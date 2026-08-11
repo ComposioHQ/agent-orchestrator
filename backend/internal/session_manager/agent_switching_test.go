@@ -1858,6 +1858,9 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 	if strings.Contains(target.launchSystemPrompt, "ao-source-transcript-tail") || target.launchPrompt != aoTargetActivationPrompt {
 		t.Fatalf("semantic continuation used a transcript fallback or leaked visibly: system=%s prompt=%q", target.launchSystemPrompt, target.launchPrompt)
 	}
+	if len(runtime.interrupts) != 0 {
+		t.Fatalf("received semantic handoff interrupted source runtime: %#v", runtime.interrupts)
+	}
 	for _, obsolete := range []string{"agent-handoff.json", "agent-handoff-candidate.json"} {
 		if _, statErr := os.Stat(filepath.Join(filepath.Dir(sw.AgentHandoffPath), obsolete)); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("unexpected retained handoff file %s: %v", obsolete, statErr)
@@ -1909,7 +1912,15 @@ func TestSwitchAgentRetriesSwallowedSourceHandoffEnterOnlyForSafeHarness(t *test
 }
 
 func TestSwitchAgentSourceSummaryTimeoutStillDeliversDeterministicHandoff(t *testing.T) {
-	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	baseRuntime := &fakeRuntime{}
+	events := make([]string, 0, 2)
+	baseRuntime.onInterrupt = func(ports.RuntimeHandle) {
+		events = append(events, "interrupt")
+	}
+	baseRuntime.onDestroy = func(_ int, _ ports.RuntimeHandle) {
+		events = append(events, "destroy")
+	}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
 	manager, store, messenger := newSwitchTestManager(t, runtime)
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	rec := store.sessions["proj-1"]
@@ -1932,10 +1943,35 @@ func TestSwitchAgentSourceSummaryTimeoutStillDeliversDeterministicHandoff(t *tes
 	if sw.AgentHandoffPath != "" || sw.AgentHandoffHash != "" {
 		t.Fatalf("timeout fallback unexpectedly retained semantic file: %+v", sw)
 	}
+	if got, want := strings.Join(events, ","), "interrupt,destroy"; got != want {
+		t.Fatalf("source timeout shutdown order = %q, want %q", got, want)
+	}
 	for _, want := range []string{"implement the feature", "please keep the API small", "implementation is half complete", "ao-workspace-facts"} {
 		if !strings.Contains(target.launchSystemPrompt, want) {
 			t.Fatalf("timeout fallback continuation omitted %q:\n%s", want, target.launchSystemPrompt)
 		}
+	}
+}
+
+func TestSwitchAgentFailsBeforeSourceStopWhenTimedOutHandoffCannotBeInterrupted(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{interruptErr: errors.New("interrupt unavailable")}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	rec := store.sessions["proj-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
+	store.sessions[rec.ID] = rec
+	manager.handoffWait = time.Millisecond
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "summary-timeout-interrupt-failure",
+	})
+	if err == nil || !strings.Contains(err.Error(), "stop expired source handoff") {
+		t.Fatalf("switch error = %v, want expired source handoff failure", err)
+	}
+	if sw.State != domain.AgentSwitchFailed || sw.AgentHandoffStatus != domain.AgentHandoffTimedOut {
+		t.Fatalf("switch = state %q handoff %q, want failed/timed_out", sw.State, sw.AgentHandoffStatus)
+	}
+	if runtime.destroyed != 0 || runtime.restarted != 0 {
+		t.Fatalf("source/target mutated after interrupt failure: destroyed=%d restarted=%d", runtime.destroyed, runtime.restarted)
 	}
 }
 
@@ -2299,9 +2335,12 @@ func TestSwitchDeliveryAcknowledgementWindowCoversSlowTargetStartup(t *testing.T
 	}
 }
 
-func TestSwitchPermissionDecisionWindowAllowsHumanResponse(t *testing.T) {
+func TestSwitchHandoffWaitBudgetsAllowAgentAndHumanResponse(t *testing.T) {
 	manager := New(Deps{})
-	if got, want := manager.switchPermissionDecisionWait, 2*time.Minute; got != want {
+	if got, want := manager.handoffWait, 90*time.Second; got != want {
+		t.Fatalf("switch semantic handoff wait = %s, want %s", got, want)
+	}
+	if got, want := manager.switchPermissionDecisionWait, time.Minute; got != want {
 		t.Fatalf("switch permission decision wait = %s, want %s", got, want)
 	}
 }

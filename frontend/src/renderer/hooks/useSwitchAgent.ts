@@ -11,7 +11,6 @@ export type SwitchAgentInput = {
 	session: WorkspaceSession;
 	targetHarness: SwitchAgentHarness;
 	model: string;
-	note: string;
 	idempotencyKey: string;
 };
 
@@ -52,8 +51,6 @@ export function useSwitchAgentState(sessionId: string) {
 	}
 
 	return {
-		// This state describes only the POST admission request. Durable progress
-		// comes from the active session summary and switch-history query.
 		error:
 			!pending &&
 			latest?.status === "error" &&
@@ -83,18 +80,14 @@ export function useSwitchAgent() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationKey: switchAgentMutationKey,
-		mutationFn: async ({ session, targetHarness, model, note, idempotencyKey }: SwitchAgentInput) => {
+		mutationFn: async ({ session, targetHarness, model, idempotencyKey }: SwitchAgentInput) => {
 			const body: {
 				targetHarness: SwitchAgentHarness;
 				model?: string;
-				note?: string;
 				idempotencyKey: string;
 			} = { targetHarness, idempotencyKey };
 			const normalizedModel = model.trim();
 			if (normalizedModel) body.model = normalizedModel;
-			const normalizedNote = note.trim();
-			if (normalizedNote) body.note = normalizedNote;
-
 			const { data, error, response } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/switch-agent",
 				{
@@ -117,8 +110,6 @@ export function useSwitchAgent() {
 				(current = []) => [agentSwitch, ...current.filter((entry) => entry.id !== agentSwitch.id)],
 			);
 		},
-		// Refresh both durable observers after the admission request settles.
-		// The mutation itself does not represent post-admission switch progress.
 		onSettled: (_data, _error, variables) => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.session.id) });

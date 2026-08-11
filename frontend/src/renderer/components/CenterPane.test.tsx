@@ -47,8 +47,19 @@ vi.mock("../hooks/useSwitchAgent", () => ({
 }));
 
 vi.mock("./TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: ({ session }: { session: WorkspaceSession }) => (
-		<button aria-label="Switch agent" data-testid="terminal-switch-agent" type="button">
+	TerminalSwitchAgentButton: ({
+		session,
+		onOpenChange,
+	}: {
+		session: WorkspaceSession;
+		onOpenChange?: (open: boolean) => void;
+	}) => (
+		<button
+			aria-label="Switch agent"
+			data-testid="terminal-switch-agent"
+			onClick={() => onOpenChange?.(true)}
+			type="button"
+		>
 			{session.provider}
 		</button>
 	),
@@ -167,11 +178,20 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});
 
+	it("blocks only the terminal interaction surface while the switch selector is open", async () => {
+		renderCenterPane({ session: worker });
+
+		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
+
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
+		expect(document.body.style.pointerEvents).not.toBe("none");
+	});
+
 	it("uses mutation input only while switch admission is still pending", () => {
 		agentSwitchMocks.mutation.input = {
 			idempotencyKey: "switch-request-1",
 			model: "",
-			note: "",
 			session: worker,
 			targetHarness: "codex",
 		};
@@ -182,12 +202,76 @@ describe("CenterPane toolbar session label", () => {
 		const overlay = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
 		const terminalPanel = screen.getByRole("tabpanel", { name: "do the thing terminal" });
 		expect(terminalPanel).toContainElement(overlay);
-		expect(overlay).toHaveClass("backdrop-blur-[3px]");
-		expect(within(overlay).getByTestId("agent-switch-transition-card")).toBeInTheDocument();
+		expect(overlay).toHaveClass("agent-switch-terminal-scrim");
+		expect(within(overlay).getByTestId("agent-switch-transition-card")).toHaveClass(
+			"animate-modal-in",
+		);
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
 		expect(within(overlay).getByText("Claude Code")).toBeInTheDocument();
 		expect(within(overlay).getByText("Codex")).toBeInTheDocument();
 		expect(screen.getByText("terminal body")).toHaveAttribute("data-input-disabled", "true");
+	});
+
+	it("renders a connected transfer arrow and a coupled, wrapping lifecycle", () => {
+		agentSwitchMocks.mutation.input = {
+			idempotencyKey: "switch-request-visuals",
+			model: "",
+			session: worker,
+			targetHarness: "codex",
+		};
+		agentSwitchMocks.mutation.isPending = true;
+
+		renderCenterPane({ session: worker });
+
+		const card = screen.getByTestId("agent-switch-transition-card");
+		const arrow = within(card).getByTestId("agent-switch-transfer-arrow");
+		const shaft = within(arrow).getByTestId("agent-switch-transfer-shaft");
+		const shaftLine = within(arrow).getByTestId("agent-switch-transfer-shaft-line");
+		const arrowhead = within(arrow).getByTestId("agent-switch-transfer-arrowhead");
+		expect(arrow.querySelectorAll("svg")).toHaveLength(1);
+		expect(arrow.querySelector(".lucide-arrow-right")).toBeNull();
+		expect(shaftLine).toHaveAttribute("d", "M1 8H109");
+		expect(arrowhead).toHaveAttribute("d", "M102 1L109 8L102 15");
+		expect(shaftLine).toHaveClass("text-muted-foreground/40");
+		expect(arrowhead).toHaveClass("text-accent");
+		expect(arrowhead.querySelector(".agent-switch-transfer-pulse")).toBeNull();
+		expect(shaft.querySelector(".agent-switch-transfer-pulse")).not.toBeNull();
+
+		const statusGroup = within(card).getByTestId("agent-switch-status-group");
+		const progress = within(statusGroup).getByRole("list", { name: "Switching…" });
+		expect(within(statusGroup).getAllByText("Preparing handoff")).toHaveLength(2);
+		expect(statusGroup).toContainElement(progress);
+		for (const label of [
+			"Preparing handoff",
+			"Stopping source agent",
+			"Starting target agent",
+			"Delivering context",
+		]) {
+			expect(within(progress).getByText(label)).toHaveClass(
+				"max-w-16",
+				"break-words",
+				"whitespace-normal",
+				"text-center",
+			);
+			expect(within(progress).getByText(label)).not.toHaveClass("truncate");
+		}
+	});
+
+	it("shows one terminal scrim while the selector is open during admission", async () => {
+		agentSwitchMocks.mutation.input = {
+			idempotencyKey: "switch-request-1",
+			model: "",
+			session: worker,
+			targetHarness: "codex",
+		};
+		agentSwitchMocks.mutation.isPending = true;
+
+		renderCenterPane({ session: worker });
+		expect(screen.getByTestId("agent-switch-terminal-overlay")).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
+
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});
 
 	it("keeps a new admission presented above unrelated settled completion history", () => {
@@ -200,7 +284,6 @@ describe("CenterPane toolbar session label", () => {
 		agentSwitchMocks.mutation.input = {
 			idempotencyKey: "switch-request-2",
 			model: "",
-			note: "",
 			session: settledSession,
 			targetHarness: "claude-code",
 		};

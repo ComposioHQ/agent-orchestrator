@@ -31,6 +31,7 @@ const (
 	sourceComposerProbeLines    = 20
 	switchPollInterval          = 150 * time.Millisecond
 	switchDurableBoundaryWait   = 5 * time.Second
+	switchHandoffInterruptWait  = 2 * time.Second
 	switchSourceStopWait        = 20 * time.Second
 	switchPostStopWait          = 2 * time.Minute
 	switchTargetNativeIDWait    = 30 * time.Second
@@ -364,6 +365,11 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	cancelDecisionClose()
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: close permission input: %w", id, err)
+	}
+	if result.AgentHandoffStatus == domain.AgentHandoffTimedOut {
+		if err := m.interruptTimedOutSourceHandoff(ctx, rec); err != nil {
+			return result, fmt.Errorf("switch agent %s: stop expired source handoff: %w", id, err)
+		}
 	}
 	// Capture the newest bounded scrollback at the final source boundary. The
 	// tmux runtime destroys its pane during stop, so this evidence cannot be
@@ -1362,6 +1368,49 @@ func (m *Manager) capturePRFacts(ctx context.Context, id domain.SessionID) []swi
 func replaceAgentSwitchWaitContext(parent context.Context, currentCancel context.CancelFunc, timeout time.Duration) (context.Context, context.CancelFunc) {
 	currentCancel()
 	return context.WithTimeout(parent, timeout)
+}
+
+func (m *Manager) interruptTimedOutSourceHandoff(ctx context.Context, rec domain.SessionRecord) error {
+	handle := ports.RuntimeHandle{ID: strings.TrimSpace(rec.Metadata.RuntimeHandleID)}
+	if handle.ID == "" {
+		return ErrIncompleteHandle
+	}
+	interrupter, ok := m.runtime.(runtimeInterrupter)
+	if !ok {
+		return fmt.Errorf("runtime cannot interrupt an expired source handoff")
+	}
+	interruptCtx, cancel := context.WithTimeout(ctx, switchHandoffInterruptWait)
+	defer cancel()
+	if err := interrupter.Interrupt(interruptCtx, handle); err != nil {
+		return err
+	}
+
+	// Give the provider a short, bounded opportunity to persist the turn as
+	// interrupted before Destroy removes its terminal. Without this boundary a
+	// resumed native session can finish and retry an already-stale handoff.
+	deadline := time.NewTimer(switchHandoffInterruptWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(interfaceTransitionPoll)
+	defer ticker.Stop()
+	for {
+		current, found, err := m.store.GetSession(interruptCtx, rec.ID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return ErrNotFound
+		}
+		if current.Activity.State == domain.ActivityIdle || current.Activity.State == domain.ActivityExited {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return nil
+		case <-ticker.C:
+		}
+	}
 }
 
 func (m *Manager) collectOptionalAgentHandoff(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, agent ports.Agent, sw domain.AgentSwitch, candidatePath string) (domain.AgentSwitch, error) {

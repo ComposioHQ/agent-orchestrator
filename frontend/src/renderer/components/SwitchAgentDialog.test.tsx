@@ -95,7 +95,7 @@ function renderDialog(session: WorkspaceSession = worker, onOpenChange = vi.fn()
 	}
 	const result = render(
 		<QueryClientProvider client={queryClient}>
-			<SwitchAgentDialog onOpenChange={onOpenChange} open session={session} />
+			<SwitchAgentDialog container={document.body} onOpenChange={onOpenChange} open session={session} />
 		</QueryClientProvider>,
 	);
 	return { ...result, onOpenChange, queryClient };
@@ -113,18 +113,37 @@ beforeEach(() => {
 });
 
 describe("SwitchAgentDialog", () => {
-	it("matches the New task composer and omits switch history", () => {
+	it("renders a compact agent and model picker without optional context or cancel actions", () => {
 		switchMocks.query.data = [switchRecord({ state: "completed" }) as AgentSwitch];
 		renderDialog();
 
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		expect(dialog.querySelector(".composer-prompt-surface")).not.toBeNull();
+		const backdrop = screen.getByTestId("switch-agent-terminal-backdrop");
+		expect(backdrop).toHaveClass("agent-switch-terminal-scrim");
+		expect(dialog).toHaveClass("w-dialog-md");
 		expect(
-			within(dialog).getByText((_content, element) => element?.textContent === "Claude Code → Codex"),
+			within(dialog).getByText(
+				"Move this session from Claude Code to another agent. AO will preserve the current native session and hand off the work.",
+			),
 		).toBeInTheDocument();
-		expect(within(dialog).getByLabelText("Note (optional)")).toHaveClass("resize-none");
+		expect(within(dialog).getByRole("button", { name: "Target agent" })).toBeInTheDocument();
+		expect(within(dialog).getByRole("button", { name: "Model" })).toBeInTheDocument();
+		expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
 		expect(within(dialog).queryByText("Switch history")).not.toBeInTheDocument();
-		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+		expect(within(dialog).queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeInTheDocument();
+		const switchButton = within(dialog).getByRole("button", { name: "Switch" });
+		expect(switchButton).toHaveClass("size-(--size-settings-action-height)");
+		expect(switchButton.textContent).toBe("");
+		expect(switchButton.querySelector(".lucide-repeat-2")).not.toBeNull();
+	});
+
+	it("dismisses from the close button before admission", async () => {
+		const { onOpenChange } = renderDialog();
+
+		await userEvent.click(screen.getByRole("button", { name: "Close switch agent dialog" }));
+
+		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 
 	it("closes only after switch admission succeeds", async () => {
@@ -139,7 +158,6 @@ describe("SwitchAgentDialog", () => {
 			{
 				idempotencyKey: "idempotency-1",
 				model: "gpt-5.4-mini",
-				note: "",
 				session: worker,
 				targetHarness: "codex",
 			},
@@ -156,7 +174,6 @@ describe("SwitchAgentDialog", () => {
 		switchMocks.state.input = {
 			idempotencyKey: "idempotency-1",
 			model: "gpt-5.4",
-			note: "keep context",
 			session: worker,
 			targetHarness: "codex",
 		};
@@ -167,8 +184,7 @@ describe("SwitchAgentDialog", () => {
 
 		expect(within(dialog).getByRole("button", { name: "Target agent" })).toBeDisabled();
 		expect(within(dialog).getByRole("button", { name: "Model" })).toBeDisabled();
-		expect(within(dialog).getByLabelText("Note (optional)")).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
 	});
 
@@ -176,7 +192,6 @@ describe("SwitchAgentDialog", () => {
 		switchMocks.state.input = {
 			idempotencyKey: "idempotency-1",
 			model: "gpt-5.4",
-			note: "keep context",
 			session: worker,
 			targetHarness: "codex",
 		};
@@ -187,7 +202,7 @@ describe("SwitchAgentDialog", () => {
 
 		expect(within(dialog).getByRole("status")).toHaveTextContent("Starting target agent");
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
 		await userEvent.keyboard("{Escape}");
 		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
 	});

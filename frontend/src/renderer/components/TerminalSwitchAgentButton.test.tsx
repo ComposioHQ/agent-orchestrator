@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentSwitchesQueryKey, type AgentSwitch } from "../hooks/useAgentSwitches";
 import { AGENT_OPTIONS } from "../lib/agent-options";
@@ -56,6 +57,21 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 	};
 }
 
+function SwitchControlHarness({ session }: { session: WorkspaceSession }) {
+	const [container, setContainer] = useState<HTMLDivElement | null>(null);
+	const [open, setOpen] = useState(false);
+	return (
+		<div className="relative" data-testid="terminal-container" ref={setContainer}>
+			<TerminalSwitchAgentButton
+				container={container}
+				onOpenChange={setOpen}
+				open={open}
+				session={session}
+			/>
+		</div>
+	);
+}
+
 function renderControl(session: WorkspaceSession = worker) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -63,7 +79,7 @@ function renderControl(session: WorkspaceSession = worker) {
 	const control = (nextSession: WorkspaceSession) => (
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<TerminalSwitchAgentButton key={nextSession.id} session={nextSession} />
+				<SwitchControlHarness key={nextSession.id} session={nextSession} />
 			</TooltipProvider>
 		</QueryClientProvider>
 	);
@@ -128,13 +144,19 @@ describe("TerminalSwitchAgentButton", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+		expect(document.querySelector(".dialog-overlay")).not.toBeInTheDocument();
+		expect(document.body.style.pointerEvents).not.toBe("none");
+		expect(screen.getByTestId("terminal-container")).toContainElement(dialog);
+		expect(screen.getByTestId("terminal-container")).toContainElement(
+			screen.getByTestId("switch-agent-terminal-backdrop"),
+		);
 		const targetAgent = within(dialog).getByRole("button", { name: "Target agent" });
 		expect(targetAgent).toHaveTextContent("Codex");
 		await userEvent.click(targetAgent);
 		expect(screen.getAllByRole("menuitem")).toHaveLength(AGENT_OPTIONS.length);
 		expect(screen.getByRole("menuitem", { name: /Cursor,\s*Coming soon/ })).toHaveAttribute("data-disabled");
 		await userEvent.keyboard("{Escape}");
-		await userEvent.type(within(dialog).getByLabelText("Note (optional)"), "  Check tests first.  ");
+		expect(within(dialog).queryByRole("textbox")).not.toBeInTheDocument();
 		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
@@ -142,7 +164,6 @@ describe("TerminalSwitchAgentButton", () => {
 			params: { path: { sessionId: "sess-1" } },
 			body: {
 				idempotencyKey: expect.any(String),
-				note: "Check tests first.",
 				targetHarness: "codex",
 			},
 		});
@@ -176,7 +197,7 @@ describe("TerminalSwitchAgentButton", () => {
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
 		expect(document.querySelector('button[aria-label="Switching to Codex"]')).toHaveAttribute(
 			"aria-busy",
 			"true",

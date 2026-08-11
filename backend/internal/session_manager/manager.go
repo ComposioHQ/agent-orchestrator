@@ -325,8 +325,9 @@ type Manager struct {
 	retainedSwitches map[domain.SessionID]struct{}
 	inputLeases      map[domain.SessionID]int
 	inputDrained     map[domain.SessionID]chan struct{}
-	// handoffWait bounds optional source-agent enrichment. Deterministic AO
-	// context is sufficient, so expiry never prevents the actual switch.
+	// handoffWait bounds optional source-agent enrichment. Time spent waiting
+	// for a human permission decision is paused and charged only against the
+	// separate switchPermissionDecisionWait budget below.
 	handoffWait time.Duration
 	// switchPermissionDecisionWait is a separate human-response budget used only
 	// while the source agent is blocked on a permission prompt. The semantic
@@ -597,8 +598,8 @@ func New(d Deps) *Manager {
 		retainedSwitches:             make(map[domain.SessionID]struct{}),
 		inputLeases:                  make(map[domain.SessionID]int),
 		inputDrained:                 make(map[domain.SessionID]chan struct{}),
-		handoffWait:                  60 * time.Second,
-		switchPermissionDecisionWait: 2 * time.Minute,
+		handoffWait:                  90 * time.Second,
+		switchPermissionDecisionWait: time.Minute,
 		switchTargetStartWait:        3 * time.Second,
 		switchPostStopWait:           switchPostStopWait,
 		// Provider startup, including slow MCP initialization, can delay the

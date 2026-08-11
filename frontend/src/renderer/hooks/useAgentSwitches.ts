@@ -6,8 +6,6 @@ import type { AgentSwitchSummary } from "../types/workspace";
 
 type GeneratedAgentSwitch = components["schemas"]["AgentSwitch"];
 
-// Keep forward compatibility with newer daemons so unknown errors can fall
-// back to protected presentation instead of becoming impossible to represent.
 export type AgentSwitch = AgentSwitchSummary<string>;
 
 const terminalAgentSwitchStates = new Set<AgentSwitch["state"]>(["completed", "failed"]);

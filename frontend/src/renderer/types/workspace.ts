@@ -134,7 +134,6 @@ export type AgentSwitchState =
 	| "completed"
 	| "failed";
 
-/** Redacted durable switch fields shared by session summaries and switch history. */
 export type AgentSwitchSummary<State extends string = AgentSwitchState> = {
 	agentHandoffStatus: string;
 	errorCode?: string;
@@ -186,7 +185,6 @@ export type WorkspaceSession = {
 	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
-	/** Redacted nonterminal switch projection from the daemon's session read model. */
 	activeAgentSwitch?: AgentSwitchSummary<string>;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over

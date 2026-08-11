@@ -433,11 +433,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[sessionId],
 	);
 
-	// Reveal the first real content in each non-empty browser lifecycle. Once the
-	// user leaves Browser, subsequent work respects that choice and uses the
-	// unseen indicator instead of repeatedly stealing the active inspector tab.
-	// previewRevision intentionally retriggers the empty branch so an explicit
-	// clear consumes unseen activity even when the browser was already empty.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const current = useUiStore.getState().inspectorSessions[sessionId];
@@ -448,8 +443,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		if (current?.browserContentRevealed) return;
 		setBrowserContentRevealed(sessionId, true);
-		setInspectorViewForSession(sessionId, "browser");
-		setInspectorOpenForSession(sessionId, true);
 	}, [
 		hasBrowserContent,
 		hasInspector,
@@ -457,14 +450,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		setBrowserContentRevealed,
 		setBrowserUnseen,
-		setInspectorOpenForSession,
-		setInspectorViewForSession,
 		terminated,
 	]);
 
-	// `ao preview` is authoritative browser work, including a same-URL rerun
-	// whose revision advances. The first target is handled by the lifecycle
-	// effect above; later targets glow only while Browser is not visible.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const previewKey = previewRevealKey(previewUrl, previewRevision);

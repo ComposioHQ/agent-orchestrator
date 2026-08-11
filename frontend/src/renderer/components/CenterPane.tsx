@@ -1,5 +1,4 @@
 import {
-	ArrowRight,
 	CheckCircle2,
 	ChevronLeft,
 	ChevronRight,
@@ -111,6 +110,8 @@ export function CenterPane({
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [terminalBounds, setTerminalBounds] = useState({ leftInset: 0, rightInset: 0, width: 0 });
+	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
+	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
@@ -200,7 +201,7 @@ export function CenterPane({
 		presentation?.lockAgentTerminal && !presentation.allowSourceInput,
 	);
 	const workerInputDisabled =
-		target.kind === "worker" && (agentInputDisabled || switchLocksWorkerInput);
+		target.kind === "worker" && (agentInputDisabled || switchLocksWorkerInput || switchSelectorOpen);
 	const shownPresentation =
 		presentation?.outcome === "success"
 			? transientSuccessSwitchId === agentSwitch?.id
@@ -218,6 +219,9 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: sessionTabLabel;
+	useEffect(() => {
+		setSwitchSelectorOpen(false);
+	}, [session?.id]);
 	const selectAdjacentTab = useCallback(
 		(direction: -1 | 1) => {
 			const activeIndex =
@@ -436,6 +440,9 @@ export function CenterPane({
 									label={sessionTabLabel}
 									onSelect={onSelectSessionTerminal}
 									session={session}
+									switchSelectorContainer={switchSelectorContainer}
+									switchSelectorOpen={switchSelectorOpen}
+									onSwitchSelectorOpenChange={setSwitchSelectorOpen}
 								/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
@@ -550,6 +557,7 @@ export function CenterPane({
 		>
 			{isFullscreen ? terminalTopbar : <SessionTopbarPortal>{terminalTopbar}</SessionTopbarPortal>}
 			<div
+				ref={setSwitchSelectorContainer}
 				aria-label={t("terminal.panelAria", { title: activeTerminalLabel })}
 				className="relative min-h-0 flex-1"
 				role="tabpanel"
@@ -572,7 +580,7 @@ export function CenterPane({
 						theme={theme}
 					/>
 				</div>
-				{shownPresentation && agentSwitch && target.kind === "worker" ? (
+				{switchSelectorOpen ? null : shownPresentation && agentSwitch && target.kind === "worker" ? (
 					<AgentSwitchTerminalOverlay agentSwitch={agentSwitch} presentation={shownPresentation} />
 				) : shownPresentation && agentSwitch ? (
 					<AgentSwitchTerminalStrip
@@ -622,7 +630,7 @@ function AgentSwitchTerminalOverlay({
 				"z-20 flex",
 				sourceInput
 					? "agent-switch-source-input-strip pointer-events-none absolute inset-x-3 top-3 justify-center"
-					: "absolute inset-0 items-center justify-center bg-terminal/95 backdrop-blur-[3px]",
+					: "agent-switch-terminal-scrim absolute inset-0 items-center justify-center animate-overlay-in motion-reduce:animate-none",
 				!presentation.lockAgentTerminal && "pointer-events-none",
 				presentation.animate && !staticWarning && !sourceInput && "cursor-wait",
 			)}
@@ -657,22 +665,54 @@ function AgentSwitchTerminalOverlay({
 				</div>
 			) : (
 				<div
-					className="flex max-w-lg flex-col items-center gap-5 rounded-xl border border-border-strong bg-surface/95 px-8 py-6 text-center shadow-xl shadow-black/20"
+					className="flex max-w-lg animate-modal-in flex-col items-center gap-5 rounded-xl border border-border-strong bg-surface/95 px-8 py-6 text-center shadow-xl shadow-black/20 motion-reduce:animate-none"
 					data-testid="agent-switch-transition-card"
 				>
 					<div className="flex items-center gap-5 sm:gap-7">
 						<SwitchingAgentMark harness={agentSwitch.fromHarness} />
-						<div aria-hidden="true" className="flex items-center gap-2 text-accent">
-							<div className="relative h-1 w-20 overflow-hidden rounded-full bg-border-strong/70 sm:w-28">
-								<span className="agent-switch-transfer-pulse absolute inset-y-0 w-10 rounded-full bg-gradient-to-r from-transparent via-accent to-transparent" />
-							</div>
-							<ArrowRight className="size-icon-lg shrink-0" />
+						<div
+							aria-hidden="true"
+							className="relative h-4 w-20 shrink-0 text-accent sm:w-28"
+							data-testid="agent-switch-transfer-arrow"
+						>
+							<svg
+								className="absolute inset-0 size-full overflow-visible"
+								fill="none"
+								preserveAspectRatio="none"
+								viewBox="0 0 112 16"
+							>
+								<path
+									className="text-muted-foreground/40"
+									d="M1 8H109"
+									data-testid="agent-switch-transfer-shaft-line"
+									stroke="currentColor"
+									strokeLinecap="round"
+									strokeWidth="1.5"
+								/>
+								<path
+									className="text-accent"
+									d="M102 1L109 8L102 15"
+									data-testid="agent-switch-transfer-arrowhead"
+									stroke="currentColor"
+									strokeLinecap="round"
+									strokeLinejoin="round"
+									strokeWidth="1.5"
+								/>
+							</svg>
+							<span
+								className="absolute inset-y-[7px] left-0 right-3 overflow-hidden"
+								data-testid="agent-switch-transfer-shaft"
+							>
+								<span className="agent-switch-transfer-pulse absolute inset-y-0 w-10 bg-gradient-to-r from-transparent via-accent to-transparent" />
+							</span>
 						</div>
 						<SwitchingAgentMark harness={agentSwitch.targetHarness} />
 					</div>
-					<p className="font-mono text-control font-medium text-foreground">{title}</p>
-					<p className="text-caption leading-4 text-muted-foreground">{description}</p>
-					<AgentSwitchProgressTrack stage={presentation.stage} />
+					<div className="flex w-full flex-col items-center" data-testid="agent-switch-status-group">
+						<p className="font-mono text-control font-medium text-foreground">{title}</p>
+						<p className="mt-2 text-caption leading-4 text-muted-foreground">{description}</p>
+						<AgentSwitchProgressTrack stage={presentation.stage} />
+					</div>
 				</div>
 			)}
 		</div>
@@ -720,19 +760,21 @@ function AgentSwitchProgressTrack({ stage }: { stage: AgentSwitchPresentation["s
 	const { t } = useTranslation();
 	const activeIndex = agentSwitchProgressSteps.findIndex((step) => step.key === stage);
 	return (
-		<ol className="agent-switch-progress-track flex w-full items-start" aria-label={t("switchAgent.switching")}>
+		<ol className="agent-switch-progress-track mt-2.5 flex w-full items-start" aria-label={t("switchAgent.switching")}>
 			{agentSwitchProgressSteps.map((step, index) => (
 				<li
 					key={step.key}
 					aria-current={index === activeIndex ? "step" : undefined}
 					className={cn(
-						"agent-switch-progress-step relative flex min-w-0 flex-1 flex-col items-center gap-1.5 px-1 text-micro text-passive",
+						"agent-switch-progress-step relative flex min-w-0 flex-1 flex-col items-center gap-1.5 px-0.5 text-[10px] leading-3 text-passive",
 						index < activeIndex && "is-complete text-muted-foreground",
 						index === activeIndex && "is-current text-foreground",
 					)}
 				>
 					<span aria-hidden="true" className="agent-switch-progress-dot relative z-10 size-2 rounded-full border border-border-strong bg-surface" />
-					<span className="max-w-full truncate">{t(step.labelKey)}</span>
+					<span className="min-h-6 max-w-16 break-words whitespace-normal text-balance text-center">
+						{t(step.labelKey)}
+					</span>
 				</li>
 			))}
 		</ol>
@@ -755,6 +797,9 @@ type SessionPaneTabProps = {
 	isActive: boolean;
 	onSelect?: () => void;
 	session?: WorkspaceSession;
+	switchSelectorContainer?: HTMLDivElement | null;
+	switchSelectorOpen?: boolean;
+	onSwitchSelectorOpenChange?: (open: boolean) => void;
 	icon?: ReactNode;
 	title?: string;
 };
@@ -763,7 +808,17 @@ type SessionPaneTabProps = {
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: SessionPaneTabProps) {
+function SessionPaneTab({
+	label,
+	isActive,
+	onSelect,
+	session,
+	switchSelectorContainer,
+	switchSelectorOpen = false,
+	onSwitchSelectorOpenChange,
+	icon,
+	title,
+}: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
@@ -809,7 +864,15 @@ function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: Ses
 					</span>
 				) : null}
 			</button>
-			{session ? <TerminalSwitchAgentButton key={session.id} session={session} /> : null}
+			{session ? (
+				<TerminalSwitchAgentButton
+					key={session.id}
+					container={switchSelectorContainer}
+					onOpenChange={onSwitchSelectorOpenChange}
+					open={switchSelectorOpen}
+					session={session}
+				/>
+			) : null}
 		</span>
 	);
 }

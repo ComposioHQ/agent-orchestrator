@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
@@ -20,13 +20,15 @@ import { canSwitchAgentHarness, SwitchAgentDialog } from "./SwitchAgentDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TerminalSwitchAgentButtonProps = {
+	container: HTMLElement | null | undefined;
+	onOpenChange: ((open: boolean) => void) | undefined;
+	open: boolean;
 	session: WorkspaceSession;
 };
 
-export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButtonProps) {
+export function TerminalSwitchAgentButton({ container, onOpenChange, open, session }: TerminalSwitchAgentButtonProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const [open, setOpen] = useState(false);
 	const switches = useAgentSwitches(session.id).data ?? [];
 	const switchMutation = useSwitchAgentState(session.id);
 	const observedNonterminalSwitchIdsRef = useRef(new Set<string>());
@@ -86,8 +88,8 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 	const warning = controlPresentation?.outcome === "failure" || controlPresentation?.outcome === "recovery";
 
 	useEffect(() => {
-		if (switchMutation.error) setOpen(true);
-	}, [switchMutation.error]);
+		if (switchMutation.error) onOpenChange?.(true);
+	}, [onOpenChange, switchMutation.error]);
 
 	if (
 		session.kind !== "worker" ||
@@ -102,7 +104,7 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 		? t(controlPresentation.compactLabelKey, controlPresentation.values)
 		: t("switchAgent.action");
 	const handleOpenChange = (nextOpen: boolean) => {
-		setOpen(nextOpen);
+		onOpenChange?.(nextOpen);
 		if (!nextOpen && switchMutation.error) {
 			clearSwitchAgentState(queryClient, session.id);
 		}
@@ -119,7 +121,7 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 							"ml-1 grid size-6 shrink-0 place-items-center rounded-full border border-border/70 bg-background/45 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
 							warning && "border-warning/50 text-warning hover:border-warning/70 hover:text-warning",
 						)}
-						onClick={() => setOpen(true)}
+						onClick={() => handleOpenChange(true)}
 						type="button"
 					>
 						{warning ? (
@@ -133,8 +135,8 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 				</TooltipTrigger>
 				<TooltipContent>{label}</TooltipContent>
 			</Tooltip>
-			{open ? (
-				<SwitchAgentDialog onOpenChange={handleOpenChange} open session={session} />
+			{open && container ? (
+				<SwitchAgentDialog container={container} onOpenChange={handleOpenChange} open session={session} />
 			) : null}
 		</>
 	);

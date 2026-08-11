@@ -646,8 +646,6 @@
 	"switchAgent.historyFallbackContext": "フォールバックコンテキストを使用",
 	"switchAgent.historyTitle": "切り替え履歴",
 	"switchAgent.inProgress": "{{target}} に切り替え中…",
-	"switchAgent.noteLabel": "メモ（任意）",
-	"switchAgent.notePlaceholder": "次のエージェント向けのコンテキストを追加",
 	"switchAgent.progressTitle": "{{source}} から {{target}} に切り替え中",
 	"switchAgent.permissionRequired": "切り替え元のエージェントで権限の判断が必要です。引き継ぎを続行するには、ターミナルの確認画面を確認してください。",
 	"switchAgent.recovery.action": "エージェント切り替えの復旧が必要です",

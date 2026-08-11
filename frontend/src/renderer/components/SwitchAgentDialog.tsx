@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, TriangleAlert } from "lucide-react";
+import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -98,22 +98,21 @@ function SwitchTargetPicker({
 }
 
 type SwitchAgentDialogProps = {
+	container: HTMLElement;
 	open: boolean;
 	session: WorkspaceSession;
 	onOpenChange: (open: boolean) => void;
 };
 
-export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDialogProps) {
+export function SwitchAgentDialog({ container, open, session, onOpenChange }: SwitchAgentDialogProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const noteId = useId();
 	const modelId = useId();
 	const defaultTargetHarness: SwitchAgentHarness = session.provider === "claude-code" ? "codex" : "claude-code";
 	const [targetHarness, setTargetHarness] = useState<SwitchAgentHarness>(defaultTargetHarness);
 	const [model, setModel] = useState("");
 	const [mode, setMode] = useState("");
 	const [modelWarning, setModelWarning] = useState<string | undefined>();
-	const [note, setNote] = useState("");
 	const switchAgent = useSwitchAgent();
 	const switchMutation = useSwitchAgentState(session.id);
 	const switchesQuery = useAgentSwitches(session.id);
@@ -136,9 +135,6 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 				terminalHandleId: session.terminalHandleId,
 			})
 		: undefined;
-	const routeSource = durableSwitch?.fromHarness ?? session.provider;
-	const routeTarget = durableSwitch?.targetHarness ?? targetHarness;
-
 	const clearFailedAttempt = () => {
 		if (!switchMutation.error) return;
 		clearSwitchAgentState(queryClient, session.id);
@@ -160,7 +156,6 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 				session,
 				targetHarness,
 				model: model.trim() || mode.trim(),
-				note,
 				idempotencyKey: createSwitchAgentIdempotencyKey(),
 			},
 			{ onSuccess: () => onOpenChange(false) },
@@ -173,25 +168,39 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 
 	return (
 		<Dialog.Root
-			open={open}
+			modal={false}
 			onOpenChange={(nextOpen) => {
 				if (!nextOpen && admissionPending) return;
 				onOpenChange(nextOpen);
 			}}
+			open={open}
 		>
-			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-					<Dialog.Title className="settings-dialog-title px-4 pt-3">{t("switchAgent.title")}</Dialog.Title>
-					<Dialog.Description className="sr-only">
-						{t("switchAgent.description", { current: agentLabel(session.provider) })}
-					</Dialog.Description>
-					<p className="px-4 pt-1 text-caption text-muted-foreground">
-						{agentLabel(routeSource)} <span aria-hidden="true">→</span> {agentLabel(routeTarget)}
-					</p>
+			<Dialog.Portal container={container}>
+				<div
+					aria-hidden="true"
+					className="agent-switch-terminal-scrim absolute inset-0 z-20 animate-overlay-in motion-reduce:animate-none"
+					data-testid="switch-agent-terminal-backdrop"
+				/>
+				<Dialog.Content className="absolute left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+				<Dialog.Close asChild>
+					<button
+						aria-label={t("switchAgent.close")}
+						className="settings-dialog-close-button settings-close-button"
+						disabled={admissionPending}
+						type="button"
+					>
+						<X className="size-icon-base" aria-hidden="true" />
+					</button>
+				</Dialog.Close>
+				<Dialog.Title className="settings-dialog-title px-4 pr-12 pt-3">
+					{t("switchAgent.title")}
+				</Dialog.Title>
+				<Dialog.Description className="px-4 pr-12 pt-0.5 text-caption leading-4 text-muted-foreground">
+					{t("switchAgent.description", { current: agentLabel(session.provider) })}
+				</Dialog.Description>
 
-					{showComposer ? (
-						<form className="composer-prompt-surface flex flex-col" onSubmit={submit}>
+				{showComposer ? (
+					<form className="flex flex-col gap-3 px-4 pb-4 pt-4" onSubmit={submit}>
 							{admissionPending && durablePresentation ? (
 								<div
 									aria-label={t(durablePresentation.compactLabelKey, durablePresentation.values)}
@@ -209,36 +218,8 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 									</div>
 								</div>
 							) : null}
-							<label className="sr-only" htmlFor={noteId}>
-								{t("switchAgent.noteLabel")}
-							</label>
-							<textarea
-								id={noteId}
-								autoFocus
-								className="min-h-(--size-composer-prompt-min) w-full resize-none bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50"
-								disabled={admissionPending}
-								maxLength={4096}
-								onChange={(event) => {
-									clearFailedAttempt();
-									setNote(event.target.value);
-								}}
-								onKeyDown={(event) => {
-									if (
-										event.key === "Enter" &&
-										!event.shiftKey &&
-										!event.altKey &&
-										!event.nativeEvent.isComposing
-									) {
-										event.preventDefault();
-										event.currentTarget.form?.requestSubmit();
-									}
-								}}
-								placeholder={t("switchAgent.notePlaceholder")}
-								value={note}
-							/>
-
 							{error || statusError || modelWarning ? (
-								<div className="px-4 pb-2">
+								<div>
 									{error ? (
 										<p className="text-caption leading-4 text-error" role="alert">
 											{error}
@@ -255,7 +236,7 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 								</div>
 							) : null}
 
-							<div className="composer-toolbar">
+							<div className="composer-toolbar p-0!">
 								<div className="composer-run-controls" role="group" aria-label={t("newTask.runsWith")}>
 									<div className="composer-toolbar-slot">
 										<SwitchTargetPicker
@@ -290,26 +271,19 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 									</div>
 								</div>
 								<Button
-									className="h-(--size-settings-action-height) px-3"
-									disabled={admissionPending}
-									onClick={() => onOpenChange(false)}
-									size="none"
-									type="button"
-									variant="outline"
-								>
-									{t("confirm.cancel")}
-								</Button>
-								<Button
-									className="h-(--size-settings-action-height) min-w-(--size-composer-start-button) px-3"
+									aria-label={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
+									className="size-(--size-settings-action-height)"
 									disabled={admissionPending}
 									size="none"
+									title={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
 									type="submit"
 									variant="primary"
 								>
 									{admissionPending ? (
 										<LoaderCircle className="size-icon-base animate-spin" aria-hidden="true" />
-									) : null}
-									{admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
+									) : (
+										<Repeat2 className="size-4 stroke-[1.8]" aria-hidden="true" />
+									)}
 								</Button>
 							</div>
 						</form>
@@ -338,9 +312,6 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 									</p>
 								</div>
 							</div>
-							<Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="self-end">
-								{t("switchAgent.closeButton")}
-							</Button>
 						</div>
 					) : checkingStatus ? (
 						<div className="flex flex-col gap-4 px-4 pb-3 pt-4">
@@ -348,9 +319,6 @@ export function SwitchAgentDialog({ open, session, onOpenChange }: SwitchAgentDi
 								<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
 								{t("switchAgent.checkingStatus")}
 							</div>
-							<Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="self-end">
-								{t("switchAgent.closeButton")}
-							</Button>
 						</div>
 					) : null}
 				</Dialog.Content>
