@@ -563,7 +563,6 @@ func setupOriginCloneOnBranch(t *testing.T, git, tmp, branch string) string {
 	t.Helper()
 	repo := setupOriginClone(t, git, tmp)
 	runGit(t, git, repo, "branch", "-m", "main", branch)
-	runGit(t, git, repo, "push", "origin", ":"+"main")
 	runGit(t, git, repo, "push", "-u", "origin", branch)
 	runGit(t, git, repo, "remote", "set-head", "origin", branch)
 	return repo
