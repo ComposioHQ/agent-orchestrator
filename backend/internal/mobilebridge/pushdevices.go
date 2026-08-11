@@ -124,15 +124,29 @@ func LoadRegistry(path string) (*DeviceRegistry, error) {
 	return reg, nil
 }
 
-// Upsert registers or refreshes a device. It resolves the target row in three
-// steps: an existing row with the same InstallID; failing that, a row carrying
-// the same push token (a legacy row adopting its real install ID exactly once,
-// skipped entirely when the incoming token is empty — otherwise every
-// tokenless announce would adopt an arbitrary tokenless row); failing that, a
-// new row. CreatedAt, Muted, and (when the incoming Token is empty) the
-// existing Token always survive, so neither a reinstall, a token rotation, nor
-// a plain identity announce can silently unmute a device or blank a working
-// token.
+// Upsert registers or refreshes a device.
+//
+// A phone can reach us under two identities at once. On upgrade the registry
+// holds a legacy row that owns its push token, while the phone announces its
+// real install id (tokenless) and registers that same id (with token) from two
+// independent effects. If the announce lands first, resolving by install id
+// alone would update the new row and leave the legacy row still holding the
+// token — two rows, one token, every notification delivered twice. That is the
+// precise defect install ids exist to prevent, so resolution consults BOTH keys
+// and reconciles them:
+//
+//   - both match (different rows): merge into the install-id row, drop the
+//     token row.
+//   - only the install id matches: update that row.
+//   - only the token matches: re-key that row onto the incoming install id.
+//   - neither: insert.
+//
+// The token lookup is skipped when the incoming token is empty — otherwise
+// every tokenless announce would adopt an arbitrary tokenless row.
+//
+// CreatedAt, Muted, and (when the incoming Token is empty) the existing Token
+// always survive, so neither a reinstall, a token rotation, nor a plain
+// identity announce can silently unmute a device or blank a working token.
 //
 // A row represents a paired phone, not a push registration: Token is optional.
 // When non-empty it must still be a well-formed Expo push token.
@@ -146,23 +160,20 @@ func (r *DeviceRegistry) Upsert(dev PushDevice) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if existing, ok := r.devices[dev.InstallID]; ok {
-		dev.CreatedAt, dev.Muted, dev.Token = carryOver(existing, dev)
-		r.consumeTombstoneLocked(&dev)
-		r.devices[dev.InstallID] = dev
-		return r.persistLocked()
-	}
-	if dev.Token != "" {
-		for key, existing := range r.devices {
-			if existing.Token != dev.Token {
-				continue
-			}
-			dev.CreatedAt, dev.Muted, dev.Token = carryOver(existing, dev)
-			delete(r.devices, key) // re-key from the legacy/synthesized id
-			r.consumeTombstoneLocked(&dev)
-			r.devices[dev.InstallID] = dev
-			return r.persistLocked()
-		}
+	byInstall, hasInstall := r.devices[dev.InstallID]
+	tokenKey, byToken, hasToken := r.findByTokenLocked(dev.Token, dev.InstallID)
+
+	switch {
+	case hasInstall && hasToken:
+		// Same phone, two identities. Fold them together before writing, so the
+		// token is never left behind on the row being abandoned.
+		dev.CreatedAt, dev.Muted, dev.Token = carryOver(mergeIdentities(byInstall, byToken), dev)
+		delete(r.devices, tokenKey)
+	case hasInstall:
+		dev.CreatedAt, dev.Muted, dev.Token = carryOver(byInstall, dev)
+	case hasToken:
+		dev.CreatedAt, dev.Muted, dev.Token = carryOver(byToken, dev)
+		delete(r.devices, tokenKey) // re-key from the legacy/synthesized id
 	}
 	r.consumeTombstoneLocked(&dev)
 	r.devices[dev.InstallID] = dev
@@ -181,6 +192,51 @@ func (r *DeviceRegistry) consumeTombstoneLocked(dev *PushDevice) {
 			return
 		}
 	}
+}
+
+// findByTokenLocked returns the row holding token, ignoring the row already
+// keyed by skipInstallID (that one is found by install id instead, and treating
+// it as a second identity would make a device merge with itself). An empty
+// token matches nothing: tokenless rows are distinct phones, not candidates for
+// adoption. Callers must hold r.mu.
+func (r *DeviceRegistry) findByTokenLocked(token, skipInstallID string) (key string, dev PushDevice, ok bool) {
+	if token == "" {
+		return "", PushDevice{}, false
+	}
+	for k, existing := range r.devices {
+		if k != skipInstallID && existing.Token == token {
+			return k, existing, true
+		}
+	}
+	return "", PushDevice{}, false
+}
+
+// mergeIdentities folds two rows that turn out to be the same phone into the
+// one that survives. The oldest CreatedAt wins so "paired since" never jumps
+// forward, the newest LastSeenAt wins, and Muted is sticky: if EITHER identity
+// was muted the merged row stays muted, so reconciling can never silently
+// re-enable notifications the user turned off. Descriptive fields fill in from
+// whichever row has them, since a tokenless announce may carry a device name
+// the legacy row lacks.
+func mergeIdentities(primary, other PushDevice) PushDevice {
+	out := primary
+	if !other.CreatedAt.IsZero() && (out.CreatedAt.IsZero() || other.CreatedAt.Before(out.CreatedAt)) {
+		out.CreatedAt = other.CreatedAt
+	}
+	if other.LastSeenAt.After(out.LastSeenAt) {
+		out.LastSeenAt = other.LastSeenAt
+	}
+	out.Muted = primary.Muted || other.Muted
+	if out.Token == "" {
+		out.Token = other.Token
+	}
+	if out.DeviceName == "" {
+		out.DeviceName = other.DeviceName
+	}
+	if out.Platform == "" {
+		out.Platform = other.Platform
+	}
+	return out
 }
 
 // carryOver preserves the fields an incoming registration must never reset:

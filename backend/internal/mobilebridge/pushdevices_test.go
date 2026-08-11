@@ -667,3 +667,115 @@ func TestTombstonesAreCapped(t *testing.T) {
 		}
 	}
 }
+
+// A phone upgrading to a build that sends an install id reaches the daemon under
+// two identities: the legacy row that owns its push token, and its real install
+// id. PushManager announces (tokenless) and registers (with token) from separate
+// effects, so the announce can land first and create the real-id row before the
+// token ever arrives. Both identities must end up as ONE row: two rows sharing a
+// token would double every notification — the exact defect install ids exist to
+// prevent.
+func TestLegacyRowMergesWhenAnnounceLandsBeforeRegistration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	token := "ExponentPushToken[abc]"
+	legacyCreated := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)
+
+	if err := reg.Upsert(PushDevice{
+		InstallID: "legacy-old", Token: token, DeviceName: "Phone", Platform: "android",
+		CreatedAt: legacyCreated, LastSeenAt: legacyCreated,
+	}); err != nil {
+		t.Fatalf("legacy upsert: %v", err)
+	}
+	if err := reg.Upsert(PushDevice{
+		InstallID: "real-id", DeviceName: "Phone", Platform: "android",
+		CreatedAt: now, LastSeenAt: now,
+	}); err != nil {
+		t.Fatalf("announce: %v", err)
+	}
+	if err := reg.Upsert(PushDevice{
+		InstallID: "real-id", Token: token, DeviceName: "Phone", Platform: "android",
+		CreatedAt: now, LastSeenAt: now,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	devices := reg.List()
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want 1 (the legacy row must be merged, not left behind): %+v", len(devices), devices)
+	}
+	got := devices[0]
+	if got.InstallID != "real-id" {
+		t.Fatalf("InstallID = %q, want the real install id to win", got.InstallID)
+	}
+	if got.Token != token {
+		t.Fatalf("Token = %q, want %q", got.Token, token)
+	}
+	if !got.CreatedAt.Equal(legacyCreated) {
+		t.Fatalf("CreatedAt = %v, want the older legacy value %v (paired-since must not jump forward)", got.CreatedAt, legacyCreated)
+	}
+}
+
+// Mute is sticky across a merge: if EITHER identity was muted the surviving row
+// stays muted. A merge must never silently re-enable notifications the user
+// turned off.
+func TestMergePreservesMuteFromEitherIdentity(t *testing.T) {
+	token := "ExponentPushToken[abc]"
+	now := time.Now().UTC()
+
+	for _, tc := range []struct{ name, muteTarget string }{
+		{"legacy row muted", "legacy-old"},
+		{"install-id row muted", "real-id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "push-devices.json")
+			reg, _ := LoadRegistry(path)
+			_ = reg.Upsert(PushDevice{InstallID: "legacy-old", Token: token, CreatedAt: now, LastSeenAt: now})
+			_ = reg.Upsert(PushDevice{InstallID: "real-id", CreatedAt: now, LastSeenAt: now})
+			if err := reg.SetMuted(tc.muteTarget, true); err != nil {
+				t.Fatalf("mute %s: %v", tc.muteTarget, err)
+			}
+
+			if err := reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now}); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+
+			devices := reg.List()
+			if len(devices) != 1 {
+				t.Fatalf("devices = %d, want 1: %+v", len(devices), devices)
+			}
+			if !devices[0].Muted {
+				t.Fatalf("merged row is unmuted; muting %s was silently discarded", tc.muteTarget)
+			}
+		})
+	}
+}
+
+// No row may ever share a push token with another row, whatever order the
+// announce and registration arrive in.
+func TestNoTwoRowsEverShareAToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	now := time.Now().UTC()
+	token := "ExponentPushToken[abc]"
+
+	_ = reg.Upsert(PushDevice{InstallID: "legacy-old", Token: token, CreatedAt: now, LastSeenAt: now})
+	_ = reg.Upsert(PushDevice{InstallID: "real-id", CreatedAt: now, LastSeenAt: now})
+	_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+	_ = reg.Upsert(PushDevice{InstallID: "third", Token: token, CreatedAt: now, LastSeenAt: now})
+
+	seen := map[string]string{}
+	for _, d := range reg.List() {
+		if d.Token == "" {
+			continue
+		}
+		if prev, dup := seen[d.Token]; dup {
+			t.Fatalf("token %s held by both %q and %q", d.Token, prev, d.InstallID)
+		}
+		seen[d.Token] = d.InstallID
+	}
+}
