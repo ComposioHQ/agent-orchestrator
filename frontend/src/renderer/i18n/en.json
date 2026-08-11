@@ -487,6 +487,7 @@
 	"settings.options.noMatches": "No matching options.",
 	"settings.options.searchAria": "Search {{label}}",
 	"settings.options.searchPlaceholder": "Search options…",
+	"settings.field.edit": "Edit {{label}}",
 	"settings.preferences": "Preferences",
 	"settings.project.agents": "Agents",
 	"settings.project.agentsRequired": "Worker and orchestrator agents are required.",

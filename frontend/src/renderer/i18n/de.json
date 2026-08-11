@@ -503,6 +503,7 @@
 	"settings.options.noMatches": "Keine passenden Optionen.",
 	"settings.options.searchAria": "{{label}} durchsuchen",
 	"settings.options.searchPlaceholder": "Optionen durchsuchen…",
+	"settings.field.edit": "{{label}} bearbeiten",
 	"settings.project.agents": "Agenten",
 	"settings.project.agentsRequired": "Worker- und Orchestrator-Agenten sind erforderlich.",
 	"settings.project.agentDefault": "(Agent-Standard)",

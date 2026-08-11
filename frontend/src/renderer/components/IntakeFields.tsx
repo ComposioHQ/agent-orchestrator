@@ -3,8 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { cn } from "../lib/utils";
 import { Label } from "./ui/label";
-import { SettingsRow } from "./settings/SettingsRow";
-import { Input } from "./ui/input";
+import { SettingsInlineInput, SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
@@ -134,12 +133,11 @@ export function IntakeFields({
 							</SettingsRow>
 						)}
 						<SettingsRow label={t("settings.project.assignee")}>
-							<Input
+							<SettingsInlineInput
 								id="intakeAssignee"
-								aria-label={t("settings.project.assignee")}
-								className="settings-inline-input"
+								label={t("settings.project.assignee")}
 								value={form.assignee}
-								onChange={(e) => onChange({ assignee: e.target.value })}
+								onChange={(assignee) => onChange({ assignee })}
 								placeholder={t("settings.project.intakeAssigneePlaceholder")}
 							/>
 						</SettingsRow>

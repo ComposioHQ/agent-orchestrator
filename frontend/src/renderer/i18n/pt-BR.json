@@ -512,6 +512,7 @@
 	"settings.options.noMatches": "Nenhuma opção correspondente.",
 	"settings.options.searchAria": "Pesquisar {{label}}",
 	"settings.options.searchPlaceholder": "Pesquisar opções…",
+	"settings.field.edit": "Editar {{label}}",
 	"settings.project.agents": "Agentes",
 	"settings.project.agentsRequired": "Os agentes worker e orchestrator são obrigatórios.",
 	"settings.project.agentDefault": "(padrão do agente)",

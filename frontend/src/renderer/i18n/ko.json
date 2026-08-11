@@ -503,6 +503,7 @@
 	"settings.options.noMatches": "일치하는 옵션이 없습니다.",
 	"settings.options.searchAria": "{{label}} 검색",
 	"settings.options.searchPlaceholder": "옵션 검색…",
+	"settings.field.edit": "{{label}} 편집",
 	"settings.project.agents": "에이전트",
 	"settings.project.agentsRequired": "워커 및 오케스트레이터 에이전트는 필수입니다.",
 	"settings.project.agentDefault": "(에이전트 기본값)",

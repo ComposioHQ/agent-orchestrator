@@ -722,6 +722,80 @@ button.settings-link-row:active {
 	}
 }
 
+@utility settings-inline-edit-trigger {
+	display: inline-flex;
+	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
+	min-width: 0;
+	flex: 0 1 auto;
+	align-items: center;
+	justify-content: flex-end;
+	gap: calc(var(--spacing) * 1.5);
+	border: 0;
+	background: transparent;
+	padding: 0;
+	color: var(--color-text-settings-muted);
+	outline: none;
+	cursor: pointer;
+	transition-property: color;
+	transition-duration: var(--duration-fast);
+
+	&:hover,
+	&:focus-visible {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-radius: var(--radius-md);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+
+	& .settings-row-value {
+		max-width: none;
+	}
+}
+
+@utility settings-inline-edit-icon {
+	width: var(--size-icon-sm);
+	height: var(--size-icon-sm);
+	flex-shrink: 0;
+	opacity: 0.7;
+}
+
+@utility settings-inline-edit-input {
+	width: var(--size-settings-inline-input-max);
+	max-width: var(--size-settings-inline-input-max);
+	min-width: 0;
+	flex: 0 1 auto;
+	height: var(--size-settings-inline-input-height);
+	border: 1px solid var(--color-border-settings-input);
+	border-radius: var(--radius-lg);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: calc(var(--spacing) * 2.5);
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-input);
+	text-align: right;
+	outline: none;
+	box-shadow: none;
+	transition-property: border-color, box-shadow, color;
+	transition-duration: var(--duration-normal);
+
+	&::placeholder {
+		color: var(--color-text-settings-placeholder);
+	}
+
+	&:hover {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		color: var(--color-text-settings-row);
+		outline: none;
+	}
+}
+
 @utility settings-inline-input {
 	width: auto;
 	max-width: min(var(--size-settings-inline-input-max), var(--size-settings-inline-input-max-percent));

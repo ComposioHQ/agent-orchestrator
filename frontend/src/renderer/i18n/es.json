@@ -512,6 +512,7 @@
 	"settings.options.noMatches": "No hay opciones coincidentes.",
 	"settings.options.searchAria": "Buscar {{label}}",
 	"settings.options.searchPlaceholder": "Buscar opciones…",
+	"settings.field.edit": "Editar {{label}}",
 	"settings.project.agents": "Agentes",
 	"settings.project.agentsRequired": "Se requieren agentes de trabajo y orquestador.",
 	"settings.project.agentDefault": "(predeterminado del agente)",
