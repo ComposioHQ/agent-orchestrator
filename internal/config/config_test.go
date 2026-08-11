@@ -120,8 +120,25 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WorkOSJWKSURL != "https://api.workos.com/sso/jwks/client_123" {
-		t.Fatalf("JWKS URL = %q", cfg.WorkOSJWKSURL)
+	if cfg.WorkOSIssuer != "https://api.workos.com/user_management/client_123" ||
+		cfg.WorkOSJWKSURL != "https://api.workos.com/sso/jwks/client_123" {
+		t.Fatalf("WorkOS config = issuer %q, JWKS URL %q", cfg.WorkOSIssuer, cfg.WorkOSJWKSURL)
+	}
+}
+
+func TestLoadRejectsMismatchedWorkOSIssuer(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "production")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv(
+		"AO_CLOUD_WORKOS_ISSUER",
+		"https://api.workos.com/user_management/other_client",
+	)
+	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
+	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with a mismatched WorkOS issuer")
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 
 var releasePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$`)
 
+const workOSAPIBaseURL = "https://api.workos.com"
+
 type Config struct {
 	Environment          string
 	HTTPAddress          string
@@ -71,11 +73,21 @@ func Load() (Config, error) {
 	if configuredWorkOSValues != 0 && configuredWorkOSValues != len(workosValues) {
 		return Config{}, errors.New("AO_CLOUD_WORKOS_ISSUER, AO_CLOUD_WORKOS_CLIENT_ID, and AO_CLOUD_WORKOS_API_KEY must be set together")
 	}
-	if cfg.WorkOSIssuer != "" && cfg.WorkOSJWKSURL == "" {
-		if strings.TrimRight(cfg.WorkOSIssuer, "/") == "https://api.workos.com" {
-			cfg.WorkOSJWKSURL = "https://api.workos.com/sso/jwks/" + cfg.WorkOSClientID
-		} else {
-			cfg.WorkOSJWKSURL = strings.TrimRight(cfg.WorkOSIssuer, "/") + "/oauth2/jwks"
+	if strings.TrimRight(cfg.WorkOSIssuer, "/") == workOSAPIBaseURL {
+		cfg.WorkOSIssuer = workOSAPIBaseURL + "/user_management/" + cfg.WorkOSClientID
+	}
+	if cfg.WorkOSIssuer != "" {
+		workOSIssuer := workOSAPIBaseURL + "/user_management/" + cfg.WorkOSClientID
+		if strings.HasPrefix(cfg.WorkOSIssuer, workOSAPIBaseURL+"/user_management/") &&
+			cfg.WorkOSIssuer != workOSIssuer {
+			return Config{}, errors.New("AO_CLOUD_WORKOS_ISSUER must match AO_CLOUD_WORKOS_CLIENT_ID")
+		}
+		if cfg.WorkOSJWKSURL == "" {
+			if cfg.WorkOSIssuer == workOSIssuer {
+				cfg.WorkOSJWKSURL = workOSAPIBaseURL + "/sso/jwks/" + cfg.WorkOSClientID
+			} else {
+				cfg.WorkOSJWKSURL = strings.TrimRight(cfg.WorkOSIssuer, "/") + "/oauth2/jwks"
+			}
 		}
 	}
 	if cfg.WorkOSIssuer == "" && !cfg.LocalAuthEnabled {

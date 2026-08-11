@@ -107,20 +107,20 @@ func TestOIDCVerifierValidatesWorkOSToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const issuer = "https://api.workos.com/"
+	const issuer = "https://api.workos.com/user_management/client_123"
 	token, err := jwt.Signed(signer).
 		Claims(jwt.Claims{
 			Issuer:   issuer,
 			Subject:  "user_123",
-			Audience: jwt.Audience{"client_123"},
 			IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Minute)),
 			Expiry:   jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		}).
 		Claims(map[string]any{
-			"email":  "person@example.com",
-			"name":   "Person Example",
-			"org_id": "org_123",
-			"role":   "admin",
+			"client_id": "client_123",
+			"email":     "person@example.com",
+			"name":      "Person Example",
+			"org_id":    "org_123",
+			"role":      "admin",
 		}).
 		Serialize()
 	if err != nil {
@@ -154,7 +154,7 @@ func TestOIDCVerifierValidatesWorkOSToken(t *testing.T) {
 		t.Fatalf("principal = %#v", principal)
 	}
 
-	wrongAudience, err := NewOIDCVerifier(
+	wrongClient, err := NewOIDCVerifier(
 		context.Background(),
 		issuer,
 		"other_client",
@@ -165,8 +165,8 @@ func TestOIDCVerifierValidatesWorkOSToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wrongAudience.Verify(context.Background(), token); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("wrong audience error = %v", err)
+	if _, err := wrongClient.Verify(context.Background(), token); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("wrong client ID error = %v", err)
 	}
 }
 
