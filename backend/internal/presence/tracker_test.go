@@ -76,3 +76,36 @@ func TestTouchPrunesWithoutLiveEverBeingCalled(t *testing.T) {
 		t.Fatal("eviction kept the oldest entry; it is not oldest-first")
 	}
 }
+
+// The point of Retention: a device stops being live after TTL, but the moment it
+// went quiet must still be readable long afterwards, because that is exactly
+// what the roster's "last seen 3 hours ago" label needs. TTL-scoped expiry would
+// have discarded it 20 seconds in.
+func TestLastSeenOutlivesLiveness(t *testing.T) {
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	tr := NewTracker()
+	tr.Now = func() time.Time { return now }
+
+	touchedAt := now
+	tr.Touch("inst-1")
+
+	now = now.Add(3 * time.Hour)
+	if tr.Live()["inst-1"] {
+		t.Fatal("device should not be live three hours after its last request")
+	}
+	at, ok := tr.LastSeen("inst-1")
+	if !ok {
+		t.Fatal("LastSeen lost the timestamp once the device stopped being live")
+	}
+	if !at.Equal(touchedAt) {
+		t.Fatalf("LastSeen = %v, want the moment it was touched %v", at, touchedAt)
+	}
+
+	// Past Retention it is finally forgotten, and the roster falls back to the
+	// registry's stored value.
+	now = now.Add(Retention)
+	tr.Touch("other") // Touch is the sweeper
+	if _, ok := tr.LastSeen("inst-1"); ok {
+		t.Fatal("entry outlived Retention")
+	}
+}
