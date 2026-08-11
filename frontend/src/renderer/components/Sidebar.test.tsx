@@ -194,6 +194,7 @@ async function openCreateProjectDialog(
 			hasRemote: boolean;
 			status?: "ok" | "error";
 			reason?: string;
+			needsGitInit?: boolean;
 		}>;
 	} = {
 		path,
@@ -807,6 +808,51 @@ describe("Sidebar", () => {
 			path: "/Users/test/dev/acme",
 			mode: "workspace",
 		});
+	});
+
+	it("shows non-git child repos as needs git init in the valid list", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockRejectedValue(new Error("workspace not registered")) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/workspace");
+		window.ao!.app.checkAncestorRepo = vi.fn().mockResolvedValue(undefined);
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/workspace",
+			repos: [
+				{
+					name: "api",
+					path: "/repo/workspace/api",
+					relativePath: "api",
+					branch: "main",
+					remote: "git@github.com:acme/api.git",
+					hasRemote: true,
+					status: "ok",
+				},
+				{
+					name: "docs",
+					path: "/repo/workspace/docs",
+					relativePath: "docs",
+					branch: "",
+					remote: "",
+					hasRemote: false,
+					status: "ok",
+					needsGitInit: true,
+				},
+			],
+		});
+		renderSidebar({ onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
+		await screen.findByRole("dialog", { name: "Workspace agents" });
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
+
+		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
+		expect(screen.getByText("api")).toBeInTheDocument();
+		expect(screen.getByText("main github.com/acme/api")).toBeInTheDocument();
+		expect(screen.getByText("docs")).toBeInTheDocument();
+		expect(screen.getByText("Needs git init")).toBeInTheDocument();
+		expect(screen.queryByText(/Origin remote is required/)).not.toBeInTheDocument();
 	});
 
 	it("does not rescan folders for non-validation create failures", async () => {
