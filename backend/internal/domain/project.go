@@ -38,6 +38,15 @@ type ProjectRecord struct {
 	Config ProjectConfig
 }
 
+// GitStatus tracks whether a workspace child is a usable git repository
+// (ready) or still needs `git init` (needs_init).
+type GitStatus string
+
+const (
+	GitStatusReady      GitStatus = "ready"
+	GitStatusNeedsInit   GitStatus = "needs_init"
+)
+
 // WorkspaceRepoRecord is a child repo registered under a workspace project.
 // The root repo itself is represented by ProjectRecord and by session_worktrees
 // rows using RootWorkspaceRepoName; workspace_repos contains direct children.
@@ -48,6 +57,7 @@ type WorkspaceRepoRecord struct {
 	RepoOriginURL string
 	DefaultBranch string
 	RegisteredAt  time.Time
+	GitStatus     GitStatus
 }
 
 // SessionWorktreeRecord tracks one repo worktree in a session. Workspace
