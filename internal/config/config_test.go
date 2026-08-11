@@ -6,6 +6,8 @@ import (
 )
 
 func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_HTTP_ADDRESS", "")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
 	t.Setenv("AO_CLOUD_LOCAL_SESSION_TTL", "2h")
@@ -18,12 +20,15 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.LocalAuthEnabled || cfg.LocalSessionTTL != 2*time.Hour {
+	if !cfg.LocalAuthEnabled ||
+		cfg.LocalSessionTTL != 2*time.Hour ||
+		cfg.HTTPAddress != "127.0.0.1:8080" {
 		t.Fatalf("config = %#v", cfg)
 	}
 }
 
 func TestLoadRequiresCompleteWorkOSConfiguration(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "production")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
 	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://example.com")
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
@@ -37,6 +42,7 @@ func TestLoadRequiresCompleteWorkOSConfiguration(t *testing.T) {
 }
 
 func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "production")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
 	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
@@ -50,5 +56,31 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	}
 	if cfg.WorkOSJWKSURL != "https://api.workos.com/sso/jwks/client_123" {
 		t.Fatalf("JWKS URL = %q", cfg.WorkOSJWKSURL)
+	}
+}
+
+func TestLoadRejectsLocalAuthOutsideDevelopment(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "production")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
+	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "")
+	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "")
+	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with production local auth")
+	}
+}
+
+func TestLoadRejectsLocalAuthWithWorkOS(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
+	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
+	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with local auth and WorkOS")
 	}
 }

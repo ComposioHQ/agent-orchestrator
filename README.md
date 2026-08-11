@@ -20,11 +20,12 @@ Requirements: Go 1.25.7 or newer and PostgreSQL 15 or newer.
 createdb ao_cloud
 cp .env.example .env
 set -a; source .env; set +a
-go run ./cmd/ao-cloud
+AO_CLOUD_LOCAL_AUTH=true go run ./cmd/ao-cloud
 ```
 
 The service applies embedded Goose migrations at startup. Local auth is disabled
-unless `AO_CLOUD_LOCAL_AUTH=true`; keep it disabled in hosted environments.
+unless `AO_CLOUD_LOCAL_AUTH=true`, cannot run alongside WorkOS, and is rejected
+when `AO_CLOUD_ENV=production`.
 
 For WorkOS, set `AO_CLOUD_WORKOS_ISSUER`, `AO_CLOUD_WORKOS_CLIENT_ID`, and
 `AO_CLOUD_WORKOS_API_KEY`. The OIDC verifier validates issuer, audience,
@@ -32,6 +33,9 @@ signature, and token lifetime. The WorkOS API key is server-only and resolves
 the profile fields that access tokens may omit. The JWKS URL is derived for
 standard WorkOS and custom AuthKit domains; `AO_CLOUD_WORKOS_JWKS_URL` can
 override it.
+
+Hosted environments must set `AO_CLOUD_ENV=production`; production startup
+fails if local authentication is enabled.
 
 If a verified access token contains `org_id`, that WorkOS organization and the
 token's role are synchronized into AO membership. Tokens without `org_id`

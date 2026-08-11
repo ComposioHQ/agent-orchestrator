@@ -62,12 +62,13 @@ CREATE TABLE ao_organizations (
     kind TEXT NOT NULL CHECK (kind IN ('personal', 'team', 'enterprise')),
     plan TEXT NOT NULL DEFAULT 'free',
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
-    owner_user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE RESTRICT,
+    owner_user_id UUID REFERENCES ao_users(id) ON DELETE RESTRICT,
     created_by_user_id UUID REFERENCES ao_users(id) ON DELETE SET NULL,
     settings JSONB NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(settings) = 'object'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (auth_provider, external_org_id)
+    UNIQUE (auth_provider, external_org_id),
+    CHECK (kind <> 'personal' OR owner_user_id IS NOT NULL)
 );
 
 CREATE TABLE ao_org_memberships (

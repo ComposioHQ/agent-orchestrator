@@ -73,6 +73,14 @@ func (s *Store) ensureWorkOSOrganization(
 	if orgName == "" {
 		orgName = "WorkOS organization"
 	}
+	role := principal.OrgRole
+	if role != "owner" && role != "admin" && role != "member" {
+		role = "member"
+	}
+	var ownerUserID *string
+	if role == "owner" {
+		ownerUserID = &principal.UserID
+	}
 	digest := sha256.Sum256([]byte(principal.ExternalOrgID))
 	slug := "workos-" + hex.EncodeToString(digest[:8])
 	var orgID string
@@ -81,13 +89,17 @@ func (s *Store) ensureWorkOSOrganization(
 		`INSERT INTO ao_organizations (
 			auth_provider, external_org_id, slug, display_name, kind,
 			owner_user_id, created_by_user_id
-		) VALUES ('workos', $1, $2, $3, 'team', $4, $4)
+		) VALUES ('workos', $1, $2, $3, 'team', $4, $5)
 		ON CONFLICT (auth_provider, external_org_id)
-		DO UPDATE SET display_name = EXCLUDED.display_name, updated_at = now()
+		DO UPDATE SET
+			display_name = EXCLUDED.display_name,
+			owner_user_id = COALESCE(ao_organizations.owner_user_id, EXCLUDED.owner_user_id),
+			updated_at = now()
 		RETURNING id`,
 		principal.ExternalOrgID,
 		slug,
 		orgName,
+		ownerUserID,
 		principal.UserID,
 	).Scan(&orgID); err != nil {
 		return err
@@ -99,16 +111,12 @@ func (s *Store) ensureWorkOSOrganization(
 	); err != nil {
 		return err
 	}
-	role := principal.OrgRole
-	if role != "owner" && role != "admin" && role != "member" {
-		role = "member"
-	}
 	if _, err := tx.Exec(
 		ctx,
 		`INSERT INTO ao_org_memberships (org_id, user_id, role)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (org_id, user_id)
-		DO UPDATE SET role = EXCLUDED.role, status = 'active', updated_at = now()`,
+		DO UPDATE SET role = EXCLUDED.role, updated_at = now()`,
 		orgID,
 		principal.UserID,
 		role,

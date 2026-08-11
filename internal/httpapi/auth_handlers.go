@@ -56,6 +56,9 @@ func (s *Server) registerLocal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusNotFound, "not_found", "Local authentication is disabled.")
 		return
 	}
+	if !s.allowLocalAuthAttempt(w, r) {
+		return
+	}
 	var request localRegisterRequest
 	if err := decodeJSON(w, r, &request); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
@@ -111,6 +114,9 @@ func (s *Server) registerLocal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) loginLocal(w http.ResponseWriter, r *http.Request) {
 	if !s.localAuthEnabled {
 		writeError(w, r, http.StatusNotFound, "not_found", "Local authentication is disabled.")
+		return
+	}
+	if !s.allowLocalAuthAttempt(w, r) {
 		return
 	}
 	var request localLoginRequest
@@ -205,4 +211,13 @@ func toOrganizations(memberships []domain.Membership) []organizationResponse {
 func validEmail(value string) bool {
 	address, err := mail.ParseAddress(value)
 	return err == nil && strings.EqualFold(address.Address, value)
+}
+
+func (s *Server) allowLocalAuthAttempt(w http.ResponseWriter, r *http.Request) bool {
+	if s.localAuthLimiter.allow(localAuthRateLimitKey(r), time.Now()) {
+		return true
+	}
+	w.Header().Set("Retry-After", "60")
+	writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Too many authentication attempts.")
+	return false
 }

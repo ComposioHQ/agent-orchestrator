@@ -33,13 +33,6 @@ type LocalRegistration struct {
 	OrgName      string
 }
 
-type LocalSession struct {
-	Token     string
-	ExpiresAt time.Time
-	User      Principal
-	OrgID     string
-}
-
 type Project struct {
 	ID            string
 	OrgID         string

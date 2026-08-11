@@ -12,6 +12,7 @@ import (
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -240,6 +241,82 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 			adminMemberships,
 			memberMemberships,
 		)
+	}
+	var initialOwnerUserID *string
+	if err := store.withTenant(
+		ctx,
+		workosAdmin,
+		adminMemberships[0].OrgID,
+		func(tx pgx.Tx) error {
+			return tx.QueryRow(
+				ctx,
+				`SELECT owner_user_id FROM ao_organizations WHERE id = $1`,
+				adminMemberships[0].OrgID,
+			).Scan(&initialOwnerUserID)
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if initialOwnerUserID != nil {
+		t.Fatalf("admin was assigned as organization owner: %q", *initialOwnerUserID)
+	}
+	workosOwner, err := store.UpsertWorkOSUser(ctx, domain.Principal{
+		Provider:      "workos",
+		ExternalID:    "user_owner_" + suffix,
+		Email:         "owner-" + suffix + "@example.com",
+		DisplayName:   "Owner",
+		ExternalOrgID: externalOrgID,
+		OrgName:       "Example Inc.",
+		OrgRole:       "owner",
+	})
+	if err != nil {
+		t.Fatalf("upsert WorkOS owner: %v", err)
+	}
+	var ownerUserID *string
+	if err := store.withTenant(
+		ctx,
+		workosOwner,
+		adminMemberships[0].OrgID,
+		func(tx pgx.Tx) error {
+			return tx.QueryRow(
+				ctx,
+				`SELECT owner_user_id FROM ao_organizations WHERE id = $1`,
+				adminMemberships[0].OrgID,
+			).Scan(&ownerUserID)
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if ownerUserID == nil || *ownerUserID != workosOwner.UserID {
+		t.Fatalf("WorkOS owner_user_id = %#v, want %q", ownerUserID, workosOwner.UserID)
+	}
+	if err := store.withTenant(
+		ctx,
+		workosMember,
+		memberMemberships[0].OrgID,
+		func(tx pgx.Tx) error {
+			_, err := tx.Exec(
+				ctx,
+				`UPDATE ao_org_memberships
+				SET status = 'disabled'
+				WHERE org_id = $1 AND user_id = $2`,
+				memberMemberships[0].OrgID,
+				workosMember.UserID,
+			)
+			return err
+		},
+	); err != nil {
+		t.Fatalf("disable WorkOS member: %v", err)
+	}
+	if _, err := store.UpsertWorkOSUser(ctx, workosMember); err != nil {
+		t.Fatalf("resync disabled WorkOS member: %v", err)
+	}
+	disabledMemberships, err := store.ListMemberships(ctx, workosMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disabledMemberships) != 0 {
+		t.Fatalf("disabled WorkOS membership was reactivated: %#v", disabledMemberships)
 	}
 	tokenWithoutOrganization := workosAdmin
 	tokenWithoutOrganization.ExternalOrgID = ""

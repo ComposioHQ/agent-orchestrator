@@ -36,6 +36,7 @@ type Server struct {
 	workos           auth.WorkOSVerifier
 	localAuthEnabled bool
 	localSessionTTL  time.Duration
+	localAuthLimiter *fixedWindowLimiter
 	logger           *slog.Logger
 	handler          http.Handler
 }
@@ -58,6 +59,7 @@ func New(options Options) *Server {
 		workos:           options.WorkOS,
 		localAuthEnabled: options.LocalAuthEnabled,
 		localSessionTTL:  options.LocalSessionTTL,
+		localAuthLimiter: newFixedWindowLimiter(10, time.Minute, 4096),
 		logger:           logger,
 	}
 	router := chi.NewRouter()

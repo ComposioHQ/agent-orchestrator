@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	Environment      string
 	HTTPAddress      string
 	DatabaseURL      string
 	WorkOSIssuer     string
@@ -21,8 +22,14 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	environment := strings.ToLower(strings.TrimSpace(os.Getenv("AO_CLOUD_ENV")))
+	defaultHTTPAddress := ":8080"
+	if environment == "development" || environment == "test" {
+		defaultHTTPAddress = "127.0.0.1:8080"
+	}
 	cfg := Config{
-		HTTPAddress:      envOrDefault("AO_CLOUD_HTTP_ADDRESS", ":8080"),
+		Environment:      environment,
+		HTTPAddress:      envOrDefault("AO_CLOUD_HTTP_ADDRESS", defaultHTTPAddress),
 		DatabaseURL:      strings.TrimSpace(os.Getenv("AO_CLOUD_DATABASE_URL")),
 		WorkOSIssuer:     strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_ISSUER")),
 		WorkOSClientID:   strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
@@ -33,6 +40,11 @@ func Load() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")
+	}
+	switch cfg.Environment {
+	case "development", "test", "production":
+	default:
+		return Config{}, errors.New("AO_CLOUD_ENV must be development, test, or production")
 	}
 	workosValues := []string{cfg.WorkOSIssuer, cfg.WorkOSClientID, cfg.WorkOSAPIKey}
 	configuredWorkOSValues := 0
@@ -53,6 +65,12 @@ func Load() (Config, error) {
 	}
 	if cfg.WorkOSIssuer == "" && !cfg.LocalAuthEnabled {
 		return Config{}, errors.New("configure WorkOS or enable AO_CLOUD_LOCAL_AUTH")
+	}
+	if cfg.LocalAuthEnabled && cfg.Environment == "production" {
+		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be enabled in production")
+	}
+	if cfg.LocalAuthEnabled && cfg.WorkOSIssuer != "" {
+		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be combined with WorkOS")
 	}
 	if cfg.LocalSessionTTL <= 0 {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_SESSION_TTL must be positive")
@@ -94,7 +112,7 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 func (c Config) String() string {
 	authMode := "workos"
 	if c.LocalAuthEnabled {
-		authMode += "+local"
+		authMode = "local"
 	}
-	return fmt.Sprintf("address=%s auth=%s", c.HTTPAddress, authMode)
+	return fmt.Sprintf("environment=%s address=%s auth=%s", c.Environment, c.HTTPAddress, authMode)
 }

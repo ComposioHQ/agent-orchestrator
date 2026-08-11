@@ -251,6 +251,25 @@ func TestLocalRegistrationRejectsBcryptOversizedPassword(t *testing.T) {
 	}
 }
 
+func TestLocalAuthenticationIsRateLimited(t *testing.T) {
+	server := New(Options{LocalAuthEnabled: true})
+	for attempt := 1; attempt <= 11; attempt++ {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"/api/cloud/v1/auth/local/login",
+			strings.NewReader(`{`),
+		)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if attempt <= 10 && response.Code != http.StatusBadRequest {
+			t.Fatalf("attempt %d status = %d", attempt, response.Code)
+		}
+		if attempt == 11 && response.Code != http.StatusTooManyRequests {
+			t.Fatalf("attempt %d status = %d, want 429", attempt, response.Code)
+		}
+	}
+}
+
 type registration struct {
 	Token string
 	OrgID string
