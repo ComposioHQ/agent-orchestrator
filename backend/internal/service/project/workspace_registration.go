@@ -153,13 +153,6 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			continue
 		}
 		child := filepath.Join(parent, name)
-		if !isGitRepo(child) {
-			continue
-		}
-		// Reject a child directory whose name collides with the reserved root name.
-		// Plain folders with this name are fine (they fall through before here);
-		// only a real git repo named __root__ would create a PK collision in
-		// session_worktrees.
 		if name == domain.RootWorkspaceRepoName {
 			return nil, apierr.Invalid("WORKSPACE_CHILD_RESERVED_NAME",
 				"Child repository name is reserved for internal use",
@@ -167,6 +160,16 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 					"path":         child,
 					"suggestedFix": fmt.Sprintf("Rename the directory %q — the name %q is reserved by AO for the workspace root.", child, domain.RootWorkspaceRepoName),
 				})
+		}
+		if !isGitRepo(child) {
+			repos = append(repos, domain.WorkspaceRepoRecord{
+				ProjectID:    projectID,
+				Name:         name,
+				RelativePath: filepath.ToSlash(name),
+				RegisteredAt: registeredAt,
+				GitStatus:    domain.GitStatusNeedsInit,
+			})
+			continue
 		}
 		if err := validateWorkspaceChild(ctx, child); err != nil {
 			return nil, err
@@ -178,6 +181,7 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			RepoOriginURL: resolveGitOriginURL(child),
 			DefaultBranch: resolveDefaultBranch(child),
 			RegisteredAt:  registeredAt,
+			GitStatus:     domain.GitStatusReady,
 		})
 	}
 	sort.Slice(repos, func(i, j int) bool { return repos[i].Name < repos[j].Name })
@@ -359,7 +363,12 @@ func guardNoGitlinks(ctx context.Context, repo string) error {
 func workspaceReposFromRecords(records []domain.WorkspaceRepoRecord) []WorkspaceRepo {
 	out := make([]WorkspaceRepo, 0, len(records))
 	for _, rec := range records {
-		out = append(out, WorkspaceRepo{Name: rec.Name, RelativePath: rec.RelativePath, Repo: rec.RepoOriginURL})
+		out = append(out, WorkspaceRepo{
+			Name:         rec.Name,
+			RelativePath: rec.RelativePath,
+			Repo:         rec.RepoOriginURL,
+			GitStatus:    string(rec.GitStatus),
+		})
 	}
 	return out
 }

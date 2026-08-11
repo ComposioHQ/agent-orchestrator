@@ -1357,11 +1357,11 @@ func TestManager_AddWorkspaceRejectsReservedChildName(t *testing.T) {
 	wantCode(t, err, "WORKSPACE_CHILD_RESERVED_NAME")
 }
 
-// TestManager_AddWorkspaceInitRollsBackOnNestedGitlink verifies that when a
-// nested git repo at depth ≥2 causes guardNoGitlinks to fail, initWorkspaceParent
-// rolls back the .git dir and .gitignore so the folder is exactly as it was.
-// A retry of the same Add must fail with the same error, not a stranded-state error.
-func TestManager_AddWorkspaceInitRollsBackOnNestedGitlink(t *testing.T) {
+// TestManager_AddWorkspaceNonGitChildWithNestedRepo verifies that a non-git
+// child folder containing a nested git repo is imported as needs_init (not
+// rejected as a gitlink). The child is gitignored in the parent, so the
+// nested repo is never staged by git add -A and guardNoGitlinks never fires.
+func TestManager_AddWorkspaceNonGitChildWithNestedRepo(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
@@ -1369,30 +1369,42 @@ func TestManager_AddWorkspaceInitRollsBackOnNestedGitlink(t *testing.T) {
 	parent := t.TempDir()
 	// One direct committed child repo — valid on its own.
 	gitRepoWithCommit(t, filepath.Join(parent, "app"))
-	// A nested git repo at packages/foo — depth 2 relative to parent.
-	// detectWorkspaceChildren never registers it (packages/ itself is not a repo),
-	// but git add -A would stage it as a gitlink.
+	// A non-git child folder containing a nested git repo at depth 2.
+	// detectWorkspaceChildren registers packages/ as needs_init; it gets
+	// gitignored in the parent, so packages/foo is never staged as a gitlink.
 	pkgs := filepath.Join(parent, "packages")
 	if err := os.MkdirAll(pkgs, 0o755); err != nil {
 		t.Fatalf("mkdir packages: %v", err)
 	}
 	gitRepoWithCommit(t, filepath.Join(pkgs, "foo"))
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_PARENT_GITLINK")
-
-	// Rollback: .git must not exist.
-	if _, statErr := os.Lstat(filepath.Join(parent, ".git")); statErr == nil {
-		t.Fatal(".git still exists after rollback")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with non-git child: %v", err)
 	}
-	// Rollback: .gitignore must not exist (it didn't exist before the call).
-	if _, statErr := os.Lstat(filepath.Join(parent, ".gitignore")); statErr == nil {
-		t.Fatal(".gitignore still exists after rollback")
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos (app + packages), got %d", len(proj.WorkspaceRepos))
+	}
+	var pkgsRepo *project.WorkspaceRepo
+	for i := range proj.WorkspaceRepos {
+		if proj.WorkspaceRepos[i].Name == "packages" {
+			pkgsRepo = &proj.WorkspaceRepos[i]
+		}
+	}
+	if pkgsRepo == nil {
+		t.Fatalf("packages not in WorkspaceRepos = %#v", proj.WorkspaceRepos)
+	}
+	if pkgsRepo.GitStatus != string(domain.GitStatusNeedsInit) {
+		t.Fatalf("packages GitStatus = %q, want %q", pkgsRepo.GitStatus, domain.GitStatusNeedsInit)
 	}
 
-	// Retry must fail with the same error, not a different stranded-state error.
-	_, err2 := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
-	wantCode(t, err2, "WORKSPACE_PARENT_GITLINK")
+	// Parent git repo and .gitignore must exist (no rollback).
+	if _, statErr := os.Lstat(filepath.Join(parent, ".git")); statErr != nil {
+		t.Fatalf(".git missing after successful init: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(parent, ".gitignore")); statErr != nil {
+		t.Fatalf(".gitignore missing after successful init: %v", statErr)
+	}
 }
 
 // TestManager_AddWorkspaceConcurrentSamePath verifies that two goroutines racing
