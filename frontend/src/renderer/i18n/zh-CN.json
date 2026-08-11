@@ -879,5 +879,19 @@
 	"settings.dev.activitySpreadLabel": "活动分布（分钟）",
 	"settings.dev.activitySpreadAria": "活动分布（分钟）",
 	"settings.dev.resetDefaultsLabel": "重置默认值",
-	"settings.dev.resetReload": "重置并重新加载"
+	"settings.dev.resetReload": "重置并重新加载",
+	"workspaces.title": "工作区",
+	"workspaces.local": "本机",
+	"workspaces.localHint": "代理在本地运行",
+	"workspaces.add": "添加远程工作区",
+	"workspaces.id": "工作区名称",
+	"workspaces.idPlaceholder": "build-vm",
+	"workspaces.target": "SSH 目标",
+	"workspaces.targetPlaceholder": "user@host",
+	"workspaces.targetHint": "一台你已经可以用 ssh 连接的主机。建议使用 ~/.ssh/config 中的 Host 别名。",
+	"workspaces.removeAria": "移除 {{name}}",
+	"workspaces.connecting": "正在连接",
+	"workspaces.connected": "已连接",
+	"workspaces.cancel": "取消",
+	"workspaces.save": "添加"
 }

@@ -874,9 +874,7 @@
 	"zone.done": "종료됨",
 	"zone.merge": "병합 준비 완료",
 	"zone.pending": "리뷰 중",
-	"zone.working": "작업 중"
-
-,
+	"zone.working": "작업 중",
 	"settings.developer": "Developer",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",
@@ -899,5 +897,19 @@
 	"settings.dev.activitySpreadLabel": "Activity spread (min)",
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
-	"settings.dev.resetReload": "Reset & Reload"
+	"settings.dev.resetReload": "Reset & Reload",
+	"workspaces.title": "작업 공간",
+	"workspaces.local": "이 컴퓨터",
+	"workspaces.localHint": "에이전트가 로컬에서 실행됩니다",
+	"workspaces.add": "원격 작업 공간 추가",
+	"workspaces.id": "작업 공간 이름",
+	"workspaces.idPlaceholder": "build-vm",
+	"workspaces.target": "SSH 대상",
+	"workspaces.targetPlaceholder": "user@host",
+	"workspaces.targetHint": "이미 ssh로 접속할 수 있는 호스트입니다. ~/.ssh/config의 Host 별칭을 권장합니다.",
+	"workspaces.removeAria": "{{name}} 제거",
+	"workspaces.connecting": "연결 중",
+	"workspaces.connected": "연결됨",
+	"workspaces.cancel": "취소",
+	"workspaces.save": "추가"
 }

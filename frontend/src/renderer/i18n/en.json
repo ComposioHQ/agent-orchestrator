@@ -879,5 +879,19 @@
 	"zone.done": "Terminated",
 	"zone.merge": "Ready to merge",
 	"zone.pending": "In review",
-	"zone.working": "Working"
+	"zone.working": "Working",
+	"workspaces.title": "Workspace",
+	"workspaces.local": "This computer",
+	"workspaces.localHint": "Agents run locally",
+	"workspaces.add": "Add a remote workspace",
+	"workspaces.id": "Workspace name",
+	"workspaces.idPlaceholder": "build-vm",
+	"workspaces.target": "SSH target",
+	"workspaces.targetPlaceholder": "user@host",
+	"workspaces.targetHint": "A host you can already reach with ssh. A Host alias from ~/.ssh/config works best.",
+	"workspaces.removeAria": "Remove {{name}}",
+	"workspaces.connecting": "Connecting",
+	"workspaces.connected": "Connected",
+	"workspaces.cancel": "Cancel",
+	"workspaces.save": "Add"
 }

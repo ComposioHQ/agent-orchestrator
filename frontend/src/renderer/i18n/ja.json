@@ -874,9 +874,7 @@
 	"zone.done": "終了済み",
 	"zone.merge": "マージ準備完了",
 	"zone.pending": "レビュー中",
-	"zone.working": "作業中"
-
-,
+	"zone.working": "作業中",
 	"settings.developer": "Developer",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",
@@ -899,5 +897,19 @@
 	"settings.dev.activitySpreadLabel": "Activity spread (min)",
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
-	"settings.dev.resetReload": "Reset & Reload"
+	"settings.dev.resetReload": "Reset & Reload",
+	"workspaces.title": "ワークスペース",
+	"workspaces.local": "このコンピュータ",
+	"workspaces.localHint": "エージェントはローカルで実行されます",
+	"workspaces.add": "リモートワークスペースを追加",
+	"workspaces.id": "ワークスペース名",
+	"workspaces.idPlaceholder": "build-vm",
+	"workspaces.target": "SSH 接続先",
+	"workspaces.targetPlaceholder": "user@host",
+	"workspaces.targetHint": "すでに ssh で接続できるホスト。~/.ssh/config の Host エイリアスが最適です。",
+	"workspaces.removeAria": "{{name}} を削除",
+	"workspaces.connecting": "接続中",
+	"workspaces.connected": "接続済み",
+	"workspaces.cancel": "キャンセル",
+	"workspaces.save": "追加"
 }

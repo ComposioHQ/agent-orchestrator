@@ -887,9 +887,7 @@
 	"zone.done": "Terminé",
 	"zone.merge": "Prêt à fusionner",
 	"zone.pending": "En revue",
-	"zone.working": "En cours"
-
-,
+	"zone.working": "En cours",
 	"settings.developer": "Developer",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",
@@ -913,5 +911,19 @@
 	"settings.dev.activitySpreadLabel": "Activity spread (min)",
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
-	"settings.dev.resetReload": "Reset & Reload"
+	"settings.dev.resetReload": "Reset & Reload",
+	"workspaces.title": "Espace de travail",
+	"workspaces.local": "Cet ordinateur",
+	"workspaces.localHint": "Les agents s'executent en local",
+	"workspaces.add": "Ajouter un espace distant",
+	"workspaces.id": "Nom de l'espace",
+	"workspaces.idPlaceholder": "build-vm",
+	"workspaces.target": "Cible SSH",
+	"workspaces.targetPlaceholder": "utilisateur@hote",
+	"workspaces.targetHint": "Un hote deja joignable avec ssh. Un alias Host de ~/.ssh/config est preferable.",
+	"workspaces.removeAria": "Supprimer {{name}}",
+	"workspaces.connecting": "Connexion",
+	"workspaces.connected": "Connecte",
+	"workspaces.cancel": "Annuler",
+	"workspaces.save": "Ajouter"
 }

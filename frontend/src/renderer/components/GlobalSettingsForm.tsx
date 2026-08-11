@@ -10,11 +10,18 @@ import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
 import { DevSettingsSection } from "./settings/DevSettingsSection";
 import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
+import { WorkspacesSection } from "./settings/WorkspacesSection";
+import { useShellMaybe } from "../lib/shell-context";
 
 export type GlobalSettingsSection = "general" | "updates" | "developer" | "help" | "all";
 
 export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettingsSection }) {
 	const { t } = useTranslation();
+	// Read the shell's existing status rather than mounting a second
+	// useDaemonStatus: that hook owns the event transport and the polling loop,
+	// and a duplicate would run both twice. Settings can render outside the
+	// shell, so the status is optional.
+	const daemonStatus = useShellMaybe()?.daemonStatus ?? { state: "stopped" as const };
 	const [mobileOpen, setMobileOpen] = useState(false);
 	const [reportProblemOpen, setReportProblemOpen] = useState(false);
 	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
@@ -35,6 +42,7 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 							onConnectMobile={() => setMobileOpen(true)}
 							titleHidden={leadingTitleHidden}
 						/>
+						<WorkspacesSection daemonStatus={daemonStatus} />
 						<SettingsSection title={t("settings.preferences")}>
 							<SettingsLinkRow
 								icon={Keyboard}
