@@ -184,6 +184,26 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Session project, kind, harness, name, or prompt is invalid.")
 		return
 	}
+	// Quota is enforced at intent time and counted from durable state, so a
+	// sandbox stuck mid-teardown still occupies a slot until its deletion
+	// actually completes.
+	active, err := s.store.CountActiveSandboxes(r.Context(), principalFrom(r), orgID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if active >= s.maxSandboxes {
+		writeError(
+			w, r, http.StatusConflict, "SANDBOX_QUOTA_EXCEEDED",
+			"This organization has reached its limit of concurrent sessions. Delete a session and try again.",
+		)
+		return
+	}
+	plan, err := s.provisioning.SessionPlan()
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	session, err := s.store.CreateSession(
 		r.Context(),
 		principalFrom(r),
