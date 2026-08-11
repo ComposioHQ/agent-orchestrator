@@ -42,6 +42,7 @@ type Tracker struct {
 	Now func() time.Time
 }
 
+// NewTracker returns an empty tracker using the wall clock.
 func NewTracker() *Tracker {
 	return &Tracker{seen: map[string]time.Time{}, Now: time.Now}
 }

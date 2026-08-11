@@ -2315,8 +2315,8 @@ export interface components {
         RegisterPushDeviceRequest: {
             /** @description Human-friendly device label. */
             deviceName?: string;
-            /** @description Stable per-install device id. Keys the registry so a rotated push token updates the same row. */
-            installId: string;
+            /** @description Stable per-install device id, keying the registry so a rotated push token updates the same row. Optional: older app builds omit it and the daemon synthesizes one. */
+            installId?: string;
             /**
              * @description Device platform.
              * @enum {string}
