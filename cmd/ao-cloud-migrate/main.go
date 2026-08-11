@@ -35,5 +35,12 @@ func main() {
 		}
 		os.Exit(1)
 	}
+	runtimeUser := strings.TrimSpace(os.Getenv("AO_CLOUD_RUNTIME_DATABASE_USER"))
+	if runtimeUser != "" {
+		if err := postgres.GrantRuntimeRole(ctx, databaseURL, runtimeUser); err != nil {
+			logger.Error("grant runtime database privileges", "error", err)
+			os.Exit(1)
+		}
+	}
 	logger.Info("AO Cloud database migrations complete")
 }

@@ -8,6 +8,7 @@ REPOSITORY="${AO_CLOUD_ECR_REPOSITORY:-ao-cloud-control-plane}"
 API_FAMILY="${AO_CLOUD_API_TASK_FAMILY:-ao-cloud-staging-api}"
 MIGRATION_FAMILY="${AO_CLOUD_MIGRATION_TASK_FAMILY:-ao-cloud-staging-migrate}"
 ROLLBACK_ALARM="${AO_CLOUD_ROLLBACK_ALARM:-ao-cloud-staging-target-5xx}"
+RUNTIME_DATABASE_USER="${AO_CLOUD_RUNTIME_DATABASE_USER:-ao_cloud_app}"
 RELEASE="${1:-$(git rev-parse --short=12 HEAD)}"
 IMAGE_TAG="${RELEASE//+/-}-linux-amd64"
 
@@ -112,6 +113,7 @@ register_task_definition() {
 			IMAGE="$image" \
 			RELEASE="$RELEASE" \
 			CONTAINER_NAME="$container_name" \
+			RUNTIME_DATABASE_USER="$RUNTIME_DATABASE_USER" \
 			python3 - <<'PY'
 import json
 import os
@@ -141,9 +143,20 @@ for container in payload["containerDefinitions"]:
     if container["name"] != os.environ["CONTAINER_NAME"]:
         continue
     container["image"] = os.environ["IMAGE"]
-    for variable in container.get("environment", []):
+    environment = container.setdefault("environment", [])
+    for variable in environment:
         if variable["name"] == "AO_CLOUD_RELEASE":
             variable["value"] = os.environ["RELEASE"]
+    if container["name"] == "migration":
+        environment[:] = [
+            variable
+            for variable in environment
+            if variable["name"] != "AO_CLOUD_RUNTIME_DATABASE_USER"
+        ]
+        environment.append({
+            "name": "AO_CLOUD_RUNTIME_DATABASE_USER",
+            "value": os.environ["RUNTIME_DATABASE_USER"],
+        })
 payload["tags"] = [
     tag for tag in source.get("tags", []) if tag["key"] != "Release"
 ] + [{"key": "Release", "value": os.environ["RELEASE"]}]
