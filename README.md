@@ -77,10 +77,10 @@ The desktop app is the main control surface: projects on the left, active sessio
   <tr>
     <td width="36%">
       <h3>Review feedback loop</h3>
-      <p>Run reviewer agents, inspect review status, and route requested changes back to the right worker session.</p>
+      <p>Run reviewer agents, inspect review status from the session summary, and route requested changes back to the right worker session.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/reviews-tab.png" alt="Reviews tab showing reviewer runs and actions" />
+      <img src="docs/assets/readme/reviews-tab.png" alt="Session summary showing pull request and reviewer status" />
     </td>
   </tr>
   <tr>
@@ -96,7 +96,7 @@ The desktop app is the main control surface: projects on the left, active sessio
 
 ## Supported Agents
 
-AO ships adapters for 25 worker agent harnesses:
+AO ships adapters for 26 worker agent harnesses (shown by their configuration IDs):
 
 <p>
   <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
@@ -123,10 +123,11 @@ AO ships adapters for 25 worker agent harnesses:
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="" width="16" height="16" valign="middle" /> <code>kilocode</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/vibe.png" alt="" width="16" height="16" valign="middle" /> <code>vibe</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/pi.png" alt="" width="16" height="16" valign="middle" /> <code>pi</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="" width="16" height="16" valign="middle" /> <code>kimchi</code></a>
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="" width="16" height="16" valign="middle" /> <code>kimchi</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/prime-agent.png" alt="" width="16" height="16" valign="middle" /> <code>prime-agent</code></a>
 </p>
 
-Reviewer agents are configured separately. The current reviewer harnesses are:
+Reviewer agents are configured separately. The current reviewer harness configuration IDs are:
 
 <p>
   <a href="https://aoagents.dev/docs/plugins/agents/aider"><img src="frontend/src/renderer/assets/agents/aider.png" alt="" width="16" height="16" valign="middle" /> <code>aider</code></a> ·
@@ -149,6 +150,7 @@ Reviewer agents are configured separately. The current reviewer harnesses are:
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kiro.png" alt="" width="16" height="16" valign="middle" /> <code>kiro</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kimi.png" alt="" width="16" height="16" valign="middle" /> <code>kimi</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="" width="16" height="16" valign="middle" /> <code>kimchi</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/muse.png" alt="" width="16" height="16" valign="middle" /> <code>muse</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/pi.png" alt="" width="16" height="16" valign="middle" /> <code>pi</code></a> ·
   <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/qwen.png" alt="" width="16" height="16" valign="middle" /> <code>qwen</code></a> ·
@@ -157,7 +159,7 @@ Reviewer agents are configured separately. The current reviewer harnesses are:
 
 Reviewer panes stay interactive. AO opens a fresh reviewer process for each pass so the selected harness's current task context, permissions, and environment are applied at launch. Pi reviewers run with project/user resource discovery and built-in tools disabled; AO loads an extension from its own data directory that exposes only read-only checkout inspection plus structured GitHub review posting and `ao review submit`. Agy, Continue, Devin, Droid, Goose, Kimchi, Kimi, Qwen, and Vibe are experimental host-trusted reviewers: their native modes and settings do not provide OS isolation, and some reviewers receive autonomous settings so they can complete review tasks. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers: AO supplies a hardened reviewer role and leaves native permission prompts enabled rather than passing broad unattended flags.
 
-**If it runs in a terminal, it runs on Agent Orchestrator.**
+**AO brings supported terminal coding agents into one supervised workflow.**
 
 **Use the agent interface that fits the moment: structured Chat or its native terminal UI.**
 
