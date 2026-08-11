@@ -193,6 +193,30 @@ func TestLoadRequiresCompleteGitHubConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsGitHubAppCredentialsOutsideProduction(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "staging")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
+	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
+	t.Setenv("AO_CLOUD_RELEASE", "sha-staging")
+	t.Setenv("AO_CLOUD_GITHUB_APP_ID", "123")
+	t.Setenv("AO_CLOUD_GITHUB_APP_SLUG", "ao")
+	t.Setenv("AO_CLOUD_GITHUB_CLIENT_ID", "client")
+	t.Setenv("AO_CLOUD_GITHUB_CLIENT_SECRET", "secret")
+	t.Setenv("AO_CLOUD_GITHUB_PRIVATE_KEY", "private-key")
+	t.Setenv("AO_CLOUD_GITHUB_WEBHOOK_SECRET", "webhook-secret")
+	t.Setenv(
+		"AO_CLOUD_GITHUB_STATE_KEY",
+		base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	)
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://staging-api.aoagents.dev")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with staging GitHub App credentials")
+	}
+}
+
 func TestLoadRequiresHTTPSGitHubCallbackInHostedEnvironment(t *testing.T) {
 	t.Setenv("AO_CLOUD_ENV", "production")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")

@@ -184,6 +184,9 @@ func Load() (Config, error) {
 	if configuredGitHubValues != 0 && configuredGitHubValues != len(githubValues) {
 		return Config{}, errors.New("all AO_CLOUD_GITHUB_* credentials and AO_CLOUD_PUBLIC_URL must be set together")
 	}
+	if cfg.GitHub.Enabled() && cfg.Environment != "production" {
+		return Config{}, errors.New("GitHub App credentials may only be configured in production")
+	}
 	if cfg.GitHub.Enabled() {
 		publicURL, err := url.Parse(cfg.GitHub.PublicURL)
 		if err != nil || publicURL.Host == "" || publicURL.User != nil ||

@@ -22,6 +22,47 @@ implemented yet. See
 behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
 production deployments.
 
+## Environment model
+
+- **Local (`npm run cloud:local`)** uses local email/password auth, local
+  PostgreSQL, and the local control-plane container. It does not load WorkOS or
+  GitHub App credentials. Docker workers are the intended execution backend,
+  but no worker is started until the worker protocol is implemented.
+- **Staging (`npm run cloud:staging`)** runs the desktop locally against
+  `https://staging-api.aoagents.dev`. The hosted staging control plane uses the
+  shared WorkOS environment and its own staging database. Future workers run in
+  staging, not on the developer's machine.
+- **Production** uses `https://api.aoagents.dev`, the shared WorkOS environment,
+  the production database, and the one production GitHub App. There is no
+  supported local-desktop-against-production development command.
+
+GitHub App credentials are rejected outside production because setup, OAuth,
+and webhook callback state is durable in the production database. Local and
+staging GitHub UI must remain disabled until a production broker protocol can
+return signed, environment-scoped repository grants. Sharing credentials alone
+would send callbacks to the wrong database and is not supported.
+
+## Hosted ingress
+
+The hosted control planes are publicly reachable through Cloudflare DNS-only
+CNAMEs and AWS-managed TLS:
+
+- staging: `https://staging-api.aoagents.dev` →
+  `ao-cloud-staging-public`
+- production: `https://api.aoagents.dev` →
+  `ao-cloud-production-public`
+
+ACM certificates in `eu-north-1` terminate TLS. Both ECS services run two
+healthy replicas, `/healthz` reports deployment identity, and `/readyz` verifies
+database connectivity plus draining state. Their task security groups accept
+port 8080 only from the corresponding public ALB security group. CloudWatch
+deployment alarms and the operations dashboard use the public ALB target
+groups.
+
+The old internal ALBs have no ECS targets and remain only for a short rollback
+observation period. Tasks still use public subnets and public IPs; moving them
+to private subnets with NAT or VPC endpoints remains infrastructure work.
+
 ## Run locally
 
 The default development loop requires Docker with Compose:
@@ -173,10 +214,16 @@ appropriate for the later worker and the `installation` and
 permission is absent; ordinary organization members cannot bind an
 installation.
 
-Use one GitHub App for staging and production only if its global setup,
-OAuth-callback, and webhook URLs point to production. Staging should leave the
-GitHub variables unset unless production intentionally brokers the test flow.
-WorkOS credentials remain separate and may use the desktop deep link.
+The one GitHub App is a production-owned integration. Its global setup,
+OAuth-callback, and webhook URLs must point to `https://api.aoagents.dev`.
+Staging and local configurations reject GitHub App credentials. The hosted
+tasks currently leave GitHub disabled until the production secret and task
+mapping are installed; a future broker must explicitly return
+environment-scoped grants before staging or local UI enables GitHub.
+
+Staging and production intentionally share one WorkOS environment while keeping
+their AO databases separate. Desktop login continues to use the
+`ao-app://callback` deep link.
 
 ## Tenancy
 
