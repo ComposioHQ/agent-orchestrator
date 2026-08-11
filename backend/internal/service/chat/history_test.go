@@ -522,7 +522,7 @@ func newEditHarness(t *testing.T, replay ...bool) (*harness, *historyRecorder, *
 	if len(replay) > 0 && replay[0] {
 		sourceCapabilities := productionCaps()
 		sourceCapabilities[ports.ChatCapabilityPromptReplay] = true
-		source.fakeConversation.capabilities = sourceCapabilities
+		source.capabilities = sourceCapabilities
 	}
 	fresh := newFakeConversation()
 	fresh.providerConversationID = "thread-fresh"

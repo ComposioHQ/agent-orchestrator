@@ -277,7 +277,7 @@ func (s *Service) editReplayContext(ctx context.Context, conversationID string, 
 		if message.Sequence > cutoff || message.Streaming || strings.TrimSpace(message.Text) == "" {
 			continue
 		}
-		role := ""
+		var role string
 		switch message.Role {
 		case domain.MessageRoleUser:
 			role = "User"
