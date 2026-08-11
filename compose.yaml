@@ -5,15 +5,15 @@ services:
     image: postgres:17-bookworm
     environment:
       POSTGRES_DB: ao_cloud
-      POSTGRES_USER: ao_cloud_migrator
-      POSTGRES_PASSWORD: ao_cloud_local_migrator
+      POSTGRES_USER: ao_cloud_bootstrap
+      POSTGRES_PASSWORD: ao_cloud_local_bootstrap
     ports:
       - "127.0.0.1:${AO_CLOUD_POSTGRES_PORT:-54329}:5432"
     volumes:
       - ao-cloud-postgres:/var/lib/postgresql/data
       - ./dev/postgres/init.sql:/docker-entrypoint-initdb.d/10-runtime-role.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ao_cloud_migrator -d ao_cloud"]
+      test: ["CMD-SHELL", "pg_isready -U ao_cloud_owner -d ao_cloud"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -24,7 +24,7 @@ services:
       context: .
     entrypoint: ["/ao-cloud-migrate"]
     environment:
-      AO_CLOUD_MIGRATION_DATABASE_URL: postgres://ao_cloud_migrator:ao_cloud_local_migrator@postgres:5432/ao_cloud?sslmode=disable
+      AO_CLOUD_MIGRATION_DATABASE_URL: postgres://ao_cloud_owner:ao_cloud_local_owner@postgres:5432/ao_cloud?sslmode=disable
       AO_CLOUD_RUNTIME_DATABASE_USER: ao_cloud_app
     depends_on:
       postgres:

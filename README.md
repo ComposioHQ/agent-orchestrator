@@ -31,31 +31,37 @@ npm run cloud:local
 
 This builds the same distroless control-plane image used in hosted
 environments, starts PostgreSQL on `127.0.0.1:54329`, runs migrations with an
-elevated migration role, grants only runtime DML privileges to the
-non-superuser `ao_cloud_app` role, and exposes the API on
+isolated non-superuser schema-owner role, grants only runtime DML privileges to
+the separate non-superuser `ao_cloud_app` role, disables login for the
+image-bootstrap superuser, and exposes the API on
 `http://127.0.0.1:8081` (avoiding the desktop daemon's usual port). Local auth
-is enabled. No worker is started: sessions
-store durable execution intent, but provisioning remains a separate feature.
+is enabled. No worker is started: sessions store durable execution intent, but
+provisioning remains a separate feature.
 
 Use `npm run cloud:local:down` to stop containers while retaining data and
 `npm run cloud:local:reset` to stop them and delete the local database volume.
 Ports can be changed with `AO_CLOUD_PORT` and `AO_CLOUD_POSTGRES_PORT`.
+`npm run cloud:local:smoke` uses an isolated Compose project and random
+loopback ports to verify the complete create/restart/persist/down/reset
+lifecycle without touching normal local Cloud data.
 
 To launch the desktop's currently implemented auth-only flow against a hosted
 staging deployment:
 
 ```bash
-AO_CLOUD_STAGING_URL=https://staging-api.aoagents.dev \
-VITE_WORKOS_CLIENT_ID=client_... \
 npm run cloud:staging
 ```
 
-The staging launcher requires HTTPS, verifies `/readyz` reports
-`environment=staging`, refuses production, and isolates Electron and daemon
-state under `~/.ao/staging-desktop` by default. The desktop currently uses the
-URL for staging preflight and future Cloud API calls; this branch does not add
-Cloud project/session UI. WorkOS desktop authentication continues to use the
-`ao-app://callback` deep link.
+The launcher defaults to `https://staging-api.aoagents.dev` and the non-secret
+staging WorkOS client ID. `AO_CLOUD_STAGING_URL` and `VITE_WORKOS_CLIENT_ID`
+remain available as explicit overrides. The command requires HTTPS, refuses
+redirects and production responses, verifies `/readyz` reports
+`environment=staging`, and isolates Electron and daemon state under
+`~/.ao/staging-desktop` by default. If public ingress is unavailable, it exits
+with the failing readiness URL and HTTP/TLS error before Electron starts. The
+desktop currently uses the URL for staging preflight and future Cloud API
+calls; this branch does not add Cloud project/session UI. WorkOS desktop
+authentication continues to use the `ao-app://callback` deep link.
 
 For a direct Go loop, requirements are Go 1.26.5 and PostgreSQL 15 or newer.
 Development and test environments can apply embedded Goose migrations at
@@ -191,6 +197,15 @@ Unit tests do not require PostgreSQL:
 ```bash
 go test ./...
 go vet ./...
+```
+
+The isolated Compose lifecycle check builds the images, applies fresh
+migrations, verifies the HTTP flow and role boundaries, restarts the control
+plane, recreates the stack without deleting its volume, and finally proves that
+reset deletes the volume:
+
+```bash
+npm run cloud:local:smoke
 ```
 
 Database integration tests run when a disposable PostgreSQL database is

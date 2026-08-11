@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-staging_url="${AO_CLOUD_STAGING_URL:-}"
+readonly default_staging_url="https://staging-api.aoagents.dev"
+readonly default_workos_client_id="client_01KZ3VRKC374HS91XGRDPT3671"
+
+staging_url="${AO_CLOUD_STAGING_URL:-$default_staging_url}"
 if [[ "$staging_url" != https://* ]]; then
 	echo "AO_CLOUD_STAGING_URL must be the hosted staging HTTPS origin." >&2
 	exit 1
 fi
 staging_url="${staging_url%/}"
 
-if [[ -z "${VITE_WORKOS_CLIENT_ID:-}" ]]; then
-	echo "VITE_WORKOS_CLIENT_ID is required for the desktop WorkOS flow." >&2
-	exit 1
-fi
+export VITE_WORKOS_CLIENT_ID="${VITE_WORKOS_CLIENT_ID:-$default_workos_client_id}"
 
 response_file="$(mktemp)"
-trap 'rm -f "$response_file"' EXIT
-curl \
+error_file="$(mktemp)"
+trap 'rm -f "$response_file" "$error_file"' EXIT
+if ! curl \
 	--fail \
 	--silent \
 	--show-error \
@@ -23,14 +24,21 @@ curl \
 	--proto '=https' \
 	--tlsv1.2 \
 	--output "$response_file" \
-	"${staging_url}/readyz"
+	"${staging_url}/readyz" 2>"$error_file"; then
+	detail="$(tr '\n' ' ' <"$error_file")"
+	echo "Staging control plane readiness failed at ${staging_url}/readyz: ${detail}" >&2
+	exit 1
+fi
 
 python3 - "$response_file" <<'PY'
 import json
 import pathlib
 import sys
 
-payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+try:
+    payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+except (OSError, json.JSONDecodeError) as error:
+    raise SystemExit(f"The staging readiness response is invalid: {error}") from error
 if payload.get("status") != "ready":
     raise SystemExit("The staging control plane is not ready.")
 if payload.get("environment") != "staging":
