@@ -6,6 +6,28 @@ import (
 	"time"
 )
 
+// nodeOpsEnvironment sets every variable a nodeops deployment requires, so a
+// test can then remove exactly the one it is asserting on.
+func nodeOpsEnvironment(t *testing.T) {
+	t.Helper()
+	t.Setenv("AO_CLOUD_ENV", "staging")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
+	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://api.sb.createos.sh")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-4vcpu-8gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
+	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
+	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+}
+
 func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_ENV", "development")
 	t.Setenv("AO_CLOUD_HTTP_ADDRESS", "")
@@ -19,6 +41,14 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "")
 	t.Setenv("AO_CLOUD_WORKOS_JWKS_URL", "")
 	t.Setenv("AO_CLOUD_SANDBOX_PROVIDER", "")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "")
+	t.Setenv("AO_CLOUD_NODEOPS_INGRESS", "")
+	t.Setenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH", "")
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "")
 	t.Setenv("AO_CLOUD_RELEASE", "")
 
 	cfg, err := Load()
@@ -30,7 +60,7 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 		cfg.LocalSessionTTL != 2*time.Hour ||
 		cfg.MigrationTimeout != 15*time.Minute ||
 		cfg.HTTPAddress != "127.0.0.1:8080" ||
-		cfg.SandboxProvider != "ecs" ||
+		cfg.SandboxProvider != "docker" ||
 		cfg.Release != "dev" ||
 		cfg.MigrationDatabaseURL != cfg.DatabaseURL {
 		t.Fatalf("config = %#v", cfg)
@@ -92,6 +122,15 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com/")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
+	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-staging")
 	setProviderSecretKey(t)
 
@@ -101,8 +140,10 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	}
 	if !cfg.Hosted() ||
 		cfg.MigrateOnStartup ||
+		cfg.SandboxProvider != "nodeops" ||
 		cfg.Release != "sha-staging" ||
-		cfg.HTTPAddress != ":8080" {
+		cfg.HTTPAddress != ":8080" ||
+		cfg.NodeOpsBaseURL != "https://nodeops.example.com" {
 		t.Fatalf("config = %#v", cfg)
 	}
 }
@@ -114,6 +155,12 @@ func TestLoadRequiresHostedRelease(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_RELEASE", "")
 
 	if _, err := Load(); err == nil {
@@ -140,6 +187,15 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_WORKOS_JWKS_URL", "")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
+	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
 	setProviderSecretKey(t)
 
@@ -162,6 +218,12 @@ func TestLoadRejectsMismatchedWorkOSIssuer(t *testing.T) {
 	)
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
 
 	if _, err := Load(); err == nil {
@@ -176,6 +238,12 @@ func TestLoadRejectsLocalAuthOutsideDevelopment(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "")
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "")
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with production local auth")
