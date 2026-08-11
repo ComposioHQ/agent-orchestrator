@@ -9,6 +9,8 @@
 //
 // Pure and node:*-free so the stderr matching can be table-tested.
 
+import type { DaemonFailureCode } from "./daemon-status";
+
 /** Why a remote workspace could not be reached. Each maps to a distinct remedy. */
 export type SshFailureKind =
 	/** The host key changed — a real security event, never auto-accepted. */
@@ -85,6 +87,28 @@ export function classifySshFailure(exitCode: number | null, stderr: string, sshT
 		message: `Could not reach ${sshTarget} over SSH.`,
 		details,
 	};
+}
+
+/**
+ * Map a transport failure onto the supervisor's status vocabulary, so the
+ * renderer's existing daemon-failure surface can render it without knowing
+ * anything about SSH.
+ */
+export function sshFailureCode(kind: SshFailureKind): DaemonFailureCode {
+	switch (kind) {
+		case "host_key_changed":
+			return "host_key_changed";
+		case "host_key_unverified":
+			return "host_key_unverified";
+		case "auth_failed":
+			return "host_auth_failed";
+		case "ssh_missing":
+			return "ssh_missing";
+		case "remote_command_failed":
+			return "remote_ao_missing";
+		default:
+			return "host_unreachable";
+	}
 }
 
 /** The failure for a spawn that never produced a process because ssh is absent. */

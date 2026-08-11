@@ -146,6 +146,14 @@ export const aoBridge: AoBridge =
 			get: async () => ({ locale: "en" as const }),
 			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
 		},
+		// Remote workspaces need the Electron supervisor to hold the SSH tunnel,
+		// so the browser fallback is always the local workspace with none listed.
+		workspaces: {
+			list: async () => ({ remotes: [] }),
+			add: async () => ({ remotes: [] }),
+			remove: async () => ({ remotes: [] }),
+			setActive: async () => ({ remotes: [] }),
+		},
 		keybindings: {
 			get: async () => ({}),
 			set: async (overrides) => overrides,

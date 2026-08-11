@@ -7,6 +7,7 @@ import type {
 	BrowserTabsState,
 } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
+import type { RemoteWorkspace, WorkspaceRegistry } from "./shared/workspaces";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
@@ -166,6 +167,15 @@ const api = {
 				ipcRenderer.off("daemon:status", wrapped);
 			};
 		},
+	},
+	// Which machine the client runs agents on. `setActive` also repoints the
+	// connection, so the renderer learns the new daemon port through the ordinary
+	// `daemon:status` event rather than from this call's return value.
+	workspaces: {
+		list: () => ipcRenderer.invoke("workspaces:list") as Promise<WorkspaceRegistry>,
+		add: (workspace: RemoteWorkspace) => ipcRenderer.invoke("workspaces:add", workspace) as Promise<WorkspaceRegistry>,
+		remove: (id: string) => ipcRenderer.invoke("workspaces:remove", id) as Promise<WorkspaceRegistry>,
+		setActive: (id: string) => ipcRenderer.invoke("workspaces:setActive", id) as Promise<WorkspaceRegistry>,
 	},
 	telemetry: {
 		getBootstrap: () => ipcRenderer.invoke("telemetry:getBootstrap") as Promise<TelemetryBootstrap | null>,

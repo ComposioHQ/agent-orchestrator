@@ -30,6 +30,19 @@ import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds"
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
 import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import {
+	addRemoteWorkspace,
+	readWorkspaceRegistry,
+	removeRemoteWorkspace,
+	setActiveWorkspace,
+} from "./main/workspace-registry";
+import {
+	connectRemoteWorkspace,
+	RemoteWorkspaceError,
+	type RemoteConnection,
+} from "./main/remote-workspace";
+import { sshFailureCode } from "./shared/ssh-failure";
+import { resolveWorkspace, type RemoteWorkspace, type WorkspaceRegistry } from "./shared/workspaces";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -682,6 +695,20 @@ async function inspectExistingDaemon(
 }
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
+	// A remote workspace's liveness is the tunnel's, and the local daemon's
+	// run-file says nothing about it. Probe the forwarded port instead.
+	if (remoteConnection && remoteWorkspace) {
+		const health = await readDaemonProbe(remoteConnection.localPort, "healthz");
+		if (!health) {
+			setDaemonStatus({
+				state: "stopped",
+				workspaceId: remoteWorkspace.id,
+				message: `Lost the connection to ${remoteWorkspace.sshTarget}.`,
+				code: "daemon_unreachable",
+			});
+		}
+		return daemonStatus;
+	}
 	if (daemonProcess) {
 		return daemonStatus;
 	}
@@ -710,7 +737,112 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	return daemonStatus;
 }
 
+// ---------------------------------------------------------------------------
+// Remote workspaces
+//
+// A remote workspace runs its own daemon; the supervisor reaches it through an
+// SSH loopback forward and hands the renderer the *local* end of that forward as
+// `daemon:status.port`. The renderer therefore needs no remote-awareness at all:
+// its base URL, SSE stream and terminal-mux WebSocket already derive from that
+// one port. Both daemons keep their 127.0.0.1-only bind.
+// ---------------------------------------------------------------------------
+
+/** The live tunnel, when the active workspace is remote. */
+let remoteConnection: RemoteConnection | null = null;
+/** The workspace `remoteConnection` belongs to; null while local. */
+let remoteWorkspace: RemoteWorkspace | null = null;
+
+/** The ~/.ao state dir, or null before the run-file path is known. */
+function aoStateDir(): string | null {
+	const runFile = runFilePath();
+	return runFile ? path.dirname(runFile) : null;
+}
+
+/** ControlMaster sockets live under ~/.ao/ssh, created 0700 (AGENTS.md ~/.ao rule). */
+async function ensureControlDir(stateDir: string): Promise<string> {
+	const dir = path.join(stateDir, "ssh");
+	await mkdir(dir, { recursive: true, mode: 0o700 });
+	return dir;
+}
+
+/** Drop the tunnel. The remote daemon is deliberately left running — its
+ * persistence across client restarts is the entire point of the feature. */
+function disconnectRemoteWorkspace(): void {
+	remoteConnection?.dispose();
+	remoteConnection = null;
+	remoteWorkspace = null;
+}
+
+/** Which workspace the supervisor should connect to right now. */
+async function activeWorkspace(): Promise<RemoteWorkspace | null> {
+	const stateDir = aoStateDir();
+	if (!stateDir) return null;
+	const resolved = resolveWorkspace(await readWorkspaceRegistry(stateDir));
+	return "error" in resolved ? null : resolved.workspace;
+}
+
+/**
+ * Connect to a remote workspace and publish it as the daemon status. Returns
+ * false when the active workspace is local, so the caller falls through to the
+ * unchanged local spawn path.
+ */
+async function startRemoteWorkspaceDaemon(): Promise<boolean> {
+	const workspace = await activeWorkspace();
+	if (!workspace) {
+		// Switched back to local: drop any tunnel before the local daemon starts.
+		disconnectRemoteWorkspace();
+		return false;
+	}
+
+	const stateDir = aoStateDir();
+	if (!stateDir) return false;
+
+	// Reconnecting to the same workspace is a no-op while the tunnel is healthy.
+	if (remoteConnection && remoteWorkspace?.id === workspace.id && daemonStatus.state === "ready") return true;
+	disconnectRemoteWorkspace();
+
+	setDaemonStatus({ state: "starting", workspaceId: workspace.id });
+	try {
+		const connection = await connectRemoteWorkspace(workspace, {
+			controlDir: await ensureControlDir(stateDir),
+			probe: readDaemonProbe,
+		});
+		remoteConnection = connection;
+		remoteWorkspace = workspace;
+		// No identity check here, unlike the local attach path: the remote daemon
+		// is a different installation with a different executable path, and
+		// comparing it against this bundle would reject every healthy VM.
+		setDaemonStatus({ state: "ready", port: connection.localPort, workspaceId: workspace.id });
+	} catch (error) {
+		const failure = error instanceof RemoteWorkspaceError ? error.failure : null;
+		setDaemonStatus({
+			state: "error",
+			workspaceId: workspace.id,
+			message: failure?.message ?? `Could not connect to ${workspace.sshTarget}.`,
+			details: failure?.details || undefined,
+			code: failure ? sshFailureCode(failure.kind) : "host_unreachable",
+		});
+	}
+	return true;
+}
+
+/**
+ * Repoint the client after the active workspace changed.
+ *
+ * Only a *remote* connection is torn down. A running local daemon is left
+ * alone: it is this machine's, killing it would drop supervision of local
+ * sessions the user did not ask to leave, and switching back to local simply
+ * re-attaches to it through the ordinary attach path.
+ */
+async function switchWorkspaceConnection(): Promise<DaemonStatus> {
+	disconnectRemoteWorkspace();
+	return startDaemon();
+}
+
 async function startDaemon(): Promise<DaemonStatus> {
+	// Placement is decided before any local spawn machinery runs: a remote
+	// workspace must never fall through and boot a second local daemon.
+	if (await startRemoteWorkspaceDaemon()) return daemonStatus;
 	if (daemonStartPromise) {
 		return daemonStartPromise;
 	}
@@ -1139,6 +1271,15 @@ function stopDaemon(): DaemonStatus {
 	// An explicit stop (or a newer restart request) cancels any deferred restart
 	// left waiting for a previously slow child to exit.
 	daemonRestartAfterExitProcess = null;
+	// Stopping a remote workspace closes the tunnel only. The remote daemon keeps
+	// running by design: surviving a client restart (or a closed laptop lid) is
+	// the reason the daemon lives on the VM in the first place.
+	if (remoteConnection) {
+		const workspaceId = remoteWorkspace?.id;
+		disconnectRemoteWorkspace();
+		setDaemonStatus({ state: "stopped", workspaceId });
+		return daemonStatus;
+	}
 	if (!daemonProcess) {
 		setDaemonStatus({ state: "stopped" });
 		return daemonStatus;
@@ -1223,6 +1364,33 @@ ipcMain.handle("daemon:restart", async () => {
 		return reportDaemonRestartFailure(error);
 	}
 });
+// Workspace registry. Every mutation that can change *which* machine the client
+// is pointed at re-runs the daemon start path, so the switch is atomic from the
+// renderer's point of view: it gets one `daemon:status` with the new port.
+async function withWorkspaceRegistry<T>(operation: (stateDir: string) => Promise<T>, fallback: T): Promise<T> {
+	const stateDir = aoStateDir();
+	return stateDir ? operation(stateDir) : fallback;
+}
+
+ipcMain.handle("workspaces:list", async (): Promise<WorkspaceRegistry> =>
+	withWorkspaceRegistry((stateDir) => readWorkspaceRegistry(stateDir), { remotes: [] }),
+);
+ipcMain.handle("workspaces:add", async (_event, workspace: RemoteWorkspace): Promise<WorkspaceRegistry> =>
+	withWorkspaceRegistry((stateDir) => addRemoteWorkspace(stateDir, workspace), { remotes: [] }),
+);
+ipcMain.handle("workspaces:remove", async (_event, id: string): Promise<WorkspaceRegistry> => {
+	// Removing the workspace currently in use must drop its tunnel, or the
+	// renderer would keep talking to a machine that is no longer registered.
+	const registry = await withWorkspaceRegistry((stateDir) => removeRemoteWorkspace(stateDir, id), { remotes: [] });
+	if (remoteWorkspace?.id === id) await switchWorkspaceConnection();
+	return registry;
+});
+ipcMain.handle("workspaces:setActive", async (_event, id: string): Promise<WorkspaceRegistry> => {
+	const registry = await withWorkspaceRegistry((stateDir) => setActiveWorkspace(stateDir, id), { remotes: [] });
+	await switchWorkspaceConnection();
+	return registry;
+});
+
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);

@@ -190,6 +190,12 @@ if (typeof window !== "undefined") {
 				locale: settings.locale as "en",
 			}),
 		},
+		workspaces: {
+			list: async () => ({ remotes: [] }),
+			add: async () => ({ remotes: [] }),
+			remove: async () => ({ remotes: [] }),
+			setActive: async () => ({ remotes: [] }),
+		},
 		keybindings: {
 			get: async () => ({}),
 			set: async (overrides) => overrides,
