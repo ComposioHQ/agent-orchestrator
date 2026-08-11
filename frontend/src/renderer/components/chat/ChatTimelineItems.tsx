@@ -147,7 +147,6 @@ export function HumanMessage({
 	sessionId,
 	apiBaseUrl = getApiBaseUrl(),
 	queued,
-	onSteerNow,
 	onEdit,
 	editing = false,
 	editText,
@@ -169,8 +168,6 @@ export function HumanMessage({
 	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
-	/** Present only when this queued turn can join the running turn. */
-	onSteerNow?: () => Promise<unknown> | undefined;
 	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
 	editing?: boolean;
 	editText?: string;
@@ -186,20 +183,6 @@ export function HumanMessage({
 	activateBranchError?: string;
 }) {
 	const { body, attachments } = humanMessageParts(message.text);
-	const [steering, setSteering] = useState(false);
-	const [steerError, setSteerError] = useState<string>();
-	async function steerNow() {
-		if (!onSteerNow || steering) return;
-		setSteering(true);
-		setSteerError(undefined);
-		try {
-			await onSteerNow();
-		} catch {
-			setSteerError("Could not steer this message. It remains queued.");
-		} finally {
-			setSteering(false);
-		}
-	}
 	return (
 		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
@@ -276,14 +259,8 @@ export function HumanMessage({
 			{queued ? (
 				<div className="flex items-center gap-2 text-[11px] text-muted-foreground">
 					<span>Queued · sends when the agent finishes</span>
-					{onSteerNow ? (
-						<Button type="button" variant="ghost" size="sm" disabled={steering} onClick={() => void steerNow()}>
-							{steering ? "Steering…" : "Steer now"}
-						</Button>
-					) : null}
 				</div>
 			) : null}
-			{steerError ? <span role="status" className="text-[11px] text-warning">{steerError}</span> : null}
 			{message.delivery && message.delivery !== "accepted" ? (
 				<DeliveryNote state={message.delivery} />
 			) : null}

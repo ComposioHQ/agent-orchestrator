@@ -29,6 +29,7 @@ import {
 import {
 	Archive,
 	ArrowDown,
+	CornerDownRight,
 	GitBranch,
 	Loader2,
 	Maximize2,
@@ -274,6 +275,21 @@ export function ChatWorkspace({
 	const approval = pendingApproval(snapshot);
 	const userInput = pendingUserInput(snapshot);
 	const queuedCount = queuedTurnIds(snapshot).size;
+	const queuedMessages = useMemo(() => {
+		const messagesByTurn = new Map(
+			snapshot.items
+				.filter(
+					(item): item is ConversationMessage =>
+						item.kind === "message" && item.role === "user" && item.origin === "human" && Boolean(item.turnId),
+				)
+				.map((message) => [message.turnId as string, message]),
+		);
+		return snapshot.turns.flatMap((queuedTurn) => {
+			if (queuedTurn.state !== "queued") return [];
+			const message = messagesByTurn.get(queuedTurn.id);
+			return message ? [{ turnId: queuedTurn.id, message }] : [];
+		});
+	}, [snapshot.items, snapshot.turns]);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -408,7 +424,6 @@ export function ChatWorkspace({
 					onResolveInput={onResolveInput}
 					busy={busy}
 					onRollback={rollbackTarget}
-					onPromoteQueuedTurn={turn?.state === "running" ? onPromoteQueuedTurn : undefined}
 					onEditHumanMessage={editHumanMessage}
 					editPending={editMessagePending}
 					editBusy={Boolean(turn)}
@@ -443,6 +458,12 @@ export function ChatWorkspace({
 							blocked={Boolean(approval || userInput)}
 							queuedCount={queuedCount}
 							onInterrupt={onInterrupt}
+						/>
+					) : null}
+					{turn?.state === "running" && queuedMessages.length > 0 ? (
+						<QueuedMessageDock
+							messages={queuedMessages}
+							onSteer={onPromoteQueuedTurn}
 						/>
 					) : null}
 					<ChatComposer
@@ -936,7 +957,6 @@ function Timeline({
 	onResolveInput,
 	busy,
 	onRollback,
-	onPromoteQueuedTurn,
 	onEditHumanMessage,
 	editPending,
 	editBusy,
@@ -953,7 +973,6 @@ function Timeline({
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
-	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	editPending?: boolean;
 	editBusy?: boolean;
@@ -980,7 +999,6 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
-	const promoteQueuedTurn = onPromoteQueuedTurn;
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 	const editHumanMessage = useStableCallback(onEditHumanMessage);
 	const activateBranch = useStableCallback(onActivateBranch);
@@ -1247,7 +1265,6 @@ function Timeline({
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
-								onPromoteQueuedTurn={promoteQueuedTurn}
 								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
 								messageEdit={messageEdit}
 								onStartMessageEdit={startMessageEdit}
@@ -1394,7 +1411,6 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide,
 	onResolveInput,
 	onRollback,
-	onPromoteQueuedTurn,
 	onEditHumanMessage,
 	messageEdit,
 	onStartMessageEdit,
@@ -1419,7 +1435,6 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
-	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	messageEdit?: MessageEditDraft;
 	onStartMessageEdit: (message: ConversationMessage) => void;
@@ -1465,7 +1480,6 @@ const TurnGroup = memo(function TurnGroup({
 						apiBaseUrl={apiBaseUrl}
 						onDecide={onDecide}
 						onResolveInput={onResolveInput}
-						onPromoteQueuedTurn={onPromoteQueuedTurn}
 						onEditHumanMessage={onEditHumanMessage}
 						messageEdit={messageEdit}
 						onStartMessageEdit={onStartMessageEdit}
@@ -1513,7 +1527,6 @@ function TimelineItem({
 	apiBaseUrl,
 	onDecide,
 	onResolveInput,
-	onPromoteQueuedTurn,
 	onEditHumanMessage,
 	messageEdit,
 	onStartMessageEdit,
@@ -1538,7 +1551,6 @@ function TimelineItem({
 	apiBaseUrl: string;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
-	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
 	messageEdit?: MessageEditDraft;
 	onStartMessageEdit: (message: ConversationMessage) => void;
@@ -1588,11 +1600,6 @@ function TimelineItem({
 					sessionId={sessionId}
 					apiBaseUrl={apiBaseUrl}
 					queued={queued}
-					onSteerNow={
-						queued && item.turnId && onPromoteQueuedTurn
-							? () => onPromoteQueuedTurn(item.turnId as string)
-							: undefined
-					}
 					onEdit={editAvailable ? (_turnID, text) => onSubmitMessageEdit(text) : undefined}
 					editing={editing}
 					editText={editing ? messageEdit?.text : undefined}
@@ -1840,6 +1847,76 @@ function EmptyState({ harness }: { harness: string }) {
 }
 
 /* -------------------------------------------------------------------------- */
+
+function QueuedMessageDock({
+	messages,
+	onSteer,
+}: {
+	messages: Array<{ turnId: string; message: ConversationMessage }>;
+	onSteer?: (turnId: string) => Promise<unknown>;
+}) {
+	const [steeringTurnId, setSteeringTurnId] = useState<string>();
+	const [errors, setErrors] = useState<Record<string, string>>({});
+
+	async function steer(turnId: string) {
+		if (!onSteer || steeringTurnId) return;
+		setSteeringTurnId(turnId);
+		setErrors((current) => {
+			const next = { ...current };
+			delete next[turnId];
+			return next;
+		});
+		try {
+			await onSteer(turnId);
+		} catch {
+			setErrors((current) => ({
+				...current,
+				[turnId]: "Could not steer this message. It remains queued.",
+			}));
+		} finally {
+			setSteeringTurnId(undefined);
+		}
+	}
+
+	return (
+		<div className="flex max-h-40 flex-col gap-1.5 overflow-y-auto" data-testid="queued-message-dock">
+			{messages.map(({ turnId, message }) => {
+				const steering = steeringTurnId === turnId;
+				return (
+					<div
+						key={turnId}
+						className="rounded-md border border-border bg-surface px-2.5 py-2"
+						data-testid={`queued-message-${turnId}`}
+					>
+						<div className="flex min-w-0 items-center gap-2">
+							<CornerDownRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+							<span className="min-w-0 flex-1 truncate text-xs text-foreground" title={message.text}>
+								{message.text}
+							</span>
+							{onSteer ? (
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									disabled={Boolean(steeringTurnId)}
+									onClick={() => void steer(turnId)}
+								>
+									<CornerDownRight aria-hidden="true" className="size-3" />
+									{steering ? "Steering…" : "Steer"}
+								</Button>
+							) : null}
+						</div>
+						{errors[turnId] ? (
+							<p role="status" className="mt-1 text-[11px] text-warning">
+								{errors[turnId]}
+							</p>
+						) : null}
+					</div>
+				);
+			})}
+		</div>
+	);
+}
 
 /**
  * The in-flight turn. Elapsed time is shown because a long silence is otherwise
