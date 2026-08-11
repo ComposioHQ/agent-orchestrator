@@ -26,6 +26,10 @@ export type ActivityNode = {
 	children: ActivityNode[];
 };
 
+export type ConversationTimelineRenderPlan =
+	| { kind: "empty"; inverted: false; groups: [] }
+	| { kind: "list"; inverted: true; groups: ConversationGroup[] };
+
 /** Keep conversation signal while removing provider telemetry/noise. */
 export function readableConversationItems(snapshot: ConversationSnapshot): ConversationItem[] {
 	const plannedTurns = new Set(snapshot.turns.filter((turn) => turn.plan?.steps.length).map((turn) => turn.id));
@@ -75,6 +79,16 @@ export function latestFirstConversationGroups(
 	items = readableConversationItems(snapshot),
 ): ConversationGroup[] {
 	return groupConversationByTurn(snapshot, items).reverse();
+}
+
+export function conversationTimelineRenderPlan(
+	snapshot: ConversationSnapshot,
+	items = readableConversationItems(snapshot),
+): ConversationTimelineRenderPlan {
+	const groups = latestFirstConversationGroups(snapshot, items);
+	return groups.length === 0
+		? { kind: "empty", inverted: false, groups: [] }
+		: { kind: "list", inverted: true, groups };
 }
 
 export function conversationMarkers(snapshot: ConversationSnapshot): ConversationMarker[] {

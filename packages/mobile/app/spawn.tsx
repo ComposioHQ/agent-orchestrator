@@ -23,7 +23,7 @@ import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
 import { agentSheetRoute, modelSheetRoute, projectSheetRoute } from "../lib/sheetResult";
 import { screenKeyboardAvoidance } from "../lib/session/keyboardInset";
-import { modelOverride, resolveSpawnModel } from "../lib/spawnModel";
+import { modelOverride, resolveSpawnModel, spawnModelSourceChanged } from "../lib/spawnModel";
 import { useApp } from "../lib/store";
 import type { Theme } from "../lib/theme";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
@@ -135,7 +135,28 @@ export default function SpawnModal() {
 		return () => { cancelled = true; };
 	}, [config, harness, projectId]);
 
-	const resetModel = () => { setModel(""); setModelTouched(false); setModelCatalog(undefined); setProjectDetail(undefined); setModelError(undefined); };
+	const clearModelOverride = () => { setModel(""); setModelTouched(false); };
+	const resetModelSource = () => { clearModelOverride(); setModelCatalog(undefined); setProjectDetail(undefined); setModelError(undefined); };
+	const selectProject = (nextProjectId: string) => {
+		if (!spawnModelSourceChanged({ projectId, agentId: harness }, { projectId: nextProjectId, agentId: harness })) return;
+		resetModelSource();
+		setProjectId(nextProjectId);
+	};
+	const selectAgent = (nextHarness: string) => {
+		if (!spawnModelSourceChanged({ projectId, agentId: harness }, { projectId, agentId: nextHarness })) return;
+		resetModelSource();
+		setHarness(nextHarness);
+	};
+	const selectMode = (nextMode: SessionMode) => {
+		if (nextMode === mode) return;
+		const nextHarness = nextMode === "chat"
+			? (chatHarnesses.includes(harness) ? harness : (defaultAgent(allAgents.filter((agent) => chatHarnesses.includes(agent.id))) ?? ""))
+			: (harness || (defaultAgent(allAgents) ?? ""));
+		if (spawnModelSourceChanged({ projectId, agentId: harness }, { projectId, agentId: nextHarness })) resetModelSource();
+		else clearModelOverride();
+		setMode(nextMode);
+		setHarness(nextHarness);
+	};
 
 	const onSpawn = async () => {
 		// Validated on submit rather than by disabling the button — desktop's
@@ -199,7 +220,7 @@ export default function SpawnModal() {
 							router.push(
 								projectSheetRoute({
 									selected: projectId ?? "",
-								onSelect: (value) => { setProjectId(value); resetModel(); },
+								onSelect: selectProject,
 									// "All projects" is a filter — there is nothing to spawn into.
 									includeAll: false,
 									title: "Project",
@@ -215,7 +236,7 @@ export default function SpawnModal() {
 						// The collapsed row carries the mark too, as desktop's trigger does.
 						leading={selectedAgent ? <AgentLogo harness={selectedAgent.id} size={20} /> : undefined}
 						disabled={loading}
-					onPress={() => router.push(agentSheetRoute({ selected: harness, onSelect: (value) => { setHarness(value); resetModel(); }, allowed: mode === "chat" ? chatHarnesses : undefined, mode }))}
+					onPress={() => router.push(agentSheetRoute({ selected: harness, onSelect: selectAgent, allowed: mode === "chat" ? chatHarnesses : undefined, mode }))}
 				/>
 				<SettingsRow
 					icon="box"
@@ -232,13 +253,9 @@ export default function SpawnModal() {
 						label="Chat"
 						detail="Native conversation"
 						selected={mode === "chat"}
-						onPress={() => {
-							setMode("chat");
-							resetModel();
-							setHarness((current) => chatHarnesses.includes(current) ? current : (defaultAgent(allAgents.filter((agent) => chatHarnesses.includes(agent.id))) ?? ""));
-						}}
-					/>
-					<ModeChoice label="Terminal UI" detail="Agent's own TUI" selected={mode === "tui"} onPress={() => { setMode("tui"); resetModel(); setHarness((current) => current || (defaultAgent(allAgents) ?? "")); }} />
+							onPress={() => selectMode("chat")}
+						/>
+					<ModeChoice label="Terminal UI" detail="Agent's own TUI" selected={mode === "tui"} onPress={() => selectMode("tui")} />
 				</View>
 				<Text style={styles.hint}>{mode === "chat" ? "Chat is the mobile default. The agent runs through its structured controller; no tmux is created for it." : "Compatibility mode. The agent runs inside tmux and mobile mirrors its terminal."}</Text>
 				{mode === "chat" && !loading && agents.length === 0 ? <Text style={styles.warn}>No installed agent on this AO host currently supports Chat. Choose Terminal UI or install/authenticate a Chat-capable agent.</Text> : null}
@@ -258,7 +275,7 @@ export default function SpawnModal() {
 				{modelError ? <Text style={styles.warn}>{modelError}</Text> : null}
 
 				{error ? <Text style={styles.error}>{error}</Text> : null}
-				{offerTUI ? <Button title="Create as Terminal UI instead" variant="ghost" icon="terminal" onPress={() => { setMode("tui"); setOfferTUI(false); setError(null); }} style={{ marginTop: 12 }} /> : null}
+				{offerTUI ? <Button title="Create as Terminal UI instead" variant="ghost" icon="terminal" onPress={() => { selectMode("tui"); setOfferTUI(false); setError(null); }} style={{ marginTop: 12 }} /> : null}
 
 				<Button
 					title="Spawn agent"

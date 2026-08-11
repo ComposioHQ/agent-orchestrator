@@ -36,7 +36,7 @@ import { ChatTimeline } from "./ChatTimeline";
 import { chatSheetRoute } from "./chatSheetRegistry";
 import { centeredConversationMenu } from "./chatLayout";
 import { elapsedLabel, mcpServerFailureLabel, quotaWarning, resetLabel } from "./conversationChrome";
-import { conversationActionUnsupported } from "./conversationErrors";
+import { conversationActionError, conversationActionUnsupported } from "./conversationErrors";
 import { conversationMarkers } from "./timelineModel";
 import { brokenMcpServers, can } from "./types";
 import { useMobileConversation } from "./useConversation";
@@ -145,16 +145,23 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const openTurnSettings = useCallback(async () => {
 		const current = conversation.snapshot;
 		if (!current) return;
-		const catalog = await conversation.loadTurnOptions();
+		let catalog = { models: conversation.models, configOptions: conversation.configOptions };
+		let catalogError = conversation.actionErrors.settings ?? conversation.actionErrors.config;
+		try {
+			catalog = await conversation.loadTurnOptions();
+		} catch (cause) {
+			catalogError = conversationActionError(cause);
+		}
 		router.push(chatSheetRoute({
 			kind: "turn-settings",
 			snapshot: current,
 			models: catalog.models,
 			options: catalog.configOptions,
 			disabled: current.controller.state === "stopped" || conversation.pendingActions.includes("settings") || conversation.pendingActions.includes("config"),
-			error: conversation.actionErrors.settings ?? conversation.actionErrors.config,
-			onSettings: (settings) => void conversation.chooseSettings(settings).catch(() => {}),
-			onOption: (id, value) => void conversation.setConfigOption(id, value).catch(() => {}),
+			error: catalogError,
+			onSettings: conversation.chooseSettings,
+			onOption: conversation.setConfigOption,
+			onRefresh: () => conversation.loadTurnOptions({ refresh: true }),
 		}));
 	}, [conversation, router]);
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	findComposerSuggestion,
+	composerSuggestionKey,
 	rankComposerFiles,
 	rankComposerSkills,
 	replaceComposerSuggestion,
@@ -36,5 +37,12 @@ describe("mobile Chat composer suggestions", () => {
 		expect(rankComposerSkills(skills, "rev").map((item) => item.value)).toEqual(["review", "code-review"]);
 		expect(rankComposerFiles(["deep/src/app.ts", "app.ts", "docs/application.md"], "app").map((item) => item.value))
 			.toEqual(["app.ts", "deep/src/app.ts", "docs/application.md"]);
+	});
+
+	it("keys a picker request to the exact active trigger", () => {
+		expect(composerSuggestionKey({ kind: "files", query: "src", start: 8, end: 12 }))
+			.toBe("files:8:12:src");
+		expect(composerSuggestionKey({ kind: "files", query: "src/a", start: 8, end: 14 }))
+			.not.toBe("files:8:12:src");
 	});
 });

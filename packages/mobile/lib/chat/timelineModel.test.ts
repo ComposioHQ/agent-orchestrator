@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { activityHierarchy, activityNodesRunning, activityStartsExpanded, canRollbackTurn, conversationMarkers, countActivityNodes, groupConversationByTurn, latestFirstConversationGroups, readableConversationItems } from "./timelineModel";
+import * as timelineModel from "./timelineModel";
 import type { ConversationActivity, ConversationSnapshot } from "./types";
 
 function snapshot(): ConversationSnapshot {
@@ -20,6 +21,23 @@ function snapshot(): ConversationSnapshot {
 }
 
 describe("mobile Chat timeline model", () => {
+	it("keeps the empty state outside the inverted conversation surface", () => {
+		const value = snapshot();
+		value.items = [];
+		value.turns = [];
+		const buildPlan = (
+			timelineModel as unknown as {
+				conversationTimelineRenderPlan?: (snapshot: ConversationSnapshot) => {
+					kind: "empty" | "list";
+					inverted: boolean;
+					groups: unknown[];
+				};
+			}
+		).conversationTimelineRenderPlan;
+
+		expect(buildPlan?.(value)).toEqual({ kind: "empty", inverted: false, groups: [] });
+	});
+
 	it("puts the latest exchange first in the virtualized render plan", () => {
 		expect(latestFirstConversationGroups(snapshot()).map((group) => group.items.map((item) => item.id))).toEqual([
 			["u2", "a2"],

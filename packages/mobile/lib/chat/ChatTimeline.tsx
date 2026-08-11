@@ -41,8 +41,8 @@ import {
 	activityNodesRunning,
 	activityStartsExpanded,
 	canRollbackTurn,
+	conversationTimelineRenderPlan,
 	countActivityNodes,
-	latestFirstConversationGroups,
 	readableConversationItems,
 	type ActivityNode,
 	type ConversationGroup,
@@ -83,7 +83,8 @@ export const ChatTimeline = memo(function ChatTimeline({
 	// Usage is snapshot state, not conversation. Reasoning stays available in the
 	// durable record but hidden on mobile: prose and work are the primary surface.
 	const items = useMemo(() => readableConversationItems(snapshot), [snapshot]);
-	const groups = useMemo(() => latestFirstConversationGroups(snapshot, items), [items, snapshot.turns]);
+	const plan = useMemo(() => conversationTimelineRenderPlan(snapshot, items), [items, snapshot.turns]);
+	const groups = plan.groups;
 
 	useEffect(() => {
 		if (jumpToSequence === undefined) return;
@@ -96,12 +97,22 @@ export const ChatTimeline = memo(function ChatTimeline({
 		onJumpHandled?.();
 	}, [groups, jumpToSequence, onJumpHandled]);
 
+	if (plan.kind === "empty") {
+		return (
+			<View style={styles.timelineWrap}>
+				<View style={styles.emptySurface}>
+					<EmptyConversation harness={snapshot.harness} controller={snapshot.controller.state} />
+				</View>
+			</View>
+		);
+	}
+
 	return (
 		<View style={styles.timelineWrap}>
 			<FlatList<ConversationGroup>
 				ref={listRef}
 				data={groups}
-				inverted
+				inverted={plan.inverted}
 				keyExtractor={(group) => group.key}
 				style={styles.list}
 				contentContainerStyle={styles.content}
@@ -137,7 +148,6 @@ export const ChatTimeline = memo(function ChatTimeline({
 						</Pressable>
 					) : items.length ? <Text style={styles.beginning}>Beginning of conversation</Text> : null
 				}
-				ListEmptyComponent={<EmptyConversation harness={snapshot.harness} controller={snapshot.controller.state} />}
 				renderItem={({ item: group }) => <ConversationTurnGroup
 					group={group}
 					snapshot={snapshot}
@@ -778,6 +788,7 @@ function elapsed(start?: string, end?: string): string | undefined { if (!start 
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value); }
 const makeStyles = (t: Theme) => StyleSheet.create({
 	timelineWrap: { flex: 1, position: "relative", backgroundColor: t.bgBase },
+	emptySurface: { flex: 1, justifyContent: "center" },
 	list: { flex: 1, backgroundColor: t.bgBase },
 	content: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 28 },
 	older: { alignSelf: "center", flexDirection: "row", gap: 7, alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, marginBottom: 14 },

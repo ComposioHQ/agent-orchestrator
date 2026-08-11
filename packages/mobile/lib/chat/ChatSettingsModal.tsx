@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { haptics } from "../haptics";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
@@ -19,7 +19,9 @@ export function ChatSettingsSheet({
 	models,
 	options,
 	disabled,
+	refreshing,
 	error,
+	onRefresh,
 	onSettings,
 	onOption,
 }: {
@@ -27,7 +29,9 @@ export function ChatSettingsSheet({
 	models: ChatModel[];
 	options: ChatConfigOption[];
 	disabled?: boolean;
+	refreshing?: boolean;
 	error?: string;
+	onRefresh(): void;
 	onSettings(settings: TurnSettings): void;
 	onOption(id: string, value: { value: string } | { enabled: boolean }): void;
 }) {
@@ -38,7 +42,7 @@ export function ChatSettingsSheet({
 	const usesProviderOptions = can(snapshot, "config_options");
 	return (
 		<ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-			<SheetHeader title="Turn settings" subtitle="Changes apply to the next message." />
+			<SheetHeader title="Turn settings" subtitle="Changes apply to the next message." right={<Pressable accessibilityRole="button" accessibilityLabel="Refresh turn settings" disabled={refreshing} onPress={() => { haptics.tap(); onRefresh(); }} style={styles.refresh}>{refreshing ? <ActivityIndicator size="small" color={t.blue} /> : <><Feather name="refresh-cw" size={13} color={t.blue} /><Text style={styles.refreshText}>Refresh</Text></>}</Pressable>} />
 					{error ? <View accessibilityRole="alert" style={styles.error}><Feather name="alert-circle" size={14} color={t.red} /><Text style={styles.errorText}>{error}</Text></View> : null}
 					{snapshot.modelReroute ? <View style={styles.reroute}><Feather name="shuffle" size={14} color={t.amber} /><View style={{ flex: 1 }}><Text style={styles.rerouteTitle}>Currently answered by {snapshot.modelReroute.toModel}</Text><Text style={styles.rerouteCopy}>{snapshot.modelReroute.fromModel ? `${snapshot.modelReroute.fromModel} was requested. ` : ""}{snapshot.modelReroute.reason || "The provider selected a fallback model for this conversation."}</Text></View></View> : null}
 					{!usesProviderOptions && models.length ? <SettingsSection icon="cpu" title="Model">
@@ -86,6 +90,8 @@ function configOptionIcon(option: ChatConfigOption): keyof typeof Feather.glyphM
 const makeStyles = (t: Theme) => StyleSheet.create({
 	screen: { flex: 1, backgroundColor: t.bgSurface },
 	content: { padding: 16, paddingBottom: 42, gap: 22 },
+	refresh: { flexDirection: "row", alignItems: "center", gap: 5 },
+	refreshText: { color: t.blue, fontSize: 13, fontWeight: "600" },
 	error: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderRadius: 10, backgroundColor: t.tintRed, padding: 10 },
 	errorText: { flex: 1, color: t.red, fontSize: 11, lineHeight: 16 },
 	reroute: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 11, borderWidth: 1, borderColor: t.borderDefault, backgroundColor: t.tintAmber, padding: 11 },

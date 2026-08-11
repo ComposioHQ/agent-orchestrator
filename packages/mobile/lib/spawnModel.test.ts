@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modelOverride, resolveSpawnModel } from "./spawnModel";
+import { modelOverride, resolveSpawnModel, spawnModelSourceChanged } from "./spawnModel";
 
 describe("spawn model resolution", () => {
 	it("prefers the project worker model for its configured worker agent", () => {
@@ -28,5 +28,20 @@ describe("spawn model resolution", () => {
 		expect(modelOverride("opus", "sonnet", true)).toBe("opus");
 		expect(modelOverride("sonnet", "sonnet", true)).toBeUndefined();
 		expect(modelOverride("opus", "sonnet", false)).toBeUndefined();
+	});
+
+	it("reloads the model catalog only when its project or agent source changes", () => {
+		expect(spawnModelSourceChanged(
+			{ projectId: "project-1", agentId: "codex" },
+			{ projectId: "project-1", agentId: "codex" },
+		)).toBe(false);
+		expect(spawnModelSourceChanged(
+			{ projectId: "project-1", agentId: "codex" },
+			{ projectId: "project-2", agentId: "codex" },
+		)).toBe(true);
+		expect(spawnModelSourceChanged(
+			{ projectId: "project-1", agentId: "codex" },
+			{ projectId: "project-1", agentId: "claude-code" },
+		)).toBe(true);
 	});
 });

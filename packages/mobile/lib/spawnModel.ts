@@ -5,6 +5,12 @@ export type SpawnModelDefaults = {
 	catalogDefault?: string;
 };
 
+export type SpawnModelSource = { projectId: string | null; agentId: string };
+
+export function spawnModelSourceChanged(current: SpawnModelSource, next: SpawnModelSource): boolean {
+	return current.projectId !== next.projectId || current.agentId !== next.agentId;
+}
+
 export function resolveSpawnModel(input: SpawnModelDefaults): string {
 	if (input.selectedAgent === input.projectWorkerAgent && input.projectWorkerModel) {
 		return input.projectWorkerModel;

@@ -2,6 +2,10 @@ import type { ChatSkill } from "./types";
 
 export type ComposerSuggestion = { kind: "skills" | "files"; query: string; start: number; end: number };
 
+export function composerSuggestionKey(suggestion: ComposerSuggestion): string {
+	return `${suggestion.kind}:${suggestion.start}:${suggestion.end}:${suggestion.query}`;
+}
+
 export type RankedSuggestion = {
 	value: string;
 	label: string;

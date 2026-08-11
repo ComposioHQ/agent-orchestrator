@@ -26,6 +26,8 @@ import { cachedConversationState, createMobileConversationPageCache, discardHist
 import { conversationActionError, conversationErrorCode } from "./conversationErrors";
 import { subscribeConversationEvents } from "./conversationEvents";
 import { createAsyncValueCache } from "./asyncValueCache";
+import { createRequestGate } from "./requestGate";
+import { loadTurnOptionCatalog } from "./turnOptionsCatalog";
 
 const REFRESH_DEBOUNCE_MS = 120;
 const conversationPageCache = createMobileConversationPageCache();
@@ -70,7 +72,7 @@ export type MobileConversation = {
 	actionCodes: Partial<Record<ConversationAction, string>>;
 	refresh(): Promise<void>;
 	loadOlder(): Promise<void>;
-	loadTurnOptions(): Promise<{ models: ChatModel[]; configOptions: ChatConfigOption[] }>;
+	loadTurnOptions(options?: { refresh?: boolean }): Promise<{ models: ChatModel[]; configOptions: ChatConfigOption[] }>;
 	loadSkills(): Promise<ChatSkill[]>;
 	send(text: string, attachments?: ChatImage[], resources?: ChatResource[]): Promise<void>;
 	retrySend(id: string): Promise<void>;
@@ -82,7 +84,7 @@ export type MobileConversation = {
 	compact(): Promise<void>;
 	rollback(turnId: string): Promise<number>;
 	chooseSettings(settings: TurnSettings): Promise<void>;
-	setConfigOption(optionId: string, value: { value: string } | { enabled: boolean }): Promise<void>;
+	setConfigOption(optionId: string, value: { value: string } | { enabled: boolean }): Promise<ChatConfigOption[]>;
 	reloadMcp(): Promise<void>;
 	rename(title: string): Promise<void>;
 };
@@ -111,6 +113,7 @@ export function useMobileConversation(
 	const [actionCodes, setActionCodes] = useState<Partial<Record<ConversationAction, string>>>({});
 	const mounted = useRef(true);
 	const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const refreshGate = useRef(createRequestGate()).current;
 
 	const snapshot = useMemo(() => mergeConversationPages(pages), [pages]);
 	const hasConversation = Boolean(snapshot);
@@ -118,10 +121,11 @@ export function useMobileConversation(
 
 	const refresh = useCallback(async () => {
 		if (!cfg) return;
+		const request = refreshGate.begin();
 		setRefreshing(true);
 		try {
 			const live = await getConversationPage(cfg, sessionId);
-			if (!mounted.current) return;
+			if (!mounted.current || !refreshGate.isCurrent(request)) return;
 			setPages((old) => {
 				const next = old[0]?.conversationId && old[0].conversationId !== live.conversationId
 					? [live]
@@ -132,17 +136,17 @@ export function useMobileConversation(
 			setUnavailable(undefined);
 			setError(undefined);
 		} catch (cause) {
-			if (!mounted.current) return;
+			if (!mounted.current || !refreshGate.isCurrent(request)) return;
 			const classified = classifyConversationError(cause);
 			if (classified.permanent) setUnavailable({ code: classified.code, message: classified.message });
 			else setError(classified.message);
 		} finally {
-			if (mounted.current) {
+			if (mounted.current && refreshGate.isCurrent(request)) {
 				setLoading(false);
 				setRefreshing(false);
 			}
 		}
-	}, [cacheKey, cfg, sessionId]);
+	}, [cacheKey, cfg, refreshGate, sessionId]);
 
 	const scheduleRefresh = useCallback(() => {
 		if (refreshTimer.current) clearTimeout(refreshTimer.current);
@@ -173,21 +177,20 @@ export function useMobileConversation(
 		void refresh();
 		return () => {
 			mounted.current = false;
+			refreshGate.invalidate();
 			if (refreshTimer.current) clearTimeout(refreshTimer.current);
 		};
-	}, [cacheKey, refresh]);
+	}, [cacheKey, refresh, refreshGate]);
 
-	const loadTurnOptions = useCallback(async () => {
+	const loadTurnOptions = useCallback(async (options?: { refresh?: boolean }) => {
 		if (!cfg || unavailable || !hasConversation) return { models, configOptions };
+		if (options?.refresh) turnOptionsCache.delete(cacheKey);
 		const catalog = await turnOptionsCache.load(cacheKey, async () => {
-			const [modelResult, configResult] = await Promise.allSettled([
-				hasProviderConfig ? Promise.resolve([]) : getConversationModels(cfg, sessionId),
-				hasProviderConfig ? getConversationConfigOptions(cfg, sessionId) : Promise.resolve([]),
-			]);
-			return {
-				models: modelResult.status === "fulfilled" ? modelResult.value : models,
-				configOptions: configResult.status === "fulfilled" ? configResult.value : configOptions,
-			};
+			return loadTurnOptionCatalog({
+				hasProviderConfig,
+				loadModels: () => getConversationModels(cfg, sessionId),
+				loadConfigOptions: () => getConversationConfigOptions(cfg, sessionId),
+			});
 		});
 		if (mounted.current) {
 			setModels(catalog.models);
@@ -329,6 +332,7 @@ export function useMobileConversation(
 				const options = await requireConfig(cfg, (c) => setConversationConfigOption(c, sessionId, optionId, value));
 				setConfigOptions(options);
 				turnOptionsCache.set(cacheKey, { models, configOptions: options });
+				return options;
 			}),
 		[cacheKey, cfg, models, runAction, sessionId],
 	);

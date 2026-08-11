@@ -12,6 +12,7 @@ import { MicKey } from "../voice/MicKey";
 import { useVoiceInput } from "../voice/useVoiceInput";
 import type { ChatConfigOption, ChatImage, ChatResource, ChatSkill, ConversationSnapshot } from "./types";
 import {
+	composerSuggestionKey,
 	findComposerSuggestion,
 	rankComposerFiles,
 	rankComposerSkills,
@@ -20,6 +21,7 @@ import {
 } from "./composerSuggestions";
 import { chatSheetRoute } from "./chatSheetRegistry";
 import { composerSurfaceStyle } from "./chatChrome";
+import { createRequestGate } from "./requestGate";
 
 type Attachment =
 	| { id: string; kind: "image"; name: string; bytes: number; image: ChatImage }
@@ -80,6 +82,12 @@ export function ChatComposer({
 	const stopped = snapshot.controller.state === "stopped";
 	const draftKey = `ao.chat.draft.${sessionId}`;
 	const openingSuggestion = useRef<string | undefined>(undefined);
+	const pickerGate = useRef(createRequestGate()).current;
+	const latestText = useRef(text);
+	const latestCursor = useRef(cursor);
+	latestText.current = text;
+	latestCursor.current = cursor;
+	useEffect(() => () => pickerGate.invalidate(), [pickerGate]);
 
 	useEffect(() => { let mounted = true; void AsyncStorage.getItem(draftKey).then((value) => { if (mounted && value) setText((current) => current || value); }); return () => { mounted = false; }; }, [draftKey]);
 	useEffect(() => { const timer = setTimeout(() => void (text ? AsyncStorage.setItem(draftKey, text) : AsyncStorage.removeItem(draftKey)), 250); return () => clearTimeout(timer); }, [draftKey, text]);
@@ -160,8 +168,14 @@ export function ChatComposer({
 	const providerModelLabel = providerModel?.type === "select" ? providerModel.choices.find((choice) => choice.value === providerModel.currentValue)?.name ?? providerModel.currentValue : undefined;
 	const selectedModel = snapshot.modelReroute?.toModel || providerModelLabel || snapshot.settings.model;
 	const openPicker = useCallback(async (kind: "skills" | "files", activeTrigger?: ComposerSuggestion) => {
+		const request = pickerGate.begin();
 		const loadedSkills = kind === "skills" ? await onLoadSkills() : skills;
 		const loadedFiles = kind === "files" ? await onLoadFiles() : { paths: filePaths, truncated: Boolean(filePathsTruncated) };
+		if (!pickerGate.isCurrent(request)) return;
+		if (activeTrigger) {
+			const currentTrigger = findComposerSuggestion(latestText.current, latestCursor.current);
+			if (!currentTrigger || composerSuggestionKey(currentTrigger) !== composerSuggestionKey(activeTrigger)) return;
+		}
 		const choices = kind === "skills" ? rankComposerSkills(loadedSkills, activeTrigger?.query ?? "") : rankComposerFiles(loadedFiles.paths, activeTrigger?.query ?? "");
 		router.push(chatSheetRoute({ kind: "composer-picker", pickerKind: kind, choices, truncated: kind === "files" ? loadedFiles.truncated : undefined, onSelect: (value) => {
 			setText((old) => {
@@ -170,18 +184,19 @@ export function ChatComposer({
 				return next;
 			});
 		} }));
-	}, [filePaths, filePathsTruncated, onLoadFiles, onLoadSkills, router, skills]);
+	}, [filePaths, filePathsTruncated, onLoadFiles, onLoadSkills, pickerGate, router, skills]);
 	useEffect(() => {
 		const suggestion = findComposerSuggestion(text, cursor);
 		if (!suggestion) {
+			pickerGate.invalidate();
 			openingSuggestion.current = undefined;
 			return;
 		}
-		const key = `${suggestion.kind}:${suggestion.start}:${suggestion.query}`;
+		const key = composerSuggestionKey(suggestion);
 		if (openingSuggestion.current === key) return;
 		openingSuggestion.current = key;
 		void openPicker(suggestion.kind, suggestion);
-	}, [cursor, openPicker, text]);
+	}, [cursor, openPicker, pickerGate, text]);
 	return (
 		<View style={styles.dock}>
 			{voice.state === "starting" || voice.state === "recording" ? <View style={styles.voice}><Feather name="mic" size={12} color={t.red} /><Text style={styles.voiceText}>{voice.partial || (voice.state === "starting" ? "Keep holding…" : "Listening…")}</Text></View> : null}
