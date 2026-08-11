@@ -34,6 +34,7 @@ creates new task-definition revisions; it never mutates an older image tag.
 - ECS service: `ao-cloud-staging-api`
 - API task family: `ao-cloud-staging-api`
 - migration task family: `ao-cloud-staging-migrate`
+- PostgreSQL: `ao-cloud-staging-storage`
 - internal ALB: `ao-cloud-staging`
 - target group: `ao-cloud-staging-cp`
 - CloudWatch log group: `/ao-cloud/staging/control-plane` (30-day retention)

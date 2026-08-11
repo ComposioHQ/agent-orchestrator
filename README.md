@@ -14,7 +14,8 @@ Private AO control-plane service. This foundation contains:
 Cloud UI, worker provisioning/execution, terminal/files, GitHub behavior, and
 sharing behavior are intentionally not implemented yet. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
-behavior and [`docs/deployment.md`](docs/deployment.md) for staging deployment.
+behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
+production deployments.
 
 ## Run locally
 
@@ -48,6 +49,33 @@ if local authentication is enabled or if the runtime database role is a
 superuser or can bypass row-level security. Use a restricted runtime credential
 for `AO_CLOUD_DATABASE_URL` and, when necessary, a separate schema-migration
 credential for `AO_CLOUD_MIGRATION_DATABASE_URL`.
+
+## Database changes and production promotion
+
+Database migrations in `internal/postgres/migrations` are embedded in the same
+immutable control-plane image as the API and migration binary. The release flow
+is:
+
+1. Add a forward, backward-compatible Goose migration to the repository.
+2. Run the migration and integration tests locally.
+3. Deploy the commit with `scripts/deploy-staging.sh`. Staging runs that image's
+   migrations before updating its API replicas.
+4. Verify the release in staging.
+5. Promote it with `scripts/promote-production.sh`. Production uses the exact
+   scanned image digest currently running in staging and runs that image's
+   migrations before updating any production API replica.
+
+If a production migration fails, promotion stops and the existing production
+API keeps running. Application rollback does not reverse an applied migration,
+so migrations must remain compatible with the previous API release.
+
+Only migration code and the tested application image are promoted. Staging
+database rows are never copied to production: users, organizations, projects,
+sessions, events, credentials, and all other data remain isolated in their
+respective databases. The AWS instances are named
+`ao-cloud-staging-storage` and `ao-cloud-production-storage` so the environment
+boundary is explicit. See [`docs/deployment.md`](docs/deployment.md) for the full
+deployment and rollback procedure.
 
 If a verified access token contains `org_id`, that WorkOS organization and the
 token's role are synchronized into AO membership. Tokens without `org_id`
