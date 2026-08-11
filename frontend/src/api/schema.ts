@@ -2760,6 +2760,7 @@ export interface components {
             status: "unmodified" | "modified" | "added" | "deleted" | "renamed";
         };
         WorkspaceRepo: {
+            gitStatus?: string;
             name: string;
             relativePath: string;
             repo: string;

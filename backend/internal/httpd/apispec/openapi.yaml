@@ -7926,6 +7926,8 @@ components:
       type: object
     WorkspaceRepo:
       properties:
+        gitStatus:
+          type: string
         name:
           type: string
         relativePath:
