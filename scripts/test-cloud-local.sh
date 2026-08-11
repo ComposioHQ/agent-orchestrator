@@ -21,6 +21,7 @@ PY
 
 export AO_CLOUD_PORT="${AO_CLOUD_SMOKE_PORT:-$(free_port)}"
 export AO_CLOUD_POSTGRES_PORT="${AO_CLOUD_SMOKE_POSTGRES_PORT:-$(free_port)}"
+export AO_CLOUD_LOCAL_POSTGRES_DATA_DIR="$state_directory/postgres"
 export COMPOSE_PROJECT_NAME="$project_name"
 
 compose() {

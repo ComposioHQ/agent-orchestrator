@@ -7,6 +7,7 @@ public_root="$(cd "$root/../.." && pwd)"
 readonly public_root
 readonly api_url="http://127.0.0.1:${AO_CLOUD_PORT:-8081}"
 readonly web_port="${AO_CLOUD_WEB_PORT:-3000}"
+export AO_CLOUD_LOCAL_POSTGRES_DATA_DIR="${AO_CLOUD_LOCAL_POSTGRES_DATA_DIR:-${AO_DATA_DIR:-$HOME/.ao}/cloud/postgres}"
 
 if [[ ! -f "$public_root/packages/product-ui/src/index.ts" || ! -f "$public_root/packages/cloud-client/src/index.ts" ]]; then
 	echo "The Cloud web UI must run from private/ao-cloud inside an Agent Orchestrator checkout." >&2
@@ -14,6 +15,7 @@ if [[ ! -f "$public_root/packages/product-ui/src/index.ts" || ! -f "$public_root
 fi
 
 cd "$root"
+mkdir -p "$AO_CLOUD_LOCAL_POSTGRES_DATA_DIR"
 docker compose up --build --detach --remove-orphans
 
 ready=false
