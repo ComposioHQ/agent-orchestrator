@@ -156,7 +156,10 @@ gitignored** — the run commands prebuild them for you.
 
 Cleartext HTTP to the bridge already works on both platforms: Android through
 `usesCleartextTraffic` in `app.json`, iOS through `NSAllowsLocalNetworking` in the prebuilt
-`Info.plist`.
+`Info.plist`. `NSAllowsLocalNetworking` only covers *local* destinations (RFC1918, link-local,
+`.local`), so plain HTTP to a Tailscale address needs its own App Transport Security exception —
+`app.json` adds one for the `100.64.0.0/10` CGNAT range. Any other non-local host has to use TLS
+(e.g. `tailscale serve` plus the app's **Use TLS** toggle).
 
 > **On `expo-dev-client`:** this package doesn't depend on it today, so the debug build
 > connects straight to Metro and has no in-app launcher or URL switcher. If you want the
