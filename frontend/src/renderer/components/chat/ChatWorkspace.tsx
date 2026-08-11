@@ -1022,7 +1022,8 @@ function Timeline({
 	);
 	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
-	const previews = useMemo(() => groups.map(groupPreview), [groups]);
+	const navigableGroups = useMemo(() => groups.filter(groupHasHumanPrompt), [groups]);
+	const previews = useMemo(() => navigableGroups.map(groupPreview), [navigableGroups]);
 
 	const updateScrollbar = useCallback(() => {
 		const node = scroller.current;
@@ -1228,7 +1229,10 @@ function Timeline({
 						</div>
 					) : null}
 					{groups.map((group) => (
-						<div key={group.key} data-chat-scroll-anchor="">
+						<div
+							key={group.key}
+							data-chat-scroll-anchor={groupHasHumanPrompt(group) ? "" : undefined}
+						>
 							<TurnGroup
 								group={group}
 								sessionId={snapshot.sessionId}
@@ -1704,6 +1708,10 @@ function groupPreview(group: TimelineGroup): GroupPreview {
 			: firstActivity?.detail?.text || firstActivity?.detail?.output || firstActivity?.summary;
 	const detail = detailSource ? previewText(detailSource, 240) : undefined;
 	return { title, detail: detail && detail !== title ? detail : undefined };
+}
+
+function groupHasHumanPrompt(group: TimelineGroup): boolean {
+	return group.items.some((item) => item.kind === "message" && item.role === "user" && item.origin === "human");
 }
 
 function previewText(value: string, limit: number): string {
