@@ -2,34 +2,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentSwitch } from "../hooks/useAgentSwitches";
 import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
 import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
-import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
+import type { WorkspaceSession } from "../types/workspace";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
 
 const switchMocks = vi.hoisted(() => ({
 	clear: vi.fn(),
 	mutate: vi.fn(),
-	query: {
-		data: [] as AgentSwitch[],
-		error: null as Error | null,
-		isPending: false,
-	},
 	state: {
 		error: null as string | null,
 		input: undefined as SwitchAgentInput | undefined,
 		isPending: false,
 	},
 }));
-
-vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("../hooks/useAgentSwitches")>();
-	return {
-		...actual,
-		useAgentSwitches: () => switchMocks.query,
-	};
-});
 
 vi.mock("../hooks/useSwitchAgent", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../hooks/useSwitchAgent")>();
@@ -56,21 +42,6 @@ const worker: WorkspaceSession = {
 	workspaceId: "proj-1",
 	workspaceName: "my-app",
 };
-
-function switchRecord(overrides: Partial<AgentSwitchSummary> = {}): AgentSwitchSummary {
-	return {
-		agentHandoffStatus: "not_attempted",
-		fromHarness: "claude-code",
-		id: "switch-1",
-		requestedAt: "2026-06-10T00:00:00Z",
-		semanticHandoffIncluded: true,
-		sessionId: "sess-1",
-		state: "starting_target",
-		targetHarness: "codex",
-		updatedAt: "2026-06-10T00:00:01Z",
-		...overrides,
-	};
-}
 
 function renderDialog(session: WorkspaceSession = worker, onOpenChange = vi.fn()) {
 	const queryClient = new QueryClient({
@@ -104,9 +75,6 @@ function renderDialog(session: WorkspaceSession = worker, onOpenChange = vi.fn()
 beforeEach(() => {
 	switchMocks.clear.mockReset();
 	switchMocks.mutate.mockReset();
-	switchMocks.query.data = [];
-	switchMocks.query.error = null;
-	switchMocks.query.isPending = false;
 	switchMocks.state.error = null;
 	switchMocks.state.input = undefined;
 	switchMocks.state.isPending = false;
@@ -114,7 +82,6 @@ beforeEach(() => {
 
 describe("SwitchAgentDialog", () => {
 	it("renders a compact agent and model picker without optional context or cancel actions", () => {
-		switchMocks.query.data = [switchRecord({ state: "completed" }) as AgentSwitch];
 		renderDialog();
 
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
@@ -188,25 +155,6 @@ describe("SwitchAgentDialog", () => {
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
 	});
 
-	it("keeps raw admission pending non-dismissible when a durable row appears", async () => {
-		switchMocks.state.input = {
-			idempotencyKey: "idempotency-1",
-			model: "gpt-5.4",
-			session: worker,
-			targetHarness: "codex",
-		};
-		switchMocks.state.isPending = true;
-
-		renderDialog({ ...worker, activeAgentSwitch: switchRecord() });
-		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-
-		expect(within(dialog).getByRole("status")).toHaveTextContent("Starting target agent");
-		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
-		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
-		await userEvent.keyboard("{Escape}");
-		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
-	});
-
 	it("keeps admission failures inline for correction", () => {
 		switchMocks.state.error = "target agent is unavailable";
 
@@ -214,27 +162,5 @@ describe("SwitchAgentDialog", () => {
 
 		expect(screen.getByRole("alert")).toHaveTextContent("target agent is unavailable");
 		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
-	});
-
-	it("uses the session's durable active summary while detailed history loads", () => {
-		switchMocks.query.isPending = true;
-
-		renderDialog({ ...worker, activeAgentSwitch: switchRecord() });
-
-		expect(screen.getByRole("status")).toHaveTextContent(
-			"Switching from Claude Code to CodexStarting target agent",
-		);
-		expect(screen.queryByText("Checking switch status…")).not.toBeInTheDocument();
-	});
-
-	it("reopens durable recovery as a static warning", () => {
-		renderDialog({
-			...worker,
-			activeAgentSwitch: switchRecord({ errorCode: "target_start_unconfirmed" }),
-		});
-
-		const warning = screen.getByRole("alert");
-		expect(warning).toHaveTextContent("Target startup could not be confirmed");
-		expect(warning.querySelector(".animate-spin")).not.toBeInTheDocument();
 	});
 });

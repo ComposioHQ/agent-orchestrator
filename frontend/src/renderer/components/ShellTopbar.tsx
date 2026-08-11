@@ -25,7 +25,10 @@ import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
+import {
+	deriveSessionAgentSwitchPresentation,
+	getAgentSwitchStatusView,
+} from "../lib/agent-switch-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -467,18 +470,11 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const agentSwitch = deriveSessionAgentSwitchPresentation(session);
+	const switchStatusView = agentSwitch ? getAgentSwitchStatusView(agentSwitch) : undefined;
 	const activity = getAgentActivityView(session.activity, t);
 	const label = agentSwitch ? t(agentSwitch.compactLabelKey, agentSwitch.values) : activity.label;
-	const tone = agentSwitch
-		? agentSwitch.tone === "working"
-			? "var(--color-status-working)"
-			: agentSwitch.tone === "warning"
-				? "var(--color-status-needs-you)"
-				: agentSwitch.tone === "danger"
-					? "var(--color-status-exited)"
-					: "var(--color-status-merged)"
-		: activity.tone;
-	const breathe = agentSwitch ? agentSwitch.animate && agentSwitch.tone === "working" : activity.breathe;
+	const tone = switchStatusView?.color ?? activity.tone;
+	const breathe = switchStatusView?.breathe ?? activity.breathe;
 	return (
 		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
 	);

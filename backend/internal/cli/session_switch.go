@@ -16,7 +16,6 @@ import (
 )
 
 type sessionSwitchAgentOptions struct {
-	note           string
 	idempotencyKey string
 	json           bool
 }
@@ -43,7 +42,6 @@ var (
 // coupling the thin CLI client to the HTTP controller package.
 type switchAgentRequest struct {
 	TargetHarness  string `json:"targetHarness"`
-	Note           string `json:"note,omitempty"`
 	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 }
 
@@ -98,7 +96,6 @@ func newSessionSwitchAgentCommand(ctx *commandContext) *cobra.Command {
 			return ctx.switchSessionAgent(cmd.Context(), cmd, sessionID, targetHarness, opts)
 		},
 	}
-	cmd.Flags().StringVar(&opts.note, "note", "", "Optional guidance for the handoff")
 	cmd.Flags().StringVar(&opts.idempotencyKey, "idempotency-key", "", "Reuse a prior identical switch request safely")
 	cmd.Flags().BoolVar(&opts.json, "json", false, "Output the agent switch as JSON")
 	return cmd
@@ -172,7 +169,6 @@ func (c *commandContext) switchSessionAgent(
 
 	req := switchAgentRequest{
 		TargetHarness:  targetHarness,
-		Note:           strings.TrimSpace(opts.note),
 		IdempotencyKey: strings.TrimSpace(opts.idempotencyKey),
 	}
 	var res agentSwitchResponse

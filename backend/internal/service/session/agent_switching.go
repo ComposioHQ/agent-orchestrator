@@ -13,7 +13,6 @@ import (
 type SwitchAgentInput struct {
 	TargetHarness  domain.AgentHarness
 	Model          string
-	Note           string
 	IdempotencyKey string
 }
 
@@ -22,7 +21,6 @@ func (s *Service) SwitchAgent(ctx context.Context, id domain.SessionID, in Switc
 	switchRecord, err := s.manager.SwitchAgent(ctx, id, sessionmanager.SwitchAgentConfig{
 		TargetHarness:  in.TargetHarness,
 		Model:          in.Model,
-		Note:           in.Note,
 		IdempotencyKey: in.IdempotencyKey,
 	})
 	return switchRecord, toAPIError(err)

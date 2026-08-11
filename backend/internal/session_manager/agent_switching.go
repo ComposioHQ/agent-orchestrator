@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	maxSwitchNoteBytes          = 16 << 10
 	conversationFactBytes       = 16 << 10
 	handoffContinuationMaxBytes = 96 << 10
 	// Retain a small bounded prefix of each deterministic conversation fact in
@@ -53,7 +52,6 @@ var (
 type SwitchAgentConfig struct {
 	TargetHarness  domain.AgentHarness
 	Model          string
-	Note           string
 	IdempotencyKey string
 }
 
@@ -133,14 +131,13 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	}
 	cfg.TargetHarness = domain.AgentHarness(strings.TrimSpace(string(cfg.TargetHarness)))
 	cfg.Model = strings.TrimSpace(cfg.Model)
-	cfg.Note = boundedString(strings.TrimSpace(cfg.Note), maxSwitchNoteBytes)
 	cfg.IdempotencyKey = strings.TrimSpace(cfg.IdempotencyKey)
-	requestFingerprint := domain.ComputeAgentSwitchRequestFingerprint(id, cfg.TargetHarness, cfg.Note, cfg.Model)
+	requestFingerprint := domain.ComputeAgentSwitchRequestFingerprint(id, cfg.TargetHarness, cfg.Model)
 	if cfg.IdempotencyKey != "" {
 		if existing, ok, err := store.GetAgentSwitchByIdempotencyKey(ctx, id, cfg.IdempotencyKey); err != nil {
 			return domain.AgentSwitch{}, nil, fmt.Errorf("switch agent %s: idempotency lookup: %w", id, err)
 		} else if ok {
-			if !existing.RequestFingerprint.MatchesRequest(id, cfg.TargetHarness, cfg.Note, cfg.Model) {
+			if !existing.RequestFingerprint.MatchesRequest(id, cfg.TargetHarness, cfg.Model) {
 				return existing, nil, fmt.Errorf("switch agent %s: %w", id, domain.ErrAgentSwitchIdempotencyConflict)
 			}
 			return existing, nil, nil
@@ -505,7 +502,6 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	includeTranscriptFallback := !semanticHandoffAvailable
 	observedTranscript, sourceTranscriptStatus := m.captureSourceTranscriptFact(ctx, sourceAgent, sourceNative, includeTranscriptFallback)
 	finalContext := deterministicSwitchContext{
-		UserNote:              cfg.Note,
 		OriginalTask:          stoppedSession.Metadata.Prompt,
 		LatestUserPrompt:      stoppedSession.Metadata.LatestUserPrompt,
 		LatestAssistantUpdate: stoppedSession.Metadata.LatestAssistantUpdate,
@@ -1825,9 +1821,8 @@ func buildTargetContinuationMessageBody(sw domain.AgentSwitch, snapshot determin
 	}
 	semanticAvailable := len(bytes.TrimSpace(snapshot.SemanticHandoff)) > 0
 	switchFacts, _ := json.MarshalIndent(struct {
-		UserNote   string    `json:"userNote,omitempty"`
 		CapturedAt time.Time `json:"capturedAt"`
-	}{UserNote: snapshot.UserNote, CapturedAt: snapshot.CapturedAt}, "", "  ")
+	}{CapturedAt: snapshot.CapturedAt}, "", "  ")
 	workspaceFacts, _ := json.MarshalIndent(snapshot.Workspaces, "", "  ")
 	prFacts, _ := json.MarshalIndent(snapshot.PullRequests, "", "  ")
 

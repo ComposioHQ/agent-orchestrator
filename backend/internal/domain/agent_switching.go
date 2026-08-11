@@ -25,9 +25,9 @@ type AgentSwitchRequestFingerprint string
 const agentSwitchRequestFingerprintPrefix = "v1:"
 
 // ComputeAgentSwitchRequestFingerprint deterministically binds an idempotency
-// key to the stable request tuple. Note whitespace is normalized in the same
-// way as the switch entry point before it is hashed.
-func ComputeAgentSwitchRequestFingerprint(sessionID SessionID, targetHarness AgentHarness, note, model string) AgentSwitchRequestFingerprint {
+// key to the stable request tuple. The retired note slot remains empty in the
+// encoded payload so retries of existing note-free requests keep matching.
+func ComputeAgentSwitchRequestFingerprint(sessionID SessionID, targetHarness AgentHarness, model string) AgentSwitchRequestFingerprint {
 	payload, _ := json.Marshal(struct {
 		SessionID     SessionID    `json:"sessionId"`
 		TargetHarness AgentHarness `json:"targetHarness"`
@@ -36,18 +36,17 @@ func ComputeAgentSwitchRequestFingerprint(sessionID SessionID, targetHarness Age
 	}{
 		SessionID:     sessionID,
 		TargetHarness: targetHarness,
-		Note:          strings.TrimSpace(note),
+		Note:          "",
 		Model:         strings.TrimSpace(model),
 	})
 	sum := sha256.Sum256(payload)
 	return AgentSwitchRequestFingerprint(agentSwitchRequestFingerprintPrefix + hex.EncodeToString(sum[:]))
 }
 
-// MatchesRequest preserves idempotent retries created before model selection
-// became part of the switch request. A legacy fingerprint can only match when
-// no model override is requested because the old tuple did not bind that field.
-func (f AgentSwitchRequestFingerprint) MatchesRequest(sessionID SessionID, targetHarness AgentHarness, note, model string) bool {
-	if f == ComputeAgentSwitchRequestFingerprint(sessionID, targetHarness, note, model) {
+// MatchesRequest preserves idempotent note-free retries created before model
+// selection became part of the switch request.
+func (f AgentSwitchRequestFingerprint) MatchesRequest(sessionID SessionID, targetHarness AgentHarness, model string) bool {
+	if f == ComputeAgentSwitchRequestFingerprint(sessionID, targetHarness, model) {
 		return true
 	}
 	if strings.TrimSpace(model) != "" {
@@ -60,7 +59,7 @@ func (f AgentSwitchRequestFingerprint) MatchesRequest(sessionID SessionID, targe
 	}{
 		SessionID:     sessionID,
 		TargetHarness: targetHarness,
-		Note:          strings.TrimSpace(note),
+		Note:          "",
 	})
 	sum := sha256.Sum256(payload)
 	return f == AgentSwitchRequestFingerprint(agentSwitchRequestFingerprintPrefix+hex.EncodeToString(sum[:]))

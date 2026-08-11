@@ -1,11 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agentSwitchesQueryKey, type AgentSwitch } from "../hooks/useAgentSwitches";
 import { AGENT_OPTIONS } from "../lib/agent-options";
-import type { WorkspaceSession } from "../types/workspace";
+import {
+	deriveAgentSwitchPresentation,
+	type AgentSwitchPresentation,
+} from "../lib/agent-switch-presentation";
+import type { AgentSwitchSummary, WorkspaceSession } from "../types/workspace";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -42,7 +45,7 @@ const worker: WorkspaceSession = {
 	workspaceName: "my-app",
 };
 
-function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
+function switchRecord(overrides: Partial<AgentSwitchSummary> = {}): AgentSwitchSummary {
 	return {
 		agentHandoffStatus: "not_attempted",
 		fromHarness: "claude-code",
@@ -57,7 +60,26 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 	};
 }
 
-function SwitchControlHarness({ session }: { session: WorkspaceSession }) {
+function switchPresentation(
+	agentSwitch: AgentSwitchSummary,
+	session: WorkspaceSession = worker,
+): AgentSwitchPresentation {
+	return deriveAgentSwitchPresentation({
+		agentSwitch,
+		activityState: session.activity?.state,
+		currentHarness: session.provider,
+		isTerminated: Boolean(session.isTerminated),
+		terminalHandleId: session.terminalHandleId,
+	});
+}
+
+function SwitchControlHarness({
+	presentation,
+	session,
+}: {
+	presentation?: AgentSwitchPresentation;
+	session: WorkspaceSession;
+}) {
 	const [container, setContainer] = useState<HTMLDivElement | null>(null);
 	const [open, setOpen] = useState(false);
 	return (
@@ -66,20 +88,25 @@ function SwitchControlHarness({ session }: { session: WorkspaceSession }) {
 				container={container}
 				onOpenChange={setOpen}
 				open={open}
+				presentation={presentation}
 				session={session}
+				switchError={null}
 			/>
 		</div>
 	);
 }
 
-function renderControl(session: WorkspaceSession = worker) {
+function renderControl(
+	session: WorkspaceSession = worker,
+	presentation?: AgentSwitchPresentation,
+) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
-	const control = (nextSession: WorkspaceSession) => (
+	const control = (nextSession: WorkspaceSession, nextPresentation = presentation) => (
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<SwitchControlHarness key={nextSession.id} session={nextSession} />
+				<SwitchControlHarness key={nextSession.id} presentation={nextPresentation} session={nextSession} />
 			</TooltipProvider>
 		</QueryClientProvider>
 	);
@@ -87,7 +114,6 @@ function renderControl(session: WorkspaceSession = worker) {
 	return {
 		...result,
 		queryClient,
-		rerenderControl: (nextSession: WorkspaceSession) => result.rerender(control(nextSession)),
 	};
 }
 
@@ -130,9 +156,8 @@ describe("TerminalSwitchAgentButton", () => {
 		["unsupported provider", { provider: "cursor" }],
 		["terminated worker", { isTerminated: true, status: "terminated" }],
 		["orchestrator", { id: "orch-1", kind: "orchestrator" }],
-	] as const)("does not render for an %s", async (_name, overrides) => {
+	] as const)("does not render for an %s", (_name, overrides) => {
 		renderControl({ ...worker, ...overrides } as WorkspaceSession);
-		await waitFor(() => expect(getMock).toHaveBeenCalled());
 		expect(screen.queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
 	});
 
@@ -187,7 +212,7 @@ describe("TerminalSwitchAgentButton", () => {
 		await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 	});
 
-	it("shows terminal progress while keeping the dialog locked during admission", async () => {
+	it("keeps the selector locked during admission", async () => {
 		postMock.mockReturnValue(new Promise(() => {}));
 		renderControl();
 
@@ -198,36 +223,6 @@ describe("TerminalSwitchAgentButton", () => {
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
 		expect(within(dialog).getByRole("button", { name: "Starting..." })).toBeDisabled();
 		expect(within(dialog).getByRole("button", { name: "Close switch agent dialog" })).toBeDisabled();
-		expect(document.querySelector('button[aria-label="Switching to Codex"]')).toHaveAttribute(
-			"aria-busy",
-			"true",
-		);
-	});
-
-	it("ignores unrelated settled completion history during a new admission", async () => {
-		const settledSession = {
-			...worker,
-			provider: "codex",
-			terminalHandleId: "settled-target-terminal",
-		} satisfies WorkspaceSession;
-		getMock.mockResolvedValue({
-			data: { switches: [switchRecord({ state: "completed" })] },
-			error: undefined,
-			response: { status: 200 },
-		});
-		postMock.mockReturnValue(new Promise(() => {}));
-		renderControl(settledSession);
-
-		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
-		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		expect(within(dialog).queryByText("Completed")).not.toBeInTheDocument();
-		await userEvent.click(within(dialog).getByRole("button", { name: "Switch" }));
-
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(document.querySelector('button[aria-label="Switching to Claude Code"]')).toHaveAttribute(
-			"aria-busy",
-			"true",
-		);
 	});
 
 	it("keeps the dialog open when the daemon does not accept the switch", async () => {
@@ -245,98 +240,49 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
 	});
 
-	it("restores durable progress and keeps it inspectable after the source exits", async () => {
-		const activeSwitch = switchRecord();
-		getMock.mockResolvedValue({
-			data: { switches: [{ ...activeSwitch, state: "target_ready" }] },
-			error: undefined,
-			response: { status: 200 },
-		});
-		renderControl({
+	it("renders durable progress as a non-interactive status", async () => {
+		const activeSwitch = switchRecord({ state: "delivering_context" });
+		const exitedSession = {
 			...worker,
 			activeAgentSwitch: activeSwitch,
 			activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
 			status: "exited",
-		});
-
-		const button = await screen.findByRole("button", { name: "Switching to Codex" });
-		await userEvent.click(button);
-		expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent(
-			"Switching from Claude Code to CodexTarget ready",
-		);
-	});
-
-	it("uses the shared compact presentation for an active switch", async () => {
-		const activeSwitch = switchRecord({ state: "delivering_context" });
-		getMock.mockResolvedValue({
-			data: { switches: [activeSwitch] },
-			error: undefined,
-			response: { status: 200 },
-		});
-
-		renderControl({ ...worker, activeAgentSwitch: activeSwitch });
+		} satisfies WorkspaceSession;
+		renderControl(exitedSession, switchPresentation(activeSwitch, exitedSession));
 
 		const button = await screen.findByRole("button", { name: "Switching to Codex" });
 		expect(button).toHaveAttribute("aria-busy", "true");
+		expect(button).toBeDisabled();
 		expect(button.querySelector(".lucide-loader-circle")).toBeInTheDocument();
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
 	it("shows a static recovery warning when target startup is unconfirmed", async () => {
 		const recoverySwitch = switchRecord({ errorCode: "target_start_unconfirmed" });
-		getMock.mockResolvedValue({
-			data: { switches: [recoverySwitch] },
-			error: undefined,
-			response: { status: 200 },
-		});
-		renderControl({
+		const exitedSession = {
 			...worker,
 			activeAgentSwitch: recoverySwitch,
 			activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
 			status: "exited",
-		});
+		} satisfies WorkspaceSession;
+		renderControl(exitedSession, switchPresentation(recoverySwitch, exitedSession));
 
 		const button = await screen.findByRole("button", { name: "Agent switch needs recovery" });
 		expect(button).not.toHaveAttribute("aria-busy");
+		expect(button).toBeDisabled();
+		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("keeps a terminal failure available for a fresh switch attempt", async () => {
+		const failedSwitch = switchRecord({ errorCode: "target_binary_missing", state: "failed" });
+		renderControl(worker, switchPresentation(failedSwitch));
+
+		const button = await screen.findByRole("button", { name: "Agent switch failed" });
+		expect(button).not.toBeDisabled();
 		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
 		await userEvent.click(button);
-		expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
-			"AO could not confirm whether the target agent started. Terminal input remains locked to prevent two agents from owning the session.",
-		);
-	});
-
-	it("changes an observed terminal failure to a static warning treatment", async () => {
-		const activeSwitch = switchRecord({ state: "starting_target" });
-		getMock.mockResolvedValue({
-			data: { switches: [activeSwitch] },
-			error: undefined,
-			response: { status: 200 },
-		});
-		const { queryClient, rerenderControl } = renderControl({ ...worker, activeAgentSwitch: activeSwitch });
-		await screen.findByRole("button", { name: "Switching to Codex" });
-
-		act(() => {
-			queryClient.setQueryData(agentSwitchesQueryKey(worker.id), [
-				{ ...activeSwitch, errorCode: "target_binary_missing", state: "failed" },
-			]);
-		});
-		rerenderControl(worker);
-
-		const button = screen.getByRole("button", { name: "Agent switch failed" });
-		expect(button).not.toHaveAttribute("aria-busy");
-		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
-	});
-
-	it("does not expose durable switch history in the configuration dialog", async () => {
-		getMock.mockResolvedValue({
-			data: { switches: [switchRecord({ state: "completed" })] },
-			error: undefined,
-			response: { status: 200 },
-		});
-		renderControl();
-
-		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
-		expect(screen.queryByText("Switch history")).not.toBeInTheDocument();
-		expect(screen.queryByTestId("agent-switch-history")).not.toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
 	});
 
 	it("reopens a rejected switch and retries with a fresh idempotency key", async () => {

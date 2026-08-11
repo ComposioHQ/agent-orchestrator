@@ -1,6 +1,6 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
+import { LoaderCircle, Repeat2, X } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -10,13 +10,7 @@ import {
 	useSwitchAgent,
 	useSwitchAgentState,
 } from "../hooks/useSwitchAgent";
-import {
-	findActiveAgentSwitch,
-	findRecoveryRequiredAgentSwitch,
-	useAgentSwitches,
-} from "../hooks/useAgentSwitches";
 import { AGENT_LABELS, AGENT_OPTIONS, agentLabel } from "../lib/agent-options";
-import { deriveAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentModelPicker } from "./AgentModelPicker";
@@ -115,26 +109,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	const [modelWarning, setModelWarning] = useState<string | undefined>();
 	const switchAgent = useSwitchAgent();
 	const switchMutation = useSwitchAgentState(session.id);
-	const switchesQuery = useAgentSwitches(session.id);
-	const switches = switchesQuery.data ?? [];
-	const activeHistorySwitch = findActiveAgentSwitch(switches);
-	const recoveryHistorySwitch = findRecoveryRequiredAgentSwitch(switches);
-	const detailedSessionSwitch = session.activeAgentSwitch
-		? switches.find((entry) => entry.id === session.activeAgentSwitch?.id)
-		: undefined;
-	const durableSwitch =
-		detailedSessionSwitch ?? session.activeAgentSwitch ?? recoveryHistorySwitch ?? activeHistorySwitch;
-	const checkingStatus = switchesQuery.isPending && !durableSwitch;
 	const admissionPending = switchMutation.isPending;
-	const durablePresentation = durableSwitch
-		? deriveAgentSwitchPresentation({
-				agentSwitch: durableSwitch,
-				activityState: session.activity?.state,
-				currentHarness: session.provider,
-				isTerminated: session.isTerminated ?? false,
-				terminalHandleId: session.terminalHandleId,
-			})
-		: undefined;
 	const clearFailedAttempt = () => {
 		if (!switchMutation.error) return;
 		clearSwitchAgentState(queryClient, session.id);
@@ -150,7 +125,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		if (admissionPending || checkingStatus || durableSwitch) return;
+		if (admissionPending) return;
 		switchAgent.mutate(
 			{
 				session,
@@ -163,8 +138,6 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	};
 
 	const error = switchMutation.error;
-	const statusError = switchesQuery.error instanceof Error ? switchesQuery.error.message : null;
-	const showComposer = admissionPending || (!durablePresentation && !checkingStatus);
 
 	return (
 		<Dialog.Root
@@ -182,145 +155,88 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 					data-testid="switch-agent-terminal-backdrop"
 				/>
 				<Dialog.Content className="absolute left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-				<Dialog.Close asChild>
-					<button
-						aria-label={t("switchAgent.close")}
-						className="settings-dialog-close-button settings-close-button"
-						disabled={admissionPending}
-						type="button"
-					>
-						<X className="size-icon-base" aria-hidden="true" />
-					</button>
-				</Dialog.Close>
-				<Dialog.Title className="settings-dialog-title px-4 pr-12 pt-3">
-					{t("switchAgent.title")}
-				</Dialog.Title>
-				<Dialog.Description className="px-4 pr-12 pt-0.5 text-caption leading-4 text-muted-foreground">
-					{t("switchAgent.description", { current: agentLabel(session.provider) })}
-				</Dialog.Description>
+					<Dialog.Close asChild>
+						<button
+							aria-label={t("switchAgent.close")}
+							className="settings-dialog-close-button settings-close-button"
+							disabled={admissionPending}
+							type="button"
+						>
+							<X className="size-icon-base" aria-hidden="true" />
+						</button>
+					</Dialog.Close>
+					<Dialog.Title className="settings-dialog-title px-4 pr-12 pt-3">
+						{t("switchAgent.title")}
+					</Dialog.Title>
+					<Dialog.Description className="px-4 pr-12 pt-0.5 text-caption leading-4 text-muted-foreground">
+						{t("switchAgent.description", { current: agentLabel(session.provider) })}
+					</Dialog.Description>
 
-				{showComposer ? (
 					<form className="flex flex-col gap-3 px-4 pb-4 pt-4" onSubmit={submit}>
-							{admissionPending && durablePresentation ? (
-								<div
-									aria-label={t(durablePresentation.compactLabelKey, durablePresentation.values)}
-									className="flex items-start gap-2 px-4 pt-3"
-									role="status"
-								>
-									<LoaderCircle className="mt-0.5 size-icon-sm shrink-0 animate-spin" aria-hidden="true" />
-									<div>
-										<div className="text-control font-medium text-foreground">
-											{t(durablePresentation.titleKey, durablePresentation.values)}
-										</div>
-										<p className="mt-0.5 text-caption leading-4 text-muted-foreground">
-											{t(durablePresentation.descriptionKey, durablePresentation.values)}
-										</p>
-									</div>
-								</div>
-							) : null}
-							{error || statusError || modelWarning ? (
-								<div>
-									{error ? (
-										<p className="text-caption leading-4 text-error" role="alert">
-											{error}
-										</p>
-									) : null}
-									{!error && statusError ? (
-										<p className="text-caption leading-4 text-error" role="alert">
-											{statusError}
-										</p>
-									) : null}
-									{!error && !statusError && modelWarning ? (
-										<p className="text-caption text-warning">{modelWarning}</p>
-									) : null}
-								</div>
-							) : null}
-
-							<div className="composer-toolbar p-0!">
-								<div className="composer-run-controls" role="group" aria-label={t("newTask.runsWith")}>
-									<div className="composer-toolbar-slot">
-										<SwitchTargetPicker
-											currentHarness={session.provider}
-											disabled={admissionPending}
-											onChange={changeTarget}
-											value={targetHarness}
-										/>
-									</div>
-									<span className="composer-toolbar-divider" aria-hidden="true" />
-									<div className="composer-toolbar-slot">
-										<AgentModelPicker
-											agentId={targetHarness}
-											agentLabel={agentLabel(targetHarness)}
-											disabled={admissionPending}
-											id={modelId}
-											mode={mode}
-											onModeChange={(value) => {
-												clearFailedAttempt();
-												setMode(value);
-												setModel("");
-											}}
-											onModelChange={(value) => {
-												clearFailedAttempt();
-												setModel(value);
-												setMode("");
-											}}
-											onWarningChange={setModelWarning}
-											projectId={session.workspaceId}
-											value={model}
-										/>
-									</div>
-								</div>
-								<Button
-									aria-label={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
-									className="size-(--size-settings-action-height)"
-									disabled={admissionPending}
-									size="none"
-									title={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
-									type="submit"
-									variant="primary"
-								>
-									{admissionPending ? (
-										<LoaderCircle className="size-icon-base animate-spin" aria-hidden="true" />
-									) : (
-										<Repeat2 className="size-4 stroke-[1.8]" aria-hidden="true" />
-									)}
-								</Button>
-							</div>
-						</form>
-					) : durablePresentation ? (
-						<div className="flex flex-col gap-4 px-4 pb-3 pt-4">
-							<div
-								aria-label={t(durablePresentation.compactLabelKey, durablePresentation.values)}
-								className={
-									durablePresentation.outcome === "recovery"
-										? "flex items-start gap-2 rounded-md border border-warning/35 bg-warning/5 px-3 py-2.5"
-										: "flex items-start gap-2 py-1"
-								}
-								role={durablePresentation.outcome === "recovery" ? "alert" : "status"}
-							>
-								{durablePresentation.outcome === "recovery" ? (
-									<TriangleAlert className="mt-0.5 size-icon-sm shrink-0 text-warning" aria-hidden="true" />
-								) : durablePresentation.animate ? (
-									<LoaderCircle className="mt-0.5 size-icon-sm shrink-0 animate-spin" aria-hidden="true" />
-								) : null}
-								<div>
-									<div className="text-control font-medium text-foreground">
-										{t(durablePresentation.titleKey, durablePresentation.values)}
-									</div>
-									<p className="mt-0.5 text-caption leading-4 text-muted-foreground">
-										{t(durablePresentation.descriptionKey, durablePresentation.values)}
+						{error || modelWarning ? (
+							<div>
+								{error ? (
+									<p className="text-caption leading-4 text-error" role="alert">
+										{error}
 									</p>
+								) : null}
+								{!error && modelWarning ? (
+									<p className="text-caption text-warning">{modelWarning}</p>
+								) : null}
+							</div>
+						) : null}
+
+						<div className="composer-toolbar p-0!">
+							<div className="composer-run-controls" role="group" aria-label={t("newTask.runsWith")}>
+								<div className="composer-toolbar-slot">
+									<SwitchTargetPicker
+										currentHarness={session.provider}
+										disabled={admissionPending}
+										onChange={changeTarget}
+										value={targetHarness}
+									/>
+								</div>
+								<span className="composer-toolbar-divider" aria-hidden="true" />
+								<div className="composer-toolbar-slot">
+									<AgentModelPicker
+										agentId={targetHarness}
+										agentLabel={agentLabel(targetHarness)}
+										disabled={admissionPending}
+										id={modelId}
+										mode={mode}
+										onModeChange={(value) => {
+											clearFailedAttempt();
+											setMode(value);
+											setModel("");
+										}}
+										onModelChange={(value) => {
+											clearFailedAttempt();
+											setModel(value);
+											setMode("");
+										}}
+										onWarningChange={setModelWarning}
+										projectId={session.workspaceId}
+										value={model}
+									/>
 								</div>
 							</div>
+							<Button
+								aria-label={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
+								className="size-(--size-settings-action-height)"
+								disabled={admissionPending}
+								size="none"
+								title={admissionPending ? t("newTask.starting") : t("switchAgent.confirm")}
+								type="submit"
+								variant="primary"
+							>
+								{admissionPending ? (
+									<LoaderCircle className="size-icon-base animate-spin" aria-hidden="true" />
+								) : (
+									<Repeat2 className="size-4 stroke-[1.8]" aria-hidden="true" />
+								)}
+							</Button>
 						</div>
-					) : checkingStatus ? (
-						<div className="flex flex-col gap-4 px-4 pb-3 pt-4">
-							<div className="inline-flex items-center gap-2 text-control text-muted-foreground" role="status">
-								<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
-								{t("switchAgent.checkingStatus")}
-							</div>
-						</div>
-					) : null}
+					</form>
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>

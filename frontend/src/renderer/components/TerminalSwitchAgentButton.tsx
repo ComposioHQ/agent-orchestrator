@@ -1,21 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import {
-	findActiveAgentSwitch,
-	findRecoveryRequiredAgentSwitch,
-	isTerminalAgentSwitch,
-	useAgentSwitches,
-} from "../hooks/useAgentSwitches";
-import { clearSwitchAgentState, useSwitchAgentState } from "../hooks/useSwitchAgent";
-import { deriveAgentSwitchPresentation } from "../lib/agent-switch-presentation";
+import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
+import type { AgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { cn } from "../lib/utils";
-import {
-	sessionIsActive,
-	type AgentSwitchSummary,
-	type WorkspaceSession,
-} from "../types/workspace";
+import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { canSwitchAgentHarness, SwitchAgentDialog } from "./SwitchAgentDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -23,73 +13,29 @@ type TerminalSwitchAgentButtonProps = {
 	container: HTMLElement | null | undefined;
 	onOpenChange: ((open: boolean) => void) | undefined;
 	open: boolean;
+	presentation?: AgentSwitchPresentation;
 	session: WorkspaceSession;
+	switchError: string | null;
 };
 
-export function TerminalSwitchAgentButton({ container, onOpenChange, open, session }: TerminalSwitchAgentButtonProps) {
+export function TerminalSwitchAgentButton({
+	container,
+	onOpenChange,
+	open,
+	presentation,
+	session,
+	switchError,
+}: TerminalSwitchAgentButtonProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const switches = useAgentSwitches(session.id).data ?? [];
-	const switchMutation = useSwitchAgentState(session.id);
-	const observedNonterminalSwitchIdsRef = useRef(new Set<string>());
-	const sessionSwitch = session.activeAgentSwitch;
-	const detailedSessionSwitch = sessionSwitch
-		? switches.find((entry) => entry.id === sessionSwitch.id)
-		: undefined;
-	const activeHistorySwitch = findActiveAgentSwitch(switches);
-	const recoveryHistorySwitch = findRecoveryRequiredAgentSwitch(switches);
-	const latestCompletedSwitch = switches[0]?.state === "completed" ? switches[0] : undefined;
-	if (sessionSwitch && !isTerminalAgentSwitch(sessionSwitch)) {
-		observedNonterminalSwitchIdsRef.current.add(sessionSwitch.id);
-	}
-	if (activeHistorySwitch) observedNonterminalSwitchIdsRef.current.add(activeHistorySwitch.id);
-	const observedTerminalSwitch = switches.find(
-		(entry) =>
-			isTerminalAgentSwitch(entry) && observedNonterminalSwitchIdsRef.current.has(entry.id),
-	);
-	const currentSwitch =
-		detailedSessionSwitch ??
-		sessionSwitch ??
-		recoveryHistorySwitch ??
-		activeHistorySwitch;
-	const admissionSwitch: AgentSwitchSummary<string> | undefined =
-		!currentSwitch && switchMutation.isPending && switchMutation.input
-			? {
-				agentHandoffStatus: "not_attempted",
-				fromHarness: switchMutation.input.session.provider,
-				id: `admission:${switchMutation.input.idempotencyKey}`,
-				requestedAt: "",
-				semanticHandoffIncluded: true,
-				sessionId: switchMutation.input.session.id,
-				state: "preparing_handoff",
-				targetHarness: switchMutation.input.targetHarness,
-				updatedAt: "",
-			}
-			: undefined;
-	const agentSwitch =
-		currentSwitch ??
-		admissionSwitch ??
-		latestCompletedSwitch ??
-		observedTerminalSwitch;
-	if (agentSwitch && !isTerminalAgentSwitch(agentSwitch)) {
-		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
-	}
-	const presentation = agentSwitch
-		? deriveAgentSwitchPresentation({
-			agentSwitch,
-			activityState: session.activity?.state,
-			currentHarness: session.provider,
-			isTerminated: Boolean(session.isTerminated),
-			terminalHandleId: session.terminalHandleId,
-		})
-		: undefined;
 	const controlPresentation = presentation?.outcome === "success" ? undefined : presentation;
 	const switching = controlPresentation?.outcome === "in_progress";
 	const warning = controlPresentation?.outcome === "failure" || controlPresentation?.outcome === "recovery";
+	const blocksNewSwitch = switching || controlPresentation?.outcome === "recovery";
 
 	useEffect(() => {
-		if (switchMutation.error) onOpenChange?.(true);
-	}, [onOpenChange, switchMutation.error]);
+		if (switchError) onOpenChange?.(true);
+	}, [onOpenChange, switchError]);
 
 	if (
 		session.kind !== "worker" ||
@@ -105,7 +51,7 @@ export function TerminalSwitchAgentButton({ container, onOpenChange, open, sessi
 		: t("switchAgent.action");
 	const handleOpenChange = (nextOpen: boolean) => {
 		onOpenChange?.(nextOpen);
-		if (!nextOpen && switchMutation.error) {
+		if (!nextOpen && switchError) {
 			clearSwitchAgentState(queryClient, session.id);
 		}
 	};
@@ -121,6 +67,7 @@ export function TerminalSwitchAgentButton({ container, onOpenChange, open, sessi
 							"ml-1 grid size-6 shrink-0 place-items-center rounded-full border border-border/70 bg-background/45 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
 							warning && "border-warning/50 text-warning hover:border-warning/70 hover:text-warning",
 						)}
+						disabled={blocksNewSwitch}
 						onClick={() => handleOpenChange(true)}
 						type="button"
 					>

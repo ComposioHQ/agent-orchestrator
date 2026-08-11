@@ -37,7 +37,6 @@ const (
 	maxMessageLen     = 4096
 	maxModelLen       = 256
 	maxDisplayNameLen = 20
-	maxSwitchNoteLen  = 4096
 	maxIdempotencyKey = 128
 
 	// Agent-authored handoffs are deliberately bounded. Deterministic AO
@@ -1056,11 +1055,6 @@ func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "Model must be 256 characters or fewer", nil)
 		return
 	}
-	note := domain.SanitizeControlChars(strings.TrimSpace(in.Note))
-	if len(note) > maxSwitchNoteLen {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SWITCH_NOTE_TOO_LONG", "note is too long", nil)
-		return
-	}
 	idempotencyKey := strings.TrimSpace(in.IdempotencyKey)
 	if len(idempotencyKey) > maxIdempotencyKey {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "IDEMPOTENCY_KEY_TOO_LONG", "idempotencyKey is too long", nil)
@@ -1069,7 +1063,6 @@ func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request)
 	switchRecord, err := c.Svc.SwitchAgent(r.Context(), sessionID(r), sessionsvc.SwitchAgentInput{
 		TargetHarness:  targetHarness,
 		Model:          model,
-		Note:           note,
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {

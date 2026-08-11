@@ -26,7 +26,10 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
+import {
+	deriveSessionAgentSwitchPresentation,
+	getAgentSwitchStatusView,
+} from "../lib/agent-switch-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -152,13 +155,7 @@ function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const activity = getAgentActivityView(session.activity);
 	const agentSwitch = deriveSessionAgentSwitchPresentation(session);
 	const indicatorClassName = agentSwitch
-		? agentSwitch.tone === "working"
-			? "bg-status-working animate-status-pulse"
-			: agentSwitch.tone === "warning"
-				? "bg-status-needs-you"
-				: agentSwitch.tone === "danger"
-					? "bg-status-exited"
-					: "bg-status-merged"
+		? getAgentSwitchStatusView(agentSwitch).indicatorClassName
 		: activity.indicatorClassName;
 	return (
 		<span

@@ -97,7 +97,6 @@ func TestSessionSwitchAgentPostsRequestAndPrintsSwitch(t *testing.T) {
 
 	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
 		"session", "switch-agent", "demo-1", "codex",
-		"--note", "preserve the current investigation",
 		"--idempotency-key", "switch-key",
 	)
 	if err != nil {
@@ -113,7 +112,6 @@ func TestSessionSwitchAgentPostsRequestAndPrintsSwitch(t *testing.T) {
 	}
 	want := switchAgentRequest{
 		TargetHarness:  "codex",
-		Note:           "preserve the current investigation",
 		IdempotencyKey: "switch-key",
 	}
 	if !reflect.DeepEqual(got, want) {

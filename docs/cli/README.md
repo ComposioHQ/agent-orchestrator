@@ -75,11 +75,10 @@ paths. If `AO_SESSION_ID` is set but the session cannot be fetched, pass
 
 Agent switching is initially available only for worker sessions whose source
 and target harnesses are Claude Code or Codex. The main command
-accepts optional handoff guidance and an idempotency key:
+accepts an idempotency key:
 
 ```bash
 ao session switch-agent ao-7 codex \
-  --note "Continue the failing integration test" \
   --idempotency-key switch-ao-7-to-codex
 
 ao session agent-switch ls ao-7 --json

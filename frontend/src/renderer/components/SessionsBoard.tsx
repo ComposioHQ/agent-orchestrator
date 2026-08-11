@@ -32,7 +32,10 @@ import {
 	type AttentionZone,
 	type AttentionZoneView,
 } from "../lib/session-presentation";
-import { deriveSessionAgentSwitchPresentation } from "../lib/agent-switch-presentation";
+import {
+	deriveSessionAgentSwitchPresentation,
+	getAgentSwitchStatusView,
+} from "../lib/agent-switch-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import {
 	useSessionUsageSummaries,
@@ -846,30 +849,17 @@ function SessionCard({
 	const badge = getSessionStatusView(session.status, t);
 	const activity = getAgentActivityView(session.activity, t);
 	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
+	const switchStatusView = switchPresentation
+		? getAgentSwitchStatusView(switchPresentation)
+		: undefined;
 	const switchLabel = switchPresentation
 		? t(switchPresentation.compactLabelKey, switchPresentation.values)
 		: undefined;
-	const switchClassName = switchPresentation
-		? switchPresentation.tone === "working"
-			? "text-status-working"
-			: switchPresentation.tone === "warning"
-				? "text-status-needs-you"
-				: switchPresentation.tone === "danger"
-					? "text-status-exited"
-					: "text-status-merged"
-		: undefined;
-	const switchTone = switchPresentation
-		? switchPresentation.tone === "working"
-			? "var(--color-status-working)"
-			: switchPresentation.tone === "warning"
-				? "var(--color-status-needs-you)"
-				: switchPresentation.tone === "danger"
-					? "var(--color-status-exited)"
-					: "var(--color-status-merged)"
-		: undefined;
-	const showLiveActivity = switchPresentation?.tone === "working" || (session.status === "working" && activity.state === "active");
-	const activityIndicatorClassName = switchPresentation?.tone === "working"
-		? "bg-status-working animate-status-pulse"
+	const showLiveActivity = session.status === "working" && activity.state === "active";
+	const activityIndicatorClassName = switchStatusView
+		? switchPresentation?.tone === "working"
+			? switchStatusView.indicatorClassName
+			: "bg-current"
 		: showLiveActivity
 			? activity.indicatorClassName
 			: "bg-current";
@@ -971,8 +961,8 @@ function SessionCard({
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center justify-between gap-2">
 					<span
-						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", switchClassName ?? badge.className)}
-						style={switchTone ? { color: switchTone } : showLiveActivity ? { color: activity.tone } : undefined}
+							className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", switchStatusView?.textClassName ?? badge.className)}
+							style={switchStatusView ? { color: switchStatusView.color } : showLiveActivity ? { color: activity.tone } : undefined}
 					>
 						<span
 							aria-hidden="true"

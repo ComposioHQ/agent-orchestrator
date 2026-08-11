@@ -440,10 +440,12 @@ export function CenterPane({
 									label={sessionTabLabel}
 									onSelect={onSelectSessionTerminal}
 									session={session}
-									switchSelectorContainer={switchSelectorContainer}
-									switchSelectorOpen={switchSelectorOpen}
-									onSwitchSelectorOpenChange={setSwitchSelectorOpen}
-								/>
+										switchSelectorContainer={switchSelectorContainer}
+										switchSelectorOpen={switchSelectorOpen}
+										onSwitchSelectorOpenChange={setSwitchSelectorOpen}
+										switchPresentation={presentation}
+										switchError={switchMutation.error}
+									/>
 							) : (
 								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
 							)}
@@ -800,6 +802,8 @@ type SessionPaneTabProps = {
 	switchSelectorContainer?: HTMLDivElement | null;
 	switchSelectorOpen?: boolean;
 	onSwitchSelectorOpenChange?: (open: boolean) => void;
+	switchPresentation?: AgentSwitchPresentation;
+	switchError?: string | null;
 	icon?: ReactNode;
 	title?: string;
 };
@@ -816,6 +820,8 @@ function SessionPaneTab({
 	switchSelectorContainer,
 	switchSelectorOpen = false,
 	onSwitchSelectorOpenChange,
+	switchPresentation,
+	switchError = null,
 	icon,
 	title,
 }: SessionPaneTabProps) {
@@ -868,10 +874,12 @@ function SessionPaneTab({
 				<TerminalSwitchAgentButton
 					key={session.id}
 					container={switchSelectorContainer}
-					onOpenChange={onSwitchSelectorOpenChange}
-					open={switchSelectorOpen}
-					session={session}
-				/>
+						onOpenChange={onSwitchSelectorOpenChange}
+						open={switchSelectorOpen}
+						presentation={switchPresentation}
+						session={session}
+						switchError={switchError}
+					/>
 			) : null}
 		</span>
 	);

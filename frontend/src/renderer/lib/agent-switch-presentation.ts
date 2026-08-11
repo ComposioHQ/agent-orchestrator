@@ -33,6 +33,45 @@ export type AgentSwitchPresentationInput = {
 	isTerminated: boolean;
 };
 
+export type AgentSwitchStatusView = {
+	breathe: boolean;
+	color: string;
+	indicatorClassName: string;
+	textClassName: string;
+};
+
+const statusViewByTone: Record<AgentSwitchPresentation["tone"], Omit<AgentSwitchStatusView, "breathe">> = {
+	working: {
+		color: "var(--color-status-working)",
+		indicatorClassName: "bg-status-working animate-status-pulse",
+		textClassName: "text-status-working",
+	},
+	warning: {
+		color: "var(--color-status-needs-you)",
+		indicatorClassName: "bg-status-needs-you",
+		textClassName: "text-status-needs-you",
+	},
+	danger: {
+		color: "var(--color-status-exited)",
+		indicatorClassName: "bg-status-exited",
+		textClassName: "text-status-exited",
+	},
+	success: {
+		color: "var(--color-status-merged)",
+		indicatorClassName: "bg-status-merged",
+		textClassName: "text-status-merged",
+	},
+};
+
+export function getAgentSwitchStatusView(
+	presentation: AgentSwitchPresentation,
+): AgentSwitchStatusView {
+	return {
+		...statusViewByTone[presentation.tone],
+		breathe: presentation.animate && presentation.tone === "working",
+	};
+}
+
 const inProgressDescriptions: Partial<Record<string, MessageKey>> = {
 	preparing_handoff: "switchAgent.state.preparingHandoff",
 	stopping_source: "switchAgent.state.stoppingSource",

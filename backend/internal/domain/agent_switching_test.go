@@ -9,9 +9,9 @@ import (
 )
 
 func TestComputeAgentSwitchRequestFingerprintNormalizesAndIncludesModel(t *testing.T) {
-	base := ComputeAgentSwitchRequestFingerprint("session-1", HarnessCodex, "note", "gpt-5.4")
-	same := ComputeAgentSwitchRequestFingerprint("session-1", HarnessCodex, "note", "  gpt-5.4  ")
-	other := ComputeAgentSwitchRequestFingerprint("session-1", HarnessCodex, "note", "gpt-5.4-mini")
+	base := ComputeAgentSwitchRequestFingerprint("session-1", HarnessCodex, "gpt-5.4")
+	same := ComputeAgentSwitchRequestFingerprint("session-1", HarnessCodex, "  gpt-5.4  ")
+	other := ComputeAgentSwitchRequestFingerprint("session-1", HarnessCodex, "gpt-5.4-mini")
 
 	if base != same {
 		t.Fatalf("normalized model fingerprint = %q, want %q", same, base)
@@ -29,7 +29,7 @@ func TestAgentSwitchRequestFingerprintMatchesLegacyRequestWithoutModel(t *testin
 		SessionID     SessionID    `json:"sessionId"`
 		TargetHarness AgentHarness `json:"targetHarness"`
 		Note          string       `json:"note"`
-	}{SessionID: "session-1", TargetHarness: HarnessCodex, Note: "note"})
+	}{SessionID: "session-1", TargetHarness: HarnessCodex, Note: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,10 +38,10 @@ func TestAgentSwitchRequestFingerprintMatchesLegacyRequestWithoutModel(t *testin
 	if !legacy.Valid() {
 		t.Fatalf("legacy fingerprint should remain valid: %q", legacy)
 	}
-	if !legacy.MatchesRequest("session-1", HarnessCodex, " note ", "") {
+	if !legacy.MatchesRequest("session-1", HarnessCodex, "") {
 		t.Fatal("legacy fingerprint should match the same request without a model override")
 	}
-	if legacy.MatchesRequest("session-1", HarnessCodex, "note", "gpt-5.4") {
+	if legacy.MatchesRequest("session-1", HarnessCodex, "gpt-5.4") {
 		t.Fatal("legacy fingerprint must not match a request with a model override")
 	}
 }

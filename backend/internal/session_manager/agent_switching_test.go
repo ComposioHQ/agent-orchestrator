@@ -1423,7 +1423,7 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 		}
 	}
 
-	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "request-1", Note: "preserve the unfinished test"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "request-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1477,7 +1477,6 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 		!strings.Contains(target.launchSystemPrompt, "implement the feature") ||
 		!strings.Contains(target.launchSystemPrompt, "please keep the API small") ||
 		!strings.Contains(target.launchSystemPrompt, "implementation is half complete") ||
-		!strings.Contains(target.launchSystemPrompt, "preserve the unfinished test") ||
 		!strings.Contains(target.launchSystemPrompt, "main.go") {
 		t.Fatalf("hidden continuation = %q", target.launchSystemPrompt)
 	}
@@ -1822,7 +1821,7 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 		}
 	}
 
-	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "semantic", Note: "preserve storage semantics"})
+	sw, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "semantic"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1842,7 +1841,7 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 	if !strings.Contains(string(body), "wired storage") || !strings.Contains(string(body), `"schemaVersion": 1`) {
 		t.Fatalf("finalized handoff omitted source report:\n%s", body)
 	}
-	for _, deterministic := range []string{"preserve storage semantics", "implement the feature", "please keep the API small", "implementation is half complete", "main.go"} {
+	for _, deterministic := range []string{"implement the feature", "please keep the API small", "implementation is half complete", "main.go"} {
 		if !strings.Contains(string(body), deterministic) {
 			t.Fatalf("finalized handoff omitted deterministic context %q:\n%s", deterministic, body)
 		}
@@ -1850,7 +1849,7 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 	if len(messenger.msgs) != 1 || !strings.HasPrefix(strings.TrimSpace(messenger.msgs[0]), "<ao-handoff-request") {
 		t.Fatalf("message sequence = %#v", messenger.msgs)
 	}
-	for _, want := range []string{"wired storage", "preserve storage semantics", "implement the feature", "please keep the API small", "implementation is half complete", "main.go"} {
+	for _, want := range []string{"wired storage", "implement the feature", "please keep the API small", "implementation is half complete", "main.go"} {
 		if !strings.Contains(target.launchSystemPrompt, want) {
 			t.Fatalf("continuation omitted %q:\n%s", want, target.launchSystemPrompt)
 		}
@@ -2488,28 +2487,22 @@ func TestSwitchAgentCompletesWhenAcknowledgementWinsFailureCAS(t *testing.T) {
 	}
 }
 
-func TestSwitchAgentIdempotencyFingerprintIncludesNoteAndModel(t *testing.T) {
+func TestSwitchAgentIdempotencyFingerprintIncludesModel(t *testing.T) {
 	manager, _, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	first, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4", IdempotencyKey: "same-key", Note: "preserve tests",
+		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4", IdempotencyKey: "same-key",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	retry, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, Model: " gpt-5.4 ", IdempotencyKey: "same-key", Note: " preserve tests ",
+		TargetHarness: domain.HarnessCodex, Model: " gpt-5.4 ", IdempotencyKey: "same-key",
 	})
 	if err != nil || retry.ID != first.ID {
 		t.Fatalf("same request retry = %+v, err=%v", retry, err)
 	}
 	_, err = switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-key", Note: "different request",
-	})
-	if !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
-		t.Fatalf("changed-note retry error = %v, want idempotency conflict", err)
-	}
-	_, err = switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4-mini", IdempotencyKey: "same-key", Note: "preserve tests",
+		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4-mini", IdempotencyKey: "same-key",
 	})
 	if !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
 		t.Fatalf("changed-model retry error = %v, want idempotency conflict", err)
@@ -2779,7 +2772,7 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 			targetRef := targetNative.ID
 			sw := domain.AgentSwitch{
 				ID: "switch-recovery", SessionID: "proj-1", IdempotencyKey: "recovery",
-				RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, "", ""),
+				RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
 				FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 				TargetNativeSessionRef: &targetRef, TargetStartMode: domain.AgentSwitchTargetStartFresh,
 				State:              tt.state,
@@ -2853,7 +2846,7 @@ func TestReconcileRejectsTargetGenerationWithoutProviderNativeIdentity(t *testin
 	ref := targetNative.ID
 	sw := domain.AgentSwitch{
 		ID: "switch-provider-id-pending", SessionID: "proj-1", IdempotencyKey: "provider-id-pending",
-		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, "", ""),
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
 		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 		TargetNativeSessionRef: &ref, TargetStartMode: domain.AgentSwitchTargetStartFresh,
 		State: domain.AgentSwitchStartingTarget, AgentHandoffStatus: domain.AgentHandoffUnavailable,

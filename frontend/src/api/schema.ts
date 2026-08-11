@@ -2596,8 +2596,6 @@ export interface components {
             idempotencyKey?: string;
             /** @description Optional model override for the target agent launch or resume. */
             model?: string;
-            /** @description Optional user guidance included in the bounded handoff context. */
-            note?: string;
             /**
              * @description Agent harness to continue the logical AO session with.
              * @enum {string}
