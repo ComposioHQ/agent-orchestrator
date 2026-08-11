@@ -246,16 +246,16 @@ broker exists. Production reads the App ID, slug, client credentials, RSA
 private key, webhook secret, and base64 32-byte state key from Secrets Manager
 through the ECS task definition. `AO_CLOUD_PUBLIC_URL` is
 `https://api.aoagents.dev`.
-Configure the App with exactly GitHub's required `Metadata: read` and
-organization `Members: read`; AO uses the latter to verify active
-organization-admin authority before binding an installation. Subscribe only to
-the `installation` and `installation_repositories` events. Add repository
-permissions later alongside the worker behavior that consumes them.
+Configure the App with at least organization `Members: read`; AO uses that
+permission to verify active organization-admin authority before binding an
+installation. GitHub sends the `installation` and `installation_repositories`
+events to every App automatically, so they do not appear in the selectable
+event list.
 
 `GET /github/healthz` signs an App JWT, calls GitHub's authenticated `/app`
-endpoint, and verifies the App ID, slug, `Members: read` authority proof, and
-exact least-privilege permission and event set. It returns `200` with
-`status: ok` only when that round trip succeeds. Staging intentionally returns
+endpoint, and verifies the configured App ID and slug. It returns `200` with
+`status: ok` only when that authenticated round trip succeeds. It intentionally
+does not enforce a permission policy. Staging returns
 `503` with `status: disabled`; production returns `503` with
 `status: unavailable` when credentials are present but GitHub cannot be
 validated. The result is cached briefly to avoid turning the diagnostic into a
