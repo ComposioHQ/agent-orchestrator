@@ -138,11 +138,11 @@ async function scanGitRepo(
 				name,
 				path: repoPath,
 				relativePath,
-				branch: "HEAD",
+				branch: "",
 				remote: "",
 				hasRemote: false,
-				status: "error",
-				reason: "Linked worktree children cannot be imported.",
+				status: "ok",
+				needsGitInit: true,
 			};
 		}
 	} catch {
@@ -174,43 +174,29 @@ async function scanGitRepo(
 		};
 	}
 	if (!(await isGitRepo(repoPath, options))) return null;
-	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
+	const [branchResult, remoteResult, headResult] = await Promise.allSettled([
 		resolveDefaultBranch(repoPath, options),
 		gitOutput(repoPath, ["remote", "get-url", "origin"], options),
-		gitOutput(repoPath, ["rev-parse", "--is-bare-repository"], options),
 		gitOutput(repoPath, ["rev-parse", "--verify", "HEAD"], options),
 	]);
-	const validationReason = scanRepoValidationReason(
-		name,
-		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
-		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
-		bareResult.status === "fulfilled" && bareResult.value === "true",
-		headResult.status === "fulfilled",
-	);
+	const hasHead = headResult.status === "fulfilled";
+	const hasRemote = remoteResult.status === "fulfilled" && remoteResult.value.length > 0;
+	const validationReason = scanRepoValidationReason(name);
 	return {
 		name,
 		path: repoPath,
 		relativePath,
 		branch: branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
 		remote: remoteResult.status === "fulfilled" ? remoteResult.value : "",
-		hasRemote: remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
+		hasRemote,
 		status: validationReason ? "error" : "ok",
 		reason: validationReason,
+		needsGitInit: !validationReason && (!hasHead || !hasRemote),
 	};
 }
 
-function scanRepoValidationReason(
-	name: string,
-	branch: string,
-	hasRemote: boolean,
-	isBare: boolean,
-	hasHead: boolean,
-): string | undefined {
+function scanRepoValidationReason(name: string): string | undefined {
 	if (name === "__root__") return "Repository name is reserved by AO.";
-	if (isBare) return "Bare repositories cannot be imported.";
-	if (!hasHead) return "Repository must have at least one commit.";
-	if (branch === "HEAD") return "Repository must have a checked-out branch.";
-	if (!hasRemote) return "Origin remote is required.";
 	return undefined;
 }
 

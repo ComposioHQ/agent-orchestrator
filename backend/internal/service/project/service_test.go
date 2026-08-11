@@ -1152,7 +1152,7 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	}
 }
 
-func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
+func TestManager_AddWorkspaceAcceptsUnbornChildAsNeedsInit(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
@@ -1162,19 +1162,38 @@ func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
 		t.Fatalf("git init child: %v (%s)", err, out)
 	}
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_UNBORN")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with unborn child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 1 {
+		t.Fatalf("expected 1 child repo, got %d", len(proj.WorkspaceRepos))
+	}
+	if proj.WorkspaceRepos[0].GitStatus != string(domain.GitStatusNeedsInit) {
+		t.Fatalf("GitStatus = %q, want %q", proj.WorkspaceRepos[0].GitStatus, domain.GitStatusNeedsInit)
+	}
 }
 
-func TestManager_AddWorkspaceRejectsChildWithoutOrigin(t *testing.T) {
+func TestManager_AddWorkspaceAcceptsChildWithoutOriginAsNeedsInit(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
 	parent := t.TempDir()
 	gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_ORIGIN_REQUIRED")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with originless child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 1 {
+		t.Fatalf("expected 1 child repo, got %d", len(proj.WorkspaceRepos))
+	}
+	if proj.WorkspaceRepos[0].GitStatus != string(domain.GitStatusNeedsInit) {
+		t.Fatalf("GitStatus = %q, want %q", proj.WorkspaceRepos[0].GitStatus, domain.GitStatusNeedsInit)
+	}
+	if proj.WorkspaceRepos[0].Repo != "" {
+		t.Fatalf("Repo = %q, want empty", proj.WorkspaceRepos[0].Repo)
+	}
 }
 
 // TestManager_AddWorkspaceAdoptsExistingParent verifies that when the parent is
@@ -1317,9 +1336,9 @@ func TestManager_AddWorkspaceAdoptsSeparateGitDirParent(t *testing.T) {
 	}
 }
 
-// TestManager_AddWorkspaceRejectsWorktreeChild verifies that a child whose .git
-// is a file (linked worktree) is rejected.
-func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
+// TestManager_AddWorkspaceAcceptsWorktreeChildAsNeedsInit verifies that a
+// child whose .git is a file (linked worktree) is accepted as needs_init.
+func TestManager_AddWorkspaceAcceptsWorktreeChildAsNeedsInit(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
@@ -1339,8 +1358,16 @@ func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
 		t.Fatalf("git worktree add child: %v (%s)", err, out)
 	}
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_IS_WORKTREE")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with worktree child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 1 {
+		t.Fatalf("expected 1 child repo, got %d", len(proj.WorkspaceRepos))
+	}
+	if proj.WorkspaceRepos[0].GitStatus != string(domain.GitStatusNeedsInit) {
+		t.Fatalf("GitStatus = %q, want %q", proj.WorkspaceRepos[0].GitStatus, domain.GitStatusNeedsInit)
+	}
 }
 
 // TestManager_AddWorkspaceRejectsReservedChildName verifies that a child repo

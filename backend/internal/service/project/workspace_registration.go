@@ -172,6 +172,18 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			continue
 		}
 		if err := validateWorkspaceChild(ctx, child); err != nil {
+			var apiErr *apierr.Error
+			if errors.As(err, &apiErr) && (apiErr.Code == "WORKSPACE_CHILD_ORIGIN_REQUIRED" || apiErr.Code == "WORKSPACE_CHILD_UNBORN" || apiErr.Code == "WORKSPACE_CHILD_DEFAULT_BRANCH_UNKNOWN" || apiErr.Code == "WORKSPACE_CHILD_IS_WORKTREE") {
+				repos = append(repos, domain.WorkspaceRepoRecord{
+					ProjectID:     projectID,
+					Name:          name,
+					RelativePath:  filepath.ToSlash(name),
+					RepoOriginURL: "",
+					RegisteredAt:  registeredAt,
+					GitStatus:     domain.GitStatusNeedsInit,
+				})
+				continue
+			}
 			return nil, err
 		}
 		repos = append(repos, domain.WorkspaceRepoRecord{
