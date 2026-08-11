@@ -40,6 +40,116 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud/v1/orgs/{orgId}/github/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listGitHubInstallations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/github/installations/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["startGitHubInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/github/installations/{githubInstallationId}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                githubInstallationId: components["parameters"]["GitHubInstallationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["syncGitHubInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/github/installations/{githubInstallationId}/disconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                githubInstallationId: components["parameters"]["GitHubInstallationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["disconnectGitHubInstallation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/github/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listGitHubRepositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/orgs/{orgId}/github/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createProjectFromGitHub"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud/v1/orgs/{orgId}/sessions": {
         parameters: {
             query?: never;
@@ -350,6 +460,67 @@ export interface components {
         ProjectPage: {
             items: components["schemas"]["Project"][];
             page: components["schemas"]["PageInfo"];
+        };
+        /** @enum {string} */
+        GitHubInstallationStatus: "active" | "suspended" | "removed";
+        /** @enum {string} */
+        GitHubSyncStatus: "pending" | "syncing" | "ready" | "retry" | "failed";
+        GitHubInstallation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            githubInstallationId: number;
+            accountLogin: string;
+            /** @enum {string} */
+            accountType: "User" | "Organization" | "Enterprise";
+            status: components["schemas"]["GitHubInstallationStatus"];
+            /** @enum {string} */
+            repositorySelection: "all" | "selected";
+            syncStatus: components["schemas"]["GitHubSyncStatus"];
+            /** Format: date-time */
+            lastSyncedAt?: string;
+            lastError?: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        GitHubInstallationStart: {
+            /** Format: uri */
+            installationUrl: string;
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        /** @enum {string} */
+        GitHubRepositoryAccessState: "active" | "revoked";
+        GitHubRepository: {
+            /** Format: int64 */
+            githubRepositoryId: number;
+            name: string;
+            fullName: string;
+            /** Format: uri */
+            htmlUrl: string;
+            defaultBranch: string;
+            visibility: string;
+            isPrivate: boolean;
+            isArchived: boolean;
+            access: components["schemas"]["GitHubRepositoryAccessState"];
+            /** Format: date-time */
+            grantedAt: string;
+            /** Format: date-time */
+            revokedAt?: string;
+        };
+        GitHubRepositoryPage: {
+            items: components["schemas"]["GitHubRepository"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        CreateGitHubProjectInput: {
+            /** Format: int64 */
+            githubRepositoryId: number;
+            displayName?: string;
+            config?: {
+                [key: string]: unknown;
+            };
         };
         /** @enum {string} */
         SessionKind: "worker" | "orchestrator";
@@ -741,6 +912,7 @@ export interface components {
     parameters: {
         OrgId: string;
         SessionId: string;
+        GitHubInstallationId: string;
         Cursor: string;
         Limit: number;
         EventLimit: number;
@@ -829,6 +1001,166 @@ export interface operations {
         };
         responses: {
             /** @description Project created. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        project: components["schemas"]["Project"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubInstallations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description GitHub App installations connected to the organization. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        installations: components["schemas"]["GitHubInstallation"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startGitHubInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A short-lived GitHub App installation attempt. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubInstallationStart"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    syncGitHubInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                githubInstallationId: components["parameters"]["GitHubInstallationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Repository synchronization accepted. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        installation: components["schemas"]["GitHubInstallation"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    disconnectGitHubInstallation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                githubInstallationId: components["parameters"]["GitHubInstallationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The GitHub App installation was disconnected from AO. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        installation: components["schemas"]["GitHubInstallation"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubRepositories: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of repositories currently or historically granted to the organization. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubRepositoryPage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createProjectFromGitHub: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Reusing a key with the same command returns the original result.
+                 *     Reusing it with a different command returns an IDEMPOTENCY_CONFLICT.
+                 *      */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                orgId: components["parameters"]["OrgId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGitHubProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Project created from an actively granted GitHub repository. */
             201: {
                 headers: {
                     [name: string]: unknown;

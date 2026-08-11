@@ -41,6 +41,73 @@ describe("CloudClient", () => {
     );
   });
 
+  it("manages organization-scoped GitHub App installations and repositories", async () => {
+    const installation = {
+      id: "d9916dbe-486c-43ec-91b8-379419767719",
+      githubInstallationId: 12345,
+      accountLogin: "acme",
+      accountType: "Organization",
+      status: "active",
+      repositorySelection: "selected",
+      syncStatus: "ready",
+      createdAt: "2026-08-11T00:00:00Z",
+      updatedAt: "2026-08-11T00:00:00Z",
+    } as const;
+    const fetchMock = vi
+      .fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+      .mockResolvedValueOnce(jsonResponse({ installations: [installation] }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          installationUrl: "https://github.com/apps/ao/installations/new",
+          expiresAt: "2026-08-11T00:10:00Z",
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [],
+          page: { hasMore: false },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ installation }))
+      .mockResolvedValueOnce(jsonResponse({ project: { id: "project-1" } }));
+    const client = createCloudClient({
+      baseUrl: "https://cloud.example.com",
+      getAccessToken: () => "access-token",
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(
+      client.listGitHubInstallations("tenant one"),
+    ).resolves.toEqual([installation]);
+    await client.startGitHubInstallation("tenant one");
+    await client.listGitHubRepositories("tenant one", {
+      cursor: "next page",
+      limit: 25,
+    });
+    await client.syncGitHubInstallation(
+      "tenant one",
+      "d9916dbe-486c-43ec-91b8-379419767719",
+    );
+    await client.createProjectFromGitHub(
+      "tenant one",
+      { githubRepositoryId: 98765 },
+      { idempotencyKey: "github-project-1" },
+    );
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "https://cloud.example.com/api/cloud/v1/orgs/tenant%20one/github/installations",
+      "https://cloud.example.com/api/cloud/v1/orgs/tenant%20one/github/installations/start",
+      "https://cloud.example.com/api/cloud/v1/orgs/tenant%20one/github/repositories?cursor=next+page&limit=25",
+      "https://cloud.example.com/api/cloud/v1/orgs/tenant%20one/github/installations/d9916dbe-486c-43ec-91b8-379419767719/sync",
+      "https://cloud.example.com/api/cloud/v1/orgs/tenant%20one/github/projects",
+    ]);
+    expect(fetchMock.mock.calls[1]?.[1]?.method).toBe("POST");
+    expect(fetchMock.mock.calls[3]?.[1]?.method).toBe("POST");
+    expect(requestHeaders(fetchMock, 4).get("Idempotency-Key")).toBe(
+      "github-project-1",
+    );
+  });
+
   it("scopes and encodes organization and session URLs", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>

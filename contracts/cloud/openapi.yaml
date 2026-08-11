@@ -83,6 +83,131 @@ paths:
                     $ref: "#/components/schemas/Project"
         default:
           $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/github/installations:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+    get:
+      operationId: listGitHubInstallations
+      tags: [GitHub]
+      responses:
+        "200":
+          description: GitHub App installations connected to the organization.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [installations]
+                properties:
+                  installations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/GitHubInstallation"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/github/installations/start:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+    post:
+      operationId: startGitHubInstallation
+      tags: [GitHub]
+      responses:
+        "201":
+          description: A short-lived GitHub App installation attempt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubInstallationStart"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/github/installations/{githubInstallationId}/sync:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/GitHubInstallationId"
+    post:
+      operationId: syncGitHubInstallation
+      tags: [GitHub]
+      responses:
+        "202":
+          description: Repository synchronization accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [installation]
+                properties:
+                  installation:
+                    $ref: "#/components/schemas/GitHubInstallation"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/github/installations/{githubInstallationId}/disconnect:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/GitHubInstallationId"
+    post:
+      operationId: disconnectGitHubInstallation
+      tags: [GitHub]
+      responses:
+        "200":
+          description: The GitHub App installation was disconnected from AO.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [installation]
+                properties:
+                  installation:
+                    $ref: "#/components/schemas/GitHubInstallation"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/github/repositories:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+    get:
+      operationId: listGitHubRepositories
+      tags: [GitHub]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of repositories currently or historically granted to the organization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GitHubRepositoryPage"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/github/projects:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+    post:
+      operationId: createProjectFromGitHub
+      tags: [GitHub, Projects]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGitHubProjectInput"
+      responses:
+        "201":
+          description: Project created from an actively granted GitHub repository.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [project]
+                properties:
+                  project:
+                    $ref: "#/components/schemas/Project"
+        default:
+          $ref: "#/components/responses/Error"
   /api/cloud/v1/orgs/{orgId}/sessions:
     parameters:
       - $ref: "#/components/parameters/OrgId"
@@ -414,6 +539,13 @@ components:
       schema:
         type: string
         minLength: 1
+    GitHubInstallationId:
+      name: githubInstallationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     Cursor:
       name: cursor
       in: query
@@ -595,6 +727,136 @@ components:
             $ref: "#/components/schemas/Project"
         page:
           $ref: "#/components/schemas/PageInfo"
+    GitHubInstallationStatus:
+      type: string
+      enum: [active, suspended, removed]
+    GitHubSyncStatus:
+      type: string
+      enum: [pending, syncing, ready, retry, failed]
+    GitHubInstallation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - githubInstallationId
+        - accountLogin
+        - accountType
+        - status
+        - repositorySelection
+        - syncStatus
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        githubInstallationId:
+          type: integer
+          format: int64
+        accountLogin:
+          type: string
+        accountType:
+          type: string
+          enum: [User, Organization, Enterprise]
+        status:
+          $ref: "#/components/schemas/GitHubInstallationStatus"
+        repositorySelection:
+          type: string
+          enum: [all, selected]
+        syncStatus:
+          $ref: "#/components/schemas/GitHubSyncStatus"
+        lastSyncedAt:
+          type: string
+          format: date-time
+        lastError:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    GitHubInstallationStart:
+      type: object
+      additionalProperties: false
+      required: [installationUrl, expiresAt]
+      properties:
+        installationUrl:
+          type: string
+          format: uri
+        expiresAt:
+          type: string
+          format: date-time
+    GitHubRepositoryAccessState:
+      type: string
+      enum: [active, revoked]
+    GitHubRepository:
+      type: object
+      additionalProperties: false
+      required:
+        - githubRepositoryId
+        - name
+        - fullName
+        - htmlUrl
+        - defaultBranch
+        - visibility
+        - isPrivate
+        - isArchived
+        - access
+        - grantedAt
+      properties:
+        githubRepositoryId:
+          type: integer
+          format: int64
+        name:
+          type: string
+        fullName:
+          type: string
+        htmlUrl:
+          type: string
+          format: uri
+        defaultBranch:
+          type: string
+        visibility:
+          type: string
+        isPrivate:
+          type: boolean
+        isArchived:
+          type: boolean
+        access:
+          $ref: "#/components/schemas/GitHubRepositoryAccessState"
+        grantedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+    GitHubRepositoryPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/GitHubRepository"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+    CreateGitHubProjectInput:
+      type: object
+      additionalProperties: false
+      required: [githubRepositoryId]
+      properties:
+        githubRepositoryId:
+          type: integer
+          format: int64
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        config:
+          type: object
+          additionalProperties: true
     SessionKind:
       type: string
       enum: [worker, orchestrator]

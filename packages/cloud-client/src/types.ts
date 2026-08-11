@@ -16,6 +16,16 @@ export type Project = Schemas["Project"];
 export type CreateProjectInput = Schemas["CreateProjectInput"];
 export type ProjectPage = Schemas["ProjectPage"];
 
+export type GitHubInstallationStatus = Schemas["GitHubInstallationStatus"];
+export type GitHubSyncStatus = Schemas["GitHubSyncStatus"];
+export type GitHubInstallation = Schemas["GitHubInstallation"];
+export type GitHubInstallationStart = Schemas["GitHubInstallationStart"];
+export type GitHubRepositoryAccessState =
+  Schemas["GitHubRepositoryAccessState"];
+export type GitHubRepository = Schemas["GitHubRepository"];
+export type GitHubRepositoryPage = Schemas["GitHubRepositoryPage"];
+export type CreateGitHubProjectInput = Schemas["CreateGitHubProjectInput"];
+
 export type Session = Schemas["Session"];
 export type SessionKind = Schemas["SessionKind"];
 export type SessionActivityState = Schemas["SessionActivityState"];

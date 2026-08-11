@@ -2,10 +2,14 @@ import type {
   AgentProfile,
   ClientEvent,
   ClientEventPage,
+  CreateGitHubProjectInput,
   CreateProjectInput,
   CreateSessionInput,
   ErrorEnvelope,
   EventReplayOptions,
+  GitHubInstallation,
+  GitHubInstallationStart,
+  GitHubRepositoryPage,
   IdempotentRequestOptions,
   PaginationOptions,
   Project,
@@ -103,6 +107,80 @@ export class CloudClient {
     options: IdempotentRequestOptions,
   ): Promise<{ project: Project }> {
     return this.request(this.orgPath(orgId, "/projects"), {
+      method: "POST",
+      body: input,
+      idempotencyKey: options.idempotencyKey,
+      signal: options.signal,
+    });
+  }
+
+  async listGitHubInstallations(
+    orgId: string,
+    options: RequestOptions = {},
+  ): Promise<GitHubInstallation[]> {
+    const response = await this.request<{
+      installations: GitHubInstallation[];
+    }>(this.orgPath(orgId, "/github/installations"), options);
+    return response.installations;
+  }
+
+  startGitHubInstallation(
+    orgId: string,
+    options: RequestOptions = {},
+  ): Promise<GitHubInstallationStart> {
+    return this.request(this.orgPath(orgId, "/github/installations/start"), {
+      method: "POST",
+      signal: options.signal,
+    });
+  }
+
+  syncGitHubInstallation(
+    orgId: string,
+    installationId: string,
+    options: RequestOptions = {},
+  ): Promise<{ installation: GitHubInstallation }> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/github/installations/${encodeURIComponent(installationId)}/sync`,
+      ),
+      { method: "POST", signal: options.signal },
+    );
+  }
+
+  disconnectGitHubInstallation(
+    orgId: string,
+    installationId: string,
+    options: RequestOptions = {},
+  ): Promise<{ installation: GitHubInstallation }> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/github/installations/${encodeURIComponent(installationId)}/disconnect`,
+      ),
+      { method: "POST", signal: options.signal },
+    );
+  }
+
+  listGitHubRepositories(
+    orgId: string,
+    options: PaginationOptions = {},
+  ): Promise<GitHubRepositoryPage> {
+    return this.request(
+      this.withQuery(this.orgPath(orgId, "/github/repositories"), {
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      { signal: options.signal },
+    );
+  }
+
+  createProjectFromGitHub(
+    orgId: string,
+    input: CreateGitHubProjectInput,
+    options: IdempotentRequestOptions,
+  ): Promise<{ project: Project }> {
+    return this.request(this.orgPath(orgId, "/github/projects"), {
       method: "POST",
       body: input,
       idempotencyKey: options.idempotencyKey,
