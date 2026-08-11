@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -47,6 +48,9 @@ var (
 	// while the conversation stayed healthy. It is a conflict, never an internal
 	// failure: the message it carries is the provider's own explanation.
 	ErrProviderRefused = errors.New("the agent refused the request")
+	// ErrEditTurnInvalid reports a prompt that cannot be safely reconstructed from
+	// durable history, including malformed legacy structured content.
+	ErrEditTurnInvalid = errors.New("conversation turn cannot be edited")
 )
 
 // providerRefusal is satisfied by driver errors that mean "the provider said no"
@@ -125,11 +129,265 @@ func (s *Service) ForkConversation(ctx context.Context, id domain.SessionID) (st
 	if !ok {
 		return "", ErrForkUnsupported
 	}
-	forked, err := forker.Fork(ctx)
+	forked, err := forker.Fork(ctx, nil)
 	if err != nil {
 		return "", classify(fmt.Errorf("fork conversation for %s: %w", id, err))
 	}
 	return forked, nil
+}
+
+// EditMessage forks immediately before one durable human prompt, swaps the live
+// controller to that provider branch, then sends the edited text with the exact
+// structured content stored for the original prompt.
+func (s *Service) EditMessage(
+	ctx context.Context,
+	id domain.SessionID,
+	turnID string,
+	msg ports.ChatUserMessage,
+) (EditMessageResult, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return EditMessageResult{}, err
+	}
+	source, err := s.Controller(id)
+	if err != nil {
+		return EditMessageResult{}, err
+	}
+	forker, canFork := source.conv.(ports.ChatForker)
+	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
+	if err != nil {
+		return EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
+	}
+	var content []ports.ChatContent
+	if anchor.OriginalDeliveryContentJSON != "" {
+		if err := json.Unmarshal([]byte(anchor.OriginalDeliveryContentJSON), &content); err != nil {
+			return EditMessageResult{}, fmt.Errorf("%w: decode stored prompt content: %w", ErrEditTurnInvalid, err)
+		}
+	}
+	msg.Content = content
+	if anchor.RetryActiveBranch {
+		branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, anchor.SourceBranchID)
+		if err != nil {
+			return EditMessageResult{}, fmt.Errorf("load pending edited conversation: %w", err)
+		}
+		return s.sendEditedMessage(ctx, branch.ParentBranchID, branch.ID, source, msg)
+	}
+	if anchor.PreviousProviderTurnID != "" && !canFork {
+		return EditMessageResult{}, ErrForkUnsupported
+	}
+	if err := source.BeginIdleBranchHandoff(ctx); err != nil {
+		return EditMessageResult{}, err
+	}
+	abortSource := true
+	defer func() {
+		if abortSource {
+			source.AbortHandoff()
+		}
+	}()
+
+	cfg, driver, err := s.branchLaunchConfig(id, source)
+	if err != nil {
+		return EditMessageResult{}, err
+	}
+	var providerConversationID string
+	var provider ports.ChatConversation
+	if anchor.PreviousProviderTurnID == "" {
+		provider, err = driver.Start(ctx, ports.ChatStartConfig{
+			SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
+			Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions,
+			SystemPrompt: cfg.SystemPrompt, AdditionalDirectories: cfg.AdditionalDirectories,
+			MCPServers: cfg.MCPServers,
+		})
+		if err == nil {
+			providerConversationID = provider.ProviderConversationID()
+		}
+	} else {
+		forkAnchor := anchor.PreviousProviderTurnID
+		providerConversationID, err = forker.Fork(ctx, &forkAnchor)
+		if err == nil {
+			provider, err = driver.Resume(ctx, ports.ChatResumeConfig{
+				SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
+				DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
+				Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+				AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
+			})
+		}
+	}
+	if err != nil {
+		return EditMessageResult{}, classify(fmt.Errorf("prepare edited conversation: %w", err))
+	}
+	if provider == nil || providerConversationID == "" {
+		if provider != nil {
+			_ = provider.Close()
+		}
+		return EditMessageResult{}, errors.New("replacement provider conversation is not ready")
+	}
+
+	branchID := s.newID()
+	generation := s.newID()
+	branch := domain.ConversationBranch{
+		ID: branchID, ConversationID: source.conversation.ID, SessionID: id,
+		ProviderConversationID: providerConversationID, ParentBranchID: anchor.SourceBranchID,
+		ReplacedTurnID: anchor.ReplacedTurnID, ForkAfterSequence: anchor.ForkAfterSequence,
+		CreatedAt: s.now(),
+	}
+	conversation := source.conversation
+	conversation.ActiveBranchID = branchID
+	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
+	if err := s.store.CreateAndActivateConversationBranch(ctx, id, branch, generation, s.now()); err != nil {
+		_ = provider.Close()
+		return EditMessageResult{}, fmt.Errorf("activate edited conversation: %w", err)
+	}
+	if err := s.installBranchController(ctx, id, source, replacement, anchor.SourceBranchID); err != nil {
+		return EditMessageResult{}, err
+	}
+	abortSource = false
+
+	return s.sendEditedMessage(ctx, anchor.SourceBranchID, branchID, replacement, msg)
+}
+
+// sendEditedMessage commits the branch replacement only after the provider has
+// accepted it. A transport refusal leaves an empty active branch so the same
+// source prompt and in-memory editor draft can be retried without another fork.
+func (s *Service) sendEditedMessage(
+	ctx context.Context,
+	sourceBranchID, activeBranchID string,
+	controller *Controller,
+	msg ports.ChatUserMessage,
+) (EditMessageResult, error) {
+	turn, sendErr := controller.Send(ctx, msg)
+	result := EditMessageResult{
+		SourceBranchID: sourceBranchID,
+		ActiveBranchID: activeBranchID,
+		Turn:           turn,
+	}
+	if sendErr != nil {
+		if turn.ID != "" {
+			if _, err := s.store.RollbackTurns(ctx, controller.conversation.ID, turn.ID, s.now()); err != nil {
+				sendErr = errors.Join(sendErr, fmt.Errorf("discard failed edited turn: %w", err))
+			}
+		}
+		return result, sendErr
+	}
+	if turn.ID != "" {
+		if err := s.store.UpdateConversationBranchReplacement(ctx, activeBranchID, turn.ID); err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+// EditMessageResult identifies the source, selected child, and replacement turn.
+type EditMessageResult struct {
+	SourceBranchID string
+	ActiveBranchID string
+	Turn           domain.ConversationTurn
+}
+
+// ActivateBranch resumes a durable provider branch in the same worktree and
+// swaps controllers without sending a new prompt.
+func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branchID string) (string, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return "", err
+	}
+	source, err := s.Controller(id)
+	if err != nil {
+		return "", err
+	}
+	branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, branchID)
+	if err != nil {
+		return "", err
+	}
+	if branch.Active {
+		return branch.ID, nil
+	}
+	if err := source.BeginIdleBranchHandoff(ctx); err != nil {
+		return "", err
+	}
+	abortSource := true
+	defer func() {
+		if abortSource {
+			source.AbortHandoff()
+		}
+	}()
+	cfg, driver, err := s.branchLaunchConfig(id, source)
+	if err != nil {
+		return "", err
+	}
+	provider, err := driver.Resume(ctx, ports.ChatResumeConfig{
+		SessionID: cfg.SessionID, ProviderConversationID: branch.ProviderConversationID,
+		DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
+		Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
+	})
+	if err != nil {
+		return "", fmt.Errorf("resume conversation branch %s: %w", branchID, err)
+	}
+	generation := s.newID()
+	conversation := source.conversation
+	conversation.ActiveBranchID = branch.ID
+	replacement := newController(id, conversation, generation, provider, s.store, s.activity, s.log, s.newID, s.now)
+	if err := s.store.ActivateConversationBranch(ctx, id, conversation.ID, branch.ID,
+		branch.ProviderConversationID, generation, s.now()); err != nil {
+		_ = provider.Close()
+		return "", err
+	}
+	if err := s.installBranchController(ctx, id, source, replacement, source.conversation.ActiveBranchID); err != nil {
+		return "", err
+	}
+	abortSource = false
+	return branch.ID, nil
+}
+
+func (s *Service) branchLaunchConfig(
+	id domain.SessionID,
+	source *Controller,
+) (StartConfig, ports.ChatDriver, error) {
+	s.mu.RLock()
+	cfg, ok := s.startConfigs[id]
+	current := s.controllers[id]
+	s.mu.RUnlock()
+	if !ok || current != source {
+		return StartConfig{}, nil, ErrControllerHandoff
+	}
+	driver, err := s.drivers.Driver(cfg.Harness)
+	if err != nil {
+		return StartConfig{}, nil, fmt.Errorf("chat driver for %s: %w", cfg.Harness, err)
+	}
+	return cloneStartConfig(cfg), driver, nil
+}
+
+func (s *Service) installBranchController(
+	ctx context.Context,
+	id domain.SessionID,
+	source, replacement *Controller,
+	sourceBranchID string,
+) error {
+	s.mu.Lock()
+	if s.controllers[id] != source {
+		s.mu.Unlock()
+		_ = replacement.conv.Close()
+		if err := s.store.ActivateConversationBranch(ctx, id, source.conversation.ID,
+			sourceBranchID, source.ProviderConversationID(), source.generation, s.now()); err != nil {
+			return fmt.Errorf("restore source branch after controller swap conflict: %w", err)
+		}
+		return ErrControllerHandoff
+	}
+	s.controllers[id] = replacement
+	replacement.start()
+	s.mu.Unlock()
+
+	go func() {
+		replacement.Wait()
+		s.mu.Lock()
+		if current := s.controllers[id]; current == replacement {
+			delete(s.controllers, id)
+		}
+		s.mu.Unlock()
+	}()
+	if err := source.Close(ctx); err != nil {
+		s.log.Error("close source controller after branch swap", "session", id, "error", err)
+	}
+	return nil
 }
 
 // SetTitle names the provider's thread and returns the normalized title.

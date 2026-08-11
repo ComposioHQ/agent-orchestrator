@@ -198,11 +198,12 @@ func newSCMFixture(t *testing.T, branch string) *scmFixture {
 		t.Fatalf("UpsertProject: %v", err)
 	}
 	sess, err := store.CreateSession(ctx, domain.SessionRecord{
-		ProjectID: "octo",
-		Kind:      domain.KindWorker,
-		Metadata:  domain.SessionMetadata{Branch: branch, WorkspacePath: "/ws/octo"},
-		CreatedAt: now,
-		UpdatedAt: now,
+		ProjectID:    "octo",
+		Kind:         domain.KindWorker,
+		Metadata:     domain.SessionMetadata{Branch: branch, WorkspacePath: "/ws/octo"},
+		AutoInjectCI: true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)

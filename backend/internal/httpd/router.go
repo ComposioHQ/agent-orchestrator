@@ -136,6 +136,7 @@ func mountMobile(r chi.Router, c *controllers.MobileController) {
 	r.Post("/api/v1/mobile/enable", c.Enable)
 	r.Post("/api/v1/mobile/disable", c.Disable)
 	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
+	r.Post("/api/v1/mobile/secure-pairing", c.SecurePairing)
 }
 
 type cliInvokedRequest struct {
@@ -307,6 +308,13 @@ func daemonProbePayload(status string, cfg config.Config) map[string]any {
 	}
 	if cfg.StartupWorkingDirectory != "" {
 		payload["startupWorkingDirectory"] = cfg.StartupWorkingDirectory
+	}
+	// AO_APPIMAGE is set by the Electron app at spawn time when it runs from an
+	// AppImage. The value is the stable outer .AppImage file path, which the
+	// app's daemon identity check compares instead of the transient
+	// /tmp/.mount_* executable path (regenerated on every AppImage launch).
+	if appImage := os.Getenv("AO_APPIMAGE"); appImage != "" {
+		payload["appImagePath"] = appImage
 	}
 	return payload
 }

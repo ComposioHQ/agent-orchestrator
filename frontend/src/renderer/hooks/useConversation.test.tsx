@@ -80,6 +80,60 @@ beforeEach(() => {
 });
 
 describe("useConversation snapshot mapping", () => {
+	it("maps branch metadata and lightweight prompt content", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				...WIRE,
+				activeBranchId: "branch-child",
+				branchedFromEarlierMessage: true,
+				branchPoints: [
+					{
+						turnId: "turn-1",
+						position: 2,
+						total: 3,
+						previousBranchId: "branch-previous",
+						nextBranchId: "branch-next",
+					},
+				],
+				messages: [
+					{
+						id: "message-1",
+						turnId: "turn-1",
+						sequence: 1,
+						revision: 1,
+						role: "user",
+						origin: "human",
+						text: "inspect this",
+						streaming: false,
+						createdAt: "2026-08-03T00:00:00Z",
+						editAvailable: true,
+						content: [
+							{ type: "image", mimeType: "image/png" },
+							{ type: "resource", name: "notes.md", uri: "file:///notes.md" },
+						],
+					},
+				],
+			},
+			error: undefined,
+		});
+
+		const { result } = renderHook(() => useConversation("ao-1"), { wrapper });
+		await waitFor(() => expect(result.current.snapshot).toBeDefined());
+
+		expect(result.current.snapshot).toMatchObject({
+			activeBranchId: "branch-child",
+			branchedFromEarlierMessage: true,
+			branchPoints: [{ turnId: "turn-1", position: 2, total: 3 }],
+		});
+		expect(result.current.snapshot!.items[0]).toMatchObject({
+			editAvailable: true,
+			content: [
+				{ type: "image", mimeType: "image/png" },
+				{ type: "resource", name: "notes.md", uri: "file:///notes.md" },
+			],
+		});
+	});
+
 	it("maps the provider state the timeline cannot express", async () => {
 		getMock.mockResolvedValue({ data: WIRE, error: undefined });
 
@@ -123,6 +177,42 @@ describe("useConversation snapshot mapping", () => {
 		expect(result.current.snapshot!.account).toBeUndefined();
 		expect(result.current.snapshot!.threadState).toBeUndefined();
 		expect(result.current.snapshot!.mcpServers).toBeUndefined();
+	});
+});
+
+describe("conversation branching commands", () => {
+	it("edits through the dedicated endpoint without rolling back", async () => {
+		postMock.mockResolvedValue({ data: {}, error: undefined });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await act(async () => {
+			await result.current.editMessage("turn-2", "edited prompt");
+		});
+
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit",
+			expect.objectContaining({
+				params: { path: { sessionId: "ao-1", turnId: "turn-2" } },
+				body: expect.objectContaining({ text: "edited prompt" }),
+			}),
+		);
+		expect(
+			postMock.mock.calls.some(([path]) => String(path).endsWith("/rollback")),
+		).toBe(false);
+	});
+
+	it("activates an existing branch", async () => {
+		postMock.mockResolvedValue({ data: {}, error: undefined });
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+
+		await act(async () => {
+			await result.current.activateBranch("branch-previous");
+		});
+
+		expect(postMock).toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate",
+			{ params: { path: { sessionId: "ao-1", branchId: "branch-previous" } } },
+		);
 	});
 });
 

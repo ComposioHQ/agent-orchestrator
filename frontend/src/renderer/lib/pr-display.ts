@@ -1,6 +1,25 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
 import { appI18n, type PluralMessageKey } from "../i18n";
+import type {
+	PRCardPresentation,
+	PRCardStatus,
+	PRDisplayTone,
+	PRNoun,
+	PRStatusRow,
+	PRSummaryLink,
+	PRSummaryPart,
+} from "@aoagents/product-ui";
+
+export type {
+	PRCardPresentation,
+	PRCardStatus,
+	PRDisplayTone,
+	PRNoun,
+	PRSummaryLink,
+	PRSummaryPart,
+	PRSummaryPartKey,
+} from "@aoagents/product-ui";
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);
@@ -18,19 +37,6 @@ const mergeabilityStates = new Set<SessionPRSummary["mergeability"]["state"]>([
 	"unstable",
 ]);
 
-export type PRDisplayTone = "neutral" | "passive" | "success" | "review" | "warning" | "error";
-
-export type PRStatusRow = {
-	key: "ci" | "review" | "merge";
-	label: string;
-	value: string;
-	detail?: string;
-	tone: PRDisplayTone;
-};
-
-export type PRSummaryPartKey = "ci" | "review" | "merge";
-export type PRNoun = "check" | "comment" | "file" | "line" | "reason" | "reviewer";
-
 export const prNounKeys: Record<PRNoun, PluralMessageKey> = {
 	check: "pr.noun.check",
 	comment: "pr.noun.comment",
@@ -38,39 +44,6 @@ export const prNounKeys: Record<PRNoun, PluralMessageKey> = {
 	line: "pr.noun.line",
 	reason: "pr.noun.reason",
 	reviewer: "pr.noun.reviewer",
-};
-
-export type PRSummaryLink = {
-	label: string;
-	href?: string;
-	title?: string;
-};
-
-export type PRSummaryPart = {
-	key: PRSummaryPartKey;
-	label: string;
-	status: string;
-	summary?: string;
-	links: PRSummaryLink[];
-	linkTotal?: number;
-	overflowLabel?: string;
-	overflowNoun?: PRNoun;
-	tone: PRDisplayTone;
-};
-
-export type PRCardStatus = {
-	key: "ci" | "merge" | "review" | "lifecycle";
-	label: string;
-	detail?: string;
-	href?: string;
-	breathe?: boolean;
-	links: PRSummaryLink[];
-	tone: PRDisplayTone;
-};
-
-export type PRCardPresentation = {
-	primary: PRCardStatus;
-	supporting: PRCardStatus[];
 };
 
 export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSummary): number {
@@ -253,6 +226,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		deletions: 0,
 		changedFiles: 0,
 		ci: {
+			autoInjectCI: true,
 			state: toCIState(pr.ci),
 			failingChecks: [],
 		},
