@@ -6751,8 +6751,9 @@ components:
           description: Human-friendly device label.
           type: string
         installId:
-          description: Stable per-install device id. Keys the registry so a rotated
-            push token updates the same row.
+          description: 'Stable per-install device id, keying the registry so a rotated
+            push token updates the same row. Optional: older app builds omit it and
+            the daemon synthesizes one.'
           type: string
         platform:
           description: Device platform.
@@ -6764,8 +6765,6 @@ components:
           description: 'Expo push token, e.g. ExponentPushToken[...]. Optional: omitted
             when the phone has no push token yet.'
           type: string
-      required:
-      - installId
       type: object
     ReloadConversationMCPServersResponse:
       properties:

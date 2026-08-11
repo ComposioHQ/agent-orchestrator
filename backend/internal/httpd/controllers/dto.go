@@ -1168,7 +1168,11 @@ type PushDeviceTokenParam struct {
 // the registry on the install ID (the token is an attribute and is now optional)
 // and re-registering is an idempotent upsert.
 type RegisterPushDeviceRequest struct {
-	InstallID string `json:"installId" description:"Stable per-install device id. Keys the registry so a rotated push token updates the same row."`
+	// Optional so the published contract matches what the daemon actually
+	// accepts: app builds predating install IDs send none, and the handler
+	// synthesizes a legacy one rather than rejecting them. Marking it required
+	// would generate clients unable to express a request the server handles.
+	InstallID string `json:"installId,omitempty" description:"Stable per-install device id, keying the registry so a rotated push token updates the same row. Optional: older app builds omit it and the daemon synthesizes one."`
 	// Optional: a row represents a paired phone, not a push registration. Omitted
 	// (or empty) when the phone is only announcing its identity — permission not
 	// yet granted, or a build that can't mint a token. When present it must still

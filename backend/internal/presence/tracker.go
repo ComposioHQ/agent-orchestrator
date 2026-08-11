@@ -41,17 +41,22 @@ func (t *Tracker) now() time.Time {
 
 // Touch records that installID was just seen. Empty ids are ignored so requests
 // from the desktop or an older mobile build never create phantom entries.
+//
+// Expired entries are swept here as well as in Live. The install id arrives in a
+// client-supplied header, so a caller sending a fresh id per request would
+// otherwise grow the map without bound on a daemon whose Devices section is
+// never opened — Live, the only other sweeper, would never run.
 func (t *Tracker) Touch(installID string) {
 	if installID == "" {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.pruneLocked()
 	t.seen[installID] = t.now()
 }
 
-// Live returns the set of install ids seen within the TTL. Expired entries are
-// dropped as they are found, so the map cannot grow without bound.
+// Live returns the set of install ids seen within the TTL.
 func (t *Tracker) Live() map[string]bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -65,4 +70,23 @@ func (t *Tracker) Live() map[string]bool {
 		live[id] = true
 	}
 	return live
+}
+
+// pruneLocked drops entries past the TTL. Callers must hold t.mu.
+func (t *Tracker) pruneLocked() {
+	cutoff := t.now().Add(-TTL)
+	for id, at := range t.seen {
+		if at.Before(cutoff) {
+			delete(t.seen, id)
+		}
+	}
+}
+
+// Size reports how many entries the tracker is holding. Test-facing: it is the
+// only way to observe that expiry actually reclaims memory rather than merely
+// hiding entries from Live.
+func (t *Tracker) Size() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.seen)
 }

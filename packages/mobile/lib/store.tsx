@@ -122,6 +122,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// tells a fresh launch apart from a later reconnect.
 	const openRef = useRef(false);
 	const everConnectedRef = useRef(false);
+	// Mirrors appActive for code that runs mid-flight, where reading the state
+	// value would see a stale closure. fetchAll consults it between requests so a
+	// poll interrupted by backgrounding does not fire its remaining calls — each
+	// would carry the install-id header and keep the device "live" on the desktop
+	// past the point the user left the app.
+	const pollActiveRef = useRef(true);
 
 	// The poll is the daemon's liveness signal (see shouldPoll), so it must stop
 	// while backgrounded rather than rely on the OS suspending the JS timer
@@ -129,7 +135,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [appActive, setAppActive] = useState(() => shouldPoll(RNAppState.currentState));
 
 	useEffect(() => {
-		const sub = RNAppState.addEventListener("change", (s) => setAppActive(shouldPoll(s)));
+		const sub = RNAppState.addEventListener("change", (s) => {
+			const active = shouldPoll(s);
+			pollActiveRef.current = active;
+			setAppActive(active);
+		});
 		return () => sub.remove();
 	}, []);
 
@@ -196,6 +206,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// Badge count for the board's bell. Deliberately after the session fetch
 			// and separately caught: an older daemon without /notifications must not
 			// knock the board offline. limit:1 because we only read unreadCount.
+			// The app may have gone to the background while the sessions request was
+			// in flight. Stop here rather than spending another request that would
+			// re-mark this device live after the user left.
+			if (!pollActiveRef.current) return true;
 			try {
 				const page = await getNotifications(c, { status: "unread", limit: 1 });
 				setNotificationsUnread(page.unreadCount);
@@ -245,7 +259,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		};
 		void tick();
 		const poll = setInterval(() => void tick(), POLL_INTERVAL_MS);
-		return () => clearInterval(poll);
+		return () => {
+			clearInterval(poll);
+			// Clearing the interval does not stop a tick already in flight, and
+			// every request it makes carries the install-id header, so an
+			// in-flight fetchAll would keep the device "live" past backgrounding.
+			// Marking the closure stopped ends the loop at the next await
+			// boundary instead of one whole request-timeout later.
+			stopped = true;
+		};
 	}, [config, fetchAll, appActive]);
 
 	const setActiveProject = useCallback((id: string) => {
