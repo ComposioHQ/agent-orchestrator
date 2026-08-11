@@ -2,13 +2,18 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
+import { useLocaleStore } from "../stores/locale-store";
 
 const {
 	getUpdate,
 	setUpdate,
+	getUiSettings,
+	setUiSettings,
 	updGetStatus,
 	updCheck,
+	updReturnHome,
 	updDownload,
 	updInstall,
 	updOnStatus,
@@ -19,10 +24,16 @@ const {
 	openExternal,
 	featListBuilds,
 	featGetActive,
+	getKeybindings,
+	setKeybindings,
+	setKeybindingRecording,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
+	getUiSettings: vi.fn(),
+	setUiSettings: vi.fn(),
 	updGetStatus: vi.fn(),
+	updReturnHome: vi.fn(),
 	updCheck: vi.fn(),
 	updDownload: vi.fn(),
 	updInstall: vi.fn(),
@@ -34,6 +45,9 @@ const {
 	openExternal: vi.fn(),
 	featListBuilds: vi.fn(),
 	featGetActive: vi.fn(),
+	getKeybindings: vi.fn(),
+	setKeybindings: vi.fn(),
+	setKeybindingRecording: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -50,9 +64,16 @@ vi.mock("../lib/bridge", () => ({
 		clipboard: { writeText },
 		daemon: { getStatus: getDaemonStatus },
 		updateSettings: { get: getUpdate, set: setUpdate },
+		uiSettings: { get: getUiSettings, set: setUiSettings },
+		keybindings: {
+			get: getKeybindings,
+			set: setKeybindings,
+			setRecording: setKeybindingRecording,
+		},
 		updates: {
 			getStatus: updGetStatus,
 			check: updCheck,
+			returnHome: updReturnHome,
 			download: updDownload,
 			install: updInstall,
 			onStatus: updOnStatus,
@@ -71,12 +92,15 @@ function renderForm() {
 	return qc;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	for (const m of [
 		getUpdate,
 		setUpdate,
+		getUiSettings,
+		setUiSettings,
 		updGetStatus,
 		updCheck,
+		updReturnHome,
 		updDownload,
 		updInstall,
 		updOnStatus,
@@ -87,13 +111,21 @@ beforeEach(() => {
 		getDaemonStatus,
 		featListBuilds,
 		featGetActive,
+		getKeybindings,
+		setKeybindings,
+		setKeybindingRecording,
 	]) {
 		m.mockReset();
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
+	getUiSettings.mockResolvedValue({ locale: "en" });
+	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
+		locale: settings.locale,
+	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
+	updReturnHome.mockResolvedValue(undefined);
 	updDownload.mockResolvedValue(undefined);
 	updInstall.mockResolvedValue(undefined);
 	updOnStatus.mockReturnValue(() => undefined);
@@ -103,17 +135,67 @@ beforeEach(() => {
 	openExternal.mockResolvedValue(undefined);
 	featListBuilds.mockResolvedValue([]);
 	featGetActive.mockResolvedValue(null);
+	getKeybindings.mockResolvedValue({});
+	setKeybindings.mockImplementation(async (overrides) => overrides);
+	setKeybindingRecording.mockResolvedValue(undefined);
+	// Locale defaults to English so existing copy assertions stay green.
+	await appI18n.changeLanguage("en");
+	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
+	document.documentElement.lang = "en";
 });
 
 describe("GlobalSettingsForm", () => {
 	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+		// "Settings" heading is now in the modal dialog header, not in the form body
 		expect(screen.getByText("General")).toBeInTheDocument();
+		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
+	});
+
+	it("gives settings link rows internal padding and rounded borders", async () => {
+		renderForm();
+
+		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
+		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
+
+		for (const row of [connectMobile, keyboardShortcuts]) {
+			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
+		}
+	});
+
+	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		expect(await screen.findByText("General")).toBeInTheDocument();
+		expect(screen.getByLabelText("Language")).toBeInTheDocument();
+
+		await user.click(screen.getByLabelText("Language"));
+		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
+		await waitFor(() => expect(screen.getByText("通用")).toBeInTheDocument());
+		expect(screen.getByText("语言")).toBeInTheDocument();
+		expect(screen.getByText("主题")).toBeInTheDocument();
+		expect(document.documentElement.lang).toBe("zh-CN");
+		expect(useLocaleStore.getState().locale).toBe("zh-CN");
+	});
+
+	it("keeps the current language and reports a persistence failure", async () => {
+		setUiSettings.mockRejectedValue(new Error("disk full"));
+		const user = userEvent.setup();
+		renderForm();
+		await screen.findByText("General");
+
+		await user.click(screen.getByLabelText("Language"));
+		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
+		expect(useLocaleStore.getState().locale).toBe("en");
+		expect(screen.getByText("General")).toBeInTheDocument();
 	});
 
 	it("closes settings with Escape", async () => {
@@ -123,7 +205,8 @@ describe("GlobalSettingsForm", () => {
 
 		await user.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		// Escape is handled by the wrapping Radix Dialog, not the form itself
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("lets an open settings dialog consume Escape first", async () => {
@@ -170,15 +253,6 @@ describe("GlobalSettingsForm", () => {
 	it("hides the nightly warning on the stable channel", async () => {
 		renderForm();
 		await screen.findByText("Updates");
-		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
-	});
-
-	it("hides the nightly warning when Feature Releases is selected", async () => {
-		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
-		renderForm();
-		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
 		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
 	});
 
@@ -263,7 +337,7 @@ describe("GlobalSettingsForm", () => {
 		expect(copied).not.toContain("## Type");
 		expect(copied).not.toContain("Generated locally by AO");
 		expect(openExternal).toHaveBeenCalledWith(
-			expect.stringContaining("https://github.com/AgentWrapper/agent-orchestrator/issues/new"),
+			expect.stringContaining("https://github.com/Untrivial-ai/agent-orchestrator/issues/new"),
 		);
 		expect(open).not.toHaveBeenCalled();
 		expect(screen.getByLabelText("Title")).toHaveValue("");
@@ -280,6 +354,7 @@ describe("GlobalSettingsForm", () => {
 		await user.click(await screen.findByRole("button", { name: "Report a problem" }));
 		expect(await screen.findByRole("dialog", { name: "Report a problem" })).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
+		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 
 		await user.click(screen.getByRole("radio", { name: "Discord" }));
 		expect(screen.getByRole("button", { name: /copy & open discord/i })).toBeInTheDocument();
@@ -288,6 +363,8 @@ describe("GlobalSettingsForm", () => {
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
 		expect(writeText.mock.calls[0][0]).toContain("**AO feedback**");
 		expect(screen.getByText("Discord draft copied.")).toBeInTheDocument();
+		expect(screen.getByLabelText("Title")).toHaveValue("");
+		expect(screen.getByLabelText("What happened?")).toHaveValue("");
 
 		await user.click(screen.getByRole("radio", { name: "Email" }));
 		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeInTheDocument();
@@ -295,14 +372,15 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByText("Discord draft copied.")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /copy & open email/i })).toBeDisabled();
 		await user.type(screen.getByLabelText("Title"), "Need help with setup");
+		await user.type(screen.getByLabelText("What happened?"), "The setup flow stalls after the first prompt.");
 		await user.click(screen.getByRole("button", { name: /copy & open email/i }));
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
-		expect(writeText.mock.calls[1][0]).toContain("To: support@aoagents.dev");
+		expect(writeText.mock.calls[1][0]).toContain("To: prateek@untrivial.ai");
 		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
 		expect(openExternal).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG");
-		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:support@aoagents.dev"));
+		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:prateek@untrivial.ai"));
 		expect(open).not.toHaveBeenCalled();
 	});
 
@@ -342,64 +420,26 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
 	});
 
-	it("reveals the feature-build picker when Feature Releases is selected", async () => {
+	it("surfaces a Return action for a persisted feature pin", async () => {
+		// A pin persists in settings but is not yet running; updates are on the stable channel.
+		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
+		featGetActive.mockResolvedValue(null);
 		renderForm();
-		await screen.findByText("Updates");
-		// The picker must be reachable from a clean state (no pin seeded).
+		// The concealed pin is announced even though the channel option/picker are hidden.
+		expect(await screen.findByText("PR #2270 is pinned but not yet installed.")).toBeInTheDocument();
+		// The fall-home copy must be truthful: automatic updates keep tracking the pin,
+		// they do NOT silently return the user home on the next check.
+		expect(
+			screen.getByText(
+				/Automatic updates, if enabled, keep tracking PR #2270 until you return home or the build retires\./i,
+			),
+		).toBeInTheDocument();
 		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-		// Secondary picker mounts; no live builds are mocked, so it shows the empty state.
-		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
-		expect(featListBuilds).toHaveBeenCalled();
-	});
-
-	it("pins a feature build after confirming and ignores unowned updater events", async () => {
-		featListBuilds.mockResolvedValue([
-			{
-				pr: 2270,
-				title: "Fix foo",
-				base: "0.2.0",
-				sha: "abc",
-				slug: "x",
-				buildId: "v0.2.0-pr2270.202607061200",
-				publishedAt: new Date().toISOString(),
-			},
-		]);
-		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
-		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
-			emit = cb as typeof emit;
-			return () => undefined;
-		});
-		renderForm();
-		await screen.findByText("Updates");
-
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-
-		await userEvent.click(await screen.findByLabelText("Feature build"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: /PR #2270: Fix foo/ }));
-
-		// Confirmation dialog replaces window.confirm.
-		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-
-		await waitFor(() =>
-			expect(updCheck).toHaveBeenCalledWith({
-				settings: expect.objectContaining({ feature: { pr: 2270 } }),
-				requestId: expect.any(String),
-			}),
-		);
-		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
-
-		// An older hourly operation can finish while the feature request waits for
-		// updater ownership. Its events must not arm the feature install flow.
-		act(() => emit({ state: "available", version: "1.2.3" }));
-		expect(updDownload).not.toHaveBeenCalled();
-
-		// The owned feature operation auto-progresses available -> download -> install.
-		act(() => emit({ state: "available", version: "1.2.3", requestId }));
-		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));
-		act(() => emit({ state: "downloaded", version: "1.2.3", requestId }));
-		await waitFor(() => expect(updInstall).toHaveBeenCalled());
+		await userEvent.keyboard("{Escape}");
+		// Return delegates to the single updater-serialized returnHome operation.
+		await userEvent.click(screen.getByRole("button", { name: "Return to Stable" }));
+		await waitFor(() => expect(updReturnHome).toHaveBeenCalledWith(expect.any(String)));
+		expect(updCheck).not.toHaveBeenCalled();
 	});
 
 	it("returns to Stable, then auto-progresses check -> download -> install", async () => {
@@ -415,13 +455,8 @@ describe("GlobalSettingsForm", () => {
 		const returnBtn = await screen.findByRole("button", { name: "Return to Stable" });
 		await userEvent.click(returnBtn);
 
-		await waitFor(() =>
-			expect(updCheck).toHaveBeenCalledWith({
-				settings: expect.objectContaining({ feature: null }),
-				requestId: expect.any(String),
-			}),
-		);
-		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
+		await waitFor(() => expect(updReturnHome).toHaveBeenCalledWith(expect.any(String)));
+		const requestId = updReturnHome.mock.calls[0]?.[0] as string;
 
 		act(() => emit({ state: "available", version: "1.3.0", requestId }));
 		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));

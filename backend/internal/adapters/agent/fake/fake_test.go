@@ -22,8 +22,8 @@ func TestManifestReportsFakeHarness(t *testing.T) {
 	if domain.AgentHarness(m.ID) != domain.HarnessFake {
 		t.Fatalf("manifest id %q does not match domain.HarnessFake %q", m.ID, domain.HarnessFake)
 	}
-	if !domain.HarnessFake.IsKnown() {
-		t.Fatal("domain.HarnessFake is not registered as a known harness")
+	if domain.HarnessFake.IsKnown() {
+		t.Fatal("domain.HarnessFake must not be registered as a user-selectable harness")
 	}
 	found := false
 	for _, c := range m.Capabilities {
@@ -205,8 +205,9 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 // lifecycleStore is a minimal in-memory implementation of the store the
-// lifecycle reducer writes. Only GetSession/UpdateSession carry the activity
-// path; the PR methods are inert stubs (the fake never opens a PR row).
+// lifecycle reducer writes. Only the session read/activity-write methods carry
+// the activity path; the PR methods are inert stubs (the fake never opens a PR
+// row).
 type lifecycleStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 }
@@ -221,7 +222,20 @@ func (s *lifecycleStore) UpdateSession(_ context.Context, rec domain.SessionReco
 	return nil
 }
 
+func (s *lifecycleStore) UpdateSessionFromActivitySignal(_ context.Context, rec domain.SessionRecord) (bool, error) {
+	s.sessions[rec.ID] = rec
+	return true, nil
+}
+
 func (s *lifecycleStore) ListPRsBySession(_ context.Context, _ domain.SessionID) ([]domain.PullRequest, error) {
+	return nil, nil
+}
+
+func (s *lifecycleStore) ListPRReviews(_ context.Context, _ string) ([]domain.PullRequestReview, error) {
+	return nil, nil
+}
+
+func (s *lifecycleStore) ListPRComments(_ context.Context, _ string) ([]domain.PullRequestComment, error) {
 	return nil, nil
 }
 
@@ -233,26 +247,8 @@ func (s *lifecycleStore) UpdatePRLastNudgeSignature(_ context.Context, _ string,
 	return nil
 }
 
-// The worker-idle outbox methods are inert stubs like the PR methods above:
-// this test drives activity transitions only, never idle-event delivery.
 func (s *lifecycleStore) ListSessions(_ context.Context, _ domain.ProjectID) ([]domain.SessionRecord, error) {
 	return nil, nil
-}
-
-func (s *lifecycleStore) RecordWorkerIdle(ctx context.Context, rec domain.SessionRecord, _ domain.WorkerIdleEvent) error {
-	return s.UpdateSession(ctx, rec)
-}
-
-func (s *lifecycleStore) ListPendingWorkerIdleEventsByProject(_ context.Context, _ domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
-	return nil, nil
-}
-
-func (s *lifecycleStore) ListPendingWorkerIdleEvents(_ context.Context) ([]domain.WorkerIdleEvent, error) {
-	return nil, nil
-}
-
-func (s *lifecycleStore) MarkWorkerIdleEventDelivered(_ context.Context, _ string, _ time.Time) error {
-	return nil
 }
 
 // TestFullLifecycleSpawnToTermination is the end-to-end integration test the
@@ -260,11 +256,11 @@ func (s *lifecycleStore) MarkWorkerIdleEventDelivered(_ context.Context, _ strin
 // -> hooks fire (the script actually runs, calling a stub `ao` on PATH that
 // records each event) -> activity derivation (DeriveActivityState) -> reduction
 // (lifecycle.Manager.ApplyActivitySignal, including the sticky-state precedence
-// rules) -> termination — and asserts the derived activity states in order.
+// rules) -> agent exit — and asserts the derived activity states in order.
 //
 // It also asserts the whole sped-up run compresses to well under a second, and
-// that the terminal state is a deterministic ActivityExited (is_terminated),
-// not an incidental idle.
+// that the terminal state is a deterministic ActivityExited without terminating
+// the still-available runtime, not an incidental idle.
 func TestFullLifecycleSpawnToTermination(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no POSIX shell on PATH")
@@ -324,7 +320,7 @@ func TestFullLifecycleSpawnToTermination(t *testing.T) {
 	// fired event through the real deriver and lifecycle reducer, capturing the
 	// persisted state after each. This exercises sticky-state precedence:
 	// waiting_input and blocked must be cleared by the following turn-boundary
-	// events, and session-end must terminate.
+	// events, and session-end must mark the agent exited.
 	store := &lifecycleStore{sessions: map[domain.SessionID]domain.SessionRecord{
 		"fake-1": {
 			ID:        "fake-1",
@@ -358,7 +354,7 @@ func TestFullLifecycleSpawnToTermination(t *testing.T) {
 		domain.ActivityActive,       // user-prompt-submit (clears waiting_input)
 		domain.ActivityActive,       // pr-push (already active)
 		domain.ActivityBlocked,      // permission-request
-		domain.ActivityExited,       // session-end (clears blocked + terminates)
+		domain.ActivityExited,       // session-end (clears blocked)
 	}
 	if len(got) != len(want) {
 		t.Fatalf("derived %d states %v, want %d %v", len(got), got, len(want), want)
@@ -369,10 +365,10 @@ func TestFullLifecycleSpawnToTermination(t *testing.T) {
 		}
 	}
 
-	// Termination must be a durable, deterministic exit.
+	// Agent exit must be durable and distinct from runtime termination.
 	final := store.sessions["fake-1"]
-	if !final.IsTerminated {
-		t.Fatalf("session not terminated after session-end; state=%q", final.Activity.State)
+	if final.IsTerminated {
+		t.Fatalf("session terminated after agent-only session-end; state=%q", final.Activity.State)
 	}
 	if final.Activity.State != domain.ActivityExited {
 		t.Fatalf("terminal state = %q, want %q (not an incidental idle)", final.Activity.State, domain.ActivityExited)

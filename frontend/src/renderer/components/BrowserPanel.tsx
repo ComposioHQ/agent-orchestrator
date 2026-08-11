@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, MousePointer2, RefreshCw, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import {
+	ArrowLeft,
+	ArrowRight,
+	Bug,
+	Globe2,
+	Layers3,
+	Maximize2,
+	Minimize2,
+	MousePointer2,
+	Plus,
+	RefreshCw,
+	X,
+} from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
-import { isAgentActivityWorking } from "../lib/session-presentation";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
+import { appI18n, type MessageKey } from "../i18n";
 
 type BrowserPanelProps = {
 	session: WorkspaceSession;
@@ -17,6 +32,11 @@ type BrowserPanelProps = {
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
+
+// Docked rail visibility: collapsed (0px, tab access via the toolbar trigger) is
+// the default; pinning restores an always-visible icon rail. Persisted so it's a
+// one-time choice, not a state.
+const RAIL_PINNED_STORAGE_KEY = "ao.browserTabs.railPinned";
 
 export type BrowserAnnotationQueueModel = {
 	status: AnnotationStatus;
@@ -45,9 +65,12 @@ export function useBrowserAnnotationQueue({
 	const annotationSendingRef = useRef(false);
 	const sessionIdRef = useRef(sessionId ?? "");
 	const generationRef = useRef(0);
+	const sentTimerRef = useRef<number | null>(null);
 
 	const resetQueue = useCallback(() => {
 		generationRef.current += 1;
+		if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+		sentTimerRef.current = null;
 		annotationQueueRef.current = [];
 		annotationSendingRef.current = false;
 		setState({ status: "idle", error: "", queuedCount: 0 });
@@ -69,20 +92,20 @@ export function useBrowserAnnotationQueue({
 
 		void (async () => {
 			let sent = false;
-			let failureMessage = "Unable to send annotation.";
+			let failureMessage = appI18n.t("browser.unableSendAnnotation");
 			try {
 				const message = formatBrowserAnnotationMessage(payload);
 				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 					params: { path: { sessionId: sendSessionId } },
-					body: { message },
+					body: { message, attachment: payload.snapshot },
 				});
 				if (error) {
-					failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+					failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 					return;
 				}
 				sent = true;
 			} catch (error) {
-				failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+				failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 			} finally {
 				if (sendGeneration !== generationRef.current || sendSessionId !== sessionIdRef.current) return;
 				annotationSendingRef.current = false;
@@ -98,7 +121,17 @@ export function useBrowserAnnotationQueue({
 
 				const queuedCount = annotationQueueRef.current.length;
 				setState({ status: queuedCount > 0 ? "queued" : "sent", error: "", queuedCount });
-				if (queuedCount > 0) drainAnnotationQueue();
+				if (queuedCount > 0) {
+					drainAnnotationQueue();
+				} else {
+					if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+					sentTimerRef.current = window.setTimeout(() => {
+						sentTimerRef.current = null;
+						setState((current) =>
+							current.status === "sent" ? { status: "idle", error: "", queuedCount: 0 } : current,
+						);
+					}, 2_000);
+				}
 			}
 		})();
 	}, []);
@@ -112,6 +145,13 @@ export function useBrowserAnnotationQueue({
 		if (navUrl) return;
 		resetQueue();
 	}, [navUrl, resetQueue]);
+
+	useEffect(
+		() => () => {
+			if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current);
+		},
+		[],
+	);
 
 	const beginPicking = useCallback(() => {
 		setState((current) => ({ ...current, status: "picking", error: "" }));
@@ -181,33 +221,55 @@ export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: Bro
 }
 
 export function BrowserPanelView({
-	session,
 	poppedOut,
 	onTogglePopOut,
 	browserView,
 	annotationQueue,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
+	const { t } = useTranslation();
 	const {
 		viewId,
 		navState,
-		mirrorUrl,
-		mirrorStream,
 		slotRef,
 		navigate,
 		goBack,
 		goForward,
 		reload,
 		stop,
+		tabs,
+		activeTabId,
+		tabNotice,
+		selectTab,
+		closeTab,
+		openTab,
+		reorderTabs,
+		agentBrowserActive,
+		agentBrowserActivity,
+		devtoolsState = { viewId: "", open: false, activeTabId: "" },
+		openDevTools = async () => undefined,
+		closeDevTools = async () => undefined,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
-	const showStaticPreview = !window.ao?.browser && navState.url !== "";
-	const sessionBusy = isAgentActivityWorking(session.activity);
+	const hasNativeBrowser = Boolean(window.ao?.browser);
+	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
+	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
+	const railRef = useRef<BrowserTabsRailHandle>(null);
+	const urlInputRef = useRef<HTMLInputElement>(null);
+	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
+	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
+
+	const handlePinnedChange = useCallback((next: boolean) => {
+		setPinned(next);
+		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
+	}, []);
+
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -249,37 +311,66 @@ export function BrowserPanelView({
 				cancelPicking();
 			}
 		} catch (error) {
-			failPicking(error instanceof Error ? error.message : "Unable to start annotation.");
+			failPicking(error instanceof Error ? error.message : appI18n.t("browser.unableStartAnnotation"));
 		}
 	};
 
+	// The button lives in the toolbar, not inside the rail, so a fast
+	// hover-rail-then-click-here still needs to force the flyout closed first —
+	// same reason rows inside the rail do it (see BrowserTabsRail.tsx). A blank
+	// new tab has nowhere to go on its own, so send focus straight to the URL
+	// bar afterward instead of leaving the user to click into it themselves.
+	const handleOpenTab = useCallback(async () => {
+		railRef.current?.closeFlyout(true);
+		await openTab();
+		urlInputRef.current?.focus();
+		urlInputRef.current?.select();
+	}, [openTab]);
+
+	const handleSelectTab = useCallback(
+		async (tabId: string) => {
+			try {
+				await selectTab(tabId);
+			} catch {
+				// The existing tab remains active.
+			}
+		},
+		[selectTab],
+	);
+
 	const annotationStatusLabel =
 		status === "picking"
-			? "Pick element"
+			? t("browser.pickElement")
 			: status === "queued"
 				? queuedCount > 1
-					? `Queued (${queuedCount})`
-					: "Queued"
+					? t("browser.queuedCount", { count: queuedCount })
+					: t("browser.queued")
 				: status === "sending"
-					? "Sending"
+					? t("browser.sending")
 					: status === "sent"
-						? "Sent"
+						? t("browser.sent")
 						: status === "error"
 							? error
 							: "";
-
+	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
 	return (
 		<div
-			className="flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background"
+			className={cn(
+				"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
+				poppedOut && "browser-panel--popped-out",
+				agentStatusLabel && "browser-panel--agent-active",
+			)}
+			data-browser-native-page={navState.url ? "live" : "empty"}
 			data-testid="browser-panel"
 			role="tabpanel"
 		>
 			<form
-				className="flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
+				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
 				<Button
-					aria-label="Back"
+					aria-label={t("browser.back")}
 					disabled={!navState.canGoBack}
 					onClick={() => void goBack()}
 					size="icon-sm"
@@ -289,7 +380,7 @@ export function BrowserPanelView({
 					<ArrowLeft aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
-					aria-label="Forward"
+					aria-label={t("browser.forward")}
 					disabled={!navState.canGoForward}
 					onClick={() => void goForward()}
 					size="icon-sm"
@@ -299,7 +390,7 @@ export function BrowserPanelView({
 					<ArrowRight aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
-					aria-label={navState.isLoading ? "Stop" : "Reload"}
+					aria-label={navState.isLoading ? t("browser.stop") : t("browser.reload")}
 					onClick={() => void (navState.isLoading ? stop() : reload())}
 					size="icon-sm"
 					type="button"
@@ -314,17 +405,17 @@ export function BrowserPanelView({
 				<Button
 					aria-label={
 						canRetryAnnotation
-							? "Retry annotation"
+							? t("browser.retryAnnotation")
 							: annotationMode || status === "picking"
-								? "Cancel annotation"
-								: "Annotate page"
+								? t("browser.cancelAnnotation")
+								: t("browser.annotate")
 					}
 					aria-pressed={annotationMode || status === "picking"}
 					className="browser-panel__annotate-btn"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
-					title={canRetryAnnotation ? "Retry annotation" : "Annotate page"}
+					title={canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate")}
 					type="button"
 					variant="ghost"
 				>
@@ -340,24 +431,45 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
-				) : sessionBusy ? (
-					<span className="browser-panel__annotation-status">Agent working</span>
+				) : agentStatusLabel ? (
+					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
+						{agentStatusLabel}
+					</span>
 				) : null}
-				<div className="relative min-w-0 flex-1">
-					<Globe2
-						aria-hidden="true"
-						className="pointer-events-none absolute left-2.25 top-1/2 size-icon-md -translate-y-1/2 text-passive"
-					/>
+					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
+						<Globe2
+							aria-hidden="true"
+							className="browser-panel__url-icon"
+							data-testid="browser-url-icon"
+						/>
 					<Input
-						aria-label="Browser URL"
-						className="h-browser-url pl-browser-url font-mono text-xs"
+						aria-label={t("browser.url")}
+						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
 						onChange={(event) => setUrlInput(event.target.value)}
-						placeholder="localhost:5173"
+						placeholder={t("browser.urlPlaceholder")}
+						ref={urlInputRef}
 						value={urlInput}
 					/>
 				</div>
+				{tabNotice ? (
+					<span className="max-w-24 truncate text-caption text-accent" role="status">
+						{tabNotice}
+					</span>
+				) : null}
 				<Button
-					aria-label={poppedOut ? "Return to panel" : "Pop out"}
+					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
+					disabled={!canUseDevTools}
+					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
+					size="icon-sm"
+					title={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					type="button"
+					variant="ghost"
+				>
+					<Bug aria-hidden="true" className="size-icon-base" />
+				</Button>
+				<Button
+					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
 					onClick={() => onTogglePopOut(!poppedOut)}
 					size="icon-sm"
 					type="button"
@@ -369,46 +481,160 @@ export function BrowserPanelView({
 						<Maximize2 aria-hidden="true" className="size-icon-base" />
 					)}
 				</Button>
-			</form>
-			<div className="relative min-h-0 flex-1 overflow-hidden bg-background">
-				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorStream ? (
-					<MirrorVideo stream={mirrorStream} />
-				) : mirrorUrl ? (
-					<img alt="" className="absolute inset-0 h-full w-full object-cover" src={mirrorUrl} />
-				) : null}
-				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
-				{navState.url === "" ? (
-					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
-						<p>Enter a URL or click one in the terminal.</p>
+				{/* Docked mode has no reserved rail column by default (see
+				    BrowserTabsRail.tsx) — this trigger is the only way to reach the tab
+				    list until the user pins the rail. Hidden at a single tab, same as
+				    the rail's own hover trigger was before this existed. Hover/focus
+				    drive the rail's flyout imperatively since the two live in separate
+				    DOM subtrees (toolbar row vs. body row) — see BrowserTabsRail.tsx's
+				    BrowserTabsRailHandle for why the close side stays debounced here. */}
+				{showTabsTrigger ? (
+					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+						<Button
+							aria-label={t("browser.tabsTitle", { count: tabs.length })}
+							className="relative"
+							onBlur={() => railRef.current?.closeFlyout()}
+							onFocus={() => railRef.current?.openFlyout(true)}
+							onPointerEnter={() => railRef.current?.openFlyout()}
+							onPointerLeave={() => railRef.current?.closeFlyout()}
+							size="icon-sm"
+							title={t("browser.tabsTitle", { count: tabs.length })}
+							type="button"
+							variant="ghost"
+						>
+							<Layers3 aria-hidden="true" className="size-icon-base" />
+							<span
+								aria-hidden="true"
+								className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm"
+							>
+								{tabs.length}
+							</span>
+						</Button>
 					</div>
 				) : null}
-				{navState.error ? (
-					<p
-						className={cn(
-							"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
-							"rounded-md text-xs text-destructive",
-						)}
-						data-testid="browser-preview-error"
-					>
-						{navState.error}
-					</p>
+				{/* Fixed at the rail's own width (w-8) and flush against the panel's
+				    right edge (the form has no right padding) so this column lines up
+				    with the docked rail directly below it. Popped-out has no icon rail
+				    to align with, and gets its own "+" row inside BrowserTabsRail. */}
+				{!poppedOut ? (
+					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+						<Button
+							aria-label={t("browser.openNewTab")}
+							disabled={!canOpenTab}
+							onClick={() => void handleOpenTab()}
+							size="icon-sm"
+							title={t("browser.openNewTab")}
+							type="button"
+							variant="ghost"
+						>
+							<Plus aria-hidden="true" className="size-icon-base" />
+						</Button>
+					</div>
+				) : null}
+			</form>
+			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
+				{/* Docked keeps the rail on the right (out of the way of the toolbar/
+				    address bar); popped-out keeps it on the left. */}
+				{poppedOut ? (
+					<BrowserTabsRail
+						activeTabId={activeTabId}
+						onCloseTab={closeTab}
+						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
+						onReorderTabs={reorderTabs}
+						onSelectTab={handleSelectTab}
+						pinned={pinned}
+						poppedOut={poppedOut}
+						ref={railRef}
+						tabs={tabs}
+					/>
+				) : null}
+				<div
+					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
+					data-testid="browser-viewport"
+				>
+					<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
+					{navState.url === "" ? (
+						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
+							<p>{t("browser.emptyUrl")}</p>
+						</div>
+					) : null}
+					{navState.error ? (
+						<p
+							className={cn(
+								"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
+								"rounded-md text-xs text-destructive",
+							)}
+							data-testid="browser-preview-error"
+						>
+							{navState.error}
+						</p>
+					) : null}
+				</div>
+				{!poppedOut ? (
+					<BrowserTabsRail
+						activeTabId={activeTabId}
+						onCloseTab={closeTab}
+						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
+						onReorderTabs={reorderTabs}
+						onSelectTab={handleSelectTab}
+						pinned={pinned}
+						poppedOut={poppedOut}
+						ref={railRef}
+						tabs={tabs}
+					/>
 				) : null}
 			</div>
 		</div>
 	);
 }
 
-function MirrorVideo({ stream }: { stream: MediaStream }) {
-	const attach = useCallback(
-		(node: HTMLVideoElement | null) => {
-			if (node && node.srcObject !== stream) {
-				node.srcObject = stream;
-			}
-		},
-		[stream],
-	);
-	return <video autoPlay className="absolute inset-0 h-full w-full object-cover" muted playsInline ref={attach} />;
+function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
+	if (!active && !activity?.active) return "";
+	const action = activity?.active ? activity.action : "";
+	if (!action) return appI18n.t("browser.agentUsing");
+	return appI18n.t("browser.agentAction", { verb: browserActionVerb(action) });
+}
+
+function browserActionVerb(action: string): string {
+	const key = ((): MessageKey => {
+		switch (action) {
+			case "click":
+				return "browser.verb.click";
+			case "fill":
+			case "type":
+				return "browser.verb.type";
+			case "press":
+				return "browser.verb.press";
+			case "hover":
+				return "browser.verb.hover";
+			case "scroll":
+				return "browser.verb.scroll";
+			case "open":
+				return "browser.verb.open";
+			case "wait":
+				return "browser.verb.wait";
+			case "snapshot":
+				return "browser.verb.read";
+			case "highlight":
+				return "browser.verb.highlight";
+			case "unhighlight":
+				return "browser.verb.clearHighlight";
+			case "tab-new":
+				return "browser.verb.openTab";
+			case "tab-select":
+				return "browser.verb.switchTab";
+			case "tab-close":
+				return "browser.verb.closeTab";
+			case "tabs":
+				return "browser.verb.checkTabs";
+			default:
+				return "browser.verb.using";
+		}
+	})();
+	return appI18n.t(key);
 }
 
 function StaticPreview({ url }: { url: string }) {

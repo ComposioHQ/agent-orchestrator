@@ -3,8 +3,9 @@
 // It builds the argv to launch `claude` as an interactive session inside a
 // session's worktree, installs worktree-local hooks that report normalized
 // session metadata (native id, title, summary) back into AO's store,
-// and supports resume: GetLaunchCommand pins a stable `--session-id` so
-// GetRestoreCommand can rebuild `claude --resume <uuid>`. SessionInfo reads the
+// and supports resume: GetLaunchCommand pins either AO's requested native UUID
+// or a stable AO-session-derived fallback so GetRestoreCommand can rebuild
+// `claude --resume <uuid>`. SessionInfo reads the
 // hook-captured metadata from the store — it does not parse transcripts.
 // GetConfigSpec remains a no-op (no agent-specific config keys yet).
 //
@@ -22,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -33,7 +33,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 const (
@@ -64,19 +67,31 @@ func New() *Plugin {
 
 // EmitsSubmitActivity signals that Claude Code fires a user-prompt-submit hook
 // under AO's launch, so Activity.State can flip to active after a prompt is
-// accepted. See ports.ActivitySignaler.
+// accepted. See ports.SubmitActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
 // EmitsBlockedActivity signals that Claude Code fires both pre- and post-tool
 // hooks, so Activity.State can flip to blocked mid-turn on a permission dialog
 // and the guarded send loop can clear it once the tool completes. Only
 // claude-code (and its hook-delegators) carry this trio; see
-// ports.ActivitySignaler.
+// ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.EmptyComposerDetector = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
+
+// ComposerIsEmpty recognizes Claude Code's blank composer or its dim
+// placeholder. Claude renders normal, non-dim status chrome below a bordered
+// composer, so inspect that bounded region before using the footer-free fallback.
+// A permission-menu selection and normal typed text are rejected.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	return terminalui.LastBorderedPromptIsEmptyOrDimPlaceholder(output, "❯") ||
+		terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "❯")
+}
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -129,11 +144,13 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 //
 //	claude [--session-id <uuid>] \
 //	       [--permission-mode <mode>] \
-//	       [--append-system-prompt <system prompt>] \
+//	       [--append-system-prompt-file <path> | --append-system-prompt <text>] \
 //	       [-- <prompt>]
 //
-// --session-id pins Claude's native session UUID to a value derived from the
-// AO session id, so the session is resumable later (see
+// --session-id pins Claude's native session UUID to LaunchConfig.NativeSessionID
+// when AO requests a distinct provider conversation, otherwise to a value
+// derived from the AO session id for the legacy one-conversation path. This
+// makes the session resumable later (see
 // GetRestoreCommand) and its transcript is locatable (see SessionInfo) without
 // a separate capture step.
 //
@@ -156,7 +173,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
-	if cfg.SessionID != "" {
+	if cfg.NativeSessionID != "" {
+		nativeSessionID, err := uuid.Parse(strings.TrimSpace(cfg.NativeSessionID))
+		if err != nil {
+			return nil, fmt.Errorf("claude-code: invalid native session id: %w", err)
+		}
+		cmd = append(cmd, "--session-id", nativeSessionID.String())
+	} else if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
 	}
 	// A project's configured permissions drive the starting mode; the explicit
@@ -173,15 +196,20 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--model", model)
 	}
 
-	systemPrompt, err := resolveSystemPrompt(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if systemPrompt != "" {
+	if cfg.SystemPromptFile != "" {
+		if err := validateClaudeSystemPromptFile(cfg.SystemPromptFile); err != nil {
+			return nil, err
+		}
+		// Keep AO's standing instructions out of the process argv. Besides
+		// avoiding platform and terminal-multiplexer command-size limits, this
+		// also leaves the initial user turn as the only potentially large
+		// in-command payload.
+		cmd = append(cmd, "--append-system-prompt-file", cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
 		// Append rather than replace: Claude Code's default system prompt
 		// carries its tool-use and coding instructions, which we want to
 		// keep. The orchestrator prompt layers on top.
-		cmd = append(cmd, "--append-system-prompt", systemPrompt)
+		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
 
 	if cfg.Prompt != "" {
@@ -221,9 +249,9 @@ func (p *Plugin) PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error {
 // cfg.Session.Metadata["agentSessionId"]; for sessions created before hooks
 // captured it, it falls back to the deterministic UUID AO pins via
 // --session-id at launch. ok is false only when neither is available, so the
-// caller fresh-spawns. The command re-applies the permission mode (resume
-// otherwise reverts to the configured default) but not the prompt/system
-// prompt, which the session already carries.
+// caller fresh-spawns. The command re-applies the permission mode and current
+// standing system instructions. When Prompt is present it is passed as the
+// resume-time user turn, avoiding a fragile terminal paste into Claude's TUI.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -246,17 +274,22 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
-	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
-	if err != nil {
-		return nil, false, err
-	}
-	if systemPrompt != "" {
+	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
+	if cfg.SystemPromptFile != "" {
+		if err := validateClaudeSystemPromptFile(cfg.SystemPromptFile); err != nil {
+			return nil, false, err
+		}
+		cmd = append(cmd, "--append-system-prompt-file", cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
 		// --resume rebuilds the system prompt from the current flags (it is
 		// not stored in the transcript), so standing instructions must be
 		// re-appended or a restored orchestrator loses its role.
-		cmd = append(cmd, "--append-system-prompt", systemPrompt)
+		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
 	cmd = append(cmd, "--resume", sessionID)
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
 	return cmd, true, nil
 }
 
@@ -274,6 +307,96 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, ok, nil
 }
 
+// NativeConversationID bridges Claude Code's terminal and ACP surfaces. Both
+// use the same native Claude session UUID. AO terminal sessions pin a
+// deterministic UUID, while Chat persists the id returned by claude-agent-acp.
+func (p *Plugin) NativeConversationID(
+	ctx context.Context,
+	session ports.SessionRef,
+	currentMode domain.SessionMode,
+	providerConversationID string,
+) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	if currentMode == domain.SessionModeChat {
+		id := strings.TrimSpace(providerConversationID)
+		return id, id != "", nil
+	}
+	id := strings.TrimSpace(session.Metadata[ports.MetadataKeyAgentSessionID])
+	if id == "" && session.ID != "" {
+		id = claudeSessionUUID(session.ID)
+	}
+	return id, id != "", nil
+}
+
+// NativeConversationExists distinguishes Claude's reserved session UUID from
+// a conversation that Claude has actually persisted. Claude Code accepts
+// --session-id before the first prompt, but does not create its JSONL transcript
+// until the conversation has content. Passing that reserved-but-empty UUID to
+// either `claude --resume` or ACP session/load returns "No conversation found".
+//
+// The Agent SDK documents local transcripts at
+// ~/.claude/projects/<project-key>/<session-id>.jsonl (or beneath
+// CLAUDE_CONFIG_DIR). We only test for a non-empty top-level transcript; AO does
+// not parse or project provider files here.
+func (p *Plugin) NativeConversationExists(
+	ctx context.Context,
+	_ ports.SessionRef,
+	nativeConversationID string,
+	env map[string]string,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	id := strings.TrimSpace(nativeConversationID)
+	if !isUUID(id) {
+		return false, nil
+	}
+	configDir := strings.TrimSpace(env["CLAUDE_CONFIG_DIR"])
+	if configDir == "" {
+		configDir = strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	}
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, fmt.Errorf("claude-code: resolve transcript root: %w", err)
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	projectsDir := filepath.Join(configDir, "projects")
+	projects, err := os.ReadDir(projectsDir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claude-code: read transcript root %s: %w", projectsDir, err)
+	}
+	for _, project := range projects {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if !project.IsDir() {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(projectsDir, project.Name(), id+".jsonl"))
+		switch {
+		case err == nil && info.Mode().IsRegular() && info.Size() > 0:
+			return true, nil
+		case err == nil, os.IsNotExist(err):
+			continue
+		default:
+			return false, fmt.Errorf("claude-code: inspect transcript for %s: %w", id, err)
+		}
+	}
+	return false, nil
+}
+
+func isUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
+}
+
 // AuthStatus checks Claude Code's local authentication state without starting a
 // session.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
@@ -289,16 +412,17 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(probeCtx, binary, "auth", "status").CombinedOutput()
+	out, err := aoprocess.CommandContext(probeCtx, binary, "auth", "status").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
 	if status, ok := claudeAuthStatusFromOutput(out); ok {
 		return status, nil
 	}
-	if err != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
+	// An unfamiliar non-zero result is not affirmative evidence of missing
+	// credentials. Keep this advisory probe unknown and let launch report the
+	// authoritative failure.
+	_ = err
 	return ports.AgentAuthStatusUnknown, nil
 }
 
@@ -385,34 +509,28 @@ func claudeSessionUUID(aoSessionID string) string {
 	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
 }
 
-// resolveSystemPrompt returns the system prompt text to append, preferring
-// inline instructions when AO has them.
-func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {
-	if cfg.SystemPrompt != "" {
-		return cfg.SystemPrompt, nil
-	}
-	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile)
-		if err != nil {
-			return "", fmt.Errorf("claude-code: read system prompt file: %w", err)
-		}
-		return strings.TrimRight(string(data), "\n"), nil
-	}
-	return "", nil
+// SessionUUID maps an AO session id onto the native Claude Code session UUID
+// used by --session-id and --resume.
+func SessionUUID(aoSessionID string) string {
+	return claudeSessionUUID(aoSessionID)
 }
 
-func resolveRestoreSystemPrompt(cfg ports.RestoreConfig) (string, error) {
-	if cfg.SystemPrompt != "" {
-		return cfg.SystemPrompt, nil
+func validateClaudeSystemPromptFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("claude-code: inspect system prompt file: %w", err)
 	}
-	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile)
-		if err != nil {
-			return "", fmt.Errorf("claude-code: read system prompt file: %w", err)
-		}
-		return strings.TrimRight(string(data), "\n"), nil
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("claude-code: system prompt file %q is not a regular file", path)
 	}
-	return "", nil
+	file, err := os.Open(path) //nolint:gosec // path is AO-owned launch config
+	if err != nil {
+		return fmt.Errorf("claude-code: open system prompt file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("claude-code: close system prompt file: %w", err)
+	}
+	return nil
 }
 
 // appendPermissionFlags maps AO's permission modes onto Claude Code's

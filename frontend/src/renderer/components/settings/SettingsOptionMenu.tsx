@@ -1,12 +1,15 @@
 import { ChevronDown } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
+import { useSuppressStrayFocusRing } from "../../hooks/useSuppressStrayFocusRing";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 
 export type SettingsOption<T extends string> = {
 	value: T;
 	label: string;
 	icon?: ReactNode;
+	disabled?: boolean;
 };
 
 export function SettingsOptionMenu<T extends string>({
@@ -16,7 +19,13 @@ export function SettingsOptionMenu<T extends string>({
 	disabled,
 	placeholder,
 	renderMenuItem,
+	renderTrigger,
 	triggerClassName,
+	menuClassName,
+	menuItemClassName,
+	menuAlign = "end",
+	searchable = false,
+	searchPlaceholder,
 	"aria-label": ariaLabel,
 }: {
 	value: T;
@@ -25,55 +34,137 @@ export function SettingsOptionMenu<T extends string>({
 	disabled?: boolean;
 	placeholder?: string;
 	renderMenuItem?: (option: SettingsOption<T>, selected: boolean) => ReactNode;
+	renderTrigger?: (selected: SettingsOption<T> | undefined, placeholder?: string) => ReactNode;
 	triggerClassName?: string;
+	menuClassName?: string;
+	menuItemClassName?: string;
+	menuAlign?: "start" | "center" | "end";
+	searchable?: boolean;
+	searchPlaceholder?: string;
 	"aria-label": string;
 }) {
+	const { t } = useTranslation();
+	const [search, setSearch] = useState("");
+	const [menuOpen, setMenuOpen] = useState(false);
 	const selected = options.find((option) => option.value === value);
+	const normalizedSearch = search.trim().toLocaleLowerCase();
+	const visibleOptions = normalizedSearch
+		? options.filter((option) =>
+				`${option.label} ${option.value}`.toLocaleLowerCase().includes(normalizedSearch),
+			)
+		: options;
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const [canScrollDown, setCanScrollDown] = useState(false);
+	const updateScrollCue = useCallback(() => {
+		const element = scrollRef.current;
+		setCanScrollDown(Boolean(element && element.scrollHeight - element.scrollTop > element.clientHeight + 1));
+	}, []);
+	useLayoutEffect(() => {
+		if (!menuOpen) {
+			setCanScrollDown(false);
+			return;
+		}
+		updateScrollCue();
+		const element = scrollRef.current;
+		if (!element || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(updateScrollCue);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [menuOpen, updateScrollCue, visibleOptions.length]);
+	const onCloseAutoFocus = useSuppressStrayFocusRing(menuOpen);
 
 	return (
-		<DropdownMenu>
+		<DropdownMenu
+			onOpenChange={(open) => {
+				setMenuOpen(open);
+				if (!open) setSearch("");
+			}}
+		>
 			<DropdownMenuTrigger asChild disabled={disabled}>
 				<button
 					type="button"
 					className={cn(
-						"settings-option-trigger max-w-full min-w-0 hover:text-settings-label focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
+						"group/settings-option-trigger settings-option-trigger max-w-full min-w-0 bg-[var(--color-bg-settings-trigger)] text-[var(--color-text-settings-trigger)] transition-colors hover:bg-[var(--color-bg-settings-trigger-hover)] hover:text-[var(--color-text-settings-trigger)] data-[state=open]:bg-[var(--color-bg-settings-trigger-hover)] focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
 						triggerClassName,
 					)}
 					aria-label={ariaLabel}
 				>
-					<span className="min-w-0 truncate">{selected?.label ?? placeholder}</span>
-					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
+					{renderTrigger ? (
+						renderTrigger(selected, placeholder)
+					) : (
+						<>
+							{selected?.icon}
+							<span className="min-w-0 truncate">{selected?.label ?? placeholder}</span>
+						</>
+					)}
+				<ChevronDown
+					className="size-icon-sm shrink-0 transition-transform duration-300 ease-out group-data-[state=open]/settings-option-trigger:rotate-180"
+					aria-hidden="true"
+				/>
 				</button>
 			</DropdownMenuTrigger>
 			{/* bg-settings-menu / border-settings-menu / rounded-(--radius-settings-panel) must
 			    be real utilities so twMerge drops DropdownMenuContent's bg-popover, border-border,
 			    and rounded-lg. */}
 			<DropdownMenuContent
-				align="end"
-				className="settings-menu-surface rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
+				align={menuAlign}
+				alignOffset={0}
+				onCloseAutoFocus={onCloseAutoFocus}
+				className={cn(
+					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
+					menuClassName,
+				)}
 			>
-				{options.map((option) => (
-					<DropdownMenuItem
-						key={option.value}
-						onSelect={() => onChange(option.value)}
-						className={cn(
-							"settings-menu-item min-w-0 cursor-default outline-none",
-							"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
-							"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
-							option.value === value && "border-settings-menu bg-settings-menu-selected",
-							"[&_svg]:size-icon-lg [&_svg]:shrink-0 [&_svg]:text-settings-muted",
-						)}
+				{searchable && (
+					<div className="shrink-0 p-1" onKeyDown={(event) => event.stopPropagation()}>
+						<input
+							type="search"
+							aria-label={t("settings.options.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
+							value={search}
+							onChange={(event) => setSearch(event.target.value)}
+							placeholder={searchPlaceholder ?? t("settings.options.searchPlaceholder")}
+							className="settings-inline-input w-full"
+						/>
+					</div>
+				)}
+				<div className="relative min-h-0">
+					<div
+						ref={scrollRef}
+						className="model-menu-scroll max-h-select-menu-max overflow-y-auto overscroll-contain"
+						onScroll={updateScrollCue}
 					>
-						{renderMenuItem ? (
-							renderMenuItem(option, option.value === value)
-						) : (
-							<>
-								{option.icon}
-								{option.label}
-							</>
+						{visibleOptions.map((option) => (
+							<DropdownMenuItem
+								key={option.value}
+								disabled={option.disabled}
+								onSelect={() => onChange(option.value)}
+								className={cn(
+									"settings-menu-item min-w-0 cursor-default outline-none",
+									"focus:bg-settings-menu-selected focus:text-settings-title",
+									"data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title",
+									option.value === value && "border-settings-menu bg-settings-menu-selected text-settings-title",
+									menuItemClassName,
+								)}
+							>
+								{renderMenuItem ? (
+									renderMenuItem(option, option.value === value)
+								) : (
+									<>
+										{option.icon}
+										{option.label}
+									</>
+								)}
+							</DropdownMenuItem>
+						))}
+						{visibleOptions.length === 0 && (
+							<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.options.noMatches")}</p>
 						)}
-					</DropdownMenuItem>
-				))}
+					</div>
+					<div
+						className={cn("model-menu-overflow-cue", canScrollDown ? "opacity-100" : "opacity-0")}
+						aria-hidden="true"
+					/>
+				</div>
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);

@@ -9,6 +9,7 @@ package codex
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,11 +18,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
@@ -38,15 +43,21 @@ func New() *Plugin {
 }
 
 // EmitsSubmitActivity signals Codex fires a user-prompt-submit hook under AO's
-// launch. See ports.ActivitySignaler.
+// launch. See ports.SubmitActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
 // EmitsBlockedActivity is false: codex reports permission prompts as
 // waiting_input — it installs no post-tool-use hook, so a blocked state could
 // never be cleared mid-turn. confirmActive must not nudge it (an Enter could
 // answer a pending decision it cannot report as blocked). See
-// ports.ActivitySignaler.
+// ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return false }
+
+// ExitDetectionMode opts Codex into AO's process supervisor. Codex hooks
+// expose turn boundaries but no reliable session-end event.
+func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
 
 // SteersActiveTurn is true: submitting input to the codex TUI mid-turn steers
 // the running turn rather than being swallowed or queued, so AO may write an
@@ -54,43 +65,21 @@ func (p *Plugin) EmitsBlockedActivity() bool { return false }
 // ports.ActiveTurnSteerer.
 func (p *Plugin) SteersActiveTurn() bool { return true }
 
-// SteerContent steers an active turn with attachment-aware content blocks.
-// It reuses the same validation as the spawn attachment path: only raster
-// image mimes are supported and are delivered as base64 blocks. Unsupported
-// block types are rejected with ErrUnsupportedContent instead of being
-// dropped, so the queued turn remains queued.
-func (p *Plugin) SteerContent(ctx context.Context, id domain.SessionID, blocks []ports.SteerContentBlock) error {
-	_ = ctx
-	_ = id
-	for _, b := range blocks {
-		switch b.Type {
-		case "text":
-			continue
-		case "image":
-			switch b.MimeType {
-			case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp":
-			default:
-				return ports.ErrUnsupportedContent
-			}
-			if b.Data == "" {
-				return ports.ErrUnsupportedContent
-			}
-		case "resource":
-			if b.URI == "" && b.Text == "" {
-				return ports.ErrUnsupportedContent
-			}
-		default:
-			return ports.ErrUnsupportedContent
-		}
-	}
-	return nil
-}
-
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
-var _ ports.ActiveTurnContentSteerer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
+var _ ports.TerminalActivityDetector = (*Plugin)(nil)
+var _ ports.EmptyComposerDetector = (*Plugin)(nil)
+
+// ComposerIsEmpty recognizes Codex's blank composer or its dim placeholder.
+// Normal text after the prompt marker is treated as a human draft and causes
+// optional semantic handoff collection to fail closed.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	return terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "›")
+}
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -137,15 +126,17 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	if err := appendSessionHookFlags(&cmd); err != nil {
+		return nil, err
+	}
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
 
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
+	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
 
 	if cfg.Prompt != "" {
@@ -179,16 +170,21 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	if err := appendSessionHookFlags(&cmd); err != nil {
+		return nil, false, err
+	}
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
+	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
 	cmd = append(cmd, agentSessionID)
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
 	return cmd, true, nil
 }
 
@@ -202,6 +198,107 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, ok, nil
 }
 
+// NativeConversationID bridges Codex's terminal resume id and app-server thread
+// id. Codex uses the same native thread UUID on both surfaces; a TUI source must
+// have reported it through its hook before it can switch without losing context.
+func (p *Plugin) NativeConversationID(
+	ctx context.Context,
+	session ports.SessionRef,
+	currentMode domain.SessionMode,
+	providerConversationID string,
+) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	if currentMode == domain.SessionModeChat {
+		id := strings.TrimSpace(providerConversationID)
+		return id, id != "", nil
+	}
+	id := strings.TrimSpace(session.Metadata[ports.MetadataKeyAgentSessionID])
+	return id, id != "", nil
+}
+
+// NativeConversationExists distinguishes a Codex thread UUID from a thread
+// that app-server can actually resume. Codex returns the UUID from thread/start
+// before the first user message materializes a rollout; thread/resume rejects
+// that reserved-only UUID with "no rollout found for thread id".
+//
+// Active rollouts live below CODEX_HOME/sessions. Archived rollouts are
+// deliberately excluded because Codex also rejects them from thread/resume.
+// We only establish that a non-empty rollout exists; Codex remains responsible
+// for parsing its own provider state.
+func (p *Plugin) NativeConversationExists(
+	ctx context.Context,
+	_ ports.SessionRef,
+	nativeConversationID string,
+	env map[string]string,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	id, valid := canonicalCodexThreadID(nativeConversationID)
+	if !valid {
+		return false, nil
+	}
+	codexHome := strings.TrimSpace(env["CODEX_HOME"])
+	if codexHome == "" {
+		codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	}
+	if codexHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, fmt.Errorf("codex: resolve rollout root: %w", err)
+		}
+		codexHome = filepath.Join(home, ".codex")
+	}
+
+	found := false
+	sessionsDir := filepath.Join(codexHome, "sessions")
+	err := filepath.WalkDir(sessionsDir, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || !codexRolloutNameMatches(entry.Name(), id) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && info.Size() > 0 {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("codex: inspect rollout root %s: %w", sessionsDir, err)
+	}
+	return found, nil
+}
+
+func canonicalCodexThreadID(value string) (string, bool) {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+func codexRolloutNameMatches(name, nativeConversationID string) bool {
+	if !strings.HasPrefix(name, "rollout-") {
+		return false
+	}
+	suffix := "-" + nativeConversationID + ".jsonl"
+	return strings.HasSuffix(name, suffix) || strings.HasSuffix(name, suffix+".zst")
+}
+
 // AuthStatus checks Codex's local login state without making a model call.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	binary, err := p.codexBinary(ctx)
@@ -211,21 +308,29 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(probeCtx, binary, "login", "status").CombinedOutput()
+	out, err := aoprocess.CommandContext(probeCtx, binary, "login", "status").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
+	if status, ok := codexAuthStatusFromOutput(out); ok {
+		return status, nil
+	}
+	// The probe is advisory. Version skew, transient startup failures, and
+	// unfamiliar output are not proof that credentials are invalid; the actual
+	// launch remains the authoritative check.
+	_ = err
+	return ports.AgentAuthStatusUnknown, nil
+}
+
+func codexAuthStatusFromOutput(out []byte) (ports.AgentAuthStatus, bool) {
 	text := strings.ToLower(string(out))
 	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnauthorized, true
 	}
 	if strings.Contains(text, "logged in") {
-		return ports.AgentAuthStatusAuthorized, nil
+		return ports.AgentAuthStatusAuthorized, true
 	}
-	if err != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
-	return ports.AgentAuthStatusUnknown, nil
+	return ports.AgentAuthStatusUnknown, false
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,
@@ -369,7 +474,12 @@ func DoctorLaunchProbes() [][]string {
 	overrideProbe := []string{"features", "list"}
 	appendNoUpdateCheckFlag(&overrideProbe)
 	appendHideRateLimitNudgeFlag(&overrideProbe)
-	appendSessionHookFlags(&overrideProbe)
+	if err := appendSessionHookFlags(&overrideProbe); err != nil {
+		// The probe only asks Codex to parse the hook config; a bare fallback
+		// keeps that diagnostic available if the current executable cannot be
+		// resolved, while real session launches fail closed above.
+		appendSessionHookFlagsForExecutable(&overrideProbe, "ao")
+	}
 	appendWorkspaceTrustFlag(&overrideProbe, os.TempDir())
 	return [][]string{flagProbe, overrideProbe}
 }

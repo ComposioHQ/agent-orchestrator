@@ -15,7 +15,7 @@ func newAuthUnderTest(pw string, now func() time.Time) (http.Handler, *lockout) 
 	st.setHash(h)
 	lock := newLockout(5, time.Minute, now)
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
-	return authMiddleware(st, lock)(ok), lock
+	return authMiddleware(st, lock, nil)(ok), lock
 }
 
 func req(auth string) *http.Request {
@@ -146,8 +146,9 @@ func TestPreviewFileSetsScopedCookie(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("expected auth cookie on preview file response")
+		return
 	}
-	if c.Path != "/api/v1/sessions/abc/preview/files/" {
+	if c.Path != "/api/v1/sessions/abc/preview/files/" { //nolint:staticcheck // SA5011 false positive: t.Fatal above halts the test
 		t.Errorf("cookie Path = %q, want /api/v1/sessions/abc/preview/files/", c.Path)
 	}
 	if !c.HttpOnly {
@@ -175,8 +176,9 @@ func TestPreviewCookieRefreshedAfterPasswordChange(t *testing.T) {
 	}
 	if c == nil {
 		t.Fatal("expected stale auth cookie to be refreshed")
+		return
 	}
-	if c.Value != "newpass12" {
+	if c.Value != "newpass12" { //nolint:staticcheck // SA5011 false positive: t.Fatal above halts the test
 		t.Errorf("cookie Value = %q, want the current token newpass12", c.Value)
 	}
 }

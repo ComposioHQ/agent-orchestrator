@@ -36,6 +36,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 
 	_ "modernc.org/sqlite" // register sqlite driver for opencode session metadata probes
 )
@@ -88,6 +89,11 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports opencode's optional provider/model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `opencode --model`.")
+}
+
 // GetLaunchCommand builds the argv to start a new interactive opencode session.
 // Shape:
 //
@@ -111,6 +117,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
@@ -147,6 +154,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
@@ -165,8 +173,9 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, ok, nil
 }
 
-// AuthStatus checks whether opencode has at least one configured provider
-// credential.
+// AuthStatus checks whether opencode has a configured provider credential.
+// Missing credentials remain unknown because opencode can still run its public
+// free models without a provider login.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	binary, err := p.opencodeBinary(ctx)
 	if err != nil {
@@ -180,13 +189,13 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
+	out, err := aoprocess.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
 	text := strings.ToLower(string(out))
 	if strings.Contains(text, "0 credentials") {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnknown, nil
 	}
 	if strings.Contains(text, "credential") && err == nil {
 		return ports.AgentAuthStatusAuthorized, nil
@@ -264,7 +273,7 @@ func opencodeAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, true, nil
 	}
 
 	var entries map[string]json.RawMessage
@@ -272,7 +281,7 @@ func opencodeAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(entries) == 0 {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, true, nil
 	}
 	for key, value := range entries {
 		if strings.TrimSpace(key) == "" {
@@ -283,7 +292,7 @@ func opencodeAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, true, nil
 }
 
 func opencodeDBAuthStatus(ctx context.Context, path string) (ports.AgentAuthStatus, bool, error) {
@@ -314,7 +323,7 @@ func opencodeDBAuthStatus(ctx context.Context, path string) (ports.AgentAuthStat
 	if authorized {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, true, nil
 }
 
 func opencodeDBHasAuthorizedAccount(ctx context.Context, db *sql.DB) (authorized, known bool, err error) {
@@ -407,6 +416,52 @@ func opencodeConfigEnvPrefix(inlinePrompt, promptFile, sessionID string) ([]stri
 	return []string{"env", opencodeConfigEnvVar + "=" + configPath}, agentName, nil
 }
 
+// PrepareACPConfigContent merges AO's standing instructions and any explicit
+// bypass-permissions choice into OpenCode's inline runtime overlay. The user's
+// OPENCODE_CONFIG path remains untouched, preserving its normal global, custom,
+// project, provider, and credential configuration.
+func PrepareACPConfigContent(
+	existing, systemPrompt, sessionID string,
+	permissions ports.PermissionMode,
+) (string, error) {
+	allowAll := ports.NormalizePermissionMode(permissions) == ports.PermissionModeBypassPermissions
+	if strings.TrimSpace(systemPrompt) == "" && !allowAll {
+		return existing, nil
+	}
+	config := map[string]any{}
+	if strings.TrimSpace(existing) != "" {
+		if err := json.Unmarshal([]byte(existing), &config); err != nil {
+			return "", fmt.Errorf("opencode: decode OPENCODE_CONFIG_CONTENT: %w", err)
+		}
+	}
+	if _, ok := config["$schema"]; !ok {
+		config["$schema"] = "https://opencode.ai/config.json"
+	}
+	if strings.TrimSpace(systemPrompt) != "" {
+		agents, ok := config["agent"].(map[string]any)
+		if config["agent"] != nil && !ok {
+			return "", fmt.Errorf("opencode: OPENCODE_CONFIG_CONTENT agent must be an object")
+		}
+		if agents == nil {
+			agents = map[string]any{}
+		}
+		agentName := opencodeAOAgentName(sessionID)
+		agents[agentName] = opencodeAgentSettings{Mode: "primary", Prompt: systemPrompt}
+		config["agent"] = agents
+		config["default_agent"] = agentName
+	}
+	if allowAll {
+		// This is the native config equivalent of OpenCode's TUI auto-approval
+		// flag. Other AO permission modes preserve the user's granular rules.
+		config["permission"] = "allow"
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return "", fmt.Errorf("opencode: encode ACP agent config: %w", err)
+	}
+	return string(data), nil
+}
+
 func opencodeAOAgentName(sessionID string) string {
 	const fallback = "ao-system-prompt"
 	trimmed := strings.TrimSpace(sessionID)
@@ -455,7 +510,7 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 			)
 		}
 		for _, candidate := range candidates {
-			if hookutil.FileExists(candidate) {
+			if hookutil.IsExecutableFile(candidate) {
 				return candidate, nil
 			}
 		}
@@ -482,7 +537,7 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 	}
 
 	for _, candidate := range candidates {
-		if hookutil.FileExists(candidate) {
+		if hookutil.IsExecutableFile(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {

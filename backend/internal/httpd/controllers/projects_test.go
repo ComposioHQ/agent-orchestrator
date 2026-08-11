@@ -31,7 +31,7 @@ import (
 
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 // emptyGetManager returns a GetResult that sets neither Project nor Degraded —
@@ -76,10 +76,11 @@ func TestProjectsAPI_GetEmptyResultIs500(t *testing.T) {
 func newTestServer(t *testing.T) *httptest.Server {
 
 	t.Helper()
+	t.Setenv("GIT_CEILING_DIRECTORIES", os.TempDir())
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 
 	if err != nil {
 

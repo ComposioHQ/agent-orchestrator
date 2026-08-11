@@ -3,6 +3,7 @@ package conpty
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -26,6 +27,13 @@ func livePID() int { return os.Getpid() }
 // used in Destroy tests so the force-kill step is a safe no-op.
 // ponytail: PID 2147483647 (MaxInt32) is never a real process; signal-0 returns ESRCH.
 func deadPID() int { return 2147483647 }
+
+func TestRuntimeDoesNotAdvertiseStyledRenderedTerminalOutput(t *testing.T) {
+	var runtime any = New(Options{})
+	if _, ok := runtime.(ports.StyledTerminalOutputReader); ok {
+		t.Fatal("raw ConPTY history must not be used as rendered composer state")
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Test harness: in-process pty-host backed by a fakePTY.
@@ -105,6 +113,7 @@ func isolateRegistry(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
 }
 
 // ---------------------------------------------------------------------------
@@ -268,6 +277,38 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 	}
 }
 
+func TestSendInputDeliversEscapeByte(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID: "sess-escape", WorkspacePath: "/tmp/w", Argv: []string{"sh"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	h := hosts["sess-escape"]
+	defer h.cleanup(t)
+
+	if err := rt.SendInput(context.Background(), handle, "\x1b"); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	inputC := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 8)
+		n, _ := h.pty.inR.Read(buf)
+		inputC <- append([]byte(nil), buf[:n]...)
+	}()
+	select {
+	case got := <-inputC:
+		if string(got) != "\x1b" {
+			t.Fatalf("input = %q, want Escape", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Escape input")
+	}
+}
+
 // TestSendMessage_LargeMessageChunked verifies a message > 512 runes is
 // delivered correctly (host receives full text + "\r").
 func TestSendMessage_LargeMessageChunked(t *testing.T) {
@@ -396,6 +437,60 @@ func TestIsAlive_TrueWhileServing_FalseAfterClose(t *testing.T) {
 	}
 }
 
+func TestSupervisedProcessExitKeepsHostAlive(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	ctx := context.Background()
+
+	handle, err := rt.Create(ctx, ports.RuntimeConfig{
+		SessionID:     "sess-supervised",
+		WorkspacePath: "/tmp/w",
+		Argv:          []string{"ao", "agent-process", "supervise"},
+		Env:           map[string]string{runtimeLaunchIDEnv: "launch-current"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := hosts["sess-supervised"]
+	t.Cleanup(func() { h.cleanup(t) })
+
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{}); err != nil || !alive {
+		t.Fatalf("supervised process before exit = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-stale"}); err != nil || alive {
+		t.Fatalf("stale supervised generation = (%v, %v), want (false, nil)", alive, err)
+	}
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-current"}); err != nil || !alive {
+		t.Fatalf("current supervised generation = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-current"}); err != nil || !alive {
+		t.Fatalf("exact current supervised generation = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-stale"}); err != nil || alive {
+		t.Fatalf("exact stale supervised generation = (%v, %v), want (false, nil)", alive, err)
+	}
+	h.pty.signalExit(42)
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		alive, probeErr := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{})
+		if probeErr != nil {
+			t.Fatal(probeErr)
+		}
+		if !alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("supervised process remained alive after PTY exit")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if alive, probeErr := rt.IsAlive(ctx, handle); probeErr != nil || !alive {
+		t.Fatalf("runtime host after child exit = (%v, %v), want (true, nil)", alive, probeErr)
+	}
+}
+
 // TestIsAlive_FalseForUnknownSession verifies IsAlive returns (false, nil) for
 // a session not in the map or registry.
 func TestIsAlive_FalseForUnknownSession(t *testing.T) {
@@ -471,6 +566,33 @@ func TestDestroy_KillsHostAndCleansUp(t *testing.T) {
 	// Second Destroy must be idempotent (returns nil).
 	if err := rt.Destroy(ctx, handle); err != nil {
 		t.Fatalf("second Destroy: expected nil, got %v", err)
+	}
+}
+
+type processKillerFunc func() error
+
+func (f processKillerFunc) Kill() error { return f() }
+
+func TestDestroyRetainsSessionWhenPIDCannotBeStopped(t *testing.T) {
+	isolateRegistry(t)
+	rt := New(Options{})
+	rt.sessions["sess-stuck"] = &hostSession{addr: "127.0.0.1:1", pid: 424242}
+	rt.killHost = func(string) error { return errors.New("graceful transport failed") }
+	rt.pidIsAlive = func(int) bool { return true }
+	rt.processFinder = func(int) (processKiller, error) {
+		return processKillerFunc(func() error { return errors.New("access denied") }), nil
+	}
+	rt.destroyWait = 0
+
+	err := rt.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-stuck"})
+	if err == nil || !strings.Contains(err.Error(), "still alive") || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("Destroy error = %v, want force-kill and final-liveness evidence", err)
+	}
+	rt.mu.Lock()
+	_, retained := rt.sessions["sess-stuck"]
+	rt.mu.Unlock()
+	if !retained {
+		t.Fatal("Destroy removed a session whose PID may still be alive")
 	}
 }
 

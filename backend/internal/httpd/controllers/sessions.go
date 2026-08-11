@@ -1,18 +1,22 @@
 package controllers
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -22,19 +26,30 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
+	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
+	"github.com/aoagents/agent-orchestrator/backend/internal/workspacewatch"
 )
 
 const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
+	maxModelLen       = 256
 	maxDisplayNameLen = 20
+	maxSwitchNoteLen  = 4096
+	maxIdempotencyKey = 128
 
-	// Attachment limits guard the daemon against oversized spawn bodies. Images
+	// Agent-authored handoffs are deliberately bounded. Deterministic AO
+	// context is stored separately and does not need to be repeated here.
+	maxAgentHandoffBodyBytes = 256 << 10
+	maxAgentHandoffBytes     = 64 << 10
+
+	// Attachment limits guard the daemon against oversized spawn bodies. Files
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
 	// body, so the caps are deliberately conservative.
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
+	maxAttachmentBytes  = 10 << 20 // 10 MiB per file, decoded
 	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
 	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
 	// per-attachment and total caps above only apply after the whole body is
@@ -42,42 +57,55 @@ const (
 	// decoded total by ~4/3) would allocate in full first. Derived from the
 	// decoded total plus headroom for the prompt and JSON envelope.
 	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
+	// maxSendBodyBytes is the /send equivalent of maxSpawnBodyBytes, sized off
+	// maxAttachmentBytes (one attachment) rather than maxAttachmentsBytes
+	// (spawn's up-to-eight): unlike spawn, a send carries at most one inline
+	// attachment.
+	maxSendBodyBytes = maxAttachmentBytes*4/3 + (2 << 20)
 )
 
-// attachmentExtByMime maps the accepted image MIME types to the file extension
-// used when the image is written into the worktree. Raster formats only: the
-// agent is told to open the file for visual context, so active-content formats
-// (notably image/svg+xml, which is XML that can carry scripts/external entities)
-// are intentionally excluded.
-var attachmentExtByMime = map[string]string{
-	"image/png":  ".png",
-	"image/jpeg": ".jpg",
-	"image/jpg":  ".jpg",
-	"image/gif":  ".gif",
-	"image/webp": ".webp",
-	"image/bmp":  ".bmp",
+// blockedAttachmentMimes contains MIME types that are explicitly rejected for
+// security reasons. SVG is excluded because it is XML that can carry active
+// content (scripts/external entities).
+var blockedAttachmentMimes = map[string]bool{
+	"image/svg+xml": true,
 }
 
-var errPreviewFileNotFound = errors.New("preview file not found")
+var (
+	errPreviewFileNotFound         = errors.New("preview file not found")
+	errPreviewFileOutsideWorkspace = errors.New("preview file is outside the session workspace")
+)
 
 // SessionService is the controller-facing session service contract.
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
-	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
+	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
+	ResumeAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error)
+	SwitchAgent(ctx context.Context, id domain.SessionID, in sessionsvc.SwitchAgentInput) (domain.AgentSwitch, error)
+	ListAgentSwitches(ctx context.Context, id domain.SessionID) ([]domain.AgentSwitch, error)
+	SubmitAgentHandoff(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID, sourceGenerationID domain.AgentGenerationID, handoff json.RawMessage) (domain.AgentSwitch, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (sessionsvc.RollbackOutcome, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionsvc.CleanupOutcome, error)
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
-	Send(ctx context.Context, id domain.SessionID, message string) error
-	PromoteQueuedTurn(ctx context.Context, id domain.SessionID, turnID domain.TurnID) (domain.ConversationTurn, error)
+	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
+	SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
+	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error)
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
+	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
+	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
+	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
+	InvalidateWorkspaceCache(id domain.SessionID)
+	Pin(ctx context.Context, id domain.SessionID) (domain.Session, error)
+	Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error)
 }
 
 // ActivityRecorder applies an agent activity-state signal to a session. It is
@@ -89,12 +117,34 @@ type ActivityRecorder interface {
 	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error
 }
 
+// ManagedPreviewServer is the deterministic server lifecycle attached to a
+// worker. It is separate from static file rendering and browser automation.
+type ManagedPreviewServer interface {
+	Start(ctx context.Context, sessionID domain.SessionID, workspacePath, configurationName string) (previewserver.Status, error)
+	Stop(ctx context.Context, sessionID domain.SessionID) (previewserver.Status, error)
+	Status(sessionID domain.SessionID) previewserver.Status
+}
+
+// SessionCapabilityValidator verifies the daemon-issued token injected only
+// into the owning worker session.
+type SessionCapabilityValidator interface {
+	Valid(sessionID domain.SessionID, token, verifier string) bool
+}
+
+// UsageHookRecorder consumes transcript metadata from the same native hook
+// callback without changing activity-state semantics.
+type UsageHookRecorder interface {
+	RecordHook(ctx context.Context, id domain.SessionID, signal usagesvc.HookSignal) error
+}
+
 // SessionsController owns the session routes. Nil keeps routes registered but
 // returns OpenAPI-backed 501s.
 type SessionsController struct {
-	Svc      SessionService
-	Activity ActivityRecorder
-	sendMu sync.Mutex
+	Svc           SessionService
+	Activity      ActivityRecorder
+	Usage         UsageHookRecorder
+	PreviewServer ManagedPreviewServer
+	Capabilities  SessionCapabilityValidator
 }
 
 // Register mounts the session routes on the supplied router.
@@ -106,21 +156,49 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/preview", c.preview)
 	r.Post("/sessions/{sessionId}/preview", c.setPreview)
 	r.Delete("/sessions/{sessionId}/preview", c.clearPreview)
+	r.Get("/sessions/{sessionId}/preview/server", c.previewServerStatus)
+	r.Post("/sessions/{sessionId}/preview/server", c.startPreviewServer)
+	r.Delete("/sessions/{sessionId}/preview/server", c.stopPreviewServer)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
+	r.Post("/sessions/{sessionId}/attachments", c.stageAttachments)
 	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
 	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
 	r.Get("/sessions/{sessionId}/pr", c.listPRs)
 	r.Post("/sessions/{sessionId}/pr/claim", c.claimPR)
 	r.Patch("/sessions/{sessionId}", c.rename)
+	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
+	r.Patch("/sessions/{sessionId}/auto-inject-review", c.setAutoInjectReviewPolicy)
+	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
+	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
+	r.Get("/sessions/{sessionId}/agent-switches", c.listAgentSwitches)
+	r.Post("/sessions/{sessionId}/agent-switches/{switchId}/handoff", c.submitAgentHandoff)
+	r.Get("/sessions/{sessionId}/interface-transition", c.interfaceTransitionStatus)
+	r.Post("/sessions/{sessionId}/interface-transition", c.startInterfaceTransition)
+	r.Delete("/sessions/{sessionId}/interface-transition", c.cancelInterfaceTransition)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
-	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/steer", c.promoteTurn)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
+	r.Post("/sessions/{sessionId}/pin", c.pin)
+	r.Delete("/sessions/{sessionId}/pin", c.unpin)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
+	r.Post("/orchestrators/delegate", c.delegateTask)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
+}
+
+// RegisterSwitchAgent mounts the synchronous switch workflow separately so
+// the API layer can give it a larger bounded timeout than ordinary REST calls.
+func (c *SessionsController) RegisterSwitchAgent(r chi.Router) {
+	r.Post("/sessions/{sessionId}/switch-agent", c.switchAgent)
+}
+
+// RegisterStreams mounts long-lived session streams outside the REST timeout
+// middleware. Worktree notifications remain active only while a client is
+// actually viewing that session's files.
+func (c *SessionsController) RegisterStreams(r chi.Router) {
+	r.Get("/sessions/{sessionId}/workspace/events", c.streamWorkspaceChanges)
 }
 
 func (c *SessionsController) list(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +238,12 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
 		return
 	}
+	mode, err := domain.ParseSessionMode(string(in.Mode))
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "SESSION_MODE_INVALID", err.Error(), nil)
+		return
+	}
+	in.Mode = mode
 	if len(in.Prompt) > maxPromptLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
@@ -181,7 +265,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -189,45 +273,106 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusCreated, SpawnSessionResponse{Session: sessionView(sess), PromptBytes: promptBytes, SystemPromptBytes: systemPromptBytes})
 }
 
-// spawnAttachmentError carries a client-facing API error code + message for a
+// attachmentError carries a client-facing API error code + message for a
 // rejected attachment payload.
-type spawnAttachmentError struct {
+type attachmentError struct {
 	code    string
 	message string
 }
 
-// decodeSpawnAttachments validates and base64-decodes the inline image
-// attachments from a spawn request, enforcing count, per-image, and total size
-// caps. It returns a nil slice when there are no attachments.
-func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
+// extensionForMimeType returns a file extension for a MIME type. For known
+// MIME types, it returns a standard extension. For unknown types, it attempts
+// to extract a reasonable extension from the MIME type, or falls back to ".bin".
+func extensionForMimeType(mimeType string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+
+	// Preferred extensions for MIME types with multiple options
+	preferredExts := map[string]string{
+		"image/jpeg": ".jpg",
+		"image/jpg":  ".jpg",
+		"text/plain": ".txt",
+	}
+
+	// Check if we have a preferred extension for this MIME type
+	if pref, ok := preferredExts[mimeType]; ok {
+		return pref
+	}
+
+	// Try the standard mime package
+	exts, err := mime.ExtensionsByType(mimeType)
+	if err == nil && len(exts) > 0 {
+		// Prefer common extensions when available
+		for _, ext := range exts {
+			switch ext {
+			case ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".txt", ".json", ".xml", ".html", ".css", ".js", ".md", ".zip", ".tar", ".gz":
+				return ext
+			}
+		}
+		return exts[0] // Return the primary extension if no preferred match
+	}
+
+	// Fallback: extract from the MIME type itself
+	// e.g., "application/pdf" -> ".pdf", "text/plain" -> ".plain"
+	parts := strings.SplitN(mimeType, "/", 2)
+	if len(parts) == 2 {
+		subtype := parts[1]
+		// Handle common suffixes like "+xml", "+json"
+		if idx := strings.Index(subtype, "+"); idx >= 0 {
+			subtype = subtype[:idx]
+		}
+		return "." + subtype
+	}
+
+	// Ultimate fallback for unknown MIME types
+	return ".bin"
+}
+
+// decodeAttachment validates and base64-decodes a single inline file
+// attachment shared by spawn, delegate, stage, and send requests, enforcing
+// the blocked-MIME-type rule and per-file size cap. Callers handling multiple
+// attachments are responsible for the count and total-size caps.
+func decodeAttachment(a AttachmentInput) (ports.SpawnAttachment, *attachmentError) {
+	mimeType := strings.ToLower(strings.TrimSpace(a.MimeType))
+	if blockedAttachmentMimes[mimeType] {
+		return ports.SpawnAttachment{}, &attachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
+	}
+	ext := extensionForMimeType(mimeType)
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+	if err != nil {
+		return ports.SpawnAttachment{}, &attachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+	}
+	if len(data) == 0 {
+		return ports.SpawnAttachment{}, &attachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
+	}
+	if len(data) > maxAttachmentBytes {
+		return ports.SpawnAttachment{}, &attachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
+	}
+	return ports.SpawnAttachment{Ext: ext, Data: data}, nil
+}
+
+// decodeSpawnAttachments validates and base64-decodes the inline file
+// attachments from a spawn request, enforcing count, per-file, and total size
+// caps. It accepts any MIME type except explicitly blocked ones (e.g., SVG
+// for security reasons). Returns a nil slice when there are no attachments.
+func decodeSpawnAttachments(in []AttachmentInput) ([]ports.SpawnAttachment, *attachmentError) {
 	if len(in) == 0 {
 		return nil, nil
 	}
 	if len(in) > maxAttachments {
-		return nil, &spawnAttachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
+		return nil, &attachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
 	}
 	out := make([]ports.SpawnAttachment, 0, len(in))
 	total := 0
 	for _, a := range in {
-		ext, ok := attachmentExtByMime[strings.ToLower(strings.TrimSpace(a.MimeType))]
-		if !ok {
-			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
-		}
-		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+		attachment, err := decodeAttachment(a)
 		if err != nil {
-			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+			return nil, err
 		}
-		if len(data) == 0 {
-			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
-		}
-		if len(data) > maxAttachmentBytes {
-			return nil, &spawnAttachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
-		}
-		total += len(data)
+		total += len(attachment.Data)
 		if total > maxAttachmentsBytes {
-			return nil, &spawnAttachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
+			return nil, &attachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
 		}
-		out = append(out, ports.SpawnAttachment{Ext: ext, Data: data})
+		out = append(out, attachment)
 	}
 	return out, nil
 }
@@ -406,6 +551,59 @@ func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Req
 	envelope.WriteJSON(w, http.StatusOK, workspaceFileResponse(file))
 }
 
+func (c *SessionsController) streamWorkspaceChanges(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/workspace/events")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "SSE_UNSUPPORTED", "Streaming is not supported by this server", nil)
+		return
+	}
+	paths, err := c.Svc.WorkspaceWatchPaths(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	changes, err := workspacewatch.Watch(r.Context(), paths...)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream; charset=utf-8")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	keepAlive := time.NewTicker(15 * time.Second)
+	defer keepAlive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case _, ok := <-changes:
+			if !ok {
+				return
+			}
+			c.Svc.InvalidateWorkspaceCache(sessionID(r))
+			if _, err := fmt.Fprint(w, "event: workspace_changed\ndata: {}\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-keepAlive.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 // setPreview persists the browser preview URL the desktop app opens for a
 // session and fans out a session_updated CDC event so the dashboard's browser
 // panel reacts live. The target is resolved as follows:
@@ -415,7 +613,10 @@ func (c *SessionsController) getWorkspaceFile(w http.ResponseWriter, r *http.Req
 //     when no entry point exists.
 //   - An explicit workspace-local path (e.g. `index.html`, `./dist/index.html`)
 //     is served through the preview/files route so local files load.
-//   - Anything else (http(s)/file URLs, host:port dev servers) is kept verbatim.
+//   - Absolute paths and file: URLs are accepted only when their fully resolved
+//     target remains inside the fully resolved session workspace. They use the
+//     workspace-confined preview origin rather than an automatable file: URL.
+//   - External http(s) URLs and host:port dev servers are kept verbatim.
 //
 // Every call bumps the session's preview revision, so re-running `ao preview`
 // with the same target still refreshes the panel.
@@ -436,7 +637,11 @@ func (c *SessionsController) setPreview(w http.ResponseWriter, r *http.Request) 
 		envelope.WriteError(w, r, err)
 		return
 	}
-	// ponytail: no URL sanitization on preview target; agent-trusted for now
+	// Passive preview intentionally accepts an explicit external URL or an
+	// existing workspace-local file. Arbitrary local files are rejected by every
+	// browser surface because the target remains available to session automation.
+	// Managed process execution uses the separately capability-protected
+	// /preview/server route.
 	previewURL := strings.TrimSpace(in.URL)
 	if previewURL == "" {
 		if entry, ok := discoverPreviewEntry(sess.Metadata.WorkspacePath); ok {
@@ -488,6 +693,170 @@ func (c *SessionsController) clearPreview(w http.ResponseWriter, r *http.Request
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(updated)})
+}
+
+func (c *SessionsController) previewServerStatus(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil || c.PreviewServer == nil || c.Capabilities == nil {
+		apispec.NotImplemented(w, r, http.MethodGet, "/api/v1/sessions/{sessionId}/preview/server")
+		return
+	}
+	if !c.authorizePreviewServer(w, r) {
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, previewServerStatusResponse(c.PreviewServer.Status(sessionID(r))))
+}
+
+func (c *SessionsController) startPreviewServer(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil || c.PreviewServer == nil || c.Capabilities == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/sessions/{sessionId}/preview/server")
+		return
+	}
+	var in StartPreviewServerRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if !c.authorizePreviewServer(w, r) {
+		return
+	}
+	sess, err := c.Svc.Get(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	previous := c.PreviewServer.Status(sessionID(r))
+	status, err := c.PreviewServer.Start(
+		r.Context(),
+		sessionID(r),
+		sess.Metadata.WorkspacePath,
+		strings.TrimSpace(in.Configuration),
+	)
+	if err != nil {
+		currentStatus := c.PreviewServer.Status(sessionID(r))
+		if previous.URL != "" &&
+			(currentStatus.State != previewserver.StateReady || currentStatus.URL != previous.URL) {
+			if current, getErr := c.Svc.Get(r.Context(), sessionID(r)); getErr == nil &&
+				current.Metadata.PreviewURL == previous.URL {
+				clearCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+				_, _ = c.Svc.SetPreview(clearCtx, sessionID(r), "")
+				cancel()
+			}
+		}
+		writePreviewServerError(w, r, err)
+		return
+	}
+	if status.TargetKind == previewserver.TargetApp {
+		if _, err := c.Svc.SetPreview(r.Context(), sessionID(r), status.URL); err != nil {
+			_, _ = c.PreviewServer.Stop(context.Background(), sessionID(r))
+			envelope.WriteError(w, r, err)
+			return
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, previewServerStatusResponse(status))
+}
+
+func (c *SessionsController) stopPreviewServer(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil || c.PreviewServer == nil || c.Capabilities == nil {
+		apispec.NotImplemented(w, r, http.MethodDelete, "/api/v1/sessions/{sessionId}/preview/server")
+		return
+	}
+	if !c.authorizePreviewServer(w, r) {
+		return
+	}
+	previous := c.PreviewServer.Status(sessionID(r))
+	status, err := c.PreviewServer.Stop(r.Context(), sessionID(r))
+	if err != nil {
+		writePreviewServerError(w, r, err)
+		return
+	}
+	current, getErr := c.Svc.Get(r.Context(), sessionID(r))
+	if getErr != nil {
+		envelope.WriteError(w, r, getErr)
+		return
+	}
+	if previous.URL != "" && current.Metadata.PreviewURL == previous.URL {
+		if _, err := c.Svc.SetPreview(r.Context(), sessionID(r), ""); err != nil {
+			envelope.WriteError(w, r, err)
+			return
+		}
+	}
+	envelope.WriteJSON(w, http.StatusOK, previewServerStatusResponse(status))
+}
+
+func (c *SessionsController) authorizePreviewServer(w http.ResponseWriter, r *http.Request) bool {
+	id := sessionID(r)
+	sess, err := c.Svc.Get(r.Context(), id)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return false
+	}
+	if sess.IsTerminated {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_TERMINATED", "Session is terminated", nil)
+		return false
+	}
+	if !c.Capabilities.Valid(
+		id,
+		strings.TrimSpace(r.Header.Get(browserCapabilityHeader)),
+		sess.Metadata.BrowserCapabilityVerifier,
+	) {
+		envelope.WriteAPIError(
+			w,
+			r,
+			http.StatusForbidden,
+			"forbidden",
+			"PREVIEW_CAPABILITY_INVALID",
+			"Preview capability is invalid",
+			nil,
+		)
+		return false
+	}
+	return true
+}
+
+func previewServerStatusResponse(status previewserver.Status) PreviewServerStatusResponse {
+	logs := status.Logs
+	if logs == nil {
+		logs = []string{}
+	}
+	return PreviewServerStatusResponse{
+		SessionID:     status.SessionID,
+		State:         string(status.State),
+		Configuration: status.Configuration,
+		TargetKind:    string(status.TargetKind),
+		URL:           status.URL,
+		Port:          status.Port,
+		StartedAt:     status.StartedAt,
+		Error:         status.Error,
+		Logs:          logs,
+	}
+}
+
+func writePreviewServerError(w http.ResponseWriter, r *http.Request, err error) {
+	var serviceErr previewserver.Error
+	if !errors.As(err, &serviceErr) {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	status := http.StatusUnprocessableEntity
+	typeName := "unprocessable"
+	switch serviceErr.Code {
+	case "PREVIEW_CONFIG_NOT_FOUND", "PREVIEW_CONFIGURATION_NOT_FOUND":
+		status = http.StatusNotFound
+		typeName = "not_found"
+	case "PREVIEW_CONFIGURATION_REQUIRED":
+		status = http.StatusBadRequest
+		typeName = "bad_request"
+	case "PREVIEW_NOT_READY":
+		status = http.StatusGatewayTimeout
+		typeName = "timeout"
+	case "PREVIEW_START_CANCELED":
+		status = http.StatusRequestTimeout
+		typeName = "timeout"
+	case "PREVIEW_START_FAILED", "PREVIEW_EXITED", "PREVIEW_STOP_FAILED":
+		status = http.StatusInternalServerError
+		typeName = "internal_error"
+	}
+	envelope.WriteAPIError(w, r, status, typeName, serviceErr.Code, serviceErr.Message, nil)
 }
 
 func (c *SessionsController) listPRs(w http.ResponseWriter, r *http.Request) {
@@ -551,6 +920,70 @@ func (c *SessionsController) rename(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, RenameSessionResponse{OK: true, SessionID: sessionID(r), DisplayName: displayName})
 }
 
+func (c *SessionsController) setMergePolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/merge-policy")
+		return
+	}
+	var in SetSessionMergePolicyRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetTerminateOnPRMerge(r.Context(), sessionID(r), in.TerminateOnPRMerge)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionMergePolicyResponse{
+		OK:                 true,
+		SessionID:          sessionID(r),
+		TerminateOnPRMerge: in.TerminateOnPRMerge,
+		Session:            sessionView(sess),
+	})
+}
+
+func (c *SessionsController) setAutoInjectReviewPolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/auto-inject-review")
+		return
+	}
+	var in SetSessionAutoInjectReviewRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetAutoInjectReview(r.Context(), sessionID(r), in.AutoInjectReview)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionAutoInjectReviewResponse{
+		OK:               true,
+		SessionID:        sessionID(r),
+		AutoInjectReview: in.AutoInjectReview,
+		Session:          sessionView(sess),
+	})
+}
+
+func (c *SessionsController) setReviewer(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/sessions/{sessionId}/reviewer")
+		return
+	}
+	var in SetSessionReviewerRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sess, err := c.Svc.SetReviewerHarness(r.Context(), sessionID(r), in.Harness)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
 func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/restore")
@@ -562,6 +995,134 @@ func (c *SessionsController) restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, RestoreSessionResponse{OK: true, SessionID: sessionID(r), RestoreMode: out.Mode, Session: sessionView(out.Session)})
+}
+
+func (c *SessionsController) pin(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/pin")
+		return
+	}
+	sess, err := c.Svc.Pin(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) unpin(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "DELETE", "/api/v1/sessions/{sessionId}/pin")
+		return
+	}
+	sess, err := c.Svc.Unpin(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) resumeAgent(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/resume-agent")
+		return
+	}
+	out, err := c.Svc.ResumeAgent(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ResumeAgentResponse{
+		OK:         true,
+		SessionID:  sessionID(r),
+		ResumeMode: out.Mode,
+		Session:    sessionView(out.Session),
+	})
+}
+
+func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/switch-agent")
+		return
+	}
+	var in SwitchAgentRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	targetHarness := domain.AgentHarness(strings.TrimSpace(string(in.TargetHarness)))
+	if targetHarness == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TARGET_HARNESS_REQUIRED", "targetHarness is required", nil)
+		return
+	}
+	note := domain.SanitizeControlChars(strings.TrimSpace(in.Note))
+	if len(note) > maxSwitchNoteLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SWITCH_NOTE_TOO_LONG", "note is too long", nil)
+		return
+	}
+	idempotencyKey := strings.TrimSpace(in.IdempotencyKey)
+	if len(idempotencyKey) > maxIdempotencyKey {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "IDEMPOTENCY_KEY_TOO_LONG", "idempotencyKey is too long", nil)
+		return
+	}
+	switchRecord, err := c.Svc.SwitchAgent(r.Context(), sessionID(r), sessionsvc.SwitchAgentInput{
+		TargetHarness:  targetHarness,
+		Note:           note,
+		IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, AgentSwitchResponse{Switch: agentSwitchView(switchRecord)})
+}
+
+func (c *SessionsController) listAgentSwitches(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/agent-switches")
+		return
+	}
+	switches, err := c.Svc.ListAgentSwitches(r.Context(), sessionID(r))
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, ListAgentSwitchesResponse{Switches: agentSwitchViews(switches)})
+}
+
+func (c *SessionsController) submitAgentHandoff(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxAgentHandoffBodyBytes)
+	var in SubmitAgentHandoffRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	sourceGenerationID := domain.AgentGenerationID(strings.TrimSpace(string(in.SourceGenerationID)))
+	if sourceGenerationID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "SOURCE_GENERATION_REQUIRED", "sourceGenerationId is required", nil)
+		return
+	}
+	if len(bytes.TrimSpace(in.Handoff)) == 0 {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "HANDOFF_REQUIRED", "handoff is required", nil)
+		return
+	}
+	if len(in.Handoff) > maxAgentHandoffBytes {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "HANDOFF_TOO_LARGE", "handoff must be no larger than 64 KiB", nil)
+		return
+	}
+	switchRecord, err := c.Svc.SubmitAgentHandoff(
+		r.Context(), sessionID(r), agentSwitchID(r), sourceGenerationID, in.Handoff,
+	)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, AgentSwitchResponse{Switch: agentSwitchView(switchRecord)})
 }
 
 func (c *SessionsController) kill(w http.ResponseWriter, r *http.Request) {
@@ -618,8 +1179,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/send")
 		return
 	}
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
+	r.Body = http.MaxBytesReader(w, r.Body, maxSendBodyBytes)
 	var in SendSessionMessageRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -633,37 +1193,73 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MESSAGE_TOO_LONG", "Message is too long", nil)
 		return
 	}
+	var attachment *ports.SpawnAttachment
+	if in.Attachment != nil {
+		decoded, attachErr := decodeAttachment(*in.Attachment)
+		if attachErr != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+			return
+		}
+		attachment = &decoded
+	}
 	message := domain.SanitizeControlChars(in.Message)
-	if err := c.Svc.Send(r.Context(), sessionID(r), message); err != nil {
+	if err := c.Svc.Send(r.Context(), sessionID(r), message, attachment); err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
 }
 
-func (c *SessionsController) promoteTurn(w http.ResponseWriter, r *http.Request) {
+func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
-		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer")
+		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators/delegate")
 		return
 	}
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
-	sid := sessionID(r)
-	tid := turnID(r)
-	if strings.TrimSpace(string(tid)) == "" {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TURN_ID_REQUIRED", "turnId is required", nil)
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpawnBodyBytes)
+	var in DelegateTaskRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	turn, err := c.Svc.PromoteQueuedTurn(r.Context(), sid, tid)
+	if in.ProjectID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
+		return
+	}
+	if len(in.Brief) > maxPromptLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TASK_TOO_LONG", "Task is too long", nil)
+		return
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(in.Model)) > maxModelLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "Model must be 256 characters or fewer", nil)
+		return
+	}
+	if in.Mode != "" {
+		mode, err := domain.ParseSessionMode(string(in.Mode))
+		if err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_SESSION_MODE", "mode must be chat or tui", nil)
+			return
+		}
+		in.Mode = mode
+	}
+	attachments, attachErr := decodeSpawnAttachments(in.Attachments)
+	if attachErr != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+		return
+	}
+
+	out, err := c.Svc.DelegateTask(r.Context(), sessionsvc.DelegateTaskInput{
+		ProjectID:      in.ProjectID,
+		Brief:          domain.SanitizeControlChars(in.Brief),
+		RequestedAgent: in.Agent,
+		Model:          domain.SanitizeControlChars(strings.TrimSpace(in.Model)),
+		RequestedMode:  in.Mode,
+		Attachments:    attachments,
+	})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, PromoteTurnResponse{OK: true, SessionID: sid, TurnID: domain.TurnID(tid), PromotedTurn: turn})
-}
-
-func turnID(r *http.Request) domain.TurnID {
-	return domain.TurnID(chi.URLParam(r, "turnId"))
+	envelope.WriteJSON(w, http.StatusAccepted, DelegateTaskResponse{OK: true, WorkerID: out.WorkerID, OrchestratorID: out.OrchestratorID})
 }
 
 // activity records an agent activity-state signal reported by an agent hook
@@ -671,7 +1267,7 @@ func turnID(r *http.Request) domain.TurnID {
 // lifecycle.Manager so the reaper and hooks never race on the session's
 // activity/termination columns.
 func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
-	if c.Activity == nil {
+	if c.Activity == nil && c.Usage == nil {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/activity")
 		return
 	}
@@ -690,7 +1286,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	agentSessionID := capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.AgentSessionID)))
-	if state == "" && agentSessionID == "" {
+	if state == "" && agentSessionID == "" && in.Usage == nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ACTIVITY_OR_SESSION_ID_REQUIRED", "Activity state or agent session ID is required", nil)
 		return
 	}
@@ -700,20 +1296,52 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	// never match its pre/post counterpart, so overlong values are dropped by
 	// the CLI; the cap here is defense against non-AO callers).
 	sig := ports.ActivitySignal{
-		Valid:          state != "",
-		State:          state,
-		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
-		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
-		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
-		AgentSessionID: agentSessionID,
+		Valid:                 state != "",
+		State:                 state,
+		Event:                 capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:              capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:             capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		AgentSessionID:        agentSessionID,
+		LatestUserPrompt:      capActivityText(domain.SanitizeControlChars(strings.TrimSpace(in.LatestUserPrompt)), 16<<10),
+		LatestAssistantUpdate: capActivityText(domain.SanitizeControlChars(strings.TrimSpace(in.LatestAssistantUpdate)), 16<<10),
+		TranscriptPath:        capActivityText(domain.SanitizeControlChars(strings.TrimSpace(in.TranscriptPath)), 4096),
+		LaunchID:              capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.LaunchID))),
 	}
-	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
-		if errors.Is(err, ports.ErrSessionNotFound) {
-			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
+	if c.Activity != nil && (sig.Valid || sig.AgentSessionID != "") {
+		if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
+			if errors.Is(err, ports.ErrSessionNotFound) {
+				envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
+				return
+			}
+			envelope.WriteError(w, r, err)
 			return
 		}
-		envelope.WriteError(w, r, err)
-		return
+	}
+	if c.Usage != nil {
+		usageSignal := usagesvc.HookSignal{
+			Event:           sig.Event,
+			LaunchID:        sig.LaunchID,
+			NativeSessionID: agentSessionID,
+		}
+		if in.Usage != nil {
+			usageSignal.Harness = domain.AgentHarness(capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(string(in.Usage.Harness)))))
+			usageSignal.TranscriptPath = capUsagePath(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.TranscriptPath)))
+			usageSignal.ModelID = capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.ModelID)))
+			usageSignal.SubagentID = capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.SubagentID)))
+			usageSignal.SubagentTranscriptPath = capUsagePath(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.SubagentTranscriptPath)))
+		}
+		if err := c.Usage.RecordHook(r.Context(), sessionID(r), usageSignal); err != nil {
+			if errors.Is(err, usagesvc.ErrUsageSessionNotFound) {
+				envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
+				return
+			}
+			slog.Default().Warn(
+				"usage hook processing failed",
+				"session", sessionID(r),
+				"event", sig.Event,
+				"err", err,
+			)
+		}
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
 }
@@ -726,6 +1354,28 @@ func capActivityMeta(v string) string {
 		return ""
 	}
 	return v
+}
+
+func capUsagePath(v string) string {
+	const maxLen = 4096
+	if len(v) > maxLen {
+		return ""
+	}
+	return v
+}
+
+func capActivityText(v string, maxLen int) string {
+	if maxLen <= 0 || len(v) <= maxLen {
+		return v
+	}
+	const marker = "\n[... truncated by AO ...]\n"
+	budget := maxLen - len(marker)
+	if budget <= 0 {
+		return ""
+	}
+	head := budget / 2
+	tail := budget - head
+	return strings.ToValidUTF8(string([]byte(v)[:head])+marker+string([]byte(v)[len(v)-tail:]), "?")
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {
@@ -742,7 +1392,13 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
 		return
 	}
-	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean)
+	if in.Mode != "" {
+		if _, err := domain.ParseSessionMode(string(in.Mode)); err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "SESSION_MODE_INVALID", err.Error(), nil)
+			return
+		}
+	}
+	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean, in.Mode)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -784,6 +1440,10 @@ func (c *SessionsController) getOrchestrator(w http.ResponseWriter, r *http.Requ
 
 func sessionID(r *http.Request) domain.SessionID {
 	return domain.SessionID(chi.URLParam(r, "sessionId"))
+}
+
+func agentSwitchID(r *http.Request) domain.AgentSwitchID {
+	return domain.AgentSwitchID(chi.URLParam(r, "switchId"))
 }
 
 func orchestratorID(r *http.Request) domain.SessionID {
@@ -866,8 +1526,14 @@ func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, ra
 
 func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
+	if filePath, isFileURL, err := previewFileURLPath(raw); isFileURL {
+		if err != nil {
+			return "", err
+		}
+		return workspaceAbsolutePreviewURL(r, id, workspacePath, filePath)
+	}
 	if isAbsolutePreviewPath(raw) {
-		return absolutePreviewFileURL(raw)
+		return workspaceAbsolutePreviewURL(r, id, workspacePath, raw)
 	}
 	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
 		return resolved, err
@@ -883,23 +1549,66 @@ func isWindowsAbsolutePath(raw string) bool {
 	return len(raw) >= 3 && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) && raw[1] == ':' && (raw[2] == '\\' || raw[2] == '/')
 }
 
-func absolutePreviewFileURL(raw string) (string, error) {
-	file, err := filepath.Abs(raw)
+func previewFileURLPath(raw string) (string, bool, error) {
+	if len(raw) < len("file:") || !strings.EqualFold(raw[:len("file:")], "file:") {
+		return "", false, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", true, errPreviewFileNotFound
+	}
+	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
+		return "", true, errPreviewFileOutsideWorkspace
+	}
+	filePath := parsed.Path
+	if len(filePath) > 1 && filePath[0] == '/' && isWindowsAbsolutePath(filePath[1:]) {
+		filePath = filePath[1:]
+	}
+	filePath = filepath.FromSlash(filePath)
+	if !isAbsolutePreviewPath(filePath) {
+		return "", true, errPreviewFileNotFound
+	}
+	return filePath, true, nil
+}
+
+func workspaceAbsolutePreviewURL(
+	r *http.Request,
+	id domain.SessionID,
+	workspacePath,
+	filePath string,
+) (string, error) {
+	workspaceAbs, err := filepath.Abs(workspacePath)
 	if err != nil {
 		return "", errPreviewFileNotFound
 	}
-	info, err := os.Stat(file)
-	if err != nil || info.IsDir() {
+	workspaceResolved, err := filepath.EvalSymlinks(workspaceAbs)
+	if err != nil {
 		return "", errPreviewFileNotFound
 	}
-	filePath := filepath.ToSlash(file)
-	if filepath.VolumeName(file) != "" || isWindowsAbsolutePath(filePath) {
-		filePath = "/" + filePath
+	fileAbs, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", errPreviewFileNotFound
 	}
-	return (&url.URL{Scheme: "file", Path: filePath}).String(), nil
+	fileResolved, err := filepath.EvalSymlinks(fileAbs)
+	if err != nil {
+		return "", errPreviewFileNotFound
+	}
+	rel, err := filepath.Rel(workspaceResolved, fileResolved)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", errPreviewFileOutsideWorkspace
+	}
+	entry, ok := previewutil.EntryAtPath(workspaceResolved, filepath.ToSlash(rel))
+	if !ok {
+		return "", errPreviewFileNotFound
+	}
+	return previewFileURL(r, id, entry.Path)
 }
 
 func writePreviewResolveError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errPreviewFileOutsideWorkspace) {
+		envelope.WriteAPIError(w, r, http.StatusForbidden, "forbidden", "PREVIEW_FILE_OUTSIDE_WORKSPACE", "Preview files must stay inside the session workspace", nil)
+		return
+	}
 	if errors.Is(err, errPreviewFileNotFound) {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PREVIEW_FILE_NOT_FOUND", "Preview file not found", nil)
 		return
@@ -934,7 +1643,38 @@ func previewFileURL(r *http.Request, id domain.SessionID, entry string) (string,
 }
 
 func sessionView(s domain.Session) SessionView {
-	return SessionView{Session: s, Branch: s.Metadata.Branch, PreviewURL: s.Metadata.PreviewURL, PreviewRevision: s.Metadata.PreviewRevision, PRs: sessionPRFacts(s.PRs)}
+	return SessionView{
+		Session:         s,
+		Branch:          s.Metadata.Branch,
+		PreviewURL:      s.Metadata.PreviewURL,
+		PreviewRevision: s.Metadata.PreviewRevision,
+		PRs:             sessionPRFacts(s.PRs),
+	}
+}
+
+func agentSwitchView(s domain.AgentSwitch) AgentSwitchView {
+	return AgentSwitchView{
+		ID:                      s.ID,
+		SessionID:               s.SessionID,
+		FromHarness:             s.FromHarness,
+		TargetHarness:           s.TargetHarness,
+		TargetStartMode:         s.TargetStartMode,
+		State:                   s.State,
+		AgentHandoffStatus:      s.AgentHandoffStatus,
+		SemanticHandoffIncluded: s.SemanticHandoffIncluded,
+		SourceTranscriptStatus:  s.SourceTranscriptStatus,
+		ErrorCode:               s.ErrorCode,
+		RequestedAt:             s.RequestedAt,
+		UpdatedAt:               s.UpdatedAt,
+	}
+}
+
+func agentSwitchViews(switches []domain.AgentSwitch) []AgentSwitchView {
+	out := make([]AgentSwitchView, 0, len(switches))
+	for _, agentSwitch := range switches {
+		out = append(out, agentSwitchView(agentSwitch))
+	}
+	return out
 }
 
 func sessionViews(sessions []domain.Session) []SessionView {
@@ -965,21 +1705,30 @@ func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesR
 	out := make([]WorkspaceFileSummary, 0, len(files.Files))
 	for _, file := range files.Files {
 		out = append(out, WorkspaceFileSummary{
-			Path:      file.Path,
-			Status:    file.Status,
-			Additions: file.Additions,
-			Deletions: file.Deletions,
-			Size:      file.Size,
-			Binary:    file.Binary,
+			Path:         file.Path,
+			PreviousPath: file.PreviousPath,
+			Status:       file.Status,
+			Additions:    file.Additions,
+			Deletions:    file.Deletions,
+			Size:         file.Size,
+			Binary:       file.Binary,
 		})
 	}
-	return ListWorkspaceFilesResponse{SessionID: files.SessionID, Files: out, Truncated: files.Truncated}
+	return ListWorkspaceFilesResponse{
+		SessionID:      files.SessionID,
+		CompareBaseSHA: files.CompareBaseSHA,
+		CompareBaseRef: files.CompareBaseRef,
+		CompareMode:    files.CompareMode,
+		Files:          out,
+		Truncated:      files.Truncated,
+	}
 }
 
 func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileResponse {
 	return WorkspaceFileResponse{
 		SessionID:        file.SessionID,
 		Path:             file.Path,
+		PreviousPath:     file.PreviousPath,
 		Status:           file.Status,
 		Additions:        file.Additions,
 		Deletions:        file.Deletions,
@@ -990,6 +1739,9 @@ func workspaceFileResponse(file sessionsvc.WorkspaceFileDetail) WorkspaceFileRes
 		ContentTruncated: file.ContentTruncated,
 		Diff:             file.Diff,
 		DiffTruncated:    file.DiffTruncated,
+		CompareBaseSHA:   file.CompareBaseSHA,
+		CompareBaseRef:   file.CompareBaseRef,
+		CompareMode:      file.CompareMode,
 	}
 }
 

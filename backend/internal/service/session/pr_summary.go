@@ -13,23 +13,27 @@ import (
 
 // PRSummary is the user-facing SCM read model for one PR owned by a session.
 type PRSummary struct {
-	URL              string
-	HTMLURL          string
-	Number           int
-	Title            string
-	State            domain.PRState
-	Provider         string
-	Repo             string
-	Author           string
-	SourceBranch     string
-	TargetBranch     string
-	HeadSHA          string
-	Additions        int
-	Deletions        int
-	ChangedFiles     int
-	CI               PRCISummary
-	Review           PRReviewSummary
-	Mergeability     PRMergeabilitySummary
+	URL          string
+	HTMLURL      string
+	Number       int
+	Title        string
+	State        domain.PRState
+	Provider     string
+	Repo         string
+	Author       string
+	SourceBranch string
+	TargetBranch string
+	HeadSHA      string
+	Additions    int
+	Deletions    int
+	ChangedFiles int
+	CI           PRCISummary
+	Review       PRReviewSummary
+	Mergeability PRMergeabilitySummary
+	// StateChangedAt is when the current draft/open/merged/closed state became
+	// active. It is backend-selected from durable PR/provider facts.
+	StateChangedAt   time.Time
+	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	ObservedAt       time.Time
 	CIObservedAt     time.Time
@@ -65,12 +69,13 @@ type PRReviewSummary struct {
 // PRReviewEntry is one submitted provider review summary: a reviewer's decisive
 // verdict and the body they submitted with it.
 type PRReviewEntry struct {
-	Reviewer    string
-	Verdict     domain.ReviewDecision
-	Body        string
-	URL         string
-	SubmittedAt time.Time
-	IsBot       bool
+	Reviewer         string
+	Verdict          domain.ReviewDecision
+	Body             string
+	URL              string
+	SubmittedAt      time.Time
+	IsBot            bool
+	AutoInjectReview bool
 }
 
 // PRUnresolvedReviewer groups unresolved human comments by reviewer.
@@ -84,9 +89,10 @@ type PRUnresolvedReviewer struct {
 
 // PRReviewCommentLink points to one unresolved review comment.
 type PRReviewCommentLink struct {
-	URL  string
-	File string
-	Line int
+	URL              string
+	File             string
+	Line             int
+	AutoInjectReview bool
 }
 
 // PRMergeabilitySummary describes whether a PR can be merged and why.
@@ -115,25 +121,36 @@ func (s *Service) ListPRSummaries(ctx context.Context, id domain.SessionID) ([]P
 	if err != nil {
 		return nil, err
 	}
-	out := make([]PRSummary, 0, len(prs))
-	for _, pr := range prs {
-		checks, err := s.store.ListChecks(ctx, pr.URL)
-		if err != nil {
-			return nil, err
+	groups := groupPullRequestAliases(prs)
+	out := make([]PRSummary, 0, len(groups))
+	for _, group := range groups {
+		var checks []domain.PullRequestCheck
+		var threads []domain.PullRequestReviewThread
+		var reviews []domain.PullRequestReview
+		var comments []domain.PullRequestComment
+		for _, pr := range group.aliases {
+			prChecks, err := s.store.ListChecks(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			checks = append(checks, prChecks...)
+			prThreads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			threads = append(threads, prThreads...)
+			prReviews, err := s.store.ListPRReviews(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			reviews = append(reviews, prReviews...)
+			prComments, err := s.store.ListPRComments(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			comments = append(comments, prComments...)
 		}
-		threads, err := s.store.ListPRReviewThreads(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		reviews, err := s.store.ListPRReviews(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		comments, err := s.store.ListPRComments(ctx, pr.URL)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, summarizePR(pr, checks, reviews, threads, comments))
+		out = append(out, summarizePR(group.primary, checks, reviews, threads, comments))
 	}
 	sortPRSummaries(out)
 	return out, nil
@@ -158,10 +175,28 @@ func summarizePR(pr domain.PullRequest, checks []domain.PullRequestCheck, review
 		CI:               summarizeCI(pr, checks),
 		Review:           summarizeReview(pr, comments, reviews),
 		Mergeability:     summarizeMergeability(pr, threads),
+		StateChangedAt:   summarizePRStateChangedAt(pr),
+		CreatedAt:        pr.CreatedAtProvider,
 		UpdatedAt:        pr.UpdatedAt,
 		ObservedAt:       pr.ObservedAt,
 		CIObservedAt:     pr.CIObservedAt,
 		ReviewObservedAt: pr.ReviewObservedAt,
+	}
+}
+
+func summarizePRStateChangedAt(pr domain.PullRequest) time.Time {
+	if !pr.StateChangedAt.IsZero() {
+		return pr.StateChangedAt
+	}
+	switch pullRequestState(pr) {
+	case domain.PRStateMerged:
+		return pr.MergedAtProvider
+	case domain.PRStateClosed:
+		return pr.ClosedAtProvider
+	case domain.PRStateDraft, domain.PRStateOpen:
+		return pr.CreatedAtProvider
+	default:
+		return time.Time{}
 	}
 }
 
@@ -211,9 +246,10 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 		byReviewer[reviewer]++
 		isBot[reviewer] = c.IsBot
 		links[reviewer] = append(links[reviewer], PRReviewCommentLink{
-			URL:  c.URL,
-			File: c.File,
-			Line: c.Line,
+			URL:              c.URL,
+			File:             c.File,
+			Line:             c.Line,
+			AutoInjectReview: c.AutoInjectReview,
 		})
 	}
 	latestReviews := latestChangesRequestedReviews(reviews)
@@ -231,12 +267,13 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 	// body is surfaced too.
 	for reviewer, review := range latestDecisiveReviews(reviews) {
 		out.Reviews = append(out.Reviews, PRReviewEntry{
-			Reviewer:    reviewer,
-			Verdict:     reviewOrNone(review.State),
-			Body:        review.Body,
-			URL:         review.URL,
-			SubmittedAt: review.SubmittedAt,
-			IsBot:       review.IsBot,
+			Reviewer:         reviewer,
+			Verdict:          reviewOrNone(review.State),
+			Body:             review.Body,
+			URL:              review.URL,
+			SubmittedAt:      review.SubmittedAt,
+			IsBot:            review.IsBot,
+			AutoInjectReview: review.AutoInjectReview,
 		})
 	}
 	sort.Slice(out.Reviews, func(i, j int) bool { return out.Reviews[i].Reviewer < out.Reviews[j].Reviewer })

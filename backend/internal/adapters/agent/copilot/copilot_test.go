@@ -190,15 +190,95 @@ func TestGetLaunchCommandSelectsSessionCustomAgent(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModelField(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
+		t.Fatalf("GetConfigSpec: %v", err)
+	}
+
+	var found bool
+	for _, f := range spec.Fields {
+		if f.Key != "model" {
+			continue
+		}
+		found = true
+		if f.Type != ports.ConfigFieldString {
+			t.Errorf("model field Type = %v, want %v", f.Type, ports.ConfigFieldString)
+		}
+		if f.Description == "" {
+			t.Error("model field Description is empty")
+		}
+	}
+	if !found {
+		t.Fatalf("GetConfigSpec did not report a \"model\" field: %#v", spec.Fields)
+	}
+}
+
+func TestGetConfigSpecRespectsCanceledContext(t *testing.T) {
+	plugin := &Plugin{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := plugin.GetConfigSpec(ctx); err == nil {
+		t.Fatal("GetConfigSpec with canceled context: err = nil, want non-nil")
+	}
+}
+
+func TestGetLaunchCommandAppendsModelFlag(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "claude-sonnet-4.5"},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	want := []string{"copilot", "--model", "claude-sonnet-4.5"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "   "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v unexpectedly contains --model for blank config", cmd)
+	}
+}
+
+// Restore path intentionally does not forward a configured model override —
+// see appendModelFlag's doc comment (issue #2895; --model + --resume
+// composition could not be verified — the test account's Copilot Free plan
+// only grants "auto" regardless of --model). This test locks that decision
+// in so a future "just mirror the launch path" edit doesn't silently wire
+// it without re-verifying.
+func TestGetRestoreCommandDoesNotForwardModelOverride(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "claude-sonnet-4.5"},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "uuid-123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{"copilot", "--resume", "uuid-123"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v (model override must not be forwarded on restore)", cmd, want)
 	}
 }
 
@@ -607,7 +687,7 @@ func TestGetAgentHooksInstallsCopilotHooks(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
+func TestInstallAgentProfileInstallsSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
@@ -655,6 +735,75 @@ func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
 	}
 }
 
+func TestInstallAgentProfileDoesNotInstallLifecycleHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	systemPromptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(systemPromptFile, []byte("review without modifying files\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.InstallAgentProfile(context.Background(), ports.WorkspaceHookConfig{
+		DataDir:          t.TempDir(),
+		SessionID:        "review-sess-1",
+		SystemPromptFile: systemPromptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatalf("InstallAgentProfile: %v", err)
+	}
+	profilePath := filepath.Join(workspace, ".github", "agents", "ao-review-sess-1.agent.md")
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "review without modifying files") {
+		t.Fatalf("hidden system prompt missing from profile:\n%s", data)
+	}
+	if _, err := os.Stat(copilotHooksPath(workspace)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("profile-only install created lifecycle hooks: %v", err)
+	}
+	exclude, err := os.ReadFile(filepath.Join(workspace, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exclude), "/.github/agents/ao-review-sess-1.agent.md\n") {
+		t.Fatalf("profile is not git-excluded:\n%s", exclude)
+	}
+}
+
+func TestInstallAgentProfilePreservesUserOwnedProfile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	workspace := t.TempDir()
+	profilePath := filepath.Join(workspace, ".github", "agents", "ao-review-sess-1.agent.md")
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const userProfile = "---\nname: user-owned\n---\nkeep me\n"
+	if err := os.WriteFile(profilePath, []byte(userProfile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.InstallAgentProfile(context.Background(), ports.WorkspaceHookConfig{
+		SessionID:     "review-sess-1",
+		SystemPrompt:  "AO replacement",
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatalf("InstallAgentProfile: %v", err)
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != userProfile {
+		t.Fatalf("user-owned profile changed:\n%s", data)
+	}
+}
+
 func TestGetAgentHooksIgnoresSessionCopilotAgentInLinkedWorktreeCommonExclude(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	dir := t.TempDir()
@@ -696,7 +845,7 @@ func TestGetAgentHooksIgnoresSessionCopilotAgentInLinkedWorktreeCommonExclude(t 
 	}
 }
 
-func TestGetAgentHooksUpdatesManagedSessionCopilotAgent(t *testing.T) {
+func TestInstallAgentProfileUpdatesManagedSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
@@ -704,11 +853,11 @@ func TestGetAgentHooksUpdatesManagedSessionCopilotAgent(t *testing.T) {
 	}
 
 	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", SystemPrompt: "old rules", WorkspacePath: workspace}
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+	if err := plugin.InstallAgentProfile(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg.SystemPrompt = "new rules"
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+	if err := plugin.InstallAgentProfile(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 

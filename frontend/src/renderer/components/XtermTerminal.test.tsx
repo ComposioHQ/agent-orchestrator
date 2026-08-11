@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AttachableTerminal } from "../hooks/useTerminalSession";
+import { useUiStore } from "../stores/ui-store";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
@@ -12,6 +14,8 @@ const state = vi.hoisted(() => ({
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
 		buffer: { active: { type: string } };
 		scrollLines: ReturnType<typeof vi.fn>;
+		scrollToBottom: ReturnType<typeof vi.fn>;
+		refresh: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
@@ -20,6 +24,7 @@ const state = vi.hoisted(() => ({
 		selectionListeners: Set<() => void>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
+			viewport: { scrollBarWidth: number };
 			_selectionService: {
 				enable: ReturnType<typeof vi.fn>;
 				shouldForceSelection: (event: MouseEvent) => boolean;
@@ -39,6 +44,8 @@ vi.mock("@xterm/xterm", () => ({
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
+		scrollToBottom = vi.fn();
+		refresh = vi.fn();
 		clear = vi.fn();
 		focus = vi.fn();
 		selectAll = vi.fn();
@@ -47,6 +54,7 @@ vi.mock("@xterm/xterm", () => ({
 		selectionListeners = new Set<() => void>();
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
+			viewport: { scrollBarWidth: 15 },
 			_selectionService: {
 				enable: vi.fn(),
 				shouldForceSelection: () => false,
@@ -150,6 +158,114 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+	});
+
+	it("finishes retained activation when xterm emits no render event", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+			window.setTimeout(() => callback(performance.now()), 0),
+		);
+		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+		try {
+			let terminal: AttachableTerminal | undefined;
+			render(<XtermTerminal theme="dark" onReady={(ready) => { terminal = ready; }} />);
+			const preparation = terminal!.prepareForActivation();
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+				vi.runAllTimers();
+				await preparation;
+			});
+			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
+			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("preserves the agent TUI palette without contrast remapping", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!.options.drawBoldTextInBrightColors).toBe(true);
+		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
+	});
+
+	it("focuses the terminal when human input is requested", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
+	it("updates the live terminal palette when the named color theme changes", () => {
+		const style = document.createElement("style");
+		style.textContent = `
+			:root {
+				--color-bg-terminal-opaque: #101317;
+				--color-text-terminal: #d7d7d2;
+				--color-working: #60a5fa;
+			}
+			:root[data-style-theme="github"] {
+				--background: #0d1117;
+				--foreground: #ccd3d8;
+				--primary: #58a6ff;
+			}
+		`;
+		document.head.appendChild(style);
+		delete document.documentElement.dataset.styleTheme;
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="dark" />);
+			expect(state.lastTerminal!.options.theme).toMatchObject({ background: "#101317" });
+
+			act(() => useUiStore.getState().setThemeStyle("github"));
+
+			expect(state.lastTerminal!.options.theme).toMatchObject({
+				background: "#0d1117",
+				cursor: "#58a6ff",
+				foreground: "#ccd3d8",
+			});
+		} finally {
+			style.remove();
+			delete document.documentElement.dataset.styleTheme;
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("uses the terminal foreground for the light-mode block cursor", () => {
+		const style = document.createElement("style");
+		style.textContent = `
+			:root {
+				--color-bg-terminal-opaque: #f5f5f4;
+				--color-text-terminal: #24292f;
+				--color-working: #2563eb;
+			}
+		`;
+		document.head.appendChild(style);
+		delete document.documentElement.dataset.styleTheme;
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="light" />);
+			expect(state.lastTerminal!.options.theme).toMatchObject({
+				background: "#f5f5f4",
+				foreground: "#24292f",
+				cursor: "#24292f",
+				cursorAccent: "#f5f5f4",
+			});
+		} finally {
+			style.remove();
+			delete document.documentElement.dataset.styleTheme;
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("does not reserve width for the hidden terminal scrollbar", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(0);
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
@@ -733,22 +849,22 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 	});
 
-	it("opens terminal links externally and reports the clicked URL", () => {
+	it("routes web links to the AO browser and does not open the system browser", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		const onLinkOpen = vi.fn();
 		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
 
-		// The default WebLinksAddon handler opens an empty window first, which the
-		// Electron main process denies; ours must pass the matched URL directly.
+		// A left-click on an http(s) link is reported to the parent (which shows it
+		// in the AO Browser panel); it must NOT spawn a system-browser window.
 		expect(state.linkHandler).toBeTypeOf("function");
 		state.linkHandler!({} as MouseEvent, "https://example.com");
 
-		expect(open).toHaveBeenCalledWith("https://example.com", "_blank", "noopener");
 		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com");
+		expect(open).not.toHaveBeenCalled();
 		open.mockRestore();
 	});
 
-	it("opens OSC 8 links externally and reports the clicked URL", () => {
+	it("routes OSC 8 web links to the AO browser without a system-browser window", () => {
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
 		const onLinkOpen = vi.fn();
 		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
@@ -758,8 +874,33 @@ describe("XtermTerminal", () => {
 
 		oscLinkHandler.activate({} as MouseEvent, "http://localhost:3000");
 
-		expect(open).toHaveBeenCalledWith("http://localhost:3000", "_blank", "noopener");
 		expect(onLinkOpen).toHaveBeenCalledWith("http://localhost:3000");
+		expect(open).not.toHaveBeenCalled();
+		open.mockRestore();
+	});
+
+	it.each(["plain", "OSC 8"])("opens %s web links in the system browser on Option/Alt+Click", (kind) => {
+		const openExternal = vi.fn().mockResolvedValue(undefined);
+		window.ao!.app.openExternal = openExternal;
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+		const oscHandler = state.lastTerminal!.options.linkHandler as { activate: (event: MouseEvent, uri: string) => void };
+		const handler = kind === "plain" ? state.linkHandler! : oscHandler.activate;
+		handler({ altKey: true } as MouseEvent, "https://example.com");
+		expect(openExternal).toHaveBeenCalledWith("https://example.com");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+	});
+
+	it("opens non-web links (mailto:) in the system browser, not the AO browser", () => {
+		const open = vi.spyOn(window, "open").mockReturnValue(null);
+		const onLinkOpen = vi.fn();
+		render(<XtermTerminal onLinkOpen={onLinkOpen} theme="dark" />);
+
+		expect(state.linkHandler).toBeTypeOf("function");
+		state.linkHandler!({} as MouseEvent, "mailto:dev@example.com");
+
+		expect(open).toHaveBeenCalledWith("mailto:dev@example.com", "_blank", "noopener");
+		expect(onLinkOpen).not.toHaveBeenCalled();
 		open.mockRestore();
 	});
 

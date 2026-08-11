@@ -55,6 +55,147 @@ func capturedState(t *testing.T, capture *activityCapture) string {
 	return req.State
 }
 
+func TestHooks_ReportsUsageTranscriptMetadata(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"sessionId":"ao-7","state":""}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In: strings.NewReader(`{
+			"session_id":"native-7",
+			"transcript_path":"/home/user/.claude/projects/p/native-7.jsonl",
+			"model":"claude-sonnet",
+			"agent_id":"sub-2",
+			"agent_transcript_path":"/home/user/.claude/projects/p/agent-sub-2.jsonl",
+			"cli_version":"9.4.1"
+		}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "subagent-stop")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if req.AgentSessionID != "native-7" || req.Usage == nil {
+		t.Fatalf("request = %+v", req)
+	}
+	if req.Usage.Harness != "claude-code" ||
+		req.Usage.TranscriptPath != "/home/user/.claude/projects/p/native-7.jsonl" ||
+		req.Usage.SubagentID != "sub-2" ||
+		req.Usage.SubagentTranscriptPath != "/home/user/.claude/projects/p/agent-sub-2.jsonl" {
+		t.Fatalf("usage metadata = %+v", req.Usage)
+	}
+	if strings.Contains(capture.body, "sourceCliVersion") {
+		t.Fatalf("usage request retained obsolete CLI version metadata: %s", capture.body)
+	}
+}
+
+func capturedAgentSessionID(t *testing.T, capture *activityCapture) string {
+	t.Helper()
+	var req struct {
+		AgentSessionID string `json:"agentSessionId"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	return req.AgentSessionID
+}
+
+func TestHooks_ReviewerRoutesToReviewActivity(t *testing.T) {
+	t.Setenv("AO_REVIEW_SESSION_ID", "review-7")
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-7")
+	t.Setenv("AO_REVIEW_HARNESS", "codex")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"reviewSessionId":"review-7"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"session_id":"codex-native-1"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/reviews/review-7/activity" {
+		t.Fatalf("path = %q, want /api/v1/reviews/review-7/activity", capture.path)
+	}
+	if got := capturedAgentSessionID(t, capture); got != "codex-native-1" {
+		t.Fatalf("agentSessionId = %q, want codex-native-1", got)
+	}
+}
+
+func TestHooks_ReviewerActivityOmitsToolCorrelationFields(t *testing.T) {
+	t.Setenv("AO_REVIEW_SESSION_ID", "review-7")
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-7")
+	t.Setenv("AO_REVIEW_HARNESS", "claude-code")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"reviewSessionId":"review-7"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"tool_name":"Bash","tool_use_id":"toolu_42","tool_response":"ok"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "post-tool-use")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/reviews/review-7/activity" {
+		t.Fatalf("path = %q, want /api/v1/reviews/review-7/activity", capture.path)
+	}
+	var req map[string]any
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	if _, ok := req["toolName"]; ok {
+		t.Fatalf("reviewer activity included toolName: body=%s", capture.body)
+	}
+	if _, ok := req["toolUseId"]; ok {
+		t.Fatalf("reviewer activity included toolUseId: body=%s", capture.body)
+	}
+}
+
+func TestHooks_ReviewerRoutingTakesPrecedenceOverWorkerSession(t *testing.T) {
+	t.Setenv("AO_REVIEW_SESSION_ID", "review-7")
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-context-only")
+	t.Setenv("AO_SESSION_ID", "worker-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"session_id":"codex-native-1"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/reviews/review-7/activity" {
+		t.Fatalf("path = %q, want reviewer route", capture.path)
+	}
+}
+
+func TestHooks_ReviewWorkerSessionIDDoesNotRouteWithoutReviewSessionID(t *testing.T) {
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-context-only")
+	t.Setenv("AO_SESSION_ID", "")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"session_id":"codex-native-1"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.hits != 0 {
+		t.Fatalf("review worker context routed unexpectedly: path=%q body=%s", capture.path, capture.body)
+	}
+}
+
 func TestHooks_NotificationReportsBlocked(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
@@ -112,6 +253,29 @@ func TestHooks_SessionEndReportsExited(t *testing.T) {
 	}
 }
 
+func TestHooks_ThreadsRuntimeLaunchID(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LaunchID != "launch-3" {
+		t.Fatalf("launch id = %q, want launch-3", req.LaunchID)
+	}
+}
+
 func TestHooks_StopReportsIdle(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
@@ -128,6 +292,106 @@ func TestHooks_StopReportsIdle(t *testing.T) {
 	if got := capturedState(t, capture); got != "idle" {
 		t.Errorf("state = %q, want idle", got)
 	}
+}
+
+func TestHooks_StopReportsConversationFacts(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	payload := `{"prompt":"finish the regression test","last_assistant_message":"I updated the generation fence.","transcript_path":"/tmp/provider/session.jsonl"}`
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(payload),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LatestUserPrompt != "finish the regression test" || req.LatestAssistantUpdate != "I updated the generation fence." {
+		t.Fatalf("conversation facts = %#v", req)
+	}
+	if req.TranscriptPath != "/tmp/provider/session.jsonl" {
+		t.Fatalf("transcript path = %q", req.TranscriptPath)
+	}
+}
+
+func TestHooks_NonSwitchingHarnessDoesNotReportConversationFacts(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	payload := `{"prompt":"private cursor prompt","last_assistant_message":"private cursor response","transcript_path":"/tmp/cursor/session.jsonl"}`
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(payload),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "cursor", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LatestUserPrompt != "" || req.LatestAssistantUpdate != "" || req.TranscriptPath != "" {
+		t.Fatalf("non-switching harness reported conversation facts: %#v", req)
+	}
+}
+
+func TestHookConversationFactsExcludesAOCoordinationUserTurns(t *testing.T) {
+	for _, prompt := range []string{
+		"<ao-handoff-request>\nprepare context",
+		"<ao-handoff-request switch-id=\"switch-1\">\nprepare context",
+		"AO transferred the previous agent's context in hidden system instructions. Continue the unfinished action.",
+	} {
+		got := hookConversationFacts([]byte(`{"prompt":` + mustJSONString(t, prompt) + `,"lastAssistantMessage":"ok"}`))
+		if got.LatestUserPrompt != "" {
+			t.Fatalf("prompt %q was retained as real user intent", prompt)
+		}
+		wantAssistant := "ok"
+		if strings.HasPrefix(prompt, "<ao-handoff-request") {
+			wantAssistant = ""
+		}
+		if got.LatestAssistantUpdate != wantAssistant {
+			t.Fatalf("assistant update = %q, want %q", got.LatestAssistantUpdate, wantAssistant)
+		}
+	}
+}
+
+func TestHookMetadataAndConversationFactsTolerateMalformedOtherProjection(t *testing.T) {
+	t.Run("malformed usage retains conversation", func(t *testing.T) {
+		payload := []byte(`{"prompt":"continue investigating","lastAssistantMessage":"updated","transcriptPath":"/tmp/conversation.jsonl","model":false}`)
+		conversation := hookConversationFacts(payload)
+		if conversation.LatestUserPrompt != "continue investigating" || conversation.LatestAssistantUpdate != "updated" || conversation.TranscriptPath != "/tmp/conversation.jsonl" {
+			t.Fatalf("conversation = %+v", conversation)
+		}
+		if usage := hookUsageMetadata("claude-code", payload); usage != nil {
+			t.Fatalf("usage = %+v, want nil", usage)
+		}
+	})
+
+	t.Run("malformed conversation retains usage", func(t *testing.T) {
+		payload := []byte(`{"prompt":false,"transcript_path":"/tmp/usage.jsonl","model":"claude-sonnet","agent_id":"sub-1"}`)
+		usage := hookUsageMetadata("claude-code", payload)
+		if usage == nil || usage.TranscriptPath != "/tmp/usage.jsonl" || usage.ModelID != "claude-sonnet" || usage.SubagentID != "sub-1" {
+			t.Fatalf("usage = %+v", usage)
+		}
+	})
+}
+
+func mustJSONString(t *testing.T, value string) string {
+	t.Helper()
+	b, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestHooks_SessionStartReportsNativeSessionIDWithoutActivity(t *testing.T) {
@@ -372,27 +636,54 @@ func TestHooks_ClaudeCodeBlankSessionIDIsIgnored(t *testing.T) {
 	}
 }
 
-func TestHooks_GrokSessionStartReportsAgentSessionID(t *testing.T) {
+func TestHooks_ClaudeCompatibleSessionStartReportsAgentSessionID(t *testing.T) {
+	for _, agent := range []string{"grok", "muse"} {
+		t.Run(agent, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "ao-7")
+			cfg := setConfigEnv(t)
+			srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+			writeRunFileFor(t, cfg, srv)
+
+			_, _, err := executeCLI(t, Deps{
+				In:           strings.NewReader(`{"session_id":"` + agent + `-native-1"}`),
+				ProcessAlive: func(int) bool { return true },
+			}, "hooks", agent, "session-start")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if capture.hits != 1 {
+				t.Fatalf("daemon calls = %d, want 1", capture.hits)
+			}
+			var req setActivityAPIRequest
+			if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+				t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+			}
+			want := setActivityAPIRequest{Event: "session-start", AgentSessionID: agent + "-native-1"}
+			if req != want {
+				t.Fatalf("body = %+v, want %+v", req, want)
+			}
+		})
+	}
+}
+
+func TestHooks_MuseUserPromptReportsActive(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
 
 	_, _, err := executeCLI(t, Deps{
-		In:           strings.NewReader(`{"session_id":"grok-native-1"}`),
+		In:           strings.NewReader(`{"session_id":"muse-native-1"}`),
 		ProcessAlive: func(int) bool { return true },
-	}, "hooks", "grok", "session-start")
+	}, "hooks", "muse", "user-prompt-submit")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if capture.hits != 1 {
-		t.Fatalf("daemon calls = %d, want 1", capture.hits)
 	}
 	var req setActivityAPIRequest
 	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
-	want := setActivityAPIRequest{Event: "session-start", AgentSessionID: "grok-native-1"}
+	want := setActivityAPIRequest{State: "active", Event: "user-prompt-submit", AgentSessionID: "muse-native-1"}
 	if req != want {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}

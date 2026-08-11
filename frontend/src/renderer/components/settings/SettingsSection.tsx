@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { cn } from "../../lib/utils";
 
 /**
  * Figma section: column, gap 12px between heading and rows.
@@ -8,10 +9,14 @@ import type { ReactNode } from "react";
 export function SettingsSection({
 	title,
 	sectionId,
+	titleHidden,
+	grouped,
 	children,
 }: {
 	title: string;
 	sectionId?: string;
+	titleHidden?: boolean;
+	grouped?: boolean;
 	children: ReactNode;
 }) {
 	return (
@@ -20,8 +25,19 @@ export function SettingsSection({
 			data-testid={sectionId ? "settings-section" : undefined}
 			data-section={sectionId}
 		>
-			<h2 className="text-xs font-bold uppercase leading-4 tracking-settings-section text-settings-muted">{title}</h2>
-			<div className="flex w-full flex-col gap-1.5">{children}</div>
+			{!titleHidden && (
+				<h2 className="px-3 text-xs font-medium leading-4 text-settings-muted">{title}</h2>
+			)}
+			<div
+				className={cn(
+					"w-full",
+					grouped
+						? "settings-grouped-rows flex w-full flex-col"
+						: "flex w-full flex-col gap-1.5",
+				)}
+			>
+				{children}
+			</div>
 		</section>
 	);
 }

@@ -32,10 +32,40 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 		return domain.StatusTerminated
 	}
 
-	if rec.Activity.State.NeedsInput() {
+	switch rec.Activity.State {
+	case domain.ActivityActive:
+		return domain.StatusWorking
+	case domain.ActivityExited:
+		return domain.StatusExited
+	case domain.ActivityWaitingInput, domain.ActivityBlocked:
 		return domain.StatusNeedsInput
 	}
 
+	if scmStatus := deriveSCMStatus(prs); scmStatus != "" {
+		return scmStatus
+	}
+
+	// No hook callback has ever arrived for this spawn/restore even though the
+	// harness has a hook pipeline. The seeded LastActivityAt marks the launch,
+	// so once the grace passes the honest status is "no signal", not "idle".
+	//
+	// Chat sessions are exempt regardless of harness. no_signal means "AO cannot
+	// tell what this agent is doing", which is inferred from silence because a TUI
+	// agent reports through a hook pipeline AO does not own. In chat mode AO holds
+	// the provider connection itself: it knows the controller's state directly, and
+	// a controller that dies is reported as exited rather than guessed at from
+	// silence. An idle chat session waiting on the user emits nothing by design, so
+	// inferring a broken pipeline from that silence would be wrong every time.
+	if signalCapable && rec.Mode != domain.SessionModeChat &&
+		rec.FirstSignalAt.IsZero() && now.Sub(rec.Activity.LastActivityAt) > noSignalGrace {
+		return domain.StatusNoSignal
+	}
+	return domain.StatusIdle
+}
+
+// deriveSCMStatus returns the session's stack-aware PR context independently
+// of runtime activity. It is empty when the session has no open or merged PR.
+func deriveSCMStatus(prs []domain.PRFacts) domain.SessionStatus {
 	open := openPRs(prs)
 	if len(open) > 0 {
 		return aggregatePRStatus(open)
@@ -43,18 +73,7 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 	if anyMerged(prs) {
 		return domain.StatusMerged
 	}
-
-	if rec.Activity.State == domain.ActivityActive {
-		return domain.StatusWorking
-	}
-
-	// No hook callback has ever arrived for this spawn/restore even though the
-	// harness has a hook pipeline. The seeded LastActivityAt marks the launch,
-	// so once the grace passes the honest status is "no signal", not "idle".
-	if signalCapable && rec.FirstSignalAt.IsZero() && now.Sub(rec.Activity.LastActivityAt) > noSignalGrace {
-		return domain.StatusNoSignal
-	}
-	return domain.StatusIdle
+	return ""
 }
 
 // openPRs returns the PRs that are neither merged nor closed, preserving order.

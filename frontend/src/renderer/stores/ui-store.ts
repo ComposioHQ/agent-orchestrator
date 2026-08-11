@@ -1,24 +1,42 @@
 import { create } from "zustand";
+import type { TerminalTarget } from "../types/terminal";
 import {
+	applyDocumentTheme,
+	applyDocumentThemeStyle,
 	readStoredThemePreference,
+	readStoredThemeStyle,
 	resolveTheme,
+	runThemeTransition,
 	systemTheme,
 	themeStorageKey,
+	themeStyleStorageKey,
 	type Theme,
 	type ThemePreference,
+	type ThemeStyle,
 } from "../lib/theme";
 
-export type { Theme, ThemePreference } from "../lib/theme";
-export { readStoredThemePreference, resolveTheme } from "../lib/theme";
+export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
+export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
+
+export type SettingsModal =
+	| { scope: "global" }
+	| {
+			scope: "project";
+			projectId: string;
+	  };
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
-export type InspectorView = "summary" | "reviews" | "browser" | "files";
+export type InspectorView = "summary" | "browser" | "files";
 
 export type InspectorSessionState = {
 	isOpen: boolean;
 	view: InspectorView;
 	previewKey?: string;
+	/** The current non-empty browser content lifecycle has already been revealed. */
+	browserContentRevealed?: boolean;
+	/** Real browser activity occurred while Browser was not visible. */
+	browserUnseen?: boolean;
 };
 
 // Selection (which project/session is open) now lives in the URL — the router
@@ -30,11 +48,14 @@ type UiState = {
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
+	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
+	/** Named color style theme (e.g. "catppuccin", "nord") — independent of light/dark mode. */
+	themeStyle: ThemeStyle;
 	restartingProjectIds: ReadonlySet<string>;
-	orchestratorReplacementErrors: Record<string, string>;
+	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
 	// Transient "open the New Task dialog for this project" signal. The nonce
 	// bumps on every request so a repeat press (even for the same project) still
@@ -54,8 +75,18 @@ type UiState = {
 	// session view (tabs beside the session's pane) and the standalone terminals
 	// view read it, so whichever one is on screen shows the same shell.
 	activeShellTerminalHandleId: string | null;
+	// Which terminal each mounted session is actually showing. The session pane
+	// renders one terminal at a time, so opening a shell or the reviewer swaps
+	// the agent's terminal off screen even though the route still points at that
+	// session. Surfaces outside the session subtree (the notification runtime)
+	// need that distinction, and SessionView's own target is local state.
+	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
+	setThemeStyle: (style: ThemeStyle) => void;
+	openGlobalSettings: () => void;
+	openProjectSettings: (projectId: string) => void;
+	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
@@ -63,18 +94,27 @@ type UiState = {
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
+	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
+	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
-	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
+	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
 	requestNewShellTerminal: () => void;
 	setActiveShellTerminal: (handleId: string | null) => void;
+	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
+	clearVisibleTerminalKind: (sessionId: string) => void;
+};
+
+export type OrchestratorReplacementFailure = {
+	message: string;
+	code?: string;
+	requestId?: string;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
-
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -85,18 +125,21 @@ function initialSidebarOpen() {
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
-	return sessions[sessionId] ?? { isOpen: false, view: "summary" };
+	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
 
 const initialThemePreference = readStoredThemePreference();
+const initialThemeStyle = readStoredThemeStyle();
 
-export const useUiStore = create<UiState>((set) => ({
+export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
+	settingsModal: null,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
+	themeStyle: initialThemeStyle,
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -104,17 +147,38 @@ export const useUiStore = create<UiState>((set) => ({
 	createProjectNonce: 0,
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
+	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
-		getLocalStorage()?.setItem(themeStorageKey, themePreference);
-		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
+		if (get().themePreference === themePreference) return;
+		runThemeTransition(() => {
+			const resolvedTheme = resolveTheme(themePreference);
+			getLocalStorage()?.setItem(themeStorageKey, themePreference);
+			applyDocumentTheme(resolvedTheme);
+			set({ themePreference, resolvedTheme });
+		});
 	},
-	syncSystemTheme: () =>
-		set((state) => {
-			if (state.themePreference !== "system") return state;
-			const next = systemTheme();
-			return next === state.resolvedTheme ? state : { resolvedTheme: next };
-		}),
+	setThemeStyle: (themeStyle) => {
+		if (get().themeStyle === themeStyle) return;
+		runThemeTransition(() => {
+			getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
+			applyDocumentThemeStyle(themeStyle);
+			set({ themeStyle });
+		});
+	},
+	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	closeSettings: () => set({ settingsModal: null }),
+	syncSystemTheme: () => {
+		const { themePreference, resolvedTheme } = get();
+		if (themePreference !== "system") return;
+		const next = systemTheme();
+		if (next === resolvedTheme) return;
+		runThemeTransition(() => {
+			applyDocumentTheme(next);
+			set({ resolvedTheme: next });
+		});
+	},
 	toggleSidebar: () =>
 		set((state) => {
 			const isSidebarOpen = !state.isSidebarOpen;
@@ -144,10 +208,11 @@ export const useUiStore = create<UiState>((set) => ({
 	setInspectorView: (sessionId, view) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
+			const browserUnseen = view === "browser" ? false : current.browserUnseen;
 			return {
 				inspectorSessions: {
 					...state.inspectorSessions,
-					[sessionId]: { ...current, view },
+					[sessionId]: { ...current, view, browserUnseen },
 				},
 			};
 		}),
@@ -158,6 +223,32 @@ export const useUiStore = create<UiState>((set) => ({
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, previewKey },
+				},
+			};
+		}),
+	setBrowserContentRevealed: (sessionId, browserContentRevealed) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.browserContentRevealed) === browserContentRevealed) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: {
+						...current,
+						browserContentRevealed,
+						browserUnseen: browserContentRevealed ? current.browserUnseen : false,
+					},
+				},
+			};
+		}),
+	setBrowserUnseen: (sessionId, browserUnseen) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.browserUnseen) === browserUnseen) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: { ...current, browserUnseen },
 				},
 			};
 		}),
@@ -172,11 +263,11 @@ export const useUiStore = create<UiState>((set) => ({
 			}
 			return { restartingProjectIds };
 		}),
-	setOrchestratorReplacementError: (projectId, message) =>
+	setOrchestratorReplacementError: (projectId, failure) =>
 		set((state) => {
 			const orchestratorReplacementErrors = { ...state.orchestratorReplacementErrors };
-			if (message) {
-				orchestratorReplacementErrors[projectId] = message;
+			if (failure) {
+				orchestratorReplacementErrors[projectId] = failure;
 			} else {
 				delete orchestratorReplacementErrors[projectId];
 			}
@@ -197,6 +288,19 @@ export const useUiStore = create<UiState>((set) => ({
 	requestCreateProject: () => set((state) => ({ createProjectNonce: state.createProjectNonce + 1 })),
 	requestNewShellTerminal: () => set((state) => ({ newShellTerminalNonce: state.newShellTerminalNonce + 1 })),
 	setActiveShellTerminal: (activeShellTerminalHandleId) => set({ activeShellTerminalHandleId }),
+	setVisibleTerminalKind: (sessionId, kind) =>
+		set((state) =>
+			state.visibleTerminalKindBySession[sessionId] === kind
+				? state
+				: { visibleTerminalKindBySession: { ...state.visibleTerminalKindBySession, [sessionId]: kind } },
+		),
+	clearVisibleTerminalKind: (sessionId) =>
+		set((state) => {
+			if (!(sessionId in state.visibleTerminalKindBySession)) return state;
+			const visibleTerminalKindBySession = { ...state.visibleTerminalKindBySession };
+			delete visibleTerminalKindBySession[sessionId];
+			return { visibleTerminalKindBySession };
+		}),
 }));
 
 export function useResolvedTheme(): Theme {

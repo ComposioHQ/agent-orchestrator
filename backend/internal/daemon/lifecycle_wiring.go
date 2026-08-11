@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"time"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/container/dockerreap"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
@@ -18,9 +19,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	activityobserver "github.com/aoagents/agent-orchestrator/backend/internal/observe/activity"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -29,6 +32,7 @@ import (
 
 type notificationSink interface {
 	Notify(context.Context, ports.NotificationIntent) error
+	Resolve(context.Context, ports.NotificationResolution) error
 }
 
 // lifecycleStack owns the runtime reaper goroutine started with the lifecycle
@@ -37,16 +41,13 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM         *lifecycle.Manager
-	reaperDone  <-chan struct{}
-	scmDone     <-chan struct{}
-	trackerDone <-chan struct{}
-	sweepDone   <-chan struct{}
+	LCM           *lifecycle.Manager
+	runtimeReaper *reaper.Reaper
+	reaperDone    <-chan struct{}
+	activityDone  <-chan struct{}
+	scmDone       <-chan struct{}
+	trackerDone   <-chan struct{}
 }
-
-// workerIdleSweepInterval is the low-frequency recovery cadence that redelivers
-// any worker_idle events left pending by a missed event-driven trigger.
-const workerIdleSweepInterval = 2 * time.Minute
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
 // reaper. The goroutine stops when ctx is cancelled; Stop waits for it to drain.
@@ -56,10 +57,24 @@ func startLifecycle(ctx context.Context, store *sqlite.Store, runtime ports.Runt
 	lcm := lifecycle.New(store, messenger,
 		lifecycle.WithNotificationSink(notifier),
 		lifecycle.WithTelemetry(telemetry),
+		lifecycle.WithContainerReaper(dockerreap.New(), store),
 		lifecycle.WithActiveSteering(activeTurnSteering(agents)),
 	)
 	rp := reaper.New(lcm, store, runtime, reaper.Config{Logger: logger})
-	return &lifecycleStack{LCM: lcm, reaperDone: rp.Start(ctx), sweepDone: startWorkerIdleSweep(ctx, lcm)}
+	activityPoller := activityobserver.New(store, lcm, runtime, agents, activityobserver.Config{Logger: logger})
+	return &lifecycleStack{
+		LCM:           lcm,
+		runtimeReaper: rp,
+		reaperDone:    rp.Start(ctx),
+		activityDone:  activityPoller.Start(ctx),
+	}
+}
+
+// ReconcileRuntime runs the same conservative runtime/workload observation as
+// the periodic reaper. The daemon calls it after session-manager reconciliation
+// so exits missed while AO was stopped are folded before the API starts serving.
+func (l *lifecycleStack) ReconcileRuntime(ctx context.Context) error {
+	return l.runtimeReaper.Tick(ctx)
 }
 
 // activeTurnSteering resolves the per-harness active-turn steering capability
@@ -81,32 +96,12 @@ func activeTurnSteering(agents ports.AgentResolver) func(domain.AgentHarness) bo
 	}
 }
 
-// startWorkerIdleSweep runs the low-frequency recovery sweep that redelivers
-// pending worker_idle events. The goroutine exits on ctx cancellation.
-func startWorkerIdleSweep(ctx context.Context, lcm *lifecycle.Manager) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		t := time.NewTicker(workerIdleSweepInterval)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				lcm.DispatchAllPendingWorkerIdleEvents(ctx)
-			}
-		}
-	}()
-	return done
-}
-
 // Stop waits for the reaper goroutine to exit. The caller must cancel the ctx
 // passed to startLifecycle before calling Stop.
 func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
-	if l.sweepDone != nil {
-		<-l.sweepDone
+	if l.activityDone != nil {
+		<-l.activityDone
 	}
 	if l.scmDone != nil {
 		<-l.scmDone
@@ -127,6 +122,37 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
+	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
+	// scoped shell terminals before its worktree is torn down. shellterm.Service
+	// is built after Session Manager during boot (see startShellTerminals), so
+	// this cannot be a constructor argument.
+	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
+	// AcquireSessionInput holds direct terminal writes across the actual pane
+	// write while ownership may move between provider processes.
+	AcquireSessionInput(id domain.SessionID) (release func(), ok bool)
+	// SessionMutationInProgress suppresses observation-driven termination while
+	// Session Manager deliberately replaces or relaunches a provider process.
+	SessionMutationInProgress(id domain.SessionID) bool
+	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
+	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
+	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
+	// service, which is built alongside the controller-facing service below.
+	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
+}
+
+// sessionLifecycleMessenger adapts sessionLifecycle to ports.AgentMessenger so
+// the fully-wired manager can replace the boot-time pane messenger once ready.
+// None of the daemon-internal sends this feeds (interface-transition drains,
+// lifecycle nudges) carry an attachment, so it is always nil here; the
+// attachment-aware send path only exists at the HTTP /send endpoint.
+type sessionLifecycleMessenger struct {
+	sessionLifecycle
+}
+
+func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return m.sessionLifecycle.Send(ctx, id, message, nil)
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -134,7 +160,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -159,14 +185,19 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
+		Runtime:             runtime,
+		Agents:              agents,
+		Workspace:           ws,
+		Store:               store,
+		Messenger:           messenger,
+		Chat:                chat,
+		Defaults:            defaults,
+		Lifecycle:           lcm,
+		Preview:             previewLifecycle,
+		Browser:             browserLifecycle,
+		BrowserCapabilities: browserCapabilities,
+		DataDir:             cfg.DataDir,
+		Logger:              log,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {
@@ -185,13 +216,15 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		tracker = t
 	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
-		Manager:   mgr,
-		Store:     store,
-		PRClaimer: store,
-		SCM:       scmProvider,
-		DataDir:   cfg.DataDir,
-		Tracker:   tracker,
-		Telemetry: telemetry,
+		Manager:           mgr,
+		Store:             store,
+		PRClaimer:         store,
+		SCM:               scmProvider,
+		DataDir:           cfg.DataDir,
+		Tracker:           tracker,
+		Telemetry:         telemetry,
+		Logger:            log,
+		BackgroundContext: ctx,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
@@ -209,9 +242,12 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir, reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
+	reviewSvc := reviewsvc.New(reviewEngine, store,
+		reviewsvc.WithLifecycleReducer(lcm),
+		reviewsvc.WithTelemetry(telemetry))
+	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 
@@ -253,6 +289,48 @@ func newSessionMessenger(store *sqlite.Store, runtime runtimeMessageSender, _ *s
 	return runtimeMessenger{store: store, runtime: runtime}
 }
 
+// modeAwareMessenger lets lifecycle start before the session manager while
+// ensuring every reaction crosses the same persisted-mode dispatcher as an
+// explicit `ao send`. A send in the short boot window waits for Bind instead of
+// falling through to the terminal runtime, which would be wrong for Chat sessions.
+type modeAwareMessenger struct {
+	mu     sync.RWMutex
+	target ports.AgentMessenger
+	ready  chan struct{}
+	once   sync.Once
+}
+
+func newModeAwareMessenger() *modeAwareMessenger {
+	return &modeAwareMessenger{ready: make(chan struct{})}
+}
+
+func (m *modeAwareMessenger) Bind(target ports.AgentMessenger) {
+	m.mu.Lock()
+	m.target = target
+	m.mu.Unlock()
+	m.once.Do(func() { close(m.ready) })
+}
+
+func (m *modeAwareMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
+	m.mu.RLock()
+	target := m.target
+	m.mu.RUnlock()
+	if target == nil {
+		select {
+		case <-m.ready:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		m.mu.RLock()
+		target = m.target
+		m.mu.RUnlock()
+	}
+	if target == nil {
+		return fmt.Errorf("mode-aware lifecycle messenger bound without a target")
+	}
+	return target.Send(ctx, id, message)
+}
+
 // buildAgentRegistry returns a registry populated with the agent adapters the
 // daemon ships, keyed by manifest id. Registration only fails on an
 // empty/duplicate id — a programmer error, not a runtime condition.
@@ -279,6 +357,26 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 	}
 	agent, ok := adapter.(ports.Agent)
 	return agent, ok
+}
+
+type reviewerAgentAuth struct {
+	agents ports.AgentResolver
+}
+
+func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	if r.agents == nil {
+		return "", false, nil
+	}
+	agent, ok := r.agents.Agent(domain.AgentHarness(harness))
+	if !ok {
+		return "", false, nil
+	}
+	checker, ok := agent.(ports.AgentAuthChecker)
+	if !ok {
+		return "", false, nil
+	}
+	status, err := checker.AuthStatus(ctx)
+	return status, true, err
 }
 
 // buildAgentResolver constructs the per-session agent resolver the Session
@@ -329,4 +427,94 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 		return "", fmt.Errorf("project %q has no repo path on record: %w", projectID, sessionmanager.ErrProjectNotResolvable)
 	}
 	return rec.Path, nil
+}
+
+// chatLauncher adapts the chat service to session_manager.ChatLauncher.
+//
+// The two packages define their own request/result types on purpose so neither
+// depends on the other's; this is the one place that knows both, which keeps the
+// translation in the wiring rather than in either domain.
+type chatLauncher struct{ svc *chatsvc.Service }
+
+var _ sessionmanager.ChatLauncher = chatLauncher{}
+var _ interface {
+	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
+	AbortChatHandoff(domain.SessionID)
+} = chatLauncher{}
+
+func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
+	return c.svc.PreflightChat(ctx, harness)
+}
+
+func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStart) (sessionmanager.ChatStarted, error) {
+	out, err := c.svc.StartChat(ctx, chatsvc.StartRequest{
+		SessionID:              cfg.SessionID,
+		ProjectID:              cfg.ProjectID,
+		Kind:                   cfg.Kind,
+		Harness:                cfg.Harness,
+		DataDir:                cfg.DataDir,
+		WorkspacePath:          cfg.WorkspacePath,
+		Env:                    cfg.Env,
+		Model:                  cfg.Model,
+		Permissions:            cfg.Permissions,
+		SystemPrompt:           cfg.SystemPrompt,
+		AdditionalDirectories:  cfg.AdditionalDirectories,
+		ProviderConversationID: cfg.ProviderConversationID,
+		ControllerReady: func(out chatsvc.StartResult) error {
+			if cfg.ControllerReady == nil {
+				return nil
+			}
+			return cfg.ControllerReady(sessionmanager.ChatStarted{
+				ProviderConversationID: out.ProviderConversationID,
+				ControllerGeneration:   out.ControllerGeneration,
+			})
+		},
+	})
+	if err != nil {
+		return sessionmanager.ChatStarted{}, err
+	}
+	return sessionmanager.ChatStarted{
+		ProviderConversationID: out.ProviderConversationID,
+		ControllerGeneration:   out.ControllerGeneration,
+	}, nil
+}
+
+func (c chatLauncher) StartChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	return c.svc.StartChatTurn(ctx, id, text)
+}
+
+func (c chatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	return c.svc.RelayChatTurn(ctx, id, text)
+}
+
+func (c chatLauncher) RelayChatTurnWithID(
+	ctx context.Context,
+	id domain.SessionID,
+	text, clientMessageID string,
+) (string, error) {
+	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
+}
+
+func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
+	return c.svc.HasLiveChatController(id)
+}
+
+// PrepareChatHandoff closes Chat intake and waits for the controller to become
+// quiescent before Session Manager stops it. These methods intentionally live
+// on the wiring adapter: Session Manager's handoff capability is optional, but
+// wrapping the concrete Chat service must not erase it.
+func (c chatLauncher) PrepareChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	return c.svc.PrepareChatHandoff(ctx, id, policy)
+}
+
+func (c chatLauncher) AbortChatHandoff(id domain.SessionID) {
+	c.svc.AbortChatHandoff(id)
+}
+
+func (c chatLauncher) StopChat(ctx context.Context, id domain.SessionID) error {
+	return c.svc.StopChat(ctx, id)
 }

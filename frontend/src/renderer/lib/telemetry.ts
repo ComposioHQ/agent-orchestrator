@@ -7,16 +7,27 @@ import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "../../shared/
 const POSTHOG_KEY = import.meta.env.VITE_AO_POSTHOG_KEY?.trim() || DEFAULT_POSTHOG_PROJECT_KEY;
 const POSTHOG_HOST = import.meta.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
 const RELEASE_TAG = "2026-01-30";
+const TELEMETRY_SCHEMA_VERSION = 2;
 const REDACTED_LOCAL_URL = "[redacted-local-url]";
 const REDACTED_LOCAL_PATH = "[redacted-local-path]";
-const DAILY_ACTIVE_STORAGE_KEY = "ao.telemetry.lastActiveDate";
+const ACTIVE_STORAGE_KEY = "ao.telemetry.activeSlotsByDate";
+const ROUTE_VIEW_STORAGE_KEY = "ao.telemetry.routeViewsByDate";
 const EMBEDDED_LOCAL_URL_PATTERN =
 	/(?:\bfile:\/\/\/\S+|\bapp:\/\/renderer\/\S+|\bhttps?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\S*)/gi;
+const POSTHOG_EVENT_NAME_ALIASES: Record<string, string> = {
+	"ao.app.active": "ao.v2.app.active",
+	"ao.renderer.route_viewed": "ao.v2.renderer.route_viewed",
+	"ao.renderer.loaded": "ao.v2.renderer.loaded",
+	"ao.renderer.api_error": "ao.v2.renderer.api_error",
+	"ao.renderer.daemon_failure": "ao.v2.renderer.daemon_failure",
+};
 
 let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
-let fallbackDailyActiveDate = "";
+let fallbackActiveDate = "";
+let fallbackRouteViewDate = "";
+let fallbackRouteViewSurfaces = new Set<string>();
 
 // Bounds how many captures of a single event (or exception) name reach
 // PostHog. Mirrors the daemon-side RateLimitedSink: a re-render loop or
@@ -63,40 +74,209 @@ type DailyActiveEventTarget = {
 export type DailyActiveHeartbeatOptions = {
 	storage?: DailyActiveStorage;
 	now?: () => Date;
-	capture: () => void;
+	capture: () => boolean | void | Promise<boolean | void>;
 	window: DailyActiveEventTarget;
 	document: DailyActiveEventTarget & Pick<Document, "visibilityState">;
 };
 
-export function buildTelemetryContext(appVersion: string, platform: string): TelemetryProperties {
+/**
+ * Release channel, read from the user's own Updates setting.
+ *
+ * Previously this had to be inferred by looking for "-nightly." inside the
+ * version string, which broke for anyone pinned to a feature build and told you
+ * nothing about someone who had switched channels but not yet updated. The
+ * setting is the truth; the version is a consequence of it.
+ */
+export type ReleaseChannel = "stable" | "nightly" | "feature" | "unknown";
+
+export function releaseChannelFrom(settings: { channel?: unknown; feature?: unknown } | null | undefined): ReleaseChannel {
+	if (!settings) return "unknown";
+	if (settings.feature != null) return "feature";
+	if (settings.channel === "nightly") return "nightly";
+	if (settings.channel === "latest") return "stable";
+	return "unknown";
+}
+
+/**
+ * Channel of the build actually running, read from the version string.
+ *
+ * Distinct from release_channel, which is what the user opted into. A nightly
+ * build carries "-nightly." in its version (CI stamps 0.11.3-nightly.5); a plain
+ * semver is stable. This is "what am I running", release_channel is "what did I
+ * choose". The two disagree exactly when someone switched channels but has not
+ * updated yet, and that gap is the adoption-lag signal.
+ */
+export type VersionChannel = "stable" | "nightly" | "unknown";
+
+export function versionChannelFrom(appVersion: string): VersionChannel {
+	const v = appVersion.trim();
+	if (!v || v === "unknown") return "unknown";
+	return /-nightly\./i.test(v) ? "nightly" : "stable";
+}
+
+export function buildTelemetryContext(
+	appVersion: string,
+	platform: string,
+	channel: ReleaseChannel = "unknown",
+): TelemetryProperties {
 	const version = appVersion.trim() || "unknown";
 	return {
+		// Classifies this install as the desktop app across every event, so a
+		// shared event like ao.app.active splits cleanly by `client` alongside
+		// the mobile app (client="mobile") and the CLI (client="cli"), rather
+		// than by inferring from the platform value set.
+		client: "desktop",
 		app_version: version,
 		ao_version: version,
 		platform,
+		// What they opted into.
+		release_channel: channel,
+		// What they are actually running.
+		version_channel: versionChannelFrom(version),
 		build_mode: import.meta.env.DEV ? "dev" : "packaged",
+		telemetry_schema_version: TELEMETRY_SCHEMA_VERSION,
 	};
 }
 
-function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
-	return { ...telemetryContext, ...properties };
+/** Refreshes the channel in context after the user changes it, without a restart. */
+export function setReleaseChannelContext(channel: ReleaseChannel): void {
+	telemetryContext = { ...telemetryContext, release_channel: channel };
+}
+
+/**
+ * Best-effort read of the Updates setting for the initial context.
+ *
+ * Never throws and never blocks startup: if the bridge is unavailable the
+ * channel reports "unknown" rather than delaying the first heartbeat.
+ */
+async function readUpdateSettingsForTelemetry(): Promise<{ channel?: unknown; feature?: unknown } | null> {
+	try {
+		return (await aoBridge.updateSettings.get()) as { channel?: unknown; feature?: unknown };
+	} catch {
+		return null;
+	}
+}
+
+export function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
+	return { ...telemetryContext, ...properties, $process_person_profile: false };
+}
+
+export function postHogEventName(event: string): string {
+	return POSTHOG_EVENT_NAME_ALIASES[event] ?? event;
+}
+
+// Streams the supervisor has silenced, delivered on the telemetry bootstrap.
+// The daemon enforces the same list on its own sink, but renderer events go
+// straight to PostHog, so without this the kill switch would only cover half
+// the producers.
+let disabledEventMatchers: string[] = [];
+
+/**
+ * Whether a stream is silenced.
+ *
+ * Mirrors the daemon's DenylistSink: case-insensitive, `*` matches by prefix,
+ * and both the internal name and the exported alias are checked so an operator
+ * can type whichever one they see.
+ */
+export function isDeniedEvent(event: string, denied: string[] = disabledEventMatchers): boolean {
+	if (denied.length === 0) return false;
+	const candidates = [event.trim().toLowerCase(), postHogEventName(event).trim().toLowerCase()];
+	return denied.some((raw) => {
+		const rule = raw.trim().toLowerCase();
+		if (rule === "" || rule === "*") return false;
+		if (rule.endsWith("*")) {
+			const prefix = rule.slice(0, -1);
+			return prefix !== "" && candidates.some((name) => name.startsWith(prefix));
+		}
+		return candidates.includes(rule);
+	});
+}
+
+/** Test seam: the real value arrives with the bootstrap in initTelemetry. */
+export function setDisabledEventsForTest(denied: string[]): void {
+	disabledEventMatchers = denied;
 }
 
 export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
 	const utcDate = now.toISOString().slice(0, 10);
-	if (!storage) {
-		if (fallbackDailyActiveDate === utcDate) return false;
-		fallbackDailyActiveDate = utcDate;
+	const reserveFallback = () => {
+		if (fallbackActiveDate === utcDate) return false;
+		fallbackActiveDate = utcDate;
 		return true;
-	}
+	};
+
+	if (!storage) return reserveFallback();
 	try {
-		if (storage.getItem(DAILY_ACTIVE_STORAGE_KEY) === utcDate) return false;
-		storage.setItem(DAILY_ACTIVE_STORAGE_KEY, utcDate);
+		const raw = storage.getItem(ACTIVE_STORAGE_KEY);
+		const parsed = raw ? (JSON.parse(raw) as { date?: unknown }) : {};
+		// Any record carrying today's date counts as reserved, which includes the
+		// older { date, slots } shape written by builds that emitted four times a
+		// day. That is what stops an install upgrading mid-day from emitting a
+		// second time on a day it has already reported.
+		if (parsed.date === utcDate) return false;
+		storage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify({ date: utcDate }));
 		return true;
 	} catch {
-		if (fallbackDailyActiveDate === utcDate) return false;
-		fallbackDailyActiveDate = utcDate;
+		return reserveFallback();
+	}
+}
+
+function releaseDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): void {
+	const utcDate = now.toISOString().slice(0, 10);
+	if (fallbackActiveDate === utcDate) fallbackActiveDate = "";
+	if (!storage) return;
+
+	try {
+		const raw = storage.getItem(ACTIVE_STORAGE_KEY);
+		const parsed = raw ? (JSON.parse(raw) as { date?: unknown }) : {};
+		if (parsed.date !== utcDate) return;
+		// DailyActiveStorage is deliberately narrow (getItem/setItem only), so the
+		// reservation is cleared by blanking the date rather than widening it.
+		storage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify({ date: "" }));
+	} catch {
+		// The fallback reservation was already released above.
+	}
+}
+
+export function reserveRouteViewCapture(
+	storage: DailyActiveStorage | undefined,
+	surface: string,
+	now = new Date(),
+): boolean {
+	const normalizedSurface = surface.trim() || "unknown";
+	const utcDate = now.toISOString().slice(0, 10);
+	const reserveFallback = () => {
+		if (fallbackRouteViewDate !== utcDate) {
+			fallbackRouteViewDate = utcDate;
+			fallbackRouteViewSurfaces = new Set<string>();
+		}
+		if (fallbackRouteViewSurfaces.has(normalizedSurface)) return false;
+		fallbackRouteViewSurfaces.add(normalizedSurface);
 		return true;
+	};
+
+	if (!storage) return reserveFallback();
+	try {
+		const raw = storage.getItem(ROUTE_VIEW_STORAGE_KEY);
+		const parsed = raw ? (JSON.parse(raw) as { date?: unknown; surfaces?: unknown }) : {};
+		const surfaces =
+			parsed.date === utcDate && Array.isArray(parsed.surfaces)
+				? parsed.surfaces.filter((value): value is string => typeof value === "string")
+				: [];
+		if (surfaces.includes(normalizedSurface)) return false;
+		surfaces.push(normalizedSurface);
+		storage.setItem(ROUTE_VIEW_STORAGE_KEY, JSON.stringify({ date: utcDate, surfaces }));
+		return true;
+	} catch {
+		return reserveFallback();
+	}
+}
+
+function telemetryStorage(): DailyActiveStorage | undefined {
+	try {
+		return window.localStorage;
+	} catch {
+		return undefined;
 	}
 }
 
@@ -108,9 +288,22 @@ export function startDailyActiveHeartbeat({
 	document,
 }: DailyActiveHeartbeatOptions): () => void {
 	const maybeCapture = () => {
-		if (reserveDailyActiveCapture(storage, now())) {
-			capture();
+		const captureTime = now();
+		if (!reserveDailyActiveCapture(storage, captureTime)) return;
+
+		let result: boolean | void | Promise<boolean | void>;
+		try {
+			result = capture();
+		} catch {
+			releaseDailyActiveCapture(storage, captureTime);
+			return;
 		}
+		void Promise.resolve(result).then(
+			(captured) => {
+				if (captured === false) releaseDailyActiveCapture(storage, captureTime);
+			},
+			() => releaseDailyActiveCapture(storage, captureTime),
+		);
 	};
 	const onVisibilityChange = () => {
 		if (document.visibilityState === "visible") {
@@ -315,6 +508,64 @@ export async function sanitizeRendererProperties(
 				safe.reason = properties.reason;
 			}
 			break;
+		case "ao.renderer.agents_available": {
+			// Counts and a fixed-vocabulary id list only. Agent ids come from AO's own
+			// registry, never from user input, so they carry no user data.
+			for (const key of ["installed_count", "authorized_count", "supported_count"] as const) {
+				if (typeof properties?.[key] === "number") safe[key] = properties[key];
+			}
+			if (typeof properties?.authorized_agents === "string") {
+				safe.authorized_agents = properties.authorized_agents;
+			}
+			break;
+		}
+		case "ao.renderer.session_state_unknown":
+			if (properties?.field === "status" || properties?.field === "activity") safe.field = properties.field;
+			if (properties?.reason === "missing" || properties?.reason === "unrecognized") safe.reason = properties.reason;
+			break;
+		case "ao.renderer.update_failed":
+		case "ao.renderer.update_downloaded":
+		case "ao.renderer.update_unsupported":
+			// Version strings are release identifiers, not user data. The updater's
+			// raw error message is deliberately absent: it can carry feed URLs and
+			// local paths, so update-telemetry.ts maps it to error_category first.
+			if (typeof properties?.to_version === "string") safe.to_version = properties.to_version;
+			if (typeof properties?.error_category === "string") safe.error_category = properties.error_category;
+			if (properties?.phase === "check" || properties?.phase === "download") safe.phase = properties.phase;
+			if (properties?.trigger === "automatic" || properties?.trigger === "manual") safe.trigger = properties.trigger;
+			break;
+		case "ao.renderer.mobile_connect_opened":
+			// Whether the bridge was already on when the modal opened separates
+			// "came to set this up" from "came back to re-scan the QR".
+			if (typeof properties?.bridge_enabled === "boolean") safe.bridge_enabled = properties.bridge_enabled;
+			break;
+		case "ao.renderer.update_channel_changed":
+			// Closed vocabulary on both ends. A feature build's PR number or branch
+			// name is deliberately absent: it names unreleased work.
+			for (const key of ["from_channel", "to_channel"] as const) {
+				const value = properties?.[key];
+				if (value === "stable" || value === "nightly" || value === "feature" || value === "unknown") {
+					safe[key] = value;
+				}
+			}
+			break;
+		case "ao.renderer.support_opened":
+			break;
+		case "ao.renderer.support_submitted":
+			// The report's summary, details, and diagnostics block are the user's own
+			// words and machine state. Only the chosen destination and whether the
+			// hand-off worked are reported.
+			if (properties?.destination === "github" || properties?.destination === "discord" || properties?.destination === "email") {
+				safe.destination = properties.destination;
+			}
+			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
+			break;
+		case "ao.renderer.mobile_bridge_toggled":
+			// The host, port, and connection password in the QR never leave the
+			// machine: only the direction of the switch and whether it worked.
+			if (typeof properties?.enabled === "boolean") safe.enabled = properties.enabled;
+			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
+			break;
 	}
 	return safe;
 }
@@ -352,76 +603,119 @@ function bindErrorHandlers() {
 	});
 }
 
+type PostHogInitOptions = NonNullable<Parameters<typeof posthog.init>[1]>;
+
+export function buildPostHogConfig(distinctId: string): PostHogInitOptions {
+	return {
+		api_host: POSTHOG_HOST,
+		defaults: RELEASE_TAG,
+		autocapture: false,
+		capture_pageview: false,
+		capture_exceptions: false,
+		capture_performance: false,
+		// Session replay is billed per recording, not per event, so it bypasses
+		// every limiter in this file. AO never watches replays, so keep the
+		// recorder off in the client instead of relying on the project-side
+		// toggle staying off.
+		disable_session_recording: true,
+		// AO reads no feature flags and ships no surveys. Both of these poll
+		// PostHog on init, and /flags requests are billed, so every one of these
+		// requests is pure cost for data nothing consumes.
+		advanced_disable_flags: true,
+		disable_surveys: true,
+		// AO owns the stable random installation ID. Memory-only SDK
+		// persistence prevents legacy identified state from replacing it after
+		// an upgrade; the AO-owned heartbeat and route reservations continue to
+		// use window.localStorage independently.
+		persistence: "memory",
+		person_profiles: "never",
+		bootstrap: {
+			distinctID: distinctId,
+			isIdentifiedID: false,
+		},
+		before_send: (event) => (event ? sanitizePostHogCaptureResult(event) : event),
+		session_recording: {
+			maskCapturedNetworkRequestFn: (request) => {
+				if (request.name) {
+					request.name = sanitizeReplayRequestName(request.name);
+				}
+				return request;
+			},
+		},
+	};
+}
+
 export async function initTelemetry(): Promise<boolean> {
 	if (initPromise) return initPromise;
 	initPromise = (async () => {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
+		// Null means the supervisor withheld it: no key, no data dir, or an
+		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
-		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform);
-		posthog.init(POSTHOG_KEY, {
-			api_host: POSTHOG_HOST,
-			defaults: RELEASE_TAG,
-			autocapture: false,
-			capture_pageview: false,
-			capture_exceptions: false,
-			persistence: "localStorage",
-			// The distinct ID is a random install ID, never a person, so keep
-			// every event anonymous: identified events bill at several times the
-			// anonymous rate and the person profiles would hold nothing. The
-			// bootstrap distinct ID keeps renderer and daemon events deduplicated
-			// without an identify() call, which would flip the install to
-			// identified billing permanently.
-			person_profiles: "identified_only",
-			bootstrap: { distinctID: bootstrap.distinctId },
-			before_send: (event) => (event ? sanitizePostHogCaptureResult(event) : event),
-			session_recording: {
-				maskCapturedNetworkRequestFn: (request) => {
-					if (request.name) {
-						request.name = sanitizeReplayRequestName(request.name);
-					}
-					return request;
-				},
-			},
-		});
+		disabledEventMatchers = bootstrap.disabledEvents ?? [];
+		telemetryContext = buildTelemetryContext(
+			bootstrap.appVersion,
+			bootstrap.platform,
+			releaseChannelFrom(await readUpdateSettingsForTelemetry()),
+		);
+		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
 		posthog.register({
 			...telemetryContext,
 			surface: "renderer",
 		});
 		bindErrorHandlers();
-		let storage: DailyActiveStorage | undefined;
-		try {
-			storage = window.localStorage;
-		} catch {
-			storage = undefined;
-		}
 		startDailyActiveHeartbeat({
-			storage,
+			storage: telemetryStorage(),
 			window,
 			document,
-			capture: () => {
-				void (async () => {
+			// Ride the batched request queue like every other renderer event
+			// (loaded, route_viewed). An earlier `send_instantly: true` here
+			// fired an immediate, un-retried send during init that never
+			// reached PostHog in packaged builds, so renderer app-active
+			// dropped to zero while batched events kept landing.
+			capture: async () =>
+				isDeniedEvent("ao.app.active")
+					? true
+					: Boolean(
 					posthog.capture(
-						"ao.app.active",
+						postHogEventName("ao.app.active"),
 						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
-					);
-				})();
-			},
+					),
+				),
 		});
-		posthog.capture("ao.renderer.loaded", withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")));
+		if (!isDeniedEvent("ao.renderer.loaded")) {
+			posthog.capture(
+				postHogEventName("ao.renderer.loaded"),
+				withTelemetryContext(await sanitizeRendererProperties("ao.renderer.loaded")),
+			);
+		}
 		return true;
 	})().catch(() => false);
 	return initPromise;
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
-	if (!reserveCapture(event)) return;
+	// Checked before the reservations so a silenced stream does not consume a
+	// rate-limit slot on its way to being discarded, matching the daemon, where
+	// the denylist sits outermost.
+	if (isDeniedEvent(event)) return;
+	const sanitizedProperties = await sanitizeRendererProperties(event, properties);
+	if (event === "ao.renderer.route_viewed") {
+		const surface = typeof sanitizedProperties.surface === "string" ? sanitizedProperties.surface : "other";
+		if (!reserveRouteViewCapture(telemetryStorage(), surface)) return;
+	} else if (!reserveCapture(event)) {
+		return;
+	}
 	if (!(await initTelemetry())) return;
-	const safeProperties = withTelemetryContext(await sanitizeRendererProperties(event, properties));
-	posthog.capture(event, safeProperties);
+	const safeProperties = withTelemetryContext(sanitizedProperties);
+	posthog.capture(postHogEventName(event), safeProperties);
 }
 
 export async function captureRendererException(error: unknown, properties?: Record<string, unknown>): Promise<void> {
+	// "$exception" is the name this lands under in PostHog, so that is what an
+	// operator would type to silence a crash loop.
+	if (isDeniedEvent("$exception")) return;
 	if (!reserveCapture(`exception:${exceptionName(error)}`)) return;
 	if (!(await initTelemetry())) return;
 	const safeProperties = withTelemetryContext(await sanitizeRendererExceptionProperties(error, properties));

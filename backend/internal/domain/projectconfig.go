@@ -55,6 +55,22 @@ type ProjectConfig struct {
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// ContainerReap controls whether AO reaps a worker session's ao.session-
+	// labeled Docker containers on terminal state / kill. Enabled by default;
+	// set Disabled to opt a project out entirely. Per-container sparing uses
+	// the ao.spare=true label instead (see dockerreap.SpareLabel) so the
+	// opt-out travels with the container at `docker run` time rather than
+	// drifting out of sync with a project-config list.
+	ContainerReap ContainerReapConfig `json:"containerReap,omitempty"`
+}
+
+// ContainerReapConfig is the project-level opt-out for #2652's Docker
+// container reaping on session terminal state.
+type ContainerReapConfig struct {
+	// Disabled turns off container reaping for every session in this project.
+	// Per-container sparing (ao.spare=true) is unaffected either way.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -69,15 +85,24 @@ type ReviewerConfig struct {
 const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins. Otherwise the worker's own harness is reused when it is itself
-// a supported reviewer (e.g. a codex worker is reviewed by codex); a worker
-// whose harness is not a reviewer (e.g. crush) falls back to claude-code.
+// reviewer wins. Otherwise only the original, unattended-safe reviewer set is
+// inherited from the worker. Every other reviewer requires explicit selection,
+// so adding an experimental adapter never silently changes an existing project.
 func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
 	}
-	if rh := ReviewerHarness(worker); rh.IsKnown() {
-		return rh
+	switch worker {
+	case HarnessClaudeCode:
+		return ReviewerClaudeCode
+	case HarnessCodex:
+		return ReviewerCodex
+	case HarnessOpenCode:
+		return ReviewerOpenCode
+	case HarnessMuse:
+		return ReviewerMuse
+	case HarnessKimchi:
+		return ReviewerKimchi
 	}
 	return FallbackReviewerHarness
 }

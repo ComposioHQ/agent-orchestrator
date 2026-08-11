@@ -1,12 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Info, Loader2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
 import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogHeaderClass,
+} from "./ui/dialog";
+import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 
 export const mobileStatusQueryKey = ["mobile-status"] as const;
@@ -43,11 +56,12 @@ interface ConnectMobileModalProps {
 }
 
 // ConnectMobileModal lets a user pair the mobile app with this desktop over
-// the LAN bridge. A single "Enable mobile" toggle sits at the top; flipping it
+// the LAN bridge. A single "Allow mobile pairing" toggle sits at the top; flipping it
 // on starts the bridge and reveals the pairing details below the toggle row —
 // a QR code (host/port/password), the plaintext address + password with a copy
 // affordance, and a Regenerate action. Flipping it off tears the bridge down.
 export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalProps) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -63,6 +77,21 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 		queryFn: fetchMobileStatus,
 		enabled: open,
 	});
+
+	// Reported once per open, and only after the status query resolves, so
+	// bridge_enabled reflects the real state rather than the `false` default that
+	// every open would otherwise report. Reset on close so reopening counts again.
+	const reportedOpen = useRef(false);
+	const initialEnabled = query.data?.enabled;
+	useEffect(() => {
+		if (!open) {
+			reportedOpen.current = false;
+			return;
+		}
+		if (initialEnabled === undefined || reportedOpen.current) return;
+		reportedOpen.current = true;
+		void captureRendererEvent("ao.renderer.mobile_connect_opened", { bridge_enabled: initialEnabled });
+	}, [open, initialEnabled]);
 
 	const invalidate = () => {
 		void queryClient.invalidateQueries({ queryKey: mobileStatusQueryKey });
@@ -120,8 +149,15 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 	const onToggle = (next: boolean) => {
 		if (busy) return;
 		clearActionErrors();
-		if (next) enable.mutate();
-		else disable.mutate();
+		// Enabling is the step that starts the bridge and reveals the QR, so this
+		// paired with ao.mobile.device_connected (emitted by the daemon when a
+		// phone actually authenticates) is what shows how many people who set this
+		// up ever finish the scan.
+		const report = (outcome: "succeeded" | "failed") => {
+			void captureRendererEvent("ao.renderer.mobile_bridge_toggled", { enabled: next, outcome });
+		};
+		const mutation = next ? enable : disable;
+		mutation.mutate(undefined, { onSuccess: () => report("succeeded"), onError: () => report("failed") });
 	};
 
 	const actionError =
@@ -134,51 +170,44 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
 				showCloseButton={false}
-				className={cn(
-					// Follow the app theme (same tokens as Report a problem) — do not force `dark`.
-					// Do not add `relative` (breaks fixed centering).
-					"flex w-(--size-settings-mobile-dialog) max-w-(--size-settings-mobile-dialog) flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-settings-dialog p-0 sm:rounded-(--radius-settings-dialog-lg)",
-					"shadow-[var(--shadow-settings-dialog)]",
-					"outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0",
-				)}
+				className={cn(settingsDialogContentClass, "w-[min(var(--size-settings-mobile-dialog),calc(100vw-var(--space-8)))]")}
 			>
 				<DialogClose asChild>
 					<button
 						type="button"
 						className="settings-dialog-close-button settings-close-button"
-						aria-label="Close connect mobile"
+						aria-label={t("mobile.close")}
 					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
 				</DialogClose>
 				{/* The get-app QR and setup steps can push this past a short window,
 				    so the body scrolls rather than clipping under the screen edges. */}
-				<div className="scrollbar-none flex max-h-[80vh] flex-col overflow-y-auto px-(--size-settings-mobile-dialog-pad-x) pb-6 pt-8">
-					<DialogHeader className="items-center gap-1.5 text-center">
-						<DialogTitle className="settings-dialog-title text-center">Connect Mobile</DialogTitle>
-						<DialogDescription className="max-w-(--size-settings-mobile-desc) text-center text-control font-normal leading-4 text-settings-muted">
-							Pair the Agent Orchestrator mobile app with this desktop over your LAN.
-						</DialogDescription>
-					</DialogHeader>
-
+				<DialogHeader className={cn(settingsDialogHeaderClass, "items-start text-left")}>
+					<DialogTitle className="settings-dialog-title text-left">{t("mobile.title")}</DialogTitle>
+					<DialogDescription className="max-w-(--size-settings-mobile-desc) text-left text-control font-normal leading-4 text-settings-muted">
+						{t("mobile.description")}
+					</DialogDescription>
+				</DialogHeader>
+				<div className={cn(settingsDialogBodyClass, "max-h-[80vh] gap-0 pt-6 scrollbar-none")}>
 					<ConnectMobileGetApp />
 
 					{query.isLoading ? (
-						<p className="mt-6 text-center text-xs text-settings-muted">Checking status…</p>
+						<p className="mt-6 text-center text-xs text-settings-muted">{t("mobile.checkingStatus")}</p>
 					) : query.isError ? (
 						<p className="mt-6 text-center text-xs text-error">
-							{query.error instanceof Error ? query.error.message : "Failed to load mobile status."}
+							{query.error instanceof Error ? query.error.message : t("mobile.loadFailed")}
 						</p>
 					) : status ? (
-						<div className="mt-6 flex flex-col">
+						<div className="mt-4 flex flex-col">
 							{/* Toggle row — always visible. Flipping it starts/stops the bridge. */}
-							<div className="relative flex items-start justify-between gap-3 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-3.5 py-2.5">
+							<div className="relative flex items-start justify-between gap-3 px-3 py-3">
 								<div className="flex min-w-0 flex-col gap-1 pr-2">
 									<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
-										Enable mobile
+										{t("mobile.enable")}
 									</span>
 									<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-										Open a password-protected port on your local network so your phone can connect.
+										{t("mobile.enableHint")}
 									</span>
 								</div>
 								<div className="flex shrink-0 items-center gap-2 pt-0.5">
@@ -187,15 +216,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 										checked={enabled}
 										onCheckedChange={onToggle}
 										disabled={busy}
-										aria-label="Enable mobile"
-										className={cn(
-											"h-(--size-settings-mobile-switch-h) w-(--size-settings-mobile-switch-w) transition-colors duration-300 ease-out",
-											"data-[state=checked]:bg-settings-switch-on data-[state=unchecked]:bg-[var(--color-border-settings-input)]",
-											"focus-visible:ring-0 focus-visible:ring-offset-0",
-											"**:data-[slot=switch-thumb]:size-5 **:data-[slot=switch-thumb]:bg-white **:data-[slot=switch-thumb]:transition-transform **:data-[slot=switch-thumb]:duration-300 **:data-[slot=switch-thumb]:ease-out",
-											"data-[state=checked]:**:data-[slot=switch-thumb]:translate-x-(--size-settings-mobile-switch-travel)",
-											"data-[state=unchecked]:**:data-[slot=switch-thumb]:translate-x-0.5",
-										)}
+										aria-label={t("mobile.enable")}
 									/>
 								</div>
 							</div>
@@ -210,10 +231,10 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 								)}
 								aria-hidden={!enabled}
 							>
-								<div className="overflow-hidden">
+					<div className="overflow-hidden">
 									<div
 										className={cn(
-											"mt-6 flex flex-col items-center transition-opacity duration-300 ease-out",
+											"mt-4 flex flex-col items-center transition-opacity duration-300 ease-out",
 											enabled ? "opacity-100" : "opacity-0",
 										)}
 									>
@@ -222,14 +243,14 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 										<ConnectMobileSetup port={status.port} enabled={enabled} />
 
 										<div className="mt-6 flex w-(--size-settings-mobile-qr) flex-col items-center">
-											<div className="rounded-(--radius-settings-dialog-lg) bg-white p-2 shadow-[var(--shadow-settings-qr)]">
+											<div className="rounded-md border border-(--color-border-settings-input) bg-white p-2">
 												<QRCodeSVG
 													value={pairingPayload(status.host, status.port, status.password)}
 													size={QR_CODE_SIZE}
 													className="block size-(--size-settings-mobile-qr-code)"
 												/>
 											</div>
-											<p className="mt-4 text-sm leading-5 text-settings-muted">Scan to pair</p>
+											<p className="mt-4 text-sm leading-5 text-settings-muted">{t("mobile.scanToPair")}</p>
 										</div>
 
 										{status.warning && (
@@ -241,18 +262,18 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 
 										<div className="mt-6 flex w-full flex-col gap-1 px-(--size-settings-mobile-details-pad-x)">
 											<div className="flex items-center gap-6 text-sm leading-5">
-												<span className="w-(--size-settings-mobile-label) shrink-0 text-settings-muted">Address</span>
+												<span className="w-(--size-settings-mobile-label) shrink-0 text-settings-muted">{t("mobile.address")}</span>
 												<span className="tracking-settings-mono text-settings-label">
 													{status.host}:{status.port}
 												</span>
 											</div>
 											<div className="flex items-center gap-6 text-sm leading-5">
-												<span className="w-(--size-settings-mobile-label) shrink-0 text-settings-muted">Password</span>
+												<span className="w-(--size-settings-mobile-label) shrink-0 text-settings-muted">{t("mobile.password")}</span>
 												<div className="flex min-w-0 items-center gap-2">
 													<span className="tracking-settings-mono text-settings-label">{status.password}</span>
 													<button
 														type="button"
-														aria-label={copied ? "Password copied" : "Copy password"}
+														aria-label={copied ? t("mobile.passwordCopied") : t("mobile.copyPassword")}
 														tabIndex={enabled ? 0 : -1}
 														className="inline-flex size-6 shrink-0 items-center justify-center text-settings-muted transition-colors hover:text-settings-label"
 														onClick={() => void copyPassword()}
@@ -267,19 +288,20 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											</div>
 										</div>
 
-										<button
+										<Button
 											type="button"
+											variant="footer"
+											className="mt-5 w-(--size-settings-mobile-regen-width) rounded-md"
 											onClick={() => {
 												clearActionErrors();
 												regenerate.mutate();
 											}}
 											disabled={busy || !enabled}
 											tabIndex={enabled ? 0 : -1}
-											className="settings-footer-button mt-5 w-(--size-settings-mobile-regen-width) disabled:cursor-not-allowed disabled:opacity-50"
 										>
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
-											Regenerate password
-										</button>
+											{t("mobile.regenerate")}
+										</Button>
 									</div>
 								</div>
 							</div>

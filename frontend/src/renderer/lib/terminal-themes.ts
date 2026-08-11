@@ -8,54 +8,66 @@ function cssVar(name: string): string {
 
 /** xterm palettes harmonized to tokens.css (--color-term-* / semantic colors). */
 export function buildTerminalThemes(): { dark: ITheme; light: ITheme } {
+	// Opaque plate — xterm cells must not be translucent or the p-2 gutter and
+	// the glyph grid pick up different composites against app chrome.
+	const namedThemeActive = typeof document !== "undefined" && Boolean(document.documentElement.dataset.styleTheme);
+	const terminalBg = namedThemeActive
+		? cssVar("--background")
+		: cssVar("--color-bg-terminal-opaque") || cssVar("--color-bg-terminal");
+	const terminalForeground = namedThemeActive ? cssVar("--foreground") : cssVar("--color-text-terminal");
+	const terminalCursor = namedThemeActive ? cssVar("--primary") : cssVar("--color-working");
 	const dark: ITheme = {
-		background: cssVar("--color-bg-terminal"),
-		foreground: cssVar("--color-text-terminal"),
-		cursor: cssVar("--color-working"),
-		cursorAccent: cssVar("--color-bg-terminal"),
+		background: terminalBg,
+		foreground: terminalForeground,
+		cursor: terminalCursor,
+		cursorAccent: terminalBg,
 		selectionBackground: cssVar("--color-term-selection-dark"),
 		selectionInactiveBackground: cssVar("--color-term-selection-inactive"),
-		black: cssVar("--color-bg-terminal"),
-		red: cssVar("--color-danger"),
-		green: cssVar("--color-success"),
-		yellow: cssVar("--color-warning"),
-		blue: cssVar("--color-accent"),
-		magenta: cssVar("--color-purple"),
+		black: cssVar("--color-term-black"),
+		red: cssVar("--color-term-red"),
+		green: cssVar("--color-term-green"),
+		yellow: cssVar("--color-term-yellow"),
+		blue: cssVar("--color-term-blue"),
+		magenta: cssVar("--color-term-magenta"),
 		cyan: cssVar("--color-term-cyan"),
-		white: cssVar("--color-text-terminal"),
-		brightBlack: cssVar("--color-text-terminal-dim"),
+		white: cssVar("--color-term-white"),
+		brightBlack: cssVar("--color-term-bright-black"),
 		brightRed: cssVar("--color-term-bright-red"),
 		brightGreen: cssVar("--color-term-bright-green"),
 		brightYellow: cssVar("--color-term-bright-yellow"),
 		brightBlue: cssVar("--color-term-bright-blue"),
 		brightMagenta: cssVar("--color-term-bright-magenta"),
 		brightCyan: cssVar("--color-term-bright-cyan"),
-		brightWhite: cssVar("--color-text-primary"),
+		brightWhite: cssVar("--color-term-bright-white"),
 	};
 
 	const light: ITheme = {
-		background: cssVar("--color-bg-terminal"),
-		foreground: cssVar("--color-text-terminal"),
-		cursor: cssVar("--color-working"),
-		cursorAccent: cssVar("--color-bg-terminal"),
+		background: terminalBg,
+		foreground: terminalForeground,
+		// xterm block cursor fills with `cursor` and paints cell text in
+		// `cursorAccent`. --color-working is fine on dark plates but reads as a
+		// low-contrast wash on the light terminal bg (#f5f5f4), especially while
+		// blinking. Use the terminal foreground so the block stays visible.
+		cursor: terminalForeground,
+		cursorAccent: terminalBg,
 		selectionBackground: cssVar("--color-term-selection-light"),
 		selectionInactiveBackground: cssVar("--color-term-selection-inactive-light"),
-		black: cssVar("--color-text-terminal"),
-		red: cssVar("--color-term-red-light"),
-		green: cssVar("--color-success"),
-		yellow: cssVar("--color-warning"),
-		blue: cssVar("--color-accent"),
-		magenta: cssVar("--color-term-magenta-light"),
-		cyan: cssVar("--color-term-cyan-light"),
-		white: cssVar("--color-term-white-light"),
-		brightBlack: cssVar("--color-term-bright-black-light"),
-		brightRed: cssVar("--color-term-bright-red-light"),
-		brightGreen: cssVar("--color-term-bright-green-light"),
-		brightYellow: cssVar("--color-term-bright-yellow-light"),
-		brightBlue: cssVar("--color-term-bright-blue-light"),
-		brightMagenta: cssVar("--color-term-bright-magenta-light"),
-		brightCyan: cssVar("--color-term-bright-cyan-light"),
-		brightWhite: cssVar("--color-term-bright-black-light"),
+		black: cssVar("--color-term-black"),
+		red: cssVar("--color-term-red"),
+		green: cssVar("--color-term-green"),
+		yellow: cssVar("--color-term-yellow"),
+		blue: cssVar("--color-term-blue"),
+		magenta: cssVar("--color-term-magenta"),
+		cyan: cssVar("--color-term-cyan"),
+		white: cssVar("--color-term-white"),
+		brightBlack: cssVar("--color-term-bright-black"),
+		brightRed: cssVar("--color-term-bright-red"),
+		brightGreen: cssVar("--color-term-bright-green"),
+		brightYellow: cssVar("--color-term-bright-yellow"),
+		brightBlue: cssVar("--color-term-bright-blue"),
+		brightMagenta: cssVar("--color-term-bright-magenta"),
+		brightCyan: cssVar("--color-term-bright-cyan"),
+		brightWhite: cssVar("--color-term-bright-white"),
 	};
 
 	return { dark, light };
