@@ -36,7 +36,7 @@ func run(logger *slog.Logger) error {
 	)
 	defer cancel()
 
-	if err := postgres.Migrate(ctx, cfg.DatabaseURL); err != nil {
+	if err := postgres.Migrate(ctx, cfg.MigrationDatabaseURL); err != nil {
 		return err
 	}
 	store, err := postgres.Open(ctx, cfg.DatabaseURL)
@@ -44,6 +44,11 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer store.Close()
+	if cfg.Hosted() {
+		if err := store.ValidateRuntimeRole(ctx); err != nil {
+			return err
+		}
+	}
 
 	var workosVerifier auth.WorkOSVerifier
 	if cfg.WorkOSIssuer != "" {
@@ -72,6 +77,9 @@ func run(logger *slog.Logger) error {
 		WorkOS:           workosVerifier,
 		LocalAuthEnabled: cfg.LocalAuthEnabled,
 		LocalSessionTTL:  cfg.LocalSessionTTL,
+		SandboxProvider:  cfg.SandboxProvider,
+		Environment:      cfg.Environment,
+		Release:          cfg.Release,
 		Logger:           logger,
 	})
 	server := &http.Server{
@@ -79,7 +87,7 @@ func run(logger *slog.Logger) error {
 		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      0,
 		IdleTimeout:       90 * time.Second,
 	}
 	result := make(chan error, 1)
@@ -90,6 +98,7 @@ func run(logger *slog.Logger) error {
 
 	select {
 	case <-ctx.Done():
+		api.SetDraining(true)
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownCancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {

@@ -84,7 +84,16 @@ type CreateSession struct {
 	Harness              string
 	DisplayName          string
 	Prompt               string
+	Provider             string
 	ProviderConnectionID string
+}
+
+type ClientEvent struct {
+	SessionID string
+	Sequence  int64
+	Type      string
+	Payload   json.RawMessage
+	CreatedAt time.Time
 }
 
 type Cursor struct {

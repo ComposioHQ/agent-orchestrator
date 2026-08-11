@@ -4,21 +4,27 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
+var releasePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$`)
+
 type Config struct {
-	Environment      string
-	HTTPAddress      string
-	DatabaseURL      string
-	WorkOSIssuer     string
-	WorkOSClientID   string
-	WorkOSAPIKey     string
-	WorkOSJWKSURL    string
-	LocalAuthEnabled bool
-	LocalSessionTTL  time.Duration
+	Environment          string
+	HTTPAddress          string
+	DatabaseURL          string
+	MigrationDatabaseURL string
+	WorkOSIssuer         string
+	WorkOSClientID       string
+	WorkOSAPIKey         string
+	WorkOSJWKSURL        string
+	LocalAuthEnabled     bool
+	LocalSessionTTL      time.Duration
+	SandboxProvider      string
+	Release              string
 }
 
 func Load() (Config, error) {
@@ -28,23 +34,29 @@ func Load() (Config, error) {
 		defaultHTTPAddress = "127.0.0.1:8080"
 	}
 	cfg := Config{
-		Environment:      environment,
-		HTTPAddress:      envOrDefault("AO_CLOUD_HTTP_ADDRESS", defaultHTTPAddress),
-		DatabaseURL:      strings.TrimSpace(os.Getenv("AO_CLOUD_DATABASE_URL")),
-		WorkOSIssuer:     strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_ISSUER")),
-		WorkOSClientID:   strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
-		WorkOSAPIKey:     strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_API_KEY")),
-		WorkOSJWKSURL:    strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_JWKS_URL")),
-		LocalAuthEnabled: boolEnv("AO_CLOUD_LOCAL_AUTH", false),
-		LocalSessionTTL:  durationEnv("AO_CLOUD_LOCAL_SESSION_TTL", 24*time.Hour),
+		Environment:          environment,
+		HTTPAddress:          envOrDefault("AO_CLOUD_HTTP_ADDRESS", defaultHTTPAddress),
+		DatabaseURL:          strings.TrimSpace(os.Getenv("AO_CLOUD_DATABASE_URL")),
+		MigrationDatabaseURL: strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_DATABASE_URL")),
+		WorkOSIssuer:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_ISSUER")),
+		WorkOSClientID:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
+		WorkOSAPIKey:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_API_KEY")),
+		WorkOSJWKSURL:        strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_JWKS_URL")),
+		LocalAuthEnabled:     boolEnv("AO_CLOUD_LOCAL_AUTH", false),
+		LocalSessionTTL:      durationEnv("AO_CLOUD_LOCAL_SESSION_TTL", 24*time.Hour),
+		SandboxProvider:      strings.ToLower(envOrDefault("AO_CLOUD_SANDBOX_PROVIDER", "ecs")),
+		Release:              strings.TrimSpace(os.Getenv("AO_CLOUD_RELEASE")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")
 	}
+	if cfg.MigrationDatabaseURL == "" {
+		cfg.MigrationDatabaseURL = cfg.DatabaseURL
+	}
 	switch cfg.Environment {
-	case "development", "test", "production":
+	case "development", "test", "staging", "production":
 	default:
-		return Config{}, errors.New("AO_CLOUD_ENV must be development, test, or production")
+		return Config{}, errors.New("AO_CLOUD_ENV must be development, test, staging, or production")
 	}
 	workosValues := []string{cfg.WorkOSIssuer, cfg.WorkOSClientID, cfg.WorkOSAPIKey}
 	configuredWorkOSValues := 0
@@ -66,8 +78,8 @@ func Load() (Config, error) {
 	if cfg.WorkOSIssuer == "" && !cfg.LocalAuthEnabled {
 		return Config{}, errors.New("configure WorkOS or enable AO_CLOUD_LOCAL_AUTH")
 	}
-	if cfg.LocalAuthEnabled && cfg.Environment == "production" {
-		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be enabled in production")
+	if cfg.LocalAuthEnabled && cfg.Hosted() {
+		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be enabled in staging or production")
 	}
 	if cfg.LocalAuthEnabled && cfg.WorkOSIssuer != "" {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be combined with WorkOS")
@@ -75,7 +87,25 @@ func Load() (Config, error) {
 	if cfg.LocalSessionTTL <= 0 {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_SESSION_TTL must be positive")
 	}
+	switch cfg.SandboxProvider {
+	case "ecs", "daytona", "docker":
+	default:
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be ecs, daytona, or docker")
+	}
+	if cfg.Release == "" {
+		if cfg.Hosted() {
+			return Config{}, errors.New("AO_CLOUD_RELEASE is required in staging and production")
+		}
+		cfg.Release = "dev"
+	}
+	if !releasePattern.MatchString(cfg.Release) {
+		return Config{}, errors.New("AO_CLOUD_RELEASE must be a release tag or Git SHA")
+	}
 	return cfg, nil
+}
+
+func (c Config) Hosted() bool {
+	return c.Environment == "staging" || c.Environment == "production"
 }
 
 func envOrDefault(key, fallback string) string {
@@ -114,5 +144,5 @@ func (c Config) String() string {
 	if c.LocalAuthEnabled {
 		authMode = "local"
 	}
-	return fmt.Sprintf("environment=%s address=%s auth=%s", c.Environment, c.HTTPAddress, authMode)
+	return fmt.Sprintf("environment=%s address=%s auth=%s release=%s", c.Environment, c.HTTPAddress, authMode, c.Release)
 }

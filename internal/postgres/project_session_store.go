@@ -238,8 +238,11 @@ func (s *Store) CreateSession(
 			return normalizeConstraintError(err)
 		}
 
+		provider := input.Provider
+		if provider == "" {
+			provider = "ecs"
+		}
 		if input.ProviderConnectionID != "" {
-			var provider string
 			if err := tx.QueryRow(
 				ctx,
 				`SELECT provider FROM ao_provider_connections
@@ -251,19 +254,29 @@ func (s *Store) CreateSession(
 			} else if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(
+		}
+		if _, err := tx.Exec(
+			ctx,
+			`INSERT INTO ao_sandboxes (
+				session_id, org_id, provider, provider_connection_id
+			) VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`,
+			session.ID,
+			orgID,
+			provider,
+			input.ProviderConnectionID,
+		); err != nil {
+			return normalizeConstraintError(err)
+		}
+		if input.Prompt != "" {
+			if _, err := appendUserMessage(
 				ctx,
-				`INSERT INTO ao_sandboxes (
-					session_id, org_id, provider, provider_connection_id
-				) VALUES ($1, $2, $3, $4)`,
-				session.ID,
+				tx,
 				orgID,
-				provider,
-				input.ProviderConnectionID,
+				session.ID,
+				input.Prompt,
 			); err != nil {
 				return err
 			}
-			session.RuntimeState = "requested"
 		}
 
 		if _, err := tx.Exec(
@@ -280,7 +293,7 @@ func (s *Store) CreateSession(
 		); err != nil {
 			return err
 		}
-		_, err = tx.Exec(
+		if _, err = tx.Exec(
 			ctx,
 			`INSERT INTO ao_audit_events (
 				org_id, actor_user_id, action, resource_type, resource_id
@@ -288,8 +301,10 @@ func (s *Store) CreateSession(
 			orgID,
 			principal.UserID,
 			session.ID,
-		)
-		return err
+		); err != nil {
+			return err
+		}
+		return getSession(ctx, tx, orgID, session.ID, &session)
 	})
 	return session, err
 }

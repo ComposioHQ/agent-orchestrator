@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -32,11 +33,13 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := httptest.NewServer(New(Options{
+	api := New(Options{
 		Store:            store,
 		LocalAuthEnabled: true,
 		LocalSessionTTL:  time.Hour,
-	}).Handler())
+		SandboxProvider:  "docker",
+	})
+	server := httptest.NewServer(api.Handler())
 	defer server.Close()
 
 	first := registerUser(t, server.URL, "first")
@@ -130,6 +133,21 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	if status := stringField(t, session, "status"); status != "idle" {
 		t.Fatalf("new session status = %q, want idle", status)
 	}
+	if state := stringField(t, session, "runtimeState"); state != "requested" {
+		t.Fatalf("new session runtime state = %q, want requested", state)
+	}
+	initialEvents := requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+sessionID+"/chat-events",
+		first.Token,
+		"",
+		nil,
+		http.StatusOK,
+	)
+	if events, ok := initialEvents["events"].([]any); !ok || len(events) != 1 {
+		t.Fatalf("initial events = %#v", initialEvents["events"])
+	}
 
 	requestJSON(
 		t,
@@ -152,6 +170,108 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	if code := stringField(t, forbidden, "code"); code != "forbidden" {
 		t.Fatalf("cross-tenant error code = %q", code)
 	}
+	requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+sessionID+"/chat-events",
+		second.Token,
+		"",
+		nil,
+		http.StatusForbidden,
+	)
+
+	emptySessionResponse := requestJSON(
+		t,
+		http.MethodPost,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions",
+		first.Token,
+		"empty-session-create",
+		map[string]any{
+			"projectId":   projectID,
+			"kind":        "worker",
+			"harness":     "claude-code",
+			"displayName": "Empty session",
+			"prompt":      "",
+		},
+		http.StatusCreated,
+	)
+	emptySessionID := stringField(t, objectField(t, emptySessionResponse, "session"), "id")
+	messageBody := map[string]any{"text": "Start now"}
+	messageResponse := requestJSON(
+		t,
+		http.MethodPost,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+emptySessionID+"/messages",
+		first.Token,
+		"message-send",
+		messageBody,
+		http.StatusAccepted,
+	)
+	message := objectField(t, messageResponse, "event")
+	if sequence, ok := message["sequence"].(float64); !ok || sequence != 1 {
+		t.Fatalf("message sequence = %#v", message["sequence"])
+	}
+	replayedMessage := requestJSON(
+		t,
+		http.MethodPost,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+emptySessionID+"/messages",
+		first.Token,
+		"message-send",
+		messageBody,
+		http.StatusAccepted,
+	)
+	if objectField(t, replayedMessage, "event")["sequence"] != message["sequence"] {
+		t.Fatalf("replayed message = %#v, original = %#v", replayedMessage, messageResponse)
+	}
+	requestJSON(
+		t,
+		http.MethodPost,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+emptySessionID+"/messages",
+		first.Token,
+		"message-send",
+		map[string]any{"text": "Different"},
+		http.StatusConflict,
+	)
+	replayedEvents := requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+emptySessionID+"/chat-events?after=0&limit=1",
+		first.Token,
+		"",
+		nil,
+		http.StatusOK,
+	)
+	if events, ok := replayedEvents["events"].([]any); !ok || len(events) != 1 {
+		t.Fatalf("replayed events = %#v", replayedEvents["events"])
+	}
+	streamContext, cancelStream := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelStream()
+	streamRequest, err := http.NewRequestWithContext(
+		streamContext,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+emptySessionID+"/events?after=0",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamRequest.Header.Set("Authorization", "Bearer "+first.Token)
+	streamResponse, err := http.DefaultClient.Do(streamRequest)
+	if err != nil {
+		t.Fatalf("open event stream: %v", err)
+	}
+	defer streamResponse.Body.Close()
+	if streamResponse.StatusCode != http.StatusOK {
+		t.Fatalf("event stream status = %d", streamResponse.StatusCode)
+	}
+	reader := bufio.NewReader(streamResponse.Body)
+	if block := readSSEBlock(t, reader); !strings.Contains(block, "retry: 2000") {
+		t.Fatalf("event stream prelude = %q", block)
+	}
+	if block := readSSEBlock(t, reader); !strings.Contains(block, `"sequence":1`) ||
+		!strings.Contains(block, `"text":"Start now"`) {
+		t.Fatalf("event stream event = %q", block)
+	}
+	cancelStream()
 
 	workosServer := httptest.NewServer(New(Options{
 		Store: store,
@@ -176,6 +296,35 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	organizations, ok := me["organizations"].([]any)
 	if !ok || len(organizations) != 1 {
 		t.Fatalf("WorkOS organizations = %#v", me["organizations"])
+	}
+
+	api.SetDraining(true)
+	draining := requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/readyz",
+		"",
+		"",
+		nil,
+		http.StatusServiceUnavailable,
+	)
+	if code := stringField(t, draining, "code"); code != "draining" {
+		t.Fatalf("draining readiness code = %q", code)
+	}
+}
+
+func readSSEBlock(t *testing.T, reader *bufio.Reader) string {
+	t.Helper()
+	var block strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read SSE block: %v", err)
+		}
+		if line == "\n" {
+			return block.String()
+		}
+		block.WriteString(line)
 	}
 }
 
