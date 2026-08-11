@@ -57,3 +57,34 @@ jobs:
         run: docker build --tag ao-cloud:test .
       - name: Exercise isolated local lifecycle
         run: ./scripts/test-cloud-local.sh
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out compatible public packages
+        uses: actions/checkout@v5
+        with:
+          repository: Untrivial-ai/agent-orchestrator
+          ref: 9b2a8522aec738b157ceaa80efc74a93b846901f
+          path: public
+      - name: Check out private Cloud change
+        uses: actions/checkout@v5
+        with:
+          path: public/private/ao-cloud
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            public/package-lock.json
+            public/private/ao-cloud/package-lock.json
+      - name: Install public workspace
+        working-directory: public
+        run: npm ci
+      - name: Install and verify Cloud UI
+        working-directory: public/private/ao-cloud
+        run: |
+          npm ci
+          npm run typecheck:web
+          npm run test:web
+          npm run build

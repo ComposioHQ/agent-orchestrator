@@ -1,24 +1,26 @@
 "use client";
 
-import { Building2, Check, ChevronsUpDown, Plus } from "lucide-react";
+import type { CurrentAccount } from "@aoagents/cloud-client";
+import { Building2, Check, ChevronsUpDown } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
-const demoWorkspaces = [
-  { id: "personal", name: "Personal workspace", role: "owner" },
-  { id: "team", name: "AO Team", role: "admin" },
-] as const;
-
-export function CloudDemoWorkspaceSwitcher() {
+export function CloudWorkspaceSwitcher({
+  account,
+  onSelect,
+  selectedOrganizationId,
+}: {
+  account: CurrentAccount;
+  onSelect: (organizationId: string) => void;
+  selectedOrganizationId: string;
+}) {
   const prefersReducedMotion = useReducedMotion();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(
-    demoWorkspaces[0].id,
-  );
   const selectedWorkspace =
-    demoWorkspaces.find(({ id }) => id === selectedWorkspaceId) ??
-    demoWorkspaces[0];
+    account.organizations.find(
+      ({ id }) => id === selectedOrganizationId,
+    ) ?? account.organizations[0];
 
   useEffect(() => {
     if (!open) return;
@@ -55,7 +57,7 @@ export function CloudDemoWorkspaceSwitcher() {
         onClick={() => setOpen((current) => !current)}
       >
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-none">
-          {selectedWorkspace.name}
+          {selectedWorkspace?.displayName ?? "No organization"}
         </span>
         <motion.span
           animate={{ rotate: open ? 180 : 0 }}
@@ -78,10 +80,10 @@ export function CloudDemoWorkspaceSwitcher() {
             className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 origin-top overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.45)]"
           >
             <div className="truncate px-2 py-1.5 text-[11px] leading-4 text-[var(--color-text-passive)]">
-              you@company.com
+              {account.user.email}
             </div>
-            {demoWorkspaces.map((workspace) => {
-              const selected = workspace.id === selectedWorkspaceId;
+            {account.organizations.map((workspace) => {
+              const selected = workspace.id === selectedOrganizationId;
               return (
                 <button
                   key={workspace.id}
@@ -94,7 +96,7 @@ export function CloudDemoWorkspaceSwitcher() {
                       : "text-[var(--muted-foreground)]"
                   }`}
                   onClick={() => {
-                    setSelectedWorkspaceId(workspace.id);
+                    onSelect(workspace.id);
                     setOpen(false);
                   }}
                 >
@@ -103,7 +105,7 @@ export function CloudDemoWorkspaceSwitcher() {
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1 truncate">
-                    {workspace.name}
+                    {workspace.displayName}
                   </span>
                   <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.04em] text-[var(--color-text-passive)]">
                     {workspace.role}
@@ -117,19 +119,6 @@ export function CloudDemoWorkspaceSwitcher() {
                 </button>
               );
             })}
-            <div className="my-1 h-px bg-[var(--color-border-strong)]" />
-            <button
-              type="button"
-              role="menuitem"
-              className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] text-[var(--muted-foreground)] transition-[background-color,color,transform] duration-100 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none"
-              onClick={() => setOpen(false)}
-            >
-              <Plus
-                className="size-3.5 shrink-0 text-[var(--color-text-passive)]"
-                aria-hidden="true"
-              />
-              <span className="truncate">Create workspace</span>
-            </button>
           </motion.div>
         ) : null}
       </AnimatePresence>

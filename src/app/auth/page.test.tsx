@@ -1,15 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
-import CloudEntryPage from "./page";
-
-const mocks = vi.hoisted(() => ({
-  push: vi.fn(),
-}));
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mocks.push, replace: vi.fn() }),
-}));
+import { CloudEntryClient } from "../CloudEntryClient";
 
 vi.mock("./PrismLogoGrid", () => ({
   PrismLogoGrid: () => (
@@ -17,15 +9,25 @@ vi.mock("./PrismLogoGrid", () => ({
   ),
 }));
 
-it("offers WorkOS as the only cloud entry action", () => {
-  render(<CloudEntryPage />);
+it("offers WorkOS as the hosted staging entry action", () => {
+  render(<CloudEntryClient mode="staging" />);
 
-  const buttons = screen.getAllByRole("button");
-  expect(buttons).toHaveLength(1);
-  expect(buttons[0]).toHaveAccessibleName("Continue to Cloud");
+  expect(
+    screen.getByRole("link", { name: "Continue with WorkOS" }),
+  ).toHaveAttribute("href", "/sign-in");
   expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+});
 
-  fireEvent.click(buttons[0]);
-  expect(mocks.push).toHaveBeenCalledWith("/app");
+it("uses email and password only in local development mode", () => {
+  render(<CloudEntryClient mode="local" />);
+
+  expect(screen.getByLabelText("Email")).toBeVisible();
+  expect(screen.getByLabelText("Password")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Sign in locally" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("link", { name: "Continue with WorkOS" }),
+  ).not.toBeInTheDocument();
 });

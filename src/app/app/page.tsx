@@ -1,163 +1,98 @@
 "use client";
 
-import { GitBranch } from "lucide-react";
-import { useEffect, useState } from "react";
-
 import {
-  CloudDemoCommandMenu,
-  CloudDemoSettingsDialog,
-} from "./CloudDemoOverlays";
-import { CloudDemoMainShell, CloudDemoTopbar } from "./CloudDemoShell";
-import { CloudDemoSidebar } from "./CloudDemoSidebar";
-import type { DemoSession, DemoSessionStatus } from "./demo-types";
+  CloudApiError,
+  type CreateProjectInput,
+  type CreateSessionInput,
+  type CurrentAccount,
+  type Project,
+  type Session,
+} from "@aoagents/cloud-client";
+import { Search, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const sessions: DemoSession[] = [
-  {
-    id: "demo-codex",
-    harness: "codex",
-    displayName: "Build cloud authentication",
-    branch: "feat/cloud-auth",
-    activityState: "active",
-    status: "working",
-    age: "7h",
-  },
-  {
-    id: "demo-claude",
-    harness: "claude-code",
-    displayName: "Review onboarding flow",
-    branch: "review/onboarding",
-    activityState: "waiting_input",
-    status: "needs_input",
-    age: "7h",
-  },
-  {
-    id: "demo-cursor",
-    harness: "cursor",
-    displayName: "Polish workspace navigation",
-    branch: "feat/workspace-nav",
-    activityState: "idle",
-    status: "review_pending",
-    age: "7h",
-  },
-  {
-    id: "demo-ready",
-    harness: "codex",
-    displayName: "Add cloud board routes",
-    branch: "feat/cloud-board",
-    activityState: "idle",
-    status: "mergeable",
-    age: "8h",
-  },
-];
+import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
+import { CloudBoard } from "./CloudBoard";
+import { NewProjectDialog, NewSessionDialog } from "./CloudDialogs";
+import { CloudMainShell, CloudTopbar } from "./CloudShell";
+import { CloudSessionPanel } from "./CloudSessionPanel";
+import { CloudSidebar } from "./CloudSidebar";
 
-const columns: Array<{
-  title: string;
-  dot: string;
-  statuses: DemoSessionStatus[];
-}> = [
-  { title: "Working", dot: "#36c2b4", statuses: ["working"] },
-  { title: "Needs you", dot: "#f2b84b", statuses: ["needs_input"] },
-  { title: "In review", dot: "#5b8def", statuses: ["review_pending"] },
-  { title: "Ready to merge", dot: "#9ad97a", statuses: ["mergeable"] },
-];
-
-const statusView: Record<DemoSessionStatus, { label: string; color: string }> = {
-  working: { label: "Working", color: "text-[#f59f4c]" },
-  needs_input: { label: "Needs input", color: "text-[#e8c14a]" },
-  review_pending: { label: "Review pending", color: "text-[#5b8def]" },
-  mergeable: { label: "Ready to merge", color: "text-[#78c997]" },
-};
-
-function AgentAvatar({ agent }: { agent: string }) {
-  return (
-    <img
-      src={`/agents/${agent}.svg`}
-      alt=""
-      aria-hidden="true"
-      className="mt-0.5 size-[18px] shrink-0 object-contain"
-      draggable={false}
-    />
+export function CloudWorkspace() {
+  const client = useMemo(browserCloudClient, []);
+  const [account, setAccount] = useState<CurrentAccount | null>(null);
+  const [organizationId, setOrganizationId] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    null,
   );
-}
-
-function SessionCard({ session }: { session: DemoSession }) {
-  const status = statusView[session.status];
-
-  return (
-    <button
-      type="button"
-      data-testid="cloud-board-session-card"
-      className="group relative w-full cursor-pointer rounded-lg border border-[var(--border)] bg-[var(--color-bg-secondary)] text-left transition-[border-color,box-shadow] hover:border-[var(--color-border-strong)] hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/60"
-    >
-      <div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
-        <AgentAvatar agent={session.harness} />
-        <div className="min-w-0 flex-1">
-          <div className="line-clamp-2 overflow-hidden text-[11.5px] font-semibold leading-tight tracking-[-0.01em] text-[var(--foreground)]">
-            {session.displayName}
-          </div>
-          <div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-[10.5px] text-[var(--color-text-passive)]">
-            <GitBranch className="size-3 shrink-0" aria-hidden="true" />
-            <span className="truncate">{session.branch}</span>
-          </div>
-        </div>
-      </div>
-      <div aria-hidden="true" className="mx-3.5 my-px h-px bg-[var(--border)]" />
-      <div className="flex items-center justify-between gap-2 px-3.5 py-2">
-        <span
-          className={`inline-flex min-w-0 items-center gap-1.5 truncate text-[10.5px] font-medium ${status.color}`}
-        >
-          <span className="size-[7px] shrink-0 rounded-full bg-current" />
-          {status.label}
-        </span>
-        <span className="shrink-0 whitespace-nowrap font-mono text-[10.5px] text-[var(--color-text-passive)]">
-          {session.age}
-        </span>
-      </div>
-    </button>
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    null,
   );
-}
-
-function SessionBoard() {
-  return (
-    <div className="grid h-full min-h-0 min-w-[64rem] grid-cols-4 divide-x divide-[var(--border)] overflow-x-auto xl:min-w-0">
-      {columns.map((column) => {
-        const columnSessions = sessions.filter((session) =>
-          column.statuses.includes(session.status),
-        );
-
-        return (
-          <section
-            key={column.title}
-            aria-label={`${column.title} sessions`}
-            className="min-w-[230px] overflow-auto"
-          >
-            <div className="flex h-12 items-center gap-2.5 border-b border-[var(--border)] px-4">
-              <span
-                className="size-[7px] rounded-full"
-                style={{ backgroundColor: column.dot }}
-              />
-              <h2 className="text-[11.5px] font-medium tracking-[-0.01em] text-[var(--color-text-muted)]">
-                {column.title}
-              </h2>
-              <span className="ml-auto font-mono text-[10px] text-[var(--color-text-passive)]">
-                {columnSessions.length}
-              </span>
-            </div>
-            <div className="space-y-2 p-3">
-              {columnSessions.map((session) => (
-                <SessionCard key={session.id} session={session} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-export function CloudBoardDemo() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [commandOpen, setCommandOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const organizationRequest = useRef(0);
+
+  const loadOrganization = useCallback(
+    async (orgId: string) => {
+      const request = organizationRequest.current + 1;
+      organizationRequest.current = request;
+      setLoading(true);
+      setError("");
+      try {
+        const [projectPage, sessionPage] = await Promise.all([
+          client.listProjects(orgId, { limit: 100 }),
+          client.listSessions(orgId, { limit: 100 }),
+        ]);
+        if (organizationRequest.current !== request) return;
+        setProjects(projectPage.items);
+        setSessions(sessionPage.items);
+        setSelectedProjectId((current) =>
+          current && projectPage.items.some(({ id }) => id === current)
+            ? current
+            : (projectPage.items[0]?.id ?? null),
+        );
+      } catch (cause) {
+        if (organizationRequest.current === request) {
+          handleLoadError(cause, setError);
+        }
+      } finally {
+        if (organizationRequest.current === request) setLoading(false);
+      }
+    },
+    [client],
+  );
+
+  useEffect(() => {
+    let active = true;
+    void client
+      .getCurrentAccount()
+      .then((value) => {
+        if (!active) return;
+        setAccount(value);
+        const firstOrganization = value.organizations[0]?.id;
+        if (!firstOrganization) {
+          setError("Your account has no active organization memberships.");
+          setLoading(false);
+          return;
+        }
+        setOrganizationId(firstOrganization);
+        void loadOrganization(firstOrganization);
+      })
+      .catch((cause) => {
+        if (active) {
+          handleLoadError(cause, setError);
+          setLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [client, loadOrganization]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -167,7 +102,8 @@ export function CloudBoardDemo() {
       }
       if (event.key === "Escape") {
         setCommandOpen(false);
-        setSettingsOpen(false);
+        setNewProjectOpen(false);
+        setNewSessionOpen(false);
       }
     };
 
@@ -175,35 +111,279 @@ export function CloudBoardDemo() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const createProject = async (input: CreateProjectInput) => {
+    const response = await client.createProject(organizationId, input, {
+      idempotencyKey: newIdempotencyKey("project"),
+    });
+    setProjects((current) => [...current, response.project]);
+    setSelectedProjectId(response.project.id);
+  };
+
+  const createSession = async (input: CreateSessionInput) => {
+    const response = await client.createSession(organizationId, input, {
+      idempotencyKey: newIdempotencyKey("session"),
+    });
+    setSessions((current) => [...current, response.session]);
+    setSelectedProjectId(response.session.projectId);
+    setSelectedSessionId(response.session.id);
+  };
+
+  if (!account) {
+    return <LoadingState error={error} loading={loading} />;
+  }
+
+  const selectedProject =
+    projects.find(({ id }) => id === selectedProjectId) ?? null;
+  const visibleSessions = selectedProjectId
+    ? sessions.filter(({ projectId }) => projectId === selectedProjectId)
+    : sessions;
+  const selectedSession =
+    sessions.find(({ id }) => id === selectedSessionId) ?? null;
+
   return (
     <main
-      data-testid="cloud-board-demo"
+      data-testid="cloud-workspace"
       className="fixed inset-0 h-dvh overflow-hidden bg-[var(--color-bg-primary)] font-sans tracking-normal text-[var(--color-text-primary)] [color-scheme:dark] [&_*]:[scrollbar-color:rgb(255_255_255_/_12%)_transparent] [&_*]:[scrollbar-width:thin]"
     >
       <div className="grid h-full grid-cols-[240px_minmax(0,1fr)]">
-        <CloudDemoSidebar
-          sessions={sessions}
+        <CloudSidebar
+          account={account}
+          onNewProject={() => setNewProjectOpen(true)}
           onOpenCommand={() => setCommandOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onSelectOrganization={(id) => {
+            setOrganizationId(id);
+            setSelectedProjectId(null);
+            setSelectedSessionId(null);
+            void loadOrganization(id);
+          }}
+          onSelectProject={(id) => {
+            setSelectedProjectId(id);
+            setSelectedSessionId(null);
+          }}
+          onSelectSession={(id) => {
+            const session = sessions.find((item) => item.id === id);
+            if (session) setSelectedProjectId(session.projectId);
+            setSelectedSessionId(id);
+          }}
+          projects={projects}
+          selectedOrganizationId={organizationId}
+          selectedProjectId={selectedProjectId}
+          selectedSessionId={selectedSessionId}
+          sessions={sessions}
         />
-        <CloudDemoMainShell>
-          <CloudDemoTopbar title="Cloud platform" />
-          <div className="min-h-0 flex-1">
-            <SessionBoard />
+        <CloudMainShell>
+          <CloudTopbar
+            canCreateSession={projects.length > 0}
+            onNewSession={() => setNewSessionOpen(true)}
+            title={selectedProject?.displayName ?? "All projects"}
+          />
+          <div className="relative min-h-0 flex-1">
+            {error ? (
+              <div
+                className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
+                role="alert"
+              >
+                {error}
+              </div>
+            ) : null}
+            {loading ? (
+              <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
+                Loading workspace…
+              </div>
+            ) : (
+              <CloudBoard
+                onNewSession={() => setNewSessionOpen(true)}
+                onSelectSession={setSelectedSessionId}
+                sessions={visibleSessions}
+              />
+            )}
+            {selectedSession ? (
+              <CloudSessionPanel
+                onClose={() => setSelectedSessionId(null)}
+                organizationId={organizationId}
+                session={selectedSession}
+              />
+            ) : null}
           </div>
-        </CloudDemoMainShell>
+        </CloudMainShell>
       </div>
-      <CloudDemoCommandMenu
-        open={commandOpen}
-        onClose={() => setCommandOpen(false)}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-      <CloudDemoSettingsDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-      />
+      {commandOpen ? (
+        <CloudSearch
+          onClose={() => setCommandOpen(false)}
+          onSelectProject={(id) => {
+            setSelectedProjectId(id);
+            setSelectedSessionId(null);
+            setCommandOpen(false);
+          }}
+          onSelectSession={(id) => {
+            const session = sessions.find((item) => item.id === id);
+            if (session) setSelectedProjectId(session.projectId);
+            setSelectedSessionId(id);
+            setCommandOpen(false);
+          }}
+          projects={projects}
+          sessions={sessions}
+        />
+      ) : null}
+      {newProjectOpen ? (
+        <NewProjectDialog
+          onClose={() => setNewProjectOpen(false)}
+          onCreate={createProject}
+        />
+      ) : null}
+      {newSessionOpen ? (
+        <NewSessionDialog
+          onClose={() => setNewSessionOpen(false)}
+          onCreate={createSession}
+          projects={projects}
+          selectedProjectId={selectedProjectId}
+        />
+      ) : null}
     </main>
   );
 }
 
-export default CloudBoardDemo;
+export default CloudWorkspace;
+
+function LoadingState({
+  error,
+  loading,
+}: {
+  error: string;
+  loading: boolean;
+}) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-[var(--color-bg-primary)] p-6 text-[var(--foreground)]">
+      <div className="max-w-sm text-center">
+        <p className="text-sm">
+          {loading ? "Loading your Cloud workspace…" : error}
+        </p>
+        {!loading && error ? (
+          <a
+            className="mt-4 inline-block text-xs text-[#8bb5ff] hover:underline"
+            href="/"
+          >
+            Return to sign in
+          </a>
+        ) : null}
+      </div>
+    </main>
+  );
+}
+
+function CloudSearch({
+  onClose,
+  onSelectProject,
+  onSelectSession,
+  projects,
+  sessions,
+}: {
+  onClose: () => void;
+  onSelectProject: (id: string) => void;
+  onSelectSession: (id: string) => void;
+  projects: Project[];
+  sessions: Session[];
+}) {
+  const [query, setQuery] = useState("");
+  const normalized = query.trim().toLowerCase();
+  const filteredProjects = projects.filter(({ displayName, repositoryUrl }) =>
+    `${displayName} ${repositoryUrl}`.toLowerCase().includes(normalized),
+  );
+  const filteredSessions = sessions.filter(({ displayName, branch }) =>
+    `${displayName} ${branch}`.toLowerCase().includes(normalized),
+  );
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/55 px-4 pt-[14vh]"
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose();
+      }}
+    >
+      <section
+        aria-label="Search workspace"
+        aria-modal="true"
+        className="w-full max-w-[680px] overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-2xl"
+        role="dialog"
+      >
+        <div className="flex items-center gap-3 border-b border-[var(--color-border-strong)] px-4 py-3">
+          <Search className="size-4 text-[var(--color-text-passive)]" />
+          <input
+            aria-label="Search"
+            autoFocus
+            className="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-text-passive)]"
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search projects and sessions…"
+            value={query}
+          />
+          <button aria-label="Close search" onClick={onClose} type="button">
+            <X className="size-4 text-[var(--color-text-passive)]" />
+          </button>
+        </div>
+        <div className="max-h-[50vh] overflow-y-auto p-2">
+          {[...filteredProjects, ...filteredSessions].length === 0 ? (
+            <p className="p-6 text-center text-xs text-[var(--color-text-passive)]">
+              No matching projects or sessions.
+            </p>
+          ) : null}
+          {filteredProjects.map((project) => (
+            <SearchResult
+              detail={project.repositoryUrl}
+              key={project.id}
+              label={project.displayName}
+              onClick={() => onSelectProject(project.id)}
+              type="Project"
+            />
+          ))}
+          {filteredSessions.map((session) => (
+            <SearchResult
+              detail={session.branch}
+              key={session.id}
+              label={session.displayName}
+              onClick={() => onSelectSession(session.id)}
+              type="Session"
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SearchResult({
+  detail,
+  label,
+  onClick,
+  type,
+}: {
+  detail: string;
+  label: string;
+  onClick: () => void;
+  type: string;
+}) {
+  return (
+    <button
+      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-[var(--color-interactive-hover)]"
+      onClick={onClick}
+      type="button"
+    >
+      <span className="w-14 shrink-0 font-mono text-[9px] uppercase tracking-wider text-[var(--color-text-passive)]">
+        {type}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+      <span className="max-w-[45%] truncate text-xs text-[var(--color-text-passive)]">
+        {detail}
+      </span>
+    </button>
+  );
+}
+
+function handleLoadError(
+  cause: unknown,
+  setError: (message: string) => void,
+) {
+  if (cause instanceof CloudApiError && cause.status === 401) {
+    window.location.assign("/");
+    return;
+  }
+  setError(cause instanceof Error ? cause.message : "Could not load workspace.");
+}
