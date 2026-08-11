@@ -2,6 +2,7 @@ package mobilebridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -914,5 +915,50 @@ func TestDeadTokenPruningKeepsThePairedRow(t *testing.T) {
 	got := reg.List()
 	if len(got) != 1 || got[0].InstallID != "real-id" || got[0].Token != "" {
 		t.Fatalf("devices = %+v, want the phone still paired with no token", got)
+	}
+}
+
+// SetMuted must tell an unknown device apart from a failed write. Reporting a
+// disk fault as "unknown device" sends the user looking for a device that is
+// plainly listed, and buries a real fault.
+func TestSetMutedDistinguishesUnknownDeviceFromPersistFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not block writes on Windows")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mobile", "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	now := time.Now().UTC()
+	if err := reg.Upsert(PushDevice{InstallID: "real-id", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	if err := reg.SetMuted("nope", true); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("unknown device error = %v, want ErrDeviceNotFound", err)
+	}
+
+	// Make the registry directory unwritable so the atomic write cannot land.
+	regDir := filepath.Dir(path)
+	if err := os.Chmod(regDir, 0o500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(regDir, 0o700) })
+
+	err := reg.SetMuted("real-id", true)
+	if err == nil {
+		t.Fatal("expected an error when the registry cannot be written")
+	}
+	if errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("persist failure reported as ErrDeviceNotFound: %v", err)
+	}
+
+	// The rollback matters: dispatch must not honour a mute the caller was told
+	// had failed, which would silently suppress notifications until restart.
+	devices := reg.List()
+	if len(devices) != 1 {
+		t.Fatalf("devices = %+v", devices)
+	}
+	if devices[0].Muted {
+		t.Fatal("in-memory device is muted after the write failed; memory and disk have diverged")
 	}
 }

@@ -2,8 +2,10 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -23,6 +25,11 @@ type DeviceRoster interface {
 // *presence.Tracker.
 type LiveSet interface {
 	Live() map[string]bool
+	// LastSeen reports when a device last made any request. The registry's own
+	// LastSeenAt only advances on register/announce, so it goes stale during a
+	// long foreground session — a phone open for hours would background and
+	// immediately read "last seen 3 hours ago".
+	LastSeen(installID string) (time.Time, bool)
 }
 
 // MobileDevicesController owns the desktop-only roster routes. They are mounted
@@ -56,6 +63,16 @@ func (c *MobileDevicesController) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]MobileDeviceResponse, 0, len(devices))
 	for _, d := range devices {
+		// Prefer presence's timestamp: it advances on every request, whereas the
+		// stored one only moves on register/announce. Presence is in-memory, so
+		// after a daemon restart it has nothing and the stored value — the last
+		// registration — is the best we have.
+		lastSeen := d.LastSeenAt
+		if c.Presence != nil {
+			if at, ok := c.Presence.LastSeen(d.InstallID); ok && at.After(lastSeen) {
+				lastSeen = at
+			}
+		}
 		out = append(out, MobileDeviceResponse{
 			InstallID:            d.InstallID,
 			Token:                d.Token,
@@ -65,7 +82,7 @@ func (c *MobileDevicesController) List(w http.ResponseWriter, r *http.Request) {
 			Live:                 live[d.InstallID],
 			NotificationsEnabled: d.Token != "",
 			CreatedAt:            d.CreatedAt,
-			LastSeenAt:           d.LastSeenAt,
+			LastSeenAt:           lastSeen,
 		})
 	}
 	// Live devices first, then most-recently-seen, so the phone you are holding
@@ -92,7 +109,15 @@ func (c *MobileDevicesController) Mute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := c.Registry.SetMuted(installID, req.Muted); err != nil {
-		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "DEVICE_NOT_FOUND", "Unknown device", nil)
+		// A failed write is not a missing device. Answering 404 for a full or
+		// read-only disk sends the user hunting for a device that is plainly in
+		// the list, and disguises a fault as a routine miss.
+		if errors.Is(err, mobilebridge.ErrDeviceNotFound) {
+			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "DEVICE_NOT_FOUND", "Unknown device", nil)
+			return
+		}
+		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "DEVICE_MUTE_FAILED",
+			"Could not save the device's notification setting", nil)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, map[string]bool{"muted": req.Muted})

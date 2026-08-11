@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	yaml "gopkg.in/yaml.v3"
@@ -31,6 +32,8 @@ func (stubDeviceRoster) Delete(string) error             { return nil }
 type stubDeviceLive struct{}
 
 func (stubDeviceLive) Live() map[string]bool { return nil }
+
+func (stubDeviceLive) LastSeen(string) (time.Time, bool) { return time.Time{}, false }
 
 // TestRouteSpecParity asserts the mounted /api/v1 routes and the OpenAPI
 // operations are in 1:1 correspondence — so a route can't be added without

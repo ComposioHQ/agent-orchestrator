@@ -2,6 +2,8 @@ package controllers_test
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,14 +21,18 @@ import (
 )
 
 type fakeRoster struct {
-	devices []mobilebridge.PushDevice
-	muted   map[string]bool
-	deleted []string
+	setMutedErr error
+	devices     []mobilebridge.PushDevice
+	muted       map[string]bool
+	deleted     []string
 }
 
 func (f *fakeRoster) List() []mobilebridge.PushDevice { return f.devices }
 
 func (f *fakeRoster) SetMuted(installID string, muted bool) error {
+	if f.setMutedErr != nil {
+		return f.setMutedErr
+	}
 	if f.muted == nil {
 		f.muted = map[string]bool{}
 	}
@@ -39,11 +45,20 @@ func (f *fakeRoster) Delete(installID string) error {
 	return nil
 }
 
+// liveSet mirrors controllers.LiveSet so the helper accepts either fake.
+type liveSet interface {
+	Live() map[string]bool
+	LastSeen(installID string) (time.Time, bool)
+}
+
 type fakeLive map[string]bool
 
 func (f fakeLive) Live() map[string]bool { return f }
 
-func newRosterServer(t *testing.T, roster *fakeRoster, live fakeLive) *httptest.Server {
+// No recorded timestamps: exercises the fallback to the registry's stored value.
+func (f fakeLive) LastSeen(string) (time.Time, bool) { return time.Time{}, false }
+
+func newRosterServer(t *testing.T, roster *fakeRoster, live liveSet) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log,
@@ -323,5 +338,100 @@ func TestRosterMountedRoutesAreLANBlocked(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no /api/v1/mobile/devices routes were mounted — router wiring changed?")
+	}
+}
+
+// The API must not describe a failed write as a missing device: 404 sends the
+// user looking for a device that is plainly listed, while a 500 says a fault
+// occurred and belongs in the logs.
+func TestMuteDeviceMapsErrorsToDistinctStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{"unknown device", fmt.Errorf("%w: %q", mobilebridge.ErrDeviceNotFound, "gone"), http.StatusNotFound, "DEVICE_NOT_FOUND"},
+		{"persist failure", errors.New("persist mute: no space left on device"), http.StatusInternalServerError, "DEVICE_MUTE_FAILED"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newRosterServer(t, &fakeRoster{setMutedErr: tc.err}, fakeLive{})
+			req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/api/v1/mobile/devices/i1", strings.NewReader(`{"muted":true}`))
+			req.Header.Set("Content-Type", "application/json")
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("patch: %v", err)
+			}
+			defer res.Body.Close()
+
+			if res.StatusCode != tc.wantCode {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tc.wantCode)
+			}
+			var env struct {
+				Code string `json:"code"`
+			}
+			if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if env.Code != tc.wantBody {
+				t.Fatalf("code = %q, want %q", env.Code, tc.wantBody)
+			}
+		})
+	}
+}
+
+// A phone foregrounded for hours only registers/announces at the start, so the
+// stored LastSeenAt goes stale. Presence sees every poll, and the roster must
+// report that instead — otherwise backgrounding now reads "last seen 3 hours
+// ago", which is the wrong answer to the question the label asks.
+type fakeLiveWithTimes struct {
+	live  map[string]bool
+	times map[string]time.Time
+}
+
+func (f fakeLiveWithTimes) Live() map[string]bool { return f.live }
+func (f fakeLiveWithTimes) LastSeen(id string) (time.Time, bool) {
+	at, ok := f.times[id]
+	return at, ok
+}
+
+func TestListPrefersPresenceLastSeenOverStoredValue(t *testing.T) {
+	registered := time.Now().UTC().Add(-3 * time.Hour)
+	polledJustNow := time.Now().UTC().Add(-5 * time.Second)
+	roster := &fakeRoster{devices: []mobilebridge.PushDevice{
+		{InstallID: "i1", Token: "ExponentPushToken[a]", DeviceName: "iPhone", CreatedAt: registered, LastSeenAt: registered},
+		{InstallID: "i2", Token: "ExponentPushToken[b]", DeviceName: "M31s", CreatedAt: registered, LastSeenAt: registered},
+	}}
+	// i1 has been polling; i2 has not been seen since it registered.
+	presence := fakeLiveWithTimes{
+		live:  map[string]bool{},
+		times: map[string]time.Time{"i1": polledJustNow},
+	}
+	srv := newRosterServer(t, roster, presence)
+
+	res, err := http.Get(srv.URL + "/api/v1/mobile/devices")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer res.Body.Close()
+	var env struct {
+		Devices []struct {
+			InstallID  string    `json:"installId"`
+			LastSeenAt time.Time `json:"lastSeenAt"`
+		} `json:"devices"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	byID := map[string]time.Time{}
+	for _, d := range env.Devices {
+		byID[d.InstallID] = d.LastSeenAt
+	}
+	if !byID["i1"].Equal(polledJustNow) {
+		t.Fatalf("i1 lastSeenAt = %v, want the presence timestamp %v", byID["i1"], polledJustNow)
+	}
+	if !byID["i2"].Equal(registered) {
+		t.Fatalf("i2 lastSeenAt = %v, want the stored value %v as fallback", byID["i2"], registered)
 	}
 }

@@ -2,6 +2,7 @@ package mobilebridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,6 +62,12 @@ var expoPushTokenRE = regexp.MustCompile(`^Expo(nent)?PushToken\[[^\]]+\]$`)
 func ValidPushToken(tok string) bool {
 	return expoPushTokenRE.MatchString(tok)
 }
+
+// ErrDeviceNotFound reports that no row carries the requested install ID.
+// Callers distinguish it from a persistence failure — the API answers 404 for
+// the former and a 500-class error for the latter, since "unknown device" would
+// misdescribe a full disk and send the user looking in the wrong place.
+var ErrDeviceNotFound = errors.New("device not found")
 
 // LegacyInstallIDPrefix marks an install ID the daemon synthesized rather than
 // received from a phone: rows migrated from before install IDs existed, and
@@ -328,13 +335,22 @@ func (r *DeviceRegistry) UnregisterToken(token string) error {
 func (r *DeviceRegistry) SetMuted(installID string, muted bool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	dev, ok := r.devices[installID]
+	before, ok := r.devices[installID]
 	if !ok {
-		return fmt.Errorf("unknown device %q", installID)
+		return fmt.Errorf("%w: %q", ErrDeviceNotFound, installID)
 	}
-	dev.Muted = muted
-	r.devices[installID] = dev
-	return r.persistLocked()
+	after := before
+	after.Muted = muted
+	r.devices[installID] = after
+	if err := r.persistLocked(); err != nil {
+		// Roll back, so a device is never muted in memory but unmuted on disk.
+		// Mute is the one control whose whole job is to stop notifications
+		// arriving; silently honouring it until the next restart, while the
+		// caller was told the write failed, is worse than not applying it.
+		r.devices[installID] = before
+		return fmt.Errorf("persist mute: %w", err)
+	}
+	return nil
 }
 
 // List returns a snapshot of all registered devices, sorted by CreatedAt (then

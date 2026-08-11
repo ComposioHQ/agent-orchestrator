@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
@@ -99,6 +100,8 @@ func TestNormalizeAPIDepsNoWarnWithoutRoster(t *testing.T) {
 type fakeLiveSet map[string]bool
 
 func (f fakeLiveSet) Live() map[string]bool { return f }
+
+func (f fakeLiveSet) LastSeen(string) (time.Time, bool) { return time.Time{}, false }
 
 type fakeDeviceRoster struct{}
 

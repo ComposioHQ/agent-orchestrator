@@ -57,17 +57,22 @@ func TestTouchPrunesWithoutLiveEverBeingCalled(t *testing.T) {
 	tr := NewTracker()
 	tr.Now = func() time.Time { return now }
 
-	for i := 0; i < 500; i++ {
+	const ids = maxTracked * 2
+	for i := 0; i < ids; i++ {
 		tr.Touch(fmt.Sprintf("install-%d", i))
 		now = now.Add(time.Second)
 	}
 
-	// Every id but the handful inside the TTL window is long expired.
-	if got := tr.Size(); got > int(TTL/time.Second)+1 {
-		t.Fatalf("tracker holds %d entries after 500 distinct ids; expired ones were never reclaimed", got)
+	if got := tr.Size(); got > maxTracked {
+		t.Fatalf("tracker holds %d entries after %d distinct ids, want at most %d", got, ids, maxTracked)
 	}
-	// The most recent id must still be live — pruning must not be over-eager.
-	if !tr.Live()["install-499"] {
-		t.Fatal("pruning dropped an entry that is still inside the TTL")
+	// The newest id must survive — eviction is oldest-first, not arbitrary.
+	newest := fmt.Sprintf("install-%d", ids-1)
+	if _, ok := tr.LastSeen(newest); !ok {
+		t.Fatalf("eviction dropped the most recent entry %s", newest)
+	}
+	// The oldest must be the one that went.
+	if _, ok := tr.LastSeen("install-0"); ok {
+		t.Fatal("eviction kept the oldest entry; it is not oldest-first")
 	}
 }
