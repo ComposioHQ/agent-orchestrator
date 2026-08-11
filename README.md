@@ -8,6 +8,7 @@ Private AO control-plane service. This foundation contains:
 - organization membership checks backed by PostgreSQL row-level security;
 - organization-scoped project and session APIs matching the public Cloud contract;
 - idempotent project/session creation and cursor pagination;
+- explicit per-session mode and denied-command policy;
 - durable workspace intent for every session; and
 - durable message queues, event replay, and cluster-safe SSE reconnects;
 - GitHub App installation verification, repository grants, and durable
@@ -186,9 +187,29 @@ or writing resources. A caller cannot use another organization's UUID to cross
 the boundary.
 
 The service imports shared Go session-status rules from the public AO contract
-module. The public OpenAPI document and TypeScript client define the matching
-GitHub wire contract. The `replace` in `go.mod` pins the exact public contract
+module. The public OpenAPI document and TypeScript client define account,
+project, session, event, and GitHub wire contracts. GitHub integer IDs are
+encoded as decimal strings at the HTTP boundary so JavaScript clients do not
+lose precision. The `replace` in `go.mod` pins the exact public Go contract
 commit under the module's existing canonical import path.
+
+## Hosted monitoring
+
+`scripts/configure-monitoring.py` idempotently enforces the documented log
+retention, deployment/health/latency/ECS/RDS alarms, and the `ao-cloud`
+CloudWatch dashboard for staging and production:
+
+```bash
+AWS_PROFILE=ao-cloud ./scripts/configure-monitoring.py --dry-run
+AWS_PROFILE=ao-cloud ./scripts/configure-monitoring.py
+```
+
+Set `AO_CLOUD_ALERT_TOPIC_ARN` to attach SNS alarm and recovery notifications.
+Without it, alarms still drive deployment rollback and appear in CloudWatch but
+do not notify a person. `scripts/verify-ecs-service.py` rejects incomplete
+rollouts, mixed task revisions, empty or unhealthy target groups, and
+non-`OK` deployment alarms. Deployment and promotion call it before and after
+changes.
 
 ## Verify
 
@@ -219,5 +240,8 @@ AO_CLOUD_TEST_DATABASE_URL='postgres://localhost/ao_cloud_test?sslmode=disable' 
 The integration suite applies the migration, asserts 28 tenant/domain tables
 plus two callback-routing tables,
 exercises local and WorkOS-backed principals, checks idempotent project,
-session, and message creation under concurrent retries, verifies durable event
-replay and workspace intent, and proves cross-organization reads are denied.
+session, and message creation, verifies concurrent message retries, durable
+cross-replica event delivery/replay and workspace intent, and proves
+cross-organization reads are denied. Private CI runs those PostgreSQL tests,
+Go vet, deployment fixtures, shell checks, an image build, and the isolated
+Compose lifecycle.

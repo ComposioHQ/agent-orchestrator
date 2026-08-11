@@ -23,6 +23,7 @@ type Config struct {
 	DatabaseURL          string
 	MigrationDatabaseURL string
 	MigrateOnStartup     bool
+	MigrationTimeout     time.Duration
 	WorkOSIssuer         string
 	WorkOSClientID       string
 	WorkOSAPIKey         string
@@ -64,6 +65,7 @@ func Load() (Config, error) {
 		DatabaseURL:          strings.TrimSpace(os.Getenv("AO_CLOUD_DATABASE_URL")),
 		MigrationDatabaseURL: strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_DATABASE_URL")),
 		MigrateOnStartup:     boolEnv("AO_CLOUD_MIGRATE_ON_STARTUP", !hosted),
+		MigrationTimeout:     durationEnv("AO_CLOUD_MIGRATION_TIMEOUT", 15*time.Minute),
 		WorkOSIssuer:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_ISSUER")),
 		WorkOSClientID:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_CLIENT_ID")),
 		WorkOSAPIKey:         strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_API_KEY")),
@@ -91,6 +93,13 @@ func Load() (Config, error) {
 			return Config{}, errors.New("AO_CLOUD_GITHUB_STATE_KEY must be base64-encoded 32 bytes")
 		}
 		cfg.GitHub.StateKey = decoded
+	}
+	if value := strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_TIMEOUT")); value != "" {
+		timeout, err := time.ParseDuration(value)
+		if err != nil || timeout <= 0 {
+			return Config{}, errors.New("AO_CLOUD_MIGRATION_TIMEOUT must be a positive duration")
+		}
+		cfg.MigrationTimeout = timeout
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("AO_CLOUD_DATABASE_URL is required")

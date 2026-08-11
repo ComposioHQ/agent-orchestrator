@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 )
@@ -29,18 +30,46 @@ func main() {
 		syscall.SIGTERM,
 	)
 	defer cancel()
-	if err := postgres.Migrate(ctx, databaseURL); err != nil {
+	timeout := 15 * time.Minute
+	if value := strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_TIMEOUT")); value != "" {
+		parsed, err := time.ParseDuration(value)
+		if err != nil || parsed <= 0 {
+			logger.Error("invalid migration timeout", "value", value)
+			os.Exit(1)
+		}
+		timeout = parsed
+	}
+	migrationContext, cancelMigration := context.WithTimeout(ctx, timeout)
+	defer cancelMigration()
+	started := time.Now()
+	release := strings.TrimSpace(os.Getenv("AO_CLOUD_RELEASE"))
+	logger.Info("AO Cloud database migrations started", "release", release, "timeout", timeout)
+	if err := postgres.Migrate(migrationContext, databaseURL); err != nil {
 		if !errors.Is(err, context.Canceled) {
-			logger.Error("migrate AO Cloud database", "error", err)
+			logger.Error(
+				"migrate AO Cloud database",
+				"error",
+				err,
+				"release",
+				release,
+				"duration",
+				time.Since(started),
+			)
 		}
 		os.Exit(1)
 	}
 	runtimeUser := strings.TrimSpace(os.Getenv("AO_CLOUD_RUNTIME_DATABASE_USER"))
 	if runtimeUser != "" {
-		if err := postgres.GrantRuntimeRole(ctx, databaseURL, runtimeUser); err != nil {
+		if err := postgres.GrantRuntimeRole(migrationContext, databaseURL, runtimeUser); err != nil {
 			logger.Error("grant runtime database privileges", "error", err)
 			os.Exit(1)
 		}
 	}
-	logger.Info("AO Cloud database migrations complete")
+	logger.Info(
+		"AO Cloud database migrations complete",
+		"release",
+		release,
+		"duration",
+		time.Since(started),
+	)
 }

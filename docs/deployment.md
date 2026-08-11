@@ -9,13 +9,14 @@ average CPU utilization.
 
 ## Release flow
 
-Run from a clean `feat/control-plane` checkout:
+Run from a clean private `main` checkout:
 
 ```bash
 AWS_PROFILE=ao-cloud ./scripts/deploy-staging.sh
 ```
 
-The script uses the current Git SHA as `AO_CLOUD_RELEASE` and:
+The script requires `AO_CLOUD_RELEASE` to resolve to the clean checkout's
+current full Git SHA and:
 
 1. Builds one non-root, read-only `linux/amd64` image.
 2. Pushes an immutable release tag to `ao-cloud-control-plane`.
@@ -24,6 +25,11 @@ The script uses the current Git SHA as `AO_CLOUD_RELEASE` and:
 5. Runs `/ao-cloud-migrate` as a one-off Fargate task and stops on failure.
 6. Rolls both API replicas only after migrations succeed.
 7. Waits for ECS and both ALB targets to become healthy.
+
+The verifier rejects fewer than two desired tasks, pending tasks, mixed
+task-definition revisions, an incomplete primary deployment, an empty target
+group, unhealthy targets, or a deployment alarm that is not `OK`. Interrupted
+deployment scripts stop an unfinished migration task.
 
 Re-running the same release reuses its immutable ECR image. A new code version
 creates new task-definition revisions; it never mutates an older image tag.
@@ -45,6 +51,21 @@ connectivity. ECS keeps at least 100% of the desired replicas healthy during a
 rollout. Its deployment circuit breaker rolls back failed starts, and the
 `ao-cloud-staging-target-5xx` alarm rolls back a release with sustained target
 5xx responses. `ao-cloud-staging-unhealthy-targets` tracks unhealthy replicas.
+
+## Monitoring
+
+```bash
+AWS_PROFILE=ao-cloud ./scripts/configure-monitoring.py --dry-run
+AWS_PROFILE=ao-cloud ./scripts/configure-monitoring.py
+```
+
+This idempotently enforces 30-day staging and 90-day production log retention,
+preserves the target-5xx deployment rollback alarms, and configures
+unhealthy-target, latency, ECS CPU/memory, and RDS
+CPU/free-storage/free-memory alarms. The `ao-cloud` dashboard shows ALB, ECS,
+and RDS metrics for both environments. Set `AO_CLOUD_ALERT_TOPIC_ARN` to attach
+SNS alarm and recovery notifications; otherwise the alarms have no human
+notification action.
 
 ## Secrets
 
@@ -82,12 +103,17 @@ health checks, or the deployment alarm fail. To select an older healthy release
 manually:
 
 ```bash
-AWS_PROFILE=ao-cloud aws ecs update-service \
-  --region eu-north-1 \
-  --cluster ao-cloud-staging \
-  --service ao-cloud-staging-api \
-  --task-definition ao-cloud-staging-api:<revision>
+AWS_PROFILE=ao-cloud \
+  ./scripts/rollback-release.sh staging ao-cloud-staging-api:<revision>
+
+AO_CLOUD_APPROVE_PRODUCTION_ROLLBACK=1 \
+  AWS_PROFILE=ao-cloud \
+  ./scripts/rollback-release.sh production ao-cloud-production-api:<revision>
 ```
+
+The guarded script requires a digest-pinned task definition from the correct
+environment, waits for ECS stability, and verifies tasks, targets, and alarms.
+It does not reverse database migrations.
 
 Schema migrations must remain backward-compatible with the previous API
 revision so that rolling deploys and application rollback are safe.
@@ -110,7 +136,11 @@ AO_CLOUD_APPROVE_PRODUCTION=1 \
 The production script does not build an image. It reads the release and
 digest-pinned image from the healthy staging service, requires the ECR scan to
 be complete with no high or critical findings, and refuses a requested release
-that is not currently running in staging. It then:
+that is not currently running in staging. It verifies both services before
+changing production. New production task revisions are derived from the
+existing production definitions—not staging—so production-only secrets survive
+and staging variables, URLs, log groups, or secret ARNs cannot cross the
+environment boundary. It then:
 
 1. Registers production API and migration task definitions using that exact
    digest.
@@ -164,6 +194,12 @@ Application rollback does not reverse a completed database migration. Every
 production migration must therefore use an expand-and-contract sequence and
 remain compatible with the previous API release. Destructive cleanup belongs in
 a later release after the old application version can no longer run.
+
+Migration processes default to a 15-minute
+`AO_CLOUD_MIGRATION_TIMEOUT`. Context cancellation bounds advisory-lock waits
+and blocked DDL. If an ECS waiter or script is interrupted before migration
+completion, the deployment trap stops that task instead of leaving it running
+without an owner.
 
 ### Pre-launch network work
 

@@ -139,18 +139,16 @@ func (s *Server) streamClientEvents(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, r, http.StatusInternalServerError, "stream_unavailable", "Event streaming is unavailable.")
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	_, _ = fmt.Fprint(w, "retry: 2000\n\n")
-	flusher.Flush()
+	flusher := http.NewResponseController(w)
+	if err := flusher.Flush(); err != nil {
+		return
+	}
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -164,7 +162,9 @@ func (s *Server) streamClientEvents(w http.ResponseWriter, r *http.Request) {
 			lastWrite = time.Now()
 		}
 		if len(events) > 0 {
-			flusher.Flush()
+			if err := flusher.Flush(); err != nil {
+				return
+			}
 		}
 		if hasMore {
 			events, hasMore, err = s.store.ListClientEvents(
@@ -185,6 +185,8 @@ func (s *Server) streamClientEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.drain:
+			return
 		case now := <-ticker.C:
 			events, hasMore, err = s.store.ListClientEvents(
 				r.Context(),
@@ -202,7 +204,9 @@ func (s *Server) streamClientEvents(w http.ResponseWriter, r *http.Request) {
 				if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
 					return
 				}
-				flusher.Flush()
+				if err := flusher.Flush(); err != nil {
+					return
+				}
 				lastWrite = now
 			}
 		}
@@ -248,6 +252,12 @@ func writeSSEEvent(w http.ResponseWriter, event domain.ClientEvent) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", event.Sequence, payload)
+	_, err = fmt.Fprintf(
+		w,
+		"id: %d\nevent: %s\ndata: %s\n\n",
+		event.Sequence,
+		event.Type,
+		payload,
+	)
 	return err
 }

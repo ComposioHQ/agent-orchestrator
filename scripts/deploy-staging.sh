@@ -9,7 +9,8 @@ API_FAMILY="${AO_CLOUD_API_TASK_FAMILY:-ao-cloud-staging-api}"
 MIGRATION_FAMILY="${AO_CLOUD_MIGRATION_TASK_FAMILY:-ao-cloud-staging-migrate}"
 ROLLBACK_ALARM="${AO_CLOUD_ROLLBACK_ALARM:-ao-cloud-staging-target-5xx}"
 RUNTIME_DATABASE_USER="${AO_CLOUD_RUNTIME_DATABASE_USER:-ao_cloud_app}"
-RELEASE="${1:-$(git rev-parse --short=12 HEAD)}"
+HEAD_SHA="$(git rev-parse HEAD)"
+RELEASE="${1:-$HEAD_SHA}"
 IMAGE_TAG="${RELEASE//+/-}-linux-amd64"
 
 AWS_OPTIONS=(--region "$REGION")
@@ -29,6 +30,17 @@ if [[ ! "$RELEASE" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$ ]]; then
 	echo "Release must be a Git SHA or release tag." >&2
 	exit 1
 fi
+if ! resolved_release="$(git rev-parse "${RELEASE}^{commit}" 2>/dev/null)" ||
+	[[ "$resolved_release" != "$HEAD_SHA" ]]; then
+	echo "Release must resolve to the current commit ${HEAD_SHA}." >&2
+	exit 1
+fi
+
+./scripts/verify-ecs-service.py \
+	--region "$REGION" \
+	--cluster "$CLUSTER" \
+	--service "$SERVICE" \
+	--alarm "$ROLLBACK_ALARM" >/dev/null
 
 repository_uri="$(
 	aws_cli ecr describe-repositories \
@@ -202,6 +214,17 @@ if result.get("failures") or not result.get("tasks"):
 print(result["tasks"][0]["taskArn"])
 PY
 )"
+cleanup_migration() {
+	if [[ -n "${migration_arn:-}" && "${migration_complete:-false}" != "true" ]]; then
+		aws_cli ecs stop-task \
+			--cluster "$CLUSTER" \
+			--task "$migration_arn" \
+			--reason "AO Cloud deployment interrupted before migration completion" \
+			>/dev/null 2>&1 || true
+		echo "Stopped incomplete migration task ${migration_arn}." >&2
+	fi
+}
+trap cleanup_migration EXIT
 aws_cli ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$migration_arn"
 migration_exit="$(
 	aws_cli ecs describe-tasks \
@@ -218,6 +241,7 @@ if [[ "$migration_exit" != "0" ]]; then
 		--output json >&2
 	exit 1
 fi
+migration_complete=true
 
 aws_cli ecs update-service \
 	--cluster "$CLUSTER" \
@@ -241,24 +265,13 @@ if [[ "$deployed_task" != "$api_task" ]]; then
 	echo "ECS rolled back instead of deploying ${api_task}." >&2
 	exit 1
 fi
-
-target_group="$(
-	aws_cli ecs describe-services \
-		--cluster "$CLUSTER" \
-		--services "$SERVICE" \
-		--query 'services[0].loadBalancers[0].targetGroupArn' \
-		--output text
-)"
-unhealthy_targets="$(
-	aws_cli elbv2 describe-target-health \
-		--target-group-arn "$target_group" \
-		--query "length(TargetHealthDescriptions[?TargetHealth.State!=\`healthy\`])" \
-		--output text
-)"
-if [[ "$unhealthy_targets" != "0" ]]; then
-	echo "Deployment completed with unhealthy ALB targets." >&2
-	exit 1
-fi
+./scripts/verify-ecs-service.py \
+	--region "$REGION" \
+	--cluster "$CLUSTER" \
+	--service "$SERVICE" \
+	--alarm "$ROLLBACK_ALARM" \
+	--expected-task-definition "$api_task" >/dev/null
+trap - EXIT
 
 printf 'Deployed release %s\nImage digest: %s\nTask definition: %s\n' \
 	"$RELEASE" \

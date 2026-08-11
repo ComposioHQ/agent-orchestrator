@@ -11,6 +11,7 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_HTTP_ADDRESS", "")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
 	t.Setenv("AO_CLOUD_MIGRATION_DATABASE_URL", "")
+	t.Setenv("AO_CLOUD_MIGRATION_TIMEOUT", "")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
 	t.Setenv("AO_CLOUD_LOCAL_SESSION_TTL", "2h")
 	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "")
@@ -27,11 +28,23 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	if !cfg.LocalAuthEnabled ||
 		!cfg.MigrateOnStartup ||
 		cfg.LocalSessionTTL != 2*time.Hour ||
+		cfg.MigrationTimeout != 15*time.Minute ||
 		cfg.HTTPAddress != "127.0.0.1:8080" ||
 		cfg.SandboxProvider != "ecs" ||
 		cfg.Release != "dev" ||
 		cfg.MigrationDatabaseURL != cfg.DatabaseURL {
 		t.Fatalf("config = %#v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidMigrationTimeout(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
+	t.Setenv("AO_CLOUD_MIGRATION_TIMEOUT", "forever")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with an invalid migration timeout")
 	}
 }
 
