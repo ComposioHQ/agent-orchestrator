@@ -265,12 +265,25 @@ if [[ "$deployed_task" != "$api_task" ]]; then
 	echo "ECS rolled back instead of deploying ${api_task}." >&2
 	exit 1
 fi
-./scripts/verify-ecs-service.py \
-	--region "$REGION" \
-	--cluster "$CLUSTER" \
-	--service "$SERVICE" \
-	--alarm "$ROLLBACK_ALARM" \
-	--expected-task-definition "$api_task" >/dev/null
+verification_error=""
+for _ in $(seq 1 18); do
+	if verification_error="$(
+		./scripts/verify-ecs-service.py \
+			--region "$REGION" \
+			--cluster "$CLUSTER" \
+			--service "$SERVICE" \
+			--alarm "$ROLLBACK_ALARM" \
+			--expected-task-definition "$api_task" 2>&1
+	)"; then
+		verification_error=""
+		break
+	fi
+	sleep 10
+done
+if [[ -n "$verification_error" ]]; then
+	echo "$verification_error" >&2
+	exit 1
+fi
 trap - EXIT
 
 printf 'Deployed release %s\nImage digest: %s\nTask definition: %s\n' \
