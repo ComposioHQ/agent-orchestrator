@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"testing"
 	"time"
 )
@@ -165,5 +166,38 @@ func TestLoadRejectsLocalAuthWithWorkOS(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with local auth and WorkOS")
+	}
+}
+
+func TestLoadRequiresCompleteGitHubConfiguration(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
+	t.Setenv("AO_CLOUD_GITHUB_APP_ID", "123")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with partial GitHub App configuration")
+	}
+}
+
+func TestLoadRequiresHTTPSGitHubCallbackInHostedEnvironment(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "production")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+	t.Setenv("AO_CLOUD_GITHUB_APP_ID", "123")
+	t.Setenv("AO_CLOUD_GITHUB_APP_SLUG", "ao")
+	t.Setenv("AO_CLOUD_GITHUB_CLIENT_ID", "client")
+	t.Setenv("AO_CLOUD_GITHUB_CLIENT_SECRET", "secret")
+	t.Setenv("AO_CLOUD_GITHUB_PRIVATE_KEY", "private-key")
+	t.Setenv("AO_CLOUD_GITHUB_WEBHOOK_SECRET", "webhook-secret")
+	t.Setenv(
+		"AO_CLOUD_GITHUB_STATE_KEY",
+		base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	)
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "http://api.aoagents.dev")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with a plaintext hosted GitHub callback URL")
 	}
 }

@@ -1,0 +1,12 @@
+{
+  "name": "@aoagents/ao-cloud-private",
+  "private": true,
+  "scripts": {
+    "cloud:local": "docker compose up --build --remove-orphans",
+    "cloud:local:down": "docker compose down --remove-orphans",
+    "cloud:local:reset": "docker compose down --volumes --remove-orphans",
+    "cloud:staging": "./scripts/cloud-staging.sh",
+    "test": "go test ./...",
+    "typecheck": "go vet ./..."
+  }
+}

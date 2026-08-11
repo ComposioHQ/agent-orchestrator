@@ -1,6 +1,6 @@
 module github.com/Untrivial-ai/ao-cloud
 
-go 1.25.7
+go 1.26.5
 
 require (
 	github.com/aoagents/agent-orchestrator/backend v0.0.0
@@ -25,4 +25,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace github.com/aoagents/agent-orchestrator/backend => github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260810195726-f1377e6822ee
+replace github.com/aoagents/agent-orchestrator/backend => github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260811164213-0b1b6ad5aa88

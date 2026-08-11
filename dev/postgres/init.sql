@@ -1,0 +1,8 @@
+CREATE ROLE ao_cloud_app
+    LOGIN
+    PASSWORD 'ao_cloud_local_app'
+    NOSUPERUSER
+    NOCREATEDB
+    NOCREATEROLE
+    NOINHERIT
+    NOBYPASSRLS;

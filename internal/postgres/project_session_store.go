@@ -42,6 +42,7 @@ func (s *Store) CreateProject(
 				tx,
 				orgID,
 				idempotencyKey,
+				"project.create",
 				payload,
 				&project,
 			)
@@ -101,6 +102,7 @@ func loadIdempotentProject(
 	tx pgx.Tx,
 	orgID string,
 	idempotencyKey string,
+	expectedKind string,
 	payload []byte,
 	project *domain.Project,
 ) error {
@@ -118,7 +120,7 @@ func loadIdempotentProject(
 	if err != nil {
 		return err
 	}
-	if kind != "project.create" || status != "succeeded" ||
+	if kind != expectedKind || status != "succeeded" ||
 		!jsonEqual(storedPayload, payload) || projectID == "" {
 		return ErrIdempotencyMismatch
 	}

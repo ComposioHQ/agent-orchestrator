@@ -9,27 +9,57 @@ Private AO control-plane service. This foundation contains:
 - organization-scoped project and session APIs matching the public Cloud contract;
 - idempotent project/session creation and cursor pagination;
 - durable workspace intent for every session; and
-- durable message queues, event replay, and cluster-safe SSE reconnects.
+- durable message queues, event replay, and cluster-safe SSE reconnects;
+- GitHub App installation verification, repository grants, and durable
+  webhook processing; and
+- Dockerized local development plus an isolated hosted-staging launcher.
 
-Cloud UI, worker provisioning/execution, terminal/files, GitHub behavior, and
-sharing behavior are intentionally not implemented yet. See
+Cloud UI, worker provisioning/execution, terminal/files, personal GitHub OAuth,
+PR/issue synchronization, and sharing behavior are intentionally not
+implemented yet. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
 behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
 production deployments.
 
 ## Run locally
 
-Requirements: Go 1.25.7 or newer and PostgreSQL 15 or newer.
+The default development loop requires Docker with Compose:
 
 ```bash
-createdb ao_cloud
-cp .env.example .env
-set -a; source .env; set +a
-AO_CLOUD_LOCAL_AUTH=true go run ./cmd/ao-cloud
+npm run cloud:local
 ```
 
-Development and test environments apply embedded Goose migrations at startup,
-using `AO_CLOUD_MIGRATION_DATABASE_URL` when set and
+This builds the same distroless control-plane image used in hosted
+environments, starts PostgreSQL on `127.0.0.1:54329`, runs migrations with an
+elevated migration role, grants only runtime DML privileges to the
+non-superuser `ao_cloud_app` role, and exposes the API on
+`http://127.0.0.1:8081` (avoiding the desktop daemon's usual port). Local auth
+is enabled. No worker is started: sessions
+store durable execution intent, but provisioning remains a separate feature.
+
+Use `npm run cloud:local:down` to stop containers while retaining data and
+`npm run cloud:local:reset` to stop them and delete the local database volume.
+Ports can be changed with `AO_CLOUD_PORT` and `AO_CLOUD_POSTGRES_PORT`.
+
+To launch the desktop's currently implemented auth-only flow against a hosted
+staging deployment:
+
+```bash
+AO_CLOUD_STAGING_URL=https://staging-api.aoagents.dev \
+VITE_WORKOS_CLIENT_ID=client_... \
+npm run cloud:staging
+```
+
+The staging launcher requires HTTPS, verifies `/readyz` reports
+`environment=staging`, refuses production, and isolates Electron and daemon
+state under `~/.ao/staging-desktop` by default. The desktop currently uses the
+URL for staging preflight and future Cloud API calls; this branch does not add
+Cloud project/session UI. WorkOS desktop authentication continues to use the
+`ao-app://callback` deep link.
+
+For a direct Go loop, requirements are Go 1.26.5 and PostgreSQL 15 or newer.
+Development and test environments can apply embedded Goose migrations at
+startup, using `AO_CLOUD_MIGRATION_DATABASE_URL` when set and
 `AO_CLOUD_DATABASE_URL` otherwise. Hosted deployments run
 `/ao-cloud-migrate` as a one-off task before rolling the API service. Local auth
 is disabled unless
@@ -77,6 +107,13 @@ respective databases. The AWS instances are named
 boundary is explicit. See [`docs/deployment.md`](docs/deployment.md) for the full
 deployment and rollback procedure.
 
+Each push to private `main` runs
+`.github/workflows/update-public-submodule.yml`. When the
+`AO_PUBLIC_REPO_TOKEN` repository secret is configured with pull-request write
+access to `Untrivial-ai/agent-orchestrator`, it opens or refreshes a public PR
+that moves the optional `private/ao-cloud` gitlink to that exact private
+commit. Without the secret the pointer job is skipped.
+
 If a verified access token contains `org_id`, that WorkOS organization and the
 token's role are synchronized into AO membership. Tokens without `org_id`
 receive a personal organization.
@@ -93,6 +130,12 @@ All resource routes use `/api/cloud/v1`. Project and session creation require an
 | `POST` | `/auth/local/logout` | Revoke the current dev session |
 | `GET` | `/me` | Return the current user and organization memberships |
 | `GET/POST` | `/orgs/{orgId}/projects` | List or create projects |
+| `GET` | `/orgs/{orgId}/github/installations` | List connected GitHub App installations |
+| `POST` | `/orgs/{orgId}/github/installations/start` | Start a short-lived installation handshake |
+| `POST` | `/orgs/{orgId}/github/installations/{id}/sync` | Refresh repository grants |
+| `POST` | `/orgs/{orgId}/github/installations/{id}/disconnect` | Revoke AO's installation grants |
+| `GET` | `/orgs/{orgId}/github/repositories` | List active and revoked repository grants |
+| `POST` | `/orgs/{orgId}/github/projects` | Create a project from an active repository grant |
 | `GET/POST` | `/orgs/{orgId}/sessions` | List or create sessions |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}` | Read a session |
 | `POST` | `/orgs/{orgId}/sessions/{sessionId}/messages` | Durably queue a message |
@@ -102,6 +145,32 @@ All resource routes use `/api/cloud/v1`. Project and session creation require an
 WorkOS access tokens and local development tokens both use
 `Authorization: Bearer <token>`.
 
+GitHub App setup uses random, hashed, expiring state. The setup callback rotates
+that state into a separate OAuth PKCE challenge; the encrypted verifier is
+deleted after use. AO binds an installation only after GitHub confirms that the
+temporary user token can see and administer it: the user must own a personal
+installation or be an active admin of the GitHub organization. User OAuth
+tokens and installation tokens are never stored. Webhooks are accepted only
+after constant-time HMAC-SHA256 verification, deduplicated by GitHub delivery
+ID, and processed in per-installation order through leased PostgreSQL inbox
+rows with bounded retries. Sync generations prevent slower stale requests from
+restoring newer revoked grants. Repository removals, suspension, deletion, and
+explicit disconnect revoke grants; project creation checks an active grant in
+the same database transaction.
+
+The GitHub App must request organization **Members: read** permission so AO can
+prove that the person completing an organization installation is an active
+organization admin. It also needs repository metadata/contents permissions
+appropriate for the later worker and the `installation` and
+`installation_repositories` webhook events. AO fails closed when the members
+permission is absent; ordinary organization members cannot bind an
+installation.
+
+Use one GitHub App for staging and production only if its global setup,
+OAuth-callback, and webhook URLs point to production. Staging should leave the
+GitHub variables unset unless production intentionally brokers the test flow.
+WorkOS credentials remain separate and may use the desktop deep link.
+
 ## Tenancy
 
 Every organization-owned table has a composite tenant foreign-key path and a
@@ -110,9 +179,10 @@ forced PostgreSQL row-level-security policy. Each transaction sets
 or writing resources. A caller cannot use another organization's UUID to cross
 the boundary.
 
-The service imports session status rules from the public AO contract module. The
-`replace` in `go.mod` pins the public `feat/cloud-refactor` commit under the
-module's existing canonical import path.
+The service imports shared Go session-status rules from the public AO contract
+module. The public OpenAPI document and TypeScript client define the matching
+GitHub wire contract. The `replace` in `go.mod` pins the exact public contract
+commit under the module's existing canonical import path.
 
 ## Verify
 
@@ -131,7 +201,8 @@ AO_CLOUD_TEST_DATABASE_URL='postgres://localhost/ao_cloud_test?sslmode=disable' 
   go test ./... -count=1
 ```
 
-The integration suite applies the migration, asserts exactly 28 AO tables,
+The integration suite applies the migration, asserts 28 tenant/domain tables
+plus two callback-routing tables,
 exercises local and WorkOS-backed principals, checks idempotent project,
 session, and message creation under concurrent retries, verifies durable event
 replay and workspace intent, and proves cross-organization reads are denied.

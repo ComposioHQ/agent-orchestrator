@@ -12,6 +12,7 @@ import (
 
 	"github.com/Untrivial-ai/ao-cloud/internal/auth"
 	"github.com/Untrivial-ai/ao-cloud/internal/config"
+	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/httpapi"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 )
@@ -74,6 +75,32 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 	}
+	var githubService *githubapp.Service
+	if cfg.GitHub.Enabled() {
+		githubClient, err := githubapp.New(githubapp.Config{
+			AppID:         cfg.GitHub.AppID,
+			AppSlug:       cfg.GitHub.AppSlug,
+			ClientID:      cfg.GitHub.ClientID,
+			ClientSecret:  cfg.GitHub.ClientSecret,
+			PrivateKeyPEM: cfg.GitHub.PrivateKeyPEM,
+			PublicURL:     cfg.GitHub.PublicURL,
+		}, nil)
+		if err != nil {
+			return err
+		}
+		githubService, err = githubapp.NewService(
+			store,
+			githubClient,
+			cfg.GitHub.StateKey,
+			cfg.GitHub.WebhookSecret,
+			cfg.GitHub.InstallTTL,
+			logger,
+		)
+		if err != nil {
+			return err
+		}
+		go githubService.Run(ctx)
+	}
 	api := httpapi.New(httpapi.Options{
 		Store:            store,
 		WorkOS:           workosVerifier,
@@ -83,6 +110,8 @@ func run(logger *slog.Logger) error {
 		Environment:      cfg.Environment,
 		Release:          cfg.Release,
 		Logger:           logger,
+		GitHub:           githubService,
+		WebhookMaxBody:   cfg.GitHub.WebhookMaxBody,
 	})
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,

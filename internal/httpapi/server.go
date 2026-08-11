@@ -11,6 +11,7 @@ import (
 
 	"github.com/Untrivial-ai/ao-cloud/internal/auth"
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
+	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -45,6 +46,8 @@ type Server struct {
 	release          string
 	draining         atomic.Bool
 	logger           *slog.Logger
+	github           *githubapp.Service
+	webhookMaxBody   int64
 	handler          http.Handler
 }
 
@@ -57,6 +60,8 @@ type Options struct {
 	Environment      string
 	Release          string
 	Logger           *slog.Logger
+	GitHub           *githubapp.Service
+	WebhookMaxBody   int64
 }
 
 func New(options Options) *Server {
@@ -76,6 +81,10 @@ func New(options Options) *Server {
 	if release == "" {
 		release = "dev"
 	}
+	webhookMaxBody := options.WebhookMaxBody
+	if webhookMaxBody == 0 {
+		webhookMaxBody = 2 << 20
+	}
 	server := &Server{
 		store:            options.Store,
 		workos:           options.WorkOS,
@@ -86,11 +95,18 @@ func New(options Options) *Server {
 		environment:      environment,
 		release:          release,
 		logger:           logger,
+		github:           options.GitHub,
+		webhookMaxBody:   webhookMaxBody,
 	}
 	router := chi.NewRouter()
 	router.Use(server.requestID)
 	router.Get("/healthz", server.health)
 	router.Get("/readyz", server.ready)
+	if server.github != nil {
+		router.Get("/api/cloud/v1/github/install/setup", server.githubSetupCallback)
+		router.Get("/api/cloud/v1/github/oauth/callback", server.githubOAuthCallback)
+		router.Post("/api/cloud/v1/github/webhooks", server.githubWebhook)
+	}
 	router.Route("/api/cloud/v1", func(router chi.Router) {
 		router.Post("/auth/local/register", server.registerLocal)
 		router.Post("/auth/local/login", server.loginLocal)
@@ -98,6 +114,14 @@ func New(options Options) *Server {
 		router.With(server.authenticate).Get("/me", server.me)
 		router.Route("/orgs/{orgId}", func(router chi.Router) {
 			router.Use(server.authenticate)
+			if server.github != nil {
+				router.Get("/github/installations", server.listGitHubInstallations)
+				router.Post("/github/installations/start", server.startGitHubInstallation)
+				router.Post("/github/installations/{installationId}/sync", server.syncGitHubInstallation)
+				router.Post("/github/installations/{installationId}/disconnect", server.disconnectGitHubInstallation)
+				router.Get("/github/repositories", server.listGitHubRepositories)
+				router.Post("/github/projects", server.createGitHubProject)
+			}
 			router.Get("/projects", server.listProjects)
 			router.Post("/projects", server.createProject)
 			router.Get("/sessions", server.listSessions)
