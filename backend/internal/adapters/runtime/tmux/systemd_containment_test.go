@@ -142,7 +142,13 @@ func TestScopedCreateAddsRemainOnExitAndVerifiesScope(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fc := &fakeContainment{wrap: "wrapped-launch"}
 	r.containment = fc
-	fr.outputs = [][]byte{nil, nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
+	fr.outputs = [][]byte{[]byte("no server running"), nil, nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
+	fr.hook = func(_ context.Context, call int) error {
+		if call == 1 {
+			return &exec.ExitError{}
+		}
+		return nil
+	}
 	if _, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
 		WorkspacePath: "/tmp/ws",
@@ -153,11 +159,11 @@ func TestScopedCreateAddsRemainOnExitAndVerifiesScope(t *testing.T) {
 	if fc.validated != 1 || len(fc.waited) != 1 || fc.waited[0] != "ao-session-sess-1.scope" {
 		t.Fatalf("containment lifecycle = validated %d, waited %#v", fc.validated, fc.waited)
 	}
-	if len(fr.calls) < 2 || !reflect.DeepEqual(fr.calls[1].args, setRemainOnExitArgs("sess-1")) {
+	if len(fr.calls) < 3 || !reflect.DeepEqual(fr.calls[2].args, setRemainOnExitArgs("sess-1")) {
 		t.Fatalf("calls = %#v, want remain-on-exit after new-session", fr.calls)
 	}
-	if !strings.Contains(fr.calls[0].args[len(fr.calls[0].args)-1], "wrapped-launch") {
-		t.Fatalf("new-session did not use wrapped launch: %#v", fr.calls[0].args)
+	if !strings.Contains(fr.calls[1].args[len(fr.calls[1].args)-1], "wrapped-launch") {
+		t.Fatalf("new-session did not use wrapped launch: %#v", fr.calls[1].args)
 	}
 }
 
@@ -168,7 +174,13 @@ func TestScopedCreateReportsCleanupFailureWhenReadinessFails(t *testing.T) {
 		releaseErrs: []error{errors.New("scope still active")},
 	}
 	r.containment = fc
-	fr.outputs = [][]byte{nil, nil}
+	fr.outputs = [][]byte{[]byte("no server running"), nil, nil, nil}
+	fr.hook = func(_ context.Context, call int) error {
+		if call == 1 {
+			return &exec.ExitError{}
+		}
+		return nil
+	}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -189,8 +201,12 @@ func TestScopedCreateCleanupIgnoresCallerCancellation(t *testing.T) {
 	r.containment = fc
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	fr.outputs = [][]byte{[]byte("no server running"), nil, nil, nil}
 	fr.hook = func(_ context.Context, call int) error {
-		if call == 2 {
+		if call == 1 {
+			return &exec.ExitError{}
+		}
+		if call == 3 {
 			cancel()
 		}
 		return nil
@@ -206,6 +222,139 @@ func TestScopedCreateCleanupIgnoresCallerCancellation(t *testing.T) {
 	}
 	if countCalls(fr, "kill-session") != 1 || len(fc.releaseCtxs) != 1 || fc.releaseCtxs[0] != nil {
 		t.Fatalf("runtime calls = %#v, release contexts = %#v", fr.calls, fc.releaseCtxs)
+	}
+}
+
+func TestScopedCreateCleansUncertainNewSessionOutcome(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fr.outputs = [][]byte{[]byte("no server running"), nil, nil}
+	fr.hook = func(_ context.Context, call int) error {
+		switch call {
+		case 1:
+			return &exec.ExitError{}
+		case 2:
+			cancel()
+		}
+		return nil
+	}
+
+	_, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create error = %v, want uncertain cancellation", err)
+	}
+	if countCalls(fr, "kill-session") != 1 || !reflect.DeepEqual(fc.released, []string{"ao-session-sess-1.scope"}) {
+		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+func TestScopedCreateDoesNotCleanConcurrentDuplicate(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fr.outputs = [][]byte{[]byte("no server running"), []byte("duplicate session: sess-1")}
+	fr.hook = func(_ context.Context, call int) error {
+		switch call {
+		case 1:
+			return &exec.ExitError{}
+		case 2:
+			cancel()
+		}
+		return nil
+	}
+
+	_, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Create error = %v, want uncertain cancellation", err)
+	}
+	if countCalls(fr, "kill-session") != 0 || len(fc.released) != 0 {
+		t.Fatalf("concurrent duplicate was cleaned: runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+func TestScopedCreateRejectsPreExistingSessionWithoutCleanup(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "session sess-1 already exists") {
+		t.Fatalf("Create error = %v, want pre-existing session rejection", err)
+	}
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "has-session" || len(fc.released) != 0 {
+		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+func TestScopedCreateStopsOnInconclusivePreflight(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+	fr.outputs = [][]byte{[]byte("error connecting to tmux socket")}
+	fr.hook = func(_ context.Context, call int) error {
+		if call == 1 {
+			return &exec.ExitError{}
+		}
+		return nil
+	}
+
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "verify session sess-1 absent before create") {
+		t.Fatalf("Create error = %v, want inconclusive preflight failure", err)
+	}
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "has-session" || len(fc.released) != 0 {
+		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+func TestScopedCreateAcceptsMissingTmuxSocket(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{wrap: "wrapped-launch"}
+	r.containment = fc
+	fr.outputs = [][]byte{
+		[]byte("error connecting to /tmp/tmux/default (No such file or directory)"),
+		nil,
+		nil,
+		[]byte("/tmp/ws\n"),
+		nil,
+		nil,
+		nil,
+		nil,
+	}
+	fr.hook = func(_ context.Context, call int) error {
+		if call == 1 {
+			return &exec.ExitError{}
+		}
+		return nil
+	}
+
+	if _, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	}); err != nil {
+		t.Fatalf("Create with missing tmux socket: %v", err)
 	}
 }
 

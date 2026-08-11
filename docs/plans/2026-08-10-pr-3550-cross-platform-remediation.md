@@ -350,6 +350,29 @@ the readiness-plus-release failure and prove cleanup still runs when the caller
 context is canceled. This changes the head again, so hosted checks and an
 independent exact-current-head review must restart from the new commit.
 
+Review round 3 inspected exact range
+`cfbefa4cdbd5e8c8e020177e53d105f10e5f44ee..5ecfcc06670b00e4f12785ad74d06fba63327d2e`
+separately from CI. All exact-head hosted checks passed, and the review found
+one remaining actionable uncertain-outcome defect: cancellation or timeout of
+the `tmux new-session` command could occur after tmux accepted the request, but
+`Create` returned no handle and did not reconcile the possible session/scope.
+
+The correction first proves that a scoped Create has no pre-existing exact tmux
+session. A canceled or timed-out `new-session` then enters the same detached,
+bounded cleanup path; an explicit concurrent `duplicate session` response is
+never destroyed. Fault-injection tests cover uncertain accepted creation,
+concurrent duplicate protection, and pre-existing session protection. This
+changes the head again, so all hosted checks and the independent review must
+restart from the next exact commit.
+
+The first post-correction canary stopped safely before worker creation because
+the dedicated tmux socket's normal first-use `error connecting ... (No such
+file or directory)` response was classified too conservatively. The policy now
+accepts only that definitely-missing-socket form while continuing to reject
+inconclusive connectivity failures. Focused tests and the full Linux systemd
+canary then passed; the canary completed in 10.89 seconds with its existing
+setsid, ignored-TERM, restart, destroy, and negative-control assertions.
+
 The review also retained the ADR's documented out-of-scope residual: changing
 the daemon-wide containment setting across a restart is not a durable
 per-session migration, and crash-time scope reconciliation/persisted cleanup

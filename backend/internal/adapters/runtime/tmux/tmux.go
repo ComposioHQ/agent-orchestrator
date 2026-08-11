@@ -314,6 +314,9 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		if err := r.containment.Validate(ctx); err != nil {
 			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: process containment unavailable: %w", err)
 		}
+		if err := r.ensureSessionAbsent(ctx, id); err != nil {
+			return ports.RuntimeHandle{}, err
+		}
 	}
 
 	launchCmd := buildLaunchCommand(cfg)
@@ -323,8 +326,12 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		launchCmd = r.containment.WrapCommand(r.shell, launchCmd, unit, r.reapGrace)
 	}
 	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
-	if _, err := r.run(ctx, args...); err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+	if out, err := r.run(ctx, args...); err != nil {
+		cause := fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+		if r.containment != nil && newSessionOutcomeUncertain(err) && !duplicateSessionOutput(string(out)) {
+			return ports.RuntimeHandle{}, r.cleanupFailedCreate(ctx, id, cause)
+		}
+		return ports.RuntimeHandle{}, cause
 	}
 	if r.containment != nil {
 		if _, err := r.run(ctx, setRemainOnExitArgs(id)...); err != nil {
@@ -375,12 +382,35 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	return handle, nil
 }
 
-// cleanupFailedCreate tears down a tmux session after new-session succeeded
-// but Create could not prove the runtime ready. The caller never receives a
-// handle on these paths, so cleanup must outlive caller cancellation and must
-// report any failure that could leave an unowned session or scope behind.
-// Destroy's tmux, reaper, and containment operations enforce their own bounded
-// timeouts.
+// ensureSessionAbsent proves that a scoped Create has no existing tmux-session
+// owner at the preflight point before new-session is attempted. This makes a
+// later cancellation or timeout safe to reconcile, while duplicateSessionOutput
+// protects a concurrent creator that wins after this check. A definitely
+// missing tmux server proves session absence; other connectivity failures are
+// intentionally inconclusive and block creation. Durable orphan-scope
+// reconciliation remains outside this helper's contract.
+func (r *Runtime) ensureSessionAbsent(ctx context.Context, id string) error {
+	out, err := r.run(ctx, hasSessionArgs(id)...)
+	if err == nil {
+		return fmt.Errorf("tmux runtime: session %s already exists", id)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && (sessionMissingOutput(string(out)) || serverDefinitelyAbsentOutput(string(out))) {
+		return nil
+	}
+	return fmt.Errorf("tmux runtime: verify session %s absent before create: %w", id, err)
+}
+
+func newSessionOutcomeUncertain(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// cleanupFailedCreate tears down a tmux session after new-session succeeded or
+// may have succeeded but Create could not prove the runtime ready. The caller
+// never receives a handle on these paths, so cleanup must outlive caller
+// cancellation and must report any failure that could leave an unowned session
+// or scope behind. Destroy's tmux, reaper, and containment operations enforce
+// their own bounded timeouts.
 func (r *Runtime) cleanupFailedCreate(ctx context.Context, id string, cause error) error {
 	if err := r.Destroy(context.WithoutCancel(ctx), ports.RuntimeHandle{ID: id}); err != nil {
 		return errors.Join(cause, fmt.Errorf("tmux runtime: cleanup failed session %s: %w", id, err))
@@ -1051,8 +1081,24 @@ func sessionMissingOutput(out string) bool {
 // session's liveness.
 func serverUnreachableOutput(out string) bool {
 	s := strings.ToLower(out)
-	return strings.Contains(s, "no server running") ||
+	return serverDefinitelyAbsentOutput(s) ||
 		strings.Contains(s, "error connecting")
+}
+
+// serverDefinitelyAbsentOutput is the narrow subset of server failures that
+// proves no tmux server socket exists. Scoped Create may use this as absence;
+// ordinary liveness probes must keep using the broader inconclusive classifier.
+func serverDefinitelyAbsentOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "no server running") ||
+		(strings.Contains(s, "error connecting") && strings.Contains(s, "no such file or directory"))
+}
+
+// duplicateSessionOutput protects a concurrent creator that wins after the
+// scoped Create preflight. Even when the command context also expires, this
+// response is definitive evidence that cleanup must not destroy that session.
+func duplicateSessionOutput(out string) bool {
+	return strings.Contains(strings.ToLower(out), "duplicate session")
 }
 
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`
