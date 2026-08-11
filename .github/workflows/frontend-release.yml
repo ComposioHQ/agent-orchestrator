@@ -132,19 +132,6 @@ jobs:
           if [ -z "$src" ]; then echo "no macOS zip found under out/make/zip/darwin" >&2; exit 1; fi
           cp "$src" "$alias_name"
           gh release upload "$tag" "$alias_name" --clobber
-          # Same treatment for the dmg, the FIRST-INSTALL artifact (#3267).
-          # Mounting it gives the drag-to-Applications window, so a user lands in
-          # /Applications instead of unzipping into ~/Downloads and launching from
-          # there, which is what produces the translocated and stale copies this
-          # branch has to survive. Strictly additive: the zip above must keep
-          # publishing forever because MacUpdater can only install from a zip.
-          # Without a stable, space-free alias there is no constant URL to link,
-          # which is why the download surfaces still point at the zip.
-          dmg_alias="${alias_name%.zip}.dmg"
-          dmg_src="$(ls out/make/*.dmg | head -n1)"
-          if [ -z "$dmg_src" ]; then echo "no macOS dmg found under out/make" >&2; exit 1; fi
-          cp "$dmg_src" "$dmg_alias"
-          gh release upload "$tag" "$dmg_alias" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -247,13 +234,6 @@ jobs:
           if [ -z "$src" ]; then echo "no macOS zip found under out/make/zip/darwin" >&2; exit 1; fi
           cp "$src" "$alias_name"
           gh release upload "$tag" "$alias_name" --clobber
-          # The dmg alias, exactly as in the arm64 leg above. Both legs must
-          # upload one or Intel users get no first-install artifact.
-          dmg_alias="${alias_name%.zip}.dmg"
-          dmg_src="$(ls out/make/*.dmg | head -n1)"
-          if [ -z "$dmg_src" ]; then echo "no macOS dmg found under out/make" >&2; exit 1; fi
-          cp "$dmg_src" "$dmg_alias"
-          gh release upload "$tag" "$dmg_alias" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
