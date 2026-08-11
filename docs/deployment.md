@@ -167,15 +167,44 @@ a later release after the old application version can no longer run.
 
 ### Pre-launch network work
 
-The production ALB is internal and accepts HTTP only from the VPC. Fargate tasks
-currently use the existing VPC's public subnets with public IPs, while security
-groups admit application traffic only from the ALB and database traffic only
-from the production task group. Before connecting desktop clients:
+The active staging and production ALBs remain internal and accept HTTP only from
+the VPC. Two replacement internet-facing ALBs have been provisioned:
 
-1. Create a production hostname and ACM certificate.
-2. Add an HTTPS listener and remove or redirect HTTP.
-3. Move tasks to private subnets with NAT or the required VPC endpoints.
-4. Replace the temporary test WorkOS tenant with production credentials.
+- `ao-cloud-staging-public` for `staging-api.aoagents.dev`
+- `ao-cloud-production-public` for `api.aoagents.dev`
+
+Their security groups admit only port 443. They intentionally have no listeners
+or ECS targets until ACM issues certificates for both hostnames. To complete the
+cutover:
+
+1. Request the ACM certificates in `eu-north-1` and publish ACM's validation
+   CNAME records at the domain's current DNS provider.
+2. Create public target groups and attach them to the existing ECS services.
+3. Add HTTPS listeners using the issued certificates.
+4. Publish `api` and `staging-api` CNAME records pointing to the corresponding
+   public ALB DNS names.
+5. Verify authenticated traffic, then delete the internal ALBs.
+6. Move tasks to private subnets with NAT or the required VPC endpoints.
+7. Replace the temporary test WorkOS tenant with production credentials.
+
+Fargate tasks currently use the existing VPC's public subnets with public IPs,
+while security groups admit application traffic only from an ALB and database
+traffic only from the environment's task group.
 
 Bearer tokens must never be sent to the current plaintext internal endpoint
 from outside the controlled VPC verification path.
+
+### Authentication and callback readiness
+
+Desktop WorkOS login uses PKCE and the custom `ao-app://callback` redirect. The
+public API hostname is therefore not a WorkOS login callback: the desktop app
+only needs its Cloud client base URL changed to the environment's HTTPS
+hostname. Access-token verification and user synchronization are stateless
+across API replicas, with durable identity and organization state in PostgreSQL.
+No ALB stickiness is required.
+
+The founding schema includes GitHub installation, repository-grant, and webhook
+delivery tables, but GitHub callback and webhook HTTP handlers are not
+implemented yet. Do not configure GitHub callbacks against these hostnames until
+that integration exists. Its callback state and webhook delivery processing
+must use PostgreSQL so any healthy replica can receive a request.
