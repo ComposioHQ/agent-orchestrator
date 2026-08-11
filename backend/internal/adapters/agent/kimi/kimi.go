@@ -134,7 +134,7 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 		InitialDelay: 750 * time.Millisecond,
 		Patterns:     []string{"│ >"},
 		PollInterval: 200 * time.Millisecond,
-		Timeout:      8 * time.Second,
+		Timeout:      90 * time.Second,
 		Lines:        80,
 	}, nil
 }

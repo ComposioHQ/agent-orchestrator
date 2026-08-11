@@ -15,6 +15,7 @@ const (
 	ReviewerCopilot    ReviewerHarness = "copilot"
 	ReviewerCursor     ReviewerHarness = "cursor"
 	ReviewerKiloCode   ReviewerHarness = "kilocode"
+	ReviewerKimchi     ReviewerHarness = "kimchi"
 	ReviewerOpenCode   ReviewerHarness = "opencode"
 	ReviewerKiro       ReviewerHarness = "kiro"
 	ReviewerPi         ReviewerHarness = "pi"
@@ -45,6 +46,7 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerCopilot,
 	ReviewerCursor,
 	ReviewerKiloCode,
+	ReviewerKimchi,
 	ReviewerOpenCode,
 	ReviewerKiro,
 	ReviewerPi,

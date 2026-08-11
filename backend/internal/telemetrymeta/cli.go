@@ -24,6 +24,8 @@ var routineInternalCLICommands = []string{
 	"ao status",
 	"ao session ls",
 	"ao session get",
+	"ao session agent-switch ls",
+	"ao session handoff",
 	"ao project ls",
 	"ao project get",
 	"ao orchestrator ls",
@@ -51,6 +53,10 @@ func CLIActorType(actorType, commandPath string) string {
 	if _, ok := legacyActorlessUserCLICommands[normalized]; ok {
 		return "user"
 	}
+	switch normalized {
+	case "ao session agent-switch", "ao session agent-switch ls", "ao session switch-agent":
+		return "user"
+	}
 	if normalized == "ao hooks" {
 		return "agent"
 	}
@@ -75,8 +81,19 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao browser check":          {},
 	"ao browser click":          {},
 	"ao browser console":        {},
+	"ao browser dblclick":       {},
+	"ao browser devtools":       {},
+	"ao browser devtools close": {},
+	"ao browser devtools open":  {},
+	"ao browser dialog":         {},
+	"ao browser dialog accept":  {},
+	"ao browser dialog dismiss": {},
+	"ao browser dialog status":  {},
+	"ao browser drag":           {},
 	"ao browser errors":         {},
 	"ao browser fill":           {},
+	"ao browser focus":          {},
+	"ao browser frame":          {},
 	"ao browser get":            {},
 	"ao browser highlight":      {},
 	"ao browser hover":          {},
@@ -90,6 +107,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao browser press":          {},
 	"ao browser screenshot":     {},
 	"ao browser scroll":         {},
+	"ao browser scrollintoview": {},
 	"ao browser select":         {},
 	"ao browser snapshot":       {},
 	"ao browser tab":            {},

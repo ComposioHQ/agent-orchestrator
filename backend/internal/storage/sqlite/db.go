@@ -134,11 +134,17 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
+	if err := repairRenumberedAgentSwitchMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered agent-switch migration history: %w", err)
+	}
 	if err := prepareBurnedSchemaRepairs(db); err != nil {
 		return fmt.Errorf("prepare burned schema repairs: %w", err)
 	}
 	if err := prepareReviewPerHarnessMigration(db); err != nil {
 		return fmt.Errorf("prepare review per-harness migration: %w", err)
+	}
+	if err := prepareBrowserVerifierMigration(db); err != nil {
+		return fmt.Errorf("prepare browser verifier migration: %w", err)
 	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
@@ -148,6 +154,45 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareBrowserVerifierMigration preserves development databases that ran an
+// earlier version of this branch where the verifier was mistakenly added to
+// shipped migration 0048. The restored 0048 no longer owns the column, so mark
+// the new 0081 migration applied when its exact schema effect already exists;
+// otherwise goose applies 0081 normally.
+func prepareBrowserVerifierMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	var applied int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 81 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+	var verifierColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&verifierColumn); err != nil {
+		return err
+	}
+	if verifierColumn == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (81, 1)`)
+	return err
 }
 
 func prepareBurnedSchemaRepairs(db *sql.DB) error {
@@ -489,6 +534,128 @@ SELECT COALESCE((
 	return tx.Commit()
 }
 
+// repairRenumberedAgentSwitchMigrationHistory preserves databases opened by
+// earlier revisions of this feature branch. Agent switching first occupied
+// 0080/0081, later 0081/0082, and briefly 0083/0084; main now owns 0080
+// through 0084. Remap the physically present switching schema to the
+// consolidated 0085, then release only the main migration numbers whose
+// schema effects are still absent.
+func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
+	var gooseTable, agentSwitchTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_switches'`,
+	).Scan(&agentSwitchTable); err != nil {
+		return err
+	}
+	if agentSwitchTable == 0 {
+		return nil
+	}
+
+	reviewUpgraded, err := reviewHasSessionHarnessUnique(db)
+	if err != nil {
+		return err
+	}
+
+	var browserVerifierColumn, primeHarnessShape, reconciledKimchiPrimeHarnessShape, autoInjectReviewColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&browserVerifierColumn); err != nil {
+		return err
+	}
+	if err := db.QueryRow(`
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table'
+  AND name = 'sessions'
+  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&primeHarnessShape); err != nil {
+		return err
+	}
+	if err := db.QueryRow(`
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table'
+  AND name = 'sessions'
+  AND instr(COALESCE(sql, ''), '''kimchi''') > 0
+  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&reconciledKimchiPrimeHarnessShape); err != nil {
+		return err
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'auto_inject_review'`,
+	).Scan(&autoInjectReviewColumn); err != nil {
+		return err
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Earlier feature builds split finalized-handoff storage into 0084, while
+	// still earlier builds only had the base switching table. Repair either
+	// shape before recording the now-consolidated 0085 as applied. The status is
+	// deliberately not inferred from retained paths: old rows remain unknown.
+	for _, column := range []struct {
+		name string
+		ddl  string
+	}{
+		{name: "final_handoff_path", ddl: `ALTER TABLE agent_switches ADD COLUMN final_handoff_path TEXT NOT NULL DEFAULT ''`},
+		{name: "final_handoff_hash", ddl: `ALTER TABLE agent_switches ADD COLUMN final_handoff_hash TEXT NOT NULL DEFAULT ''`},
+		{name: "source_transcript_status", ddl: `ALTER TABLE agent_switches ADD COLUMN source_transcript_status TEXT NOT NULL DEFAULT 'not_attempted' CHECK (source_transcript_status IN ('not_attempted', 'available', 'unavailable'))`},
+		{name: "semantic_handoff_included", ddl: `ALTER TABLE agent_switches ADD COLUMN semantic_handoff_included INTEGER NOT NULL DEFAULT 0 CHECK (semantic_handoff_included IN (0, 1))`},
+	} {
+		var present int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('agent_switches') WHERE name = ?`, column.name,
+		).Scan(&present); err != nil {
+			return err
+		}
+		if present == 0 {
+			if _, err := tx.Exec(column.ddl); err != nil {
+				return err
+			}
+		}
+	}
+
+	var applied85 int
+	if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+	WHERE version_id = 85 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied85); err != nil {
+		return err
+	}
+	if applied85 == 0 {
+		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (85, 1)`); err != nil {
+			return err
+		}
+	}
+
+	for version, mainEffectPresent := range map[int64]bool{
+		80: reviewUpgraded,
+		81: browserVerifierColumn != 0,
+		82: primeHarnessShape != 0,
+		83: reconciledKimchiPrimeHarnessShape != 0,
+		84: autoInjectReviewColumn != 0,
+	} {
+		if mainEffectPresent {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = ?`, version); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // schemaRepairs lists the column-level effects of migrations that real
 // installs are known to skip. Issue #3475/#3476: profiles exist whose
 // goose_db_version already records versions 40 through 46 (written by a
@@ -503,9 +670,9 @@ SELECT COALESCE((
 // column was just added, so healthy databases — where those statements would
 // clobber live data — are never touched.
 //
-// Any new migration numbered up to 0046 whose schema the generated queries
-// depend on MUST add an entry here, or the burned field profiles skip it and
-// regress to the 500s this exists to prevent.
+// Any migration whose schema the generated queries depend on MUST add an entry
+// here when a burned field profile can skip it, or the session list can regress
+// to the 500s this exists to prevent.
 var schemaRepairs = []struct {
 	version int64
 	table   string
@@ -576,8 +743,12 @@ BEGIN
             'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
-END`,
+			END`,
 		}},
+	// 0081_browser_capability_verifier.sql. Keep the generated session queries
+	// healthy even if a field database has already burned this migration number.
+	{version: 81, table: "sessions", column: "browser_capability_verifier",
+		addDDL: `ALTER TABLE sessions ADD COLUMN browser_capability_verifier TEXT NOT NULL DEFAULT ''`},
 	// A pre-renumbered chat-mode branch created conversations before the
 	// current_session_id controller binding existed, then later builds recorded
 	// 0052 as applied. Generated chat queries require the column on startup.
@@ -626,10 +797,17 @@ func reconcileSchema(db *sql.DB) error {
 }
 
 const (
-	sessionsHarnessCheckWithoutMuse   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithMuse      = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithoutMuseQM = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
-	sessionsHarnessCheckWithMuseQM    = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithoutMuse                = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuse                   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithoutMuseQM              = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQM                 = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseKimchi             = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMKimchi           = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMusePrimeAgent         = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'prime-agent', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMPrimeAgent       = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'prime-agent', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQMLegacyPrimeAgent = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'prime-agent', 'fake'))`
+	sessionsHarnessCheckWithMuseKimchiPrimeAgent   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'prime-agent', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMKimchiPrimeAgent = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'prime-agent', 'autohand', 'qm', 'fake'))`
 )
 
 func reconcileHarnessConstraint(db *sql.DB) error {
@@ -639,27 +817,53 @@ func reconcileHarnessConstraint(db *sql.DB) error {
 	).Scan(&schema); err != nil {
 		return fmt.Errorf("schema verification: inspect sessions harness constraint: %w", err)
 	}
-	if strings.Contains(schema, "'muse'") {
+	needsMuse := !strings.Contains(schema, "'muse'")
+	needsKimchi := !strings.Contains(schema, "'kimchi'")
+	needsPrimeAgent := !strings.Contains(schema, "'prime-agent'")
+	if !needsMuse && !needsKimchi && !needsPrimeAgent {
 		return nil
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
 		return fmt.Errorf("schema repair: enable writable_schema for sessions harness constraint: %w", err)
 	}
-	for _, replacement := range []struct {
+	type replacement struct {
 		old string
 		new string
-	}{
-		{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
-		{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
-	} {
+	}
+	var repairs []replacement
+	if needsMuse {
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
+			replacement{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
+		)
+	}
+	if needsKimchi {
+		// After the Muse repair (if any), the constraint will be in one of
+		// these known states — each gets Kimchi inserted in the same
+		// position as migration 0054 does.
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithMuse, sessionsHarnessCheckWithMuseKimchi},
+			replacement{sessionsHarnessCheckWithMuseQM, sessionsHarnessCheckWithMuseQMKimchi},
+			replacement{sessionsHarnessCheckWithMusePrimeAgent, sessionsHarnessCheckWithMuseKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMPrimeAgent, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMLegacyPrimeAgent, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+		)
+	}
+	if needsPrimeAgent {
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithMuseKimchi, sessionsHarnessCheckWithMuseKimchiPrimeAgent},
+			replacement{sessionsHarnessCheckWithMuseQMKimchi, sessionsHarnessCheckWithMuseQMKimchiPrimeAgent},
+		)
+	}
+	for _, r := range repairs {
 		if _, err := db.Exec(
 			`UPDATE sqlite_master
 SET sql = replace(sql, ?, ?)
 WHERE type = 'table' AND name = 'sessions'`,
-			replacement.old,
-			replacement.new,
+			r.old,
+			r.new,
 		); err != nil {
-			return fmt.Errorf("schema repair: widen sessions harness constraint for Muse: %w", err)
+			return fmt.Errorf("schema repair: widen sessions harness constraint: %w", err)
 		}
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = RESET`); err != nil {
@@ -672,6 +876,12 @@ WHERE type = 'table' AND name = 'sessions'`,
 	}
 	if !strings.Contains(schema, "'muse'") {
 		return fmt.Errorf("schema repair: sessions harness constraint is missing Muse and did not match known pre-Muse schema")
+	}
+	if !strings.Contains(schema, "'kimchi'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Kimchi and did not match known pre-Kimchi schema")
+	}
+	if !strings.Contains(schema, "'prime-agent'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Prime Agent and did not match known pre-Prime-Agent schema")
 	}
 	return nil
 }

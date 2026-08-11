@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -172,6 +173,17 @@ func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.Se
 		return false, nil
 	}
 	r.TerminateOnPRMerge = terminate
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
+func (f *fakeStore) SetSessionAutoInjectReview(_ context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoInjectReview = autoInject
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -352,6 +364,25 @@ func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
 
 func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionSetAutoInjectReviewPersistsPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectReview: true}
+
+	sess, err := (&Service{store: st}).SetAutoInjectReview(context.Background(), "mer-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.AutoInjectReview || st.sessions["mer-1"].AutoInjectReview {
+		t.Fatalf("auto-inject policy was not disabled: session=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetAutoInjectReviewUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetAutoInjectReview(context.Background(), "ghost-1", false); err == nil {
 		t.Fatal("expected missing session error")
 	}
 }
@@ -581,6 +612,51 @@ func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
 	}
 	if byPath["lower.go"].Status != WorkspaceFileAdded || byPath["upper.go"].Status != WorkspaceFileAdded {
 		t.Fatalf("stack files = lower:%#v upper:%#v, want both visible from root PR base", byPath["lower.go"], byPath["upper.go"])
+	}
+}
+
+func TestWorkspaceFilesPRFallbackUsesMergeBaseWhenTargetBranchAdvances(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	forkBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "worker.go", "package main\n")
+	runGit(t, repo, "add", "worker.go")
+	runGit(t, repo, "commit", "-m", "worker change")
+	runGit(t, repo, "switch", "main")
+	writeWorkspaceFile(t, repo, "mainonly.go", "package main\n")
+	runGit(t, repo, "add", "mainonly.go")
+	runGit(t, repo, "commit", "-m", "main advanced independently")
+	prBaseSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "ao/work")
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "mer",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: prBaseSHA, UpdatedAt: time.Unix(100, 0)},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != forkBase || files.CompareBaseRef != "main" {
+		t.Fatalf("compare base = sha:%q ref:%q, want merge base %s main", files.CompareBaseSHA, files.CompareBaseRef, forkBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["worker.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("worker.go = %#v, want added", byPath["worker.go"])
+	}
+	if got, ok := byPath["mainonly.go"]; ok {
+		t.Fatalf("mainonly.go = %#v, want excluded once compare resolves to the merge base instead of the advanced target tip", got)
 	}
 }
 
@@ -1110,6 +1186,15 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
+func (*fakeCommander) SwitchAgent(context.Context, domain.SessionID, sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
+}
+func (*fakeCommander) ListAgentSwitches(context.Context, domain.SessionID) ([]domain.AgentSwitch, error) {
+	return nil, nil
+}
+func (*fakeCommander) SubmitAgentHandoff(context.Context, domain.SessionID, domain.AgentSwitchID, domain.AgentGenerationID, json.RawMessage) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
+}
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
@@ -1141,7 +1226,7 @@ func (f *fakeCommander) WaitForMessageDeliveryReady(_ context.Context, id domain
 	f.ready = append(f.ready, id)
 	return f.readyErr
 }
-func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string, _ *ports.SpawnAttachment) error {
 	if f.sendFunc != nil {
 		return f.sendFunc(id, message)
 	}
@@ -1682,6 +1767,17 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
 		{"agent not exited", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrAgentNotExited), apierr.KindConflict, "AGENT_NOT_EXITED"},
 		{"resume in progress", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrResumeInProgress), apierr.KindConflict, "AGENT_RESUME_IN_PROGRESS"},
+		{"target agent unauthorized", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrTargetAgentUnauthorized), apierr.KindInvalid, "TARGET_AGENT_UNAUTHORIZED"},
+		{"worker session required", fmt.Errorf("switch agent mer-orchestrator: %w", sessionmanager.ErrUnsupportedSwitchKind), apierr.KindInvalid, "WORKER_SESSION_REQUIRED"},
+		{"unsupported switch harness", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrUnsupportedSwitchHarness), apierr.KindInvalid, "UNSUPPORTED_SWITCH_HARNESS"},
+		{"already using harness", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrAlreadyUsingHarness), apierr.KindConflict, "ALREADY_USING_HARNESS"},
+		{"switch not found", fmt.Errorf("get switch: %w", sessionmanager.ErrSwitchNotFound), apierr.KindNotFound, "AGENT_SWITCH_NOT_FOUND"},
+		{"stale handoff", fmt.Errorf("submit handoff: %w", sessionmanager.ErrStaleHandoff), apierr.KindConflict, "STALE_AGENT_HANDOFF"},
+		{"invalid handoff", fmt.Errorf("submit handoff: %w", sessionmanager.ErrInvalidAgentHandoff), apierr.KindInvalid, "INVALID_AGENT_HANDOFF"},
+		{"switch delivery unconfirmed", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchDeliveryUnconfirmed), apierr.KindConflict, "AGENT_SWITCH_DELIVERY_UNCONFIRMED"},
+		{"manager switch in progress", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
+		{"switch in progress", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
+		{"switch idempotency conflict", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchIdempotencyConflict), apierr.KindConflict, "AGENT_SWITCH_IDEMPOTENCY_CONFLICT"},
 		{"chat mode unsupported", fmt.Errorf("spawn: %w", ports.ErrChatUnsupported), apierr.KindConflict, "SESSION_MODE_UNSUPPORTED"},
 		{"chat driver unavailable", fmt.Errorf("spawn: %w", ports.ErrChatDriverUnavailable), apierr.KindConflict, "CHAT_DRIVER_UNAVAILABLE"},
 		{"chat driver incompatible", fmt.Errorf("spawn: %w", ports.ErrChatDriverIncompatible), apierr.KindConflict, "CHAT_DRIVER_INCOMPATIBLE"},
@@ -1695,6 +1791,26 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 				t.Fatalf("mapped = %v, want %s %s", mapped, tc.wantCode, e)
 			}
 		})
+	}
+}
+
+func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
+	err := fmt.Errorf("switch agent mer-1: confirm continuation: %w", sessionmanager.ErrSwitchDeliveryUnconfirmed)
+	mapped := toAPIError(err)
+
+	var apiError *apierr.Error
+	if !errors.As(mapped, &apiError) {
+		t.Fatalf("mapped = %v, want *apierr.Error", mapped)
+	}
+	if apiError.Kind != apierr.KindConflict {
+		t.Fatalf("kind = %v, want %v", apiError.Kind, apierr.KindConflict)
+	}
+	if apiError.Code != "AGENT_SWITCH_DELIVERY_UNCONFIRMED" {
+		t.Fatalf("code = %q, want AGENT_SWITCH_DELIVERY_UNCONFIRMED", apiError.Code)
+	}
+	const wantMessage = "The target agent started, but AO could not confirm that it accepted the continuation"
+	if apiError.Message != wantMessage {
+		t.Fatalf("message = %q, want %q", apiError.Message, wantMessage)
 	}
 }
 
@@ -2060,6 +2176,28 @@ type fakeSCM struct {
 	reviewErr error
 }
 
+func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	obs := ports.SCMObservation{
+		PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+		Review: ports.SCMReviewObservation{
+			Reviews: []ports.SCMReviewSummaryObservation{{ID: "r1", State: string(domain.ReviewChangesRequest), Body: "review body"}},
+			Threads: []ports.SCMReviewThreadObservation{{ID: "t1", Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Body: "inline comment"}}}},
+		},
+	}
+	for _, autoInject := range []bool{false, true} {
+		t.Run(fmt.Sprintf("auto_inject_%t", autoInject), func(t *testing.T) {
+			_, _, reviews, _, comments := claimRowsFromSCM("mer-1", obs, now, domain.SessionRecord{AutoInjectReview: autoInject})
+			if len(reviews) != 1 || reviews[0].AutoInjectReview != autoInject {
+				t.Fatalf("reviews = %+v, want policy %t", reviews, autoInject)
+			}
+			if len(comments) != 1 || comments[0].AutoInjectReview != autoInject {
+				t.Fatalf("comments = %+v, want policy %t", comments, autoInject)
+			}
+		})
+	}
+}
+
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	owner, repo, err := githubRepoFromURL(remote)
 	if err != nil {
@@ -2201,12 +2339,12 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		{Name: "lint", Status: domain.PRCheckPassed, Conclusion: "success", URL: "https://github.com/acme/repo/actions/runs/2"},
 	}
 	stList.reviews[prURL] = []domain.PullRequestReview{
-		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second)},
+		{ID: "review-1", Author: "reviewer-a", State: domain.ReviewChangesRequest, URL: "https://github.com/acme/repo/pull/7#pullrequestreview-1", Body: "summary: please fix the failing unit test", SubmittedAt: now.Add(-30 * time.Second), AutoInjectReview: false},
 	}
 	stList.comments[prURL] = []domain.PullRequestComment{
-		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1"},
+		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
-		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3"},
+		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3", AutoInjectReview: true},
 	}
 
 	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
@@ -2230,6 +2368,8 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("reviewer = %+v", reviewer)
 	} else if reviewer.ReviewURL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
 		t.Fatalf("review url = %q", reviewer.ReviewURL)
+	} else if reviewer.Links[0].AutoInjectReview || !reviewer.Links[1].AutoInjectReview {
+		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
@@ -2239,7 +2379,7 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	}
 	if entry := pr.Review.Reviews[0]; entry.Reviewer != "reviewer-a" || entry.Verdict != domain.ReviewChangesRequest ||
 		entry.Body != "summary: please fix the failing unit test" ||
-		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" {
+		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" || entry.AutoInjectReview {
 		t.Fatalf("review summary entry = %+v", entry)
 	}
 	// The review summary body is surfaced, but inline comment bodies and CI log

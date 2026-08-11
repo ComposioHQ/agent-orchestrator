@@ -572,6 +572,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/agent-switches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List a session's durable agent-switch history */
+        get: operations["listSessionAgentSwitches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit a generation-fenced source-agent handoff */
+        post: operations["submitSessionAgentHandoff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/attachments": {
         parameters: {
             query?: never;
@@ -587,6 +621,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/auto-inject-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Set the auto-inject review setting for a session */
+        patch: operations["setSessionAutoInjectReview"];
         trace?: never;
     };
     "/api/v1/sessions/{sessionId}/conversation": {
@@ -1208,6 +1259,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/switch-agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Switch a logical AO session to another agent harness */
+        post: operations["switchSessionAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/workspace/events": {
         parameters: {
             query?: never;
@@ -1436,6 +1504,34 @@ export interface components {
             validatedAt?: string;
             warning?: string;
         };
+        AgentSwitch: {
+            /** @enum {string} */
+            agentHandoffStatus: "not_attempted" | "requested" | "received" | "unavailable" | "timed_out" | "failed" | "rejected";
+            /** @enum {string} */
+            errorCode?: "daemon_restart_pre_stop" | "daemon_restart_post_stop" | "daemon_restart_unrecoverable_target" | "daemon_restart_before_delivery" | "delivery_unconfirmed" | "source_session_terminated" | "source_stop_unconfirmed" | "target_binary_missing" | "target_agent_unauthorized" | "target_start_unconfirmed" | "request_cancelled" | "source_blocked" | "failed_pre_stop" | "failed_post_stop" | "target_ready_failed" | "delivery_failed" | "switch_failed";
+            fromHarness: string;
+            id: string;
+            /** Format: date-time */
+            requestedAt: string;
+            semanticHandoffIncluded: boolean;
+            sessionId: string;
+            /** @enum {string} */
+            sourceTranscriptStatus?: "not_attempted" | "available" | "unavailable";
+            /** @enum {string} */
+            state: "preparing_handoff" | "stopping_source" | "source_stopped" | "starting_target" | "target_ready" | "delivering_context" | "completed" | "failed";
+            targetHarness: string;
+            /** @enum {string} */
+            targetStartMode?: "fresh" | "resumed";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        AgentSwitchResponse: {
+            switch: components["schemas"]["AgentSwitch"];
+        };
+        AttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
         BrowserCommandRequest: {
             action: string;
             args?: {
@@ -1501,6 +1597,7 @@ export interface components {
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
+            autoInjectReview: boolean;
             branch?: string;
             /** Format: date-time */
             createdAt: string;
@@ -1521,7 +1618,7 @@ export interface components {
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */
-            reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
+            reviewerHarness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "crush" | "auggie" | "cline" | "autohand";
             /** @enum {string} */
             scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
             /** @enum {string} */
@@ -1530,10 +1627,6 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
-        };
-        ControllersSpawnAttachmentInput: {
-            data: string;
-            mimeType?: string;
         };
         ConversationAccountPayload: {
             authMode?: string;
@@ -1758,8 +1851,8 @@ export interface components {
         };
         DelegateTaskRequest: {
             /** @enum {string} */
-            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand" | "fake";
-            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
+            agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand" | "fake";
+            attachments?: components["schemas"]["AttachmentInput"][];
             brief: string;
             /** @enum {string} */
             mode?: "tui" | "chat";
@@ -1831,6 +1924,9 @@ export interface components {
             freed?: boolean;
             ok: boolean;
             sessionId: string;
+        };
+        ListAgentSwitchesResponse: {
+            switches: components["schemas"]["AgentSwitch"][];
         };
         ListAgentsResponse: {
             /** @description Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail. */
@@ -2106,6 +2202,7 @@ export interface components {
             sessionId: string;
         };
         ReviewRun: {
+            autoInjectReview: boolean;
             batchId: string;
             body: string;
             /** Format: date-time */
@@ -2154,6 +2251,7 @@ export interface components {
             turnId?: string;
         };
         SendSessionMessageRequest: {
+            attachment?: components["schemas"]["AttachmentInput"];
             message: string;
         };
         SendSessionMessageResponse: {
@@ -2228,11 +2326,13 @@ export interface components {
             state: "unknown" | "mergeable" | "conflicting" | "blocked" | "unstable";
         };
         SessionPRReviewCommentLink: {
+            autoInjectReview: boolean;
             file?: string;
             line?: number;
             url?: string;
         };
         SessionPRReviewEntry: {
+            autoInjectReview: boolean;
             body?: string;
             isBot?: boolean;
             reviewUrl?: string;
@@ -2308,6 +2408,10 @@ export interface components {
             agentSessionId?: string;
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
+            /** @description Latest assistant update exposed by the provider hook. */
+            latestAssistantUpdate?: string;
+            /** @description Latest real user prompt exposed by the provider hook. */
+            latestUserPrompt?: string;
             /** @description AO process generation that produced the signal. */
             launchId?: string;
             /**
@@ -2319,6 +2423,8 @@ export interface components {
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
             toolUseId?: string;
+            /** @description Read-only provider-native transcript path exposed by the hook. */
+            transcriptPath?: string;
             /** @description Provider transcript metadata used by the local usage pipeline. */
             usage?: components["schemas"]["UsageHookMetadata"];
         };
@@ -2357,6 +2463,15 @@ export interface components {
             ok: boolean;
             reviewSessionId: string;
         };
+        SetSessionAutoInjectReviewRequest: {
+            autoInjectReview: boolean;
+        };
+        SetSessionAutoInjectReviewResponse: {
+            autoInjectReview: boolean;
+            ok: boolean;
+            session: components["schemas"]["ControllersSessionView"];
+            sessionId: string;
+        };
         SetSessionMergePolicyRequest: {
             terminateOnPrMerge: boolean;
         };
@@ -2372,7 +2487,7 @@ export interface components {
         };
         SetSessionReviewerRequest: {
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "muse" | "amp" | "aider" | "grok" | "greptile" | "crush" | "auggie" | "cline" | "autohand";
+            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "greptile" | "crush" | "auggie" | "cline" | "autohand";
         };
         SettingsResponse: {
             chatHarnesses: string[];
@@ -2401,11 +2516,11 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
-            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
+            attachments?: components["schemas"]["AttachmentInput"][];
             branch?: string;
             displayName?: string;
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            harness?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "kimchi" | "prime-agent" | "autohand";
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
@@ -2420,7 +2535,7 @@ export interface components {
             systemPromptBytes: number;
         };
         StageSessionAttachmentsRequest: {
-            attachments: components["schemas"]["ControllersSpawnAttachmentInput"][];
+            attachments: components["schemas"]["AttachmentInput"][];
         };
         StageSessionAttachmentsResponse: {
             paths: string[];
@@ -2449,6 +2564,12 @@ export interface components {
             activityId?: string;
             providerTurnId: string;
         };
+        SubmitAgentHandoffRequest: {
+            /** @description Structured, source-agent-authored handoff enrichment. */
+            handoff: unknown;
+            /** @description Source invocation generation that authored this handoff. */
+            sourceGenerationId: string;
+        };
         SubmitReviewInput: {
             /** @description Review body recorded by AO. Required for changes_requested. */
             body?: string;
@@ -2471,6 +2592,17 @@ export interface components {
             /** @description Review verdict: approved or changes_requested. */
             verdict: string;
         };
+        SwitchAgentRequest: {
+            /** @description Optional retry key. Reusing it with a different request is rejected. */
+            idempotencyKey?: string;
+            /** @description Optional user guidance included in the bounded handoff context. */
+            note?: string;
+            /**
+             * @description Agent harness to continue the logical AO session with.
+             * @enum {string}
+             */
+            targetHarness: "claude-code" | "codex";
+        };
         TrackerIntakeConfig: {
             assignee?: string;
             enabled?: boolean;
@@ -2480,7 +2612,7 @@ export interface components {
         };
         TriggerReviewRequest: {
             /** @enum {string} */
-            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "muse" | "amp" | "aider" | "grok" | "greptile" | "crush" | "auggie" | "cline" | "autohand";
+            harness?: "claude-code" | "codex" | "copilot" | "cursor" | "kilocode" | "opencode" | "kiro" | "pi" | "qwen" | "agy" | "continue" | "goose" | "vibe" | "devin" | "droid" | "kimi" | "kimchi" | "muse" | "amp" | "aider" | "grok" | "greptile" | "crush" | "auggie" | "cline" | "autohand";
         };
         TriggerReviewResponse: {
             /** @description True when a new review pass was started; false when an existing run for the same commit was reused. */
@@ -4607,6 +4739,130 @@ export interface operations {
             };
         };
     };
+    listSessionAgentSwitches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListAgentSwitchesResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    submitSessionAgentHandoff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Durable agent-switch identifier. */
+                switchId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubmitAgentHandoffRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSwitchResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     stageSessionAttachments: {
         parameters: {
             query?: never;
@@ -4639,6 +4895,60 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionAutoInjectReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSessionAutoInjectReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetSessionAutoInjectReviewResponse"];
                 };
             };
             /** @description Not Found */
@@ -7318,6 +7628,78 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    switchSessionAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchAgentRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSwitchResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -31,6 +31,7 @@ const REVIEWER_HARNESS_IDS = [
 	"kilocode",
 	"kiro",
 	"kimi",
+	"kimchi",
 	"muse",
 	"opencode",
 	"pi",

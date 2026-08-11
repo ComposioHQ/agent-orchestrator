@@ -19,6 +19,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
 import { agentsQueryKey, refreshAgents } from "../hooks/useAgentsQuery";
+import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -152,6 +153,32 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
+	// Warms the New Task composer's model-catalog cache while the user is just
+	// looking at the project, so the picker never shows a loading flash the
+	// first time they actually open the dialog.
+	useEffect(() => {
+		if (!scopedProjectId) return;
+		const projectQueryKey = ["project", scopedProjectId];
+		void queryClient
+			.prefetchQuery({
+				queryKey: projectQueryKey,
+				queryFn: async () => {
+					const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
+						params: { path: { id: scopedProjectId } },
+					});
+					if (apiError) throw new Error(apiErrorMessage(apiError));
+					if (data?.status !== "ok") throw new Error("Project config unavailable");
+					return data.project as components["schemas"]["Project"];
+				},
+			})
+			.then(() => {
+				const project = queryClient.getQueryData<components["schemas"]["Project"]>(projectQueryKey);
+				const defaultWorkerAgent = project?.config?.worker?.agent || project?.agent || "";
+				if (defaultWorkerAgent) {
+					void queryClient.prefetchQuery(agentModelsQueryOptions(defaultWorkerAgent, scopedProjectId));
+				}
+			});
+	}, [queryClient, scopedProjectId]);
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard =
 		Boolean(matchRoute({ to: "/" })) &&

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ var ctx = context.Background()
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
+	reviews    map[string][]domain.PullRequestReview
+	comments   map[string][]domain.PullRequestComment
 	signatures map[string]string
 
 	listPRsErr        error
@@ -26,7 +29,13 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{
+		sessions:   map[domain.SessionID]domain.SessionRecord{},
+		prs:        map[domain.SessionID][]domain.PullRequest{},
+		reviews:    map[string][]domain.PullRequestReview{},
+		comments:   map[string][]domain.PullRequestComment{},
+		signatures: map[string]string{},
+	}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -39,6 +48,14 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
+}
+
+func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 
 func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
@@ -54,6 +71,11 @@ func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
 	f.sessions[rec.ID] = rec
 	return nil
+}
+
+func (f *fakeStore) UpdateSessionFromActivitySignal(_ context.Context, rec domain.SessionRecord) (bool, error) {
+	f.sessions[rec.ID] = rec
+	return true, nil
 }
 
 func (f *fakeStore) CommitSessionControllerEpoch(
@@ -95,6 +117,173 @@ func (f *fakeStore) UpdatePRLastNudgeSignature(_ context.Context, prURL, payload
 	return nil
 }
 
+type targetAcknowledgementCall struct {
+	switchID   domain.AgentSwitchID
+	sessionID  domain.SessionID
+	generation domain.AgentGenerationID
+	at         time.Time
+}
+
+// fakeAgentSwitchLifecycleStore embeds the full port only to inherit methods
+// these focused lifecycle tests never call. The methods lifecycle does consume
+// are implemented below, with one mutex covering both session ownership and
+// switch state so ActivateAgentSwitchTarget models the production transaction.
+type fakeAgentSwitchLifecycleStore struct {
+	*fakeStore
+	ports.AgentSwitchStore
+
+	mu                   sync.Mutex
+	activeSwitch         domain.AgentSwitch
+	hasActiveSwitch      bool
+	native               map[domain.AgentNativeSessionID]domain.AgentNativeSession
+	acknowledgementCalls []targetAcknowledgementCall
+}
+
+func newFakeAgentSwitchLifecycleStore() *fakeAgentSwitchLifecycleStore {
+	return &fakeAgentSwitchLifecycleStore{fakeStore: newFakeStore(), native: map[domain.AgentNativeSessionID]domain.AgentNativeSession{}}
+}
+
+func (f *fakeAgentSwitchLifecycleStore) GetAgentNativeSession(_ context.Context, id domain.AgentNativeSessionID) (domain.AgentNativeSession, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.native[id]
+	return rec, ok, nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) UpdateAgentNativeSession(_ context.Context, rec domain.AgentNativeSession, expected domain.AgentGenerationID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	current, ok := f.native[rec.ID]
+	if !ok || current.LastGenerationID != expected {
+		return false, nil
+	}
+	f.native[rec.ID] = rec
+	return true, nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.sessions[id]
+	return rec, ok, nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sessions[rec.ID] = rec
+	return nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) UpdateSessionFromActivitySignal(_ context.Context, rec domain.SessionRecord) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	current, ok := f.sessions[rec.ID]
+	if !ok || current.IsTerminated || current.Harness != rec.Harness ||
+		current.Metadata.RuntimeLaunchID != rec.Metadata.RuntimeLaunchID {
+		return false, nil
+	}
+	if f.hasActiveSwitch && f.activeSwitch.SessionID == rec.ID &&
+		f.activeSwitch.FromHarness == current.Harness &&
+		(f.activeSwitch.State == domain.AgentSwitchStoppingSource ||
+			f.activeSwitch.State == domain.AgentSwitchSourceStopped ||
+			f.activeSwitch.State == domain.AgentSwitchStartingTarget) {
+		return false, nil
+	}
+	current.Activity = rec.Activity
+	current.FirstSignalAt = rec.FirstSignalAt
+	current.Metadata.AgentSessionID = rec.Metadata.AgentSessionID
+	current.Metadata.LatestUserPrompt = rec.Metadata.LatestUserPrompt
+	current.Metadata.LatestAssistantUpdate = rec.Metadata.LatestAssistantUpdate
+	current.Metadata.NativeTranscriptPath = rec.Metadata.NativeTranscriptPath
+	current.UpdatedAt = rec.UpdatedAt
+	f.sessions[rec.ID] = current
+	return true, nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) GetActiveAgentSwitch(_ context.Context, id domain.SessionID) (domain.AgentSwitch, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.hasActiveSwitch || f.activeSwitch.SessionID != id || f.activeSwitch.State.Terminal() {
+		return domain.AgentSwitch{}, false, nil
+	}
+	return f.activeSwitch, true, nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) AcknowledgeAgentSwitchTarget(_ context.Context, switchID domain.AgentSwitchID, sessionID domain.SessionID, generation domain.AgentGenerationID, at time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.acknowledgementCalls = append(f.acknowledgementCalls, targetAcknowledgementCall{
+		switchID: switchID, sessionID: sessionID, generation: generation, at: at,
+	})
+	if !f.hasActiveSwitch || f.activeSwitch.ID != switchID || f.activeSwitch.SessionID != sessionID ||
+		f.activeSwitch.State != domain.AgentSwitchDelivering || f.activeSwitch.TargetGenerationID != generation ||
+		f.activeSwitch.TargetAcknowledgedAt != nil {
+		return false, nil
+	}
+	acknowledgedAt := at
+	f.activeSwitch.TargetAcknowledgedAt = &acknowledgedAt
+	f.activeSwitch.UpdatedAt = at
+	return true, nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) ActivateAgentSwitchTarget(_ context.Context, activation domain.AgentSwitchTargetActivation) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.hasActiveSwitch || f.activeSwitch.ID != activation.SwitchID || f.activeSwitch.SessionID != activation.SessionID ||
+		f.activeSwitch.State != domain.AgentSwitchStartingTarget || f.activeSwitch.FromHarness != activation.SourceHarness ||
+		f.activeSwitch.TargetHarness != activation.TargetHarness || f.activeSwitch.SourceGenerationID != activation.SourceGenerationID ||
+		f.activeSwitch.TargetGenerationID != activation.TargetGenerationID {
+		return false, nil
+	}
+	rec, ok := f.sessions[activation.SessionID]
+	if !ok || rec.IsTerminated || rec.Activity.State != domain.ActivityExited || rec.Harness != activation.SourceHarness ||
+		rec.Metadata.RuntimeLaunchID != activation.ExpectedSourceRuntimeLaunchID {
+		return false, nil
+	}
+	rec.Harness = activation.TargetHarness
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: activation.ActivatedAt}
+	rec.FirstSignalAt = time.Time{}
+	rec.Metadata.RuntimeHandleID = activation.RuntimeHandleID
+	rec.Metadata.RuntimeLaunchID = string(activation.TargetGenerationID)
+	rec.UpdatedAt = activation.ActivatedAt
+	f.sessions[activation.SessionID] = rec
+	f.activeSwitch.State = domain.AgentSwitchTargetReady
+	f.activeSwitch.UpdatedAt = activation.ActivatedAt
+	return true, nil
+}
+
+func (f *fakeAgentSwitchLifecycleStore) setActiveSwitch(sw domain.AgentSwitch) {
+	f.mu.Lock()
+	f.activeSwitch = sw
+	f.hasActiveSwitch = true
+	f.mu.Unlock()
+}
+
+func (f *fakeAgentSwitchLifecycleStore) setSession(rec domain.SessionRecord) {
+	f.mu.Lock()
+	f.sessions[rec.ID] = rec
+	f.mu.Unlock()
+}
+
+func (f *fakeAgentSwitchLifecycleStore) session(id domain.SessionID) domain.SessionRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sessions[id]
+}
+
+func (f *fakeAgentSwitchLifecycleStore) acknowledgements() []targetAcknowledgementCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]targetAcknowledgementCall(nil), f.acknowledgementCalls...)
+}
+
+func (f *fakeAgentSwitchLifecycleStore) active() domain.AgentSwitch {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.activeSwitch
+}
+
 type fakeMessenger struct {
 	msgs []string
 	ids  []domain.SessionID
@@ -109,6 +298,21 @@ type fakeCompletionTerminator struct {
 func (f *fakeCompletionTerminator) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	f.calls++
 	return true, f.err
+}
+
+type fixedSessionOperationGate bool
+
+func (g fixedSessionOperationGate) SessionMutationInProgress(domain.SessionID) bool {
+	return bool(g)
+}
+
+type fixedLifecycleInputLease bool
+
+func (l fixedLifecycleInputLease) AcquireSessionInput(domain.SessionID) (func(), bool) {
+	if !l {
+		return nil, false
+	}
+	return func() {}, true
 }
 
 type telemetrySink struct {
@@ -137,7 +341,7 @@ func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
-	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}}
+	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}, AutoInjectReview: true}
 }
 
 func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
@@ -397,6 +601,21 @@ func TestRuntimeObservation_RetriesAfterRevisionChangesDuringFinalization(t *tes
 	}
 	if len(revisions) != 2 || !revisions[0].Equal(rec.UpdatedAt) || !revisions[1].Equal(now) {
 		t.Fatalf("finalizer revisions=%v, want [%s %s]", revisions, rec.UpdatedAt, now)
+	}
+}
+
+func TestRuntimeObservation_ConfirmedDeathIsSuppressedDuringSessionMutation(t *testing.T) {
+	m, st, _ := newManager()
+	m.SetSessionOperationGate(fixedSessionOperationGate(true))
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Workload: ports.ProbeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got != rec {
+		t.Fatalf("runtime observation mutated session during exclusive operation: got %+v, want %+v", got, rec)
 	}
 }
 
@@ -801,6 +1020,304 @@ func TestPrepareLaunchRejectsOverlappingGeneration(t *testing.T) {
 	m.CancelLaunch("mer-1", "launch-1")
 }
 
+func TestActivity_TargetPromptSubmitAcknowledgesDeliveringAgentSwitch(t *testing.T) {
+	now := time.Unix(1_700_000_100, 0).UTC()
+	store := newFakeAgentSwitchLifecycleStore()
+	rec := working("mer-1")
+	rec.Harness = domain.HarnessCodex
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Second)}
+	rec.Metadata.RuntimeLaunchID = "target-generation"
+	store.setSession(rec)
+	store.setActiveSwitch(domain.AgentSwitch{
+		ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchDelivering,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+	})
+	m := New(store, &fakeMessenger{})
+	m.clock = func() time.Time { return now }
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit", LaunchID: "target-generation",
+	}); err != nil {
+		t.Fatalf("ApplyActivitySignal: %v", err)
+	}
+	calls := store.acknowledgements()
+	if len(calls) != 1 {
+		t.Fatalf("acknowledgement calls = %d, want 1", len(calls))
+	}
+	if call := calls[0]; call.switchID != "switch-1" || call.sessionID != rec.ID || call.generation != "target-generation" || !call.at.Equal(now) {
+		t.Fatalf("acknowledgement = %+v, want exact target generation at %v", call, now)
+	}
+	acknowledged := store.active().TargetAcknowledgedAt
+	if acknowledged == nil || !acknowledged.Equal(now) {
+		t.Fatalf("target acknowledgement timestamp = %v, want %v", acknowledged, now)
+	}
+}
+
+func TestActivity_InternalSourceHandoffUpdateNeverReplacesUserFacingAssistant(t *testing.T) {
+	tests := []struct {
+		name          string
+		state         domain.AgentSwitchState
+		handoffStatus domain.AgentHandoffStatus
+	}{
+		{name: "collecting", state: domain.AgentSwitchPreparingHandoff, handoffStatus: domain.AgentHandoffRequested},
+		{name: "already received", state: domain.AgentSwitchPreparingHandoff, handoffStatus: domain.AgentHandoffReceived},
+		{name: "source stop hook", state: domain.AgentSwitchStoppingSource, handoffStatus: domain.AgentHandoffReceived},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeAgentSwitchLifecycleStore()
+			rec := working("mer-1")
+			rec.Harness = domain.HarnessClaudeCode
+			rec.Metadata.RuntimeLaunchID = "source-generation"
+			rec.Metadata.LatestAssistantUpdate = "last real user-facing source update"
+			store.setSession(rec)
+			store.setActiveSwitch(domain.AgentSwitch{
+				ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+				TargetHarness: domain.HarnessCodex, State: tt.state,
+				AgentHandoffStatus: tt.handoffStatus, SourceGenerationID: "source-generation",
+			})
+			m := New(store, &fakeMessenger{})
+
+			if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+				LaunchID: "source-generation", LatestAssistantUpdate: "internal handoff submitted",
+			}); err != nil {
+				t.Fatalf("ApplyActivitySignal: %v", err)
+			}
+			if got := store.session(rec.ID).Metadata.LatestAssistantUpdate; got != rec.Metadata.LatestAssistantUpdate {
+				t.Fatalf("latest assistant update = %q, want preserved %q", got, rec.Metadata.LatestAssistantUpdate)
+			}
+		})
+	}
+}
+
+func TestActivity_SourceUpdateBeforeInternalHandoffRequestRemainsUserFacing(t *testing.T) {
+	for _, status := range []domain.AgentHandoffStatus{domain.AgentHandoffNotAttempted, domain.AgentHandoffUnavailable} {
+		t.Run(string(status), func(t *testing.T) {
+			store := newFakeAgentSwitchLifecycleStore()
+			rec := working("mer-1")
+			rec.Harness = domain.HarnessClaudeCode
+			rec.Metadata.RuntimeLaunchID = "source-generation"
+			rec.Metadata.LatestAssistantUpdate = "earlier source update"
+			store.setSession(rec)
+			store.setActiveSwitch(domain.AgentSwitch{
+				ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+				TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
+				AgentHandoffStatus: status, SourceGenerationID: "source-generation",
+			})
+			m := New(store, &fakeMessenger{})
+
+			if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+				LaunchID: "source-generation", LatestAssistantUpdate: "real turn completed before AO requested a handoff",
+			}); err != nil {
+				t.Fatalf("ApplyActivitySignal: %v", err)
+			}
+			if got := store.session(rec.ID).Metadata.LatestAssistantUpdate; got != "real turn completed before AO requested a handoff" {
+				t.Fatalf("latest assistant update = %q, want legitimate pre-request update", got)
+			}
+		})
+	}
+}
+
+func TestActivity_LateSourceSignalAfterStopConfirmationIsFenced(t *testing.T) {
+	stoppedAt := time.Unix(1_700_000_150, 0).UTC()
+	store := newFakeAgentSwitchLifecycleStore()
+	rec := working("mer-1")
+	rec.Harness = domain.HarnessClaudeCode
+	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: stoppedAt}
+	rec.Metadata.RuntimeLaunchID = "source-generation"
+	rec.Metadata.AgentSessionID = "source-native"
+	rec.Metadata.LatestAssistantUpdate = "last real source update"
+	rec.UpdatedAt = stoppedAt
+	store.setSession(rec)
+	store.setActiveSwitch(domain.AgentSwitch{
+		ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchSourceStopped,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+	})
+	m := New(store, &fakeMessenger{})
+	m.clock = func() time.Time { return stoppedAt.Add(time.Minute) }
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit",
+		LaunchID: "source-generation", AgentSessionID: "late-source-native",
+		LatestAssistantUpdate: "late source callback",
+	}); err != nil {
+		t.Fatalf("ApplyActivitySignal: %v", err)
+	}
+	if got := store.session(rec.ID); got != rec {
+		t.Fatalf("late source signal mutated stopped session: got %+v, want %+v", got, rec)
+	}
+	if calls := store.acknowledgements(); len(calls) != 0 {
+		t.Fatalf("late source signal produced target acknowledgements: %+v", calls)
+	}
+}
+
+func TestActivity_LateSourceSignalAfterTargetActivationIsFenced(t *testing.T) {
+	activatedAt := time.Unix(1_700_000_175, 0).UTC()
+	store := newFakeAgentSwitchLifecycleStore()
+	rec := working("mer-1")
+	rec.Harness = domain.HarnessCodex
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: activatedAt}
+	rec.Metadata.RuntimeLaunchID = "target-generation"
+	rec.Metadata.AgentSessionID = "target-native"
+	rec.UpdatedAt = activatedAt
+	store.setSession(rec)
+	store.setActiveSwitch(domain.AgentSwitch{
+		ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchTargetReady,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+	})
+	m := New(store, &fakeMessenger{})
+	m.clock = func() time.Time { return activatedAt.Add(time.Minute) }
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit",
+		LaunchID: "source-generation", AgentSessionID: "late-source-native",
+	}); err != nil {
+		t.Fatalf("ApplyActivitySignal: %v", err)
+	}
+	if got := store.session(rec.ID); got != rec {
+		t.Fatalf("late source signal mutated target owner: got %+v, want %+v", got, rec)
+	}
+	if calls := store.acknowledgements(); len(calls) != 0 {
+		t.Fatalf("late source signal produced target acknowledgements: %+v", calls)
+	}
+}
+
+func TestActivity_StaleGenerationPromptSubmitDoesNotAcknowledgeAgentSwitch(t *testing.T) {
+	now := time.Unix(1_700_000_200, 0).UTC()
+	store := newFakeAgentSwitchLifecycleStore()
+	rec := working("mer-1")
+	rec.Harness = domain.HarnessCodex
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Second)}
+	rec.Metadata.RuntimeLaunchID = "target-generation"
+	store.setSession(rec)
+	store.setActiveSwitch(domain.AgentSwitch{
+		ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchDelivering,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+	})
+	m := New(store, &fakeMessenger{})
+	m.clock = func() time.Time { return now }
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit", LaunchID: "abandoned-generation",
+	}); err != nil {
+		t.Fatalf("ApplyActivitySignal: %v", err)
+	}
+	if calls := store.acknowledgements(); len(calls) != 0 {
+		t.Fatalf("stale generation produced acknowledgement calls: %+v", calls)
+	}
+	if got := store.session(rec.ID); got != rec {
+		t.Fatalf("stale generation mutated session: got %+v, want %+v", got, rec)
+	}
+}
+
+func TestActivity_TargetPromptSubmitOutsideDeliveryDoesNotAcknowledgeAgentSwitch(t *testing.T) {
+	now := time.Unix(1_700_000_300, 0).UTC()
+	store := newFakeAgentSwitchLifecycleStore()
+	rec := working("mer-1")
+	rec.Harness = domain.HarnessCodex
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Second)}
+	rec.Metadata.RuntimeLaunchID = "target-generation"
+	store.setSession(rec)
+	store.setActiveSwitch(domain.AgentSwitch{
+		ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchTargetReady,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+	})
+	m := New(store, &fakeMessenger{})
+	m.clock = func() time.Time { return now }
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit", LaunchID: "target-generation",
+	}); err != nil {
+		t.Fatalf("ApplyActivitySignal: %v", err)
+	}
+	if calls := store.acknowledgements(); len(calls) != 0 {
+		t.Fatalf("non-delivery state produced acknowledgement calls: %+v", calls)
+	}
+	if got := store.session(rec.ID); got.Activity.State != domain.ActivityActive {
+		t.Fatalf("valid target activity was not applied: %+v", got)
+	}
+}
+
+func TestActivity_ReleaseLaunchUnblocksTargetHookAfterAtomicOwnershipTransfer(t *testing.T) {
+	activatedAt := time.Unix(1_700_000_400, 0).UTC()
+	store := newFakeAgentSwitchLifecycleStore()
+	targetNativeRef := domain.AgentNativeSessionID("native-target")
+	store.native[targetNativeRef] = domain.AgentNativeSession{
+		ID: targetNativeRef, AOSessionID: "mer-1", Harness: domain.HarnessCodex,
+		LastGenerationID: "target-generation",
+		CreatedAt:        activatedAt.Add(-time.Second), LastUsedAt: activatedAt.Add(-time.Second),
+	}
+	rec := working("mer-1")
+	rec.Harness = domain.HarnessClaudeCode
+	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: activatedAt.Add(-time.Second)}
+	rec.Metadata.RuntimeHandleID = "runtime-1"
+	rec.Metadata.RuntimeLaunchID = "source-generation"
+	store.setSession(rec)
+	store.setActiveSwitch(domain.AgentSwitch{
+		ID: "switch-1", SessionID: rec.ID, FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchStartingTarget,
+		SourceGenerationID: "source-generation", TargetGenerationID: "target-generation",
+		TargetNativeSessionRef: &targetNativeRef,
+	})
+	m := New(store, &fakeMessenger{})
+	m.clock = func() time.Time { return activatedAt.Add(time.Second) }
+	if err := m.PrepareLaunch(rec.ID, "target-generation"); err != nil {
+		t.Fatalf("PrepareLaunch: %v", err)
+	}
+
+	signalDone := make(chan error, 1)
+	go func() {
+		signalDone <- m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+			Valid: true, State: domain.ActivityActive, Event: "user-prompt-submit", LaunchID: "target-generation",
+			AgentSessionID: "codex-native", TranscriptPath: "/provider/codex-native.jsonl",
+		})
+	}()
+	select {
+	case err := <-signalDone:
+		t.Fatalf("target hook completed before ownership transfer and ReleaseLaunch: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	store.mu.Lock()
+	stagedNative := store.native[targetNativeRef]
+	stagedSource := store.sessions[rec.ID]
+	store.mu.Unlock()
+	if stagedNative.NativeSessionID != "codex-native" || stagedNative.TranscriptPath != "/provider/codex-native.jsonl" {
+		t.Fatalf("pending target metadata was not staged durably: %+v", stagedNative)
+	}
+	if stagedSource.Harness != domain.HarnessClaudeCode || stagedSource.Metadata.AgentSessionID == "codex-native" {
+		t.Fatalf("pending target hook mutated source-owned session: %+v", stagedSource)
+	}
+
+	activated, err := m.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
+		SwitchID: "switch-1", SessionID: rec.ID, SourceHarness: domain.HarnessClaudeCode,
+		SourceGenerationID: "source-generation", ExpectedSourceRuntimeLaunchID: "source-generation",
+		TargetHarness: domain.HarnessCodex, TargetGenerationID: "target-generation",
+		RuntimeHandleID: "runtime-1", ActivatedAt: activatedAt,
+	})
+	if err != nil || !activated {
+		t.Fatalf("ActivateAgentSwitchTarget = (%v, %v), want (true, nil)", activated, err)
+	}
+	m.ReleaseLaunch(rec.ID, "target-generation")
+	select {
+	case err := <-signalDone:
+		if err != nil {
+			t.Fatalf("released target hook: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReleaseLaunch did not unblock target hook")
+	}
+
+	got := store.session(rec.ID)
+	if got.Harness != domain.HarnessCodex || got.Metadata.RuntimeLaunchID != "target-generation" || got.Metadata.AgentSessionID != "codex-native" || got.Activity.State != domain.ActivityActive {
+		t.Fatalf("released hook did not apply to atomically transferred target owner: %+v", got)
+	}
+}
+
 func TestMarkTerminated(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -1180,10 +1697,11 @@ func TestFormatCIFailureMessageUsesNonMutatingFence(t *testing.T) {
 func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{
-		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1"},
-		{ID: "2", Author: "bob", Body: "already handled", Resolved: true},
-	}}
+	st.comments["pr1"] = []domain.PullRequestComment{
+		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1", AutoInjectReview: true},
+		{ID: "2", Author: "bob", Body: "already handled", Resolved: true, AutoInjectReview: true},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
@@ -1207,16 +1725,55 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_ReviewFeedbackNotInjectedWhenDisabled(t *testing.T) {
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	st.sessions[rec.ID] = rec
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: false}}
+	st.reviews["pr1"] = []domain.PullRequestReview{{ID: "r1", Author: "alice", State: domain.ReviewChangesRequest, Body: "change this too", AutoInjectReview: false}}
+	o := ports.PRObservation{
+		Fetched: true,
+		URL:     "pr1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:  domain.ReviewChangesRequest,
+	}
+	if err := m.ApplyPRObservation(ctx, rec.ID, o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") || strings.Contains(msg.msgs[0], "fix this") {
+		t.Fatalf("messages = %v, want CI only while review feedback is not injected", msg.msgs)
+	}
+}
+
+func TestPRObservation_MixedPersistedCommentDecisions(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{
+		{ID: "1", Author: "alice", Body: "captured while disabled", AutoInjectReview: false},
+		{ID: "2", Author: "alice", Body: "captured while enabled", AutoInjectReview: true},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want only the injectable comment to nudge, got %v", msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "captured while enabled") || strings.Contains(msg.msgs[0], "captured while disabled") {
+		t.Fatalf("nudge did not honor per-comment persisted decisions: %q", msg.msgs[0])
+	}
+}
+
 func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: true}}
 	o := ports.PRObservation{
-		Fetched:  true,
-		URL:      "pr1",
-		CI:       domain.CIFailing,
-		Checks:   []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
-		Review:   domain.ReviewChangesRequest,
-		Comments: []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
+		Fetched: true,
+		URL:     "pr1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:  domain.ReviewChangesRequest,
 	}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
@@ -1249,6 +1806,7 @@ func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: true}}
 	st.listPRsErr = errors.New("transient store read failure")
 	o := ports.PRObservation{
 		Fetched:      true,
@@ -1256,7 +1814,6 @@ func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T)
 		CI:           domain.CIFailing,
 		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
 		Review:       domain.ReviewChangesRequest,
-		Comments:     []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
 		Mergeability: domain.MergeConflicting,
 	}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err == nil {
@@ -1317,7 +1874,8 @@ func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
 func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "please\x1b]0;pwned\afix this"}}}
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Body: "please\x1b]0;pwned\afix this", AutoInjectReview: true}}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
@@ -1330,6 +1888,35 @@ func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
 	}
 	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
 		t.Fatalf("review nudge dropped visible text: %q", got)
+	}
+}
+
+func TestPRObservation_ChangesRequestedReviewUsesPersistedBodyAndDecision(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.reviews["pr1"] = []domain.PullRequestReview{
+		{ID: "r1", Author: "alice\x1b]0;pwned\a", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please\x1b[2Jfix this", AutoInjectReview: true},
+		{ID: "r2", Author: "bob", State: domain.ReviewApproved, Body: "approved", AutoInjectReview: true},
+		{ID: "r3", Author: "carol", State: domain.ReviewChangesRequest, Body: "do not inject", AutoInjectReview: false},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one persisted review nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{"@alice", "please", "fix this", "https://github.com/o/r/pull/1#pullrequestreview-1", "Review ID: r1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("review nudge missing %q:\n%s", want, got)
+		}
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\a') {
+		t.Fatalf("review nudge still carries control bytes: %q", got)
+	}
+	if strings.Contains(got, "approved") || strings.Contains(got, "do not inject") {
+		t.Fatalf("review nudge included an ineligible persisted review: %q", got)
 	}
 }
 
@@ -1476,6 +2063,24 @@ func TestPRObservation_MergedUsesConfiguredTerminator(t *testing.T) {
 	}
 	if terminator.calls != 1 {
 		t.Fatalf("terminator calls = %d, want 1", terminator.calls)
+	}
+}
+
+func TestPRObservation_MergedTerminationIsSuppressedDuringSessionMutation(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	m.SetSessionOperationGate(fixedSessionOperationGate(true))
+	rec := working("mer-1")
+	rec.TerminateOnPRMerge = true
+	st.sessions["mer-1"] = rec
+	st.prs["mer-1"] = []domain.PullRequest{{URL: "pr1", Merged: true}}
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Merged: true}); err != nil {
+		t.Fatal(err)
+	}
+	if terminator.calls != 0 {
+		t.Fatalf("terminator calls = %d, want 0 during session mutation", terminator.calls)
 	}
 }
 
@@ -1797,12 +2402,16 @@ func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 		{
 			name:   "worker waiting input",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}},
+			rec: func() domain.SessionRecord {
+				r := working("mer-1")
+				r.Activity.State = domain.ActivityWaitingInput
+				return r
+			}(),
 		},
 		{
 			name:   "worker agent exited",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityExited}},
+			rec:    func() domain.SessionRecord { r := working("mer-1"); r.Activity.State = domain.ActivityExited; return r }(),
 		},
 	}
 	for _, tt := range tests {
@@ -1840,6 +2449,41 @@ func TestApplyTrackerFacts_TerminalStateMarksTerminated(t *testing.T) {
 				t.Fatalf("terminal state should not nudge, got %v", msg.msgs)
 			}
 		})
+	}
+}
+
+func TestApplyTrackerFacts_TerminalStateIsSuppressedDuringSessionMutation(t *testing.T) {
+	m, st, _ := newManager()
+	m.SetSessionOperationGate(fixedSessionOperationGate(true))
+	rec := working("mer-1")
+	st.sessions["mer-1"] = rec
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueDone},
+	}
+
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if got := st.sessions["mer-1"]; got != rec {
+		t.Fatalf("tracker observation mutated session during exclusive operation: got %+v, want %+v", got, rec)
+	}
+}
+
+func TestLifecycleNudgeUsesLateBoundSessionInputLease(t *testing.T) {
+	m, st, msg := newManager()
+	m.SetSessionInputLease(fixedLifecycleInputLease(false))
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityIdle}}
+
+	outcome, err := m.sendOnce(ctx, "mer-1", "", "tracker-comment:1", "1", "review this", 0)
+	if err != nil {
+		t.Fatalf("sendOnce: %v", err)
+	}
+	if outcome != sendOnceSuppressed {
+		t.Fatalf("sendOnce outcome = %v, want suppressed", outcome)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("lifecycle nudge bypassed closed input lease: %v", msg.msgs)
 	}
 }
 

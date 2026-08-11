@@ -216,6 +216,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
 	}
+	if got, want := capturePaneStyledArgs("sess-1", 10), []string{"capture-pane", "-e", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("capturePaneStyledArgs = %#v, want %#v", got, want)
+	}
 }
 
 // -- session name sanitization --
@@ -406,13 +409,31 @@ func TestBuildLaunchCommandOutputOnlyOmitsKeepAliveShell(t *testing.T) {
 	launchCmd := buildLaunchCommand(ports.RuntimeConfig{
 		WorkspacePath:    "/tmp/ws",
 		Argv:             []string{"greptile", "review", "--json"},
+		Env:              map[string]string{"AO_SUPERVISED_PROCESS": "1"},
 		TerminalBehavior: ports.TerminalOutputOnly,
 	})
 	if strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
 		t.Fatalf("output-only launch command opens a shell: %q", launchCmd)
 	}
+	if strings.Contains(launchCmd, `exec cat >/dev/null`) {
+		t.Fatalf("output-only launch command starts an input sink: %q", launchCmd)
+	}
 	if !strings.Contains(launchCmd, "'greptile' 'review' '--json'") {
 		t.Fatalf("launch command missing argv: %q", launchCmd)
+	}
+}
+
+func TestBuildLaunchCommandSupervisedUsesInputSink(t *testing.T) {
+	launchCmd := buildLaunchCommand(ports.RuntimeConfig{
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+		Env:           map[string]string{"AO_SUPERVISED_PROCESS": "1"},
+	})
+	if !strings.Contains(launchCmd, `exec cat >/dev/null`) {
+		t.Fatalf("supervised launch command missing input sink: %q", launchCmd)
+	}
+	if strings.Contains(launchCmd, `exec "${SHELL:-/bin/sh}" -i`) {
+		t.Fatalf("supervised launch command opens an interactive shell: %q", launchCmd)
 	}
 }
 
@@ -790,18 +811,31 @@ func TestIsSupervisedProcessAliveFindsExactDescendant(t *testing.T) {
 }
 
 func TestIsSupervisedProcessAliveRejectsStaleAndUnrelatedProcesses(t *testing.T) {
-	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-old -- codex\n200 1 /opt/ao agent-process supervise --session sess-1 --launch launch-new -- codex\n")
+	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-old -- codex\n102 101 codex\n200 1 /opt/ao agent-process supervise --session sess-1 --launch launch-new -- codex\n201 200 codex\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if containsSupervisor(entries, 100, "sess-1", "launch-new") {
+	if containsExactSupervisedWorkload(entries, 100, "sess-1", "launch-new") {
 		t.Fatal("stale descendant or matching process outside the pane tree was accepted")
 	}
 	if containsManagedWorkload(entries, 100, "sess-1", "launch-new") {
 		t.Fatal("stale supervised generation was accepted as a manual workload")
 	}
-	if !containsSupervisor(entries, 100, "sess-1", "launch-old") {
+	if !containsExactSupervisedWorkload(entries, 100, "sess-1", "launch-old") {
 		t.Fatal("exact supervised descendant was not found")
+	}
+}
+
+func TestExactSupervisedWorkloadRejectsSupervisorReportingExitedChild(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-2 -- codex\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsExactSupervisedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("supervisor without a managed child was accepted as a live target")
+	}
+	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("ordinary reaper should retain a supervisor while it reports the child exit")
 	}
 }
 
@@ -812,6 +846,21 @@ func TestIsSupervisedProcessAliveFindsManualRelaunchFromPreservedShell(t *testin
 	}
 	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
 		t.Fatal("workload relaunched from the preserved shell was not found")
+	}
+}
+
+func TestIsExactSupervisedProcessAliveRejectsManualRelaunchFromPreservedShell(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{
+		[]byte("100\n"),
+		[]byte("100 1 /bin/zsh -i\n101 100 codex resume native-1\n102 101 codex worker\n"),
+	}
+	alive, err := r.IsExactSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-2",
+	})
+	if err != nil || alive {
+		t.Fatalf("IsExactSupervisedProcessAlive = (%v, %v), want (false, nil)", alive, err)
 	}
 }
 
@@ -1212,6 +1261,22 @@ func TestGetOutputArgs(t *testing.T) {
 		t.Fatalf("GetOutput: %v", err)
 	}
 	if got, want := fr.calls[0].args, capturePaneArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
+		t.Fatalf("capture-pane args = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetStyledOutputPreservesCaptureMode(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("› \x1b[2mplaceholder\x1b[0m\n")}
+
+	out, err := r.GetStyledOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, 10)
+	if err != nil {
+		t.Fatalf("GetStyledOutput: %v", err)
+	}
+	if !strings.Contains(out, "\x1b[2m") {
+		t.Fatalf("styled output lost SGR sequence: %q", out)
+	}
+	if got, want := fr.calls[0].args, capturePaneStyledArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
 		t.Fatalf("capture-pane args = %#v, want %#v", got, want)
 	}
 }
