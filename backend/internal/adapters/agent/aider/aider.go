@@ -100,13 +100,6 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchCo
 	return ports.PromptDeliveryAfterStart, nil
 }
 
-// Transcript reads the agent's native transcript and returns a normalized
-// list of user/assistant turns. This stub returns no transcript; adapters with
-// native transcript storage override it to read from their own session files.
-func (p *Plugin) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
-	return nil, false, nil
-}
-
 // normalizePermissionMode collapses an empty mode onto PermissionModeDefault so
 // callers can switch over a stable set of values.
 func normalizePermissionMode(mode ports.PermissionMode) ports.PermissionMode {

@@ -172,13 +172,6 @@ func (p *Plugin) ResolveBinary(ctx context.Context) (string, error) {
 	return p.primeAgentBinary(ctx)
 }
 
-// Transcript reads the agent's native transcript and returns a normalized
-// list of user/assistant turns. This stub returns no transcript; adapters with
-// native transcript storage override it to read from their own session files.
-func (p *Plugin) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
-	return nil, false, nil
-}
-
 func (p *Plugin) primeAgentBinary(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

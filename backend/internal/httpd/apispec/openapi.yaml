@@ -6320,6 +6320,8 @@ components:
       type: object
     PortsTranscriptMessage:
       properties:
+        index:
+          type: integer
         role:
           type: string
         text:
@@ -6327,6 +6329,7 @@ components:
       required:
       - role
       - text
+      - index
       type: object
     PreviewServerStatusResponse:
       properties:

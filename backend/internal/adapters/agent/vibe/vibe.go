@@ -173,13 +173,6 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, ok, nil
 }
 
-// Transcript reads the agent's native transcript and returns a normalized
-// list of user/assistant turns. This stub returns no transcript; adapters with
-// native transcript storage override it to read from their own session files.
-func (p *Plugin) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
-	return nil, false, nil
-}
-
 // appendWorkdirFlag adds Vibe's explicit `--workdir` flag. Vibe validates its
 // own working directory in addition to the process cwd AO sets.
 func appendWorkdirFlag(cmd *[]string, workspacePath string) {

@@ -41,9 +41,6 @@ func (a *captureAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreCon
 func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
 }
-func (a *captureAgent) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
-	return nil, false, nil
-}
 
 func TestReviewCommandAppliesBestEffortPolicyOffBypass(t *testing.T) {
 	agent := &captureAgent{}

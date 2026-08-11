@@ -220,9 +220,6 @@ func (f fakeAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]st
 func (f fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
 }
-func (f fakeAgent) Transcript(context.Context, ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
-	return nil, false, nil
-}
 
 func (f fakeAuthAgent) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	if f.authDelay > 0 {

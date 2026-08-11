@@ -80,6 +80,7 @@ func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentTranscriptReader = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.EmptyComposerDetector = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
@@ -356,14 +357,17 @@ func (p *Plugin) readClaudeTranscript(ctx context.Context, path string) ([]ports
 	defer func() { _ = f.Close() }()
 
 	var transcript []ports.TranscriptMessage
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
+	reader := bufio.NewReader(f)
+	for {
+		line, ok, err := agentbase.ReadTranscriptLine(reader)
+		if err != nil {
+			return nil, false, fmt.Errorf("claude-code: scan transcript: %w", err)
+		}
+		if !ok {
+			break
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
-		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
 		}
 		var entry struct {
 			Type    string `json:"type"`
@@ -405,11 +409,12 @@ func (p *Plugin) readClaudeTranscript(ctx context.Context, path string) ([]ports
 			}
 		}
 		if len(texts) > 0 {
-			transcript = append(transcript, ports.TranscriptMessage{Role: role, Text: strings.Join(texts, "\n")})
+			transcript = append(transcript, ports.TranscriptMessage{
+				Role:  role,
+				Text:  strings.Join(texts, "\n"),
+				Index: len(transcript),
+			})
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, false, fmt.Errorf("claude-code: scan transcript: %w", err)
 	}
 	return transcript, len(transcript) > 0, nil
 }

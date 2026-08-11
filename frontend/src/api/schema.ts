@@ -2148,6 +2148,7 @@ export interface components {
             title: string;
         };
         PortsTranscriptMessage: {
+            index: number;
             role: string;
             text: string;
         };

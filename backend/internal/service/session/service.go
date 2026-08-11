@@ -67,6 +67,9 @@ type commander interface {
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 	// Agent returns the agent adapter for a session's harness, or (nil, false) if unknown.
 	Agent(ctx context.Context, id domain.SessionID) (ports.Agent, bool, error)
+	// NativeSessionConfigDir resolves the agent-native state root a session's
+	// harness used (stored native-session binding first, then live resolution).
+	NativeSessionConfigDir(ctx context.Context, id domain.SessionID) (string, error)
 }
 
 // interfaceTransitionCommander is an optional command capability. Keeping it
@@ -984,6 +987,13 @@ func (s *Service) Transcript(ctx context.Context, id domain.SessionID) ([]ports.
 	if !ok || agent == nil {
 		return nil, nil
 	}
+	reader, ok := agent.(ports.AgentTranscriptReader)
+	if !ok {
+		// The harness records no parseable native transcript; degrade to an
+		// empty (not error) transcript rather than forcing every adapter to
+		// implement a stub.
+		return nil, nil
+	}
 	metadata := map[string]string{
 		"agentSessionId": rec.Metadata.AgentSessionID,
 		"workspacePath":  rec.Metadata.WorkspacePath,
@@ -997,12 +1007,26 @@ func (s *Service) Transcript(ctx context.Context, id domain.SessionID) ([]ports.
 	if rec.Metadata.Branch != "" {
 		metadata["branch"] = rec.Metadata.Branch
 	}
+	// A session whose agent config dir is not at the default location (e.g.
+	// CODEX_HOME / CLAUDE_CONFIG_DIR set at launch) must still resolve its
+	// transcript. Pass the stored/live native-session config dir through under
+	// the keys the adapters already read so they don't fall back to defaults.
+	if configDir, err := s.manager.NativeSessionConfigDir(ctx, id); err == nil && configDir != "" {
+		switch rec.Harness {
+		case domain.HarnessCodex:
+			metadata["codexHome"] = configDir
+		case domain.HarnessClaudeCode:
+			metadata["claudeConfigDir"] = configDir
+		case domain.HarnessOpenCode:
+			metadata["opencodeDataDir"] = configDir
+		}
+	}
 	sessionRef := ports.SessionRef{
 		ID:            string(id),
 		Metadata:      metadata,
 		WorkspacePath: rec.Metadata.WorkspacePath,
 	}
-	messages, ok, err := agent.Transcript(ctx, sessionRef)
+	messages, ok, err := reader.Transcript(ctx, sessionRef)
 	if err != nil {
 		return nil, err
 	}

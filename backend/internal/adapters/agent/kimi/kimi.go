@@ -169,13 +169,6 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	return cmd, true, nil
 }
 
-// Transcript reads the agent's native transcript and returns a normalized
-// list of user/assistant turns. This stub returns no transcript; adapters with
-// native transcript storage override it to read from their own session files.
-func (p *Plugin) Transcript(_ context.Context, _ ports.SessionRef) ([]ports.TranscriptMessage, bool, error) {
-	return nil, false, nil
-}
-
 // appendApprovalFlags maps AO's permission modes onto Kimi's approval flags
 // for interactive launches. Per Kimi docs these flags cannot be combined with
 // `--prompt`, `--session`, or `--continue`, so callers on those paths must

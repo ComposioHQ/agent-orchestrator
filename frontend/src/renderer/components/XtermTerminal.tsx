@@ -265,6 +265,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
+	// clipboardTokenRef guards async clipboard writes. Every intentional copy
+	// action bumps the token; an async write only proceeds if the token is
+	// still current when the data arrives, so a late-arriving transcript can
+	// never overwrite newer clipboard content the user copied in the meantime.
+	const clipboardTokenRef = useRef(0);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
 		canCopy: false,
 		open: false,
@@ -418,6 +423,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const copySelection = (options?: { clipboardData?: DataTransfer | null; dedupe?: boolean }) => {
 			const selection = term.getSelection();
 			if (!selection || (options?.dedupe && selection === lastCopiedSelection)) return false;
+			// This selection is the newest copy intent: any in-flight async
+			// transcript write must no longer hit the clipboard.
+			clipboardTokenRef.current += 1;
 			options?.clipboardData?.setData("text/plain", selection);
 			void aoBridge.clipboard
 				.writeText(selection)
@@ -491,6 +499,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			copyTranscript: async () => {
 				const sessionId = callbacksRef.current.sessionId;
 				if (!sessionId) return;
+				// Bump the token so an older in-flight transcript fetch can no
+				// longer clobber the clipboard with stale content.
+				clipboardTokenRef.current += 1;
+				const token = clipboardTokenRef.current;
 				try {
 					const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", {
 						params: { path: { sessionId } },
@@ -501,6 +513,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					}
 					const messages = data.messages;
 					if (!messages || messages.length === 0) return;
+					// A newer copy intent (selection, another transcript, paste
+					// selection copy) supersedes this one; don't overwrite it.
+					if (clipboardTokenRef.current !== token) return;
 					const text = messages
 						.map((m) => `${m.role === "user" ? "User" : "Assistant"}:\n${m.text}`)
 						.join("\n\n---\n\n");

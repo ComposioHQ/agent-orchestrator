@@ -1014,9 +1014,9 @@ func TestTranscriptReadsClaudeSession(t *testing.T) {
 		t.Fatal("ok = false, want true")
 	}
 	want := []ports.TranscriptMessage{
-		{Role: "user", Text: "hello"},
-		{Role: "assistant", Text: "hi there"},
-		{Role: "user", Text: "plain string text"},
+		{Role: "user", Text: "hello", Index: 0},
+		{Role: "assistant", Text: "hi there", Index: 1},
+		{Role: "user", Text: "plain string text", Index: 2},
 	}
 	if !reflect.DeepEqual(messages, want) {
 		t.Fatalf("messages\nwant: %#v\n got: %#v", want, messages)

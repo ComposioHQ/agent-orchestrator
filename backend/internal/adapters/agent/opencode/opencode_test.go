@@ -987,8 +987,8 @@ func TestTranscriptReadsOpencodeDB(t *testing.T) {
 		t.Fatal("ok = false, want true")
 	}
 	want := []ports.TranscriptMessage{
-		{Role: "user", Text: "hello"},
-		{Role: "assistant", Text: "hi there"},
+		{Role: "user", Text: "hello", Index: 0},
+		{Role: "assistant", Text: "hi there", Index: 1},
 	}
 	if !reflect.DeepEqual(messages, want) {
 		t.Fatalf("messages\nwant: %#v\n got: %#v", want, messages)

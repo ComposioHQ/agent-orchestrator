@@ -74,7 +74,9 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentTranscriptReader = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentNativeSessionConfigProvider = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -184,9 +186,13 @@ func (p *Plugin) Transcript(ctx context.Context, session ports.SessionRef) ([]po
 	if agentSessionID == "" {
 		return nil, false, nil
 	}
-	dataDir, ok := opencodeDataDir()
-	if !ok {
-		return nil, false, nil
+	dataDir := strings.TrimSpace(session.Metadata["opencodeDataDir"])
+	if dataDir == "" {
+		var ok bool
+		dataDir, ok = opencodeDataDir()
+		if !ok {
+			return nil, false, nil
+		}
 	}
 	dbPath := filepath.Join(dataDir, "opencode.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -200,6 +206,26 @@ func (p *Plugin) Transcript(ctx context.Context, session ports.SessionRef) ([]po
 	}
 	defer func() { _ = db.Close() }()
 	return p.readOpencodeTranscript(ctx, db, agentSessionID)
+}
+
+// NativeSessionConfigDir resolves opencode's data directory for a launch. It
+// honors OPENCODE_DATA_DIR / XDG_DATA_HOME from the session env (matching the
+// env the runtime was launched with) before falling back to the daemon
+// environment and the default ~/.local/share/opencode location.
+func (p *Plugin) NativeSessionConfigDir(ctx context.Context, env map[string]string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if dataDir := strings.TrimSpace(env["OPENCODE_DATA_DIR"]); dataDir != "" {
+		return filepath.Clean(dataDir), nil
+	}
+	if dataHome := strings.TrimSpace(env["XDG_DATA_HOME"]); dataHome != "" {
+		return filepath.Join(dataHome, "opencode"), nil
+	}
+	if dir, ok := opencodeDataDir(); ok {
+		return filepath.Clean(dir), nil
+	}
+	return "", fmt.Errorf("opencode: cannot resolve data dir")
 }
 
 func (p *Plugin) readOpencodeTranscript(ctx context.Context, db *sql.DB, agentSessionID string) ([]ports.TranscriptMessage, bool, error) {
@@ -248,14 +274,16 @@ func (p *Plugin) readOpencodeTranscript(ctx context.Context, db *sql.DB, agentSe
 		}
 		text, ok, err := p.getMessageText(ctx, db, msg.id)
 		if err != nil {
-			return nil, false, err
+			// Keep the rest of the transcript: one unreadable message must not
+			// fail the whole copy.
+			continue
 		}
 		if !ok || text == "" {
 			continue
 		}
 		role := msg.role
 		if role == "user" || role == "assistant" {
-			transcript = append(transcript, ports.TranscriptMessage{Role: role, Text: text})
+			transcript = append(transcript, ports.TranscriptMessage{Role: role, Text: text, Index: len(transcript)})
 		}
 	}
 	return transcript, len(transcript) > 0, nil

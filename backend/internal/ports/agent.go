@@ -57,10 +57,6 @@ type Agent interface {
 	// SessionInfo reads agent-owned session metadata such as native session id,
 	// display title, or summary. ok=false means no info is available.
 	SessionInfo(ctx context.Context, session SessionRef) (info SessionInfo, ok bool, err error)
-
-	// Transcript reads the agent's native transcript and returns a normalized
-	// list of user/assistant turns. ok=false means no transcript is available.
-	Transcript(ctx context.Context, session SessionRef) (messages []TranscriptMessage, ok bool, err error)
 }
 
 // AgentAuthChecker is the optional capability for adapters whose native CLI has
@@ -429,10 +425,13 @@ type SessionInfo struct {
 
 // TranscriptMessage is one normalized turn from an agent's native transcript.
 // Role is "user" or "assistant"; Text is the plain content suitable for
-// clipboard copy, with ANSI/markup stripped by the adapter.
+// clipboard copy, with ANSI/markup stripped by the adapter. Index is the
+// 0-based position of the message within the returned transcript so clients
+// can reference individual messages without relying on slice identity.
 type TranscriptMessage struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
+	Role  string `json:"role"`
+	Text  string `json:"text"`
+	Index int    `json:"index"`
 }
 
 // PermissionMode controls how much review an agent requires before acting. It

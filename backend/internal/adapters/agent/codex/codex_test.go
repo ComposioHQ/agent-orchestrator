@@ -1059,9 +1059,9 @@ func TestTranscriptReadsCodexRollout(t *testing.T) {
 		t.Fatal("ok = false, want true")
 	}
 	want := []ports.TranscriptMessage{
-		{Role: "user", Text: "fix the tests"},
-		{Role: "assistant", Text: "done"},
-		{Role: "assistant", Text: "here is the patch"},
+		{Role: "user", Text: "fix the tests", Index: 0},
+		{Role: "assistant", Text: "done", Index: 1},
+		{Role: "assistant", Text: "here is the patch", Index: 2},
 	}
 	if !reflect.DeepEqual(messages, want) {
 		t.Fatalf("messages\nwant: %#v\n got: %#v", want, messages)
