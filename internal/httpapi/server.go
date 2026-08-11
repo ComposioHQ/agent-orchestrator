@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,10 +15,16 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
+	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// DefaultMaxSandboxesPerOrg caps how much provider capacity one organization
+// can hold at once.
+const DefaultMaxSandboxesPerOrg = 10
 
 type Store interface {
 	Ping(context.Context) error
@@ -35,6 +42,21 @@ type Store interface {
 	GetSession(context.Context, domain.Principal, string, string) (domain.Session, error)
 	SendMessage(context.Context, domain.Principal, string, string, string, string) (domain.ClientEvent, error)
 	ListClientEvents(context.Context, domain.Principal, string, string, int64, int) ([]domain.ClientEvent, bool, error)
+	CountActiveSandboxes(context.Context, domain.Principal, string) (int, error)
+	RedeemWorkerBootstrapTicket(context.Context, string) (domain.AccessTicket, error)
+	WorkerLaunchSpec(context.Context, string, string) (domain.WorkerLaunch, error)
+	RegisterWorkerBootstrap(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
+	WorkerConnectionCurrent(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (bool, error)
+	MarkWorkerSeen(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
+	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
+}
+
+// WorkerTokens issues and verifies the short-lived credentials sandbox workers
+// present. It is nil when the deployment runs without sandbox provisioning, in
+// which case the worker routes report 404 rather than failing open.
+type WorkerTokens interface {
+	Issue(worker.Claims, time.Duration) (string, error)
+	Verify(string) (worker.Claims, error)
 }
 
 type Server struct {
@@ -44,6 +66,9 @@ type Server struct {
 	localSessionTTL     time.Duration
 	localAuthLimiter    *fixedWindowLimiter
 	sandboxProvider     string
+	provisioning        sandbox.ProvisioningDefaults
+	workerTokens        WorkerTokens
+	maxSandboxes        int
 	environment         string
 	release             string
 	draining            atomic.Bool
@@ -63,6 +88,9 @@ type Options struct {
 	LocalAuthEnabled    bool
 	LocalSessionTTL     time.Duration
 	SandboxProvider     string
+	Provisioning        sandbox.ProvisioningDefaults
+	WorkerTokens        WorkerTokens
+	MaxSandboxes        int
 	Environment         string
 	Release             string
 	Logger              *slog.Logger
@@ -79,7 +107,7 @@ func New(options Options) *Server {
 	}
 	sandboxProvider := options.SandboxProvider
 	if sandboxProvider == "" {
-		sandboxProvider = "ecs"
+		sandboxProvider = sandbox.DefaultProvider
 	}
 	environment := options.Environment
 	if environment == "" {
@@ -93,6 +121,12 @@ func New(options Options) *Server {
 	if webhookMaxBody == 0 {
 		webhookMaxBody = 2 << 20
 	}
+	// An unset quota must not read as "no capacity at all", which would reject
+	// every session with a 409 the caller cannot act on.
+	maxSandboxes := options.MaxSandboxes
+	if maxSandboxes <= 0 {
+		maxSandboxes = DefaultMaxSandboxesPerOrg
+	}
 	server := &Server{
 		store:               options.Store,
 		workos:              options.WorkOS,
@@ -100,6 +134,9 @@ func New(options Options) *Server {
 		localSessionTTL:     options.LocalSessionTTL,
 		localAuthLimiter:    newFixedWindowLimiter(10, time.Minute, 4096),
 		sandboxProvider:     sandboxProvider,
+		provisioning:        options.Provisioning,
+		workerTokens:        options.WorkerTokens,
+		maxSandboxes:        maxSandboxes,
 		environment:         environment,
 		release:             release,
 		drain:               make(chan struct{}),
@@ -111,6 +148,10 @@ func New(options Options) *Server {
 	}
 	if server.credentialValidator == nil {
 		server.credentialValidator = newAgentCredentialValidator(nil)
+	}
+	server.provisioning.Provider = sandboxProvider
+	if server.provisioning.Release == "" {
+		server.provisioning.Release = release
 	}
 	router := chi.NewRouter()
 	router.Use(server.requestID)
@@ -128,6 +169,15 @@ func New(options Options) *Server {
 		router.Post("/auth/local/login", server.loginLocal)
 		router.With(server.authenticate).Post("/auth/local/logout", server.logoutLocal)
 		router.With(server.authenticate).Get("/me", server.me)
+		// Workers hold no user identity, so they never pass through
+		// server.authenticate. Bootstrap is gated by a one-time ticket;
+		// everything after it by a short-lived worker token.
+		router.Post("/worker/bootstrap", server.workerBootstrap)
+		router.Group(func(router chi.Router) {
+			router.Use(server.workerAuth)
+			router.Post("/worker/heartbeat", server.workerHeartbeat)
+			router.Post("/worker/events", server.workerEvent)
+		})
 		router.Route("/orgs/{orgId}", func(router chi.Router) {
 			router.Use(server.authenticate)
 			if server.github != nil {
