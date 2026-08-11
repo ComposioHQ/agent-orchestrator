@@ -104,6 +104,7 @@ func TestSystemdWaitActiveIsBoundedWhenUnitNeverAppears(t *testing.T) {
 
 type fakeContainment struct {
 	validateErr error
+	waitErr     error
 	releaseErr  error
 	wrap        string
 	validated   int
@@ -127,7 +128,7 @@ func (f *fakeContainment) WrapCommand(_, launchCmd, unit string, _ time.Duration
 
 func (f *fakeContainment) WaitActive(_ context.Context, unit string) error {
 	f.waited = append(f.waited, unit)
-	return nil
+	return f.waitErr
 }
 
 func (f *fakeContainment) Release(_ context.Context, unit string) error {
@@ -194,6 +195,116 @@ func TestScopedRestartDoesNotRespawnAfterReleaseFailure(t *testing.T) {
 	if len(fr.calls) != 0 {
 		t.Fatalf("runtime called after release failure: %#v", fr.calls)
 	}
+}
+
+func TestScopedRestartReleasesReplacementWhenReadinessFails(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{waitErr: errors.New("scope state unavailable")}
+	r.containment = fc
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") {
+		t.Fatalf("Restart error = %v, want readiness failure", err)
+	}
+	wantReleases := []string{"ao-session-sess-1.scope", "ao-session-sess-1.scope"}
+	if !reflect.DeepEqual(fc.released, wantReleases) {
+		t.Fatalf("releases = %#v, want old scope release plus failed replacement cleanup %#v", fc.released, wantReleases)
+	}
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "respawn-pane" {
+		t.Fatalf("runtime calls = %#v, want only replacement respawn before readiness failure", fr.calls)
+	}
+}
+
+func TestScopedRestartReleasesReplacementWhenRespawnFails(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{{err: errors.New("respawn outcome unknown")}}}
+	r.runner = fr
+	fc := &fakeContainment{}
+	r.containment = fc
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "respawn outcome unknown") {
+		t.Fatalf("Restart error = %v, want respawn failure", err)
+	}
+	wantReleases := []string{"ao-session-sess-1.scope", "ao-session-sess-1.scope"}
+	if !reflect.DeepEqual(fc.released, wantReleases) {
+		t.Fatalf("releases = %#v, want old scope release plus uncertain replacement cleanup %#v", fc.released, wantReleases)
+	}
+}
+
+func TestScopedRestartReleasesReplacementWhenLivenessProbeFails(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{},
+		{err: errors.New("tmux probe unavailable")},
+	}}
+	r.runner = fr
+	fc := &fakeContainment{}
+	r.containment = fc
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "tmux probe unavailable") {
+		t.Fatalf("Restart error = %v, want liveness failure", err)
+	}
+	wantReleases := []string{"ao-session-sess-1.scope", "ao-session-sess-1.scope"}
+	if !reflect.DeepEqual(fc.released, wantReleases) {
+		t.Fatalf("releases = %#v, want old scope release plus failed replacement cleanup %#v", fc.released, wantReleases)
+	}
+}
+
+func TestScopedRestartReportsReplacementCleanupFailure(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &scriptedReleaseContainment{
+		waitErr:     errors.New("scope state unavailable"),
+		releaseErrs: []error{nil, errors.New("scope still active")},
+	}
+	r.containment = fc
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") || !strings.Contains(err.Error(), "scope still active") {
+		t.Fatalf("Restart error = %v, want readiness and cleanup failures", err)
+	}
+	if len(fr.calls) != 1 || len(fc.released) != 2 {
+		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+type scriptedReleaseContainment struct {
+	waitErr     error
+	releaseErrs []error
+	released    []string
+}
+
+func (*scriptedReleaseContainment) Validate(context.Context) error { return nil }
+
+func (*scriptedReleaseContainment) WrapCommand(_, launchCmd, _ string, _ time.Duration) string {
+	return launchCmd
+}
+
+func (s *scriptedReleaseContainment) WaitActive(context.Context, string) error {
+	return s.waitErr
+}
+
+func (s *scriptedReleaseContainment) Release(_ context.Context, unit string) error {
+	s.released = append(s.released, unit)
+	if len(s.releaseErrs) == 0 {
+		return nil
+	}
+	err := s.releaseErrs[0]
+	s.releaseErrs = s.releaseErrs[1:]
+	return err
 }
 
 func TestScopedDestroyReleasesEvenWhenTmuxIsMissing(t *testing.T) {

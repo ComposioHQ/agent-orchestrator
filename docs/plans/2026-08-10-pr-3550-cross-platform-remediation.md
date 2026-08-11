@@ -1,7 +1,7 @@
 # PR #3550 cross-platform remediation and validation
 
 Status: active; Slices 1-6 complete and refreshed onto upstream `main`
-`cfbefa4c`; exact-head GitHub validation and independent review in progress
+`cfbefa4c`; Slice 7 review remediation and exact-head revalidation in progress
 
 Date: 2026-08-10
 
@@ -317,6 +317,28 @@ Acceptance:
 - unresolved actionable review threads equal zero; and
 - the collaborator's top-level blocker has a concise evidence-backed response
   and a re-review request.
+
+Review round 1 on 2026-08-11 inspected exact range
+`cfbefa4cdbd5e8c8e020177e53d105f10e5f44ee..b82e0918b813ac861776d1e01fc88995e93810d7`
+separately from CI. Fork PR #28 passed the Go, lint, API drift, secret scan,
+container, and Ubuntu/macOS/Windows native jobs, including the focused config
+step on all three platforms. The code review nevertheless found one actionable
+failure-cleanup defect: after `Restart` had respawned a scoped pane, a readiness
+or liveness error returned no handle and did not release the replacement scope,
+so a worker could remain active after the caller observed failure.
+
+The correction releases that exact replacement scope on every post-respawn
+error, uses a cancellation-detached bounded cleanup context, and joins any
+cleanup failure with the original error. Hermetic tests cover uncertain
+respawn outcome, readiness failure, liveness-probe failure, and cleanup failure.
+Because this changes the head, all hosted checks and the exact-current-head
+review must run again before the collaborator response or re-review request.
+
+The review also retained the ADR's documented out-of-scope residual: changing
+the daemon-wide containment setting across a restart is not a durable
+per-session migration, and crash-time scope reconciliation/persisted cleanup
+facts remain follow-up work. This slice does not widen into that lifecycle or
+storage redesign.
 
 ### Slice 8: handoff and cleanup
 

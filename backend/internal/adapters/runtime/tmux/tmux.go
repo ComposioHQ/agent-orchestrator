@@ -411,21 +411,40 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 		launchCmd = r.containment.WrapCommand(r.shell, launchCmd, unit, r.reapGrace)
 	}
 	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
+		cause := fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
+		return ports.RuntimeHandle{}, r.cleanupFailedRestart(ctx, id, unit, cause)
 	}
 	if r.containment != nil {
 		if err := r.containment.WaitActive(ctx, unit); err != nil {
-			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify restarted process containment %s: %w", id, err)
+			cause := fmt.Errorf("tmux runtime: verify restarted process containment %s: %w", id, err)
+			return ports.RuntimeHandle{}, r.cleanupFailedRestart(ctx, id, unit, cause)
 		}
 	}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err)
+		cause := fmt.Errorf("tmux runtime: verify restarted session %s: %w", id, err)
+		return ports.RuntimeHandle{}, r.cleanupFailedRestart(ctx, id, unit, cause)
 	}
 	if !alive {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: session %s exited during restart", id)
+		cause := fmt.Errorf("tmux runtime: session %s exited during restart", id)
+		return ports.RuntimeHandle{}, r.cleanupFailedRestart(ctx, id, unit, cause)
 	}
 	return handle, nil
+}
+
+// cleanupFailedRestart releases a replacement scope when Restart cannot prove
+// that the new pane is ready. The caller never receives a successful runtime
+// result on these paths, so leaving the scope active would strand an unowned
+// worker. The tmux session itself remains available through remain-on-exit and
+// can be respawned by a subsequent Restart.
+func (r *Runtime) cleanupFailedRestart(ctx context.Context, id, unit string, cause error) error {
+	if r.containment == nil {
+		return cause
+	}
+	if err := r.containment.Release(context.WithoutCancel(ctx), unit); err != nil {
+		return errors.Join(cause, fmt.Errorf("tmux runtime: cleanup restarted process containment %s: %w", id, err))
+	}
+	return cause
 }
 
 // paneCwdVerifyAttempts and paneCwdVerifyRetryDelay bound how long Create
