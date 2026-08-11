@@ -43,10 +43,12 @@ func New(deps Deps) *Workspace {
 	}
 }
 
+// RemoteExists delegates to the git workspace adapter for the repository at repoPath.
 func (w *Workspace) RemoteExists(ctx context.Context, repoPath, remote string) (bool, error) {
 	return w.git.RemoteExists(ctx, repoPath, remote)
 }
 
+// FetchDefaultBranch delegates default-branch fetching to the git workspace adapter.
 func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath, remote, branch string) error {
 	return w.git.FetchDefaultBranch(ctx, repoPath, remote, branch)
 }

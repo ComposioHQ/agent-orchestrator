@@ -120,6 +120,7 @@ func New(opts Options) (*Workspace, error) {
 	}, nil
 }
 
+// RemoteExists reports whether the given remote exists in the repository at repoPath.
 func (w *Workspace) RemoteExists(ctx context.Context, repoPath, remote string) (bool, error) {
 	repo, err := physicalAbs(repoPath)
 	if err != nil {
@@ -129,11 +130,12 @@ func (w *Workspace) RemoteExists(ctx context.Context, repoPath, remote string) (
 		return false, errors.New("gitworktree: remote is required")
 	}
 	if _, err := w.run(ctx, w.binary, remoteGetURLArgs(repo, remote)...); err != nil {
-		return false, nil
+		return false, fmt.Errorf("gitworktree: remote get-url %q: %w", remote, err)
 	}
 	return true, nil
 }
 
+// FetchDefaultBranch performs a git fetch for branch from the specified remote into repoPath.
 func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath, remote, branch string) error {
 	repo, err := physicalAbs(repoPath)
 	if err != nil {
