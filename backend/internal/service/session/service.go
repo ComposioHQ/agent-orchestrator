@@ -32,6 +32,7 @@ type Store interface {
 	SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
+	ListAllPRFacts(ctx context.Context) (map[domain.SessionID][]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
@@ -765,16 +766,19 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]domain.Session
 	if err != nil {
 		return nil, err
 	}
+	// One batch PR-facts read for the whole list instead of one query per
+	// session; the endpoint refetches on every CDC burst, so the N+1 dominated
+	// its cost as session count grew.
+	factsBySession, err := s.store.ListAllPRFacts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]domain.Session, 0, len(recs))
 	for _, rec := range recs {
 		if !matchesSessionFilter(rec, filter) {
 			continue
 		}
-		sess, err := s.toSession(ctx, rec)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sess)
+		out = append(out, s.assembleSession(rec, factsBySession[rec.ID]))
 	}
 	return out, nil
 }
@@ -937,6 +941,12 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
+	return s.assembleSession(rec, prs), nil
+}
+
+// assembleSession derives the display model from a record and its (already
+// fetched) PR facts. Shared by the single-session path and the batched list.
+func (s *Service) assembleSession(rec domain.SessionRecord, prs []domain.PRFacts) domain.Session {
 	prs = deduplicatePRFacts(prs)
 	return domain.Session{
 		SessionRecord:    rec,
@@ -944,7 +954,7 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 		SCMStatus:        deriveSCMStatus(prs),
 		TerminalHandleID: rec.Metadata.RuntimeHandleID,
 		PRs:              prs,
-	}, nil
+	}
 }
 
 // now tolerates a zero-value Service (tests construct the struct literally

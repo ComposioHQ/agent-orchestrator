@@ -192,6 +192,84 @@ func (q *Queries) GetPRLastNudgeSignature(ctx context.Context, url string) (stri
 	return last_nudge_signature, err
 }
 
+const listAllPRFacts = `-- name: ListAllPRFacts :many
+SELECT
+    pr.session_id,
+    pr.url,
+    pr.number,
+    pr.pr_state,
+    pr.review_decision,
+    pr.ci_state,
+    pr.mergeability,
+    pr.source_branch,
+    pr.target_branch,
+    pr.head_sha,
+    pr.updated_at,
+    EXISTS (
+        SELECT 1
+        FROM pr_comment
+        WHERE pr_comment.pr_url = pr.url
+          AND pr_comment.resolved = 0
+          AND pr_comment.is_bot = 0
+    ) AS review_comments
+FROM pr
+ORDER BY pr.session_id, pr.updated_at DESC
+`
+
+type ListAllPRFactsRow struct {
+	SessionID      domain.SessionID
+	URL            string
+	Number         int64
+	PRState        domain.PRState
+	ReviewDecision domain.ReviewDecision
+	CIState        domain.CIState
+	Mergeability   domain.Mergeability
+	SourceBranch   string
+	TargetBranch   string
+	HeadSha        string
+	UpdatedAt      time.Time
+	ReviewComments bool
+}
+
+// One batch read of every session's PR snapshots for the session list. Same
+// projection and per-session ordering contract as ListPRFactsBySession, plus
+// the owning session_id so Go can group rows; replaces one query per session.
+func (q *Queries) ListAllPRFacts(ctx context.Context) ([]ListAllPRFactsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listAllPRFacts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllPRFactsRow{}
+	for rows.Next() {
+		var i ListAllPRFactsRow
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.URL,
+			&i.Number,
+			&i.PRState,
+			&i.ReviewDecision,
+			&i.CIState,
+			&i.Mergeability,
+			&i.SourceBranch,
+			&i.TargetBranch,
+			&i.HeadSha,
+			&i.UpdatedAt,
+			&i.ReviewComments,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPRFactsBySession = `-- name: ListPRFactsBySession :many
 SELECT
     pr.url,
