@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestMigration0086BackfillsConversationBranchesAndTimelineRows(t *testing.T) {
+func TestMigration0087BackfillsConversationBranchesAndTimelineRows(t *testing.T) {
 	db := openTestDB(t)
 	upTo(t, db, 79)
 
@@ -39,7 +39,7 @@ func TestMigration0086BackfillsConversationBranchesAndTimelineRows(t *testing.T)
 		conversation_id, session_id, provider_event_id, method, payload_json, received_at
 	) VALUES ('conversation-1', 'branches-1', 'event-1', 'turn.completed', '{}', ?)`, now)
 
-	upTo(t, db, 86)
+	upTo(t, db, 87)
 
 	var activeBranchID string
 	if err := db.QueryRow(`SELECT active_branch_id FROM conversations WHERE id = 'conversation-1'`).Scan(&activeBranchID); err != nil {
@@ -73,9 +73,9 @@ func TestMigration0086BackfillsConversationBranchesAndTimelineRows(t *testing.T)
 	}
 }
 
-func TestMigration0086AssignsNewTimelineRowsToActiveBranch(t *testing.T) {
+func TestMigration0087AssignsNewTimelineRowsToActiveBranch(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 86)
+	upTo(t, db, 87)
 
 	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	mustExec(t, db, `INSERT INTO projects (id, path, display_name, registered_at)

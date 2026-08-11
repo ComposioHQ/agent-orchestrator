@@ -166,6 +166,7 @@ if (typeof window !== "undefined") {
 			getTabs: async (viewId: string) => ({ viewId, activeTabId: "t1", tabs: [] }),
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",

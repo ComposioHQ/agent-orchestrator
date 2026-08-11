@@ -36,6 +36,7 @@ import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -70,6 +71,7 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
+import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
@@ -93,7 +95,9 @@ const NAV_ROW_CLASS =
 
 // Search + Pinned/Projects section chrome: same type, icon, and row size.
 const SECTION_ROW_CLASS =
-	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md [&_svg]:shrink-0";
+	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive [&_svg]:size-icon-md [&_svg]:shrink-0";
+// Hover fill only for collapsible section headers (Pinned). Projects is a static label.
+const SECTION_ROW_INTERACTIVE_CLASS = "transition-colors hover:bg-interactive-hover hover:text-foreground";
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
@@ -321,7 +325,6 @@ export function Sidebar({
 				{pinnedSessions.length > 0 && (
 					<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
 						<SectionDisclosure
-							icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
 							label={t("shell.pinned")}
 							open={pinnedOpen}
 							onToggle={() => setPinnedOpen((v) => !v)}
@@ -346,10 +349,9 @@ export function Sidebar({
 					</div>
 				)}
 
-				{/* Projects — always open; + sits inside the same hover pill. */}
+				{/* Projects — always open; only the trailing "+" is interactive. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
-						icon={<FolderOpen strokeWidth={1.75} aria-hidden="true" />}
 						label={t("shell.projects")}
 						collapsible={false}
 						trailing={
@@ -1090,14 +1092,14 @@ function SectionDisclosure({
 	trailing,
 	collapsible = true,
 }: {
-	icon: ReactNode;
+	icon?: ReactNode;
 	label: string;
 	open?: boolean;
 	onToggle?: () => void;
 	className?: string;
-	/** Optional trailing control (e.g. Projects "+") — stays inside the hover pill. */
+	/** Optional trailing control (e.g. Projects "+") — its own button, not the row. */
 	trailing?: ReactNode;
-	/** When false, render a static label row with no chevron or toggle. */
+	/** When false, render a static label row with no chevron, toggle, or hover fill. */
 	collapsible?: boolean;
 }) {
 	const labelRow = (
@@ -1127,7 +1129,7 @@ function SectionDisclosure({
 
 	if (trailing) {
 		return (
-			<div className={cn(SECTION_ROW_CLASS, "pr-1", className)}>
+			<div className={cn(SECTION_ROW_CLASS, SECTION_ROW_INTERACTIVE_CLASS, "pr-1", className)}>
 				<button
 					aria-expanded={open}
 					aria-label={label}
@@ -1146,7 +1148,7 @@ function SectionDisclosure({
 		<button
 			aria-expanded={open}
 			aria-label={label}
-			className={cn(SECTION_ROW_CLASS, "text-left", className)}
+			className={cn(SECTION_ROW_CLASS, SECTION_ROW_INTERACTIVE_CLASS, "text-left", className)}
 			onClick={onToggle}
 			type="button"
 		>
@@ -1159,6 +1161,11 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 	const { t } = useTranslation();
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
+	const overrides = useKeybindingsStore((store) => store.overrides);
+	const paletteBinding = effectiveShortcutBindings("command-palette", isMac, overrides)[0];
+	const commandPaletteShortcutLabel = paletteBinding
+		? shortcutBindingKeys(paletteBinding, isMac).join(isMac ? " " : "+")
+		: "Unassigned";
 	return (
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
@@ -1174,7 +1181,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				className={cn(
 					// Filled search trigger (Cursor-style): icon + label.
 					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
-					"hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
+					"transition-[background-color,color] duration-150 ease-out hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
 					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
@@ -1182,6 +1189,9 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
 					{t("shell.search")}
 				</span>
+				<kbd className="sidebar-expanded-chrome ml-auto shrink-0 rounded-sm border border-border-strong/60 bg-surface/50 px-1.5 py-0.5 font-mono text-caption leading-none text-muted-foreground/80 group-data-[collapsible=icon]:hidden">
+					{commandPaletteShortcutLabel}
+				</kbd>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
 	);
@@ -1211,8 +1221,7 @@ function CreateProjectButton({
 						<button
 							aria-label={t("shell.newProject")}
 							className={cn(
-								// No own hover fill — lives inside the Projects section hover pill.
-								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:text-foreground",
+								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
 								hideTrigger && "hidden",
 							)}
 							disabled={disabled}

@@ -457,6 +457,68 @@ func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationWorkspaceProjectInfersChildDefaultBranches(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	rootRepo := setupOriginClone(t, git, filepath.Join(tmp, "root"))
+	devChildRepo := setupOriginCloneOnBranch(t, git, filepath.Join(tmp, "dev-child"), "dev")
+	mainChildRepo := setupOriginClone(t, git, filepath.Join(tmp, "main-child"))
+
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": rootRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	info, err := ws.CreateWorkspaceProject(context.Background(), ports.WorkspaceProjectConfig{
+		ProjectID:    "proj",
+		SessionID:    "sess",
+		Kind:         "worker",
+		Branch:       "ao/proj-1",
+		RootRepoPath: rootRepo,
+		BaseBranch:   "main",
+		Repos: []ports.WorkspaceProjectRepoConfig{
+			{
+				Name:         "api",
+				RelativePath: "services/api",
+				RepoPath:     devChildRepo,
+			},
+			{
+				Name:         "web",
+				RelativePath: "apps/web",
+				RepoPath:     mainChildRepo,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create workspace project: %v", err)
+	}
+	if len(info.Worktrees) != 3 {
+		t.Fatalf("worktrees = %d, want root and two children: %#v", len(info.Worktrees), info.Worktrees)
+	}
+	devChildPath := filepath.Join(info.Root.Path, "services", "api")
+	if _, err := os.Stat(filepath.Join(devChildPath, "README.md")); err != nil {
+		t.Fatalf("dev child worktree missing seed file: %v", err)
+	}
+	devChildHead := gitOutput(t, git, devChildRepo, "rev-parse", "refs/heads/ao/proj-1")
+	devChildBase := gitOutput(t, git, devChildRepo, "rev-parse", "origin/dev")
+	if devChildHead != devChildBase {
+		t.Fatalf("dev child branch base = %s, want origin/dev %s", devChildHead, devChildBase)
+	}
+	mainChildHead := gitOutput(t, git, mainChildRepo, "rev-parse", "refs/heads/ao/proj-1")
+	mainChildBase := gitOutput(t, git, mainChildRepo, "rev-parse", "origin/main")
+	if mainChildHead != mainChildBase {
+		t.Fatalf("main child branch base = %s, want origin/main %s", mainChildHead, mainChildBase)
+	}
+	rootHead := gitOutput(t, git, rootRepo, "rev-parse", "refs/heads/ao/proj-1")
+	rootBase := gitOutput(t, git, rootRepo, "rev-parse", "origin/main")
+	if rootHead != rootBase {
+		t.Fatalf("root branch base = %s, want origin/main %s", rootHead, rootBase)
+	}
+	if err := ws.DestroyWorkspaceProject(context.Background(), info); err != nil {
+		t.Fatalf("destroy workspace project: %v", err)
+	}
+}
+
 func requireGit(t *testing.T) string {
 	t.Helper()
 	git, err := exec.LookPath("git")
@@ -495,6 +557,25 @@ func setupOriginClone(t *testing.T, git, tmp string) string {
 	runGit(t, git, repo, "checkout", "main")
 	runGit(t, git, repo, "reset", "--hard", "HEAD")
 	return repo
+}
+
+func setupOriginCloneOnBranch(t *testing.T, git, tmp, branch string) string {
+	t.Helper()
+	repo := setupOriginClone(t, git, tmp)
+	runGit(t, git, repo, "branch", "-m", "main", branch)
+	runGit(t, git, repo, "push", "-u", "origin", branch)
+	runGit(t, git, repo, "remote", "set-head", "origin", branch)
+	return repo
+}
+
+func gitOutput(t *testing.T, git, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(git, append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s -C %s %s: %v\n%s", git, dir, strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func runGit(t *testing.T, git, dir string, args ...string) {

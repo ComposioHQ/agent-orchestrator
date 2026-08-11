@@ -632,7 +632,7 @@ describe("agent browser runtime", () => {
 		expect(views).toHaveLength(2);
 		for (const view of views) {
 			expect(view.setBorderRadius).toHaveBeenCalled();
-			expect(view.setBorderRadius.mock.calls.every(([radius]) => radius === 8)).toBe(true);
+			expect(view.setBorderRadius.mock.calls.every(([radius]) => radius === 10)).toBe(true);
 		}
 	});
 
@@ -1015,7 +1015,7 @@ describe("browser:setBounds", () => {
 		});
 
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 25, width: 400, height: 300 });
-		expect(view.setBorderRadius).toHaveBeenLastCalledWith(8);
+		expect(view.setBorderRadius).toHaveBeenLastCalledWith(10);
 		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
 			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
 		);

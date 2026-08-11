@@ -74,6 +74,14 @@ function setupBridge() {
 			activeTabId: "t1",
 			tabs: [{ id: "t1", url: "http://localhost:3000/", title: "First", active: true }],
 		})),
+		openTab: vi.fn(async ({ viewId }: { viewId: string; url?: string }) => ({
+			viewId,
+			activeTabId: "t2",
+			tabs: [
+				{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+				{ id: "t2", url: "", title: "", active: true },
+			],
+		})),
 		devtools: vi.fn(
 			async ({ viewId, operation, placement }: {
 				viewId: string;

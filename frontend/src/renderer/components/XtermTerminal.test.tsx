@@ -234,6 +234,34 @@ describe("XtermTerminal", () => {
 		}
 	});
 
+	it("uses the terminal foreground for the light-mode block cursor", () => {
+		const style = document.createElement("style");
+		style.textContent = `
+			:root {
+				--color-bg-terminal-opaque: #f5f5f4;
+				--color-text-terminal: #24292f;
+				--color-working: #2563eb;
+			}
+		`;
+		document.head.appendChild(style);
+		delete document.documentElement.dataset.styleTheme;
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="light" />);
+			expect(state.lastTerminal!.options.theme).toMatchObject({
+				background: "#f5f5f4",
+				foreground: "#24292f",
+				cursor: "#24292f",
+				cursorAccent: "#f5f5f4",
+			});
+		} finally {
+			style.remove();
+			delete document.documentElement.dataset.styleTheme;
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
 	it("does not reserve width for the hidden terminal scrollbar", () => {
 		render(<XtermTerminal theme="dark" />);
 

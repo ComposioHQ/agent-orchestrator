@@ -669,6 +669,11 @@ export async function initTelemetry(): Promise<boolean> {
 			storage: telemetryStorage(),
 			window,
 			document,
+			// Ride the batched request queue like every other renderer event
+			// (loaded, route_viewed). An earlier `send_instantly: true` here
+			// fired an immediate, un-retried send during init that never
+			// reached PostHog in packaged builds, so renderer app-active
+			// dropped to zero while batched events kept landing.
 			capture: async () =>
 				isDeniedEvent("ao.app.active")
 					? true
@@ -676,7 +681,6 @@ export async function initTelemetry(): Promise<boolean> {
 					posthog.capture(
 						postHogEventName("ao.app.active"),
 						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
-						{ send_instantly: true },
 					),
 				),
 		});
