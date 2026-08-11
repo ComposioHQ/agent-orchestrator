@@ -3,6 +3,7 @@ import type { NextFetchEvent, NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 const stagingProxy = authkitProxy({
+  redirectUri: process.env.WORKOS_REDIRECT_URI?.trim(),
   middlewareAuth: {
     enabled: true,
     unauthenticatedPaths: ["/", "/sign-in", "/callback"],

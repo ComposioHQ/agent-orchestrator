@@ -75,6 +75,7 @@ unset workos_api_key workos_client_id
 export WORKOS_COOKIE_PASSWORD
 WORKOS_COOKIE_PASSWORD="$(<"$cookie_file")"
 export WORKOS_REDIRECT_URI="http://localhost:${web_port}/callback"
+export NEXT_PUBLIC_WORKOS_REDIRECT_URI="$WORKOS_REDIRECT_URI"
 
 redirect_status="$(
 	python3 - <<'PY'
