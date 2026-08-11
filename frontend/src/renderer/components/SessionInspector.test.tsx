@@ -234,6 +234,7 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 
 beforeEach(() => {
 	useUiStore.getState().setDeveloperMode(false);
+	useUiStore.getState().setEmulatorEnabled(false);
 	getMock.mockReset();
 	navigateMock.mockReset();
 	patchMock.mockReset();
@@ -340,6 +341,30 @@ describe("SessionInspector tabs", () => {
 
 		const filesTab = screen.getByRole("tab", { name: "Files" });
 		expect(within(filesTab).getByText("0 Files")).toBeInTheDocument();
+	});
+});
+
+describe("SessionInspector Emulator tab gating", () => {
+	it("hides the Emulator tab when the emulator setting is off (the default)", () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		expect(screen.queryByRole("tab", { name: "Emulator" })).not.toBeInTheDocument();
+	});
+
+	it("shows the Emulator tab once the emulator setting is switched on", () => {
+		useUiStore.getState().setEmulatorEnabled(true);
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		expect(screen.getByRole("tab", { name: "Emulator" })).toBeInTheDocument();
+	});
+
+	it("opens the emulator panel when the Emulator tab is selected", async () => {
+		useUiStore.getState().setEmulatorEnabled(true);
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		await userEvent.click(screen.getByRole("tab", { name: "Emulator" }));
+
+		expect(screen.getByTestId("emulator-panel")).toBeInTheDocument();
 	});
 });
 

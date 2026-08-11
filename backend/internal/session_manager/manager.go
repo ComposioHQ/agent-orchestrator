@@ -252,7 +252,10 @@ type Manager struct {
 	browser             BrowserLifecycle
 	browserCapabilities BrowserCapabilityIssuer
 	dataDir             string
-	clock               func() time.Time
+	// androidEnv supplies Android SDK env vars/PATH dirs for spawned sessions;
+	// nil means no Android env is injected. See Deps.AndroidEnv.
+	androidEnv func() (map[string]string, []string)
+	clock      func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -475,6 +478,15 @@ type Deps struct {
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
+	// AndroidEnv, when set, supplies the ANDROID_HOME/ANDROID_SDK_ROOT env vars
+	// and extra PATH directories (platform-tools, emulator) to inject into
+	// every spawned session's runtime environment. The daemon wires this to a
+	// cached check of whether AO's managed Android SDK is actually installed
+	// (see internal/daemon/androidsdk_wiring.go), so session_manager stays
+	// decoupled from the androidsdk package. Nil (the default) means no
+	// Android env is injected — e.g. the SDK isn't installed, or this build
+	// has no Track A support at all.
+	AndroidEnv func() (vars map[string]string, extraPathDirs []string)
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -492,6 +504,7 @@ func New(d Deps) *Manager {
 		browser:                d.Browser,
 		browserCapabilities:    d.BrowserCapabilities,
 		dataDir:                d.DataDir,
+		androidEnv:             d.AndroidEnv,
 		clock:                  d.Clock,
 		lookPath:               d.LookPath,
 		executable:             d.Executable,
@@ -3110,8 +3123,30 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 			"session", id, "error", err)
 		return env
 	}
-	env["PATH"] = path
+	env["PATH"] = m.prependAndroidEnv(env, path)
 	return env
+}
+
+// prependAndroidEnv merges the daemon's AndroidEnv provider (nil when AO's
+// managed Android SDK isn't installed, or this build has no Track A support)
+// into env, returning the PATH that should be stored: the provider's extra
+// directories (platform-tools, emulator) prepended to path.
+func (m *Manager) prependAndroidEnv(env map[string]string, path string) string {
+	if m.androidEnv == nil {
+		return path
+	}
+	vars, extraPathDirs := m.androidEnv()
+	for k, v := range vars {
+		env[k] = v
+	}
+	if len(extraPathDirs) == 0 {
+		return path
+	}
+	prefix := strings.Join(extraPathDirs, string(os.PathListSeparator))
+	if path == "" {
+		return prefix
+	}
+	return prefix + string(os.PathListSeparator) + path
 }
 
 func (m *Manager) launchRuntimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) (map[string]string, string, error) {

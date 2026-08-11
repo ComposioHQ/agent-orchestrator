@@ -3,6 +3,7 @@ import { Keyboard, Mail } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import { DeveloperModeSection } from "./settings/DeveloperModeSection";
+import { EmulatorSettingsSection } from "./settings/EmulatorSettingsSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
@@ -42,6 +43,7 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 								onClick={() => setKeyboardShortcutsOpen(true)}
 							/>
 						</SettingsSection>
+						<EmulatorSettingsSection titleHidden={leadingTitleHidden} />
 					</>
 				)}
 				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}

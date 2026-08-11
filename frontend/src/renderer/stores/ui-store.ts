@@ -34,7 +34,7 @@ export type DevSettings = {
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
-export type InspectorView = "summary" | "browser" | "files";
+export type InspectorView = "summary" | "browser" | "files" | "emulator";
 
 export type InspectorSessionState = {
 	isOpen: boolean;
@@ -63,6 +63,8 @@ type UiState = {
 	themeStyle: ThemeStyle;
 	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
 	developerMode: boolean;
+	/** When true, the Emulator tab is available in the session inspector. Default off — the Android emulator is a heavy, opt-in feature (multi-GB SDK download, a full VM). */
+	emulatorEnabled: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -100,6 +102,7 @@ type UiState = {
 	closeSettings: () => void;
 	setDevSettings: (devSettings: DevSettings) => void;
 	setDeveloperMode: (enabled: boolean) => void;
+	setEmulatorEnabled: (enabled: boolean) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
@@ -129,6 +132,7 @@ export type OrchestratorReplacementFailure = {
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
+const emulatorEnabledStorageKey = "ao.emulatorEnabled";
 const devSettingsStorageKey = "ao.devSettings";
 const defaultDevSettings: DevSettings = { fixtureCount: 8, randomSpreadMinutes: 120 };
 
@@ -159,6 +163,10 @@ function initialDeveloperMode() {
 	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
 }
 
+function initialEmulatorEnabled() {
+	return getLocalStorage()?.getItem(emulatorEnabledStorageKey) === "true";
+}
+
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
@@ -176,6 +184,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	resolvedTheme: resolveTheme(initialThemePreference),
 	themeStyle: initialThemeStyle,
 	developerMode: initialDeveloperMode(),
+	emulatorEnabled: initialEmulatorEnabled(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -213,6 +222,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 	setDeveloperMode: (developerMode) => {
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
+	},
+	setEmulatorEnabled: (emulatorEnabled) => {
+		getLocalStorage()?.setItem(emulatorEnabledStorageKey, String(emulatorEnabled));
+		set({ emulatorEnabled });
 	},
 	syncSystemTheme: () => {
 		const { themePreference, resolvedTheme } = get();

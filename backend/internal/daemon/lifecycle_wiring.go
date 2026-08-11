@@ -16,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	workspacerouter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/router"
 	scratchworkspace "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidsdk"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
@@ -192,6 +193,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		BrowserCapabilities: browserCapabilities,
 		DataDir:             cfg.DataDir,
 		Logger:              log,
+		AndroidEnv:          androidsdk.EnvProvider(cfg.ToolsDir),
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

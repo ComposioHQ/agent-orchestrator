@@ -352,6 +352,23 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// AO-managed Android SDK/emulator setup: unavailable on hosts with no
+	// supported Android emulator build (e.g. windows/arm64, linux/arm64).
+	// That must not block boot — the controller degrades to 501 when this
+	// stays nil, same as the push-registry pattern above. Nothing is
+	// downloaded here; Status() only reads what's already on disk, and
+	// Install() runs solely on an explicit, user-initiated setup request.
+	var (
+		androidDevice     controllers.AndroidDeviceService
+		androidDeviceImpl *androidDeviceService
+	)
+	if svc, err := newAndroidDeviceService(cfg.ToolsDir); err != nil {
+		log.Warn("android device service unavailable; Android emulator setup disabled", "err", err)
+	} else {
+		androidDevice = svc
+		androidDeviceImpl = svc
+	}
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		Agents:             agentSvc,
@@ -382,6 +399,7 @@ func Run() error {
 		Browser:             browserService,
 		PreviewServer:       managedPreview,
 		SessionCapabilities: browserAuthority,
+		AndroidDevice:       androidDevice,
 	})
 	if err != nil {
 		stop()
@@ -468,6 +486,11 @@ func Run() error {
 	stop()
 	managedPreview.Close()
 	<-previewDone
+	if androidDeviceImpl != nil {
+		androidStopCtx, androidCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		androidDeviceImpl.Close(androidStopCtx)
+		androidCancel()
+	}
 	// Close chat controllers before the lifecycle stack: each owns an app-server
 	// child process, and closing them also settles any turn left in flight so a
 	// restart does not read a half-finished turn as still working.

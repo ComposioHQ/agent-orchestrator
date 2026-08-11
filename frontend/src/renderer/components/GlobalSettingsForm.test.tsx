@@ -141,6 +141,7 @@ beforeEach(async () => {
 	setKeybindingRecording.mockResolvedValue(undefined);
 	// Feature Releases lives behind Developer Mode; reset to the default (off).
 	useUiStore.getState().setDeveloperMode(false);
+	useUiStore.getState().setEmulatorEnabled(false);
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
@@ -458,6 +459,16 @@ describe("GlobalSettingsForm", () => {
 		await userEvent.click(toggle);
 		expect(useUiStore.getState().developerMode).toBe(true);
 		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
+	});
+
+	it("persists the Android Emulator setting to localStorage and defaults off", async () => {
+		useUiStore.getState().setEmulatorEnabled(false);
+		renderForm();
+		const toggle = await screen.findByRole("switch", { name: "Android Emulator" });
+		expect(toggle).toHaveAttribute("aria-checked", "false");
+		await userEvent.click(toggle);
+		expect(useUiStore.getState().emulatorEnabled).toBe(true);
+		expect(window.localStorage.getItem("ao.emulatorEnabled")).toBe("true");
 	});
 
 	it("hides the feature-build picker when Developer Mode is turned off after selecting it", async () => {

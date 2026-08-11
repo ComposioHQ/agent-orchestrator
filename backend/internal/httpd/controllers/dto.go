@@ -1629,3 +1629,78 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
+
+// AndroidSDKComponentProgress reports download progress for one component of
+// AO's managed Android SDK (platform-tools, emulator, or the system image).
+type AndroidSDKComponentProgress struct {
+	Component  string `json:"component"`
+	BytesDone  int64  `json:"bytesDone"`
+	BytesTotal int64  `json:"bytesTotal"`
+}
+
+// AndroidSDKStatusResponse reports the current state of AO's managed Android
+// SDK download/install (~2GB, downloaded only on explicit user request via
+// AndroidSDKSetupRequest — never automatically).
+type AndroidSDKStatusResponse struct {
+	State      string                        `json:"state" enum:"not_installed,downloading,installed,failed"`
+	Components []AndroidSDKComponentProgress `json:"components,omitempty"`
+	Error      string                        `json:"error,omitempty"`
+}
+
+// AndroidSDKSetupRequest triggers the Android SDK download. AcceptLicenses
+// must be true — explicit, per-request consent, since AO downloads and
+// accepts the SDK license text on the user's behalf.
+type AndroidSDKSetupRequest struct {
+	AcceptLicenses bool `json:"acceptLicenses"`
+}
+
+// AndroidEmulatorStatusResponse reports the lifecycle state of AO's single,
+// shared, persistent Android emulator process (distinct from
+// AndroidSDKStatusResponse, which reports whether the SDK is installed).
+type AndroidEmulatorStatusResponse struct {
+	State          string   `json:"state" enum:"uninitialized,booting,running,crashed,stopping"`
+	Error          string   `json:"error,omitempty"`
+	Logs           []string `json:"logs,omitempty"`
+	AccelAvailable bool     `json:"accelAvailable"`
+	AccelDetail    string   `json:"accelDetail,omitempty"`
+}
+
+// AndroidInputActionRequest is one input event forwarded to AO's managed
+// Android emulator (tap/swipe/key/text), mirroring androidemulator.InputAction
+// without the controllers package depending on that internal type directly.
+type AndroidInputActionRequest struct {
+	Type string `json:"type" enum:"tap,swipe,key,text"`
+	X    int32  `json:"x,omitempty"`
+	Y    int32  `json:"y,omitempty"`
+	X2   int32  `json:"x2,omitempty"`
+	Y2   int32  `json:"y2,omitempty"`
+	Key  string `json:"key,omitempty"`
+	Text string `json:"text,omitempty"`
+}
+
+// AndroidInputActionResponse acknowledges a successfully forwarded input action.
+type AndroidInputActionResponse struct {
+	OK bool `json:"ok"`
+}
+
+// AndroidUIBounds is a node's on-screen rectangle in device pixels.
+type AndroidUIBounds struct {
+	X1 int `json:"x1"`
+	Y1 int `json:"y1"`
+	X2 int `json:"x2"`
+	Y2 int `json:"y2"`
+}
+
+// AndroidUINode is one element of the on-screen UI hierarchy, mirroring
+// androidemulator.UINode without the controllers package depending on that
+// internal type directly. Framework-agnostic: an OS-level accessibility
+// dump, not tied to React Native/Flutter/native specifically.
+type AndroidUINode struct {
+	Class       string          `json:"class"`
+	ResourceID  string          `json:"resourceId,omitempty"`
+	Text        string          `json:"text,omitempty"`
+	ContentDesc string          `json:"contentDesc,omitempty"`
+	Clickable   bool            `json:"clickable"`
+	Bounds      AndroidUIBounds `json:"bounds"`
+	Children    []AndroidUINode `json:"children,omitempty"`
+}

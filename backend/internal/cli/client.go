@@ -98,6 +98,47 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 	return c.doJSONPathWithHeaders(ctx, method, path, body, out, nil)
 }
 
+// doRawBytes fetches a non-JSON daemon response (e.g. a PNG screenshot) as
+// raw bytes, using the same daemon-discovery and error-envelope handling as
+// doJSONPathWithHeaders, without assuming a JSON body on success.
+func (c *commandContext) doRawBytes(ctx context.Context, method, path string) ([]byte, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	info, err := runfile.Read(cfg.RunFilePath)
+	if err != nil {
+		return nil, err
+	}
+	if info == nil {
+		return nil, fmt.Errorf("AO daemon is not running — start it with `ao start`")
+	}
+	if !c.deps.ProcessAlive(info.PID) {
+		return nil, fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+	}
+
+	url := fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path)
+	req, err := http.NewRequestWithContext(ctx, method, url, http.NoBody) // #nosec G704 -- daemon host is fixed loopback; path is an internal API route.
+	if err != nil {
+		return nil, err
+	}
+
+	client := *c.deps.HTTPClient
+	client.Timeout = commandTimeout
+	resp, err := client.Do(req) // #nosec G704 -- request target is the fixed loopback daemon URL above.
+	if err != nil {
+		return nil, fmt.Errorf("call daemon: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var e apiError
+		_ = json.NewDecoder(resp.Body).Decode(&e)
+		return nil, apiResponseError{StatusCode: resp.StatusCode, ErrorBody: e}
+	}
+	return io.ReadAll(resp.Body)
+}
+
 func (c *commandContext) doJSONPathWithHeaders(
 	ctx context.Context,
 	method, path string,

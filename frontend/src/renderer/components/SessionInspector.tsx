@@ -38,6 +38,7 @@ import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
+import { EmulatorPanel } from "./EmulatorPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
 import { Badge } from "./ui/badge";
@@ -59,9 +60,13 @@ type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewRunFacts = components["schemas"]["ReviewRun"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
-export type InspectorView = "summary" | "browser" | "files";
+export type InspectorView = "summary" | "browser" | "files" | "emulator";
 
-const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
+const VIEW_DEFS: {
+	id: InspectorView;
+	labelKey: "inspector.summary" | "inspector.browser" | "inspector.files" | "inspector.emulator";
+	icon: ReactNode;
+}[] = [
 	{
 		id: "summary",
 		labelKey: "inspector.summary",
@@ -91,6 +96,16 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 		id: "files",
 		labelKey: "inspector.files",
 		icon: <FilesIcon aria-hidden="true" />,
+	},
+	{
+		id: "emulator",
+		labelKey: "inspector.emulator",
+		icon: (
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+				<rect x="7" y="2.5" width="10" height="19" rx="2" />
+				<line x1="11" y1="18.5" x2="13" y2="18.5" />
+			</svg>
+		),
 	},
 ];
 
@@ -150,6 +165,8 @@ export function SessionInspector({
 	onOpenFiles,
 	filesView,
 	browserView,
+	emulatorPoppedOut = false,
+	onToggleEmulatorPopOut,
 	view: viewProp,
 	onViewChange,
 }: {
@@ -162,6 +179,8 @@ export function SessionInspector({
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
+	emulatorPoppedOut?: boolean;
+	onToggleEmulatorPopOut?: (next: boolean) => void;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
 	view?: InspectorView;
 	onViewChange?: (view: InspectorView) => void;
@@ -173,13 +192,20 @@ export function SessionInspector({
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
+	// The Emulator tab is a heavy opt-in feature (settings.emulator): hidden
+	// entirely unless the user has switched it on, so it never takes up space
+	// or does any work (no SDK/emulator status polling) by default.
+	const emulatorEnabled = useUiStore((state) => state.emulatorEnabled);
 	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
-	const views = VIEW_DEFS.map((entry) => ({ ...entry, label: t(entry.labelKey) }));
+	const views = VIEW_DEFS.filter((entry) => entry.id !== "emulator" || emulatorEnabled).map((entry) => ({
+		...entry,
+		label: t(entry.labelKey),
+	}));
 	const view: InspectorView = requestedView;
 
 	if (!session) {
@@ -234,7 +260,7 @@ export function SessionInspector({
 			<div
 				className={cn(
 					inspectorBodyBaseClass,
-					view !== "browser" && view !== "files" && inspectorScrollableBodyClass,
+					view !== "browser" && view !== "files" && view !== "emulator" && inspectorScrollableBodyClass,
 					// Browser and Files own their viewport spacing. Keep their body
 					// padding out of the class list entirely so a shorthand `p-3`
 					// cannot win over `p-0` through generated utility ordering.
@@ -242,6 +268,7 @@ export function SessionInspector({
 						!browserPoppedOut &&
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
+					view === "emulator" && !emulatorPoppedOut && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
 				{view === "summary" ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
@@ -256,6 +283,13 @@ export function SessionInspector({
 					/>
 				) : null}
 				{view === "files" ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : null}
+				{view === "emulator" ? (
+					<EmulatorTabView
+						emulatorPoppedOut={emulatorPoppedOut}
+						isActive={isInspectorVisible && !emulatorPoppedOut}
+						onToggleEmulatorPopOut={onToggleEmulatorPopOut}
+					/>
+				) : null}
 			</div>
 		</aside>
 	);
@@ -2256,6 +2290,39 @@ function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFi
 					{t("inspector.openFiles")}
 				</Button>
 			</div>
+		</div>
+	);
+}
+
+function EmulatorTabView({
+	emulatorPoppedOut,
+	isActive,
+	onToggleEmulatorPopOut,
+}: {
+	emulatorPoppedOut: boolean;
+	isActive: boolean;
+	onToggleEmulatorPopOut?: (next: boolean) => void;
+}) {
+	// While popped out, the overlay (rendered by SessionView) owns the live
+	// view; the docked tab shows a lightweight placeholder rather than a
+	// second live WebSocket connection to the same shared device.
+	const { t } = useTranslation();
+	if (emulatorPoppedOut) {
+		return (
+			<div role="tabpanel">
+				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
+					<p className="text-md-sm text-muted-foreground">{t("inspector.emulatorInCenter")}</p>
+					<Button onClick={() => onToggleEmulatorPopOut?.(false)} size="sm" type="button" variant="outline">
+						{t("inspector.returnToPanel")}
+					</Button>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="h-full min-h-0" role="tabpanel">
+			<EmulatorPanel active={isActive} onTogglePopOut={(next) => onToggleEmulatorPopOut?.(next)} poppedOut={false} />
 		</div>
 	);
 }

@@ -87,6 +87,9 @@ export default defineConfig({
 			"/api": {
 				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
 				changeOrigin: false,
+				// The Android emulator's frame relay is a WebSocket under /api
+				// (unlike the terminal mux's dedicated /mux route below).
+				ws: true,
 			},
 			"/mux": {
 				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",

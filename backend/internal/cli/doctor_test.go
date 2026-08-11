@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidsdk"
 )
 
 func TestDoctorChecksGitVersion(t *testing.T) {
@@ -396,6 +398,64 @@ func TestDoctorIncludesAOBinaryCheck(t *testing.T) {
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "ao-binary")
 	if check.Level != doctorWarn || !strings.Contains(check.Message, "not found in PATH") {
 		t.Fatalf("ao-binary check = %+v, want WARN for missing ao", check)
+	}
+}
+
+// TestDoctorWarnsWhenAndroidSDKNotInstalled covers Phase A6's doctor check:
+// on a fresh AO install (no `ao android sdk setup` run yet), doctor surfaces
+// the missing SDK as an actionable WARN rather than silence.
+func TestDoctorWarnsWhenAndroidSDKNotInstalled(t *testing.T) {
+	setConfigEnv(t)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "android-sdk")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "not installed") || !strings.Contains(check.Message, "ao android sdk setup") {
+		t.Fatalf("android-sdk check = %+v, want WARN mentioning the setup command", check)
+	}
+}
+
+// TestDoctorWarnsWhenAndroidAccelerationUnavailable covers the installed-but-
+// unaccelerated case: the manifest records a completed install but the
+// emulator binary itself is missing from disk (corrupted install, or the
+// accel-check subprocess simply can't run) -- doctor must report this as an
+// actionable WARN, not crash or silently pass.
+func TestDoctorWarnsWhenAndroidAccelerationUnavailable(t *testing.T) {
+	cfg := setConfigEnv(t)
+	writeAndroidInstalledManifest(t, cfg.toolsDir)
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "android-sdk")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "acceleration") {
+		t.Fatalf("android-sdk check = %+v, want WARN mentioning acceleration", check)
+	}
+}
+
+// writeAndroidInstalledManifest seeds toolsDir with a manifest recording a
+// completed Android SDK install, matching the shape androidsdk.Install writes
+// (an unexported type inside that package, so the test reconstructs the JSON
+// shape here rather than importing it).
+func writeAndroidInstalledManifest(t *testing.T, toolsDir string) {
+	t.Helper()
+	if err := os.MkdirAll(androidsdk.Dir(toolsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(map[string]any{
+		"platformToolsSha1": "pt-sha1",
+		"emulatorSha1":      "em-sha1",
+		"systemImageSha1":   "sysimg-sha1",
+		"apiLevel":          34,
+		"tag":               "google_apis",
+		"abi":               "x86_64",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(androidsdk.ManifestPath(toolsDir), data, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

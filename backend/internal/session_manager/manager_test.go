@@ -4432,6 +4432,59 @@ func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 	}
 }
 
+// TestSpawn_InjectsAndroidEnvWhenSDKAvailable covers Phase A6: when the daemon
+// wires an AndroidEnv provider (populated only once AO's managed Android SDK
+// is actually installed), spawned sessions get ANDROID_HOME/ANDROID_SDK_ROOT
+// and platform-tools/emulator prepended to PATH, so `adb`/`./gradlew` work in
+// a session terminal with zero manual setup.
+func TestSpawn_InjectsAndroidEnvWhenSDKAvailable(t *testing.T) {
+	daemonExe := filepath.Join(t.TempDir(), "ao")
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:   func(string) (string, error) { return "/bin/true", nil },
+		Executable: func() (string, error) { return daemonExe, nil },
+		AndroidEnv: func() (map[string]string, []string) {
+			return map[string]string{"ANDROID_HOME": "/opt/android-sdk", "ANDROID_SDK_ROOT": "/opt/android-sdk"},
+				[]string{"/opt/android-sdk/platform-tools", "/opt/android-sdk/emulator"}
+		},
+	})
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	env := rt.lastCfg.Env
+	if env["ANDROID_HOME"] != "/opt/android-sdk" || env["ANDROID_SDK_ROOT"] != "/opt/android-sdk" {
+		t.Fatalf("ANDROID_HOME/ANDROID_SDK_ROOT not set: %+v", env)
+	}
+	wantPrefix := "/opt/android-sdk/platform-tools" + string(os.PathListSeparator) + "/opt/android-sdk/emulator" + string(os.PathListSeparator)
+	if !strings.HasPrefix(env["PATH"], wantPrefix) {
+		t.Fatalf("PATH = %q, want prefix %q", env["PATH"], wantPrefix)
+	}
+}
+
+// TestSpawn_NoAndroidEnvWhenNotWired covers the default/unwired case (SDK not
+// installed, or a build without Track A at all): no Android env leaks in, and
+// existing PATH behavior is unaffected.
+func TestSpawn_NoAndroidEnvWhenNotWired(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rt.lastCfg.Env["ANDROID_HOME"]; ok {
+		t.Fatalf("ANDROID_HOME should be unset when AndroidEnv is not wired, got %+v", rt.lastCfg.Env)
+	}
+}
+
 func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
 	home := t.TempDir()

@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_TOOLS_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
 		t.Setenv(k, "")
 	}
 
@@ -48,6 +48,13 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.DataDir != wantDataDir {
 		t.Errorf("DataDir = %q, want %q", cfg.DataDir, wantDataDir)
 	}
+	if cfg.ToolsDir == "" {
+		t.Error("ToolsDir is empty, want a resolved default path")
+	}
+	wantToolsDir := filepath.Join(homeDir, ".ao", "tools")
+	if cfg.ToolsDir != wantToolsDir {
+		t.Errorf("ToolsDir = %q, want %q", cfg.ToolsDir, wantToolsDir)
+	}
 	if cfg.Telemetry.Remote != TelemetryRemoteOff || cfg.Telemetry.PostHogHost != DefaultTelemetryPostHogHost {
 		t.Fatalf("Telemetry defaults = %+v", cfg.Telemetry)
 	}
@@ -59,6 +66,7 @@ func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
 	// be re-resolved against the new cwd and double-nest state.
 	t.Setenv("AO_RUN_FILE", "rel-running.json")
 	t.Setenv("AO_DATA_DIR", "rel-data")
+	t.Setenv("AO_TOOLS_DIR", "rel-tools")
 
 	cfg, err := Load()
 	if err != nil {
@@ -70,6 +78,9 @@ func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
 	if !filepath.IsAbs(cfg.DataDir) {
 		t.Errorf("DataDir = %q, want absolute", cfg.DataDir)
 	}
+	if !filepath.IsAbs(cfg.ToolsDir) {
+		t.Errorf("ToolsDir = %q, want absolute", cfg.ToolsDir)
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -80,18 +91,23 @@ func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
 	if want := filepath.Join(cwd, "rel-running.json"); cfg.RunFilePath != want {
 		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, want)
 	}
+	if want := filepath.Join(cwd, "rel-tools"); cfg.ToolsDir != want {
+		t.Errorf("ToolsDir = %q, want %q", cfg.ToolsDir, want)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
 	overrideDir := t.TempDir()
 	runFilePath := filepath.Join(overrideDir, "ao-test-running.json")
 	dataDir := filepath.Join(overrideDir, "ao-test-data")
+	toolsDir := filepath.Join(overrideDir, "ao-test-tools")
 
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
 	t.Setenv("AO_RUN_FILE", runFilePath)
 	t.Setenv("AO_DATA_DIR", dataDir)
+	t.Setenv("AO_TOOLS_DIR", toolsDir)
 	t.Setenv("AO_TELEMETRY_EVENTS", "on")
 	t.Setenv("AO_TELEMETRY_METRICS", "off")
 	t.Setenv("AO_TELEMETRY_REMOTE", "posthog")
@@ -116,6 +132,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.DataDir != dataDir {
 		t.Errorf("DataDir = %q, want %q", cfg.DataDir, dataDir)
+	}
+	if cfg.ToolsDir != toolsDir {
+		t.Errorf("ToolsDir = %q, want %q", cfg.ToolsDir, toolsDir)
 	}
 	if !cfg.Telemetry.Events || cfg.Telemetry.Metrics {
 		t.Fatalf("Telemetry toggles = %+v", cfg.Telemetry)

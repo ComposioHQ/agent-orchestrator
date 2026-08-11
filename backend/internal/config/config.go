@@ -98,6 +98,12 @@ type Config struct {
 	// DataDir is the directory holding durable SQLite state: DB and WAL files.
 	// It is created on first use by the storage layer.
 	DataDir string
+	// ToolsDir is the directory holding lazily-downloaded optional developer
+	// tooling (e.g. the Android SDK). It is a sibling of DataDir, not nested
+	// under it: this content is large, redistributable, and safe to delete and
+	// re-fetch, unlike the durable state in DataDir. Created on first use by
+	// whichever tool package needs it.
+	ToolsDir string
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
@@ -138,6 +144,7 @@ func (c Config) Addr() string {
 //	AO_SHUTDOWN_TIMEOUT  shutdown deadline   (Go duration > 0, default 10s)
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
+//	AO_TOOLS_DIR         optional tooling dir (default ~/.ao/tools)
 //	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_APP_RUN_ID        desktop-app launch id, set by the Electron supervisor
 //	                     (default: a fresh id minted per daemon boot)
@@ -268,6 +275,12 @@ func Load() (Config, error) {
 	}
 	cfg.DataDir = dataDir
 
+	toolsDir, err := resolveToolsDir()
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ToolsDir = toolsDir
+
 	return cfg, nil
 }
 
@@ -361,6 +374,21 @@ func resolveDataDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(stateDir, "data"), nil
+}
+
+// resolveToolsDir picks where lazily-downloaded optional developer tooling
+// (e.g. the Android SDK) lives. An explicit AO_TOOLS_DIR wins; otherwise it
+// defaults under the same canonical AO home directory as the data dir, as a
+// sibling rather than nested under it — see the ToolsDir field doc.
+func resolveToolsDir() (string, error) {
+	if p, ok := os.LookupEnv("AO_TOOLS_DIR"); ok && p != "" {
+		return absOverride("AO_TOOLS_DIR", p)
+	}
+	stateDir, err := defaultStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(stateDir, "tools"), nil
 }
 
 func defaultStateDir() (string, error) {

@@ -210,6 +210,241 @@ paths:
       summary: Refresh the cached local agent adapter catalog
       tags:
       - agents
+  /api/v1/android-device/input:
+    post:
+      operationId: sendAndroidDeviceInput
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AndroidInputActionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidInputActionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Forward one input action (tap/swipe/key/text) to the running Android
+        emulator
+      tags:
+      - android-device
+  /api/v1/android-device/screenshot:
+    get:
+      operationId: getAndroidDeviceScreenshot
+      responses:
+        "200":
+          content:
+            image/png:
+              schema:
+                type: string
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Capture a single on-demand PNG screenshot of the running Android emulator
+      tags:
+      - android-device
+  /api/v1/android-device/sdk/setup:
+    post:
+      operationId: setupAndroidSDK
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AndroidSDKSetupRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidSDKStatusResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Download and install AO's managed Android SDK (~2GB, requires explicit
+        license consent)
+      tags:
+      - android-device
+  /api/v1/android-device/sdk/status:
+    get:
+      operationId: getAndroidSDKStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidSDKStatusResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check the status of AO's managed Android SDK download/install
+      tags:
+      - android-device
+  /api/v1/android-device/start:
+    post:
+      operationId: startAndroidDevice
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidEmulatorStatusResponse'
+          description: Accepted
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Boot AO's managed Android emulator
+      tags:
+      - android-device
+  /api/v1/android-device/status:
+    get:
+      operationId: getAndroidDeviceStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidEmulatorStatusResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Check the lifecycle state of AO's managed Android emulator process
+      tags:
+      - android-device
+  /api/v1/android-device/stop:
+    post:
+      operationId: stopAndroidDevice
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidEmulatorStatusResponse'
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stop AO's managed Android emulator
+      tags:
+      - android-device
+  /api/v1/android-device/stream:
+    get:
+      operationId: streamAndroidDevice
+      responses:
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Upgrade to a WebSocket streaming binary PNG frames from the running
+        Android emulator
+      tags:
+      - android-device
+  /api/v1/android-device/ui-tree:
+    get:
+      operationId: getAndroidDeviceUITree
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidUINode'
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the current on-screen UI hierarchy of the running Android emulator,
+        structured (not a flat image)
+      tags:
+      - android-device
   /api/v1/browser/commands:
     post:
       operationId: executeBrowserCommand
@@ -4377,6 +4612,144 @@ components:
       - fetchedAt
       - stale
       type: object
+    AndroidEmulatorStatusResponse:
+      properties:
+        accelAvailable:
+          type: boolean
+        accelDetail:
+          type: string
+        error:
+          type: string
+        logs:
+          items:
+            type: string
+          type: array
+        state:
+          enum:
+          - uninitialized
+          - booting
+          - running
+          - crashed
+          - stopping
+          type: string
+      required:
+      - state
+      - accelAvailable
+      type: object
+    AndroidInputActionRequest:
+      properties:
+        key:
+          type: string
+        text:
+          type: string
+        type:
+          enum:
+          - tap
+          - swipe
+          - key
+          - text
+          type: string
+        x:
+          format: int32
+          type: integer
+        x2:
+          format: int32
+          type: integer
+        "y":
+          format: int32
+          type: integer
+        y2:
+          format: int32
+          type: integer
+      required:
+      - type
+      type: object
+    AndroidInputActionResponse:
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
+      type: object
+    AndroidSDKComponentProgress:
+      properties:
+        bytesDone:
+          format: int64
+          type: integer
+        bytesTotal:
+          format: int64
+          type: integer
+        component:
+          type: string
+      required:
+      - component
+      - bytesDone
+      - bytesTotal
+      type: object
+    AndroidSDKSetupRequest:
+      properties:
+        acceptLicenses:
+          type: boolean
+      required:
+      - acceptLicenses
+      type: object
+    AndroidSDKStatusResponse:
+      properties:
+        components:
+          items:
+            $ref: '#/components/schemas/AndroidSDKComponentProgress'
+          type: array
+        error:
+          type: string
+        state:
+          enum:
+          - not_installed
+          - downloading
+          - installed
+          - failed
+          type: string
+      required:
+      - state
+      type: object
+    AndroidUIBounds:
+      properties:
+        x1:
+          type: integer
+        x2:
+          type: integer
+        y1:
+          type: integer
+        y2:
+          type: integer
+      required:
+      - x1
+      - y1
+      - x2
+      - y2
+      type: object
+    AndroidUINode:
+      properties:
+        bounds:
+          $ref: '#/components/schemas/AndroidUIBounds'
+        children:
+          items:
+            $ref: '#/components/schemas/AndroidUINode'
+          type: array
+        class:
+          type: string
+        clickable:
+          type: boolean
+        contentDesc:
+          type: string
+        resourceId:
+          type: string
+        text:
+          type: string
+      required:
+      - class
+      - clickable
+      - bounds
+      type: object
     AttachmentInput:
       properties:
         data:
@@ -7461,3 +7834,5 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: AO-managed Android SDK/emulator setup (loopback only)
+  name: android-device

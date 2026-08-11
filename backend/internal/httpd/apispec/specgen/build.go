@@ -81,6 +81,8 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "android-device"}).WithDescription(
+			"AO-managed Android SDK/emulator setup (loopback only)"),
 	}
 
 	for _, op := range operations() {
@@ -209,6 +211,14 @@ var schemaNames = map[string]string{
 	"ControllersBrowserStatusResponse":                    "BrowserStatusResponse",
 	"ControllersBrowserCommandRequest":                    "BrowserCommandRequest",
 	"ControllersBrowserCommandResponse":                   "BrowserCommandResponse",
+	"ControllersAndroidSDKStatusResponse":                 "AndroidSDKStatusResponse",
+	"ControllersAndroidSDKComponentProgress":              "AndroidSDKComponentProgress",
+	"ControllersAndroidSDKSetupRequest":                   "AndroidSDKSetupRequest",
+	"ControllersAndroidEmulatorStatusResponse":            "AndroidEmulatorStatusResponse",
+	"ControllersAndroidInputActionRequest":                "AndroidInputActionRequest",
+	"ControllersAndroidInputActionResponse":               "AndroidInputActionResponse",
+	"ControllersAndroidUIBounds":                          "AndroidUIBounds",
+	"ControllersAndroidUINode":                            "AndroidUINode",
 	"ControllersSetSessionMergePolicyRequest":             "SetSessionMergePolicyRequest",
 	"ControllersSetSessionMergePolicyResponse":            "SetSessionMergePolicyResponse",
 	"ControllersSetSessionAutoInjectReviewRequest":        "SetSessionAutoInjectReviewRequest",
@@ -424,8 +434,97 @@ func operations() []operation {
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
 	ops = append(ops, browserOperations()...)
+	ops = append(ops, androidDeviceOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	return ops
+}
+
+func androidDeviceOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/android-device/sdk/status", id: "getAndroidSDKStatus", tag: "android-device",
+			summary: "Check the status of AO's managed Android SDK download/install",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AndroidSDKStatusResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/android-device/sdk/setup", id: "setupAndroidSDK", tag: "android-device",
+			summary: "Download and install AO's managed Android SDK (~2GB, requires explicit license consent)",
+			reqBody: controllers.AndroidSDKSetupRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.AndroidSDKStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/android-device/status", id: "getAndroidDeviceStatus", tag: "android-device",
+			summary: "Check the lifecycle state of AO's managed Android emulator process",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AndroidEmulatorStatusResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/android-device/start", id: "startAndroidDevice", tag: "android-device",
+			summary: "Boot AO's managed Android emulator",
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.AndroidEmulatorStatusResponse{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/android-device/stop", id: "stopAndroidDevice", tag: "android-device",
+			summary: "Stop AO's managed Android emulator",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AndroidEmulatorStatusResponse{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/android-device/stream", id: "streamAndroidDevice", tag: "android-device",
+			summary: "Upgrade to a WebSocket streaming binary PNG frames from the running Android emulator",
+			resps: []respUnit{
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/android-device/input", id: "sendAndroidDeviceInput", tag: "android-device",
+			summary: "Forward one input action (tap/swipe/key/text) to the running Android emulator",
+			reqBody: controllers.AndroidInputActionRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AndroidInputActionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/android-device/screenshot", id: "getAndroidDeviceScreenshot", tag: "android-device",
+			summary: "Capture a single on-demand PNG screenshot of the running Android emulator",
+			resps: []respUnit{
+				{http.StatusOK, ""},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "image/png"},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/android-device/ui-tree", id: "getAndroidDeviceUITree", tag: "android-device",
+			summary: "Return the current on-screen UI hierarchy of the running Android emulator, structured (not a flat image)",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AndroidUINode{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func browserOperations() []operation {
