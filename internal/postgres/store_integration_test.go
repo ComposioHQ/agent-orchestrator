@@ -63,6 +63,22 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	var runtimeBypassesRLS bool
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT rolsuper OR rolbypassrls
+		FROM pg_roles
+		WHERE rolname = current_user`,
+	).Scan(&runtimeBypassesRLS); err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoleErr := store.ValidateRuntimeRole(ctx)
+	if runtimeBypassesRLS && runtimeRoleErr == nil {
+		t.Fatal("ValidateRuntimeRole accepted a role that bypasses RLS")
+	}
+	if !runtimeBypassesRLS && runtimeRoleErr != nil {
+		t.Fatalf("ValidateRuntimeRole rejected a restricted role: %v", runtimeRoleErr)
+	}
 	now := time.Now().UTC()
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	first, firstOrg := registerTestUser(
@@ -161,12 +177,141 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	if replayedSession.ID != session.ID {
 		t.Fatalf("idempotent session returned %q, want %q", replayedSession.ID, session.ID)
 	}
+	if session.RuntimeState != "requested" {
+		t.Fatalf("new session runtime state = %q, want requested", session.RuntimeState)
+	}
+	events, hasMore, err := store.ListClientEvents(ctx, first, firstOrg, session.ID, 0, 10)
+	if err != nil {
+		t.Fatalf("list initial session events: %v", err)
+	}
+	if hasMore || len(events) != 1 || events[0].Sequence != 1 ||
+		events[0].Type != "chat.user_message" {
+		t.Fatalf("initial session events = %#v, hasMore = %v", events, hasMore)
+	}
+	if !jsonEqual(events[0].Payload, []byte(`{"text":"Build the API"}`)) {
+		t.Fatalf("initial message payload = %s", events[0].Payload)
+	}
 	if _, err := store.GetSession(ctx, second, firstOrg, session.ID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-tenant session read error = %v", err)
 	}
+	if _, _, err := store.ListClientEvents(ctx, second, firstOrg, session.ID, 0, 10); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-tenant event replay error = %v", err)
+	}
 
-	var visibleWithoutContext int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ao_projects`).Scan(&visibleWithoutContext); err != nil {
+	emptySessionInput := sessionInput
+	emptySessionInput.DisplayName = "Empty session"
+	emptySessionInput.Prompt = ""
+	emptySession, err := store.CreateSession(
+		ctx,
+		first,
+		firstOrg,
+		"empty-session-key",
+		emptySessionInput,
+	)
+	if err != nil {
+		t.Fatalf("create empty session: %v", err)
+	}
+	message, err := store.SendMessage(
+		ctx,
+		first,
+		firstOrg,
+		emptySession.ID,
+		"message-key",
+		"Start now",
+	)
+	if err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+	replayedMessage, err := store.SendMessage(
+		ctx,
+		first,
+		firstOrg,
+		emptySession.ID,
+		"message-key",
+		"Start now",
+	)
+	if err != nil {
+		t.Fatalf("replay message: %v", err)
+	}
+	if replayedMessage.Sequence != message.Sequence || message.Sequence != 1 {
+		t.Fatalf("replayed message = %#v, original = %#v", replayedMessage, message)
+	}
+	if _, err := store.SendMessage(
+		ctx,
+		first,
+		firstOrg,
+		emptySession.ID,
+		"message-key",
+		"Different",
+	); !errors.Is(err, ErrIdempotencyMismatch) {
+		t.Fatalf("mismatched message replay error = %v", err)
+	}
+	if _, err := store.SendMessage(
+		ctx,
+		first,
+		firstOrg,
+		emptySession.ID,
+		"second-message-key",
+		"Still active",
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second active message error = %v", err)
+	}
+
+	concurrentInput := sessionInput
+	concurrentInput.DisplayName = "Concurrent session"
+	concurrentInput.Prompt = ""
+	concurrentSession, err := store.CreateSession(
+		ctx,
+		first,
+		firstOrg,
+		"concurrent-session-key",
+		concurrentInput,
+	)
+	if err != nil {
+		t.Fatalf("create concurrent session: %v", err)
+	}
+	const callers = 8
+	results := make(chan domain.ClientEvent, callers)
+	errs := make(chan error, callers)
+	for range callers {
+		go func() {
+			event, err := store.SendMessage(
+				ctx,
+				first,
+				firstOrg,
+				concurrentSession.ID,
+				"concurrent-message-key",
+				"Run once",
+			)
+			results <- event
+			errs <- err
+		}()
+	}
+	for range callers {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent message replay: %v", err)
+		}
+		if event := <-results; event.Sequence != 1 {
+			t.Fatalf("concurrent event sequence = %d, want 1", event.Sequence)
+		}
+	}
+	concurrentEvents, hasMore, err := store.ListClientEvents(
+		ctx,
+		first,
+		firstOrg,
+		concurrentSession.ID,
+		0,
+		10,
+	)
+	if err != nil {
+		t.Fatalf("list concurrent events: %v", err)
+	}
+	if hasMore || len(concurrentEvents) != 1 {
+		t.Fatalf("concurrent events = %#v, hasMore = %v", concurrentEvents, hasMore)
+	}
+
+	visibleWithoutContext, err := countProjectsWithoutRLSContext(ctx, pool)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if visibleWithoutContext != 0 {
@@ -329,6 +474,46 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("WorkOS token without selected organization error = %v", err)
 	}
+}
+
+func countProjectsWithoutRLSContext(ctx context.Context, pool *pgxpool.Pool) (int, error) {
+	var bypassRLS bool
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT rolsuper OR rolbypassrls
+		FROM pg_roles
+		WHERE rolname = current_user`,
+	).Scan(&bypassRLS); err != nil {
+		return 0, err
+	}
+	if !bypassRLS {
+		var count int
+		err := pool.QueryRow(ctx, `SELECT count(*) FROM ao_projects`).Scan(&count)
+		return count, err
+	}
+
+	role := "ao_rls_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	quotedRole := pgx.Identifier{role}.Sanitize()
+	if _, err := pool.Exec(ctx, `CREATE ROLE `+quotedRole); err != nil {
+		return 0, err
+	}
+	defer pool.Exec(ctx, `DROP ROLE `+quotedRole)
+	if _, err := pool.Exec(ctx, `GRANT SELECT ON ao_projects TO `+quotedRole); err != nil {
+		return 0, err
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SET LOCAL ROLE `+quotedRole); err != nil {
+		return 0, err
+	}
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM ao_projects`).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func registerTestUser(

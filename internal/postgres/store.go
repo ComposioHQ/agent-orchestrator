@@ -42,6 +42,23 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.pool.Ping(ctx)
 }
 
+func (s *Store) ValidateRuntimeRole(ctx context.Context) error {
+	var role string
+	var superuser, bypassRLS bool
+	if err := s.pool.QueryRow(
+		ctx,
+		`SELECT rolname, rolsuper, rolbypassrls
+		FROM pg_roles
+		WHERE rolname = current_user`,
+	).Scan(&role, &superuser, &bypassRLS); err != nil {
+		return fmt.Errorf("inspect PostgreSQL runtime role: %w", err)
+	}
+	if superuser || bypassRLS {
+		return fmt.Errorf("PostgreSQL runtime role %q bypasses row-level security", role)
+	}
+	return nil
+}
+
 type tenantFn func(pgx.Tx) error
 
 func (s *Store) withTenant(

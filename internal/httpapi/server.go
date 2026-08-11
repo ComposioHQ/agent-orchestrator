@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/auth"
@@ -29,6 +30,8 @@ type Store interface {
 	CreateSession(context.Context, domain.Principal, string, string, domain.CreateSession) (domain.Session, error)
 	ListSessions(context.Context, domain.Principal, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
 	GetSession(context.Context, domain.Principal, string, string) (domain.Session, error)
+	SendMessage(context.Context, domain.Principal, string, string, string, string) (domain.ClientEvent, error)
+	ListClientEvents(context.Context, domain.Principal, string, string, int64, int) ([]domain.ClientEvent, bool, error)
 }
 
 type Server struct {
@@ -37,6 +40,10 @@ type Server struct {
 	localAuthEnabled bool
 	localSessionTTL  time.Duration
 	localAuthLimiter *fixedWindowLimiter
+	sandboxProvider  string
+	environment      string
+	release          string
+	draining         atomic.Bool
 	logger           *slog.Logger
 	handler          http.Handler
 }
@@ -46,6 +53,9 @@ type Options struct {
 	WorkOS           auth.WorkOSVerifier
 	LocalAuthEnabled bool
 	LocalSessionTTL  time.Duration
+	SandboxProvider  string
+	Environment      string
+	Release          string
 	Logger           *slog.Logger
 }
 
@@ -54,12 +64,27 @@ func New(options Options) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	sandboxProvider := options.SandboxProvider
+	if sandboxProvider == "" {
+		sandboxProvider = "ecs"
+	}
+	environment := options.Environment
+	if environment == "" {
+		environment = "development"
+	}
+	release := options.Release
+	if release == "" {
+		release = "dev"
+	}
 	server := &Server{
 		store:            options.Store,
 		workos:           options.WorkOS,
 		localAuthEnabled: options.LocalAuthEnabled,
 		localSessionTTL:  options.LocalSessionTTL,
 		localAuthLimiter: newFixedWindowLimiter(10, time.Minute, 4096),
+		sandboxProvider:  sandboxProvider,
+		environment:      environment,
+		release:          release,
 		logger:           logger,
 	}
 	router := chi.NewRouter()
@@ -78,6 +103,9 @@ func New(options Options) *Server {
 			router.Get("/sessions", server.listSessions)
 			router.Post("/sessions", server.createSession)
 			router.Get("/sessions/{sessionId}", server.getSession)
+			router.Post("/sessions/{sessionId}/messages", server.sendMessage)
+			router.Get("/sessions/{sessionId}/chat-events", server.replayClientEvents)
+			router.Get("/sessions/{sessionId}/events", server.streamClientEvents)
 		})
 	})
 	server.handler = router
@@ -86,6 +114,10 @@ func New(options Options) *Server {
 
 func (s *Server) Handler() http.Handler {
 	return s.handler
+}
+
+func (s *Server) SetDraining(draining bool) {
+	s.draining.Store(draining)
 }
 
 type contextKey string
@@ -103,6 +135,7 @@ func (s *Server) requestID(next http.Handler) http.Handler {
 			requestID = uuid.NewString()
 		}
 		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("X-AO-Release", s.release)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID)))
 	})
 }
@@ -165,13 +198,25 @@ func requestID(r *http.Request) string {
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, s.statusResponse("ok"))
 }
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if s.draining.Load() {
+		writeError(w, r, http.StatusServiceUnavailable, "draining", "The control plane is draining.")
+		return
+	}
 	if err := s.store.Ping(r.Context()); err != nil {
 		writeError(w, r, http.StatusServiceUnavailable, "database_unavailable", "The database is unavailable.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	writeJSON(w, http.StatusOK, s.statusResponse("ready"))
+}
+
+func (s *Server) statusResponse(status string) map[string]string {
+	return map[string]string{
+		"status":      status,
+		"environment": s.environment,
+		"release":     s.release,
+	}
 }

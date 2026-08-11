@@ -40,6 +40,7 @@ type OrganizationResolver func(
 
 type OIDCVerifier struct {
 	verifier      *oidc.IDTokenVerifier
+	clientID      string
 	profiles      ProfileResolver
 	organizations OrganizationResolver
 }
@@ -61,8 +62,9 @@ func NewOIDCVerifier(
 		verifier: oidc.NewVerifier(
 			strings.TrimSpace(issuer),
 			oidc.NewRemoteKeySet(ctx, jwksURL),
-			&oidc.Config{ClientID: clientID},
+			&oidc.Config{SkipClientIDCheck: true},
 		),
+		clientID:      strings.TrimSpace(clientID),
 		profiles:      profiles,
 		organizations: organizations,
 	}, nil
@@ -79,13 +81,15 @@ func (v *OIDCVerifier) Verify(ctx context.Context, token string) (domain.Princip
 		Name       string `json:"name"`
 		GivenName  string `json:"given_name"`
 		FamilyName string `json:"family_name"`
+		ClientID   string `json:"client_id"`
 		OrgID      string `json:"org_id"`
 		Role       string `json:"role"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return domain.Principal{}, ErrInvalidToken
 	}
-	if strings.TrimSpace(claims.Subject) == "" {
+	if strings.TrimSpace(claims.Subject) == "" ||
+		strings.TrimSpace(claims.ClientID) != v.clientID {
 		return domain.Principal{}, ErrInvalidToken
 	}
 	displayName := strings.TrimSpace(claims.Name)

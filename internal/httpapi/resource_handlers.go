@@ -185,6 +185,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			Harness:              request.Harness,
 			DisplayName:          request.DisplayName,
 			Prompt:               request.Prompt,
+			Provider:             s.sandboxProvider,
 			ProviderConnectionID: request.ProviderConnectionID,
 		},
 	)
