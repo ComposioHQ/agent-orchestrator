@@ -73,7 +73,7 @@ type host struct {
 	// = none applied yet). Guarded by mu; used to skip redundant resizes.
 	curCols, curRows int
 
-	restarting   bool          // true if a restart is in progress. Guarded by mu.
+	restarting   bool // true if a restart is in progress. Guarded by mu.
 	shutdownOnce sync.Once
 	shutdownC    chan struct{} // closed when Shutdown is called
 }

@@ -884,4 +884,3 @@ func TestConcurrentRestarts(t *testing.T) {
 		t.Fatalf("c1: expected first restart to succeed, but got error: %s", resp1.Error)
 	}
 }
-
