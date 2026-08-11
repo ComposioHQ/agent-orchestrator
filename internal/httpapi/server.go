@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -45,6 +46,8 @@ type Server struct {
 	environment      string
 	release          string
 	draining         atomic.Bool
+	drainOnce        sync.Once
+	drain            chan struct{}
 	logger           *slog.Logger
 	github           *githubapp.Service
 	webhookMaxBody   int64
@@ -94,12 +97,14 @@ func New(options Options) *Server {
 		sandboxProvider:  sandboxProvider,
 		environment:      environment,
 		release:          release,
+		drain:            make(chan struct{}),
 		logger:           logger,
 		github:           options.GitHub,
 		webhookMaxBody:   webhookMaxBody,
 	}
 	router := chi.NewRouter()
 	router.Use(server.requestID)
+	router.Use(server.requestLog)
 	router.Get("/healthz", server.health)
 	router.Get("/readyz", server.ready)
 	if server.github != nil {
@@ -142,6 +147,11 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) SetDraining(draining bool) {
 	s.draining.Store(draining)
+	if draining {
+		s.drainOnce.Do(func() {
+			close(s.drain)
+		})
+	}
 }
 
 type contextKey string
@@ -161,6 +171,56 @@ func (s *Server) requestID(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("X-AO-Release", s.release)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, requestID)))
+	})
+}
+
+type statusResponseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusResponseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(body)
+}
+
+func (w *statusResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (s *Server) requestLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		response := &statusResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(response, r)
+		status := response.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		s.logger.Info(
+			"HTTP request complete",
+			"method",
+			r.Method,
+			"route",
+			chi.RouteContext(r.Context()).RoutePattern(),
+			"status",
+			status,
+			"duration_ms",
+			time.Since(started).Milliseconds(),
+			"request_id",
+			requestID(r),
+			"release",
+			s.release,
+		)
 	})
 }
 

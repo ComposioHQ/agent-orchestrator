@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.5
+          cache: true
+      - name: Create non-superuser test database owner
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE ao_cloud_test_owner
+            LOGIN PASSWORD 'ao_cloud_test_owner'
+            NOSUPERUSER NOBYPASSRLS;
+          CREATE DATABASE ao_cloud_test OWNER ao_cloud_test_owner;
+          SQL
+      - name: Test Go and PostgreSQL integration
+        env:
+          AO_CLOUD_TEST_DATABASE_URL: postgres://ao_cloud_test_owner:ao_cloud_test_owner@127.0.0.1:5432/ao_cloud_test?sslmode=disable
+        run: |
+          go test ./... -count=1
+          go vet ./...
+      - name: Test deployment helpers
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Check shell scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+          bash -n scripts/*.sh
+          shellcheck scripts/*.sh
+      - name: Build container image
+        run: docker build --tag ao-cloud:test .
+      - name: Exercise isolated local lifecycle
+        run: ./scripts/test-cloud-local.sh

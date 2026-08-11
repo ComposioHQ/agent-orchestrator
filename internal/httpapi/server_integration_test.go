@@ -33,6 +33,11 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
+	replicaStore, err := postgres.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replicaStore.Close()
 	api := New(Options{
 		Store:            store,
 		LocalAuthEnabled: true,
@@ -41,6 +46,14 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	})
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
+	replicaAPI := New(Options{
+		Store:            replicaStore,
+		LocalAuthEnabled: true,
+		LocalSessionTTL:  time.Hour,
+		SandboxProvider:  "docker",
+	})
+	replicaServer := httptest.NewServer(replicaAPI.Handler())
+	defer replicaServer.Close()
 
 	first := registerUser(t, server.URL, "first")
 	second := registerUser(t, server.URL, "second")
@@ -125,6 +138,10 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 			"harness":     "claude-code",
 			"displayName": "Implement API",
 			"prompt":      "Build the API",
+			"mode":        "read-only",
+			"deniedCommands": []string{
+				"git push --force:*",
+			},
 		},
 		http.StatusCreated,
 	)
@@ -135,6 +152,12 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	}
 	if state := stringField(t, session, "runtimeState"); state != "requested" {
 		t.Fatalf("new session runtime state = %q, want requested", state)
+	}
+	if mode := stringField(t, session, "mode"); mode != "read-only" {
+		t.Fatalf("new session mode = %q, want read-only", mode)
+	}
+	if denied, ok := session["deniedCommands"].([]any); !ok || len(denied) != 1 {
+		t.Fatalf("new session denied commands = %#v", session["deniedCommands"])
 	}
 	initialEvents := requestJSON(
 		t,
@@ -272,6 +295,119 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 		t.Fatalf("event stream event = %q", block)
 	}
 	cancelStream()
+
+	replicaSessionResponse := requestJSON(
+		t,
+		http.MethodPost,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions",
+		first.Token,
+		"replica-session-create",
+		map[string]any{
+			"projectId":   projectID,
+			"kind":        "worker",
+			"harness":     "claude-code",
+			"displayName": "Replica stream",
+			"prompt":      "",
+		},
+		http.StatusCreated,
+	)
+	replicaSessionID := stringField(
+		t,
+		objectField(t, replicaSessionResponse, "session"),
+		"id",
+	)
+	replicaStreamContext, cancelReplicaStream := context.WithTimeout(
+		context.Background(),
+		4*time.Second,
+	)
+	replicaStreamRequest, err := http.NewRequestWithContext(
+		replicaStreamContext,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+replicaSessionID+"/events?after=0",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaStreamRequest.Header.Set("Authorization", "Bearer "+first.Token)
+	replicaStreamResponse, err := http.DefaultClient.Do(replicaStreamRequest)
+	if err != nil {
+		t.Fatalf("open cross-replica event stream: %v", err)
+	}
+	replicaReader := bufio.NewReader(replicaStreamResponse.Body)
+	if block := readSSEBlock(t, replicaReader); !strings.Contains(block, "retry: 2000") {
+		t.Fatalf("cross-replica stream prelude = %q", block)
+	}
+	requestJSON(
+		t,
+		http.MethodPost,
+		replicaServer.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+replicaSessionID+"/messages",
+		first.Token,
+		"replica-message-send",
+		map[string]any{"text": "Written through replica B"},
+		http.StatusAccepted,
+	)
+	if block := readSSEBlock(t, replicaReader); !strings.Contains(block, `"sequence":1`) ||
+		!strings.Contains(block, `"text":"Written through replica B"`) {
+		t.Fatalf("cross-replica stream event = %q", block)
+	}
+	cancelReplicaStream()
+	_ = replicaStreamResponse.Body.Close()
+
+	resumed := requestJSON(
+		t,
+		http.MethodGet,
+		replicaServer.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+replicaSessionID+"/chat-events?after=1",
+		first.Token,
+		"",
+		nil,
+		http.StatusOK,
+	)
+	if events, ok := resumed["events"].([]any); !ok || len(events) != 0 {
+		t.Fatalf("resumed events = %#v", resumed["events"])
+	}
+	if nextAfter, ok := resumed["nextAfter"].(float64); !ok || nextAfter != 1 {
+		t.Fatalf("resumed nextAfter = %#v", resumed["nextAfter"])
+	}
+	drainContext, cancelDrain := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelDrain()
+	drainRequest, err := http.NewRequestWithContext(
+		drainContext,
+		http.MethodGet,
+		replicaServer.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/sessions/"+replicaSessionID+"/events",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drainRequest.Header.Set("Authorization", "Bearer "+first.Token)
+	drainRequest.Header.Set("Last-Event-ID", "1")
+	drainResponse, err := http.DefaultClient.Do(drainRequest)
+	if err != nil {
+		t.Fatalf("open resumable event stream: %v", err)
+	}
+	defer drainResponse.Body.Close()
+	if cacheControl := drainResponse.Header.Get("Cache-Control"); cacheControl != "no-cache, no-transform" {
+		t.Fatalf("event stream Cache-Control = %q", cacheControl)
+	}
+	drainReader := bufio.NewReader(drainResponse.Body)
+	if block := readSSEBlock(t, drainReader); !strings.Contains(block, "retry: 2000") {
+		t.Fatalf("resumable stream prelude = %q", block)
+	}
+	replicaAPI.SetDraining(true)
+	streamClosed := make(chan error, 1)
+	go func() {
+		_, err := drainReader.ReadByte()
+		streamClosed <- err
+	}()
+	select {
+	case err := <-streamClosed:
+		if err == nil {
+			t.Fatal("event stream remained readable after draining")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("event stream did not close while replica drained")
+	}
 
 	workosServer := httptest.NewServer(New(Options{
 		Store: store,

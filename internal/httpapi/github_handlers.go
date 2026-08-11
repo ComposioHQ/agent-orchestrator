@@ -17,7 +17,7 @@ import (
 
 type githubInstallationResponse struct {
 	ID                   string     `json:"id"`
-	GitHubInstallationID int64      `json:"githubInstallationId"`
+	GitHubInstallationID string     `json:"githubInstallationId"`
 	AccountLogin         string     `json:"accountLogin"`
 	AccountType          string     `json:"accountType"`
 	Status               string     `json:"status"`
@@ -30,7 +30,7 @@ type githubInstallationResponse struct {
 }
 
 type githubRepositoryResponse struct {
-	GitHubRepositoryID int64      `json:"githubRepositoryId"`
+	GitHubRepositoryID string     `json:"githubRepositoryId"`
 	Name               string     `json:"name"`
 	FullName           string     `json:"fullName"`
 	HTMLURL            string     `json:"htmlUrl"`
@@ -44,7 +44,7 @@ type githubRepositoryResponse struct {
 }
 
 type createGitHubProjectRequest struct {
-	GitHubRepositoryID int64          `json:"githubRepositoryId"`
+	GitHubRepositoryID string         `json:"githubRepositoryId"`
 	DisplayName        string         `json:"displayName,omitempty"`
 	Config             map[string]any `json:"config,omitempty"`
 }
@@ -222,23 +222,7 @@ func (s *Server) listGitHubRepositories(w http.ResponseWriter, r *http.Request) 
 	}
 	items := make([]githubRepositoryResponse, 0, len(repositories))
 	for _, repository := range repositories {
-		access := "active"
-		if repository.RevokedAt != nil {
-			access = "revoked"
-		}
-		items = append(items, githubRepositoryResponse{
-			GitHubRepositoryID: repository.GitHubRepositoryID,
-			Name:               repository.Name,
-			FullName:           repository.FullName,
-			HTMLURL:            repository.HTMLURL,
-			DefaultBranch:      repository.DefaultBranch,
-			Visibility:         repository.Visibility,
-			IsPrivate:          repository.IsPrivate,
-			IsArchived:         repository.IsArchived,
-			Access:             access,
-			GrantedAt:          repository.GrantedAt,
-			RevokedAt:          repository.RevokedAt,
-		})
+		items = append(items, toGitHubRepositoryResponse(repository))
 	}
 	page := pageInfo{HasMore: hasMore}
 	if hasMore && len(repositories) > 0 {
@@ -265,7 +249,12 @@ func (s *Server) createGitHubProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.DisplayName = strings.TrimSpace(request.DisplayName)
-	if request.GitHubRepositoryID <= 0 || len(request.DisplayName) > 120 {
+	githubRepositoryID, err := strconv.ParseInt(
+		strings.TrimSpace(request.GitHubRepositoryID),
+		10,
+		64,
+	)
+	if err != nil || githubRepositoryID <= 0 || len(request.DisplayName) > 120 {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The GitHub repository or display name is invalid.")
 		return
 	}
@@ -288,7 +277,7 @@ func (s *Server) createGitHubProject(w http.ResponseWriter, r *http.Request) {
 		orgID,
 		key,
 		domain.CreateGitHubProject{
-			GitHubRepositoryID: request.GitHubRepositoryID,
+			GitHubRepositoryID: githubRepositoryID,
 			DisplayName:        request.DisplayName,
 			Config:             config,
 		},
@@ -389,7 +378,7 @@ func toGitHubInstallationResponse(
 	}
 	return githubInstallationResponse{
 		ID:                   installation.ID,
-		GitHubInstallationID: installation.GitHubInstallationID,
+		GitHubInstallationID: strconv.FormatInt(installation.GitHubInstallationID, 10),
 		AccountLogin:         installation.AccountLogin,
 		AccountType:          installation.AccountType,
 		Status:               status,
@@ -399,6 +388,28 @@ func toGitHubInstallationResponse(
 		LastError:            installation.LastError,
 		CreatedAt:            installation.CreatedAt,
 		UpdatedAt:            installation.UpdatedAt,
+	}
+}
+
+func toGitHubRepositoryResponse(
+	repository domain.GitHubRepository,
+) githubRepositoryResponse {
+	access := "active"
+	if repository.RevokedAt != nil {
+		access = "revoked"
+	}
+	return githubRepositoryResponse{
+		GitHubRepositoryID: strconv.FormatInt(repository.GitHubRepositoryID, 10),
+		Name:               repository.Name,
+		FullName:           repository.FullName,
+		HTMLURL:            repository.HTMLURL,
+		DefaultBranch:      repository.DefaultBranch,
+		Visibility:         repository.Visibility,
+		IsPrivate:          repository.IsPrivate,
+		IsArchived:         repository.IsArchived,
+		Access:             access,
+		GrantedAt:          repository.GrantedAt,
+		RevokedAt:          repository.RevokedAt,
 	}
 }
 

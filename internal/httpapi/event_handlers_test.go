@@ -48,7 +48,7 @@ func TestWriteSSEEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "id: 7\ndata: {\"sessionId\":\"session-1\",\"sequence\":7,\"type\":\"chat.user_message\",\"payload\":{\"text\":\"hello\"},\"createdAt\":\"2026-08-11T10:00:00Z\"}\n\n"
+	want := "id: 7\nevent: chat.user_message\ndata: {\"sessionId\":\"session-1\",\"sequence\":7,\"type\":\"chat.user_message\",\"payload\":{\"text\":\"hello\"},\"createdAt\":\"2026-08-11T10:00:00Z\"}\n\n"
 	if recorder.Body.String() != want {
 		t.Fatalf("SSE body = %q, want %q", recorder.Body.String(), want)
 	}

@@ -61,7 +61,7 @@ func (s *Store) CreateProject(
 				org_id, display_name, repository_url, default_branch, config
 			) VALUES ($1, $2, $3, $4, $5)
 			RETURNING id, org_id, display_name, repository_url, default_branch,
-				config, created_at, updated_at`,
+				github_repository_id, config, created_at, updated_at`,
 			orgID,
 			input.DisplayName,
 			input.RepositoryURL,
@@ -127,7 +127,7 @@ func loadIdempotentProject(
 	return scanProject(tx.QueryRow(
 		ctx,
 		`SELECT id, org_id, display_name, repository_url, default_branch,
-			config, created_at, updated_at
+			github_repository_id, config, created_at, updated_at
 		FROM ao_projects WHERE org_id = $1 AND id = $2`,
 		orgID,
 		projectID,
@@ -146,7 +146,7 @@ func (s *Store) ListProjects(
 		rows, err := tx.Query(
 			ctx,
 			`SELECT id, org_id, display_name, repository_url, default_branch,
-				config, created_at, updated_at
+				github_repository_id, config, created_at, updated_at
 			FROM ao_projects
 			WHERE org_id = $1
 			  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3::uuid))
@@ -187,6 +187,12 @@ func (s *Store) CreateSession(
 	idempotencyKey string,
 	input domain.CreateSession,
 ) (domain.Session, error) {
+	if input.Mode == "" {
+		input.Mode = "standard"
+	}
+	if input.DeniedCommands == nil {
+		input.DeniedCommands = []string{}
+	}
 	var session domain.Session
 	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
 		payload, err := json.Marshal(input)
@@ -223,18 +229,23 @@ func (s *Store) CreateSession(
 			ctx,
 			`WITH generated AS (SELECT gen_random_uuid() AS id)
 			INSERT INTO ao_sessions (
-				id, org_id, project_id, kind, harness, display_name, branch, prompt
+				id, org_id, project_id, kind, harness, display_name, branch,
+				prompt, mode, denied_commands
 			)
-			SELECT id, $1, $2, $3, $4, $5, 'ao/' || left(id::text, 8), $6
+			SELECT id, $1, $2, $3, $4, $5, 'ao/' || left(id::text, 8),
+				$6, $7, $8
 			FROM generated
 			RETURNING id, org_id, project_id, kind, harness, display_name, branch,
-				activity_state, is_terminated, false, '', '', created_at, updated_at`,
+				mode, denied_commands, activity_state, is_terminated,
+				false, '', '', created_at, updated_at`,
 			orgID,
 			input.ProjectID,
 			input.Kind,
 			input.Harness,
 			input.DisplayName,
 			input.Prompt,
+			input.Mode,
+			input.DeniedCommands,
 		), &session)
 		if err != nil {
 			return normalizeConstraintError(err)
@@ -244,17 +255,21 @@ func (s *Store) CreateSession(
 		if provider == "" {
 			provider = "ecs"
 		}
-		if input.ProviderConnectionID != "" {
+		if input.SandboxConnectionID != "" {
+			var connectionProvider string
 			if err := tx.QueryRow(
 				ctx,
 				`SELECT provider FROM ao_provider_connections
 				WHERE org_id = $1 AND id = $2`,
 				orgID,
-				input.ProviderConnectionID,
-			).Scan(&provider); errors.Is(err, pgx.ErrNoRows) {
+				input.SandboxConnectionID,
+			).Scan(&connectionProvider); errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			} else if err != nil {
 				return err
+			}
+			if connectionProvider != provider {
+				return ErrInvalid
 			}
 		}
 		if _, err := tx.Exec(
@@ -265,7 +280,7 @@ func (s *Store) CreateSession(
 			session.ID,
 			orgID,
 			provider,
-			input.ProviderConnectionID,
+			input.SandboxConnectionID,
 		); err != nil {
 			return normalizeConstraintError(err)
 		}
@@ -403,6 +418,7 @@ func (s *Store) GetSession(
 const sessionSelect = `
 	SELECT session.id, session.org_id, session.project_id, session.kind,
 		session.harness, session.display_name, session.branch,
+		session.mode, session.denied_commands,
 		session.activity_state, session.is_terminated,
 		EXISTS (
 			SELECT 1 FROM ao_worker_connections worker
@@ -446,6 +462,7 @@ func scanProject(row scanner, project *domain.Project) error {
 		&project.DisplayName,
 		&project.RepositoryURL,
 		&project.DefaultBranch,
+		&project.GitHubRepositoryID,
 		&project.Config,
 		&project.CreatedAt,
 		&project.UpdatedAt,
@@ -462,6 +479,8 @@ func scanSession(row scanner, session *domain.Session) error {
 		&session.Harness,
 		&session.DisplayName,
 		&session.Branch,
+		&session.Mode,
+		&session.DeniedCommands,
 		&activity,
 		&session.IsTerminated,
 		&session.RuntimeConnected,

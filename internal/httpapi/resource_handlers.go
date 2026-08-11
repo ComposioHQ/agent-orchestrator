@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,23 +20,26 @@ type createProjectRequest struct {
 }
 
 type projectResponse struct {
-	ID            string         `json:"id"`
-	OrgID         string         `json:"orgId"`
-	DisplayName   string         `json:"displayName"`
-	RepositoryURL string         `json:"repositoryUrl"`
-	DefaultBranch string         `json:"defaultBranch"`
-	Config        map[string]any `json:"config"`
-	CreatedAt     time.Time      `json:"createdAt"`
-	UpdatedAt     time.Time      `json:"updatedAt"`
+	ID                 string         `json:"id"`
+	OrgID              string         `json:"orgId"`
+	DisplayName        string         `json:"displayName"`
+	RepositoryURL      string         `json:"repositoryUrl"`
+	DefaultBranch      string         `json:"defaultBranch"`
+	GitHubRepositoryID string         `json:"githubRepositoryId,omitempty"`
+	Config             map[string]any `json:"config"`
+	CreatedAt          time.Time      `json:"createdAt"`
+	UpdatedAt          time.Time      `json:"updatedAt"`
 }
 
 type createSessionRequest struct {
-	ProjectID            string `json:"projectId"`
-	Kind                 string `json:"kind"`
-	Harness              string `json:"harness"`
-	DisplayName          string `json:"displayName"`
-	Prompt               string `json:"prompt"`
-	ProviderConnectionID string `json:"providerConnectionId,omitempty"`
+	ProjectID                   string   `json:"projectId"`
+	Kind                        string   `json:"kind"`
+	Harness                     string   `json:"harness"`
+	DisplayName                 string   `json:"displayName"`
+	Prompt                      string   `json:"prompt"`
+	Mode                        string   `json:"mode,omitempty"`
+	DeniedCommands              []string `json:"deniedCommands,omitempty"`
+	SandboxProviderConnectionID string   `json:"sandboxProviderConnectionId,omitempty"`
 }
 
 type sessionResponse struct {
@@ -46,6 +50,8 @@ type sessionResponse struct {
 	Harness          string    `json:"harness"`
 	DisplayName      string    `json:"displayName"`
 	Branch           string    `json:"branch"`
+	Mode             string    `json:"mode"`
+	DeniedCommands   []string  `json:"deniedCommands"`
 	ActivityState    string    `json:"activityState"`
 	Status           string    `json:"status"`
 	RuntimeConnected bool      `json:"runtimeConnected"`
@@ -169,7 +175,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	request.ProjectID = strings.TrimSpace(request.ProjectID)
 	request.Harness = strings.TrimSpace(request.Harness)
 	request.DisplayName = strings.TrimSpace(request.DisplayName)
-	request.ProviderConnectionID = strings.TrimSpace(request.ProviderConnectionID)
+	request.Mode = strings.TrimSpace(request.Mode)
+	request.SandboxProviderConnectionID = strings.TrimSpace(request.SandboxProviderConnectionID)
+	if request.Mode == "" {
+		request.Mode = "standard"
+	}
 	if !validSessionInput(request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Session project, kind, harness, name, or prompt is invalid.")
 		return
@@ -180,13 +190,15 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		orgID,
 		key,
 		domain.CreateSession{
-			ProjectID:            request.ProjectID,
-			Kind:                 request.Kind,
-			Harness:              request.Harness,
-			DisplayName:          request.DisplayName,
-			Prompt:               request.Prompt,
-			Provider:             s.sandboxProvider,
-			ProviderConnectionID: request.ProviderConnectionID,
+			ProjectID:           request.ProjectID,
+			Kind:                request.Kind,
+			Harness:             request.Harness,
+			DisplayName:         request.DisplayName,
+			Prompt:              request.Prompt,
+			Mode:                request.Mode,
+			DeniedCommands:      request.DeniedCommands,
+			Provider:            s.sandboxProvider,
+			SandboxConnectionID: request.SandboxProviderConnectionID,
 		},
 	)
 	if err != nil {
@@ -273,27 +285,35 @@ func validProjectInput(request createProjectRequest) bool {
 func validSessionInput(request createSessionRequest) bool {
 	if requireUUID(request.ProjectID, "projectId") != nil ||
 		(request.Kind != "worker" && request.Kind != "orchestrator") ||
+		(request.Mode != "read-only" && request.Mode != "standard" && request.Mode != "trusted") ||
 		len(request.Harness) < 1 || len(request.Harness) > 120 ||
 		len(request.DisplayName) < 1 || len(request.DisplayName) > 80 ||
-		len(request.Prompt) > 65536 {
+		len(request.Prompt) > 65536 ||
+		len(request.DeniedCommands) > 128 {
 		return false
 	}
-	return request.ProviderConnectionID == "" ||
-		requireUUID(request.ProviderConnectionID, "providerConnectionId") == nil
+	for _, command := range request.DeniedCommands {
+		if strings.TrimSpace(command) == "" || len(command) > 512 {
+			return false
+		}
+	}
+	return request.SandboxProviderConnectionID == "" ||
+		requireUUID(request.SandboxProviderConnectionID, "sandboxProviderConnectionId") == nil
 }
 
 func toProjectResponse(project domain.Project) projectResponse {
 	config := map[string]any{}
 	_ = json.Unmarshal(project.Config, &config)
 	return projectResponse{
-		ID:            project.ID,
-		OrgID:         project.OrgID,
-		DisplayName:   project.DisplayName,
-		RepositoryURL: project.RepositoryURL,
-		DefaultBranch: project.DefaultBranch,
-		Config:        config,
-		CreatedAt:     project.CreatedAt,
-		UpdatedAt:     project.UpdatedAt,
+		ID:                 project.ID,
+		OrgID:              project.OrgID,
+		DisplayName:        project.DisplayName,
+		RepositoryURL:      project.RepositoryURL,
+		DefaultBranch:      project.DefaultBranch,
+		GitHubRepositoryID: decimalID(project.GitHubRepositoryID),
+		Config:             config,
+		CreatedAt:          project.CreatedAt,
+		UpdatedAt:          project.UpdatedAt,
 	}
 }
 
@@ -306,6 +326,8 @@ func toSessionResponse(session domain.Session) sessionResponse {
 		Harness:          session.Harness,
 		DisplayName:      session.DisplayName,
 		Branch:           session.Branch,
+		Mode:             session.Mode,
+		DeniedCommands:   nonNilStrings(session.DeniedCommands),
 		ActivityState:    string(session.ActivityState),
 		Status:           string(session.Status(time.Now().UTC())),
 		RuntimeConnected: session.RuntimeConnected,
@@ -315,4 +337,18 @@ func toSessionResponse(session domain.Session) sessionResponse {
 		CreatedAt:        session.CreatedAt,
 		UpdatedAt:        session.UpdatedAt,
 	}
+}
+
+func decimalID(id *int64) string {
+	if id == nil {
+		return ""
+	}
+	return strconv.FormatInt(*id, 10)
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }

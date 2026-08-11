@@ -875,7 +875,7 @@ func (s *Store) CreateGitHubProject(
 			  AND grant_row.github_repository_id = $4
 			  AND grant_row.revoked_at IS NULL
 			RETURNING id, org_id, display_name, repository_url, default_branch,
-				config, created_at, updated_at`,
+				github_repository_id, config, created_at, updated_at`,
 			orgID,
 			input.DisplayName,
 			config,

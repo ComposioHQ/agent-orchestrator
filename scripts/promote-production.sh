@@ -4,7 +4,7 @@ set -euo pipefail
 REGION="${AWS_REGION:-eu-north-1}"
 STAGING_CLUSTER="${AO_CLOUD_STAGING_CLUSTER:-ao-cloud-staging}"
 STAGING_SERVICE="${AO_CLOUD_STAGING_SERVICE:-ao-cloud-staging-api}"
-STAGING_MIGRATION_FAMILY="${AO_CLOUD_STAGING_MIGRATION_FAMILY:-ao-cloud-staging-migrate}"
+STAGING_ROLLBACK_ALARM="${AO_CLOUD_STAGING_ROLLBACK_ALARM:-ao-cloud-staging-target-5xx}"
 PRODUCTION_CLUSTER="${AO_CLOUD_PRODUCTION_CLUSTER:-ao-cloud-production}"
 PRODUCTION_SERVICE="${AO_CLOUD_PRODUCTION_SERVICE:-ao-cloud-production-api}"
 PRODUCTION_API_FAMILY="${AO_CLOUD_PRODUCTION_API_FAMILY:-ao-cloud-production-api}"
@@ -61,6 +61,17 @@ if [[ "$release" != "$staging_release" ]]; then
 	echo "Release ${release} is not the healthy staging release ${staging_release}." >&2
 	exit 1
 fi
+./scripts/verify-ecs-service.py \
+	--region "$REGION" \
+	--cluster "$STAGING_CLUSTER" \
+	--service "$STAGING_SERVICE" \
+	--alarm "$STAGING_ROLLBACK_ALARM" \
+	--expected-task-definition "$staging_task" >/dev/null
+./scripts/verify-ecs-service.py \
+	--region "$REGION" \
+	--cluster "$PRODUCTION_CLUSTER" \
+	--service "$PRODUCTION_SERVICE" \
+	--alarm "$ROLLBACK_ALARM" >/dev/null
 
 image="$(
 	SOURCE="$staging_source" python3 - <<'PY'
@@ -105,111 +116,32 @@ then
 	exit 1
 fi
 
-execution_role="$(
-	aws_cli iam get-role \
-		--role-name ao-cloud-production-execution-role \
-		--query 'Role.Arn' \
-		--output text
-)"
-task_role="$(
-	aws_cli iam get-role \
-		--role-name ao-cloud-production-task-role \
-		--query 'Role.Arn' \
-		--output text
-)"
-database_secret="$(
-	aws_cli secretsmanager describe-secret \
-		--secret-id ao-cloud/production/database-url \
-		--query ARN \
-		--output text
-)"
-migration_secret="$(
-	aws_cli secretsmanager describe-secret \
-		--secret-id ao-cloud/production/migration-database-url \
-		--query ARN \
-		--output text
-)"
-workos_secret="$(
-	aws_cli secretsmanager describe-secret \
-		--secret-id ao-cloud/production/workos \
-		--query ARN \
-		--output text
-)"
+aws_cli iam get-role --role-name ao-cloud-production-execution-role >/dev/null
+aws_cli iam get-role --role-name ao-cloud-production-task-role >/dev/null
+aws_cli secretsmanager describe-secret \
+	--secret-id ao-cloud/production/database-url >/dev/null
+aws_cli secretsmanager describe-secret \
+	--secret-id ao-cloud/production/migration-database-url >/dev/null
+aws_cli secretsmanager describe-secret \
+	--secret-id ao-cloud/production/workos >/dev/null
 
 register_api_task() {
-	local payload
+	local source payload
+	source="$(
+		aws_cli ecs describe-task-definition \
+			--task-definition "$PRODUCTION_API_FAMILY" \
+			--include TAGS
+	)"
 	payload="$(
-		SOURCE="$staging_source" \
-			IMAGE="$image" \
-			RELEASE="$release" \
-			EXECUTION_ROLE="$execution_role" \
-			TASK_ROLE="$task_role" \
-			DATABASE_SECRET="$database_secret" \
-			WORKOS_SECRET="$workos_secret" \
-			FAMILY="$PRODUCTION_API_FAMILY" \
-			REGION="$REGION" \
-			python3 - <<'PY'
-import json
-import os
-
-source = json.loads(os.environ["SOURCE"])
-task = source["taskDefinition"]
-allowed = {
-    "networkMode",
-    "containerDefinitions",
-    "volumes",
-    "placementConstraints",
-    "requiresCompatibilities",
-    "cpu",
-    "memory",
-    "pidMode",
-    "ipcMode",
-    "proxyConfiguration",
-    "inferenceAccelerators",
-    "ephemeralStorage",
-    "runtimePlatform",
-}
-payload = {key: value for key, value in task.items() if key in allowed}
-payload.update({
-    "family": os.environ["FAMILY"],
-    "taskRoleArn": os.environ["TASK_ROLE"],
-    "executionRoleArn": os.environ["EXECUTION_ROLE"],
-})
-container = next(
-    item for item in payload["containerDefinitions"]
-    if item["name"] == "control-plane"
-)
-container["image"] = os.environ["IMAGE"]
-environment = {item["name"]: item["value"] for item in container["environment"]}
-environment.update({
-    "AO_CLOUD_ENV": "production",
-    "AO_CLOUD_RELEASE": os.environ["RELEASE"],
-    "AO_CLOUD_HTTP_ADDRESS": ":8080",
-    "AO_CLOUD_LOCAL_AUTH": "false",
-    "AO_CLOUD_MIGRATE_ON_STARTUP": "false",
-})
-container["environment"] = [
-    {"name": name, "value": value}
-    for name, value in sorted(environment.items())
-]
-container["secrets"] = [
-    {"name": "AO_CLOUD_DATABASE_URL", "valueFrom": os.environ["DATABASE_SECRET"]},
-    {"name": "AO_CLOUD_WORKOS_ISSUER", "valueFrom": os.environ["WORKOS_SECRET"] + ":issuer::"},
-    {"name": "AO_CLOUD_WORKOS_CLIENT_ID", "valueFrom": os.environ["WORKOS_SECRET"] + ":client_id::"},
-    {"name": "AO_CLOUD_WORKOS_API_KEY", "valueFrom": os.environ["WORKOS_SECRET"] + ":api_key::"},
-]
-container["logConfiguration"]["options"].update({
-    "awslogs-group": "/ao-cloud/production/control-plane",
-    "awslogs-region": os.environ["REGION"],
-    "awslogs-stream-prefix": "api",
-})
-payload["tags"] = [
-    {"key": "Project", "value": "ao-cloud"},
-    {"key": "Environment", "value": "production"},
-    {"key": "Release", "value": os.environ["RELEASE"]},
-]
-print(json.dumps(payload))
-PY
+		printf '%s' "$source" |
+			./scripts/render-task-definition.py \
+				--family "$PRODUCTION_API_FAMILY" \
+				--container control-plane \
+				--image "$image" \
+				--release "$release" \
+				--environment production \
+				--log-group /ao-cloud/production/control-plane \
+				--region "$REGION"
 	)"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \
@@ -221,71 +153,20 @@ register_migration_task() {
 	local source payload
 	source="$(
 		aws_cli ecs describe-task-definition \
-			--task-definition "$STAGING_MIGRATION_FAMILY" \
+			--task-definition "$PRODUCTION_MIGRATION_FAMILY" \
 			--include TAGS
 	)"
 	payload="$(
-		SOURCE="$source" \
-			IMAGE="$image" \
-			RELEASE="$release" \
-			EXECUTION_ROLE="$execution_role" \
-			TASK_ROLE="$task_role" \
-			MIGRATION_SECRET="$migration_secret" \
-			RUNTIME_DATABASE_USER="$RUNTIME_DATABASE_USER" \
-			FAMILY="$PRODUCTION_MIGRATION_FAMILY" \
-			REGION="$REGION" \
-			python3 - <<'PY'
-import json
-import os
-
-source = json.loads(os.environ["SOURCE"])
-task = source["taskDefinition"]
-allowed = {
-    "networkMode",
-    "containerDefinitions",
-    "volumes",
-    "placementConstraints",
-    "requiresCompatibilities",
-    "cpu",
-    "memory",
-    "pidMode",
-    "ipcMode",
-    "proxyConfiguration",
-    "inferenceAccelerators",
-    "ephemeralStorage",
-    "runtimePlatform",
-}
-payload = {key: value for key, value in task.items() if key in allowed}
-payload.update({
-    "family": os.environ["FAMILY"],
-    "taskRoleArn": os.environ["TASK_ROLE"],
-    "executionRoleArn": os.environ["EXECUTION_ROLE"],
-})
-container = next(
-    item for item in payload["containerDefinitions"]
-    if item["name"] == "migration"
-)
-container["image"] = os.environ["IMAGE"]
-container["environment"] = [{
-    "name": "AO_CLOUD_RUNTIME_DATABASE_USER",
-    "value": os.environ["RUNTIME_DATABASE_USER"],
-}]
-container["secrets"] = [{
-    "name": "AO_CLOUD_MIGRATION_DATABASE_URL",
-    "valueFrom": os.environ["MIGRATION_SECRET"],
-}]
-container["logConfiguration"]["options"].update({
-    "awslogs-group": "/ao-cloud/production/control-plane",
-    "awslogs-region": os.environ["REGION"],
-    "awslogs-stream-prefix": "migration",
-})
-payload["tags"] = [
-    {"key": "Project", "value": "ao-cloud"},
-    {"key": "Environment", "value": "production"},
-    {"key": "Release", "value": os.environ["RELEASE"]},
-]
-print(json.dumps(payload))
-PY
+		printf '%s' "$source" |
+			./scripts/render-task-definition.py \
+				--family "$PRODUCTION_MIGRATION_FAMILY" \
+				--container migration \
+				--image "$image" \
+				--release "$release" \
+				--environment production \
+				--log-group /ao-cloud/production/control-plane \
+				--region "$REGION" \
+				--runtime-database-user "$RUNTIME_DATABASE_USER"
 	)"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \
@@ -352,6 +233,17 @@ if result.get("failures") or not result.get("tasks"):
 print(result["tasks"][0]["taskArn"])
 PY
 )"
+cleanup_migration() {
+	if [[ -n "${migration_arn:-}" && "${migration_complete:-false}" != "true" ]]; then
+		aws_cli ecs stop-task \
+			--cluster "$PRODUCTION_CLUSTER" \
+			--task "$migration_arn" \
+			--reason "AO Cloud promotion interrupted before migration completion" \
+			>/dev/null 2>&1 || true
+		echo "Stopped incomplete production migration task ${migration_arn}." >&2
+	fi
+}
+trap cleanup_migration EXIT
 aws_cli ecs wait tasks-stopped \
 	--cluster "$PRODUCTION_CLUSTER" \
 	--tasks "$migration_arn"
@@ -370,6 +262,7 @@ if [[ "$migration_exit" != "0" ]]; then
 		--output json >&2
 	exit 1
 fi
+migration_complete=true
 
 target_group="$(
 	aws_cli elbv2 describe-target-groups \
@@ -471,16 +364,13 @@ then
 	exit 1
 fi
 
-unhealthy_targets="$(
-	aws_cli elbv2 describe-target-health \
-		--target-group-arn "$target_group" \
-		--query "length(TargetHealthDescriptions[?TargetHealth.State!=\`healthy\`])" \
-		--output text
-)"
-if [[ "$unhealthy_targets" != "0" ]]; then
-	echo "Production completed with unhealthy ALB targets." >&2
-	exit 1
-fi
+./scripts/verify-ecs-service.py \
+	--region "$REGION" \
+	--cluster "$PRODUCTION_CLUSTER" \
+	--service "$PRODUCTION_SERVICE" \
+	--alarm "$ROLLBACK_ALARM" \
+	--expected-task-definition "$api_task" >/dev/null
+trap - EXIT
 
 printf 'Promoted release %s\nImage digest: %s\nTask definition: %s\n' \
 	"$release" \

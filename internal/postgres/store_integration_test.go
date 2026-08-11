@@ -149,11 +149,13 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	}
 
 	sessionInput := domain.CreateSession{
-		ProjectID:   project.ID,
-		Kind:        "worker",
-		Harness:     "claude-code",
-		DisplayName: "Implement API",
-		Prompt:      "Build the API",
+		ProjectID:      project.ID,
+		Kind:           "worker",
+		Harness:        "claude-code",
+		DisplayName:    "Implement API",
+		Prompt:         "Build the API",
+		Mode:           "read-only",
+		DeniedCommands: []string{"git push --force:*"},
 	}
 	session, err := store.CreateSession(
 		ctx,
@@ -181,6 +183,11 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	if session.RuntimeState != "requested" {
 		t.Fatalf("new session runtime state = %q, want requested", session.RuntimeState)
 	}
+	if session.Mode != "read-only" ||
+		len(session.DeniedCommands) != 1 ||
+		session.DeniedCommands[0] != "git push --force:*" {
+		t.Fatalf("new session policy = mode %q, denied %#v", session.Mode, session.DeniedCommands)
+	}
 	events, hasMore, err := store.ListClientEvents(ctx, first, firstOrg, session.ID, 0, 10)
 	if err != nil {
 		t.Fatalf("list initial session events: %v", err)
@@ -197,6 +204,58 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	}
 	if _, _, err := store.ListClientEvents(ctx, second, firstOrg, session.ID, 0, 10); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-tenant event replay error = %v", err)
+	}
+
+	var dockerConnectionID, daytonaConnectionID string
+	err = store.withTenant(ctx, first, firstOrg, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`INSERT INTO ao_provider_connections (
+				org_id, provider, label, encrypted_secret, secret_nonce
+			) VALUES
+				($1, 'docker', 'local docker', '\x01', '\x02'),
+				($1, 'daytona', 'hosted daytona', '\x03', '\x04')
+			RETURNING id`,
+			firstOrg,
+		).Scan(&dockerConnectionID)
+	})
+	if err != nil {
+		t.Fatalf("create sandbox provider connections: %v", err)
+	}
+	err = store.withTenant(ctx, first, firstOrg, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`SELECT id FROM ao_provider_connections
+			WHERE org_id = $1 AND provider = 'daytona'`,
+			firstOrg,
+		).Scan(&daytonaConnectionID)
+	})
+	if err != nil {
+		t.Fatalf("load daytona provider connection: %v", err)
+	}
+	connectionInput := sessionInput
+	connectionInput.DisplayName = "Provider connection"
+	connectionInput.Prompt = ""
+	connectionInput.Provider = "docker"
+	connectionInput.SandboxConnectionID = daytonaConnectionID
+	if _, err := store.CreateSession(
+		ctx,
+		first,
+		firstOrg,
+		"mismatched-provider-session",
+		connectionInput,
+	); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("mismatched sandbox provider error = %v", err)
+	}
+	connectionInput.SandboxConnectionID = dockerConnectionID
+	if _, err := store.CreateSession(
+		ctx,
+		first,
+		firstOrg,
+		"matching-provider-session",
+		connectionInput,
+	); err != nil {
+		t.Fatalf("create session with matching sandbox provider: %v", err)
 	}
 
 	emptySessionInput := sessionInput

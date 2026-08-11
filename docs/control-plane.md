@@ -11,11 +11,12 @@ Creating a session commits one PostgreSQL transaction containing:
 
 1. an idempotency command receipt;
 2. the session and generated branch;
-3. a one-to-one sandbox row with `desired_state = running` and
+3. the mode and denied-command security policy;
+4. a one-to-one sandbox row with `desired_state = running` and
    `observed_state = requested`;
-4. the initial prompt event and queued turn, when a prompt was supplied;
-5. an audit event; and
-6. the completed command result.
+5. the initial prompt event and queued turn, when a prompt was supplied;
+6. an audit event; and
+7. the completed command result.
 
 The sandbox row is desired-state intent only. This service does not call ECS,
 Daytona, Docker, or any worker API. A future reconciler can claim requested
@@ -24,7 +25,9 @@ creation flow.
 
 `AO_CLOUD_SANDBOX_PROVIDER` selects the default provider recorded on new
 sandboxes. An explicit provider connection, when supplied, determines the
-provider instead.
+credential but cannot change that provider: its provider must match the
+sandbox provider. Agent credentials and sandbox-provider credentials are not
+interchangeable.
 
 ## Durable messages and replay
 
@@ -48,6 +51,10 @@ polling implementation is intentionally simple for the first deployment; a
 database notification or broker may later reduce polling latency without
 changing event durability.
 
+The shared Cloud client tracks the highest consumed sequence and reconnects
+retryable stream failures with a fresh access token. Duplicate sequences are
+suppressed. Cancellation and non-retryable client errors stop the stream.
+
 ## Replica lifecycle
 
 - `/healthz` reports process liveness.
@@ -57,7 +64,8 @@ changing event durability.
   includes `X-AO-Release`, so load-balancer checks and rollout debugging can
   identify the exact image revision serving traffic.
 - On shutdown, the process marks itself draining before gracefully closing the
-  HTTP server.
+  HTTP server. Active event streams observe the drain signal and exit instead
+  of holding shutdown open.
 - Long-lived event streams have no global HTTP write timeout. Request bodies
   remain bounded, and server read/header/idle timeouts remain enabled.
 - Production startup rejects a runtime database role with `SUPERUSER` or
@@ -86,6 +94,8 @@ belong to deployment infrastructure rather than application branching.
 ## Deliberate exclusions
 
 This slice does not provision or reconcile sandboxes, connect workers, execute
-turns, reap idle resources, proxy terminals/files, integrate GitHub, or deploy
-AWS infrastructure. Those components consume the durable rows above and are
+turns, ingest worker events, reap idle resources, proxy terminals/files, or
+synchronize GitHub issues and pull requests. GitHub App installation,
+repository grants, project import, and durable webhook intake are implemented.
+The remaining execution components consume the durable rows above and are
 separate from this non-provisioning control-plane boundary.

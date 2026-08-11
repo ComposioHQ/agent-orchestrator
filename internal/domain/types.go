@@ -34,14 +34,15 @@ type LocalRegistration struct {
 }
 
 type Project struct {
-	ID            string
-	OrgID         string
-	DisplayName   string
-	RepositoryURL string
-	DefaultBranch string
-	Config        json.RawMessage
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                 string
+	OrgID              string
+	DisplayName        string
+	RepositoryURL      string
+	DefaultBranch      string
+	GitHubRepositoryID *int64
+	Config             json.RawMessage
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type CreateProject struct {
@@ -59,6 +60,8 @@ type Session struct {
 	Harness          string
 	DisplayName      string
 	Branch           string
+	Mode             string
+	DeniedCommands   []string
 	ActivityState    contract.ActivityState
 	IsTerminated     bool
 	RuntimeConnected bool
@@ -79,13 +82,15 @@ func (s Session) Status(now time.Time) contract.SessionStatus {
 }
 
 type CreateSession struct {
-	ProjectID            string
-	Kind                 string
-	Harness              string
-	DisplayName          string
-	Prompt               string
-	Provider             string
-	ProviderConnectionID string
+	ProjectID           string
+	Kind                string
+	Harness             string
+	DisplayName         string
+	Prompt              string
+	Mode                string
+	DeniedCommands      []string
+	Provider            string
+	SandboxConnectionID string
 }
 
 type ClientEvent struct {
