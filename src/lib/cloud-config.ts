@@ -26,4 +26,26 @@ export function cloudApiBaseUrl(): string {
   return url.origin;
 }
 
+export function workosRedirectUri(): string {
+  const value = process.env.WORKOS_REDIRECT_URI?.trim();
+  if (!value) {
+    throw new Error("WORKOS_REDIRECT_URI is required in staging mode.");
+  }
+  const url = new URL(value);
+  if (
+    url.protocol !== "http:" ||
+    (url.hostname !== "localhost" && url.hostname !== "127.0.0.1") ||
+    url.pathname !== "/callback" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error(
+      "WORKOS_REDIRECT_URI must be a loopback HTTP /callback URL.",
+    );
+  }
+  return url.href;
+}
+
 export const localAuthCookie = "ao_cloud_local_session";
