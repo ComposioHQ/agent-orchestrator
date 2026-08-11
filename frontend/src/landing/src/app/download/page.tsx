@@ -94,26 +94,35 @@ export default async function DownloadPage() {
     {
       name: "macOS",
       icon: FaApple,
-      // Prefer the .dmg, fall back to the .zip. The dmg mounts to the
-      // drag-to-Applications window, so the app lands in /Applications instead
-      // of being unzipped into ~/Downloads and launched from there, which is
-      // what leaves macOS running it translocated or as a stale copy (#3617,
-      // #3527). No release carries a dmg yet, so every row below still resolves
-      // to its zip today; the moment a release publishes the alias these switch
-      // over on their own. This page reads the live release list, so the
-      // fallback is what makes preferring the dmg safe here: the DOWNLOAD_URL_*
-      // constants and the README are static releases/latest/download links and
-      // would 404, so they stay on the zip until a dmg has actually shipped.
+      // Prefer the .dmg. Mounting it gives the drag-to-Applications window, so
+      // the app lands in /Applications instead of being unzipped into
+      // ~/Downloads and launched from there, which is what leaves macOS running
+      // it translocated or as a stale copy (#3617, #3527).
+      //
+      // Only the STABLE channel builds one. The container costs its own
+      // notarization submission per architecture and nightly publishes far too
+      // often to pay for it, so the nightly rows resolve to their zip
+      // permanently, not just until some later rollout step.
+      //
+      // Every row falls back to the zip FROM THE SAME RELEASE before it falls
+      // back to a DOWNLOAD_URL_* constant. That ordering is load-bearing: those
+      // constants now point at the dmg too, so they are not a safe fallback on
+      // their own. Reading the live release list is what lets this page serve a
+      // real asset rather than a 404 in the window before the first stable dmg
+      // ships, and if the GitHub call fails outright the constant is a guess of
+      // last resort.
       builds: available([
         build(
           "Mac (Apple silicon)",
           assetUrl(stable, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-arm64.zip") ??
             DOWNLOAD_URL_MAC_ARM64,
           "Stable",
         ),
         build(
           "Mac (Intel)",
           assetUrl(stable, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-x64.zip") ??
             DOWNLOAD_URL_MAC_X64,
           "Stable",
         ),
