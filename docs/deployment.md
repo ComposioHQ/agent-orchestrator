@@ -41,8 +41,9 @@ creates new task-definition revisions; it never mutates an older image tag.
 - API task family: `ao-cloud-staging-api`
 - migration task family: `ao-cloud-staging-migrate`
 - PostgreSQL: `ao-cloud-staging-storage`
-- internal ALB: `ao-cloud-staging`
-- target group: `ao-cloud-staging-cp`
+- public HTTPS ALB: `ao-cloud-staging-public`
+- hostname: `staging-api.aoagents.dev`
+- target group: `ao-cloud-staging-public-cp`
 - CloudWatch log group: `/ao-cloud/staging/control-plane` (30-day retention)
 - ECR repository: `ao-cloud-control-plane` (immutable tags, 30-image retention)
 
@@ -86,15 +87,11 @@ force a new ECS deployment so every replica fetches the new value.
 
 ## Network boundary
 
-The staging ALB is internal because this AWS account does not currently have an
-AO Cloud DNS zone or ACM certificate. It is reachable only from the VPC and was
-verified through the existing bastion. Do not make it a public HTTP endpoint:
-WorkOS bearer tokens require HTTPS.
-
-Before desktop clients use staging, provision a real hostname and ACM
-certificate, add an HTTPS listener, redirect or remove HTTP, and restrict the
-ALB security group to HTTPS ingress. Production should additionally use private
-task subnets with NAT or VPC endpoints instead of public task IPs.
+The staging API is exposed only through HTTPS at
+`https://staging-api.aoagents.dev`. Cloudflare serves DNS only; ACM terminates
+TLS on the public ALB. The ALB security group admits port 443 and the task
+security group admits port 8080 only from that ALB. Tasks still need to move to
+private subnets with NAT or VPC endpoints instead of public task IPs.
 
 ## Rollback
 
@@ -165,8 +162,9 @@ own users, organizations, projects, sessions, events, and credentials.
 - ECS service: `ao-cloud-production-api`
 - API task family: `ao-cloud-production-api`
 - migration task family: `ao-cloud-production-migrate`
-- internal ALB: `ao-cloud-production`
-- target group: `ao-cloud-production-cp`
+- public HTTPS ALB: `ao-cloud-production-public`
+- hostname: `api.aoagents.dev`
+- target group: `ao-cloud-production-public-cp`
 - CloudWatch log group: `/ao-cloud/production/control-plane` (90-day retention)
 - autoscaling: two to six replicas at 60% average CPU utilization
 - deployment alarms: `ao-cloud-production-target-5xx` and
@@ -178,9 +176,10 @@ The service reads only these production-scoped secrets:
 - `ao-cloud/production/database-url`
 - `ao-cloud/production/migration-database-url`
 
-The production WorkOS entry currently contains the staging test tenant's
-credentials to support pre-launch verification. Replace it with a separate live
-WorkOS environment before public launch, then force a new deployment.
+Staging and production intentionally use the same WorkOS environment. This
+shares users and provider configuration across both AO environments; split them
+into separate WorkOS environments later only if stronger environment isolation
+becomes necessary.
 
 ### Promotion and rollback limits
 
@@ -201,34 +200,26 @@ and blocked DDL. If an ECS waiter or script is interrupted before migration
 completion, the deployment trap stops that task instead of leaving it running
 without an owner.
 
-### Pre-launch network work
+### Public ingress
 
-The active staging and production ALBs remain internal and accept HTTP only from
-the VPC. Two replacement internet-facing ALBs have been provisioned:
+Staging and production use internet-facing HTTPS ALBs:
 
 - `ao-cloud-staging-public` for `staging-api.aoagents.dev`
 - `ao-cloud-production-public` for `api.aoagents.dev`
 
-Their security groups admit only port 443. They intentionally have no listeners
-or ECS targets until ACM issues certificates for both hostnames. To complete the
-cutover:
+ACM certificates in `eu-north-1` terminate TLS. Cloudflare keeps the API and ACM
+validation CNAMEs in DNS-only mode. Each ECS service is attached only to its
+public target group, and `/healthz` plus `/readyz` are verified through the
+public hostnames. CloudWatch deployment alarms and the operations dashboard use
+the public ALB and target-group dimensions.
 
-1. Request the ACM certificates in `eu-north-1` and publish ACM's validation
-   CNAME records at the domain's current DNS provider.
-2. Create public target groups and attach them to the existing ECS services.
-3. Add HTTPS listeners using the issued certificates.
-4. Publish `api` and `staging-api` CNAME records pointing to the corresponding
-   public ALB DNS names.
-5. Verify authenticated traffic, then delete the internal ALBs.
-6. Move tasks to private subnets with NAT or the required VPC endpoints.
-7. Replace the temporary test WorkOS tenant with production credentials.
+The old internal ALBs and target groups have no ECS targets and can be deleted
+after the public ingress observation period. Remaining network work is to move
+tasks into private subnets with NAT or the required VPC endpoints.
 
 Fargate tasks currently use the existing VPC's public subnets with public IPs,
 while security groups admit application traffic only from an ALB and database
 traffic only from the environment's task group.
-
-Bearer tokens must never be sent to the current plaintext internal endpoint
-from outside the controlled VPC verification path.
 
 ### Authentication and callback readiness
 

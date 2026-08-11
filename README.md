@@ -22,6 +22,26 @@ implemented yet. See
 behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
 production deployments.
 
+## Environment model
+
+- **Local (`npm run cloud:local`)** uses local email/password auth, local
+  PostgreSQL, and the local control-plane container. It does not load WorkOS or
+  GitHub App credentials. Docker workers are the intended execution backend,
+  but no worker is started until the worker protocol is implemented.
+- **Staging (`npm run cloud:staging`)** runs the desktop locally against
+  `https://staging-api.aoagents.dev`. The hosted staging control plane uses the
+  shared WorkOS environment and its own staging database. Future workers run in
+  staging, not on the developer's machine.
+- **Production** uses `https://api.aoagents.dev`, the shared WorkOS environment,
+  the production database, and the one production GitHub App. There is no
+  supported local-desktop-against-production development command.
+
+GitHub App credentials are rejected outside production because setup, OAuth,
+and webhook callback state is durable in the production database. Local and
+staging GitHub UI must remain disabled until a production broker protocol can
+return signed, environment-scoped repository grants. Sharing credentials alone
+would send callbacks to the wrong database and is not supported.
+
 ## Run locally
 
 The default development loop requires Docker with Compose:
