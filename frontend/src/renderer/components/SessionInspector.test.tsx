@@ -245,7 +245,7 @@ beforeEach(() => {
   navigateMock.mockReset();
   patchMock.mockReset();
   postMock.mockReset();
-  useUiStore.setState({ inspectorSessions: {} });
+  useUiStore.setState({ developerMode: false, inspectorSessions: {} });
   putMock.mockReset();
   mockCommonGets();
   patchMock.mockResolvedValue({
@@ -717,6 +717,31 @@ describe("SessionInspector PR section", () => {
       "https://example.com/pr/42",
     ]);
   });
+});
+
+describe("SessionInspector usage", () => {
+	it("shows detailed token statistics only when Developer Mode is enabled", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						incomplete: false,
+						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 },
+						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 }, models: [] }],
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
+		expect(screen.getByText("Total tokens")).toBeInTheDocument();
+		expect(screen.getByText("Codex")).toBeInTheDocument();
+	});
 });
 
 describe("SessionInspector completion controls", () => {
