@@ -59,6 +59,7 @@ func openStore(t *testing.T) *sqlite.Store {
 type fakeConversation struct {
 	events                 chan ports.ChatEvent
 	providerConversationID string
+	capabilities           ports.ChatCapabilities
 
 	mu        sync.Mutex
 	sent      []ports.ChatUserMessage
@@ -120,9 +121,14 @@ func newFakeConversation() *fakeConversation {
 	}
 }
 
-func (f *fakeConversation) ProviderConversationID() string       { return f.providerConversationID }
-func (f *fakeConversation) Capabilities() ports.ChatCapabilities { return productionCaps() }
-func (f *fakeConversation) Events() <-chan ports.ChatEvent       { return f.events }
+func (f *fakeConversation) ProviderConversationID() string { return f.providerConversationID }
+func (f *fakeConversation) Capabilities() ports.ChatCapabilities {
+	if f.capabilities != nil {
+		return f.capabilities
+	}
+	return productionCaps()
+}
+func (f *fakeConversation) Events() <-chan ports.ChatEvent { return f.events }
 
 func (f *fakeConversation) SendTurn(_ context.Context, msg ports.ChatUserMessage) (ports.ChatTurnRef, error) {
 	f.mu.Lock()

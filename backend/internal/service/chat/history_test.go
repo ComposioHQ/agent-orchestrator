@@ -507,17 +507,23 @@ func TestForkClassifiesAProviderRefusal(t *testing.T) {
 }
 
 type editDriverState struct {
-	mu          sync.Mutex
-	startCalls  int
-	resumeCalls []ports.ChatResumeConfig
-	fresh       *fakeConversation
-	resumed     map[string]*fakeConversation
+	mu           sync.Mutex
+	startCalls   int
+	startConfigs []ports.ChatStartConfig
+	resumeCalls  []ports.ChatResumeConfig
+	fresh        *fakeConversation
+	resumed      map[string]*fakeConversation
 }
 
-func newEditHarness(t *testing.T) (*harness, *historyRecorder, *editDriverState) {
+func newEditHarness(t *testing.T, replay ...bool) (*harness, *historyRecorder, *editDriverState) {
 	t.Helper()
 	st := openStore(t)
 	source := newHistoryRecorder()
+	if len(replay) > 0 && replay[0] {
+		sourceCapabilities := productionCaps()
+		sourceCapabilities[ports.ChatCapabilityPromptReplay] = true
+		source.fakeConversation.capabilities = sourceCapabilities
+	}
 	fresh := newFakeConversation()
 	fresh.providerConversationID = "thread-fresh"
 	fresh.turnSeq = 100
@@ -534,13 +540,20 @@ func newEditHarness(t *testing.T) (*harness, *historyRecorder, *editDriverState)
 			"thread-1":      root,
 		},
 	}
-	driver := fakeDriver{conv: source.fakeConversation}
-	driver.start = func(ports.ChatStartConfig) (ports.ChatConversation, error) {
+	initial := ports.ChatConversation(source)
+	if len(replay) > 0 && replay[0] {
+		// Use the plain conversation for this scenario: historyRecorder implements
+		// native fork, while the real Claude path does not.
+		initial = source.fakeConversation
+	}
+	driver := fakeDriver{conv: initial}
+	driver.start = func(cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
 		state.mu.Lock()
 		defer state.mu.Unlock()
+		state.startConfigs = append(state.startConfigs, cfg)
 		state.startCalls++
 		if state.startCalls == 1 {
-			return source, nil
+			return initial, nil
 		}
 		return state.fresh, nil
 	}
@@ -560,6 +573,17 @@ func newEditHarness(t *testing.T) (*harness, *historyRecorder, *editDriverState)
 	nextID := 0
 	svc := chatsvc.New(chatsvc.Options{
 		Store: st, Sessions: st,
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			snapshot, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: snapshot.Conversation, Turns: snapshot.Turns, Messages: snapshot.Messages,
+				Activities: snapshot.Activities, BranchPoints: snapshot.BranchPoints,
+				BranchedFromEarlierMessage: snapshot.BranchedFromEarlierMessage,
+			}, nil
+		}),
 		Drivers: fakeRegistry{driver: driver},
 		Log:     slog.New(slog.DiscardHandler),
 		NewID: func() string {
@@ -590,6 +614,41 @@ func newEditHarness(t *testing.T) (*harness, *historyRecorder, *editDriverState)
 	}
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 	return &harness{svc: svc, st: st, conv: source.fakeConversation, ctrl: ctrl, clock: clock}, source, state
+}
+
+func TestEditMessageReplaysDurableContextWhenNativeForkIsUnavailable(t *testing.T) {
+	h, _, driver := newEditHarness(t, true)
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{Text: "B", Origin: domain.MessageOriginHuman})
+	if err != nil {
+		t.Fatalf("Send B: %v", err)
+	}
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-2"},
+		ports.ChatEvent{Kind: ports.ChatEventMessageCompleted, ProviderTurnID: "provider-turn-2", ProviderItemID: "answer-b", Text: "answer B"},
+		ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-2", TurnState: domain.TurnStateCompleted},
+	)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	if _, err := h.svc.EditMessage(ctx, testSession, second.ID, ports.ChatUserMessage{
+		Text: "B edited", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	driver.mu.Lock()
+	starts := append([]ports.ChatStartConfig(nil), driver.startConfigs...)
+	driver.mu.Unlock()
+	if len(starts) != 2 {
+		t.Fatalf("start calls = %d, want initial plus replay", len(starts))
+	}
+	if !strings.Contains(starts[1].ReplayContext, "User: A") || !strings.Contains(starts[1].ReplayContext, "Assistant: reply to A") {
+		t.Fatalf("replay context = %q", starts[1].ReplayContext)
+	}
+	if strings.Contains(starts[1].ReplayContext, "User: B") || strings.Contains(starts[1].ReplayContext, "answer B") {
+		t.Fatalf("replay context included edited branch: %q", starts[1].ReplayContext)
+	}
 }
 
 func TestEditMessageForksBeforeMiddlePromptAndReusesStoredContent(t *testing.T) {

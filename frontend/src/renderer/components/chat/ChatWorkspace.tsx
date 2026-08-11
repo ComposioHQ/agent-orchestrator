@@ -346,7 +346,7 @@ export function ChatWorkspace({
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
-	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	const editHumanMessage = can(snapshot, "fork") || can(snapshot, "prompt_replay") ? onEditMessage : undefined;
 
 	return (
 		<section

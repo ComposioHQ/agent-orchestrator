@@ -40,6 +40,7 @@ type LaunchConfig struct {
 	Model         string
 	Permissions   ports.PermissionMode
 	SystemPrompt  string
+	ReplayContext string
 }
 
 // Config binds one harness to an ACP agent implementation.
@@ -106,6 +107,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		ReplayContext: cfg.ReplayContext,
 	}
 	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {

@@ -88,6 +88,10 @@ const (
 	ChatCapabilityRollback ChatCapability = "rollback"
 	// ChatCapabilityFork means a conversation can be branched.
 	ChatCapabilityFork ChatCapability = "fork"
+	// ChatCapabilityPromptReplay means AO can open a fresh provider session with
+	// a durable textual transcript supplied as context. This is an approximation
+	// of fork for providers whose protocol cannot fork from a historical turn.
+	ChatCapabilityPromptReplay ChatCapability = "prompt_replay"
 	// ChatCapabilityRename means the thread carries a title AO can set.
 	ChatCapabilityRename ChatCapability = "rename"
 	// ChatCapabilitySkills means named skills can be enumerated and invoked.
@@ -169,6 +173,9 @@ type ChatStartConfig struct {
 	Permissions PermissionMode
 	// SystemPrompt carries AO's standing instructions for the session.
 	SystemPrompt string
+	// ReplayContext is an AO-rendered transcript used only when starting a fresh
+	// session to emulate editing an earlier prompt. It is not provider history.
+	ReplayContext string
 	// AdditionalDirectories are extra absolute workspace roots the provider may
 	// access alongside WorkspacePath. Workspace projects use this for child repo
 	// worktrees; it is not a replacement for AO's worktree ownership.

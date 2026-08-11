@@ -153,6 +153,7 @@ func (s *Service) EditMessage(
 		return EditMessageResult{}, err
 	}
 	forker, canFork := source.conv.(ports.ChatForker)
+	canReplay := source.conv.Capabilities().Has(ports.ChatCapabilityPromptReplay)
 	anchor, err := s.store.ConversationEditAnchor(ctx, source.conversation.ID, turnID)
 	if err != nil {
 		return EditMessageResult{}, fmt.Errorf("%w: %w", ErrEditTurnInvalid, err)
@@ -171,7 +172,7 @@ func (s *Service) EditMessage(
 		}
 		return s.sendEditedMessage(ctx, branch.ParentBranchID, branch.ID, source, msg)
 	}
-	if anchor.PreviousProviderTurnID != "" && !canFork {
+	if anchor.PreviousProviderTurnID != "" && !canFork && !canReplay {
 		return EditMessageResult{}, ErrForkUnsupported
 	}
 	if err := source.BeginIdleBranchHandoff(ctx); err != nil {
@@ -200,7 +201,7 @@ func (s *Service) EditMessage(
 		if err == nil {
 			providerConversationID = provider.ProviderConversationID()
 		}
-	} else {
+	} else if canFork {
 		forkAnchor := anchor.PreviousProviderTurnID
 		providerConversationID, err = forker.Fork(ctx, &forkAnchor)
 		if err == nil {
@@ -210,6 +211,20 @@ func (s *Service) EditMessage(
 				Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 				AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
 			})
+		}
+	} else {
+		replayContext, replayErr := s.editReplayContext(ctx, source.conversation.ID, anchor.ForkAfterSequence)
+		if replayErr != nil {
+			return EditMessageResult{}, fmt.Errorf("prepare edited conversation: %w", replayErr)
+		}
+		provider, err = driver.Start(ctx, ports.ChatStartConfig{
+			SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
+			Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions,
+			SystemPrompt: cfg.SystemPrompt, ReplayContext: replayContext,
+			AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
+		})
+		if err == nil {
+			providerConversationID = provider.ProviderConversationID()
 		}
 	}
 	if err != nil {
@@ -243,6 +258,40 @@ func (s *Service) EditMessage(
 	abortSource = false
 
 	return s.sendEditedMessage(ctx, anchor.SourceBranchID, branchID, replacement, msg)
+}
+
+// editReplayContext renders only the durable textual transcript before the
+// edited prompt. Tool calls, approvals, and file changes are intentionally not
+// replayed: doing so could repeat side effects. Providers that support native
+// fork remain on that exact-history path instead.
+func (s *Service) editReplayContext(ctx context.Context, conversationID string, cutoff int64) (string, error) {
+	if s.reader == nil {
+		return "", errors.New("conversation snapshot reader is unavailable")
+	}
+	rows, err := s.reader.LoadConversationSnapshot(ctx, conversationID)
+	if err != nil {
+		return "", fmt.Errorf("load conversation for replay: %w", err)
+	}
+	var replay strings.Builder
+	for _, message := range rows.Messages {
+		if message.Sequence > cutoff || message.Streaming || strings.TrimSpace(message.Text) == "" {
+			continue
+		}
+		role := ""
+		switch message.Role {
+		case domain.MessageRoleUser:
+			role = "User"
+		case domain.MessageRoleAssistant:
+			role = "Assistant"
+		default:
+			continue
+		}
+		if replay.Len() > 0 {
+			replay.WriteByte('\n')
+		}
+		fmt.Fprintf(&replay, "%s: %s", role, strings.TrimSpace(message.Text))
+	}
+	return replay.String(), nil
 }
 
 // sendEditedMessage commits the branch replacement only after the provider has

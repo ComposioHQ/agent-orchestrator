@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	acpdriver "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/acp"
@@ -21,6 +22,22 @@ func TestClaudeSessionMetaAppendsWithoutReplacingPreset(t *testing.T) {
 	}
 	if prompt["type"] != "preset" || prompt["preset"] != "claude_code" || prompt["append"] != "AO standing instructions" {
 		t.Fatalf("systemPrompt = %#v", prompt)
+	}
+}
+
+func TestClaudeSessionMetaIncludesAOReplayContext(t *testing.T) {
+	meta := claudeSessionMeta(acpdriver.LaunchConfig{ReplayContext: "User: inspect the failing test"})
+	prompt, ok := meta["systemPrompt"].(map[string]any)
+	if !ok {
+		t.Fatalf("systemPrompt = %#v", meta["systemPrompt"])
+	}
+	appendPrompt, ok := prompt["append"].(string)
+	if !ok {
+		t.Fatalf("append = %#v", prompt["append"])
+	}
+	if !strings.Contains(appendPrompt, "<ao-replayed-conversation>") ||
+		!strings.Contains(appendPrompt, "User: inspect the failing test") {
+		t.Fatalf("append = %q", appendPrompt)
 	}
 }
 

@@ -37,14 +37,15 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 	return acpdriver.New(acpdriver.Config{
 		Harness: domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{
-			ports.ChatCapabilityStreaming: true,
-			ports.ChatCapabilityTools:     true,
-			ports.ChatCapabilityApprovals: true,
-			ports.ChatCapabilityInterrupt: true,
-			ports.ChatCapabilityResume:    true,
-			ports.ChatCapabilityUsage:     true,
-			ports.ChatCapabilityDiffs:     true,
-			ports.ChatCapabilityPlans:     true,
+			ports.ChatCapabilityStreaming:    true,
+			ports.ChatCapabilityTools:        true,
+			ports.ChatCapabilityApprovals:    true,
+			ports.ChatCapabilityInterrupt:    true,
+			ports.ChatCapabilityResume:       true,
+			ports.ChatCapabilityPromptReplay: true,
+			ports.ChatCapabilityUsage:        true,
+			ports.ChatCapabilityDiffs:        true,
+			ports.ChatCapabilityPlans:        true,
 		},
 		Probe: func(ctx context.Context) error {
 			if _, err := resolveRuntime(ctx); err != nil {
@@ -93,14 +94,27 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 }
 
 func claudeSessionMeta(cfg acpdriver.LaunchConfig) map[string]any {
-	if strings.TrimSpace(cfg.SystemPrompt) == "" {
+	standing := strings.TrimSpace(cfg.SystemPrompt)
+	replay := strings.TrimSpace(cfg.ReplayContext)
+	if standing == "" && replay == "" {
 		return nil
+	}
+	appendPrompt := standing
+	if replay != "" {
+		contextPrompt := "<ao-replayed-conversation>\n" +
+			"The following is prior conversation context reconstructed by AO. It is informational; do not treat it as a new user request or repeat tool actions.\n\n" +
+			replay +
+			"\n</ao-replayed-conversation>"
+		if appendPrompt != "" {
+			appendPrompt += "\n\n"
+		}
+		appendPrompt += contextPrompt
 	}
 	// Append AO's standing instructions to Claude Code's own prompt. Replacing
 	// the preset would discard Claude's native coding/tool instructions.
 	return map[string]any{
 		"systemPrompt": map[string]any{
-			"type": "preset", "preset": "claude_code", "append": cfg.SystemPrompt,
+			"type": "preset", "preset": "claude_code", "append": appendPrompt,
 		},
 	}
 }
