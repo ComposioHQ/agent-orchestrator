@@ -6,6 +6,7 @@
 ### The orchestration layer for parallel AI coding agents
 
 [![GitHub stars](https://img.shields.io/github/stars/Untrivial-ai/agent-orchestrator?style=flat&logo=github)](https://github.com/Untrivial-ai/agent-orchestrator/stargazers)
+[![GitHub rank](https://img.shields.io/badge/GitHub%20rank-Top%206k%20by%20stars-181717?style=flat&logo=github)](https://github.com/search?q=stars%3A%3E9365&type=repositories)
 [![GitHub release](https://img.shields.io/github/v/release/Untrivial-ai/agent-orchestrator?style=flat&logo=github)](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest)
 [![GitHub downloads](https://img.shields.io/github/downloads/Untrivial-ai/agent-orchestrator/total?style=flat&logo=github)](https://github.com/Untrivial-ai/agent-orchestrator/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat)](LICENSE)
@@ -90,28 +91,54 @@ AO stays local and supervisory: your coding agents keep doing the implementation
 
 ## Supported agents
 
-AO ships adapters for 26 worker agent harnesses, including **Claude Code**, **Codex**, **Cursor**, **opencode**, **Aider**, **GitHub Copilot**, **Grok**, **Kimi**, and **Pi**.
+**26 coding agents supported** through one supervised workflow.
+
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="Claude Code" height="28" /><br /><sub><b>Claude Code</b></sub></td>
+    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/codex.svg" alt="Codex" height="28" /><br /><sub><b>Codex</b></sub></td>
+    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="Cursor" height="28" /><br /><sub><b>Cursor</b></sub></td>
+    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="opencode" height="28" /><br /><sub><b>opencode</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/aider.png" alt="Aider" height="28" /><br /><sub><b>Aider</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="GitHub Copilot" height="28" /><br /><sub><b>GitHub Copilot</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/grok.png" alt="Grok" height="28" /><br /><sub><b>Grok</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/kimi.png" alt="Kimi" height="28" /><br /><sub><b>Kimi</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/pi.png" alt="Pi" height="28" /><br /><sub><b>Pi</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/amp.svg" alt="Amp" height="28" /><br /><sub><b>Amp</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="Auggie" height="28" /><br /><sub><b>Auggie</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/droid.png" alt="Droid" height="28" /><br /><sub><b>Droid</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/crush.png" alt="Crush" height="28" /><br /><sub><b>Crush</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/cline.svg" alt="Cline" height="28" /><br /><sub><b>Cline</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/goose.svg" alt="Goose" height="28" /><br /><sub><b>Goose</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/qwen.png" alt="Qwen" height="28" /><br /><sub><b>Qwen</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/continue.png" alt="Continue" height="28" /><br /><sub><b>Continue</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/devin.png" alt="Devin" height="28" /><br /><sub><b>Devin</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/kiro.png" alt="Kiro" height="28" /><br /><sub><b>Kiro</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="Kilo Code" height="28" /><br /><sub><b>Kilo Code</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/vibe.png" alt="Vibe" height="28" /><br /><sub><b>Vibe</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/muse.png" alt="Muse" height="28" /><br /><sub><b>Muse</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/agy.png" alt="Agy" height="28" /><br /><sub><b>Agy</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/autohand.svg" alt="Autohand" height="28" /><br /><sub><b>Autohand</b></sub></td>
+  </tr>
+  <tr>
+    <td></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="Kimchi" height="28" /><br /><sub><b>Kimchi</b></sub></td>
+    <td align="center"><img src="frontend/src/renderer/assets/agents/prime-agent.png" alt="Prime Agent" height="28" /><br /><sub><b>Prime Agent</b></sub></td>
+    <td></td>
+  </tr>
+</table>
 
 [Browse agent setup guides →](https://aoagents.dev/docs/plugins/agents)
-
-<details>
-<summary>See all worker and reviewer adapters</summary>
-
-### Worker agents
-
-`claude-code` · `codex` · `aider` · `opencode` · `grok` · `droid` · `amp` · `auggie` · `autohand` · `agy` · `crush` · `cursor` · `qwen` · `copilot` · `goose` · `continue` · `devin` · `cline` · `kimi` · `muse` · `kiro` · `kilocode` · `vibe` · `pi` · `kimchi` · `prime-agent`
-
-### Reviewer agents
-
-`aider` · `agy` · `amp` · `auggie` · `autohand` · `claude-code` · `codex` · `cline` · `continue` · `copilot` · `cursor` · `devin` · `droid` · `crush` · `goose` · `grok` · `kilocode` · `kiro` · `kimi` · `kimchi` · `muse` · `opencode` · `pi` · `qwen` · `vibe`
-
-Reviewer panes stay interactive. AO starts a fresh process for each review pass so the chosen harness receives the current task context, permissions, and environment. Experimental reviewer trust models differ:
-
-- **Pi** runs with project/user resource discovery and built-in tools disabled. AO loads its own restricted extension for read-only checkout inspection and structured review submission.
-- **Host-trusted:** `agy`, `continue`, `devin`, `droid`, `goose`, `kimchi`, `kimi`, `qwen`, and `vibe` have native modes or settings that do not provide OS isolation; some receive autonomous settings to complete reviews.
-- **User-approved:** `grok`, `crush`, `auggie`, `cline`, and `autohand` receive AO's hardened reviewer role while retaining their native permission prompts.
-
-</details>
 
 **Use the interface that fits the moment: structured Chat or the agent's native terminal UI.**
 
