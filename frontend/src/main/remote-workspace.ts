@@ -56,6 +56,13 @@ export type RemoteConnection = {
 	remotePort: number;
 	/** True when this connect started the remote daemon rather than attaching. */
 	started: boolean;
+	/**
+	 * True once the tunnel process is gone, whether disposed or dropped on its
+	 * own (laptop sleep, wifi loss, VM reboot). A dropped tunnel says nothing
+	 * about the remote daemon, which keeps running — so this is a signal to
+	 * re-dial, never to conclude the session died.
+	 */
+	closed: () => boolean;
 	/** Tear the tunnel down. Idempotent. */
 	dispose: () => void;
 };
@@ -280,26 +287,28 @@ export async function connectRemoteWorkspace(
 		tunnelStderr = `${tunnelStderr}${chunk.toString("utf8")}`.slice(-4000);
 	});
 
-	let disposed = false;
+	// One flag for both "we tore it down" and "it died on us": a later dispose
+	// must not signal a recycled pid, and the supervisor needs to see a dropped
+	// tunnel so it can re-dial.
+	let gone = false;
+	const closed = () => gone;
 	const dispose = () => {
-		if (disposed) return;
-		disposed = true;
+		if (gone) return;
+		gone = true;
 		tunnel.kill("SIGTERM");
 	};
-	// A tunnel that dies on its own must not leave `disposed` false, or a later
-	// dispose would signal a recycled pid.
 	tunnel.on("close", () => {
-		disposed = true;
+		gone = true;
 	});
 
 	try {
 		if (await waitForReady(deps.probe, localPort, ATTACH_PROBE_TIMEOUT_MS, delay, now)) {
-			return { localPort, remotePort, started: false, dispose };
+			return { localPort, remotePort, started: false, closed, dispose };
 		}
 		// Nothing answered. Distinguish "the tunnel itself failed" from "the tunnel
 		// is fine, no daemon is listening yet" — starting a daemon over a dead
 		// transport would only produce a second, more confusing failure.
-		if (disposed) {
+		if (gone) {
 			throw new RemoteWorkspaceError(classifySshFailure(null, tunnelStderr, workspace.sshTarget));
 		}
 		await startRemoteDaemon(spawn, workspace, control, remotePort);
@@ -310,7 +319,7 @@ export async function connectRemoteWorkspace(
 				details: `${tunnelStderr}\nSee ~/.ao/daemon.log on ${workspace.sshTarget}.`.trim(),
 			});
 		}
-		return { localPort, remotePort, started: true, dispose };
+		return { localPort, remotePort, started: true, closed, dispose };
 	} catch (error) {
 		dispose();
 		throw error;

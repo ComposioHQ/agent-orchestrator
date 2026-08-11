@@ -157,6 +157,32 @@ describe("connectRemoteWorkspace", () => {
 		connection.dispose();
 	});
 
+	// A dropped tunnel is a transport fact, and the supervisor re-dials on it.
+	// If `closed()` stayed false after the process died, a wifi blink would
+	// strand the client on a dead forward forever.
+	it("reports a tunnel that died on its own as closed", async () => {
+		const { calls, spawn } = fakeSpawn({});
+		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer }));
+		expect(connection.closed()).toBe(false);
+
+		const tunnel = calls.find((call) => call.args.includes("-N"));
+		tunnel?.child.emit("close", 255);
+		expect(connection.closed()).toBe(true);
+	});
+
+	it("reports a disposed tunnel as closed and ignores a second dispose", async () => {
+		const { calls, spawn } = fakeSpawn({});
+		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer }));
+		const tunnel = calls.find((call) => call.args.includes("-N"));
+
+		connection.dispose();
+		expect(connection.closed()).toBe(true);
+		tunnel!.child.killed = null;
+		connection.dispose();
+		// A second dispose must not signal again — the pid may have been recycled.
+		expect(tunnel?.child.killed).toBeNull();
+	});
+
 	it("surfaces a missing ssh client distinctly from an unreachable host", async () => {
 		const spawn = (() => {
 			const child = new FakeSsh();

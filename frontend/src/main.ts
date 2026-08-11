@@ -697,16 +697,12 @@ async function inspectExistingDaemon(
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	// A remote workspace's liveness is the tunnel's, and the local daemon's
 	// run-file says nothing about it. Probe the forwarded port instead.
-	if (remoteConnection && remoteWorkspace) {
-		const health = await readDaemonProbe(remoteConnection.localPort, "healthz");
-		if (!health) {
-			setDaemonStatus({
-				state: "stopped",
-				workspaceId: remoteWorkspace.id,
-				message: `Lost the connection to ${remoteWorkspace.sshTarget}.`,
-				code: "daemon_unreachable",
-			});
-		}
+	// Keyed on placement, not on the connection: a connect that failed leaves no
+	// connection, and this is exactly the case that must keep re-dialling.
+	if (remoteWorkspace) {
+		const connection = remoteConnection;
+		const health = !connection || connection.closed() ? null : await readDaemonProbe(connection.localPort, "healthz");
+		if (!health) await reconnectRemoteWorkspace(remoteWorkspace);
 		return daemonStatus;
 	}
 	if (daemonProcess) {
@@ -747,9 +743,17 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 // one port. Both daemons keep their 127.0.0.1-only bind.
 // ---------------------------------------------------------------------------
 
-/** The live tunnel, when the active workspace is remote. */
+/** The live tunnel, when the active workspace is remote and connected. */
 let remoteConnection: RemoteConnection | null = null;
-/** The workspace `remoteConnection` belongs to; null while local. */
+/**
+ * The remote workspace the client is placed on, null while local.
+ *
+ * Tracked independently of `remoteConnection`, and specifically survives a
+ * failed connect: placement is what the user chose, while the connection is
+ * only whether it is reachable right now. Collapsing the two would end the
+ * re-dial loop the moment a connect failed, stranding the user on a host that
+ * is merely asleep.
+ */
 let remoteWorkspace: RemoteWorkspace | null = null;
 
 /** The ~/.ao state dir, or null before the run-file path is known. */
@@ -765,12 +769,56 @@ async function ensureControlDir(stateDir: string): Promise<string> {
 	return dir;
 }
 
-/** Drop the tunnel. The remote daemon is deliberately left running — its
- * persistence across client restarts is the entire point of the feature. */
-function disconnectRemoteWorkspace(): void {
+/**
+ * Drop the tunnel. The remote daemon is deliberately left running — its
+ * persistence across client restarts is the entire point of the feature.
+ *
+ * `forgetPlacement` also clears which workspace we are on, which is right when
+ * leaving it and wrong when merely re-dialling it.
+ */
+function disconnectRemoteWorkspace(forgetPlacement = false): void {
 	remoteConnection?.dispose();
 	remoteConnection = null;
-	remoteWorkspace = null;
+	if (forgetPlacement) remoteWorkspace = null;
+}
+
+/**
+ * Minimum gap between re-dial attempts. The status poll runs every 2s, and a
+ * host that is asleep or off the network would otherwise be hammered with a
+ * full preflight per tick.
+ */
+const REMOTE_RECONNECT_INTERVAL_MS = 10_000;
+let remoteReconnectAt = 0;
+let remoteReconnecting = false;
+
+/**
+ * Re-dial a remote workspace whose tunnel dropped.
+ *
+ * A dropped tunnel is a transport fact and nothing more: the remote daemon and
+ * its tmux sessions are still running, so this must never be reported as the
+ * session dying — the same rule the repository applies to failed runtime
+ * probes. The status stays `starting` while re-dialling so the renderer waits
+ * rather than tearing its terminals down over a wifi blink.
+ */
+async function reconnectRemoteWorkspace(workspace: RemoteWorkspace): Promise<void> {
+	if (remoteReconnecting) return;
+	if (daemonStatus.state === "ready") {
+		setDaemonStatus({
+			state: "starting",
+			workspaceId: workspace.id,
+			message: `Reconnecting to ${workspace.sshTarget}…`,
+		});
+	}
+	if (Date.now() - remoteReconnectAt < REMOTE_RECONNECT_INTERVAL_MS) return;
+
+	remoteReconnecting = true;
+	remoteReconnectAt = Date.now();
+	try {
+		disconnectRemoteWorkspace();
+		await startRemoteWorkspaceDaemon();
+	} finally {
+		remoteReconnecting = false;
+	}
 }
 
 /** Which workspace the supervisor should connect to right now. */
@@ -790,7 +838,7 @@ async function startRemoteWorkspaceDaemon(): Promise<boolean> {
 	const workspace = await activeWorkspace();
 	if (!workspace) {
 		// Switched back to local: drop any tunnel before the local daemon starts.
-		disconnectRemoteWorkspace();
+		disconnectRemoteWorkspace(true);
 		return false;
 	}
 
@@ -801,6 +849,9 @@ async function startRemoteWorkspaceDaemon(): Promise<boolean> {
 	if (remoteConnection && remoteWorkspace?.id === workspace.id && daemonStatus.state === "ready") return true;
 	disconnectRemoteWorkspace();
 
+	// Record the placement before dialling, so a connect that fails still leaves
+	// the supervisor knowing where it is meant to be and re-dialling.
+	remoteWorkspace = workspace;
 	setDaemonStatus({ state: "starting", workspaceId: workspace.id });
 	try {
 		const connection = await connectRemoteWorkspace(workspace, {
@@ -808,7 +859,6 @@ async function startRemoteWorkspaceDaemon(): Promise<boolean> {
 			probe: readDaemonProbe,
 		});
 		remoteConnection = connection;
-		remoteWorkspace = workspace;
 		// No identity check here, unlike the local attach path: the remote daemon
 		// is a different installation with a different executable path, and
 		// comparing it against this bundle would reject every healthy VM.
@@ -835,7 +885,7 @@ async function startRemoteWorkspaceDaemon(): Promise<boolean> {
  * re-attaches to it through the ordinary attach path.
  */
 async function switchWorkspaceConnection(): Promise<DaemonStatus> {
-	disconnectRemoteWorkspace();
+	disconnectRemoteWorkspace(true);
 	return startDaemon();
 }
 
@@ -1274,9 +1324,11 @@ function stopDaemon(): DaemonStatus {
 	// Stopping a remote workspace closes the tunnel only. The remote daemon keeps
 	// running by design: surviving a client restart (or a closed laptop lid) is
 	// the reason the daemon lives on the VM in the first place.
-	if (remoteConnection) {
-		const workspaceId = remoteWorkspace?.id;
-		disconnectRemoteWorkspace();
+	if (remoteWorkspace) {
+		const workspaceId = remoteWorkspace.id;
+		// Forget the placement too: an explicit stop must not be undone by the
+		// re-dial loop on the very next status poll.
+		disconnectRemoteWorkspace(true);
 		setDaemonStatus({ state: "stopped", workspaceId });
 		return daemonStatus;
 	}

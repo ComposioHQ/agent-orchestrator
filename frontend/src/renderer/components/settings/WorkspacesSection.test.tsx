@@ -10,10 +10,10 @@ import { WorkspacesSection } from "./WorkspacesSection";
 const vm = { id: "build-vm", sshTarget: "build-vm" };
 
 const bridge = {
-	list: vi.fn<[], Promise<WorkspaceRegistry>>(),
-	add: vi.fn<[unknown], Promise<WorkspaceRegistry>>(),
-	remove: vi.fn<[string], Promise<WorkspaceRegistry>>(),
-	setActive: vi.fn<[string], Promise<WorkspaceRegistry>>(),
+	list: vi.fn<() => Promise<WorkspaceRegistry>>(),
+	add: vi.fn<(workspace: unknown) => Promise<WorkspaceRegistry>>(),
+	remove: vi.fn<(id: string) => Promise<WorkspaceRegistry>>(),
+	setActive: vi.fn<(id: string) => Promise<WorkspaceRegistry>>(),
 };
 
 vi.mock("../../lib/bridge", () => ({
