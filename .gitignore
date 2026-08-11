@@ -6,3 +6,10 @@ coverage.out
 *.test
 __pycache__/
 *.pyc
+
+# Next.js web application
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo

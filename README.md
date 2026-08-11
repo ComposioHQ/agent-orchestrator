@@ -15,9 +15,9 @@ Private AO control-plane service. This foundation contains:
   webhook processing; and
 - Dockerized local development plus an isolated hosted-staging launcher.
 
-Cloud UI, worker provisioning/execution, terminal/files, personal GitHub OAuth,
-PR/issue synchronization, and sharing behavior are intentionally not
-implemented yet. See
+The repository root also contains the Next.js Cloud UI. Worker provisioning,
+personal GitHub OAuth, PR/issue synchronization, and sharing behavior remain
+in development. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
 behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
 production deployments.
@@ -63,6 +63,17 @@ with the failing readiness URL and HTTP/TLS error before Electron starts. The
 desktop currently uses the URL for staging preflight and future Cloud API
 calls; this branch does not add Cloud project/session UI. WorkOS desktop
 authentication continues to use the `ao-app://callback` deep link.
+
+Run the web application from the repository root in a second terminal:
+
+```bash
+npm install
+npm run dev
+```
+
+The web app runs at `http://localhost:3000` and uses `NEXT_PUBLIC_API_URL` for
+the control-plane API. Copy `.env.example` to `.env.local` for web-only local
+configuration, or export the variables in your development environment.
 
 For a direct Go loop, requirements are Go 1.26.5 and PostgreSQL 15 or newer.
 Development and test environments can apply embedded Goose migrations at
@@ -227,6 +238,14 @@ reset deletes the volume:
 
 ```bash
 npm run cloud:local:smoke
+```
+
+Verify the web application:
+
+```bash
+npm run test:web
+npm run typecheck:web
+npm run build
 ```
 
 Database integration tests run when a disposable PostgreSQL database is

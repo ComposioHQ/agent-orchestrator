@@ -1,13 +1,49 @@
 {
   "name": "@aoagents/ao-cloud-private",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "cloud:local": "docker compose up --build --remove-orphans",
     "cloud:local:down": "docker compose down --remove-orphans",
     "cloud:local:reset": "docker compose down --volumes --remove-orphans",
     "cloud:local:smoke": "./scripts/test-cloud-local.sh",
     "cloud:staging": "./scripts/cloud-staging.sh",
-    "test": "go test ./...",
-    "typecheck": "go vet ./..."
+    "test": "npm run test:go && npm run test:web",
+    "test:go": "go test ./...",
+    "test:web": "vitest run",
+    "typecheck": "npm run typecheck:go && npm run typecheck:web",
+    "typecheck:go": "go vet ./...",
+    "typecheck:web": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@t3-oss/env-nextjs": "0.13.11",
+    "@workos-inc/authkit-nextjs": "^4.3.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "1.17.0",
+    "motion": "12.43.0",
+    "next": "16.2.11",
+    "posthog-js": "1.310.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.2.2",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "24.12.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "jsdom": "^30.0.1",
+    "tailwindcss": "4.2.2",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10"
   }
 }
