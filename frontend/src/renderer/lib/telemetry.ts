@@ -566,19 +566,6 @@ export async function sanitizeRendererProperties(
 			if (typeof properties?.enabled === "boolean") safe.enabled = properties.enabled;
 			if (properties?.outcome === "succeeded" || properties?.outcome === "failed") safe.outcome = properties.outcome;
 			break;
-		default:
-			// Every intended renderer event has an explicit case above (including
-			// the no-property ones). Reaching here means an event name was emitted
-			// with no allowlist case, so it would be sent with zero properties and
-			// no error. Warn in dev so it is caught before shipping; silent (and
-			// harmless) in production.
-			if (import.meta.env.DEV) {
-				console.warn(
-					`[telemetry] renderer event "${event}" has no sanitizeRendererProperties case; ` +
-						"it will be sent with no properties. Add a case for it.",
-				);
-			}
-			break;
 	}
 	return safe;
 }

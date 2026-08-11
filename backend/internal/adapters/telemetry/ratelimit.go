@@ -34,14 +34,6 @@ const (
 	// full day (1440) with headroom, at a cost of a few cents a month even
 	// in the worst case.
 	eventsPerNamePerDayAggregated = 1500
-	// eventsPerNamePerMinuteBurstExempt is the raised per-minute cap for names
-	// an upstream reservoir already dedups to a bounded set per day (see
-	// WithBurstExempt). ao.cli.invoked fires at most once per command path per
-	// UTC day, so a legitimate burst is many DISTINCT commands in one minute,
-	// not a loop; the tight 5/min cap starves them and the extras are dropped
-	// AND marked seen upstream, so they never retry. 60 covers a realistic
-	// distinct-command burst while the daily ceiling still bounds a runaway.
-	eventsPerNamePerMinuteBurstExempt = 60
 )
 
 // RateLimitedSink wraps a sink and drops events past a per-event-name rate
@@ -54,11 +46,6 @@ type RateLimitedSink struct {
 	// an upstream AggregatingSink already compresses their occurrence count
 	// into one rollup per flush window.
 	aggregated map[string]struct{}
-
-	// burstExempt marks event names an upstream reservoir already dedups to a
-	// bounded set per day, so they get the raised per-minute cap instead of
-	// the tight burst ceiling. See WithBurstExempt.
-	burstExempt map[string]struct{}
 
 	mu      sync.Mutex
 	minutes map[string]*rateWindow
@@ -87,22 +74,6 @@ func NewRateLimitedSink(next ports.EventSink, aggregatedNames []string) *RateLim
 	}
 }
 
-// WithBurstExempt raises the per-minute cap for names an upstream reservoir
-// already dedups to a bounded set per day (e.g. ao.cli.invoked: once per
-// command path per UTC day). Additive and chainable so existing call sites are
-// untouched; the daily ceiling and the upstream reservoir still bound total
-// volume, this only stops a burst of distinct commands from starving the tight
-// shared minute cap. Returns the receiver for chaining.
-func (s *RateLimitedSink) WithBurstExempt(names ...string) *RateLimitedSink {
-	if s.burstExempt == nil {
-		s.burstExempt = make(map[string]struct{}, len(names))
-	}
-	for _, n := range names {
-		s.burstExempt[n] = struct{}{}
-	}
-	return s
-}
-
 // Emit forwards ev to the wrapped sink unless its event name has exceeded
 // either ceiling, in which case it is silently dropped.
 func (s *RateLimitedSink) Emit(ctx context.Context, ev ports.TelemetryEvent) {
@@ -116,11 +87,7 @@ func (s *RateLimitedSink) reserve(name string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	minuteLimit := eventsPerNamePerMinute
-	if _, ok := s.burstExempt[name]; ok {
-		minuteLimit = eventsPerNamePerMinuteBurstExempt
-	}
-	if !reserveWindow(s.minutes, name, now, time.Minute, minuteLimit) {
+	if !reserveWindow(s.minutes, name, now, time.Minute, eventsPerNamePerMinute) {
 		return false
 	}
 	dayLimit := eventsPerNamePerDay

@@ -12,15 +12,7 @@ export function TelemetryManager() {
 		void mobileTelemetry()?.active(telemetryActiveStorage);
 
 		const onChange = (state: AppStateStatus) => {
-			if (state === "active") {
-				void mobileTelemetry()?.active(telemetryActiveStorage);
-			} else if (state === "background") {
-				// Drain the batch when leaving the foreground so a launch heartbeat or
-				// a last feature_used is not stranded if the app is killed while
-				// backgrounded. Only "background" (not the transient iOS "inactive")
-				// so this does not fire on every notification-center peek.
-				mobileTelemetry()?.flush();
-			}
+			if (state === "active") void mobileTelemetry()?.active(telemetryActiveStorage);
 		};
 		const sub = AppState.addEventListener("change", onChange);
 		return () => sub.remove();
