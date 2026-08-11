@@ -2,6 +2,7 @@
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
 @import "../styles/tokens.css";
+@source "../../node_modules/@aoagents/product-ui/dist";
 
 @keyframes auth-form-enter {
   from {
@@ -15,6 +16,9 @@
 }
 
 body {
+  margin: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
   -webkit-user-select: none;
   user-select: none;
 }

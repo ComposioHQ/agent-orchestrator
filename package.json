@@ -5,28 +5,39 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
+    "predev": "npm run build:shared",
     "build": "next build",
+    "prebuild": "npm run build:shared",
     "start": "next start",
-    "cloud:local": "docker compose up --build --remove-orphans",
+    "cloud:local": "./scripts/cloud-web-local.sh",
     "cloud:local:down": "docker compose down --remove-orphans",
     "cloud:local:reset": "docker compose down --volumes --remove-orphans",
     "cloud:local:smoke": "./scripts/test-cloud-local.sh",
     "cloud:staging": "./scripts/cloud-staging.sh",
+    "cloud:web:staging": "./scripts/cloud-web-staging.sh",
     "test": "npm run test:go && npm run test:web",
     "test:go": "go test ./...",
     "test:web": "vitest run",
+    "pretest:web": "npm run build:shared",
     "typecheck": "npm run typecheck:go && npm run typecheck:web",
     "typecheck:go": "go vet ./...",
-    "typecheck:web": "tsc --noEmit"
+    "typecheck:web": "tsc --noEmit",
+    "pretypecheck:web": "npm run build:shared",
+    "build:shared": "npm --prefix ../../packages/cloud-client run build && npm --prefix ../../packages/product-ui run build"
   },
   "dependencies": {
+    "@aoagents/cloud-client": "file:../../packages/cloud-client",
+    "@aoagents/product-ui": "file:../../packages/product-ui",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
+    "@workos-inc/authkit-nextjs": "^4.3.1",
+    "clsx": "^2.1.1",
     "lucide-react": "1.17.0",
     "motion": "12.43.0",
     "next": "^16.3.0",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.2.2",

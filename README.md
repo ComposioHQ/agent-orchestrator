@@ -15,9 +15,12 @@ Private AO control-plane service. This foundation contains:
   webhook processing; and
 - Dockerized local development plus an isolated hosted-staging launcher.
 
-The repository root also contains the Next.js Cloud UI. Worker provisioning,
-personal GitHub OAuth, PR/issue synchronization, and sharing behavior remain
-in development. See
+The repository root also contains the authenticated Next.js Cloud UI. It uses
+the public `@aoagents/cloud-client` and `@aoagents/product-ui` sources for
+contracts, transport, status mapping, board layout, cards, and agent identity.
+It supports organization switching, projects, durable sessions, search, chat
+history, and live event streams. Worker/orchestrator execution, personal GitHub
+OAuth, PR/issue synchronization, and sharing behavior remain in development. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
 behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
 production deployments.
@@ -28,10 +31,14 @@ production deployments.
   PostgreSQL, and the local control-plane container. It does not load WorkOS or
   GitHub App credentials. Docker workers are the intended execution backend,
   but no worker is started until the worker protocol is implemented.
-- **Staging (`npm run cloud:staging`)** runs the desktop locally against
+- **Staging desktop (`npm run cloud:staging`)** runs the desktop locally against
   `https://staging-api.aoagents.dev`. The hosted staging control plane uses the
   shared WorkOS environment and its own staging database. Future workers run in
   staging, not on the developer's machine.
+- **Staging web (`npm run cloud:web:staging`)** runs the private Next.js UI
+  against that same staging API. It loads the server-only WorkOS API key and
+  client ID at launch from `ao-cloud/staging/workos` in AWS Secrets Manager;
+  credentials are never written to the repository or exposed to browser code.
 - **Production** uses `https://api.aoagents.dev`, the shared WorkOS environment,
   the production database, and the one production GitHub App. There is no
   supported local-desktop-against-production development command.
@@ -81,8 +88,11 @@ isolated non-superuser schema-owner role, grants only runtime DML privileges to
 the separate non-superuser `ao_cloud_app` role, disables login for the
 image-bootstrap superuser, and exposes the API on
 `http://127.0.0.1:8081` (avoiding the desktop daemon's usual port). Local auth
-is enabled. No worker is started: sessions store durable execution intent, but
-provisioning remains a separate feature.
+is enabled. The command then starts the Cloud UI on `http://127.0.0.1:3000`;
+create a development account with email/password on its sign-in screen. The
+browser receives only an HttpOnly session cookie. No worker is started:
+sessions store durable execution intent, but provisioning remains a separate
+feature.
 
 Use `npm run cloud:local:down` to stop containers while retaining data and
 `npm run cloud:local:reset` to stop them and delete the local database volume.
@@ -109,15 +119,22 @@ desktop currently uses the URL for staging preflight and future Cloud API
 calls; this branch does not add Cloud project/session UI. WorkOS desktop
 authentication continues to use the `ao-app://callback` deep link.
 
-Run the web application from the repository root in a second terminal:
+To launch the web UI against hosted staging:
 
 ```bash
-npm install
-npm run dev
+npm run cloud:web:staging
 ```
 
-The UI prototype runs at `http://localhost:3000` and opens the board directly;
-it does not require authentication or control-plane configuration.
+This command requires the `ao-cloud` AWS login profile (override with
+`AWS_PROFILE`) and uses `http://localhost:3000/callback` for WorkOS. That exact
+redirect URI is verified and created through the WorkOS API before launch.
+AuthKit's encrypted cookie key is generated once under `~/.ao/cloud-web`; app
+state and credentials never use an OS-default application-data directory.
+
+The web app intentionally resolves the public TypeScript package sources from
+the containing Agent Orchestrator checkout. Develop it through
+`private/ao-cloud` as the public repository's submodule; a standalone private
+clone does not contain those public packages.
 
 For a direct Go loop, requirements are Go 1.26.5 and PostgreSQL 15 or newer.
 Development and test environments can apply embedded Goose migrations at
