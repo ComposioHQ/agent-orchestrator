@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,7 +17,31 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/httpapi"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/reconcile"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox/createos"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandboxresolve"
+	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 )
+
+// readSSHPubKeys loads the operator SSH keys authorized on every sandbox. They
+// are a debugging affordance, not part of the worker's trust path.
+func readSSHPubKeys(path string) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read sandbox SSH public keys %s: %w", path, err)
+	}
+	var keys []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			keys = append(keys, trimmed)
+		}
+	}
+	return keys, nil
+}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -134,6 +160,20 @@ func run(logger *slog.Logger) error {
 		logger.Info("ao-cloud listening", "config", cfg.String())
 		result <- server.ListenAndServe()
 	}()
+
+	if reconciler != nil {
+		go func() {
+			logger.Info("sandbox reconciler started",
+				"provider", cfg.SandboxProvider,
+				"interval", cfg.ReconcileInterval,
+				"startup_timeout", cfg.SandboxStartupTimeout,
+				"heartbeat_timeout", cfg.WorkerHeartbeatTimeout,
+			)
+			if err := reconciler.Run(ctx); err != nil {
+				logger.Error("sandbox reconciler stopped", "error", err)
+			}
+		}()
+	}
 
 	select {
 	case <-ctx.Done():

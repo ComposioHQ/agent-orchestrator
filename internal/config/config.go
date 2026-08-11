@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 )
 
 var releasePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$`)
@@ -51,6 +53,11 @@ type GitHubConfig struct {
 func (c GitHubConfig) Enabled() bool {
 	return c.AppID != 0
 }
+
+// minWorkerSigningKeyLength is the shortest signing key accepted for worker
+// tokens. Short keys make the HMAC forgeable, and a forged worker token is a
+// grant to write onto someone else's session stream.
+const minWorkerSigningKeyLength = 32
 
 func Load() (Config, error) {
 	environment := strings.ToLower(strings.TrimSpace(os.Getenv("AO_CLOUD_ENV")))
@@ -152,9 +159,55 @@ func Load() (Config, error) {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_SESSION_TTL must be positive")
 	}
 	switch cfg.SandboxProvider {
-	case "ecs", "daytona", "docker":
+	case "ecs", "daytona", "docker", "nodeops":
 	default:
-		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be ecs, daytona, or docker")
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be ecs, daytona, docker, or nodeops")
+	}
+	if cfg.Hosted() && cfg.SandboxProvider != "nodeops" {
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be nodeops in staging and production")
+	}
+	if cfg.SandboxProvider == "nodeops" || cfg.Hosted() {
+		if err := (sandbox.NodeOpsConfig{
+			BaseURL:          cfg.NodeOpsBaseURL,
+			APIKey:           cfg.NodeOpsAPIKey,
+			DefaultShape:     cfg.NodeOpsDefaultShape,
+			DefaultRootFS:    cfg.NodeOpsDefaultRootFS,
+			Ingress:          cfg.NodeOpsIngress,
+			SSHKeyPath:       cfg.NodeOpsSSHKeyPath,
+			AutoPauseMinutes: cfg.NodeOpsAutoPauseMinutes,
+			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
+		}).Validate(); err != nil {
+			return Config{}, err
+		}
+		// A worker can only dial home if it is told where home is, and can only
+		// be trusted if its token is signed by a key strong enough to matter.
+		if cfg.PublicURL == "" {
+			return Config{}, errors.New("AO_CLOUD_PUBLIC_URL is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+		}
+		if len(cfg.WorkerSigningKey) < minWorkerSigningKeyLength {
+			return Config{}, fmt.Errorf(
+				"AO_CLOUD_WORKER_SIGNING_KEY must be at least %d characters when AO_CLOUD_SANDBOX_PROVIDER=nodeops",
+				minWorkerSigningKeyLength,
+			)
+		}
+		if cfg.WorkerBinaryPath == "" {
+			return Config{}, errors.New("AO_CLOUD_WORKER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+		}
+	}
+	if cfg.ReconcileInterval <= 0 {
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_RECONCILE_INTERVAL must be positive")
+	}
+	// The startup budget must outlast a cold provider boot. Set it too low and
+	// every cycle replaces a sandbox that was still starting, which never
+	// converges and bills for every discarded attempt.
+	if cfg.SandboxStartupTimeout < 30*time.Second {
+		return Config{}, errors.New("AO_CLOUD_SANDBOX_STARTUP_TIMEOUT must be at least 30s")
+	}
+	if cfg.WorkerHeartbeatTimeout < 30*time.Second {
+		return Config{}, errors.New("AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT must be at least 30s")
+	}
+	if cfg.MaxSandboxesPerOrg < 1 {
+		return Config{}, errors.New("AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG must be at least 1")
 	}
 	if cfg.Release == "" {
 		if cfg.Hosted() {
