@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { isCancelledError, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
@@ -100,7 +100,13 @@ function ShellLayout() {
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { themePreference, resolvedTheme, themeStyle, isSidebarOpen, toggleSidebar } = useUiStore();
+	// Field selectors, not a whole-store subscription: the shell must not
+	// re-render when unrelated UI state (inspector view, browser badges, …) moves.
+	const themePreference = useUiStore((state) => state.themePreference);
+	const resolvedTheme = useUiStore((state) => state.resolvedTheme);
+	const themeStyle = useUiStore((state) => state.themeStyle);
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
@@ -645,8 +651,15 @@ function ShellLayout() {
 		[],
 	);
 
+	// A fresh value object per render would re-render every useShell() consumer
+	// on every shell render regardless of whether shell state moved.
+	const shellContextValue = useMemo(
+		() => ({ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }),
+		[daemonStatus, workspaceStartupState, createProject, initializeProjectRepository],
+	);
+
 	return (
-		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
+		<ShellProvider value={shellContextValue}>
 			<SessionTopbarProvider>
 				<NotificationRuntime />
 				<TrayRuntime />

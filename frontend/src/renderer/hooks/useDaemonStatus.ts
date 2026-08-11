@@ -8,6 +8,24 @@ import { createEventTransport } from "../lib/event-transport";
 const STATUS_REFRESH_MS = 2_000;
 const READY_STATUS_REFRESH_MS = 10_000;
 
+// Each poll answers with a fresh object even when nothing changed. Every
+// consumer of this hook (including the app shell) would re-render per poll
+// without a field-level equality bailout.
+function sameDaemonStatus(a: DaemonStatus, b: DaemonStatus): boolean {
+	return (
+		a.state === b.state &&
+		a.port === b.port &&
+		a.pid === b.pid &&
+		a.executablePath === b.executablePath &&
+		a.workingDirectory === b.workingDirectory &&
+		a.message === b.message &&
+		a.details === b.details &&
+		a.code === b.code &&
+		a.exitCode === b.exitCode &&
+		a.signal === b.signal
+	);
+}
+
 export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 	const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });
 	const statusRef = useRef(status);
@@ -50,7 +68,8 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 		const applyStatus = (nextStatus: DaemonStatus) => {
 			// Only point REST at the new port; the workspace refetch is the event
 			// transport's job (it invalidates, debounced, on every daemon status).
-			statusRef.current = nextStatus;
+			const unchanged = sameDaemonStatus(statusRef.current, nextStatus);
+			if (!unchanged) statusRef.current = nextStatus;
 			if (nextStatus.state === "ready" && nextStatus.port) {
 				applyDaemonStatus(nextStatus);
 				clearRefresh();
@@ -59,7 +78,8 @@ export function useDaemonStatus(queryClient: QueryClient = defaultQueryClient) {
 				applyDaemonStatus(nextStatus);
 				scheduleRefresh();
 			}
-			setStatus(nextStatus);
+			// Unchanged polls keep the previous object so consumers skip a render.
+			if (!unchanged) setStatus(nextStatus);
 		};
 
 		refreshStatus();

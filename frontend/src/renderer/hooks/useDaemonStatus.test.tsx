@@ -171,6 +171,34 @@ describe("useDaemonStatus", () => {
 		expect(setApiBaseUrlMock).toHaveBeenLastCalledWith("http://127.0.0.1:4777");
 	});
 
+	it("does not re-render consumers when a poll returns an unchanged status", async () => {
+		vi.useFakeTimers();
+		// Every poll answers with a fresh object carrying identical fields.
+		getStatusMock.mockImplementation(() => Promise.resolve({ state: "ready", port: 4777 }));
+		const queryClient = fakeQueryClient();
+		let renders = 0;
+		const { result } = renderHook(() => {
+			renders += 1;
+			return useDaemonStatus(queryClient);
+		});
+
+		await act(async () => {
+			await Promise.resolve();
+		});
+		expect(result.current).toEqual({ state: "ready", port: 4777 });
+		const rendersAfterFirstStatus = renders;
+
+		// Three more ready-interval polls with identical payloads.
+		for (let i = 0; i < 3; i++) {
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10_000);
+			});
+		}
+
+		expect(getStatusMock.mock.calls.length).toBeGreaterThanOrEqual(4);
+		expect(renders).toBe(rendersAfterFirstStatus);
+	});
+
 	it("still connects the transport when the initial IPC status call fails", async () => {
 		getStatusMock.mockRejectedValue(new Error("ipc unavailable"));
 		const queryClient = fakeQueryClient();

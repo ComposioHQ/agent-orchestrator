@@ -48,7 +48,8 @@ export function TitlebarNav({
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
 	const { t } = useTranslation();
-	const { isSidebarOpen, toggleSidebar } = useUiStore();
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
 	const router = useRouter();
 	const canGoBack = useCanGoBack();
 	const canGoForward = useCanGoForward();
