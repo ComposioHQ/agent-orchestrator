@@ -137,6 +137,56 @@ func loadIdempotentMessage(
 	), event)
 }
 
+// AppendSessionEvent records a control-plane or worker event on a session
+// stream. Unlike a user message it does not open a turn, and it is allowed on a
+// terminated session so lifecycle history stays complete.
+func (s *Store) AppendSessionEvent(
+	ctx context.Context,
+	orgID string,
+	sessionID string,
+	eventType string,
+	payload json.RawMessage,
+) (domain.ClientEvent, error) {
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+	var event domain.ClientEvent
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var sequence int64
+		err := tx.QueryRow(
+			ctx,
+			`UPDATE ao_sessions
+			SET next_sequence = next_sequence + 1
+			WHERE org_id = $1 AND id = $2
+			RETURNING next_sequence - 1`,
+			orgID,
+			sessionID,
+		).Scan(&sequence)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return scanClientEvent(tx.QueryRow(
+			ctx,
+			`INSERT INTO ao_events (
+				org_id, session_id, sequence, type, payload
+			) VALUES ($1, $2, $3, $4, $5)
+			RETURNING session_id, sequence, type, payload, created_at`,
+			orgID,
+			sessionID,
+			sequence,
+			eventType,
+			payload,
+		), &event)
+	})
+	if err != nil {
+		return domain.ClientEvent{}, err
+	}
+	return event, nil
+}
+
 func appendUserMessage(
 	ctx context.Context,
 	tx pgx.Tx,
