@@ -996,6 +996,10 @@ func (c *SessionsController) setAutoReview(w http.ResponseWriter, r *http.Reques
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
+	if !in.enabledPresent {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "AUTO_REVIEW_ENABLED_REQUIRED", "enabled is required", nil)
+		return
+	}
 	sess, err := c.Svc.SetAutoReview(r.Context(), sessionID(r), in.Enabled)
 	if err != nil {
 		envelope.WriteError(w, r, err)

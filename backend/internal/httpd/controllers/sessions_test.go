@@ -865,6 +865,14 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("auto review response=%+v stored=%+v", autoReview, svc.sessions["ao-2"])
 	}
 
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/sessions/ao-2/auto-review", `{}`)
+	if status != http.StatusBadRequest || !strings.Contains(string(body), "AUTO_REVIEW_ENABLED_REQUIRED") {
+		t.Fatalf("missing auto review enabled = %d, want 400; body=%s", status, body)
+	}
+	if !svc.sessions["ao-2"].AutoReviewEnabled {
+		t.Fatal("malformed auto review request changed persisted state")
+	}
+
 	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2/auto-inject-review", `{"autoInjectReview":false}`)
 	if status != http.StatusOK {
 		t.Fatalf("auto-inject review policy = %d, want 200; body=%s", status, body)

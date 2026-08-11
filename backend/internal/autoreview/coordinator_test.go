@@ -35,11 +35,15 @@ func (f *fakeStore) ListReviewRunsBySession(context.Context, domain.SessionID) (
 type fakeTrigger struct {
 	calls   int
 	harness domain.ReviewerHarness
+	result  reviewcore.TriggerResult
 }
 
 func (f *fakeTrigger) TriggerAuto(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
 	f.calls++
 	f.harness = harness
+	if f.result.Reviews != nil || f.result.Runs != nil || f.result.SkipReason != "" {
+		return f.result, nil
+	}
 	return reviewcore.TriggerResult{Created: true}, nil
 }
 
@@ -63,9 +67,6 @@ func TestEvaluateSessionEligibility(t *testing.T) {
 		{name: "merged", mutate: func(f *fakeStore) { f.prs[0].Merged = true }},
 		{name: "missing head", mutate: func(f *fakeStore) { f.prs[0].HeadSHA = "" }},
 		{name: "no PR", mutate: func(f *fakeStore) { f.prs = nil }},
-		{name: "running current head", mutate: func(f *fakeStore) {
-			f.runs = []domain.ReviewRun{{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning, CreatedAt: now}}
-		}},
 		{name: "approved current head", mutate: func(f *fakeStore) {
 			f.runs = []domain.ReviewRun{{PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now}}
 		}},
@@ -107,6 +108,52 @@ func TestEvaluateSessionEligibility(t *testing.T) {
 				t.Fatalf("harness=%q, want codex", trigger.harness)
 			}
 		})
+	}
+}
+
+func TestEvaluateSessionRoutesSoleRunningReviewThroughEngine(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	running := domain.ReviewRun{PRURL: "pr1", TargetSHA: "sha1", Harness: domain.ReviewerCodex, Status: domain.ReviewRunRunning, CreatedAt: now}
+	store := &fakeStore{
+		session: domain.SessionRecord{ID: "s1", ProjectID: "p1", Kind: domain.KindWorker, Harness: domain.HarnessCodex, AutoReviewEnabled: true, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}},
+		project: domain.ProjectRecord{ID: "p1"},
+		prs:     []domain.PullRequest{{URL: "pr1", Number: 1, HeadSHA: "sha1"}},
+		runs:    []domain.ReviewRun{running},
+	}
+	trigger := &fakeTrigger{result: reviewcore.TriggerResult{
+		Reviews: []reviewcore.PRReviewState{{PRURL: "pr1", TargetSHA: "sha1", Status: reviewcore.ReviewStateRunning}},
+		Runs:    []domain.ReviewRun{running},
+	}}
+
+	result, err := New(store, trigger, Config{Clock: func() time.Time { return now }}).EvaluateSession(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trigger.calls != 1 || result.Triggered || result.Reason != "review_running" {
+		t.Fatalf("result=%+v calls=%d, want reconciled running skip", result, trigger.calls)
+	}
+}
+
+func TestEvaluateSessionReportsCancelledAfterStaleRunningReconciliation(t *testing.T) {
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		session: domain.SessionRecord{ID: "s1", ProjectID: "p1", Kind: domain.KindWorker, Harness: domain.HarnessCodex, AutoReviewEnabled: true, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}},
+		project: domain.ProjectRecord{ID: "p1"},
+		prs:     []domain.PullRequest{{URL: "pr1", Number: 1, HeadSHA: "sha1"}},
+		runs:    []domain.ReviewRun{{PRURL: "pr1", TargetSHA: "sha1", Harness: domain.ReviewerCodex, Status: domain.ReviewRunRunning}},
+	}
+	cancelled := domain.ReviewRun{PRURL: "pr1", TargetSHA: "sha1", Harness: domain.ReviewerCodex, Status: domain.ReviewRunCancelled}
+	trigger := &fakeTrigger{result: reviewcore.TriggerResult{
+		Reviews: []reviewcore.PRReviewState{{PRURL: "pr1", TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview}},
+		Runs:    []domain.ReviewRun{cancelled},
+	}}
+
+	result, err := New(store, trigger, Config{Clock: func() time.Time { return now }}).EvaluateSession(context.Background(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trigger.calls != 1 || result.Triggered || result.Reason != "cancelled_same_sha" {
+		t.Fatalf("result=%+v calls=%d, want cancelled_same_sha", result, trigger.calls)
 	}
 }
 

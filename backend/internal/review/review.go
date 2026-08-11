@@ -147,6 +147,9 @@ type TriggerResult struct {
 	Reviews          []PRReviewState
 	Runs             []domain.ReviewRun
 	CreatedRuns      []domain.ReviewRun
+	// SkipReason is set only for a normal automatic-trigger policy race, such
+	// as the worker becoming active after the coordinator's initial read.
+	SkipReason string
 }
 
 // SessionReviews is a worker's review state: the live reviewer handle plus its
@@ -216,6 +219,11 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	}
 	if !ok {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
+	}
+	if source == domain.ReviewTriggerAuto {
+		if reason := autoReviewSessionReason(worker, e.clock()); reason != "" {
+			return TriggerResult{SkipReason: reason}, nil
+		}
 	}
 	if worker.IsTerminated {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q is terminated", ErrInvalid, workerID)
@@ -391,6 +399,23 @@ func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID
 	triggerRuns := append([]domain.ReviewRun{}, created...)
 	triggerRuns = append(triggerRuns, runs...)
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
+}
+
+func autoReviewSessionReason(worker domain.SessionRecord, now time.Time) string {
+	switch {
+	case !worker.AutoReviewEnabled:
+		return "disabled"
+	case worker.Kind != domain.KindWorker:
+		return "not_worker"
+	case worker.IsTerminated:
+		return "terminated"
+	case worker.Activity.State != domain.ActivityIdle:
+		return "not_idle"
+	case worker.Activity.LastActivityAt.IsZero() || now.Sub(worker.Activity.LastActivityAt) < time.Minute:
+		return "idle_threshold_not_met"
+	default:
+		return ""
+	}
 }
 
 // SwitchReviewer serializes reviewer preference changes with trigger/restore

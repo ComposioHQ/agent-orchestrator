@@ -122,10 +122,12 @@ func (c *Coordinator) EvaluateSession(ctx context.Context, id domain.SessionID) 
 		return Result{Reason: "no_pr"}, nil
 	}
 	eligible := false
+	hasRunning := false
 	reason := "planner_ineligible"
 	for _, state := range states {
 		switch state.Status {
 		case reviewcore.ReviewStateRunning:
+			hasRunning = true
 			reason = "review_running"
 		case reviewcore.ReviewStateUpToDate:
 			reason = "already_approved"
@@ -141,17 +143,40 @@ func (c *Coordinator) EvaluateSession(ctx context.Context, id domain.SessionID) 
 			eligible = true
 		}
 	}
-	if !eligible {
+	if !eligible && !hasRunning {
 		return Result{Reason: reason}, nil
 	}
 	result, err := c.reviews.TriggerAuto(ctx, id, harness)
 	if err != nil {
 		return Result{}, fmt.Errorf("trigger auto review for %s: %w", id, err)
 	}
+	if result.SkipReason != "" {
+		return Result{Reason: result.SkipReason}, nil
+	}
 	if !result.Created {
-		return Result{Reason: "review_running"}, nil
+		return Result{Reason: triggerResultReason(prs, result, harness)}, nil
 	}
 	return Result{Triggered: true, Reason: "triggered"}, nil
+}
+
+func triggerResultReason(prs []domain.PullRequest, result reviewcore.TriggerResult, harness domain.ReviewerHarness) string {
+	for _, state := range result.Reviews {
+		if state.Status == reviewcore.ReviewStateRunning {
+			return "review_running"
+		}
+	}
+	runs := make([]domain.ReviewRun, 0, len(result.Runs))
+	for _, run := range result.Runs {
+		if run.Harness == harness || run.Harness == "" {
+			runs = append(runs, run)
+		}
+	}
+	for _, pr := range prs {
+		if blocked := existingHeadReason(runs, pr.URL, pr.HeadSHA); blocked != "" {
+			return blocked
+		}
+	}
+	return "planner_up_to_date"
 }
 
 func existingHeadReason(runs []domain.ReviewRun, prURL, targetSHA string) string {

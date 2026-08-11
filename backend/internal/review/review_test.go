@@ -334,11 +334,17 @@ func (f *fakeLauncher) Preflight(_ context.Context, _ domain.ReviewerHarness, _ 
 
 func liveWorker() domain.SessionRecord {
 	return domain.SessionRecord{
-		ID:               "mer-1",
-		ProjectID:        "mer",
-		Harness:          domain.HarnessClaudeCode,
-		Metadata:         domain.SessionMetadata{WorkspacePath: "/ws/mer-1"},
-		AutoInjectReview: true,
+		ID:                "mer-1",
+		ProjectID:         "mer",
+		Kind:              domain.KindWorker,
+		Harness:           domain.HarnessClaudeCode,
+		Metadata:          domain.SessionMetadata{WorkspacePath: "/ws/mer-1"},
+		AutoReviewEnabled: true,
+		AutoInjectReview:  true,
+		Activity: domain.Activity{
+			State:          domain.ActivityIdle,
+			LastActivityAt: time.Unix(-60, 0).UTC(),
+		},
 	}
 }
 
@@ -1371,6 +1377,35 @@ func TestAutoTriggerReconcilesDeadReviewerBeforeRunningGate(t *testing.T) {
 	}
 	if !launcher.aliveChecked || !launcher.spawned || launcher.notified {
 		t.Fatalf("pending PR should launch a fresh reviewer: %+v", launcher)
+	}
+}
+
+func TestAutoTriggerRevalidatesSessionPolicyUnderLock(t *testing.T) {
+	tests := []struct {
+		name       string
+		mutate     func(*domain.SessionRecord)
+		wantReason string
+	}{
+		{name: "disabled", mutate: func(worker *domain.SessionRecord) { worker.AutoReviewEnabled = false }, wantReason: "disabled"},
+		{name: "active", mutate: func(worker *domain.SessionRecord) { worker.Activity.State = domain.ActivityActive }, wantReason: "not_idle"},
+		{name: "idle threshold reset", mutate: func(worker *domain.SessionRecord) { worker.Activity.LastActivityAt = time.Unix(-59, 0).UTC() }, wantReason: "idle_threshold_not_met"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			worker := liveWorker()
+			tt.mutate(&worker)
+			store := &fakeStore{}
+			launcher := &fakeLauncher{handle: "review-mer-1"}
+			eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+			result, err := eng.TriggerWithSource(context.Background(), "mer-1", domain.ReviewerClaudeCode, domain.ReviewTriggerAuto)
+			if err != nil {
+				t.Fatalf("TriggerWithSource: %v", err)
+			}
+			if result.Created || result.SkipReason != tt.wantReason || len(store.runs) != 0 || launcher.spawned {
+				t.Fatalf("result=%+v runs=%+v launcher=%+v", result, store.runs, launcher)
+			}
+		})
 	}
 }
 
