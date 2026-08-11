@@ -1018,5 +1018,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "例如：修复不稳定的结账测试（可选）…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "上一个对话分支",
+	"chat.branch.next": "下一个对话分支",
+	"chat.branch.position": "第 {{position}} 个对话分支，共 {{total}} 个",
+	"chat.edit.label": "编辑消息",
+	"chat.edit.stopCurrentTurn": "请先停止当前回合再创建分支",
+	"chat.edit.preservedContent": "已保留的消息内容",
+	"chat.edit.image": "图像",
+	"chat.edit.cancel": "取消编辑",
+	"chat.edit.send": "发送编辑后的消息",
+	"chat.edit.sendShortcut": "发送编辑后的消息（⌘/Ctrl+Enter）"
 }

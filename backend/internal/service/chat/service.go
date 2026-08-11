@@ -158,13 +158,13 @@ func notifyControllerReady(cfg StartConfig, controller *Controller) error {
 }
 
 func cloneStartConfig(cfg StartConfig) StartConfig {
-	copy := cfg
-	copy.Env = make(map[string]string, len(cfg.Env))
+	cloned := cfg
+	cloned.Env = make(map[string]string, len(cfg.Env))
 	for key, value := range cfg.Env {
-		copy.Env[key] = value
+		cloned.Env[key] = value
 	}
-	copy.AdditionalDirectories = append([]string(nil), cfg.AdditionalDirectories...)
-	copy.MCPServers = make([]ports.ChatMCPServerConfig, len(cfg.MCPServers))
+	cloned.AdditionalDirectories = append([]string(nil), cfg.AdditionalDirectories...)
+	cloned.MCPServers = make([]ports.ChatMCPServerConfig, len(cfg.MCPServers))
 	for index, server := range cfg.MCPServers {
 		server.Args = append([]string(nil), server.Args...)
 		server.Env = make(map[string]string, len(cfg.MCPServers[index].Env))
@@ -175,9 +175,9 @@ func cloneStartConfig(cfg StartConfig) StartConfig {
 		for key, value := range cfg.MCPServers[index].Headers {
 			server.Headers[key] = value
 		}
-		copy.MCPServers[index] = server
+		cloned.MCPServers[index] = server
 	}
-	return copy
+	return cloned
 }
 
 // settleOrphanedWork closes out anything a previous controller left behind.

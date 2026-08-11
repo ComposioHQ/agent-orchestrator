@@ -299,6 +299,7 @@ func (s *Store) ConversationEditAnchor(
 		PreviousProviderTurnID:      row.PreviousProviderTurnID,
 		ForkAfterSequence:           row.ForkAfterSequence,
 		OriginalDeliveryContentJSON: row.OriginalDeliveryContentJson,
+		RetryActiveBranch:           row.RetryActiveBranch.Valid && row.RetryActiveBranch.Bool,
 	}, nil
 }
 
@@ -1818,26 +1819,28 @@ func (s *Store) conversationBranchPoints(
 		turnID   string
 	}
 	groups := make(map[groupKey][]member)
+	groupByReplacement := make(map[string]groupKey)
 	order := make([]groupKey, 0)
 	for _, branch := range branches {
-		if branch.ParentBranchID == "" || branch.ReplacedTurnID == "" {
+		if branch.ParentBranchID == "" || branch.ReplacedTurnID == "" || branch.ReplacementTurnID == "" {
 			continue
 		}
 		key := groupKey{sourceBranchID: branch.ParentBranchID, replacedTurnID: branch.ReplacedTurnID}
+		if existing, ok := groupByReplacement[branch.ReplacedTurnID]; ok {
+			key = existing
+		}
 		if _, exists := groups[key]; !exists {
 			order = append(order, key)
 			groups[key] = []member{{branchID: key.sourceBranchID, turnID: key.replacedTurnID}}
 		}
 		groups[key] = append(groups[key], member{branchID: branch.ID, turnID: branch.ReplacementTurnID})
+		groupByReplacement[branch.ReplacementTurnID] = key
 	}
 
 	points := make([]domain.ConversationBranchPoint, 0, len(branches))
 	for _, key := range order {
 		members := groups[key]
 		for index, current := range members {
-			if current.turnID == "" {
-				continue
-			}
 			point := domain.ConversationBranchPoint{
 				TurnID: current.turnID, Position: index + 1, Total: len(members),
 			}

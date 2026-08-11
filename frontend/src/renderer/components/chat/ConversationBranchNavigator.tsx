@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ConversationBranchPoint } from "../../types/conversation";
 
 export function ConversationBranchNavigator({
@@ -12,6 +13,7 @@ export function ConversationBranchNavigator({
 	error?: string;
 	onActivate: (branchId: string) => Promise<unknown> | void;
 }) {
+	const { t } = useTranslation();
 	if (point.total <= 1) return null;
 	return (
 		<div className="flex min-w-0 items-center gap-0.5 text-[10.5px] text-muted-foreground">
@@ -22,14 +24,17 @@ export function ConversationBranchNavigator({
 				onClick={() => {
 					void Promise.resolve(onActivate(point.previousBranchId as string)).catch(() => {});
 				}}
-				aria-label="Previous conversation branch"
-				title="Previous conversation branch"
+				aria-label={t("chat.branch.previous")}
+				title={t("chat.branch.previous")}
 				className="rounded p-0.5 transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
 			>
 				<ChevronLeft aria-hidden="true" className="size-3.5" />
 			</button>
 		) : null}
-		<span className="px-0.5 tabular-nums" aria-label={`Conversation branch ${point.position} of ${point.total}`}>
+		<span
+			className="px-0.5 tabular-nums"
+			aria-label={t("chat.branch.position", { position: point.position, total: point.total })}
+		>
 			{point.position} / {point.total}
 		</span>
 		{point.nextBranchId ? (
@@ -39,8 +44,8 @@ export function ConversationBranchNavigator({
 				onClick={() => {
 					void Promise.resolve(onActivate(point.nextBranchId as string)).catch(() => {});
 				}}
-				aria-label="Next conversation branch"
-				title="Next conversation branch"
+				aria-label={t("chat.branch.next")}
+				title={t("chat.branch.next")}
 				className="rounded p-0.5 transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40 disabled:opacity-45"
 			>
 				<ChevronRight aria-hidden="true" className="size-3.5" />

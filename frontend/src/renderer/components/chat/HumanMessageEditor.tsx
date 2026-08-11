@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUp, FileText, Image as ImageIcon, Loader2, Tag, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ConversationContentSummary } from "../../types/conversation";
 import { Button } from "../ui/button";
 
@@ -9,6 +10,7 @@ export interface HumanMessageEditorProps {
 	pending: boolean;
 	busy: boolean;
 	error?: string;
+	onDraftChange?: (text: string) => void;
 	onCancel: () => void;
 	onSend: (text: string) => Promise<unknown> | void;
 }
@@ -19,13 +21,15 @@ export function HumanMessageEditor({
 	pending,
 	busy,
 	error,
+	onDraftChange,
 	onCancel,
 	onSend,
 }: HumanMessageEditorProps) {
+	const { t } = useTranslation();
 	const [draft, setDraft] = useState(text);
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	const sendDisabled = pending || busy || draft.trim().length === 0;
-	const busyMessage = busy ? "Stop the current turn before branching" : undefined;
+	const busyMessage = busy ? t("chat.edit.stopCurrentTurn") : undefined;
 
 	useEffect(() => {
 		const node = textarea.current;
@@ -52,22 +56,25 @@ export function HumanMessageEditor({
 	}
 
 	return (
-		<div className="flex w-full max-w-[min(78%,560px)] flex-col rounded-[10px] border border-logo-accent/50 bg-raised p-2 shadow-sm">
+		<div className="cursor-chat-composer relative flex w-full max-w-3xl flex-col gap-2 rounded-[10px] border border-border-strong p-2.5 transition-[background,border-color,box-shadow]">
 		<textarea
 			ref={textarea}
 			value={draft}
-			onChange={(event) => setDraft(event.target.value)}
+			onChange={(event) => {
+				setDraft(event.target.value);
+				onDraftChange?.(event.target.value);
+			}}
 			onKeyDown={onKeyDown}
-			aria-label="Edit message"
+			aria-label={t("chat.edit.label")}
 			autoFocus
 			rows={2}
-			className="max-h-56 min-h-20 w-full resize-none overflow-y-auto rounded-md border border-border bg-background px-2.5 py-2 text-sm leading-[1.55] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-logo-accent/40"
+			className="chat-composer-scrollbar max-h-56 min-h-[3.25rem] w-full resize-none overflow-y-auto overscroll-contain bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none"
 		/>
 		{content.length > 0 ? (
-			<div className="mt-2 flex flex-wrap gap-1.5" aria-label="Preserved message content">
+			<div className="mt-2 flex flex-wrap gap-1.5" aria-label={t("chat.edit.preservedContent")}>
 				{content.map((item, index) => {
 					const Icon = item.type === "image" ? ImageIcon : item.type === "resource" ? FileText : Tag;
-					const label = item.type === "image" ? item.mimeType || "Image" : item.name || item.uri || item.type;
+					const label = item.type === "image" ? item.mimeType || t("chat.edit.image") : item.name || item.uri || item.type;
 					return (
 						<span
 							key={`${item.type}-${item.uri ?? item.mimeType ?? item.name ?? index}`}
@@ -95,8 +102,8 @@ export function HumanMessageEditor({
 				variant="ghost"
 				onClick={onCancel}
 				disabled={pending}
-				aria-label="Cancel edit"
-				title="Cancel edit"
+				aria-label={t("chat.edit.cancel")}
+				title={t("chat.edit.cancel")}
 				className="size-7"
 			>
 				<X aria-hidden="true" className="size-3.5" />
@@ -106,8 +113,8 @@ export function HumanMessageEditor({
 				size="icon-sm"
 				onClick={submit}
 				disabled={sendDisabled}
-				aria-label="Send edited message"
-				title={busyMessage ?? "Send edited message (⌘/Ctrl+Enter)"}
+				aria-label={t("chat.edit.send")}
+				title={busyMessage ?? t("chat.edit.sendShortcut")}
 				className="size-7 rounded-full"
 			>
 				{pending ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <ArrowUp aria-hidden="true" className="size-3.5" />}

@@ -160,8 +160,16 @@ func (s *Service) EditMessage(
 	var content []ports.ChatContent
 	if anchor.OriginalDeliveryContentJSON != "" {
 		if err := json.Unmarshal([]byte(anchor.OriginalDeliveryContentJSON), &content); err != nil {
-			return EditMessageResult{}, fmt.Errorf("%w: decode stored prompt content: %v", ErrEditTurnInvalid, err)
+			return EditMessageResult{}, fmt.Errorf("%w: decode stored prompt content: %w", ErrEditTurnInvalid, err)
 		}
+	}
+	msg.Content = content
+	if anchor.RetryActiveBranch {
+		branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, anchor.SourceBranchID)
+		if err != nil {
+			return EditMessageResult{}, fmt.Errorf("load pending edited conversation: %w", err)
+		}
+		return s.sendEditedMessage(ctx, branch.ParentBranchID, branch.ID, source, msg)
 	}
 	if anchor.PreviousProviderTurnID != "" && !canFork {
 		return EditMessageResult{}, ErrForkUnsupported
@@ -234,16 +242,36 @@ func (s *Service) EditMessage(
 	}
 	abortSource = false
 
-	msg.Content = content
-	turn, sendErr := replacement.Send(ctx, msg)
-	if turn.ID != "" {
-		if err := s.store.UpdateConversationBranchReplacement(ctx, branchID, turn.ID); err != nil {
-			return EditMessageResult{SourceBranchID: anchor.SourceBranchID, ActiveBranchID: branchID, Turn: turn}, err
-		}
+	return s.sendEditedMessage(ctx, anchor.SourceBranchID, branchID, replacement, msg)
+}
+
+// sendEditedMessage commits the branch replacement only after the provider has
+// accepted it. A transport refusal leaves an empty active branch so the same
+// source prompt and in-memory editor draft can be retried without another fork.
+func (s *Service) sendEditedMessage(
+	ctx context.Context,
+	sourceBranchID, activeBranchID string,
+	controller *Controller,
+	msg ports.ChatUserMessage,
+) (EditMessageResult, error) {
+	turn, sendErr := controller.Send(ctx, msg)
+	result := EditMessageResult{
+		SourceBranchID: sourceBranchID,
+		ActiveBranchID: activeBranchID,
+		Turn:           turn,
 	}
-	result := EditMessageResult{SourceBranchID: anchor.SourceBranchID, ActiveBranchID: branchID, Turn: turn}
 	if sendErr != nil {
+		if turn.ID != "" {
+			if _, err := s.store.RollbackTurns(ctx, controller.conversation.ID, turn.ID, s.now()); err != nil {
+				sendErr = errors.Join(sendErr, fmt.Errorf("discard failed edited turn: %w", err))
+			}
+		}
 		return result, sendErr
+	}
+	if turn.ID != "" {
+		if err := s.store.UpdateConversationBranchReplacement(ctx, activeBranchID, turn.ID); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
 }

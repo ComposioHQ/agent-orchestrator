@@ -223,6 +223,7 @@ type ConversationEditAnchor struct {
 	PreviousProviderTurnID      string
 	ForkAfterSequence           int64
 	OriginalDeliveryContentJSON string
+	RetryActiveBranch           bool
 }
 
 // ConversationUsage is the conversation's token position.

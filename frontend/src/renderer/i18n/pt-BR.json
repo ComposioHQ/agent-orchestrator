@@ -1051,5 +1051,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "ex.: Corrigir o teste de checkout instável (opcional)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "Ramificação de conversa anterior",
+	"chat.branch.next": "Próxima ramificação de conversa",
+	"chat.branch.position": "Ramificação de conversa {{position}} de {{total}}",
+	"chat.edit.label": "Editar mensagem",
+	"chat.edit.stopCurrentTurn": "Pare o turno atual antes de criar uma ramificação",
+	"chat.edit.preservedContent": "Conteúdo preservado da mensagem",
+	"chat.edit.image": "Imagem",
+	"chat.edit.cancel": "Cancelar edição",
+	"chat.edit.send": "Enviar mensagem editada",
+	"chat.edit.sendShortcut": "Enviar mensagem editada (⌘/Ctrl+Enter)"
 }

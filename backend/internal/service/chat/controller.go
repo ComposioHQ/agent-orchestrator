@@ -731,11 +731,20 @@ func (c *Controller) dispatch(
 		// by AO's own turn id is required here — an undispatched turn has no
 		// provider id, so looking one up by the empty string would hit whichever
 		// undispatched turn the database returned first.
+		completedAt := c.now()
 		if settleErr := c.store.SettleTurnByID(
-			ctx, turnID, domain.TurnStateFailed, err.Error(), c.now()); settleErr != nil {
+			ctx, turnID, domain.TurnStateFailed, err.Error(), completedAt); settleErr != nil {
 			c.log.Error("failed to settle turn after send error", "error", settleErr)
 		}
-		return domain.ConversationTurn{}, fmt.Errorf("send turn: %w", err)
+		return domain.ConversationTurn{
+			ID:                 turnID,
+			ConversationID:     c.conversation.ID,
+			HandledBySessionID: c.sessionID,
+			State:              domain.TurnStateFailed,
+			ErrorMessage:       err.Error(),
+			RequestedAt:        requestedAt,
+			CompletedAt:        &completedAt,
+		}, fmt.Errorf("send turn: %w", err)
 	}
 
 	if err := c.store.BindTurnToProvider(ctx, turnID, ref.ProviderTurnID, c.now()); err != nil {

@@ -1051,5 +1051,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "p. ex. Corriger le test de paiement instable (facultatif)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "Branche de conversation précédente",
+	"chat.branch.next": "Branche de conversation suivante",
+	"chat.branch.position": "Branche de conversation {{position}} sur {{total}}",
+	"chat.edit.label": "Modifier le message",
+	"chat.edit.stopCurrentTurn": "Arrêtez le tour actuel avant de créer une branche",
+	"chat.edit.preservedContent": "Contenu du message conservé",
+	"chat.edit.image": "Image",
+	"chat.edit.cancel": "Annuler la modification",
+	"chat.edit.send": "Envoyer le message modifié",
+	"chat.edit.sendShortcut": "Envoyer le message modifié (⌘/Ctrl+Entrée)"
 }

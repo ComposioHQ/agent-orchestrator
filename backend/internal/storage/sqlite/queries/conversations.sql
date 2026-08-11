@@ -62,22 +62,43 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
+), active_branch AS (
+    SELECT branch.*
+    FROM conversations AS conversation
+    JOIN conversation_branches AS branch ON branch.id = conversation.active_branch_id
+    WHERE conversation.id = sqlc.arg(conversation_id)
 ), selected_message AS (
     SELECT message.conversation_id,
            message.turn_id,
            message.sequence,
-           message.delivery_content_json
+           message.delivery_content_json,
+           active_branch.parent_branch_id IS NOT NULL
+               AND active_branch.replaced_turn_id = message.turn_id
+               AND active_branch.replacement_turn_id IS NULL AS retry_active_branch
     FROM conversation_messages AS message
     JOIN active_path AS path ON path.branch_id = message.branch_id
+    CROSS JOIN active_branch
     WHERE message.conversation_id = sqlc.arg(conversation_id)
       AND message.turn_id = sqlc.arg(replaced_turn_id)
       AND message.role = 'user'
       AND message.origin = 'human'
-      AND (path.max_sequence IS NULL OR message.sequence <= path.max_sequence)
+      AND (
+          path.max_sequence IS NULL
+          OR message.sequence <= path.max_sequence
+          OR (
+              active_branch.replaced_turn_id = message.turn_id
+              AND active_branch.replacement_turn_id IS NULL
+          )
+      )
     LIMIT 1
 )
 SELECT selected_message.conversation_id,
@@ -101,7 +122,8 @@ SELECT selected_message.conversation_id,
            LIMIT 1
        ), '') AS TEXT) AS previous_provider_turn_id,
        selected_message.sequence - 1 AS fork_after_sequence,
-       selected_message.delivery_content_json AS original_delivery_content_json
+       selected_message.delivery_content_json AS original_delivery_content_json,
+       selected_message.retry_active_branch
 FROM selected_message
 JOIN conversations AS conversation ON conversation.id = selected_message.conversation_id;
 
@@ -343,7 +365,12 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
@@ -370,7 +397,12 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
@@ -573,7 +605,12 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
@@ -594,7 +631,12 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
@@ -728,7 +770,12 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
@@ -749,7 +796,12 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL
@@ -797,7 +849,12 @@ WITH RECURSIVE active_path(branch_id, max_sequence) AS (
     FROM conversations
     WHERE conversations.id = sqlc.arg(conversation_id)
     UNION ALL
-    SELECT branch.parent_branch_id, branch.fork_after_sequence
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
     FROM active_path AS path
     JOIN conversation_branches AS branch ON branch.id = path.branch_id
     WHERE branch.parent_branch_id IS NOT NULL

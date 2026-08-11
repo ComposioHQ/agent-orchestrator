@@ -1051,5 +1051,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "p. ej. Arreglar la prueba de pago inestable (opcional)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "Rama de conversación anterior",
+	"chat.branch.next": "Rama de conversación siguiente",
+	"chat.branch.position": "Rama de conversación {{position}} de {{total}}",
+	"chat.edit.label": "Editar mensaje",
+	"chat.edit.stopCurrentTurn": "Detén el turno actual antes de crear una rama",
+	"chat.edit.preservedContent": "Contenido conservado del mensaje",
+	"chat.edit.image": "Imagen",
+	"chat.edit.cancel": "Cancelar edición",
+	"chat.edit.send": "Enviar mensaje editado",
+	"chat.edit.sendShortcut": "Enviar mensaje editado (⌘/Ctrl+Enter)"
 }

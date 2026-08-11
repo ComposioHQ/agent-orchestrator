@@ -1036,5 +1036,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "z. B. Den instabilen Checkout-Test reparieren (optional)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "Vorheriger Gesprächszweig",
+	"chat.branch.next": "Nächster Gesprächszweig",
+	"chat.branch.position": "Gesprächszweig {{position}} von {{total}}",
+	"chat.edit.label": "Nachricht bearbeiten",
+	"chat.edit.stopCurrentTurn": "Stoppen Sie den aktuellen Durchlauf, bevor Sie verzweigen",
+	"chat.edit.preservedContent": "Beibehaltener Nachrichteninhalt",
+	"chat.edit.image": "Bild",
+	"chat.edit.cancel": "Bearbeitung abbrechen",
+	"chat.edit.send": "Bearbeitete Nachricht senden",
+	"chat.edit.sendShortcut": "Bearbeitete Nachricht senden (⌘/Strg+Enter)"
 }

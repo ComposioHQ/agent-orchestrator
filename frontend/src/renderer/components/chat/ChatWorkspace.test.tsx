@@ -515,7 +515,7 @@ describe("ChatWorkspace message actions", () => {
 		const onEditMessage = vi.fn(async () => {
 			throw new Error("branch failed");
 		});
-		render(
+		const view = render(
 			<ChatWorkspace
 				snapshot={idleSnapshot()}
 				onEditMessage={onEditMessage}
@@ -530,6 +530,22 @@ describe("ChatWorkspace message actions", () => {
 		fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
 
 		await waitFor(() => expect(onEditMessage).toHaveBeenCalledWith("turn-1", "keep this draft"));
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
+		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={{
+					...idleSnapshot(),
+					activeBranchId: "branch-failed",
+					branchedFromEarlierMessage: true,
+					items: [],
+					turns: [],
+				}}
+				onEditMessage={onEditMessage}
+				editMessageError="branch failed"
+			/>,
+		);
 		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
 		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
 	});

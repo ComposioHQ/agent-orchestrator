@@ -1018,5 +1018,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "e.g. Fix the flaky checkout test (optional)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "Previous conversation branch",
+	"chat.branch.next": "Next conversation branch",
+	"chat.branch.position": "Conversation branch {{position}} of {{total}}",
+	"chat.edit.label": "Edit message",
+	"chat.edit.stopCurrentTurn": "Stop the current turn before branching",
+	"chat.edit.preservedContent": "Preserved message content",
+	"chat.edit.image": "Image",
+	"chat.edit.cancel": "Cancel edit",
+	"chat.edit.send": "Send edited message",
+	"chat.edit.sendShortcut": "Send edited message (⌘/Ctrl+Enter)"
 }

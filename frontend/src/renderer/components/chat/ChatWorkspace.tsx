@@ -59,6 +59,7 @@ import {
 	TurnChangedFiles,
 	TurnOutcome,
 } from "./ChatTimelineItems";
+import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
@@ -89,7 +90,9 @@ import {
 	type ChatSkill,
 	type ConversationActivity,
 	type ConversationBranchPoint,
+	type ConversationContentSummary,
 	type ConversationItem,
+	type ConversationMessage,
 	type TurnDiff,
 	type TurnSettings,
 } from "../../types/conversation";
@@ -106,6 +109,12 @@ type TopbarBounds = {
 	leftInset: number;
 	rightInset: number;
 	width: number;
+};
+
+type MessageEditDraft = {
+	turnId: string;
+	text: string;
+	content: ConversationContentSummary[];
 };
 
 export interface ChatWorkspaceProps {
@@ -953,6 +962,7 @@ function Timeline({
 	const drag = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
 	const [pinned, setPinned] = useState(true);
 	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
+	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
 	const [scrollbar, setScrollbar] = useState({
 		visible: false,
 		top: 0,
@@ -978,8 +988,38 @@ function Timeline({
 		[snapshot.turns],
 	);
 
+	useEffect(() => setMessageEdit(undefined), [snapshot.sessionId]);
+
+	const startMessageEdit = useCallback((message: ConversationMessage) => {
+		if (!message.turnId) return;
+		setMessageEdit({
+			turnId: message.turnId,
+			text: message.text,
+			content: message.content ?? [],
+		});
+	}, []);
+	const updateMessageEdit = useCallback((text: string) => {
+		setMessageEdit((current) => (current ? { ...current, text } : current));
+	}, []);
+	const cancelMessageEdit = useCallback(() => setMessageEdit(undefined), []);
+	const submitMessageEdit = useCallback(
+		async (text: string) => {
+			const current = messageEdit;
+			if (!current || !onEditHumanMessage) return;
+			await editHumanMessage(current.turnId, text);
+			setMessageEdit((active) => (active?.turnId === current.turnId ? undefined : active));
+		},
+		[editHumanMessage, messageEdit, onEditHumanMessage],
+	);
+
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
+	const editedMessageVisible = Boolean(
+		messageEdit &&
+			items.some(
+				(item) => item.kind === "message" && item.role === "user" && item.turnId === messageEdit.turnId,
+			),
+	);
 	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);
 	const previews = useMemo(() => groups.map(groupPreview), [groups]);
@@ -1157,7 +1197,7 @@ function Timeline({
 		updateScrollbar();
 	}
 
-	if (items.length === 0) {
+	if (items.length === 0 && !messageEdit) {
 		return <EmptyState harness={snapshot.harness} />;
 	}
 
@@ -1197,6 +1237,11 @@ function Timeline({
 								onResolveInput={resolveInput}
 								onRollback={rollback}
 								onEditHumanMessage={canEditHumanMessage ? editHumanMessage : undefined}
+								messageEdit={messageEdit}
+								onStartMessageEdit={startMessageEdit}
+								onUpdateMessageEdit={updateMessageEdit}
+								onCancelMessageEdit={cancelMessageEdit}
+								onSubmitMessageEdit={submitMessageEdit}
 								editPending={editPending}
 								editBusy={editBusy}
 								editError={editError}
@@ -1214,6 +1259,20 @@ function Timeline({
 							/>
 						</div>
 					))}
+					{messageEdit && !editedMessageVisible ? (
+						<div className="flex justify-end" data-chat-scroll-anchor="">
+							<HumanMessageEditor
+								text={messageEdit.text}
+								content={messageEdit.content}
+								pending={Boolean(editPending)}
+								busy={Boolean(editBusy)}
+								error={editError}
+								onDraftChange={updateMessageEdit}
+								onCancel={cancelMessageEdit}
+								onSend={submitMessageEdit}
+							/>
+						</div>
+					) : null}
 				</div>
 			</div>
 
@@ -1324,6 +1383,11 @@ const TurnGroup = memo(function TurnGroup({
 	onResolveInput,
 	onRollback,
 	onEditHumanMessage,
+	messageEdit,
+	onStartMessageEdit,
+	onUpdateMessageEdit,
+	onCancelMessageEdit,
+	onSubmitMessageEdit,
 	editPending,
 	editBusy,
 	editError,
@@ -1343,6 +1407,11 @@ const TurnGroup = memo(function TurnGroup({
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
+	messageEdit?: MessageEditDraft;
+	onStartMessageEdit: (message: ConversationMessage) => void;
+	onUpdateMessageEdit: (text: string) => void;
+	onCancelMessageEdit: () => void;
+	onSubmitMessageEdit: (text: string) => Promise<void>;
 	editPending?: boolean;
 	editBusy?: boolean;
 	editError?: string;
@@ -1383,6 +1452,11 @@ const TurnGroup = memo(function TurnGroup({
 						onDecide={onDecide}
 						onResolveInput={onResolveInput}
 						onEditHumanMessage={onEditHumanMessage}
+						messageEdit={messageEdit}
+						onStartMessageEdit={onStartMessageEdit}
+						onUpdateMessageEdit={onUpdateMessageEdit}
+						onCancelMessageEdit={onCancelMessageEdit}
+						onSubmitMessageEdit={onSubmitMessageEdit}
 						editPending={editPending}
 						editBusy={editBusy}
 						editError={editError}
@@ -1425,6 +1499,11 @@ function TimelineItem({
 	onDecide,
 	onResolveInput,
 	onEditHumanMessage,
+	messageEdit,
+	onStartMessageEdit,
+	onUpdateMessageEdit,
+	onCancelMessageEdit,
+	onSubmitMessageEdit,
 	editPending,
 	editBusy,
 	editError,
@@ -1444,6 +1523,11 @@ function TimelineItem({
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	onEditHumanMessage?: (turnId: string, text: string) => Promise<unknown> | void;
+	messageEdit?: MessageEditDraft;
+	onStartMessageEdit: (message: ConversationMessage) => void;
+	onUpdateMessageEdit: (text: string) => void;
+	onCancelMessageEdit: () => void;
+	onSubmitMessageEdit: (text: string) => Promise<void>;
 	editPending?: boolean;
 	editBusy?: boolean;
 	editError?: string;
@@ -1477,17 +1561,22 @@ function TimelineItem({
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
 		if (item.origin === "human") {
+			const editAvailable = Boolean(
+				item.editAvailable && item.turnId && editableTurns.has(item.turnId) && onEditHumanMessage,
+			);
+			const editing = Boolean(item.turnId && messageEdit?.turnId === item.turnId);
 			return (
 				<HumanMessage
 					message={item}
 					sessionId={sessionId}
 					apiBaseUrl={apiBaseUrl}
 					queued={queued}
-					onEdit={
-						item.editAvailable && item.turnId && editableTurns.has(item.turnId)
-							? onEditHumanMessage
-							: undefined
-					}
+					onEdit={editAvailable ? (_turnID, text) => onSubmitMessageEdit(text) : undefined}
+					editing={editing}
+					editText={editing ? messageEdit?.text : undefined}
+					onEditStart={editAvailable ? () => onStartMessageEdit(item) : undefined}
+					onEditDraftChange={onUpdateMessageEdit}
+					onEditCancel={onCancelMessageEdit}
 					editPending={editPending}
 					editBusy={editBusy}
 					editError={editError}
@@ -1563,9 +1652,9 @@ function sameGroup(a: TimelineGroup, b: TimelineGroup): boolean {
  * harness passes literals, so without this every memo boundary below would be
  * invalidated by the one prop that never meaningfully changes.
  */
-function useStableCallback<Args extends unknown[]>(
-	fn: ((...args: Args) => void) | undefined,
-): (...args: Args) => void {
+function useStableCallback<Args extends unknown[], Result>(
+	fn: ((...args: Args) => Result) | undefined,
+): (...args: Args) => Result | undefined {
 	const latest = useRef(fn);
 	useEffect(() => {
 		latest.current = fn;

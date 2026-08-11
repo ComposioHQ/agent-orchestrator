@@ -54,8 +54,8 @@ func (h *historyRecorder) Fork(_ context.Context, anchor *string) (string, error
 	if anchor == nil {
 		h.forkAnchors = append(h.forkAnchors, nil)
 	} else {
-		copy := *anchor
-		h.forkAnchors = append(h.forkAnchors, &copy)
+		anchorCopy := *anchor
+		h.forkAnchors = append(h.forkAnchors, &anchorCopy)
 	}
 	if h.forkErr != nil {
 		return "", h.forkErr
@@ -73,8 +73,8 @@ func (h *historyRecorder) lastForkAnchor() *string {
 	if anchor == nil {
 		return nil
 	}
-	copy := *anchor
-	return &copy
+	anchorCopy := *anchor
+	return &anchorCopy
 }
 
 // SetTitle records the name and, like the real provider, reports it back on the event
@@ -139,6 +139,17 @@ func completeTurn(t *testing.T, h *harness, text, providerTurn string) string {
 		},
 	)
 	return turn.ID
+}
+
+func requireMessageTexts(t *testing.T, messages []domain.ConversationMessage, want []string) {
+	t.Helper()
+	got := make([]string, 0, len(messages))
+	for _, message := range messages {
+		got = append(got, message.Text)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("message texts = %#v, want %#v", got, want)
+	}
 }
 
 // The end-to-end shape of an undo: the provider is asked to forget, and AO's timeline
@@ -708,6 +719,67 @@ func TestEditMessageForkFailureReopensSource(t *testing.T) {
 	if _, err := h.svc.Send(context.Background(), testSession, ports.ChatUserMessage{Text: "source reopened"}); err != nil {
 		t.Fatalf("Send after fork failure: %v", err)
 	}
+}
+
+func TestEditMessageSendFailureKeepsAnEmptyBranchForRetry(t *testing.T) {
+	h, source, driver := newEditHarness(t)
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	driver.mu.Lock()
+	replacement := driver.resumed["thread-forked"]
+	replacement.mu.Lock()
+	replacement.sendErr = errors.New("provider unavailable")
+	replacement.mu.Unlock()
+	driver.mu.Unlock()
+
+	failed, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "edit-b-failed", Origin: domain.MessageOriginHuman,
+	})
+	if err == nil {
+		t.Fatal("EditMessage succeeded after replacement send failure")
+	}
+	if failed.ActiveBranchID == "" || failed.ActiveBranchID == failed.SourceBranchID {
+		t.Fatalf("failed edit branch result = %+v", failed)
+	}
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot failed branch: %v", err)
+	}
+	requireMessageTexts(t, snapshot.Messages, []string{"A", "reply to A"})
+
+	replacement.mu.Lock()
+	replacement.sendErr = nil
+	replacement.mu.Unlock()
+	retried, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "edit-b-retry", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("retry EditMessage: %v", err)
+	}
+	if retried.SourceBranchID != failed.SourceBranchID || retried.ActiveBranchID != failed.ActiveBranchID {
+		t.Fatalf("retry created another branch: failed=%+v retried=%+v", failed, retried)
+	}
+	source.mu.Lock()
+	forkCount := len(source.forkAnchors)
+	source.mu.Unlock()
+	driver.mu.Lock()
+	resumeCount := len(driver.resumeCalls)
+	driver.mu.Unlock()
+	if forkCount != 1 || resumeCount != 1 {
+		t.Fatalf("retry provider setup: forks=%d resumes=%d, want one of each", forkCount, resumeCount)
+	}
+	if sent := replacement.sentTexts(); len(sent) != 1 || sent[0] != "B edited" {
+		t.Fatalf("replacement provider sends = %v", sent)
+	}
+	snapshot, err = h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot retried branch: %v", err)
+	}
+	requireMessageTexts(t, snapshot.Messages, []string{"A", "reply to A", "B edited"})
 }
 
 func TestEditMessageRejectsMalformedStoredContentBeforeFork(t *testing.T) {

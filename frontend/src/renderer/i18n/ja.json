@@ -1036,5 +1036,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "例：不安定なチェックアウトテストを修正（任意）…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "前の会話ブランチ",
+	"chat.branch.next": "次の会話ブランチ",
+	"chat.branch.position": "会話ブランチ {{position}} / {{total}}",
+	"chat.edit.label": "メッセージを編集",
+	"chat.edit.stopCurrentTurn": "分岐する前に現在のターンを停止してください",
+	"chat.edit.preservedContent": "保持されたメッセージ内容",
+	"chat.edit.image": "画像",
+	"chat.edit.cancel": "編集をキャンセル",
+	"chat.edit.send": "編集したメッセージを送信",
+	"chat.edit.sendShortcut": "編集したメッセージを送信（⌘/Ctrl+Enter）"
 }

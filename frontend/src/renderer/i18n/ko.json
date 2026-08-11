@@ -1036,5 +1036,15 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "예: 불안정한 결제 테스트 수정(선택 사항)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"chat.branch.previous": "이전 대화 분기",
+	"chat.branch.next": "다음 대화 분기",
+	"chat.branch.position": "대화 분기 {{position}} / {{total}}",
+	"chat.edit.label": "메시지 편집",
+	"chat.edit.stopCurrentTurn": "분기하기 전에 현재 턴을 중지하세요",
+	"chat.edit.preservedContent": "보존된 메시지 내용",
+	"chat.edit.image": "이미지",
+	"chat.edit.cancel": "편집 취소",
+	"chat.edit.send": "편집한 메시지 보내기",
+	"chat.edit.sendShortcut": "편집한 메시지 보내기(⌘/Ctrl+Enter)"
 }
