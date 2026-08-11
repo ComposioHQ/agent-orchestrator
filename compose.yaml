@@ -10,7 +10,7 @@ services:
     ports:
       - "127.0.0.1:${AO_CLOUD_POSTGRES_PORT:-54329}:5432"
     volumes:
-      - ao-cloud-postgres:/var/lib/postgresql/data
+      - "${AO_CLOUD_LOCAL_POSTGRES_DATA_DIR:-${AO_DATA_DIR:-${HOME}/.ao}/cloud/postgres}:/var/lib/postgresql/data"
       - ./dev/postgres/init.sql:/docker-entrypoint-initdb.d/10-runtime-role.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ao_cloud_owner -d ao_cloud"]
@@ -56,6 +56,3 @@ services:
       retries: 20
       start_period: 5s
     restart: unless-stopped
-
-volumes:
-  ao-cloud-postgres:

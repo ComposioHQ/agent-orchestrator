@@ -11,7 +11,7 @@
     "start": "next start",
     "cloud:local": "./scripts/cloud-web-local.sh",
     "cloud:local:down": "docker compose down --remove-orphans",
-    "cloud:local:reset": "docker compose down --volumes --remove-orphans",
+    "cloud:local:reset": "./scripts/cloud-local-reset.sh",
     "cloud:local:smoke": "./scripts/test-cloud-local.sh",
     "cloud:staging": "./scripts/cloud-staging.sh",
     "cloud:web:staging": "./scripts/cloud-web-staging.sh",

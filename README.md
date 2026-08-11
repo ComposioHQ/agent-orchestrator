@@ -95,8 +95,11 @@ sessions store durable execution intent, but provisioning remains a separate
 feature.
 
 Use `npm run cloud:local:down` to stop containers while retaining data and
-`npm run cloud:local:reset` to stop them and delete the local database volume.
-Ports can be changed with `AO_CLOUD_PORT` and `AO_CLOUD_POSTGRES_PORT`.
+`npm run cloud:local:reset` to stop them and delete the local database
+directory. PostgreSQL data lives at `~/.ao/cloud/postgres` by default; set
+`AO_DATA_DIR` or `AO_CLOUD_LOCAL_POSTGRES_DATA_DIR` to move it while keeping
+application state out of OS-default app-data locations. Ports can be changed
+with `AO_CLOUD_PORT` and `AO_CLOUD_POSTGRES_PORT`.
 `npm run cloud:local:smoke` uses an isolated Compose project and random
 loopback ports to verify the complete create/restart/persist/down/reset
 lifecycle without touching normal local Cloud data.
@@ -299,8 +302,8 @@ go vet ./...
 
 The isolated Compose lifecycle check builds the images, applies fresh
 migrations, verifies the HTTP flow and role boundaries, restarts the control
-plane, recreates the stack without deleting its volume, and finally proves that
-reset deletes the volume:
+plane, recreates the stack without deleting its data directory, and finally
+proves that reset deletes that directory:
 
 ```bash
 npm run cloud:local:smoke
