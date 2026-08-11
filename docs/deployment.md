@@ -241,10 +241,11 @@ and webhook handlers are implemented with PostgreSQL-backed state:
 The shared GitHub App must route these three global URLs to production. Staging
 must not independently enable the same App credentials: its callback state
 would live in a different database. Staging may exercise the public typed
-contract and WorkOS auth, while GitHub installation testing goes through the
-production broker. Before enabling the production task, store the App ID, slug,
-client credentials, RSA private key, webhook secret, and a base64 32-byte state
-key in Secrets Manager and map all `AO_CLOUD_GITHUB_*` variables plus
+contract and WorkOS auth, but its GitHub UI must remain disabled until the
+production broker exists. The current hosted tasks do not map GitHub
+credentials. Before enabling the production task, store the App ID, slug, client
+credentials, RSA private key, webhook secret, and a base64 32-byte state key in
+Secrets Manager and map all `AO_CLOUD_GITHUB_*` variables plus
 `AO_CLOUD_PUBLIC_URL=https://api.aoagents.dev` into the task definition.
 Configure the App with organization `Members: read`; AO uses that permission to
 verify active organization-admin authority before binding an installation.
