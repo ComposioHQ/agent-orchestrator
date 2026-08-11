@@ -219,7 +219,10 @@ function SummaryView({
 			completion={showCompletion ? <CompletionControls session={session} /> : undefined}
 			pullRequestCards={
 				<div className="flex flex-col gap-1.5">
-					<AutoInjectCIPolicyControl session={session} />
+					<div>
+						<AutoInjectCIPolicyControl session={session} />
+						{hasPRs ? <AutoInjectReviewPolicyControl session={session} /> : null}
+					</div>
 					{hasPRs ? (
 						prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
@@ -232,6 +235,57 @@ function SummaryView({
 			pullRequestTitle={prSectionTitle}
 			reviews={hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined}
 		/>
+	);
+}
+
+function InspectorPolicyRow({
+	id,
+	label,
+	ariaLabel = label,
+	description,
+	tooltipClassName,
+	checked,
+	disabled,
+	onCheckedChange,
+}: {
+	id: string;
+	label: string;
+	ariaLabel?: string;
+	description?: string;
+	tooltipClassName?: string;
+	checked: boolean;
+	disabled: boolean;
+	onCheckedChange: (checked: boolean) => void;
+}) {
+	return (
+		<div className="flex items-center justify-between gap-3 py-1" data-slot="inspector-policy-row">
+			<div className="flex min-w-0 items-center gap-1.5">
+				<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={id}>
+					{label}
+				</label>
+				{description ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<button
+								aria-label={description}
+								className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								type="button"
+							>
+								<Info aria-hidden="true" className="size-icon-2xs" />
+							</button>
+						</TooltipTrigger>
+						<TooltipContent className={cn("leading-normal", tooltipClassName)}>{description}</TooltipContent>
+					</Tooltip>
+				) : null}
+			</div>
+			<Switch
+				aria-label={ariaLabel}
+				checked={checked}
+				disabled={disabled}
+				id={id}
+				onCheckedChange={onCheckedChange}
+			/>
+		</div>
 	);
 }
 
@@ -270,46 +324,72 @@ function AutoInjectCIPolicyControl({ session }: { session: WorkspaceSession }) {
 	const error = save.error instanceof Error ? save.error.message : null;
 
 	return (
-		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
-			<div className="flex items-center justify-between gap-3">
-				<div className="min-w-0">
-					<div className="flex min-w-0 items-center gap-1.5">
-						<label className="truncate text-xs font-medium text-settings-label" htmlFor={`auto-inject-ci-${session.id}`}>
-							{t("inspector.ci.autoInject")}
-						</label>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									aria-label={t("inspector.ci.autoInjectDescription")}
-									className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									type="button"
-								>
-									<Info aria-hidden="true" className="size-icon-2xs" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent className="max-w-64 leading-normal">
-								{t("inspector.ci.autoInjectDescription")}
-							</TooltipContent>
-						</Tooltip>
-					</div>
-				</div>
-				<Switch
-					aria-label={t("inspector.ci.autoInject")}
-					checked={enabled}
-					disabled={save.isPending}
-					id={`auto-inject-ci-${session.id}`}
-					onCheckedChange={(next) => {
-						setEnabled(next);
-						save.mutate(next);
-					}}
-				/>
-			</div>
+		<>
+			<InspectorPolicyRow
+				checked={enabled}
+				description={t("inspector.ci.autoInjectDescription")}
+				disabled={save.isPending}
+				id={`auto-inject-ci-${session.id}`}
+				label={t("inspector.ci.autoInject")}
+				onCheckedChange={(next) => {
+					setEnabled(next);
+					save.mutate(next);
+				}}
+				tooltipClassName="max-w-64"
+			/>
 			{error ? (
-				<p className="mt-1.5 text-2xs leading-normal text-error" role="status">
+				<p className="mt-1 text-2xs leading-normal text-error" role="status">
 					{error}
 				</p>
 			) : null}
-		</div>
+		</>
+	);
+}
+
+function AutoInjectReviewPolicyControl({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const [enabled, setEnabled] = useState(session.autoInjectReview ?? true);
+	useEffect(() => {
+		setEnabled(session.autoInjectReview ?? true);
+	}, [session.id, session.autoInjectReview]);
+	const save = useMutation({
+		mutationFn: async (autoInjectReview: boolean) => {
+			const { error } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/auto-inject-review", {
+				params: { path: { sessionId: session.id } },
+				body: { autoInjectReview },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.review.autoInjectError")));
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		onError: () => {
+			setEnabled(session.autoInjectReview ?? true);
+		},
+	});
+	const error = save.error instanceof Error ? save.error.message : null;
+
+	return (
+		<>
+			<InspectorPolicyRow
+				checked={enabled}
+				description={t("inspector.review.autoInjectDescription")}
+				disabled={save.isPending}
+				id={`auto-inject-review-${session.id}`}
+				label={t("inspector.review.autoInject")}
+				onCheckedChange={(next) => {
+					setEnabled(next);
+					save.mutate(next);
+				}}
+				tooltipClassName="max-w-60"
+			/>
+			{error ? (
+				<p className="mt-1 text-2xs leading-normal text-error" role="status">
+					{error}
+				</p>
+			) : null}
+		</>
 	);
 }
 
@@ -746,18 +826,14 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 				</div>
 			) : (
 				<>
-					<div className="flex items-center justify-between gap-3 py-1">
-						<label className="min-w-0 text-xs font-medium text-settings-label" htmlFor={`merge-policy-${session.id}`}>
-							{t("inspector.terminateOnMergeShort")}
-						</label>
-						<Switch
-							aria-label={t("inspector.terminateOnMerge")}
-							checked={Boolean(session.terminateOnPrMerge)}
-							disabled={policy.isPending}
-							id={`merge-policy-${session.id}`}
-							onCheckedChange={(checked) => policy.mutate(checked)}
-						/>
-					</div>
+					<InspectorPolicyRow
+						ariaLabel={t("inspector.terminateOnMerge")}
+						checked={Boolean(session.terminateOnPrMerge)}
+						disabled={policy.isPending}
+						id={`merge-policy-${session.id}`}
+						label={t("inspector.terminateOnMergeShort")}
+						onCheckedChange={(checked) => policy.mutate(checked)}
+					/>
 					{policyError ? (
 						<p className="mt-1 text-2xs leading-normal text-error" role="status">
 							{policyError}
@@ -1135,28 +1211,6 @@ function ReviewsSection({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
-	const [autoInjectReview, setAutoInjectReview] = useState(session.autoInjectReview ?? true);
-	useEffect(() => {
-		setAutoInjectReview(session.autoInjectReview ?? true);
-	}, [session.id, session.autoInjectReview]);
-	const saveAutoInjectReview = useMutation({
-		mutationFn: async (enabled: boolean) => {
-			const { error } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/auto-inject-review", {
-				params: { path: { sessionId: session.id } },
-				body: { autoInjectReview: enabled },
-			});
-			if (error) {
-				throw new Error(apiErrorMessage(error, t("inspector.review.autoInjectError")));
-			}
-		},
-		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		},
-		onError: () => {
-			setAutoInjectReview(session.autoInjectReview ?? true);
-		},
-	});
-
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
@@ -1178,8 +1232,7 @@ function ReviewsSection({
 					triggerReview.error ??
 					cancelReview.error ??
 					killReview.error ??
-					saveReviewer.error ??
-					saveAutoInjectReview.error
+					saveReviewer.error
 				}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
@@ -1207,36 +1260,6 @@ function ReviewsSection({
 				runs={reviewsQuery.data?.runs ?? []}
 				session={session}
 			/>
-			<div className="mt-2.5 flex items-center justify-between gap-3 rounded-lg border border-border bg-surface px-3 py-2.5">
-				<div className="min-w-0">
-					<div className="flex min-w-0 items-center gap-1.5">
-						<p className="truncate text-xs font-medium text-foreground">{t("inspector.review.autoInject")}</p>
-						<Tooltip>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-									aria-label={t("inspector.review.autoInjectDescription")}
-								>
-									<Info aria-hidden="true" className="size-icon-2xs" />
-								</button>
-							</TooltipTrigger>
-							<TooltipContent className="max-w-60 leading-normal">
-								{t("inspector.review.autoInjectDescription")}
-							</TooltipContent>
-						</Tooltip>
-					</div>
-				</div>
-				<Switch
-					aria-label={t("inspector.review.autoInject")}
-					checked={autoInjectReview}
-					disabled={saveAutoInjectReview.isPending}
-					onCheckedChange={(enabled) => {
-						setAutoInjectReview(enabled);
-						saveAutoInjectReview.mutate(enabled);
-					}}
-				/>
-			</div>
 		</div>
 	);
 }

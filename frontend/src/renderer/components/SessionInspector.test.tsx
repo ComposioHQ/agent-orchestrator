@@ -391,6 +391,27 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 
+	it("stacks the injection toggles as unboxed completion-style rows", () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+
+		const policyRow = (name: string) =>
+			screen.getByRole("switch", { name }).closest("[data-slot='inspector-policy-row']") as HTMLElement;
+		const ciRow = policyRow("Automatically send CI failures");
+		const reviewRow = policyRow("Automatically send reviews");
+		const terminateRow = policyRow("Terminate session when pull requests merge");
+
+		expect(ciRow.nextElementSibling).toBe(reviewRow);
+		expect(ciRow.parentElement?.nextElementSibling).toHaveRole("article");
+		expect(ciRow.className).toBe(terminateRow.className);
+		expect(reviewRow.className).toBe(terminateRow.className);
+		expect(ciRow.parentElement).not.toHaveClass("rounded-lg", "border", "bg-surface");
+		expect(
+			screen.getByRole("button", {
+				name: "When disabled, CI failures for newly created pull requests will not be sent to the worker agent but will still be displayed. Existing pull requests keep their original setting.",
+			}),
+		).toBeInTheDocument();
+	});
+
 	it("persists the CI injection default before a PR exists", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
@@ -1378,7 +1399,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		const toggle = screen.getByRole("switch", { name: "Automatically send review feedback" });
+		const toggle = screen.getByRole("switch", { name: "Automatically send reviews" });
 		expect(toggle).toBeChecked();
 		await userEvent.click(toggle);
 
