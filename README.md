@@ -11,10 +11,10 @@ Private AO control-plane service. This foundation contains:
 - durable workspace intent for every session; and
 - durable message queues, event replay, and cluster-safe SSE reconnects.
 
-Cloud UI, worker provisioning/execution, terminal/files, GitHub behavior,
-sharing behavior, and deployment are intentionally not implemented yet. See
+Cloud UI, worker provisioning/execution, terminal/files, GitHub behavior, and
+sharing behavior are intentionally not implemented yet. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
-behavior.
+behavior and [`docs/deployment.md`](docs/deployment.md) for staging deployment.
 
 ## Run locally
 
@@ -27,19 +27,20 @@ set -a; source .env; set +a
 AO_CLOUD_LOCAL_AUTH=true go run ./cmd/ao-cloud
 ```
 
-Development and test environments apply embedded Goose migrations at startup, using
-`AO_CLOUD_MIGRATION_DATABASE_URL` when set and `AO_CLOUD_DATABASE_URL`
-otherwise. Hosted deployments run `/ao-cloud-migrate` as a one-off task before
-rolling the API service. Local auth is disabled unless
+Development and test environments apply embedded Goose migrations at startup,
+using `AO_CLOUD_MIGRATION_DATABASE_URL` when set and
+`AO_CLOUD_DATABASE_URL` otherwise. Hosted deployments run
+`/ao-cloud-migrate` as a one-off task before rolling the API service. Local auth
+is disabled unless
 `AO_CLOUD_LOCAL_AUTH=true`, cannot run alongside WorkOS, and is rejected when
 `AO_CLOUD_ENV` is `staging` or `production`.
 
 For WorkOS, set `AO_CLOUD_WORKOS_ISSUER`, `AO_CLOUD_WORKOS_CLIENT_ID`, and
-`AO_CLOUD_WORKOS_API_KEY`. The OIDC verifier validates issuer, audience,
-signature, and token lifetime. The WorkOS API key is server-only and resolves
-the profile fields that access tokens may omit. The JWKS URL is derived for
-standard WorkOS and custom AuthKit domains; `AO_CLOUD_WORKOS_JWKS_URL` can
-override it.
+`AO_CLOUD_WORKOS_API_KEY`. The OIDC verifier validates issuer, signature, token
+lifetime, and AuthKit's `client_id` claim. The WorkOS API key is server-only and
+resolves profile fields that access tokens may omit. The JWKS URL is derived
+for standard WorkOS and custom AuthKit domains;
+`AO_CLOUD_WORKOS_JWKS_URL` can override it.
 
 Hosted environments use `AO_CLOUD_ENV=staging` or `production` and must set
 `AO_CLOUD_RELEASE` to an immutable image tag or Git SHA. Hosted startup fails
