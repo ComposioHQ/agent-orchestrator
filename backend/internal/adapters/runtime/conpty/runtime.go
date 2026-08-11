@@ -84,9 +84,13 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 
 	r.mu.Lock()
-	if _, dup := r.sessions[id]; dup {
+	if existing, dup := r.sessions[id]; dup {
 		r.mu.Unlock()
-		return ports.RuntimeHandle{}, ports.NewRuntimeCreateRollbackSafeError(fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id))
+		handle := ports.RuntimeHandle{ID: id}
+		if existing != nil {
+			handle.RuntimeLaunchID = existing.launchID
+		}
+		return handle, ports.NewRuntimeCreatePreserveError(handle, fmt.Errorf("conpty: session %q already exists; destroy before re-creating", id))
 	}
 	// Reserve the slot before the async spawn so a concurrent Create for the
 	// same id fails immediately (no gap between check and set).

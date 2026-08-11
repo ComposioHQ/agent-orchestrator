@@ -183,7 +183,7 @@ func TestCreate_DuplicateErrors(t *testing.T) {
 		t.Fatalf("first Create: %v", err)
 	}
 
-	_, err := rt.Create(ctx, ports.RuntimeConfig{
+	handle, err := rt.Create(ctx, ports.RuntimeConfig{
 		SessionID:     "sess-dup",
 		WorkspacePath: "/tmp/w",
 		Argv:          []string{"sh"},
@@ -194,8 +194,8 @@ func TestCreate_DuplicateErrors(t *testing.T) {
 	if !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("error %q should contain 'already exists'", err.Error())
 	}
-	if disposition, _ := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreateRollbackSafe {
-		t.Fatalf("duplicate disposition = %v", disposition)
+	if disposition, ref := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreatePreserve || ref != handle || handle.ID != "sess-dup" {
+		t.Fatalf("duplicate classification = %v, ref %+v, handle %+v", disposition, ref, handle)
 	}
 
 	hosts["sess-dup"].cleanup(t)

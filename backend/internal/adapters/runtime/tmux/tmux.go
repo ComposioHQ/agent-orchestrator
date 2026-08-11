@@ -657,9 +657,12 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 		if outcome == generationUnmarked {
 			return fmt.Errorf("tmux runtime: session %s has no generation marker; exact teardown is unconfirmed", id)
 		}
-		// A foreign marker belongs to a newer/concurrent generation. Its session is
-		// deliberately preserved; releasing the requested exact scope completes
-		// teardown of this handle without collateral deletion.
+		if outcome == generationForeign {
+			// The requested exact scope is gone, but a newer/concurrent generation
+			// still owns the stable terminal and may use the same workspace. Report
+			// ownership change so lifecycle callers preserve that workspace.
+			return fmt.Errorf("tmux runtime: session %s generation changed; foreign runtime preserved", id)
+		}
 		return nil
 	}
 	// Capture pane session ids while the session still exists; a missing

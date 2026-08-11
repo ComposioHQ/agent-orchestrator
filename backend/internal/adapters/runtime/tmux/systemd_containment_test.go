@@ -515,3 +515,21 @@ func TestScopedDestroyReleasesEvenWhenTmuxIsMissing(t *testing.T) {
 		t.Fatalf("released = %#v", fc.released)
 	}
 }
+
+func TestScopedDestroyPreservesForeignGenerationAndBlocksWorkspaceTransition(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+	fr.outputs = [][]byte{[]byte(runtimeLaunchReportPrefix + "launch-2\n")}
+
+	err := r.Destroy(context.Background(), scopedHandle("launch-1"))
+	if err == nil || !strings.Contains(err.Error(), "foreign runtime preserved") {
+		t.Fatalf("Destroy error = %v", err)
+	}
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "if-shell" {
+		t.Fatalf("runtime calls = %#v", fr.calls)
+	}
+	if !reflect.DeepEqual(fc.released, []string{containmentUnitName("sess-1", "launch-1")}) {
+		t.Fatalf("released = %#v", fc.released)
+	}
+}
