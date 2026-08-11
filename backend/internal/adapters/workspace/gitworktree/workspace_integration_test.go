@@ -539,7 +539,7 @@ func TestFetchDefaultBranchRefreshesRemoteTrackingRef(t *testing.T) {
 	runGit(t, git, updater, "add", "fresh.txt")
 	runGit(t, git, updater, "commit", "-m", "fresh")
 	freshMain := gitOutput(t, git, updater, "rev-parse", "HEAD")
-	runGit(t, git, updater, "push", "origin", "main")
+	runGit(t, git, updater, "push", "origin", "HEAD:main")
 
 	staleOriginMain := gitOutput(t, git, repo, "rev-parse", "refs/remotes/origin/main")
 	if staleOriginMain == freshMain {
