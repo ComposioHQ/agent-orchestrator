@@ -23,10 +23,11 @@ node .agents/skills/ao-agent-e2e/scripts/run_agent_e2e.mjs \
   --harness codex \
   --orchestrator-harness codex \
   --reviewer-harness claude-code \
+  --mode tui \
   --report /tmp/ao-agent-e2e.json
 ```
 
-Use `--ao /tmp/ao` or `AO_BIN` when a bare `ao` may resolve to another install. Use `--task` for a different brief. Use `--cleanup` only when it is safe to terminate sessions created by this run; it never force-deletes dirty worktrees.
+The default mode is `tui`, which works with installed native harnesses. Use `--mode chat` only when the AO ACP runtime is installed. Use `--ao /tmp/ao` or `AO_BIN` when a bare `ao` may resolve to another install. Use `--task` for a different brief. Use `--cleanup` only when it is safe to terminate sessions created by this run; it never force-deletes dirty worktrees.
 
 The runner exits 0 only when no stage failed. Exit 1 means an observable assertion failed. Exit 2 means configuration or preflight could not start the test. `unobservable` is reported explicitly when the public CLI does not expose a fact; it is not a pass.
 
