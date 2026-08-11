@@ -467,6 +467,7 @@ export function ChatWorkspace({
 						/>
 					) : null}
 					<ChatComposer
+						attachedTop={turn?.state === "running" && queuedMessages.length > 0}
 						onSend={(text, attachments) => onSend?.(text, attachments)}
 						commandError={commandError}
 						settings={
@@ -1879,18 +1880,21 @@ function QueuedMessageDock({
 	}
 
 	return (
-		<div className="flex max-h-40 flex-col gap-1.5 overflow-y-auto" data-testid="queued-message-dock">
+		<div
+			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[10px] border border-b-0 border-border-strong bg-surface"
+			data-testid="queued-message-dock"
+		>
 			{messages.map(({ turnId, message }) => {
 				const steering = steeringTurnId === turnId;
 				return (
 					<div
 						key={turnId}
-						className="rounded-md border border-border bg-surface px-2.5 py-2"
+						className="border-b border-border px-3 py-2 last:border-b-0"
 						data-testid={`queued-message-${turnId}`}
 					>
-						<div className="flex min-w-0 items-center gap-2">
+						<div className="flex min-h-7 min-w-0 items-center gap-2">
 							<CornerDownRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-							<span className="min-w-0 flex-1 truncate text-xs text-foreground" title={message.text}>
+							<span className="min-w-0 flex-1 truncate text-sm text-foreground" title={message.text}>
 								{message.text}
 							</span>
 							{onSteer ? (
