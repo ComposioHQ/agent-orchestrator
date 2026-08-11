@@ -18,7 +18,6 @@ type timeoutProbeSessionService struct {
 	controllers.SessionService
 	genericBudget chan time.Duration
 	switchBudget  chan time.Duration
-	switchDelay   time.Duration
 }
 
 func (s *timeoutProbeSessionService) List(ctx context.Context, _ sessionsvc.ListFilter) ([]domain.Session, error) {
@@ -32,14 +31,6 @@ func (s *timeoutProbeSessionService) SwitchAgent(
 	in sessionsvc.SwitchAgentInput,
 ) (domain.AgentSwitch, error) {
 	s.switchBudget <- remainingRequestBudget(ctx)
-	timer := time.NewTimer(s.switchDelay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-	case <-ctx.Done():
-		return domain.AgentSwitch{}, ctx.Err()
-	}
-
 	now := time.Now().UTC()
 	return domain.AgentSwitch{
 		ID:            "switch-timeout-probe",
@@ -64,7 +55,6 @@ func TestSwitchAgentRouteUsesOrdinaryTimeoutAndReturnsAccepted(t *testing.T) {
 	svc := &timeoutProbeSessionService{
 		genericBudget: make(chan time.Duration, 1),
 		switchBudget:  make(chan time.Duration, 1),
-		switchDelay:   10 * time.Millisecond,
 	}
 	router := NewRouterWithControl(
 		config.Config{RequestTimeout: configuredTimeout},

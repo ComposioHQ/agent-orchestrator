@@ -64,7 +64,6 @@ type admittedAgentSwitch struct {
 	sourceAgent        ports.Agent
 	targetAgent        ports.Agent
 	targetCapabilities ports.ContinuationCapabilities
-	sourceGeneration   domain.AgentGenerationID
 	sourceEnv          map[string]string
 	sourceNative       domain.AgentNativeSession
 }
@@ -283,7 +282,6 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 		sourceAgent:        sourceAgent,
 		targetAgent:        targetAgent,
 		targetCapabilities: targetCapabilities,
-		sourceGeneration:   sourceGeneration,
 		sourceEnv:          sourceEnv,
 		sourceNative:       sourceNative,
 	}, nil
@@ -300,7 +298,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 	sourceAgent := admitted.sourceAgent
 	targetAgent := admitted.targetAgent
 	targetCapabilities := admitted.targetCapabilities
-	sourceGeneration := admitted.sourceGeneration
+	sourceGeneration := admitted.record.SourceGenerationID
 	sourceEnv := admitted.sourceEnv
 	sourceNative := admitted.sourceNative
 	skipTerminalization := false
@@ -319,7 +317,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 					retErr = nil
 				}
 			} else {
-				m.logger.Error("agent switch: failed to persist terminal failure", "sessionID", id, "switchID", result.ID, "state", result.State)
+				m.logger.Error("agent switch: failed to persist terminal failure", "sessionID", id, "switchID", result.ID, "state", result.State, "error", failErr)
 			}
 		}
 		if targetWorkspacePrepared && !targetOwnerCommitted && !targetRuntimeAmbiguous {
@@ -332,7 +330,7 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 			cleanupErr := m.cleanupAgentHandoffArtifacts(cleanupCtx, result)
 			cancel()
 			if cleanupErr != nil {
-				m.logger.Warn("agent switch: handoff artifact cleanup failed", "sessionID", id, "switchID", result.ID, "state", result.State)
+				m.logger.Warn("agent switch: handoff artifact cleanup failed", "sessionID", id, "switchID", result.ID, "state", result.State, "error", cleanupErr)
 			}
 		}
 		if result.State.Terminal() {
@@ -722,7 +720,8 @@ func (m *Manager) startAgentSwitchWorker(admitted *admittedAgentSwitch) error {
 	go func() {
 		defer m.agentSwitchWorkers.Done()
 		defer func() {
-			if recover() == nil {
+			panicValue := recover()
+			if panicValue == nil {
 				return
 			}
 			m.retainAgentSwitch(admitted.record.SessionID)
@@ -735,15 +734,10 @@ func (m *Manager) startAgentSwitchWorker(admitted *admittedAgentSwitch) error {
 				"state", admitted.record.State,
 				"resolved", resolved,
 				"reconcileFailed", err != nil,
+				"error", err,
+				"panic", panicValue,
 			)
 		}()
-		m.logger.Info("agent switch started",
-			"sessionID", admitted.record.SessionID,
-			"switchID", admitted.record.ID,
-			"fromHarness", admitted.record.FromHarness,
-			"targetHarness", admitted.record.TargetHarness,
-			"state", admitted.record.State,
-		)
 		result, err := m.executeAgentSwitch(m.backgroundContext, admitted)
 		if err != nil {
 			m.logger.Error("agent switch failed",
@@ -751,6 +745,7 @@ func (m *Manager) startAgentSwitchWorker(admitted *admittedAgentSwitch) error {
 				"switchID", result.ID,
 				"state", result.State,
 				"errorCode", result.ErrorCode,
+				"error", err,
 			)
 			return
 		}
@@ -2959,8 +2954,6 @@ func switchErrorCode(err error, state domain.AgentSwitchState) domain.AgentSwitc
 		return domain.AgentSwitchErrorSourceStopUnconfirmed
 	case errors.Is(err, ErrSwitchDeliveryUnconfirmed):
 		return domain.AgentSwitchErrorDeliveryUnconfirmed
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return domain.AgentSwitchErrorRequestCancelled
 	case errors.Is(err, ErrAwaitingDecision):
 		return domain.AgentSwitchErrorSourceBlocked
 	}

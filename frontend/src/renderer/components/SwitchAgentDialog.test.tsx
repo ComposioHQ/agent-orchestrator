@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
 import { agentModelsQueryKey } from "../hooks/useAgentModelsQuery";
 import type { WorkspaceSession } from "../types/workspace";
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
@@ -12,7 +11,6 @@ const switchMocks = vi.hoisted(() => ({
 	mutate: vi.fn(),
 	state: {
 		error: null as string | null,
-		input: undefined as SwitchAgentInput | undefined,
 		isPending: false,
 	},
 }));
@@ -76,7 +74,6 @@ beforeEach(() => {
 	switchMocks.clear.mockReset();
 	switchMocks.mutate.mockReset();
 	switchMocks.state.error = null;
-	switchMocks.state.input = undefined;
 	switchMocks.state.isPending = false;
 });
 
@@ -138,12 +135,6 @@ describe("SwitchAgentDialog", () => {
 	});
 
 	it("keeps admission controls visible but disabled while displaying Starting...", () => {
-		switchMocks.state.input = {
-			idempotencyKey: "idempotency-1",
-			model: "gpt-5.4",
-			session: worker,
-			targetHarness: "codex",
-		};
 		switchMocks.state.isPending = true;
 
 		renderDialog();

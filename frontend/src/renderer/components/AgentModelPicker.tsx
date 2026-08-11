@@ -12,8 +12,7 @@ import { cn } from "../lib/utils";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 
-export type AgentModelPickerProps = {
-	id: string;
+type AgentModelPickerProps = {
 	agentId: string;
 	agentLabel: string;
 	projectId: string;
@@ -26,7 +25,6 @@ export type AgentModelPickerProps = {
 };
 
 export function AgentModelPicker({
-	id,
 	agentId,
 	agentLabel,
 	projectId,
@@ -156,7 +154,6 @@ export function AgentModelPicker({
 	return (
 		<span className="inline-flex w-full min-w-0 items-center gap-1.5">
 			<input
-				id={id}
 				aria-label={t("newTask.model")}
 				className={cn(
 					"composer-chip composer-toolbar-option min-w-0 flex-1 text-control placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50",

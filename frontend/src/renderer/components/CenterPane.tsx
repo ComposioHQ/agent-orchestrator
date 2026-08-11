@@ -25,6 +25,7 @@ import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_
 import { getAgentActivityView } from "../lib/session-presentation";
 import {
 	deriveAgentSwitchPresentation,
+	getAgentSwitchStatusView,
 	type AgentSwitchPresentation,
 } from "../lib/agent-switch-presentation";
 import { agentLabel } from "../lib/agent-options";
@@ -152,18 +153,14 @@ export function CenterPane({
 		sessionAgentSwitch ??
 		recoveryHistorySwitch ??
 		activeHistorySwitch;
-	const admissionAgentSwitch: AgentSwitchSummary<string> | undefined =
+	const admissionAgentSwitch: AgentSwitchSummary | undefined =
 		!currentAgentSwitch && switchMutation.isPending && switchMutation.input
 			? {
 				agentHandoffStatus: "not_attempted",
 				fromHarness: switchMutation.input.session.provider,
 				id: `admission:${switchMutation.input.idempotencyKey}`,
-				requestedAt: "",
-				semanticHandoffIncluded: true,
-				sessionId: switchMutation.input.session.id,
 				state: "preparing_handoff",
 				targetHarness: switchMutation.input.targetHarness,
-				updatedAt: "",
 			}
 			: undefined;
 	const agentSwitch =
@@ -601,7 +598,7 @@ export function CenterPane({
 }
 
 type AgentSwitchTerminalOverlayProps = {
-	agentSwitch: AgentSwitchSummary<string>;
+	agentSwitch: AgentSwitchSummary;
 	presentation: AgentSwitchPresentation;
 };
 
@@ -753,7 +750,7 @@ function AgentSwitchTerminalStrip({
 
 const agentSwitchProgressSteps = [
 	{ key: "preparing", labelKey: "switchAgent.state.preparingHandoff" },
-	{ key: "waiting_for_source", labelKey: "switchAgent.state.stoppingSource" },
+	{ key: "stopping_source", labelKey: "switchAgent.state.stoppingSource" },
 	{ key: "starting_target", labelKey: "switchAgent.state.startingTarget" },
 	{ key: "confirming_takeover", labelKey: "switchAgent.state.deliveringContext" },
 ] as const;
@@ -828,6 +825,14 @@ function SessionPaneTab({
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
+	const switchStatus = switchPresentation
+		? getAgentSwitchStatusView(switchPresentation)
+		: undefined;
+	const activityLabel = switchPresentation
+		? t(switchPresentation.compactLabelKey, switchPresentation.values)
+		: activity?.label;
+	const activityTone = switchStatus?.color ?? activity?.tone;
+	const activityBreathe = switchStatus?.breathe ?? activity?.breathe;
 	const tabIcon = session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : icon;
 	return (
 		<span
@@ -842,7 +847,7 @@ function SessionPaneTab({
 			<button
 				ref={ref}
 				aria-current={isActive}
-				aria-label={activity ? `${label} · ${activity.label}` : label}
+				aria-label={activityLabel ? `${label} · ${activityLabel}` : label}
 				aria-selected={isActive}
 				className={cn(
 					"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
@@ -856,16 +861,16 @@ function SessionPaneTab({
 			>
 				{tabIcon}
 				<span className="truncate">{label}</span>
-				{activity ? (
+				{activityTone ? (
 					<span
 						aria-hidden="true"
 						className="inline-flex shrink-0 self-center items-center"
-						style={{ color: activity.tone }}
-						title={activity.label}
+						style={{ color: activityTone }}
+						title={activityLabel}
 					>
 						<span
-							className={cn("size-1.5 rounded-full", activity.breathe && "animate-status-pulse")}
-							style={{ background: activity.tone }}
+							className={cn("size-1.5 rounded-full", activityBreathe && "animate-status-pulse")}
+							style={{ background: activityTone }}
 						/>
 					</span>
 				) : null}

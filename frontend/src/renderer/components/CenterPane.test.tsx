@@ -26,14 +26,6 @@ const agentSwitchMocks = vi.hoisted(() => ({
 	},
 }));
 
-const terminalPaneMocks = vi.hoisted(() => ({
-	props: [] as Array<{
-		focusRequested?: boolean;
-		inputDisabled?: boolean;
-		terminalTarget?: { kind: string };
-	}>,
-}));
-
 vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("../hooks/useAgentSwitches")>();
 	return {
@@ -96,9 +88,7 @@ vi.mock("./TerminalPane", () => ({
 	TerminalPane: (props: {
 		focusRequested?: boolean;
 		inputDisabled?: boolean;
-		terminalTarget?: { kind: string };
 	}) => {
-		terminalPaneMocks.props.push(props);
 		return (
 			<div
 				data-focus-requested={props.focusRequested ? "true" : "false"}
@@ -129,12 +119,8 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 		agentHandoffStatus: "not_attempted",
 		fromHarness: "claude-code",
 		id: "switch-1",
-		requestedAt: "2026-06-10T00:00:00Z",
-		semanticHandoffIncluded: true,
-		sessionId: worker.id,
 		state: "preparing_handoff",
 		targetHarness: "codex",
-		updatedAt: "2026-06-10T00:00:01Z",
 		...overrides,
 	};
 }
@@ -158,7 +144,6 @@ beforeEach(() => {
 	agentSwitchMocks.mutation.error = null;
 	agentSwitchMocks.mutation.input = undefined;
 	agentSwitchMocks.mutation.isPending = false;
-	terminalPaneMocks.props.length = 0;
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -313,9 +298,10 @@ describe("CenterPane toolbar session label", () => {
 		const status = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
 		expect(within(status).getByText("Switching from Claude Code to Codex")).toBeInTheDocument();
 		expect(within(status).getAllByText(description).length).toBeGreaterThan(0);
+		expect(screen.getByRole("tab", { name: "do the thing · Switching to Codex" })).toBeInTheDocument();
 	});
 
-	it("renders the shared waiting stage while the source handoff is requested", () => {
+	it("keeps the preparation stage active while the source handoff is requested", () => {
 		const activeSwitch = switchRecord({ agentHandoffStatus: "requested" });
 		agentSwitchMocks.switches.push(activeSwitch);
 
@@ -323,7 +309,7 @@ describe("CenterPane toolbar session label", () => {
 
 		const status = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
 		expect(within(status).getAllByText("Preparing handoff").length).toBeGreaterThan(0);
-		expect(within(status).getByText("Stopping source agent").closest("li")).toHaveAttribute(
+		expect(within(status).getAllByText("Preparing handoff").at(-1)?.closest("li")).toHaveAttribute(
 			"aria-current",
 			"step",
 		);

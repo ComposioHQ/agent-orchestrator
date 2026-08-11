@@ -171,18 +171,6 @@ func (s *switchTestStore) GetActiveAgentSwitch(_ context.Context, sessionID doma
 	return domain.AgentSwitch{}, false, nil
 }
 
-func (s *switchTestStore) ListActiveAgentSwitches(_ context.Context) ([]domain.AgentSwitch, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]domain.AgentSwitch, 0)
-	for _, rec := range s.switches {
-		if !rec.State.Terminal() {
-			out = append(out, rec)
-		}
-	}
-	return out, nil
-}
-
 func (s *switchTestStore) ListAgentSwitches(_ context.Context, sessionID domain.SessionID) ([]domain.AgentSwitch, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -773,7 +761,7 @@ func TestSwitchAgentIdempotentReplayStartsOneWorker(t *testing.T) {
 	manager, _, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	releasePreflight := blockTargetPreflight(t, target)
-	cfg := SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "same-async-request"}
+	cfg := SwitchAgentConfig{TargetHarness: domain.HarnessCodex, Model: "gpt-5.4", IdempotencyKey: "same-async-request"}
 
 	firstCall := callSwitchAgent(context.Background(), manager, "proj-1", cfg)
 	cleanupBlockedSwitchCall(t, manager, releasePreflight, firstCall)
@@ -783,7 +771,9 @@ func TestSwitchAgentIdempotentReplayStartsOneWorker(t *testing.T) {
 	}
 	first := firstResult.record
 	awaitSwitchTestSignal(t, target.preflightStarted, "target preflight")
-	replayResult := awaitSwitchAgentCall(t, callSwitchAgent(context.Background(), manager, "proj-1", cfg))
+	replayConfig := cfg
+	replayConfig.Model = " gpt-5.4 "
+	replayResult := awaitSwitchAgentCall(t, callSwitchAgent(context.Background(), manager, "proj-1", replayConfig))
 	if replayResult.err != nil {
 		t.Fatal(replayResult.err)
 	}
@@ -793,6 +783,11 @@ func TestSwitchAgentIdempotentReplayStartsOneWorker(t *testing.T) {
 	}
 	if calls := target.preflightCallCount(); calls != 1 {
 		t.Fatalf("target preflight calls = %d, want 1", calls)
+	}
+	changedModel := cfg
+	changedModel.Model = "gpt-5.4-mini"
+	if _, err := manager.SwitchAgent(context.Background(), "proj-1", changedModel); !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
+		t.Fatalf("changed-model retry error = %v, want idempotency conflict", err)
 	}
 	releasePreflight()
 	waitForSwitchWorkers(t, manager)
@@ -2327,15 +2322,11 @@ func TestWaitForTargetAcknowledgementClassifiesInternalDeadlineAsUnconfirmed(t *
 	}
 }
 
-func TestSwitchDeliveryAcknowledgementWindowCoversSlowTargetStartup(t *testing.T) {
+func TestSwitchDefaultTimingBudgets(t *testing.T) {
 	manager := New(Deps{})
 	if got, want := manager.switchDeliveryAckWait, 150*time.Second; got != want {
 		t.Fatalf("switch delivery acknowledgement wait = %s, want %s", got, want)
 	}
-}
-
-func TestSwitchHandoffWaitBudgetsAllowAgentAndHumanResponse(t *testing.T) {
-	manager := New(Deps{})
 	if got, want := manager.handoffWait, 90*time.Second; got != want {
 		t.Fatalf("switch semantic handoff wait = %s, want %s", got, want)
 	}
@@ -2484,28 +2475,6 @@ func TestSwitchAgentCompletesWhenAcknowledgementWinsFailureCAS(t *testing.T) {
 	}
 	if sw.ErrorCode != "" {
 		t.Fatalf("completed switch retained failure = %q", sw.ErrorCode)
-	}
-}
-
-func TestSwitchAgentIdempotencyFingerprintIncludesModel(t *testing.T) {
-	manager, _, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
-	first, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4", IdempotencyKey: "same-key",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	retry, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, Model: " gpt-5.4 ", IdempotencyKey: "same-key",
-	})
-	if err != nil || retry.ID != first.ID {
-		t.Fatalf("same request retry = %+v, err=%v", retry, err)
-	}
-	_, err = switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, Model: "gpt-5.4-mini", IdempotencyKey: "same-key",
-	})
-	if !errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict) {
-		t.Fatalf("changed-model retry error = %v, want idempotency conflict", err)
 	}
 }
 

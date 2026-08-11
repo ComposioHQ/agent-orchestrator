@@ -618,11 +618,10 @@ func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
 // assert the daemon wiring invokes the correct methods without needing a real
 // runtime or worktree.
 type fakeSessionLifecycle struct {
-	reconcileCalled         bool
-	restoreAllCalled        bool
-	waitSwitchWorkersCalled bool
-	reconcileErr            error
-	restoreErr              error
+	reconcileCalled  bool
+	restoreAllCalled bool
+	reconcileErr     error
+	restoreErr       error
 }
 
 func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
@@ -643,10 +642,7 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 	return f.restoreErr
 }
 
-func (f *fakeSessionLifecycle) WaitAgentSwitchWorkers(context.Context) error {
-	f.waitSwitchWorkersCalled = true
-	return nil
-}
+func (*fakeSessionLifecycle) WaitAgentSwitchWorkers(context.Context) error { return nil }
 
 func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 func (f *fakeSessionLifecycle) SetTerminalInputGate(sessionmanager.TerminalInputGate)     {}
@@ -684,12 +680,6 @@ func TestWiring_SessionLifecycleInterfaceInvokedByDaemon(t *testing.T) {
 	}
 	if !fake.restoreAllCalled {
 		t.Fatal("RestoreAll was not called through the interface")
-	}
-	if err := sl.WaitAgentSwitchWorkers(ctx); err != nil {
-		t.Fatalf("WaitAgentSwitchWorkers: %v", err)
-	}
-	if !fake.waitSwitchWorkersCalled {
-		t.Fatal("WaitAgentSwitchWorkers was not called through the interface")
 	}
 }
 

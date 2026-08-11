@@ -69,7 +69,6 @@ export function TaskComposer({
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const promptId = useId();
-	const modelId = useId();
 	const agentId = useId();
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [prompt, setPrompt] = useState("");
@@ -388,13 +387,11 @@ export function TaskComposer({
 					<span className="composer-toolbar-divider" aria-hidden="true" />
 					<div className="composer-toolbar-slot">
 						<AgentModelPicker
-							id={modelId}
 							agentId={selectedAgent}
 							agentLabel={selectedAgentLabel}
 							projectId={projectId ?? ""}
 							value={model}
 							mode={mode}
-							disabled={false}
 							onWarningChange={setModelWarning}
 							onModelChange={(value) => {
 								setModel(value);

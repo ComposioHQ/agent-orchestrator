@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, X } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	createSwitchAgentIdempotencyKey,
@@ -101,7 +101,6 @@ type SwitchAgentDialogProps = {
 export function SwitchAgentDialog({ container, open, session, onOpenChange }: SwitchAgentDialogProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const modelId = useId();
 	const defaultTargetHarness: SwitchAgentHarness = session.provider === "claude-code" ? "codex" : "claude-code";
 	const [targetHarness, setTargetHarness] = useState<SwitchAgentHarness>(defaultTargetHarness);
 	const [model, setModel] = useState("");
@@ -202,7 +201,6 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 										agentId={targetHarness}
 										agentLabel={agentLabel(targetHarness)}
 										disabled={admissionPending}
-										id={modelId}
 										mode={mode}
 										onModeChange={(value) => {
 											clearFailedAttempt();

@@ -33,7 +33,7 @@ type sessionHandoffSubmitOptions struct {
 }
 
 var (
-	switchAgentOverallWait  = 7 * time.Minute
+	switchAgentOverallWait  = 10 * time.Minute
 	switchAgentPollInterval = 500 * time.Millisecond
 )
 

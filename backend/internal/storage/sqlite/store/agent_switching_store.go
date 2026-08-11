@@ -209,7 +209,7 @@ func (s *Store) GetActiveAgentSwitch(ctx context.Context, sessionID domain.Sessi
 	return agentSwitchFromGen(row), true, nil
 }
 
-// ListActiveAgentSwitches returns every non-terminal switch saga, newest first.
+// ListActiveAgentSwitches returns every non-terminal switch saga.
 func (s *Store) ListActiveAgentSwitches(ctx context.Context) ([]domain.AgentSwitch, error) {
 	rows, err := s.qr.ListActiveAgentSwitches(ctx)
 	if err != nil {

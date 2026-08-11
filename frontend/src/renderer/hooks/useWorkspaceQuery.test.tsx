@@ -149,14 +149,8 @@ describe("useWorkspaceQuery", () => {
 			errorCode: "delivery_unconfirmed",
 			fromHarness: "claude-code",
 			id: "switch-1",
-			requestedAt: "2026-06-10T15:31:00Z",
-			semanticHandoffIncluded: true,
-			sessionId: "sess-1",
-			sourceTranscriptStatus: "available",
 			state: "delivering_context",
 			targetHarness: "codex",
-			targetStartMode: "resumed",
-			updatedAt: "2026-06-10T15:32:00Z",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",

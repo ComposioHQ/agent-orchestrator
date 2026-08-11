@@ -11,12 +11,8 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 		agentHandoffStatus: "not_attempted",
 		fromHarness: "claude-code",
 		id: "switch-1",
-		requestedAt: "2026-06-10T00:00:00Z",
-		semanticHandoffIncluded: true,
-		sessionId: "session-1",
 		state: "starting_target",
 		targetHarness: "codex",
-		updatedAt: "2026-06-10T00:00:01Z",
 		...overrides,
 	};
 }

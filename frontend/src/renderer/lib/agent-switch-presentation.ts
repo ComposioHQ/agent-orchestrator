@@ -6,7 +6,7 @@ import { agentLabel } from "./agent-options";
 export type AgentSwitchPresentation = {
 	stage:
 		| "preparing"
-		| "waiting_for_source"
+		| "stopping_source"
 		| "starting_target"
 		| "confirming_takeover"
 		| "needs_attention"
@@ -26,7 +26,7 @@ export type AgentSwitchPresentation = {
 };
 
 export type AgentSwitchPresentationInput = {
-	agentSwitch: AgentSwitchSummary<string>;
+	agentSwitch: AgentSwitchSummary;
 	currentHarness: string;
 	activityState?: string;
 	terminalHandleId?: string;
@@ -79,7 +79,6 @@ const inProgressDescriptions: Partial<Record<string, MessageKey>> = {
 	starting_target: "switchAgent.state.startingTarget",
 	target_ready: "switchAgent.state.targetReady",
 	delivering_context: "switchAgent.state.deliveringContext",
-	completed: "switchAgent.state.completed",
 };
 
 function failureDescriptionKey(errorCode?: string): MessageKey {
@@ -138,7 +137,7 @@ export function deriveAgentSwitchPresentation({
 			stage: settled ? null : "confirming_takeover",
 			outcome: settled ? "success" : "in_progress",
 			compactLabelKey: settled ? "switchAgent.success.compact" : "switchAgent.compact.switching",
-			titleKey: "switchAgent.progressTitle",
+			titleKey: settled ? "switchAgent.success.compact" : "switchAgent.progressTitle",
 			descriptionKey: "switchAgent.state.completed",
 			values,
 			tone: settled ? "success" : "working",
@@ -151,7 +150,7 @@ export function deriveAgentSwitchPresentation({
 	if (agentSwitch.state === "preparing_handoff" && agentSwitch.agentHandoffStatus === "requested") {
 		const allowSourceInput = activityState === "blocked" || activityState === "waiting_input";
 		return {
-			stage: "waiting_for_source",
+			stage: "preparing",
 			outcome: "in_progress",
 			compactLabelKey: allowSourceInput ? "switchAgent.sourceInput.compact" : "switchAgent.compact.switching",
 			titleKey: "switchAgent.progressTitle",
@@ -172,6 +171,8 @@ export function deriveAgentSwitchPresentation({
 			stage = "preparing";
 			break;
 		case "stopping_source":
+			stage = "stopping_source";
+			break;
 		case "source_stopped":
 		case "starting_target":
 			stage = "starting_target";

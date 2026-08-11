@@ -7,24 +7,20 @@ import {
 } from "./agent-switch-presentation";
 
 function switchSummary(
-	overrides: Partial<AgentSwitchSummary<string>> = {},
-): AgentSwitchSummary<string> {
+	overrides: Partial<AgentSwitchSummary> = {},
+): AgentSwitchSummary {
 	return {
 		agentHandoffStatus: "not_attempted",
 		fromHarness: "claude-code",
 		id: "switch-1",
-		requestedAt: "2026-06-10T00:00:00Z",
-		semanticHandoffIncluded: true,
-		sessionId: "session-1",
 		state: "preparing_handoff",
 		targetHarness: "codex",
-		updatedAt: "2026-06-10T00:00:01Z",
 		...overrides,
 	};
 }
 
 function input(
-	agentSwitch: AgentSwitchSummary<string>,
+	agentSwitch: AgentSwitchSummary,
 	overrides: Partial<Omit<AgentSwitchPresentationInput, "agentSwitch">> = {},
 ): AgentSwitchPresentationInput {
 	return {
@@ -51,7 +47,7 @@ function expectRelationship(
 describe("deriveAgentSwitchPresentation", () => {
 	it.each([
 		["preparing_handoff", "preparing", "switchAgent.state.preparingHandoff"],
-		["stopping_source", "starting_target", "switchAgent.state.stoppingSource"],
+		["stopping_source", "stopping_source", "switchAgent.state.stoppingSource"],
 		["source_stopped", "starting_target", "switchAgent.state.sourceStopped"],
 		["starting_target", "starting_target", "switchAgent.state.startingTarget"],
 		["target_ready", "confirming_takeover", "switchAgent.state.targetReady"],
@@ -79,7 +75,7 @@ describe("deriveAgentSwitchPresentation", () => {
 		["waiting_input", true, "switchAgent.permissionRequired"],
 		["active", false, "switchAgent.state.preparingHandoff"],
 	] as const)(
-		"maps a requested source handoff with %s activity to the source wait",
+		"maps a requested source handoff with %s activity to preparation",
 		(activityState, allowSourceInput, descriptionKey) => {
 			const presentation = deriveAgentSwitchPresentation(
 				input(switchSummary({ agentHandoffStatus: "requested" }), { activityState }),
@@ -90,7 +86,7 @@ describe("deriveAgentSwitchPresentation", () => {
 				animate: true,
 				lockAgentTerminal: !allowSourceInput,
 				outcome: "in_progress",
-				stage: "waiting_for_source",
+				stage: "preparing",
 				tone: allowSourceInput ? "warning" : "working",
 			});
 			expect(presentation.descriptionKey).toBe(descriptionKey);
@@ -176,7 +172,7 @@ describe("deriveAgentSwitchPresentation", () => {
 		expect(presentation).toMatchObject({
 			compactLabelKey: "switchAgent.success.compact",
 			descriptionKey: "switchAgent.state.completed",
-			titleKey: "switchAgent.progressTitle",
+			titleKey: "switchAgent.success.compact",
 		});
 	});
 

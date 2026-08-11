@@ -529,7 +529,6 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
        final_handoff_path, final_handoff_hash
 FROM agent_switches
 WHERE state NOT IN ('completed', 'failed')
-ORDER BY requested_at DESC, id DESC
 `
 
 func (q *Queries) ListActiveAgentSwitches(ctx context.Context) ([]AgentSwitch, error) {

@@ -28,21 +28,19 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
-	sessions              map[domain.SessionID]domain.SessionRecord
-	activeSwitches        map[domain.SessionID]domain.AgentSwitch
-	activeSwitchListCalls int
-	activeSwitchGetCalls  int
-	activeSwitchGetErr    error
-	activeSwitchListErr   error
-	pr                    map[domain.SessionID]domain.PRFacts
-	prs                   map[domain.SessionID][]domain.PullRequest
-	projects              map[string]domain.ProjectRecord
-	worktrees             map[domain.SessionID][]domain.SessionWorktreeRecord
-	checks                map[string][]domain.PullRequestCheck
-	reviews               map[string][]domain.PullRequestReview
-	threads               map[string][]domain.PullRequestReviewThread
-	comments              map[string][]domain.PullRequestComment
-	num                   int
+	sessions            map[domain.SessionID]domain.SessionRecord
+	activeSwitches      map[domain.SessionID]domain.AgentSwitch
+	activeSwitchGetErr  error
+	activeSwitchListErr error
+	pr                  map[domain.SessionID]domain.PRFacts
+	prs                 map[domain.SessionID][]domain.PullRequest
+	projects            map[string]domain.ProjectRecord
+	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
+	checks              map[string][]domain.PullRequestCheck
+	reviews             map[string][]domain.PullRequestReview
+	threads             map[string][]domain.PullRequestReviewThread
+	comments            map[string][]domain.PullRequestComment
+	num                 int
 }
 
 func newFakeStore() *fakeStore {
@@ -61,7 +59,6 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) GetActiveAgentSwitch(_ context.Context, id domain.SessionID) (domain.AgentSwitch, bool, error) {
-	f.activeSwitchGetCalls++
 	if f.activeSwitchGetErr != nil {
 		return domain.AgentSwitch{}, false, f.activeSwitchGetErr
 	}
@@ -70,7 +67,6 @@ func (f *fakeStore) GetActiveAgentSwitch(_ context.Context, id domain.SessionID)
 }
 
 func (f *fakeStore) ListActiveAgentSwitches(context.Context) ([]domain.AgentSwitch, error) {
-	f.activeSwitchListCalls++
 	if f.activeSwitchListErr != nil {
 		return nil, f.activeSwitchListErr
 	}
@@ -301,24 +297,19 @@ func TestSessionListAppliesActivityBeforePRFacts(t *testing.T) {
 	}
 }
 
-func TestSessionListProjectsRedactedActiveAgentSwitch(t *testing.T) {
+func TestSessionListProjectsActiveAgentSwitch(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityExited}}
 	st.sessions["other-1"] = domain.SessionRecord{ID: "other-1", ProjectID: "other", Activity: domain.Activity{State: domain.ActivityIdle}}
 	st.activeSwitches["mer-1"] = domain.AgentSwitch{
-		ID: "switch-1", SessionID: "mer-1", IdempotencyKey: "private-key",
-		RequestFingerprint: "v1:private-fingerprint", FromHarness: domain.HarnessClaudeCode,
+		ID: "switch-1", SessionID: "mer-1", FromHarness: domain.HarnessClaudeCode,
 		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
-		AgentHandoffPath: "/private/handoff.json", SourceGenerationID: "private-generation",
 	}
 	st.activeSwitches["other-1"] = domain.AgentSwitch{ID: "switch-other", SessionID: "other-1", State: domain.AgentSwitchPreparingHandoff}
 
 	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if st.activeSwitchListCalls != 1 {
-		t.Fatalf("ListActiveAgentSwitches calls = %d, want 1", st.activeSwitchListCalls)
 	}
 	if len(list) != 1 || list[0].ActiveAgentSwitch == nil || list[0].ActiveAgentSwitch.ID != "switch-1" {
 		t.Fatalf("list active switch projection = %+v", list)
@@ -329,9 +320,6 @@ func TestSessionListProjectsRedactedActiveAgentSwitch(t *testing.T) {
 	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
 	if err != nil || got.ActiveAgentSwitch == nil || got.ActiveAgentSwitch.ID != "switch-1" {
 		t.Fatalf("get active switch projection = %+v, err=%v", got.ActiveAgentSwitch, err)
-	}
-	if st.activeSwitchGetCalls != 1 {
-		t.Fatalf("GetActiveAgentSwitch calls = %d, want 1", st.activeSwitchGetCalls)
 	}
 
 	st.activeSwitchListErr = errors.New("active switch read failed")

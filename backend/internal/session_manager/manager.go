@@ -604,8 +604,7 @@ func New(d Deps) *Manager {
 		switchPostStopWait:           switchPostStopWait,
 		// Provider startup, including slow MCP initialization, can delay the
 		// prompt-submit hook even though the continuation is correctly buffered.
-		// Keep the acknowledgement wait below the CLI's seven-minute switch timeout
-		// while leaving enough headroom to avoid a false delivery failure.
+		// Leave enough headroom to avoid a false delivery failure.
 		switchDeliveryAckWait:  150 * time.Second,
 		transitions:            make(map[domain.SessionID]*interfaceTransitionRun),
 		transitionDeliveryWake: make(chan struct{}, 1),

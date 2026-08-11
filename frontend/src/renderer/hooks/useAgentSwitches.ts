@@ -1,16 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import type { AgentSwitchSummary } from "../types/workspace";
 
-type GeneratedAgentSwitch = components["schemas"]["AgentSwitch"];
-
-export type AgentSwitch = AgentSwitchSummary<string>;
+export type AgentSwitch = AgentSwitchSummary;
 
 const terminalAgentSwitchStates = new Set<AgentSwitch["state"]>(["completed", "failed"]);
 
-export const agentSwitchesQueryKey = (sessionId: string) => ["session-agent-switches", sessionId] as const;
+export const agentSwitchesQueryRoot = ["session-agent-switches"] as const;
+export const agentSwitchesQueryKey = (sessionId: string) => [...agentSwitchesQueryRoot, sessionId] as const;
 
 export function isTerminalAgentSwitch(agentSwitch: AgentSwitch): boolean {
 	return terminalAgentSwitchStates.has(agentSwitch.state);
@@ -41,7 +39,7 @@ async function fetchAgentSwitches(sessionId: string): Promise<AgentSwitch[]> {
 	if (error) {
 		throw new Error(apiErrorMessage(error, "Unable to load agent switch status"));
 	}
-	return (data?.switches ?? []) satisfies GeneratedAgentSwitch[];
+	return data?.switches ?? [];
 }
 
 export function useAgentSwitches(sessionId: string) {

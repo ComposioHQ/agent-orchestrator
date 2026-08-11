@@ -110,8 +110,7 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
        error_code, requested_at, updated_at,
        final_handoff_path, final_handoff_hash
 FROM agent_switches
-WHERE state NOT IN ('completed', 'failed')
-ORDER BY requested_at DESC, id DESC;
+WHERE state NOT IN ('completed', 'failed');
 
 -- name: ListAgentSwitches :many
 SELECT id, session_id, idempotency_key, request_fingerprint,

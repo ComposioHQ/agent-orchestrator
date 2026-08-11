@@ -24,14 +24,8 @@ function toAgentSwitchSummary(
 		errorCode: agentSwitch.errorCode,
 		fromHarness: agentSwitch.fromHarness,
 		id: agentSwitch.id,
-		requestedAt: agentSwitch.requestedAt,
-		semanticHandoffIncluded: agentSwitch.semanticHandoffIncluded,
-		sessionId: agentSwitch.sessionId,
-		sourceTranscriptStatus: agentSwitch.sourceTranscriptStatus,
 		state: agentSwitch.state,
 		targetHarness: agentSwitch.targetHarness,
-		targetStartMode: agentSwitch.targetStartMode,
-		updatedAt: agentSwitch.updatedAt,
 	};
 }
 

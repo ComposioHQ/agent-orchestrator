@@ -1454,12 +1454,9 @@ textarea,
 		animation: none;
 	}
 
-	.agent-switch-attention-card,
 	.agent-switch-progress-dot,
 	.agent-switch-progress-step,
-	.agent-switch-progress-step::before,
-	.agent-switch-shell-strip,
-	.agent-switch-source-input-strip {
+	.agent-switch-progress-step::before {
 		transition: none;
 	}
 }

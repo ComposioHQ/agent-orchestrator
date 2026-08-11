@@ -15,7 +15,7 @@ import {
 	Settings,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
@@ -865,6 +865,7 @@ function SessionRow({
 	const switchLabel = switchPresentation
 		? t(switchPresentation.compactLabelKey, switchPresentation.values)
 		: undefined;
+	const switchStatusId = useId();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
@@ -942,6 +943,7 @@ function SessionRow({
 				<div className="flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out active:scale-[0.97]">
 					<button
 						aria-current={active ? "page" : undefined}
+						aria-describedby={switchLabel ? switchStatusId : undefined}
 						aria-label={t("shell.openSession", { title: session.title })}
 						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
 						onClick={onOpen}
@@ -958,7 +960,7 @@ function SessionRow({
 								{session.title}
 							</span>
 							{switchLabel ? (
-								<span className="max-w-28 shrink-0 truncate text-2xs text-muted-foreground">
+								<span id={switchStatusId} className="max-w-28 shrink-0 truncate text-2xs text-muted-foreground">
 									{switchLabel}
 								</span>
 							) : null}
