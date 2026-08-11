@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
 	AlertTriangle,
 	Check,
@@ -293,7 +293,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 			{/* Reserve only the collapsed archive bar. Expanded archive overlays the
 			    board so lane height (and Needs You scrollbars) stay stable. */}
-			<div className={cn("min-h-0 flex-1 overflow-hidden", hasArchive && "pb-[46px]")}>
+			<div className={cn("min-h-0 flex-1 overflow-hidden", hasArchive && "pb-[58px]")}>
 				{projectId && health.state !== "ok" ? (
 					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
@@ -361,9 +361,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 /**
  * Archive lives in its own component so expand/collapse state does not re-render
- * the kanban columns. The sheet still opens under the Archive row (same chrome as
- * before); card mount is deferred via startTransition, and open/close uses the
- * shared CSS grid 0fr→1fr pattern instead of a measured height tween.
+ * the kanban columns. The sheet opens under the Archive row; card mount is deferred
+ * via startTransition, and open/close uses a Motion height 0↔auto tween.
  */
 const BoardArchivePanel = memo(function BoardArchivePanel({
 	activeProjectIdRef,
@@ -461,7 +460,7 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 	return (
 		<>
 			<div className="absolute inset-x-0 bottom-0 z-20 border-t border-border-strong bg-background px-3">
-				{/* Full-row hit target: the 46px control stretches edge-to-edge so
+				{/* Full-row hit target: the 58px control stretches edge-to-edge so
 				    empty space beside the label toggles archive too. */}
 				<button
 					aria-expanded={expanded}
@@ -490,16 +489,24 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 					<span className="text-2xs font-medium tracking-wide-sm">{t("shell.archive")}</span>
 					<span className="ml-1.5 font-mono text-micro text-passive">{sessions.length}</span>
 				</button>
-				{/* Disclosure sheet under the Archive row. No grid-rows transition —
-				    animating 0fr→1fr with overflow:hidden reads as a top→bottom clip wipe. */}
-				<div className={cn("grid", expanded && cardsReady ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
-					<div className="min-h-0 overflow-hidden">
-						{cardsReady ? (
+				{/* Disclosure sheet under the Archive row — Motion height 0↔auto. */}
+				<AnimatePresence initial={false}>
+					{expanded && cardsReady ? (
+						<motion.div
+							key="archive-sheet"
+							initial={prefersReducedMotion ? false : { height: 0 }}
+							animate={{ height: "auto" }}
+							exit={{ height: 0 }}
+							transition={
+								prefersReducedMotion
+									? { duration: 0 }
+									: { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }
+							}
+							style={{ overflow: "hidden" }}
+						>
 							<div
-								aria-hidden={!expanded}
 								aria-label={t("shell.archivedSessions")}
-								className="scrollbar-none grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
-								inert={!expanded ? true : undefined}
+								className="scrollbar-none grid max-h-[28vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
 								role="list"
 							>
 								{sessions.map((s) => (
@@ -514,9 +521,9 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 									/>
 								))}
 							</div>
-						) : null}
-					</div>
-				</div>
+						</motion.div>
+					) : null}
+				</AnimatePresence>
 			</div>
 			{restoreUnavailableSession ? (
 				<RestoreUnavailableDialog

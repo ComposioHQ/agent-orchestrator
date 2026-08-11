@@ -5,6 +5,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { appI18n } from "../i18n";
 
+// Disable motion animations so AnimatePresence unmounts children immediately
+// (no exit-animation timer keeps them alive after conditional removal).
+vi.mock("motion/react", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("motion/react")>();
+	return {
+		...actual,
+		AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
+	};
+});
+
 const {
 	navigateMock,
 	notificationShowMock,
@@ -755,7 +765,7 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const archiveButton = screen.getByRole("button", { name: /archive/i });
-		expect(archiveButton).toHaveClass("h-[46px]", "w-full", "py-0");
+		expect(archiveButton).toHaveClass("h-[58px]", "w-full", "py-0");
 		const archiveLabel = within(archiveButton).getByText("Archive");
 		expect(archiveLabel).not.toHaveClass("font-mono", "uppercase");
 		expect(archiveLabel).toHaveClass("text-2xs", "font-medium");
@@ -764,7 +774,7 @@ describe("SessionsBoard", () => {
 		expect(archiveButton.parentElement).toHaveClass("absolute", "inset-x-0", "bottom-0", "bg-background");
 		expect(screen.getByTestId("board")).toHaveClass("relative");
 		const archive = await expandArchive();
-		expect(archive).toHaveClass("scrollbar-none", "overflow-y-auto");
+		expect(archive).toHaveClass("scrollbar-none", "overflow-y-auto", "max-h-[28vh]");
 		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
 		expect(terminatedCard).toHaveAttribute("data-testid", "board-session-card");
