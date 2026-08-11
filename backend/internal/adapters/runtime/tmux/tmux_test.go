@@ -167,9 +167,17 @@ func TestCommandBuilders(t *testing.T) {
 		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
 	}
+	if got, want := scopedNewSessionArgs("sess-1", "/tmp/ws", "/bin/sh", "echo hi", "launch-1"),
+		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi", ";", "set-option", "-t", "sess-1", runtimeLaunchIDOption, "launch-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("scopedNewSessionArgs = %#v, want %#v", got, want)
+	}
 	if got, want := respawnPaneArgs("sess-1", "/tmp/ws", "/bin/sh", "echo hi"),
 		[]string{"respawn-pane", "-k", "-t", "sess-1:0.0", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("respawnPaneArgs = %#v, want %#v", got, want)
+	}
+	if got, want := scopedRespawnPaneArgs("sess-1", "/tmp/ws", "/bin/sh", "echo hi", "launch-2"),
+		[]string{"respawn-pane", "-k", "-t", "sess-1:0.0", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi", ";", "set-option", "-t", "sess-1", runtimeLaunchIDOption, "launch-2"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("scopedRespawnPaneArgs = %#v, want %#v", got, want)
 	}
 	// set-option uses pane-targeting (no = prefix).
 	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
@@ -223,15 +231,38 @@ func TestUnknownProcessContainmentFailsBeforeTmux(t *testing.T) {
 	fr := &fakeRunner{}
 	r.runner = fr
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
+		SessionID:       "sess-1",
+		WorkspacePath:   "/tmp/ws",
+		Argv:            []string{"codex"},
+		RuntimeLaunchID: "launch-1",
 	})
 	if err == nil || !strings.Contains(err.Error(), "unknown process containment") {
 		t.Fatalf("Create error = %v, want unknown containment error", err)
 	}
 	if len(fr.calls) != 0 {
 		t.Fatalf("tmux called before containment validation: %#v", fr.calls)
+	}
+}
+
+func TestReviewerCreateWithoutLaunchIDKeepsLegacyRuntimePath(t *testing.T) {
+	r := New(Options{Binary: "tmux-test", ProcessContainment: "cgroup"})
+	fr := &fakeRunner{outputs: [][]byte{nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}}
+	r.runner = fr
+	r.reapSessions = (&recordingReaper{}).reap
+
+	handle, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "reviewer-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "review"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handle != (ports.RuntimeHandle{ID: "reviewer-1"}) {
+		t.Fatalf("Create handle = %+v", handle)
+	}
+	if len(fr.calls) == 0 || fr.calls[0].args[0] != "new-session" || strings.Contains(strings.Join(fr.calls[0].args, " "), runtimeLaunchIDOption) {
+		t.Fatalf("reviewer unexpectedly entered contained generation path: %#v", fr.calls)
 	}
 }
 

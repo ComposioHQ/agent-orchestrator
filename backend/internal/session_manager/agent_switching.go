@@ -290,7 +290,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	// tmux runtime destroys its pane during stop, so this evidence cannot be
 	// recovered afterward. It stays in memory and is rendered only if the final
 	// semantic file and verified transcript excerpt are both unavailable.
-	sourceHandle := ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}
+	sourceHandle := runtimeHandle(rec.Metadata)
 	preStopTerminalTail := ""
 	if output, outputErr := m.runtime.GetOutput(ctx, sourceHandle, handoffTerminalMaxLines); outputErr == nil {
 		preStopTerminalTail = normalizeTerminalTail(output)
@@ -475,9 +475,21 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	}
 
 	runtimeCfg := ports.RuntimeConfig{
-		SessionID: id, WorkspacePath: rec.Metadata.WorkspacePath, Argv: target.argv, Env: target.env,
+		SessionID: id, RuntimeLaunchID: string(target.launchID), WorkspacePath: rec.Metadata.WorkspacePath, Argv: target.argv, Env: target.env,
 	}
 	handle, createErr := m.runtime.Create(ctx, runtimeCfg)
+	if createErr != nil {
+		disposition, failureHandle := ports.RuntimeCreateFailureOf(createErr)
+		if strings.TrimSpace(handle.ID) == "" && strings.TrimSpace(failureHandle.ID) != "" {
+			handle = failureHandle
+		}
+		if disposition == ports.RuntimeCreateRollbackSafe {
+			return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, createErr)
+		}
+	}
+	if strings.TrimSpace(handle.RuntimeLaunchID) == "" {
+		handle.RuntimeLaunchID = string(target.launchID)
+	}
 	if strings.TrimSpace(handle.ID) == "" {
 		// Without an opaque target handle AO cannot safely prove or clean up a
 		// partially-created target. In particular, the source handle is already
@@ -1255,7 +1267,7 @@ func (m *Manager) collectOptionalAgentHandoff(ctx context.Context, store ports.A
 		m.exactGenerationPreWrite(
 			rec.ID,
 			rec.Harness,
-			ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID},
+			runtimeHandle(rec.Metadata),
 			domain.AgentGenerationID(rec.Metadata.RuntimeLaunchID),
 			errSourceHandoffOwnershipChanged,
 		),
@@ -1466,7 +1478,7 @@ func (m *Manager) waitForSourceHandoffOpportunity(
 }
 
 func (m *Manager) sourceComposerIsEmpty(ctx context.Context, rec domain.SessionRecord, detector ports.EmptyComposerDetector) (bool, error) {
-	handle := ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}
+	handle := runtimeHandle(rec.Metadata)
 	if strings.TrimSpace(handle.ID) == "" {
 		return false, ErrIncompleteHandle
 	}
@@ -1482,7 +1494,7 @@ func (m *Manager) sourceGenerationCanReceiveCoordination(ctx context.Context, re
 	if strings.TrimSpace(rec.Metadata.RuntimeHandleID) == "" || generation == "" {
 		return false, nil
 	}
-	return m.exactTargetGenerationAlive(ctx, ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}, rec.ID, generation)
+	return m.exactTargetGenerationAlive(ctx, runtimeHandle(rec.Metadata), rec.ID, generation)
 }
 
 func (m *Manager) composerIsEmpty(ctx context.Context, handle ports.RuntimeHandle, detector ports.EmptyComposerDetector) (bool, error) {
@@ -2476,7 +2488,7 @@ func (m *Manager) failUnrecoverableRecoveredTarget(
 	if handleID == "" {
 		return false, fmt.Errorf("%s agent switch lacks a durable target runtime handle", sw.State)
 	}
-	if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+	if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID, RuntimeLaunchID: string(sw.TargetGenerationID)}); err != nil {
 		return false, err
 	}
 	if err := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); err != nil {
@@ -2546,7 +2558,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorSourceSessionTerminated)
 		return failErr == nil, failErr
 	}
-	handle := ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}
+	handle := runtimeHandle(rec.Metadata)
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
 		// No target can exist in stopping_source, so closing the saga cannot
@@ -2599,7 +2611,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		}
 		return false, nil
 	}
-	handle := ports.RuntimeHandle{ID: targetHandleID}
+	handle := ports.RuntimeHandle{ID: targetHandleID, RuntimeLaunchID: string(sw.TargetGenerationID)}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
 		if destroyErr := m.runtime.Destroy(ctx, handle); destroyErr != nil {

@@ -2,6 +2,8 @@ package tmux
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -12,9 +14,9 @@ import (
 
 const processContainmentSystemd = "systemd"
 
-// processContainment is deliberately private to the tmux adapter. The
-// daemon's runtime port remains unchanged: containment is an implementation
-// detail of the opt-in Linux tmux backend.
+// processContainment is deliberately private to the tmux adapter. The runtime
+// port carries generation identity, while Linux containment mechanics remain
+// an implementation detail of the opt-in tmux backend.
 type processContainment interface {
 	Validate(ctx context.Context) error
 	WrapCommand(shellPath, launchCmd, unit string, stopGrace time.Duration) string
@@ -240,6 +242,7 @@ func (s *systemdContainment) run(ctx context.Context, name string, args ...strin
 	return out, nil
 }
 
-func containmentUnitName(id string) string {
-	return "ao-session-" + SessionName(id) + ".scope"
+func containmentUnitName(id, launchID string) string {
+	sum := sha256.Sum256([]byte(launchID))
+	return "ao-session-" + SessionName(id) + "-" + hex.EncodeToString(sum[:8]) + ".scope"
 }

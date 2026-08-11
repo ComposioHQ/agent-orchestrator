@@ -13,11 +13,14 @@ import (
 )
 
 func TestContainmentUnitNameIsDeterministic(t *testing.T) {
-	if got, want := containmentUnitName("session-42"), "ao-session-session-42.scope"; got != want {
+	if got, want := containmentUnitName("session-42", "launch-1"), "ao-session-session-42-aad36a428ce91190.scope"; got != want {
 		t.Fatalf("containmentUnitName = %q, want %q", got, want)
 	}
-	if got := containmentUnitName("session with spaces"); strings.ContainsAny(got, " '") {
+	if got := containmentUnitName("session with spaces", "launch-1"); strings.ContainsAny(got, " '") {
 		t.Fatalf("containmentUnitName contains unsafe characters: %q", got)
+	}
+	if containmentUnitName("session-42", "launch-1") == containmentUnitName("session-42", "launch-2") {
+		t.Fatal("different launch generations received the same containment unit")
 	}
 }
 
@@ -138,32 +141,40 @@ func (f *fakeContainment) Release(ctx context.Context, unit string) error {
 	return f.releaseErr
 }
 
+func scopedConfig(launchID string) ports.RuntimeConfig {
+	return ports.RuntimeConfig{
+		SessionID:       "sess-1",
+		WorkspacePath:   "/tmp/ws",
+		Argv:            []string{"codex"},
+		RuntimeLaunchID: launchID,
+	}
+}
+
+func scopedHandle(launchID string) ports.RuntimeHandle {
+	return ports.RuntimeHandle{ID: "sess-1", RuntimeLaunchID: launchID}
+}
+
 func TestScopedCreateAddsRemainOnExitAndVerifiesScope(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fc := &fakeContainment{wrap: "wrapped-launch"}
 	r.containment = fc
-	fr.outputs = [][]byte{[]byte("no server running"), nil, nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
-	fr.hook = func(_ context.Context, call int) error {
-		if call == 1 {
-			return &exec.ExitError{}
-		}
-		return nil
-	}
-	if _, err := r.Create(context.Background(), ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	}); err != nil {
+	fr.outputs = [][]byte{nil, nil, []byte("/tmp/ws\n"), nil, nil, nil, nil}
+	handle, err := r.Create(context.Background(), scopedConfig("launch-1"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if fc.validated != 1 || len(fc.waited) != 1 || fc.waited[0] != "ao-session-sess-1.scope" {
+	if handle != scopedHandle("launch-1") {
+		t.Fatalf("Create handle = %+v", handle)
+	}
+	wantUnit := containmentUnitName("sess-1", "launch-1")
+	if fc.validated != 1 || len(fc.waited) != 1 || fc.waited[0] != wantUnit {
 		t.Fatalf("containment lifecycle = validated %d, waited %#v", fc.validated, fc.waited)
 	}
-	if len(fr.calls) < 3 || !reflect.DeepEqual(fr.calls[2].args, setRemainOnExitArgs("sess-1")) {
+	if len(fr.calls) < 2 || !reflect.DeepEqual(fr.calls[1].args, setRemainOnExitArgs("sess-1")) {
 		t.Fatalf("calls = %#v, want remain-on-exit after new-session", fr.calls)
 	}
-	if !strings.Contains(fr.calls[1].args[len(fr.calls[1].args)-1], "wrapped-launch") {
-		t.Fatalf("new-session did not use wrapped launch: %#v", fr.calls[1].args)
+	if !strings.Contains(strings.Join(fr.calls[0].args, " "), "wrapped-launch") || !reflect.DeepEqual(fr.calls[0].args, scopedNewSessionArgs("sess-1", "/tmp/ws", "/bin/sh", "wrapped-launch", "launch-1")) {
+		t.Fatalf("new-session did not atomically create and mark generation: %#v", fr.calls[0].args)
 	}
 }
 
@@ -174,23 +185,16 @@ func TestScopedCreateReportsCleanupFailureWhenReadinessFails(t *testing.T) {
 		releaseErrs: []error{errors.New("scope still active")},
 	}
 	r.containment = fc
-	fr.outputs = [][]byte{[]byte("no server running"), nil, nil, nil}
-	fr.hook = func(_ context.Context, call int) error {
-		if call == 1 {
-			return &exec.ExitError{}
-		}
-		return nil
-	}
+	fr.outputs = [][]byte{nil, nil, nil}
 
-	_, err := r.Create(context.Background(), ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	handle, err := r.Create(context.Background(), scopedConfig("launch-1"))
 	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") || !strings.Contains(err.Error(), "scope still active") {
 		t.Fatalf("Create error = %v, want readiness and cleanup failures", err)
 	}
-	if countCalls(fr, "kill-session") != 1 || !reflect.DeepEqual(fc.released, []string{"ao-session-sess-1.scope"}) {
+	if disposition, ref := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreatePreserve || ref != scopedHandle("launch-1") || handle != ref {
+		t.Fatalf("Create classification = %v, ref %+v, handle %+v", disposition, ref, handle)
+	}
+	if countCalls(fr, "if-shell") != 1 || !reflect.DeepEqual(fc.released, []string{containmentUnitName("sess-1", "launch-1")}) {
 		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
 	}
 }
@@ -201,26 +205,23 @@ func TestScopedCreateCleanupIgnoresCallerCancellation(t *testing.T) {
 	r.containment = fc
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fr.outputs = [][]byte{[]byte("no server running"), nil, nil, nil}
-	fr.hook = func(_ context.Context, call int) error {
-		if call == 1 {
-			return &exec.ExitError{}
-		}
+	fr.outputs = [][]byte{nil, nil, nil, nil}
+	fr.hook = func(ctx context.Context, call int) error {
 		if call == 3 {
 			cancel()
+			return ctx.Err()
 		}
 		return nil
 	}
 
-	_, err := r.Create(ctx, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	_, err := r.Create(ctx, scopedConfig("launch-1"))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Create error = %v, want caller cancellation", err)
 	}
-	if countCalls(fr, "kill-session") != 1 || len(fc.releaseCtxs) != 1 || fc.releaseCtxs[0] != nil {
+	if disposition, _ := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreateRollbackSafe {
+		t.Fatalf("Create disposition = %v, want rollback safe after exact cleanup", disposition)
+	}
+	if countCalls(fr, "if-shell") != 1 || len(fc.releaseCtxs) != 1 || fc.releaseCtxs[0] != nil {
 		t.Fatalf("runtime calls = %#v, release contexts = %#v", fr.calls, fc.releaseCtxs)
 	}
 }
@@ -231,26 +232,23 @@ func TestScopedCreateCleansUncertainNewSessionOutcome(t *testing.T) {
 	r.containment = fc
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fr.outputs = [][]byte{[]byte("no server running"), nil, nil}
-	fr.hook = func(_ context.Context, call int) error {
-		switch call {
-		case 1:
-			return &exec.ExitError{}
-		case 2:
+	fr.outputs = [][]byte{nil, nil}
+	fr.hook = func(ctx context.Context, call int) error {
+		if call == 1 {
 			cancel()
+			return ctx.Err()
 		}
 		return nil
 	}
 
-	_, err := r.Create(ctx, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	_, err := r.Create(ctx, scopedConfig("launch-1"))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Create error = %v, want uncertain cancellation", err)
 	}
-	if countCalls(fr, "kill-session") != 1 || !reflect.DeepEqual(fc.released, []string{"ao-session-sess-1.scope"}) {
+	if disposition, ref := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreateRollbackSafe || ref != (ports.RuntimeHandle{}) {
+		t.Fatalf("Create classification = %v, ref %+v", disposition, ref)
+	}
+	if countCalls(fr, "if-shell") != 1 || !reflect.DeepEqual(fc.released, []string{containmentUnitName("sess-1", "launch-1")}) {
 		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
 	}
 }
@@ -261,100 +259,90 @@ func TestScopedCreateDoesNotCleanConcurrentDuplicate(t *testing.T) {
 	r.containment = fc
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fr.outputs = [][]byte{[]byte("no server running"), []byte("duplicate session: sess-1")}
-	fr.hook = func(_ context.Context, call int) error {
-		switch call {
-		case 1:
-			return &exec.ExitError{}
-		case 2:
+	fr.outputs = [][]byte{[]byte("duplicate session: sess-1")}
+	fr.hook = func(ctx context.Context, call int) error {
+		if call == 1 {
 			cancel()
+			return ctx.Err()
 		}
 		return nil
 	}
 
-	_, err := r.Create(ctx, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	handle, err := r.Create(ctx, scopedConfig("launch-1"))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Create error = %v, want uncertain cancellation", err)
 	}
-	if countCalls(fr, "kill-session") != 0 || len(fc.released) != 0 {
+	if disposition, ref := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreatePreserve || ref != scopedHandle("launch-1") || handle != ref {
+		t.Fatalf("Create classification = %v, ref %+v, handle %+v", disposition, ref, handle)
+	}
+	if countCalls(fr, "if-shell") != 0 || len(fc.released) != 0 {
 		t.Fatalf("concurrent duplicate was cleaned: runtime calls = %#v, releases = %#v", fr.calls, fc.released)
 	}
 }
 
-func TestScopedCreateRejectsPreExistingSessionWithoutCleanup(t *testing.T) {
+func TestScopedCreatePreservesForeignGenerationAfterUncertainOutcome(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fc := &fakeContainment{}
 	r.containment = fc
-
-	_, err := r.Create(context.Background(), ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
-	if err == nil || !strings.Contains(err.Error(), "session sess-1 already exists") {
-		t.Fatalf("Create error = %v, want pre-existing session rejection", err)
-	}
-	if len(fr.calls) != 1 || fr.calls[0].args[0] != "has-session" || len(fc.released) != 0 {
-		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
-	}
-}
-
-func TestScopedCreateStopsOnInconclusivePreflight(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fc := &fakeContainment{}
-	r.containment = fc
-	fr.outputs = [][]byte{[]byte("error connecting to tmux socket")}
+	fr.outputs = [][]byte{nil, []byte(runtimeLaunchReportPrefix + "launch-2\n")}
 	fr.hook = func(_ context.Context, call int) error {
 		if call == 1 {
-			return &exec.ExitError{}
+			return errors.New("new-session outcome unknown")
 		}
 		return nil
 	}
 
-	_, err := r.Create(context.Background(), ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
-	if err == nil || !strings.Contains(err.Error(), "verify session sess-1 absent before create") {
-		t.Fatalf("Create error = %v, want inconclusive preflight failure", err)
+	handle, err := r.Create(context.Background(), scopedConfig("launch-1"))
+	if err == nil || !strings.Contains(err.Error(), "new-session outcome unknown") {
+		t.Fatalf("Create error = %v", err)
 	}
-	if len(fr.calls) != 1 || fr.calls[0].args[0] != "has-session" || len(fc.released) != 0 {
+	if disposition, ref := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreatePreserve || ref != scopedHandle("launch-1") || handle != ref {
+		t.Fatalf("Create classification = %v, ref %+v, handle %+v", disposition, ref, handle)
+	}
+	if countCalls(fr, "if-shell") != 1 || !reflect.DeepEqual(fc.released, []string{containmentUnitName("sess-1", "launch-1")}) {
 		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
 	}
 }
 
-func TestScopedCreateAcceptsMissingTmuxSocket(t *testing.T) {
+func TestScopedCreatePreservesUnmarkedSessionAfterUncertainOutcome(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fc := &fakeContainment{wrap: "wrapped-launch"}
+	fc := &fakeContainment{}
 	r.containment = fc
-	fr.outputs = [][]byte{
-		[]byte("error connecting to /tmp/tmux/default (No such file or directory)"),
-		nil,
-		nil,
-		[]byte("/tmp/ws\n"),
-		nil,
-		nil,
-		nil,
-		nil,
-	}
+	fr.outputs = [][]byte{nil, []byte(runtimeLaunchReportPrefix + "\n")}
 	fr.hook = func(_ context.Context, call int) error {
 		if call == 1 {
-			return &exec.ExitError{}
+			return errors.New("new-session outcome unknown")
 		}
 		return nil
 	}
 
-	if _, err := r.Create(context.Background(), ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	}); err != nil {
-		t.Fatalf("Create with missing tmux socket: %v", err)
+	handle, err := r.Create(context.Background(), scopedConfig("launch-1"))
+	if disposition, ref := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreatePreserve || ref != scopedHandle("launch-1") || handle != ref {
+		t.Fatalf("Create classification = %v, ref %+v, handle %+v, err %v", disposition, ref, handle, err)
+	}
+	if countCalls(fr, "if-shell") != 1 || len(fc.released) != 1 {
+		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+func TestScopedCreatePreservesWhenGenerationFenceFails(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+	fr.outputs = [][]byte{nil, []byte("tmux server unavailable")}
+	fr.hook = func(_ context.Context, call int) error {
+		switch call {
+		case 1:
+			return errors.New("new-session outcome unknown")
+		case 2:
+			return errors.New("fence unavailable")
+		}
+		return nil
+	}
+
+	handle, err := r.Create(context.Background(), scopedConfig("launch-1"))
+	if disposition, ref := ports.RuntimeCreateFailureOf(err); disposition != ports.RuntimeCreatePreserve || ref != scopedHandle("launch-1") || handle != ref {
+		t.Fatalf("Create classification = %v, ref %+v, handle %+v, err %v", disposition, ref, handle, err)
 	}
 }
 
@@ -363,19 +351,36 @@ func TestScopedRestartReleasesBeforeRespawn(t *testing.T) {
 	fc := &fakeContainment{}
 	r.containment = fc
 	fr.outputs = [][]byte{nil, nil}
-	h, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	h, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.ID != "sess-1" || !reflect.DeepEqual(fc.released, []string{"ao-session-sess-1.scope"}) {
+	if h != scopedHandle("launch-2") || !reflect.DeepEqual(fc.released, []string{containmentUnitName("sess-1", "launch-1")}) {
 		t.Fatalf("restart = %+v, releases %#v", h, fc.released)
 	}
-	if len(fr.calls) != 2 || fr.calls[0].args[0] != "respawn-pane" {
-		t.Fatalf("calls = %#v, want respawn then liveness", fr.calls)
+	if !reflect.DeepEqual(fc.waited, []string{containmentUnitName("sess-1", "launch-2")}) {
+		t.Fatalf("waited = %#v", fc.waited)
+	}
+	if len(fr.calls) != 2 || fr.calls[0].args[0] != "if-shell" {
+		t.Fatalf("calls = %#v, want fenced respawn and liveness", fr.calls)
+	}
+}
+
+func TestScopedRestartPreservesForeignGeneration(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{}
+	r.containment = fc
+	fr.outputs = [][]byte{[]byte(runtimeLaunchReportPrefix + "launch-foreign\n")}
+
+	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
+	if err == nil || !strings.Contains(err.Error(), "observed \"launch-foreign\"") {
+		t.Fatalf("Restart error = %v", err)
+	}
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "if-shell" {
+		t.Fatalf("runtime calls = %#v", fr.calls)
+	}
+	if !reflect.DeepEqual(fc.released, []string{containmentUnitName("sess-1", "launch-1")}) || len(fc.waited) != 0 {
+		t.Fatalf("containment releases = %#v, waits = %#v", fc.released, fc.waited)
 	}
 }
 
@@ -383,11 +388,7 @@ func TestScopedRestartDoesNotRespawnAfterReleaseFailure(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fc := &fakeContainment{releaseErr: errors.New("scope still active")}
 	r.containment = fc
-	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err == nil || !strings.Contains(err.Error(), "scope still active") {
 		t.Fatalf("Restart error = %v, want containment failure", err)
 	}
@@ -400,38 +401,35 @@ func TestScopedRestartReleasesReplacementWhenReadinessFails(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fc := &fakeContainment{waitErr: errors.New("scope state unavailable")}
 	r.containment = fc
-	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	fr.outputs = [][]byte{nil, []byte("launch-2\n"), nil}
+	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") {
 		t.Fatalf("Restart error = %v, want readiness failure", err)
 	}
-	wantReleases := []string{"ao-session-sess-1.scope", "ao-session-sess-1.scope"}
+	wantReleases := []string{containmentUnitName("sess-1", "launch-1"), containmentUnitName("sess-1", "launch-2")}
 	if !reflect.DeepEqual(fc.released, wantReleases) {
 		t.Fatalf("releases = %#v, want old scope release plus failed replacement cleanup %#v", fc.released, wantReleases)
 	}
-	if len(fr.calls) != 1 || fr.calls[0].args[0] != "respawn-pane" {
-		t.Fatalf("runtime calls = %#v, want only replacement respawn before readiness failure", fr.calls)
+	if len(fr.calls) != 3 || fr.calls[0].args[0] != "if-shell" || fr.calls[2].args[0] != "set-option" {
+		t.Fatalf("runtime calls = %#v, want fenced respawn, inspect, restore marker", fr.calls)
 	}
 }
 
 func TestScopedRestartReleasesReplacementWhenRespawnFails(t *testing.T) {
 	r, _ := newTestRuntime(0)
-	fr := &fakeRunnerSequence{results: []fakeRunnerResult{{err: errors.New("respawn outcome unknown")}}}
+	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
+		{err: errors.New("respawn outcome unknown")},
+		{out: []byte("launch-2\n")},
+		{},
+	}}
 	r.runner = fr
 	fc := &fakeContainment{}
 	r.containment = fc
-	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err == nil || !strings.Contains(err.Error(), "respawn outcome unknown") {
 		t.Fatalf("Restart error = %v, want respawn failure", err)
 	}
-	wantReleases := []string{"ao-session-sess-1.scope", "ao-session-sess-1.scope"}
+	wantReleases := []string{containmentUnitName("sess-1", "launch-1"), containmentUnitName("sess-1", "launch-2")}
 	if !reflect.DeepEqual(fc.released, wantReleases) {
 		t.Fatalf("releases = %#v, want old scope release plus uncertain replacement cleanup %#v", fc.released, wantReleases)
 	}
@@ -442,19 +440,17 @@ func TestScopedRestartReleasesReplacementWhenLivenessProbeFails(t *testing.T) {
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{},
 		{err: errors.New("tmux probe unavailable")},
+		{out: []byte("launch-2\n")},
+		{},
 	}}
 	r.runner = fr
 	fc := &fakeContainment{}
 	r.containment = fc
-	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err == nil || !strings.Contains(err.Error(), "tmux probe unavailable") {
 		t.Fatalf("Restart error = %v, want liveness failure", err)
 	}
-	wantReleases := []string{"ao-session-sess-1.scope", "ao-session-sess-1.scope"}
+	wantReleases := []string{containmentUnitName("sess-1", "launch-1"), containmentUnitName("sess-1", "launch-2")}
 	if !reflect.DeepEqual(fc.released, wantReleases) {
 		t.Fatalf("releases = %#v, want old scope release plus failed replacement cleanup %#v", fc.released, wantReleases)
 	}
@@ -467,15 +463,12 @@ func TestScopedRestartReportsReplacementCleanupFailure(t *testing.T) {
 		releaseErrs: []error{nil, errors.New("scope still active")},
 	}
 	r.containment = fc
-	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
-		SessionID:     "sess-1",
-		WorkspacePath: "/tmp/ws",
-		Argv:          []string{"codex"},
-	})
+	fr.outputs = [][]byte{nil, []byte("launch-2\n"), nil}
+	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") || !strings.Contains(err.Error(), "scope still active") {
 		t.Fatalf("Restart error = %v, want readiness and cleanup failures", err)
 	}
-	if len(fr.calls) != 1 || len(fc.released) != 2 {
+	if len(fr.calls) != 3 || len(fc.released) != 2 {
 		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
 	}
 }
@@ -512,13 +505,13 @@ func TestScopedDestroyReleasesEvenWhenTmuxIsMissing(t *testing.T) {
 	r.containment = fc
 	fr.outputs = [][]byte{[]byte("can't find session: sess-1")}
 	fr.err = &exec.ExitError{}
-	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
+	if err := r.Destroy(context.Background(), scopedHandle("launch-1")); err != nil {
 		t.Fatal(err)
 	}
-	if len(fr.calls) != 1 || fr.calls[0].args[0] != "kill-session" {
-		t.Fatalf("calls = %#v, want only kill-session", fr.calls)
+	if len(fr.calls) != 1 || fr.calls[0].args[0] != "if-shell" {
+		t.Fatalf("calls = %#v, want only exact-generation fence", fr.calls)
 	}
-	if !reflect.DeepEqual(fc.released, []string{"ao-session-sess-1.scope"}) {
+	if !reflect.DeepEqual(fc.released, []string{containmentUnitName("sess-1", "launch-1")}) {
 		t.Fatalf("released = %#v", fc.released)
 	}
 }
