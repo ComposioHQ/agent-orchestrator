@@ -179,6 +179,9 @@ func TestCommandBuilders(t *testing.T) {
 		[]string{"respawn-pane", "-k", "-t", "sess-1:0.0", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi", ";", "set-option", "-t", "sess-1", runtimeLaunchIDOption, "launch-2"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("scopedRespawnPaneArgs = %#v, want %#v", got, want)
 	}
+	if got := fencedRestoreRuntimeLaunchIDArgs("sess-1", "launch-2", "launch-1"); len(got) != 7 || got[0] != "if-shell" || !strings.Contains(got[4], "launch-2") || !strings.Contains(got[5], "launch-1") {
+		t.Fatalf("fencedRestoreRuntimeLaunchIDArgs = %#v", got)
+	}
 	// set-option uses pane-targeting (no = prefix).
 	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setStatusOffArgs = %#v, want %#v", got, want)

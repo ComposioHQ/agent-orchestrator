@@ -77,8 +77,15 @@ func showRuntimeLaunchIDArgs(id string) []string {
 	return []string{"show-option", "-v", "-t", id, runtimeLaunchIDOption}
 }
 
-func setRuntimeLaunchIDArgs(id, launchID string) []string {
-	return []string{"set-option", "-t", id, runtimeLaunchIDOption, launchID}
+// fencedRestoreRuntimeLaunchIDArgs restores a failed replacement's previous
+// marker only while the session still records that exact replacement. The
+// compare and write execute in one server-side command queue so cleanup cannot
+// overwrite a concurrent owner's newer generation.
+func fencedRestoreRuntimeLaunchIDArgs(id, failedLaunchID, previousLaunchID string) []string {
+	condition := fmt.Sprintf("#{==:#{%s},%s}", runtimeLaunchIDOption, failedLaunchID)
+	restore := tmuxCommandString([]string{"set-option", "-t", id, runtimeLaunchIDOption, previousLaunchID})
+	report := fmt.Sprintf("display-message -p -t %s \"%s#{%s}\"", id, runtimeLaunchReportPrefix, runtimeLaunchIDOption)
+	return []string{"if-shell", "-F", "-t", id, condition, restore, report}
 }
 
 // killRuntimeGenerationArgs checks the session marker and kills only the

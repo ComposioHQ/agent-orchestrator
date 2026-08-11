@@ -401,7 +401,7 @@ func TestScopedRestartReleasesReplacementWhenReadinessFails(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fc := &fakeContainment{waitErr: errors.New("scope state unavailable")}
 	r.containment = fc
-	fr.outputs = [][]byte{nil, []byte("launch-2\n"), nil}
+	fr.outputs = [][]byte{nil, nil}
 	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") {
 		t.Fatalf("Restart error = %v, want readiness failure", err)
@@ -410,8 +410,8 @@ func TestScopedRestartReleasesReplacementWhenReadinessFails(t *testing.T) {
 	if !reflect.DeepEqual(fc.released, wantReleases) {
 		t.Fatalf("releases = %#v, want old scope release plus failed replacement cleanup %#v", fc.released, wantReleases)
 	}
-	if len(fr.calls) != 3 || fr.calls[0].args[0] != "if-shell" || fr.calls[2].args[0] != "set-option" {
-		t.Fatalf("runtime calls = %#v, want fenced respawn, inspect, restore marker", fr.calls)
+	if len(fr.calls) != 2 || fr.calls[0].args[0] != "if-shell" || fr.calls[1].args[0] != "if-shell" {
+		t.Fatalf("runtime calls = %#v, want fenced respawn and atomic marker restore", fr.calls)
 	}
 }
 
@@ -419,7 +419,6 @@ func TestScopedRestartReleasesReplacementWhenRespawnFails(t *testing.T) {
 	r, _ := newTestRuntime(0)
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{err: errors.New("respawn outcome unknown")},
-		{out: []byte("launch-2\n")},
 		{},
 	}}
 	r.runner = fr
@@ -440,7 +439,6 @@ func TestScopedRestartReleasesReplacementWhenLivenessProbeFails(t *testing.T) {
 	fr := &fakeRunnerSequence{results: []fakeRunnerResult{
 		{},
 		{err: errors.New("tmux probe unavailable")},
-		{out: []byte("launch-2\n")},
 		{},
 	}}
 	r.runner = fr
@@ -463,13 +461,28 @@ func TestScopedRestartReportsReplacementCleanupFailure(t *testing.T) {
 		releaseErrs: []error{nil, errors.New("scope still active")},
 	}
 	r.containment = fc
-	fr.outputs = [][]byte{nil, []byte("launch-2\n"), nil}
+	fr.outputs = [][]byte{nil}
 	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
 	if err == nil || !strings.Contains(err.Error(), "scope state unavailable") || !strings.Contains(err.Error(), "scope still active") {
 		t.Fatalf("Restart error = %v, want readiness and cleanup failures", err)
 	}
-	if len(fr.calls) != 3 || len(fc.released) != 2 {
+	if len(fr.calls) != 1 || len(fc.released) != 2 {
 		t.Fatalf("runtime calls = %#v, releases = %#v", fr.calls, fc.released)
+	}
+}
+
+func TestScopedRestartCleanupPreservesForeignGeneration(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fc := &fakeContainment{waitErr: errors.New("scope state unavailable")}
+	r.containment = fc
+	fr.outputs = [][]byte{nil, []byte(runtimeLaunchReportPrefix + "launch-foreign\n")}
+
+	_, err := r.Restart(context.Background(), scopedHandle("launch-1"), scopedConfig("launch-2"))
+	if err == nil || !strings.Contains(err.Error(), "changed to \"launch-foreign\"") {
+		t.Fatalf("Restart error = %v, want foreign generation preservation", err)
+	}
+	if len(fr.calls) != 2 || fr.calls[1].args[0] != "if-shell" {
+		t.Fatalf("runtime calls = %#v, want atomic cleanup fence", fr.calls)
 	}
 }
 

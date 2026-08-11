@@ -513,21 +513,28 @@ func (r *Runtime) cleanupFailedRestart(ctx context.Context, id, oldLaunchID, new
 		return cause
 	}
 	cleanupCtx := context.WithoutCancel(ctx)
-	var cleanupErrs []error
 	if err := r.containment.Release(cleanupCtx, unit); err != nil {
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("tmux runtime: cleanup restarted process containment %s: %w", id, err))
+		// Keep the new marker when its exact scope may still be active. Reverting
+		// it would hide the only generation reference that can safely retry the
+		// cleanup.
+		return errors.Join(cause, fmt.Errorf("tmux runtime: cleanup restarted process containment %s: %w", id, err))
 	}
-	observed, present, err := r.observedRuntimeLaunchID(cleanupCtx, id)
+	out, err := r.run(cleanupCtx, fencedRestoreRuntimeLaunchIDArgs(id, newLaunchID, oldLaunchID)...)
 	if err != nil {
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("tmux runtime: read failed restart generation %s: %w", id, err))
-	} else if present && observed == newLaunchID {
-		if _, err := r.run(cleanupCtx, setRuntimeLaunchIDArgs(id, oldLaunchID)...); err != nil {
-			cleanupErrs = append(cleanupErrs, fmt.Errorf("tmux runtime: restore restart generation %s: %w", id, err))
-		}
-	} else if !present || observed != oldLaunchID {
-		cleanupErrs = append(cleanupErrs, fmt.Errorf("tmux runtime: failed restart generation %s is %q, expected %q or %q", id, observed, oldLaunchID, newLaunchID))
+		return errors.Join(cause, fmt.Errorf("tmux runtime: fence failed restart generation %s: %w", id, err))
 	}
-	return errors.Join(append([]error{cause}, cleanupErrs...)...)
+	report := strings.TrimSpace(string(out))
+	if report == "" {
+		return cause
+	}
+	if !strings.HasPrefix(report, runtimeLaunchReportPrefix) {
+		return errors.Join(cause, fmt.Errorf("tmux runtime: unexpected failed restart generation fence output for %s: %q", id, report))
+	}
+	observed := strings.TrimSpace(strings.TrimPrefix(report, runtimeLaunchReportPrefix))
+	if observed == oldLaunchID {
+		return cause
+	}
+	return errors.Join(cause, fmt.Errorf("tmux runtime: failed restart generation %s changed to %q; marker preserved", id, observed))
 }
 
 func (r *Runtime) observedRuntimeLaunchID(ctx context.Context, id string) (string, bool, error) {

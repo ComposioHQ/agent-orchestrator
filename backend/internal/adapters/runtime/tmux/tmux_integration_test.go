@@ -262,7 +262,19 @@ func TestRuntimeIntegrationGenerationFencePreservesForeignSession(t *testing.T) 
 	if err != nil || !present || marker != "launch-replacement" {
 		t.Fatalf("replacement marker = (%q, %v, %v)", marker, present, err)
 	}
-	winner := ports.RuntimeHandle{ID: id, RuntimeLaunchID: "launch-replacement"}
+	out, err = r.run(ctx, fencedRestoreRuntimeLaunchIDArgs(id, "launch-loser", "launch-winner")...)
+	if err != nil || strings.TrimSpace(string(out)) != runtimeLaunchReportPrefix+"launch-replacement" {
+		t.Fatalf("foreign restore fence = (%q, %v)", strings.TrimSpace(string(out)), err)
+	}
+	out, err = r.run(ctx, fencedRestoreRuntimeLaunchIDArgs(id, "launch-replacement", "launch-winner")...)
+	if err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("matching restore fence = (%q, %v)", strings.TrimSpace(string(out)), err)
+	}
+	marker, present, err = r.observedRuntimeLaunchID(ctx, id)
+	if err != nil || !present || marker != "launch-winner" {
+		t.Fatalf("restored marker = (%q, %v, %v)", marker, present, err)
+	}
+	winner := ports.RuntimeHandle{ID: id, RuntimeLaunchID: "launch-winner"}
 	if outcome, err := r.destroyGenerationSession(ctx, winner); err != nil || outcome != generationDestroyed {
 		t.Fatalf("matching fence = (%v, %v), want destroyed", outcome, err)
 	}

@@ -68,9 +68,12 @@ exact pair. It may kill the tmux session only after the session's launch marker
 matches the requested generation.
 
 A missing exact scope is idempotent success. A tmux session marked for another
-generation is not an error for release of the requested generation and must not
-be killed. Probe failure or a scope that cannot be proven released returns an
-error; nil means the exact generation is no longer owned by the runtime.
+generation must not be killed; Destroy returns a preservation error even after
+the requested scope is released, because the foreign generation may still use
+the same workspace and callers must not continue into workspace deletion.
+Probe failure or a scope that cannot be proven released also returns an error;
+nil means the exact scope is released and no foreign terminal owner blocks the
+caller's lifecycle transition.
 
 ### Stop-before-start Restart
 
@@ -81,6 +84,11 @@ unconfirmed, the same preserve outcome applies.
 
 This avoids overlapping old and replacement scopes and keeps terminal-handle
 reuse separate from process-generation identity.
+
+If replacement readiness fails, AO first confirms the replacement scope is
+released and then restores the prior tmux marker with one server-side
+compare-and-set command. It never rewrites the marker after release failure and
+never overwrites a marker that changed to a concurrent generation.
 
 ### Caller preservation rule
 
