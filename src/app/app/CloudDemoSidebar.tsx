@@ -4,17 +4,16 @@ import { ChevronRight, Folder, FolderOpen, MoreVertical, Plus, Search, Settings 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 
-import type { CloudSession } from "@/lib/cloud-api";
-
 import { OrchestratorIcon } from "./OrchestratorIcon";
 import { CloudDemoWorkspaceSwitcher } from "./CloudDemoWorkspaceSwitcher";
+import type { DemoSession } from "./demo-types";
 
 export function CloudDemoSidebar({
   sessions,
   onOpenCommand,
   onOpenSettings,
 }: {
-  sessions: CloudSession[];
+  sessions: DemoSession[];
   onOpenCommand: () => void;
   onOpenSettings: () => void;
 }) {

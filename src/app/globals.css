@@ -2,8 +2,6 @@
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
 @import "../styles/tokens.css";
-@import "../styles/prose.css";
-@import "@xterm/xterm/css/xterm.css";
 
 @keyframes auth-form-enter {
   from {
@@ -16,83 +14,12 @@
   }
 }
 
-@keyframes auth-grid-enter {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes cloud-progress {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(400%);
-  }
-}
-
-@keyframes cloud-shimmer {
-  from {
-    background-position: 200% 0;
-  }
-  to {
-    background-position: -200% 0;
-  }
-}
-
-@keyframes cloud-repository-stage {
-  0%,
-  16%,
-  100% {
-    border-color: rgb(255 255 255 / 10%);
-    box-shadow: 0 0 0 rgb(77 141 255 / 0%);
-    opacity: 0.45;
-    transform: scale(0.94);
-  }
-  32%,
-  62% {
-    border-color: rgb(77 141 255 / 48%);
-    box-shadow: 0 0 18px rgb(77 141 255 / 18%);
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Match the desktop app: marketing chrome is not selectable. */
 body {
   -webkit-user-select: none;
   user-select: none;
 }
 
-input,
-textarea,
-[contenteditable="true"],
-.prose {
+input {
   -webkit-user-select: text;
   user-select: text;
-}
-
-/*
- * Blog code blocks - force dark theme
- * Note: !important is required to override Shiki's inline styles
- */
-.blog-code-block > div {
-  background: #282c34;
-  border-color: #3e4451;
-}
-
-.blog-code-block pre {
-  background: #282c34;
-}
-
-/* Hide light theme, show dark theme */
-.blog-code-block .dark\:hidden {
-  display: none;
-}
-
-.blog-code-block .hidden.dark\:block {
-  display: block;
 }

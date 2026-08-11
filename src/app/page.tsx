@@ -1,20 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
-import { AOLogo } from "./components/Header/components/AOLogo";
+import { AOLogo } from "./AOLogo";
 
-import { useAuth } from "./auth/AuthProvider";
 import { PrismLogoGrid } from "./auth/PrismLogoGrid";
 
 export default function CloudEntryPage() {
-  const { status } = useAuth();
   const router = useRouter();
-
-  useEffect(() => {
-    if (status === "authenticated") window.location.replace("/app");
-  }, [status]);
 
   return (
     <main className="grid min-h-dvh bg-[#0a0b0d] text-[#f4f5f7] lg:grid-cols-[minmax(420px,0.82fr)_minmax(520px,1.18fr)]">

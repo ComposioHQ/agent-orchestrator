@@ -11,10 +11,6 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mocks.push, replace: vi.fn() }),
 }));
 
-vi.mock("./AuthProvider", () => ({
-  useAuth: () => ({ status: "unauthenticated" }),
-}));
-
 vi.mock("./PrismLogoGrid", () => ({
   PrismLogoGrid: () => (
     <div role="img" aria-label="Agent Orchestrator square grid" />

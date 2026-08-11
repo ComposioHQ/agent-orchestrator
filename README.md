@@ -71,9 +71,8 @@ npm install
 npm run dev
 ```
 
-The web app runs at `http://localhost:3000` and uses `NEXT_PUBLIC_API_URL` for
-the control-plane API. Copy `.env.example` to `.env.local` for web-only local
-configuration, or export the variables in your development environment.
+The UI prototype runs at `http://localhost:3000` and opens the board directly;
+it does not require authentication or control-plane configuration.
 
 For a direct Go loop, requirements are Go 1.26.5 and PostgreSQL 15 or newer.
 Development and test environments can apply embedded Goose migrations at
