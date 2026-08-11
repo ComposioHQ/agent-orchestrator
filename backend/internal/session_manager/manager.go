@@ -916,6 +916,9 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	}
 	childRepos := make([]ports.WorkspaceProjectRepoConfig, 0, len(repos))
 	for _, repo := range repos {
+		if repo.GitStatus == domain.GitStatusNeedsInit {
+			continue
+		}
 		childRepos = append(childRepos, ports.WorkspaceProjectRepoConfig{
 			Name:         repo.Name,
 			RelativePath: repo.RelativePath,
