@@ -355,7 +355,6 @@ export interface SystemEventDetail {
 		name?: string;
 		text?: string;
 	}>;
-	sourceTurnId?: string;
 }
 
 /** A `plan` activity's payload, which is the same plan the turn carries. */
