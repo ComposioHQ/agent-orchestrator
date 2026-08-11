@@ -2977,3 +2977,56 @@ func TestTranscriptEmptyOkDegradesToEmpty(t *testing.T) {
 		t.Fatalf("messages = %#v, want empty", got)
 	}
 }
+
+// TestTranscriptNonDefaultConfigDirPerHarness verifies the config-dir wiring
+// end to end: when the manager resolves a non-default native config dir for a
+// session (e.g. a CODEX_HOME / CLAUDE_CONFIG_DIR / OPENCODE_DATA_DIR set at
+// launch), the reader receives it under the harness-specific metadata key.
+func TestTranscriptNonDefaultConfigDirPerHarness(t *testing.T) {
+	cases := []struct {
+		name      string
+		harness   domain.AgentHarness
+		configDir string
+		metaKey   string
+	}{
+		{name: "codex", harness: domain.HarnessCodex, configDir: "/opt/custom-codex-home", metaKey: "codexHome"},
+		{name: "claude-code", harness: domain.HarnessClaudeCode, configDir: "/opt/custom-claude-config", metaKey: "claudeConfigDir"},
+		{name: "opencode", harness: domain.HarnessOpenCode, configDir: "/opt/custom-opencode-data", metaKey: "opencodeDataDir"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID:        "mer-1",
+				ProjectID: "mer",
+				Kind:      domain.KindWorker,
+				Harness:   tc.harness,
+				Metadata:  domain.SessionMetadata{WorkspacePath: "/work/mer"},
+			}
+			fake := &fakeTranscriptAgent{
+				messages: []ports.TranscriptMessage{{Role: "user", Text: "hello", Index: 0}},
+				ok:       true,
+			}
+			svc := &Service{
+				manager: &fakeCommander{agent: fake, configDir: tc.configDir},
+				store:   st,
+			}
+
+			got, err := svc.Transcript(context.Background(), "mer-1")
+			if err != nil {
+				t.Fatalf("Transcript: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("messages = %#v, want 1", got)
+			}
+
+			ref := fake.gotRef
+			if ref == nil {
+				t.Fatal("Transcript did not reach the adapter")
+			}
+			if got := ref.Metadata[tc.metaKey]; got != tc.configDir {
+				t.Fatalf("%s = %q, want %q (all metadata: %#v)", tc.metaKey, got, tc.configDir, ref.Metadata)
+			}
+		})
+	}
+}

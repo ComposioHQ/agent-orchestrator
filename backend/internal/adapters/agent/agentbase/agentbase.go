@@ -26,25 +26,29 @@ const MaxTranscriptLineBytes = 8 << 20 // 8 MiB
 func ReadTranscriptLine(r *bufio.Reader) (line string, ok bool, err error) {
 	for {
 		var buf []byte
+		oversized := false
 		for {
 			frag, readErr := r.ReadSlice('\n')
-			if len(buf) < MaxTranscriptLineBytes {
+			if !oversized && len(buf)+len(frag) > MaxTranscriptLineBytes {
+				oversized = true
+				buf = nil // oversized: drop what we have and keep draining the line
+			}
+			if !oversized {
 				buf = append(buf, frag...)
-				if len(buf) > MaxTranscriptLineBytes {
-					buf = nil // oversized: drop and keep draining the line
-				}
 			}
 			if errors.Is(readErr, bufio.ErrBufferFull) {
 				continue
 			}
-			if readErr == io.EOF {
-				if len(buf) == 0 && len(frag) == 0 {
-					return "", false, nil
-				}
-			} else if readErr != nil {
+			if readErr == io.EOF && len(buf) == 0 && len(frag) == 0 && !oversized {
+				return "", false, nil
+			}
+			if readErr != nil && readErr != io.EOF {
 				return "", false, readErr
 			}
 			break
+		}
+		if oversized {
+			continue // drop the line entirely; keep reading
 		}
 		line = strings.TrimSpace(string(buf))
 		if line == "" {
