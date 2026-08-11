@@ -55,8 +55,8 @@ CNAMEs and AWS-managed TLS:
 ACM certificates in `eu-north-1` terminate TLS. Both ECS services run two
 healthy replicas, `/healthz` reports deployment identity, and `/readyz` verifies
 database connectivity plus draining state. Production also exposes
-`/github/healthz`, which validates the configured App identity, permissions, and
-events with GitHub and returns `503` when GitHub is disabled, misconfigured, or
+`/github/healthz`, which validates the configured credentials and App identity
+with GitHub and returns `503` when GitHub is disabled, misconfigured, or
 unavailable. It is diagnostic only and is not an ALB target-health dependency.
 Their task security groups accept port
 8080 only from the corresponding public ALB security group. CloudWatch
@@ -220,12 +220,12 @@ restoring newer revoked grants. Repository removals, suspension, deletion, and
 explicit disconnect revoke grants; project creation checks an active grant in
 the same database transaction.
 
-The GitHub App currently allows only GitHub's required **Metadata: read** and
-organization **Members: read** permissions. It subscribes only to the
-`installation` and `installation_repositories` webhook events. AO fails closed
-when those exact settings drift: ordinary organization members cannot bind an
-installation, and unused write access is not left available before workers need
-it. Add narrowly scoped repository permissions later with the worker feature.
+The GitHub App needs at least organization **Members: read** permission so AO can
+prove that the person binding an organization installation is an active admin.
+The `installation` and `installation_repositories` lifecycle webhooks are sent
+to every GitHub App automatically and do not appear in the selectable event
+list. The connectivity diagnostic does not enforce a permission policy;
+least-privilege permissions remain recommended.
 
 The one GitHub App is a production-owned integration. Its global setup,
 OAuth-callback, and webhook URLs must point to `https://api.aoagents.dev`.

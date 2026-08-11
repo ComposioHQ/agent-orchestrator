@@ -69,10 +69,8 @@ type Installation struct {
 }
 
 type App struct {
-	ID          int64             `json:"id"`
-	Slug        string            `json:"slug"`
-	Permissions map[string]string `json:"permissions"`
-	Events      []string          `json:"events"`
+	ID   int64  `json:"id"`
+	Slug string `json:"slug"`
 }
 
 type InstallationOwner struct {
@@ -161,38 +159,6 @@ func (c *Client) Check(ctx context.Context) error {
 	}
 	if app.ID != c.appID || app.Slug != c.appSlug {
 		return errors.New("GitHub returned a different App identity")
-	}
-	requiredPermissions := map[string]string{
-		"members":  "read",
-		"metadata": "read",
-	}
-	for permission, expected := range requiredPermissions {
-		if app.Permissions[permission] != expected {
-			return fmt.Errorf("GitHub App requires %s %s permission", permission, expected)
-		}
-	}
-	for permission, access := range app.Permissions {
-		if expected, ok := requiredPermissions[permission]; !ok || access != expected {
-			return fmt.Errorf("GitHub App has unexpected %s %s permission", permission, access)
-		}
-	}
-	requiredEvents := map[string]bool{
-		"installation":              true,
-		"installation_repositories": true,
-	}
-	events := make(map[string]bool, len(app.Events))
-	for _, event := range app.Events {
-		events[event] = true
-	}
-	for event := range requiredEvents {
-		if !events[event] {
-			return fmt.Errorf("GitHub App requires %s event", event)
-		}
-	}
-	for event := range events {
-		if !requiredEvents[event] {
-			return fmt.Errorf("GitHub App has unexpected %s event", event)
-		}
 	}
 	return nil
 }
