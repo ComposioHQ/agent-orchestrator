@@ -1,7 +1,7 @@
 # PR #3550 cross-platform remediation and validation
 
 Status: active; Slices 1-6 complete and refreshed onto upstream `main`
-`00330ae9`; exact-head GitHub validation and maintainer re-review pending
+`cfbefa4c`; exact-head GitHub validation and independent review in progress
 
 Date: 2026-08-10
 
@@ -23,9 +23,9 @@ them before any rebase, push, review, or response because all are movable.
 | Upstream PR | [Untrivial-ai/agent-orchestrator#3550](https://github.com/Untrivial-ai/agent-orchestrator/pull/3550) | existing delivery surface |
 | PR head | `bd7baa54e829c3426cdeefe345b8252d1c8ed746` | pre-remediation rollback and lease point |
 | PR base snapshot | `5f3e6bcd5a47bb7312f80cfc3966464a8f948cda` | original comparison base |
-| Current upstream `main` | `00330ae9b06a40ad21273511915fdeaf56438bf9` | refreshed rebase target after #3808 |
+| Current upstream `main` | `cfbefa4cdbd5e8c8e020177e53d105f10e5f44ee` | latest refreshed rebase target after #3817 |
 | Current fork `main` | `17748630b701367bc70edfab6155c272eb10595b` | fork validation reference only |
-| PR state | open, ready, conflicting, review required | blocks delivery until refreshed |
+| PR state | open, ready, mergeable, review required | blocks delivery until exact-head validation and review converge |
 | GitHub checks | none reported on the upstream PR head | requires exact-head fork validation |
 | Formal reviews / review threads | `0 / 0` | not equivalent to a clean independent review |
 | Actionable top-level feedback | [non-Linux `TestLoadOverrides` failure](https://github.com/Untrivial-ai/agent-orchestrator/pull/3550#issuecomment-5226399480) | remediation contract |
@@ -125,9 +125,17 @@ Later the same day, upstream `main` advanced by one commit to
 `00330ae9b06a40ad21273511915fdeaf56438bf9` (`#3808`). That commit changes only
 the landing `DownloadButton` label and its test, with zero file overlap against
 this PR. The four local commits rebased without conflicts, and `git range-diff`
-reported all four patches equivalent. The refreshed containment commit is
-`5591250dc79506dd884de845c6f1ce4541692670`; the fork branch remains at the
-recorded pre-remediation head until the Slice 7 lease-protected push.
+reported all four patches equivalent. The refreshed containment commit was
+`5591250dc79506dd884de845c6f1ce4541692670`.
+
+On 2026-08-11, upstream `main` advanced by five more commits to
+`cfbefa4cdbd5e8c8e020177e53d105f10e5f44ee` (`#3809`, `#3811`, `#3816`,
+`#3648`, and `#3817`). Their changed files have zero overlap with this PR.
+The same four local commits rebased without conflicts, and `git range-diff`
+again reported every patch equivalent. The refreshed containment commit is
+`6a436d9499b05b5552841af50c96d8b74da7bd32`; the previously published exact
+head `bd047301bbd5933f5b3df9343d907a1b49e21486` remains the lease point until
+the Slice 7 push.
 
 ### Slice 3: make configuration policy deterministic
 
@@ -235,8 +243,9 @@ The validation also exposed a 10 ms error-classification race in the PR's new
 `WaitActive` test (2 failures in 10 runs). The implementation now maps expiry
 of the total wait context to the existing `did not become active` contract;
 50 consecutive runs and the full race gate passed. After the second rebase,
-the remediation commit is
-`f01bc4b68d8808e0cc208ab48cd39d13bbd9d9fe`.
+the remediation commit was
+`f01bc4b68d8808e0cc208ab48cd39d13bbd9d9fe`; after the 2026-08-11 refresh it
+is `53f13a60c5133bf16d1860ff02900409f7fd65ad`.
 
 The refreshed source repeated the config test, 50-run timeout test, uncached
 host containment packages, linked-worktree build, vet, and full race command;
