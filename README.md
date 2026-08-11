@@ -128,12 +128,17 @@ AO stays local and supervisory: your coding agents keep doing the implementation
     <td align="center"><img src="frontend/src/renderer/assets/agents/vibe.png" alt="Vibe" height="28" /><br /><sub><b>Vibe</b></sub></td>
     <td align="center"><img src="frontend/src/renderer/assets/agents/muse.png" alt="Muse" height="28" /><br /><sub><b>Muse</b></sub></td>
     <td align="center"><img src="frontend/src/renderer/assets/agents/agy.png" alt="Agy" height="28" /><br /><sub><b>Agy</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/autohand.svg" alt="Autohand" height="28" /><br /><sub><b>Autohand</b></sub></td>
+    <td align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/agents/autohand-stacked-dark.png" />
+        <img src="docs/assets/readme/agents/autohand-stacked-light.png" alt="Autohand" height="44" />
+      </picture><br /><sub><b>Autohand</b></sub>
+    </td>
   </tr>
   <tr>
     <td></td>
     <td align="center"><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="Kimchi" height="28" /><br /><sub><b>Kimchi</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/prime-agent.png" alt="Prime Agent" height="28" /><br /><sub><b>Prime Agent</b></sub></td>
+    <td align="center"><img src="docs/assets/readme/agents/prime-agent.svg" alt="Prime Agent" height="28" /><br /><sub><b>Prime Agent</b></sub></td>
     <td></td>
   </tr>
 </table>
