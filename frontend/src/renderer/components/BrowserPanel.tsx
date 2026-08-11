@@ -586,23 +586,23 @@ function browserTabLabel(title: string, url: string): { title: string; subtitle:
 
 function StaticPreview({ url }: { url: string }) {
 	return (
-		<div className="absolute inset-0 overflow-auto bg-preview text-preview-foreground">
-			<div className="border-b border-preview bg-surface px-4 py-3">
-				<div className="text-caption font-semibold uppercase tracking-wide-md text-preview-muted">AO Preview</div>
-				<div className="mt-1 truncate font-mono text-xs text-preview-link">{url}</div>
+		<div className="absolute inset-0 overflow-auto bg-background text-foreground">
+			<div className="border-b border-border bg-surface px-4 py-3">
+				<div className="text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">AO Preview</div>
+				<div className="mt-1 truncate font-mono text-xs text-accent">{url}</div>
 			</div>
 			<div className="mx-auto max-w-preview-max px-5 py-6">
-				<div className="rounded-lg border border-preview-card bg-surface p-5 shadow-sm">
+				<div className="rounded-lg border border-border bg-card p-5 shadow-sm">
 					<div className="flex items-center justify-between gap-3">
 						<div>
-							<h1 className="text-heading-lg font-semibold leading-tight tracking-normal text-preview-heading">
+							<h1 className="text-heading-lg font-semibold leading-tight tracking-normal text-foreground">
 								Demo app preview
 							</h1>
-							<p className="mt-1 text-control leading-row text-preview-body">
+							<p className="mt-1 text-control leading-row text-muted-foreground">
 								The worker exposed a local Vite app with <span className="font-mono">ao preview</span>.
 							</p>
 						</div>
-						<span className="rounded-md bg-preview-success px-2.5 py-1 text-caption font-semibold text-success">
+						<span className="rounded-md bg-success/15 px-2.5 py-1 text-caption font-semibold text-success">
 							Loaded
 						</span>
 					</div>
@@ -612,13 +612,13 @@ function StaticPreview({ url }: { url: string }) {
 							["Build", "ready"],
 							["Latency", "42 ms"],
 						].map(([label, value]) => (
-							<div key={label} className="rounded-md border border-preview-tile bg-preview-tile p-3">
-								<div className="text-caption font-medium uppercase tracking-wide text-preview-muted">{label}</div>
-								<div className="mt-1 text-subtitle font-semibold text-preview-heading">{value}</div>
+							<div key={label} className="rounded-md border border-border bg-raised p-3">
+								<div className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+								<div className="mt-1 text-subtitle font-semibold text-foreground">{value}</div>
 							</div>
 						))}
 					</div>
-					<div className="mt-5 rounded-md border border-preview-terminal bg-preview-terminal p-3 font-mono text-xs leading-row text-preview-terminal">
+					<div className="mt-5 rounded-md border border-border bg-terminal p-3 font-mono text-xs leading-row text-terminal-dim">
 						<div>$ npm run dev -- --host 127.0.0.1</div>
 						<div className="text-success-bright">ready in 418 ms</div>
 						<div>Local: http://localhost:5173/</div>
