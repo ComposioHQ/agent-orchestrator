@@ -1225,6 +1225,64 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer:
+    post:
+      operationId: promoteTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Conversation turn identifier.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: Conversation turn identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoteTurnResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Steer a queued turn into the currently running turn
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -2273,6 +2331,40 @@ components:
       required:
       - data
       type: object
+    ConversationTurn:
+      properties:
+        clientId:
+          type: string
+        conversationId:
+          type: string
+        createdAt:
+          format: date-time
+          type: string
+        deliveryContentJson:
+          type: string
+        id:
+          type: string
+        role:
+          type: string
+        sessionId:
+          type: string
+        state:
+          type: string
+        text:
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sessionId
+      - conversationId
+      - role
+      - state
+      - text
+      - createdAt
+      - updatedAt
+      type: object
     DegradedProject:
       properties:
         id:
@@ -2846,6 +2938,22 @@ components:
       - path
       - kind
       - sessionPrefix
+      type: object
+    PromoteTurnResponse:
+      properties:
+        ok:
+          type: boolean
+        promotedTurn:
+          $ref: '#/components/schemas/ConversationTurn'
+        sessionId:
+          type: string
+        turnId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - turnId
+      - promotedTurn
       type: object
     PushDeviceEnvelope:
       properties:

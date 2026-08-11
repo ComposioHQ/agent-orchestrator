@@ -303,6 +303,19 @@ type SendSessionMessageResponse struct {
 	Message   string           `json:"message"`
 }
 
+// TurnIDParam is the {turnId} path parameter for conversation turn routes.
+type TurnIDParam struct {
+	TurnID string `path:"turnId" description:"Conversation turn identifier."`
+}
+
+// PromoteTurnResponse is the body of POST /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer.
+type PromoteTurnResponse struct {
+	OK           bool                    `json:"ok"`
+	SessionID    domain.SessionID        `json:"sessionId"`
+	TurnID       domain.TurnID           `json:"turnId"`
+	PromotedTurn domain.ConversationTurn `json:"promotedTurn"`
+}
+
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
 type SessionPRFacts struct {
 	URL            string                `json:"url"`

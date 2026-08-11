@@ -135,6 +135,9 @@ var schemaNames = map[string]string{
 	"DomainProjectID":           "ProjectID",
 	"DomainSessionID":           "SessionID",
 	"DomainIssueID":             "IssueID",
+	"DomainTurnID":              "TurnID",
+	"DomainConversationID":      "ConversationID",
+	"DomainConversationTurn":    "ConversationTurn",
 	"DomainSession":             "Session",
 	"DomainProjectConfig":       "ProjectConfig",
 	"DomainTrackerIntakeConfig": "TrackerIntakeConfig",
@@ -167,6 +170,8 @@ var schemaNames = map[string]string{
 	"ControllersRollbackSessionResponse":          "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":        "SendSessionMessageRequest",
 	"ControllersSendSessionMessageResponse":       "SendSessionMessageResponse",
+	"ControllersTurnIDParam":                      "TurnIDParam",
+	"ControllersPromoteTurnResponse":              "PromoteTurnResponse",
 	"ControllersClaimPRResponse":                  "ClaimPRResponse",
 	"ControllersClaimPRRequest":                   "ClaimPRRequest",
 	"ControllersSessionPRFacts":                   "SessionPRFacts",
@@ -929,6 +934,19 @@ func sessionOperations() []operation {
 				// decision (SESSION_AWAITING_DECISION) — the guarded send refuses
 				// to paste into a pending dialog.
 				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", id: "promoteTurn", tag: "sessions",
+			summary:    "Steer a queued turn into the currently running turn",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.TurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.PromoteTurnResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},

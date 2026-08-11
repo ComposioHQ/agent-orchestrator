@@ -4,6 +4,8 @@ package sessionmanager
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -59,6 +61,21 @@ var (
 	// would answer it on the user's behalf. The API maps it to a 409; the
 	// caller retries once the user has answered in the terminal.
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
+	// ErrTurnNotFound means the queued turn id does not exist.
+	ErrTurnNotFound = errors.New("session: turn not found")
+	// ErrTurnNotQueued means the turn exists but is no longer queued (already
+	// promoted, running, or completed). Promotion must leave it untouched.
+	ErrTurnNotQueued = errors.New("session: turn not queued")
+	// ErrTurnSessionMismatch means the turn does not belong to the requested
+	// session/conversation.
+	ErrTurnSessionMismatch = errors.New("session: turn does not belong to session")
+	// ErrNoSteerableTurn means no active steer-capable turn is currently
+	// running, so promotion is refused and the queued message stays queued.
+	ErrNoSteerableTurn = errors.New("session: no steerable turn running")
+	// ErrUnsupportedContent means the queued turn carries attachment content
+	// (image/resource blocks) that the harness cannot steer. The turn stays
+	// queued and the API surfaces a typed 422.
+	ErrUnsupportedContent = errors.New("session: unsupported content for steering")
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -120,6 +137,8 @@ type Store interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+	GetConversationTurn(ctx context.Context, id domain.TurnID) (domain.ConversationTurn, bool, error)
+	UpdateConversationTurnState(ctx context.Context, id domain.TurnID, expected domain.TurnState, next domain.TurnState) (bool, error)
 	// DeleteSession removes a session row only if it is still in seed state
 	// (no workspace, runtime handle, agent session id, or prompt; not
 	// terminated). Returns deleted=true when removal happened; deleted=false
@@ -1634,6 +1653,199 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 		m.confirmActive(ctx, m.messenger, id)
 	}
 	return nil
+}
+
+// PromoteQueuedTurn steers a queued human turn into the currently running
+// active turn. It loads the queued message including native attachment content
+// (delivery_content_json), validates that the named turn belongs to this
+// session/conversation, is still queued, and that a steer-capable turn is
+// currently running, then sends the complete content through the provider's
+// steering path. Only after a successful steer is the queued turn retired as
+// promoted/interrupted. On refusal, race, or unsupported attachment content the
+// queued message remains queued and a typed error is returned.
+func (m *Manager) PromoteQueuedTurn(ctx context.Context, sessionID domain.SessionID, turnID domain.TurnID) (domain.ConversationTurn, error) {
+	turn, ok, err := m.store.GetConversationTurn(ctx, turnID)
+	if err != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, err)
+	}
+	if !ok {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrTurnNotFound)
+	}
+	if turn.SessionID != sessionID {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrTurnSessionMismatch)
+	}
+	if turn.State != domain.TurnStateQueued {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrTurnNotQueued)
+	}
+	if turn.Role != domain.TurnRoleHuman && turn.Role != "" {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrTurnNotQueued)
+	}
+	rec, ok, err := m.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s: session: %w", sessionID, err)
+	}
+	if !ok {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s: %w", sessionID, ErrNotFound)
+	}
+	if rec.IsTerminated || rec.Activity.State != domain.ActivityActive {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrNoSteerableTurn)
+	}
+	if !m.isSteerable(rec.Harness) {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrNoSteerableTurn)
+	}
+	blocks, err := parseSteerBlocks(turn.DeliveryContentJSON, turn.Text)
+	if err != nil {
+		if errors.Is(err, ErrUnsupportedContent) {
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrUnsupportedContent)
+		}
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, err)
+	}
+	hasAttachment := false
+	for _, b := range blocks {
+		if b.Type == "image" || b.Type == "resource" {
+			hasAttachment = true
+			break
+		}
+	}
+	if hasAttachment {
+		agent, ok := m.agents.Agent(rec.Harness)
+		if !ok {
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrUnsupportedContent)
+		}
+		steerer, ok := agent.(ports.ActiveTurnContentSteerer)
+		if !ok {
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrUnsupportedContent)
+		}
+		// Re-read session at write boundary to ensure still active+steerable.
+		rec2, ok2, err2 := m.store.GetSession(ctx, sessionID)
+		if err2 != nil {
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s: session: %w", sessionID, err2)
+		}
+		if !ok2 || rec2.IsTerminated || rec2.Activity.State != domain.ActivityActive || !m.isSteerable(rec2.Harness) {
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrNoSteerableTurn)
+		}
+		if err := steerer.SteerContent(ctx, sessionID, blocks); err != nil {
+			if errors.Is(err, ports.ErrUnsupportedContent) {
+				return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrUnsupportedContent)
+			}
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: steer: %w", sessionID, turnID, err)
+		}
+	} else {
+		// Text-only: use NudgeCoordination so the write is refused if the active
+		// turn finished or the harness is no longer steerable at the boundary.
+		msg := turn.Text
+		if msg == "" && len(blocks) > 0 {
+			var parts []string
+			for _, b := range blocks {
+				if b.Type == "text" && b.Text != "" {
+					parts = append(parts, b.Text)
+				}
+			}
+			msg = strings.Join(parts, "\n")
+		}
+		if msg == "" {
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrUnsupportedContent)
+		}
+		outcome, err := m.messenger.NudgeCoordination(ctx, sessionID, msg, m.isSteerable)
+		if err != nil {
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, err)
+		}
+		switch outcome {
+		case sessionguard.Sent:
+		case sessionguard.SuppressedBusy, sessionguard.SuppressedAwaitingUser, sessionguard.SuppressedTerminated, sessionguard.SuppressedNotFound, sessionguard.SuppressedUnknown:
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrNoSteerableTurn)
+		default:
+			return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrNoSteerableTurn)
+		}
+	}
+	// Only after successful steer, retire the queued turn. Use CAS on state
+	// so a concurrent queue drain that already promoted/started it does not get
+	// silently overwritten — that race returns ErrTurnNotQueued and leaves the
+	// original delivery to run as a normal new turn.
+	updated, err := m.store.UpdateConversationTurnState(ctx, turnID, domain.TurnStateQueued, domain.TurnStatePromoted)
+	if err != nil {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: update: %w", sessionID, turnID, err)
+	}
+	if !updated {
+		return domain.ConversationTurn{}, fmt.Errorf("promote %s turn %s: %w", sessionID, turnID, ErrTurnNotQueued)
+	}
+	turn.State = domain.TurnStatePromoted
+	return turn, nil
+}
+
+func (m *Manager) isSteerable(h domain.AgentHarness) bool {
+	if m.agents == nil {
+		return false
+	}
+	agent, ok := m.agents.Agent(h)
+	if !ok {
+		return false
+	}
+	s, ok := agent.(ports.ActiveTurnSteerer)
+	return ok && s.SteersActiveTurn()
+}
+
+func parseSteerBlocks(deliveryJSON string, fallbackText string) ([]ports.SteerContentBlock, error) {
+	trimmed := strings.TrimSpace(deliveryJSON)
+	if trimmed == "" || trimmed == "null" {
+		if strings.TrimSpace(fallbackText) == "" {
+			return nil, fmt.Errorf("%w: empty message", ErrUnsupportedContent)
+		}
+		return []ports.SteerContentBlock{{Type: "text", Text: fallbackText}}, nil
+	}
+	var blocks []ports.SteerContentBlock
+	if err := json.Unmarshal([]byte(trimmed), &blocks); err != nil {
+		return nil, fmt.Errorf("%w: invalid delivery_content_json: %w", ErrUnsupportedContent, err)
+	}
+	if len(blocks) == 0 {
+		if strings.TrimSpace(fallbackText) == "" {
+			return nil, fmt.Errorf("%w: empty blocks", ErrUnsupportedContent)
+		}
+		return []ports.SteerContentBlock{{Type: "text", Text: fallbackText}}, nil
+	}
+	allowedImageMimes := map[string]bool{
+		"image/png": true, "image/jpeg": true, "image/jpg": true,
+		"image/gif": true, "image/webp": true, "image/bmp": true,
+	}
+	var total int
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if strings.TrimSpace(b.Text) == "" && strings.TrimSpace(fallbackText) == "" {
+				return nil, fmt.Errorf("%w: empty text block", ErrUnsupportedContent)
+			}
+		case "image":
+			mime := strings.ToLower(strings.TrimSpace(b.MimeType))
+			if !allowedImageMimes[mime] {
+				return nil, fmt.Errorf("%w: unsupported image mime %s", ErrUnsupportedContent, mime)
+			}
+			data := strings.TrimSpace(b.Data)
+			if data == "" {
+				return nil, fmt.Errorf("%w: empty image data", ErrUnsupportedContent)
+			}
+			decoded, err := base64.StdEncoding.DecodeString(data)
+			if err != nil {
+				return nil, fmt.Errorf("%w: invalid base64", ErrUnsupportedContent)
+			}
+			if len(decoded) == 0 {
+				return nil, fmt.Errorf("%w: empty image", ErrUnsupportedContent)
+			}
+			if len(decoded) > 10<<20 {
+				return nil, fmt.Errorf("%w: image too large", ErrUnsupportedContent)
+			}
+			total += len(decoded)
+			if total > 25<<20 {
+				return nil, fmt.Errorf("%w: attachments too large", ErrUnsupportedContent)
+			}
+		case "resource":
+			if strings.TrimSpace(b.URI) == "" && strings.TrimSpace(b.Text) == "" {
+				return nil, fmt.Errorf("%w: resource missing uri", ErrUnsupportedContent)
+			}
+		default:
+			return nil, fmt.Errorf("%w: unsupported block type %s", ErrUnsupportedContent, b.Type)
+		}
+	}
+	return blocks, nil
 }
 
 func (m *Manager) prepareOutboundMessage(ctx context.Context, id domain.SessionID, message string) (string, error) {

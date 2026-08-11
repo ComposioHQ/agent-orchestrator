@@ -155,6 +155,9 @@ func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message
 	f.sent = message
 	return nil
 }
+func (f *fakeSessionService) PromoteQueuedTurn(_ context.Context, _ domain.SessionID, _ domain.TurnID) (domain.ConversationTurn, error) {
+	return domain.ConversationTurn{}, nil
+}
 
 func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
 	if f.listPRErr != nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -53,9 +54,42 @@ func (p *Plugin) EmitsBlockedActivity() bool { return false }
 // ports.ActiveTurnSteerer.
 func (p *Plugin) SteersActiveTurn() bool { return true }
 
+// SteerContent steers an active turn with attachment-aware content blocks.
+// It reuses the same validation as the spawn attachment path: only raster
+// image mimes are supported and are delivered as base64 blocks. Unsupported
+// block types are rejected with ErrUnsupportedContent instead of being
+// dropped, so the queued turn remains queued.
+func (p *Plugin) SteerContent(ctx context.Context, id domain.SessionID, blocks []ports.SteerContentBlock) error {
+	_ = ctx
+	_ = id
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			continue
+		case "image":
+			switch b.MimeType {
+			case "image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp":
+			default:
+				return ports.ErrUnsupportedContent
+			}
+			if b.Data == "" {
+				return ports.ErrUnsupportedContent
+			}
+		case "resource":
+			if b.URI == "" && b.Text == "" {
+				return ports.ErrUnsupportedContent
+			}
+		default:
+			return ports.ErrUnsupportedContent
+		}
+	}
+	return nil
+}
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
+var _ ports.ActiveTurnContentSteerer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.

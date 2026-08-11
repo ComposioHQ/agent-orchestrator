@@ -21,6 +21,19 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type ConversationTurn struct {
+	ID                  string
+	SessionID           string
+	ConversationID      string
+	Role                string
+	State               string
+	Text                string
+	ClientID            string
+	DeliveryContentJson string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+}
+
 type Notification struct {
 	ID        string
 	SessionID domain.SessionID

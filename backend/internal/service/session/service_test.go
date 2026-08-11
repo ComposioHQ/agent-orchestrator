@@ -540,6 +540,12 @@ func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message str
 	f.sentMessages = append(f.sentMessages, message)
 	return nil
 }
+func (f *fakeCommander) PromoteQueuedTurn(_ context.Context, id domain.SessionID, turnID domain.TurnID) (domain.ConversationTurn, error) {
+	if f.sendErr != nil {
+		return domain.ConversationTurn{}, f.sendErr
+	}
+	return domain.ConversationTurn{ID: turnID, SessionID: id, State: domain.TurnStatePromoted}, nil
+}
 func (f *fakeCommander) Cleanup(_ context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error) {
 	f.cleanupProjects = append(f.cleanupProjects, project)
 	if f.cleanupErr != nil {

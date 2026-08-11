@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -72,6 +73,7 @@ type SessionService interface {
 	Rename(ctx context.Context, id domain.SessionID, displayName string) error
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	PromoteQueuedTurn(ctx context.Context, id domain.SessionID, turnID domain.TurnID) (domain.ConversationTurn, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
@@ -92,6 +94,7 @@ type ActivityRecorder interface {
 type SessionsController struct {
 	Svc      SessionService
 	Activity ActivityRecorder
+	sendMu sync.Mutex
 }
 
 // Register mounts the session routes on the supplied router.
@@ -113,6 +116,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/steer", c.promoteTurn)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
@@ -614,6 +618,8 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/send")
 		return
 	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	var in SendSessionMessageRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -633,6 +639,31 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SendSessionMessageResponse{OK: true, SessionID: sessionID(r), Message: message})
+}
+
+func (c *SessionsController) promoteTurn(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer")
+		return
+	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	sid := sessionID(r)
+	tid := turnID(r)
+	if strings.TrimSpace(string(tid)) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TURN_ID_REQUIRED", "turnId is required", nil)
+		return
+	}
+	turn, err := c.Svc.PromoteQueuedTurn(r.Context(), sid, tid)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, PromoteTurnResponse{OK: true, SessionID: sid, TurnID: domain.TurnID(tid), PromotedTurn: turn})
+}
+
+func turnID(r *http.Request) domain.TurnID {
+	return domain.TurnID(chi.URLParam(r, "turnId"))
 }
 
 // activity records an agent activity-state signal reported by an agent hook

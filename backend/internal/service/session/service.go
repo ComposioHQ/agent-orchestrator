@@ -48,6 +48,7 @@ type commander interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	PromoteQueuedTurn(ctx context.Context, id domain.SessionID, turnID domain.TurnID) (domain.ConversationTurn, error)
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 }
@@ -456,6 +457,15 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string)
 	return toAPIError(s.manager.Send(ctx, id, message))
 }
 
+// PromoteQueuedTurn steers a queued turn into the running turn.
+func (s *Service) PromoteQueuedTurn(ctx context.Context, id domain.SessionID, turnID domain.TurnID) (domain.ConversationTurn, error) {
+	turn, err := s.manager.PromoteQueuedTurn(ctx, id, turnID)
+	if err != nil {
+		return domain.ConversationTurn{}, toAPIError(err)
+	}
+	return turn, nil
+}
+
 // Rename updates the user-facing session display name.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
 	displayName = strings.TrimSpace(displayName)
@@ -593,6 +603,14 @@ func toAPIError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, sessionmanager.ErrTurnNotFound), errors.Is(err, sessionmanager.ErrTurnSessionMismatch):
+		return apierr.NotFound("TURN_NOT_FOUND", "Unknown turn")
+	case errors.Is(err, sessionmanager.ErrTurnNotQueued):
+		return apierr.Conflict("TURN_NOT_QUEUED", "Turn is no longer queued", nil)
+	case errors.Is(err, sessionmanager.ErrNoSteerableTurn):
+		return apierr.Conflict("NO_STEERABLE_TURN", "No steerable turn is currently running", nil)
+	case errors.Is(err, sessionmanager.ErrUnsupportedContent):
+		return apierr.Invalid("UNSUPPORTED_ATTACHMENT", "Attachment content cannot be steered by this harness", nil)
 	case errors.Is(err, sessionmanager.ErrNotFound):
 		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	case errors.Is(err, sessionmanager.ErrNotRestorable):

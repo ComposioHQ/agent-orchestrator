@@ -34,6 +34,8 @@ type fakeStore struct {
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
 	sharedLog *[]string
+	turns          map[domain.TurnID]domain.ConversationTurn
+	updateTurnErr  error
 }
 
 func newFakeStore() *fakeStore {
@@ -43,6 +45,7 @@ func newFakeStore() *fakeStore {
 		projects:      map[string]domain.ProjectRecord{},
 		workspaceRepo: map[string][]domain.WorkspaceRepoRecord{},
 		worktrees:     map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		turns:         map[domain.TurnID]domain.ConversationTurn{},
 	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -130,6 +133,25 @@ func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionI
 	}
 	delete(f.worktrees, id)
 	return nil
+}
+func (f *fakeStore) GetConversationTurn(_ context.Context, id domain.TurnID) (domain.ConversationTurn, bool, error) {
+	t, ok := f.turns[id]
+	return t, ok, nil
+}
+func (f *fakeStore) UpdateConversationTurnState(_ context.Context, id domain.TurnID, expected domain.TurnState, next domain.TurnState) (bool, error) {
+	if f.updateTurnErr != nil {
+		return false, f.updateTurnErr
+	}
+	t, ok := f.turns[id]
+	if !ok {
+		return false, nil
+	}
+	if t.State != expected {
+		return false, nil
+	}
+	t.State = next
+	f.turns[id] = t
+	return true, nil
 }
 
 type fakeLCM struct {

@@ -140,6 +140,39 @@ type ActiveTurnSteerer interface {
 	SteersActiveTurn() bool
 }
 
+// SteerContentBlock is a single content block delivered when steering an
+// active turn. It mirrors the delivery_content_json blocks stored on a queued
+// turn: text plus optional image/resource payloads. Providers must reject
+// unsupported blocks instead of silently dropping them.
+type SteerContentBlock struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+	Data     string `json:"data,omitempty"` // base64
+	URI      string `json:"uri,omitempty"`
+}
+
+// ActiveTurnContentSteerer is an OPTIONAL capability that extends
+// ActiveTurnSteerer with attachment-aware steering. When a queued turn carries
+// delivery_content_json, AO decodes it into SteerContentBlocks and routes
+// through this interface so image/resource blocks are not lost. Implementations
+// must validate blocks and return ErrUnsupportedContent for any type they
+// cannot steer; callers leave the queued turn untouched on that error.
+type ActiveTurnContentSteerer interface {
+	ActiveTurnSteerer
+	SteerContent(ctx context.Context, id domain.SessionID, blocks []SteerContentBlock) error
+}
+
+// ErrUnsupportedContent is returned by ActiveTurnContentSteerer.SteerContent
+// when the provider cannot steer one or more content blocks (e.g. image where
+// only text is supported). The queued turn must remain queued.
+var ErrUnsupportedContent = errors.New("unsupported content for steering")
+
+// ErrNoSteerableTurn is returned when promotion is requested but no active
+// steer-capable turn is currently running.
+var ErrNoSteerableTurn = errors.New("no steerable turn running")
+
+
 // MetadataKeyAgentSessionID is the SessionRef.Metadata key that carries an
 // agent's native session id. It matches the json tag on
 // domain.SessionMetadata.AgentSessionID and the key the adapters read, so the
