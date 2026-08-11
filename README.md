@@ -55,9 +55,10 @@ CNAMEs and AWS-managed TLS:
 ACM certificates in `eu-north-1` terminate TLS. Both ECS services run two
 healthy replicas, `/healthz` reports deployment identity, and `/readyz` verifies
 database connectivity plus draining state. Production also exposes
-`/github/healthz`, which validates the configured App identity with GitHub and
-returns `503` when GitHub is disabled or unavailable. It is diagnostic only and
-is not an ALB target-health dependency. Their task security groups accept port
+`/github/healthz`, which validates the configured App identity, permissions, and
+events with GitHub and returns `503` when GitHub is disabled, misconfigured, or
+unavailable. It is diagnostic only and is not an ALB target-health dependency.
+Their task security groups accept port
 8080 only from the corresponding public ALB security group. CloudWatch
 deployment alarms and the operations dashboard use the public ALB target
 groups.

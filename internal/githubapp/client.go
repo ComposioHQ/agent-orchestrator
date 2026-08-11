@@ -69,8 +69,10 @@ type Installation struct {
 }
 
 type App struct {
-	ID   int64  `json:"id"`
-	Slug string `json:"slug"`
+	ID          int64             `json:"id"`
+	Slug        string            `json:"slug"`
+	Permissions map[string]string `json:"permissions"`
+	Events      []string          `json:"events"`
 }
 
 type InstallationOwner struct {
@@ -159,6 +161,16 @@ func (c *Client) Check(ctx context.Context) error {
 	}
 	if app.ID != c.appID || app.Slug != c.appSlug {
 		return errors.New("GitHub returned a different App identity")
+	}
+	if permission := app.Permissions["members"]; permission != "read" && permission != "write" {
+		return errors.New("GitHub App requires Members read permission")
+	}
+	events := make(map[string]bool, len(app.Events))
+	for _, event := range app.Events {
+		events[event] = true
+	}
+	if !events["installation"] || !events["installation_repositories"] {
+		return errors.New("GitHub App requires installation lifecycle events")
 	}
 	return nil
 }

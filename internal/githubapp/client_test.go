@@ -58,7 +58,12 @@ func TestClientUsesPKCEAndVerifiesUserInstallation(t *testing.T) {
 				len(strings.Split(strings.TrimPrefix(authorization, "Bearer "), ".")) != 3 {
 				t.Errorf("invalid GitHub App authorization: %q", authorization)
 			}
-			_, _ = w.Write([]byte(`{"id":1234,"slug":"ao-app"}`))
+			_, _ = w.Write([]byte(`{
+				"id":1234,
+				"slug":"ao-app",
+				"permissions":{"members":"read"},
+				"events":["installation","installation_repositories"]
+			}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -153,6 +158,23 @@ func TestClientUsesPKCEAndVerifiesUserInstallation(t *testing.T) {
 	)
 	if err != nil || canAdminister {
 		t.Fatalf("different personal installation owner accepted: allowed=%v err=%v", canAdminister, err)
+	}
+}
+
+func TestClientCheckRejectsIncompleteAppConfiguration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":1234,
+			"slug":"ao-app",
+			"permissions":{"metadata":"read"},
+			"events":["installation"]
+		}`))
+	}))
+	defer server.Close()
+
+	err := testClient(t, server.URL).Check(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Members read") {
+		t.Fatalf("Check() error = %v", err)
 	}
 }
 

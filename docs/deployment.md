@@ -250,8 +250,9 @@ Configure the App with organization `Members: read`; AO uses that permission to
 verify active organization-admin authority before binding an installation.
 
 `GET /github/healthz` signs an App JWT, calls GitHub's authenticated `/app`
-endpoint, and verifies both the App ID and slug. It returns `200` with
-`status: ok` only when that round trip succeeds. Staging intentionally returns
+endpoint, and verifies the App ID, slug, `Members: read` authority proof, and
+required installation lifecycle events. It returns `200` with `status: ok` only
+when that round trip succeeds. Staging intentionally returns
 `503` with `status: disabled`; production returns `503` with
 `status: unavailable` when credentials are present but GitHub cannot be
 validated. The result is cached briefly to avoid turning the diagnostic into a
