@@ -36,7 +36,7 @@ func (f *fakeDeviceStore) List() []mobilebridge.PushDevice {
 	return append([]mobilebridge.PushDevice(nil), f.devices...)
 }
 
-func (f *fakeDeviceStore) DeleteByToken(token string) error {
+func (f *fakeDeviceStore) UnregisterToken(token string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, token)

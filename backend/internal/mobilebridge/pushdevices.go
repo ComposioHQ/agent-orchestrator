@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,13 @@ func ValidPushToken(tok string) bool {
 	return expoPushTokenRE.MatchString(tok)
 }
 
+// LegacyInstallIDPrefix marks an install ID the daemon synthesized rather than
+// received from a phone: rows migrated from before install IDs existed, and
+// registrations from app builds too old to send one. It is a placeholder, not an
+// identity — the phone itself never knows this value and will announce under its
+// real install ID instead.
+const LegacyInstallIDPrefix = "legacy-"
+
 // PushDevicesPath returns the push-device registry location under the data dir
 // (~/.ao/mobile/push-devices.json), co-located with the Connect Mobile config.
 func PushDevicesPath(dataDir string) string {
@@ -107,7 +115,7 @@ func LoadRegistry(path string) (*DeviceRegistry, error) {
 			continue
 		}
 		if d.InstallID == "" {
-			d.InstallID = "legacy-" + uuid.NewString()
+			d.InstallID = LegacyInstallIDPrefix + uuid.NewString()
 			migrated = true
 		}
 		reg.devices[d.InstallID] = d
@@ -279,17 +287,38 @@ func (r *DeviceRegistry) Delete(installID string) error {
 	return r.persistLocked()
 }
 
-// DeleteByToken removes a device by push token. Used by the phone's
-// unregister-on-disconnect and by the dispatcher's dead-token pruning, neither
-// of which knows an install ID. Unknown tokens are a no-op.
-func (r *DeviceRegistry) DeleteByToken(token string) error {
+// UnregisterToken detaches a push token from whichever row holds it. Used by the
+// phone's own unregister (the user switching notifications off, or moving to
+// another daemon) and by the dispatcher's dead-token pruning — neither knows an
+// install ID. Unknown tokens are a no-op.
+//
+// A row represents a paired phone, not a push registration, so losing a token
+// must NOT delete the phone: it stays listed as "notifications off" and keeps
+// its mute state and paired-since. Only the desktop's Delete removes a row.
+//
+// The exception is a row whose install ID was synthesized (see
+// LegacyInstallIDPrefix). That ID is a placeholder standing in for an identity
+// the phone never sent, so the row has nothing left to represent once its token
+// is gone — the phone, if it is still around, announces under its real install
+// ID instead. Keeping it would strand a permanently unreachable row that no
+// announce can ever reclaim, so it is deleted.
+func (r *DeviceRegistry) UnregisterToken(token string) error {
+	if token == "" {
+		return nil
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for key, dev := range r.devices {
-		if dev.Token == token {
+		if dev.Token != token {
+			continue
+		}
+		if strings.HasPrefix(dev.InstallID, LegacyInstallIDPrefix) {
 			delete(r.devices, key)
 			return r.persistLocked()
 		}
+		dev.Token = ""
+		r.devices[key] = dev
+		return r.persistLocked()
 	}
 	return nil
 }

@@ -247,21 +247,29 @@ func TestUpsertAdoptsLegacyRowByToken(t *testing.T) {
 	}
 }
 
-func TestDeleteByTokenAndByInstallID(t *testing.T) {
+func TestUnregisterTokenAndDeleteByInstallID(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "push-devices.json")
 	reg, _ := LoadRegistry(path)
 	now := time.Now().UTC()
 	_ = reg.Upsert(PushDevice{InstallID: "i1", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now})
 	_ = reg.Upsert(PushDevice{InstallID: "i2", Token: "ExponentPushToken[b]", CreatedAt: now, LastSeenAt: now})
 
-	if err := reg.DeleteByToken("ExponentPushToken[a]"); err != nil {
-		t.Fatalf("delete by token: %v", err)
+	// The two removal doors differ on purpose: unregistering a token detaches the
+	// registration but leaves the paired phone listed, while the desktop's Delete
+	// removes the phone outright.
+	if err := reg.UnregisterToken("ExponentPushToken[a]"); err != nil {
+		t.Fatalf("unregister token: %v", err)
 	}
 	if err := reg.Delete("i2"); err != nil {
 		t.Fatalf("delete by install id: %v", err)
 	}
-	if got := reg.List(); len(got) != 0 {
-		t.Fatalf("devices = %+v, want empty", got)
+
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %+v, want only i1 surviving (tokenless)", got)
+	}
+	if got[0].InstallID != "i1" || got[0].Token != "" {
+		t.Fatalf("device = %+v, want i1 with its token cleared", got[0])
 	}
 	if err := reg.Delete("missing"); err != nil {
 		t.Fatalf("deleting unknown install id must be a no-op, got %v", err)
@@ -360,7 +368,7 @@ func TestTombstoneConsumedOnce(t *testing.T) {
 	}
 }
 
-func TestDeleteByTokenWritesNoTombstone(t *testing.T) {
+func TestUnregisterTokenWritesNoTombstone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "push-devices.json")
 	reg, err := LoadRegistry(path)
 	if err != nil {
@@ -371,7 +379,7 @@ func TestDeleteByTokenWritesNoTombstone(t *testing.T) {
 	if err := reg.Upsert(dev); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	if err := reg.DeleteByToken("ExponentPushToken[a]"); err != nil {
+	if err := reg.UnregisterToken("ExponentPushToken[a]"); err != nil {
 		t.Fatalf("delete by token: %v", err)
 	}
 	if err := reg.Upsert(dev); err != nil {
@@ -382,7 +390,7 @@ func TestDeleteByTokenWritesNoTombstone(t *testing.T) {
 		t.Fatalf("devices = %d, want 1", len(got))
 	}
 	if got[0].Muted {
-		t.Fatalf("DeleteByToken must not write a tombstone, but device came back muted: %+v", got[0])
+		t.Fatalf("UnregisterToken must not write a tombstone, but device came back muted: %+v", got[0])
 	}
 }
 
@@ -777,5 +785,134 @@ func TestNoTwoRowsEverShareAToken(t *testing.T) {
 			t.Fatalf("token %s held by both %q and %q", d.Token, prev, d.InstallID)
 		}
 		seen[d.Token] = d.InstallID
+	}
+}
+
+// Losing a push token must not unpair the phone. A row represents a paired
+// phone, so switching notifications off in the mobile app (or Expo reporting the
+// token dead) leaves the device listed as "notifications off" — keeping its
+// mute state and paired-since — instead of vanishing from the roster until it
+// happens to announce again.
+func TestUnregisterTokenKeepsThePairedRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	token := "ExponentPushToken[a]"
+
+	if err := reg.Upsert(PushDevice{
+		InstallID: "real-id", Token: token, DeviceName: "Phone",
+		CreatedAt: created, LastSeenAt: created,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.SetMuted("real-id", true); err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+	if err := reg.UnregisterToken(token); err != nil {
+		t.Fatalf("unregister: %v", err)
+	}
+
+	devices := reg.List()
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want the paired phone to survive: %+v", len(devices), devices)
+	}
+	got := devices[0]
+	if got.Token != "" {
+		t.Fatalf("Token = %q, want cleared", got.Token)
+	}
+	if got.InstallID != "real-id" || got.DeviceName != "Phone" {
+		t.Fatalf("identity lost: %+v", got)
+	}
+	if !got.Muted {
+		t.Fatalf("mute lost when the token was unregistered: %+v", got)
+	}
+	if !got.CreatedAt.Equal(created) {
+		t.Fatalf("CreatedAt = %v, want preserved %v", got.CreatedAt, created)
+	}
+}
+
+// A synthesized install ID is a placeholder, not an identity the phone knows.
+// Once its token is gone the row can never be reclaimed by any announce, so it
+// is deleted rather than stranded as a permanently unreachable tokenless row.
+func TestUnregisterTokenDropsSynthesizedRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	now := time.Now().UTC()
+	token := "ExponentPushToken[a]"
+
+	if err := reg.Upsert(PushDevice{
+		InstallID: LegacyInstallIDPrefix + "synthesized", Token: token,
+		CreatedAt: now, LastSeenAt: now,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.UnregisterToken(token); err != nil {
+		t.Fatalf("unregister: %v", err)
+	}
+	if got := reg.List(); len(got) != 0 {
+		t.Fatalf("devices = %+v, want the placeholder row dropped", got)
+	}
+}
+
+// The cleared token must survive a reload: a restart cannot resurrect a
+// registration the phone already gave up, which would resume delivery.
+func TestUnregisterTokenPersistsAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	now := time.Now().UTC()
+	token := "ExponentPushToken[a]"
+
+	_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+	_ = reg.UnregisterToken(token)
+
+	reloaded, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	devices := reloaded.List()
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want 1 after reload: %+v", len(devices), devices)
+	}
+	if devices[0].Token != "" {
+		t.Fatalf("Token = %q after reload, want it to stay cleared", devices[0].Token)
+	}
+}
+
+func TestUnregisterUnknownOrEmptyTokenIsNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	now := time.Now().UTC()
+	_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now})
+
+	if err := reg.UnregisterToken("ExponentPushToken[missing]"); err != nil {
+		t.Fatalf("unknown token: %v", err)
+	}
+	if err := reg.UnregisterToken(""); err != nil {
+		t.Fatalf("empty token: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 || got[0].Token != "ExponentPushToken[a]" {
+		t.Fatalf("an unrelated row was touched: %+v", got)
+	}
+}
+
+// Dead-token pruning goes through the same door, so a phone whose token Expo
+// reports as dead stays paired and listed rather than disappearing from the
+// desktop's roster.
+func TestDeadTokenPruningKeepsThePairedRow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	now := time.Now().UTC()
+	token := "ExponentPushToken[dead]"
+	_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, DeviceName: "Phone", CreatedAt: now, LastSeenAt: now})
+
+	// What dispatcher.prune does when Expo answers DeviceNotRegistered.
+	if err := reg.UnregisterToken(token); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	got := reg.List()
+	if len(got) != 1 || got[0].InstallID != "real-id" || got[0].Token != "" {
+		t.Fatalf("devices = %+v, want the phone still paired with no token", got)
 	}
 }

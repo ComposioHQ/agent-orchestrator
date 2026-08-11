@@ -17,7 +17,7 @@ import (
 // by *mobilebridge.DeviceRegistry.
 type PushRegistry interface {
 	Upsert(dev mobilebridge.PushDevice) error
-	DeleteByToken(token string) error
+	UnregisterToken(token string) error
 }
 
 // PushController owns the /push/devices routes: a paired phone registers (and
@@ -68,7 +68,7 @@ func (c *PushController) register(w http.ResponseWriter, r *http.Request) {
 		// a legacy id rather than rejecting the registration; Upsert's token-adoption
 		// path merges this row into the real one once that phone updates and sends a
 		// genuine install ID. Mirrors LoadRegistry's migration of pre-existing rows.
-		installID = "legacy-" + uuid.NewString()
+		installID = mobilebridge.LegacyInstallIDPrefix + uuid.NewString()
 	}
 	now := c.now()
 	dev := mobilebridge.PushDevice{
@@ -100,7 +100,7 @@ func (c *PushController) unregister(w http.ResponseWriter, r *http.Request) {
 	// chi decodes the percent-encoded token (the Expo token's [ ] brackets are
 	// URL-encoded by the client). Deleting an unknown token is a clean no-op.
 	token := chi.URLParam(r, "token")
-	if err := c.Registry.DeleteByToken(token); err != nil {
+	if err := c.Registry.UnregisterToken(token); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PUSH_UNREGISTER", err.Error(), nil)
 		return
 	}

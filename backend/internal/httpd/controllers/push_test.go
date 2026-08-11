@@ -29,7 +29,7 @@ func (f *fakePushRegistry) Upsert(dev mobilebridge.PushDevice) error {
 	return nil
 }
 
-func (f *fakePushRegistry) DeleteByToken(token string) error {
+func (f *fakePushRegistry) UnregisterToken(token string) error {
 	if f.err != nil {
 		return f.err
 	}
