@@ -14,6 +14,7 @@ function help() {
   --orchestrator-harness NAME  role-specific orchestrator harness
   --reviewer-harness NAME      expected reviewer harness
   --task TEXT                  task brief
+  --mode tui|chat              session interface (default tui)
   --ao PATH                    AO binary (AO_BIN, /tmp/ao, or PATH)
   --report PATH                write JSON evidence
   --poll-timeout-seconds N     timeout per stage (default 180)
@@ -24,8 +25,8 @@ function help() {
 }
 
 function parseArgs(argv) {
-  const o = { project: "", harness: "", orchestratorHarness: "", reviewerHarness: "", task: DEFAULT_TASK, ao: "", report: "", pollTimeoutSeconds: 180, commandTimeoutSeconds: 120, pollIntervalSeconds: 3, cleanup: false };
-  const flags = { "--project": "project", "--harness": "harness", "--orchestrator-harness": "orchestratorHarness", "--reviewer-harness": "reviewerHarness", "--task": "task", "--ao": "ao", "--report": "report", "--poll-timeout-seconds": "pollTimeoutSeconds", "--command-timeout-seconds": "commandTimeoutSeconds", "--poll-interval-seconds": "pollIntervalSeconds" };
+  const o = { project: "", harness: "", orchestratorHarness: "", reviewerHarness: "", task: DEFAULT_TASK, mode: "tui", ao: "", report: "", pollTimeoutSeconds: 180, commandTimeoutSeconds: 120, pollIntervalSeconds: 3, cleanup: false };
+  const flags = { "--project": "project", "--harness": "harness", "--orchestrator-harness": "orchestratorHarness", "--reviewer-harness": "reviewerHarness", "--task": "task", "--mode": "mode", "--ao": "ao", "--report": "report", "--poll-timeout-seconds": "pollTimeoutSeconds", "--command-timeout-seconds": "commandTimeoutSeconds", "--poll-interval-seconds": "pollIntervalSeconds" };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "-h" || argv[i] === "--help") return { ...o, help: true };
     if (argv[i] === "--cleanup") { o.cleanup = true; continue; }
@@ -34,6 +35,7 @@ function parseArgs(argv) {
     o[key] = ["pollTimeoutSeconds", "commandTimeoutSeconds", "pollIntervalSeconds"].includes(key) ? Number(argv[++i]) : argv[++i];
   }
   if (!o.project || !o.harness) throw new Error("--project and --harness are required");
+  if (o.mode !== "tui" && o.mode !== "chat") throw new Error("--mode must be tui or chat");
   if (!HARNESSES.has(o.harness)) throw new Error(`unknown harness: ${o.harness}`);
   for (const key of ["pollTimeoutSeconds", "commandTimeoutSeconds", "pollIntervalSeconds"]) if (!Number.isFinite(o[key]) || o[key] <= 0) throw new Error(`${key} must be positive`);
   return o;
@@ -81,9 +83,10 @@ async function main() {
 
   await stage("preflight", async (r) => { r.observed = { ao, version: await run(r, ["version"]), status: await run(r, ["status"], true), project: await run(r, ["project", "get", options.project, "--json"], true), harness: options.harness }; });
   if (report.failure) return finish(report, options, created, command);
-  await stage("orchestrator", async (r) => { const text = await run(r, ["spawn", "--project", options.project, "--kind", "orchestrator", "--mode", "chat", "--harness", options.orchestratorHarness || options.harness, "--name", "e2e-orchestrator", "--prompt", options.task]); const match = text.match(/spawned session ([A-Za-z0-9_-]+)/); if (!match) throw new Error(`could not parse session ID: ${text}`); created.push(match[1]); report.sessions.push({ role: "orchestrator", id: match[1], harness: options.orchestratorHarness || options.harness }); const payload = await poll(r, "orchestrator session", () => run(r, ["session", "get", match[1], "--json"], true), (x) => sessionFrom(x)?.isTerminated === false); const observedStrings = strings(payload); r.observed = { session: payload, exactTaskVisible: observedStrings.some((x) => x.includes(options.task)), promptBytesReported: text.includes("prompt "), systemPromptBytesReported: text.includes("system ") }; if (!r.observed.promptBytesReported || !r.observed.systemPromptBytesReported || !r.observed.exactTaskVisible) r.status = "unobservable"; });
+  await stage("orchestrator", async (r) => { const text = await run(r, ["spawn", "--project", options.project, "--kind", "orchestrator", "--mode", options.mode, "--harness", options.orchestratorHarness || options.harness, "--name", "e2e-orchestrator", "--prompt", options.task]); const match = text.match(/spawned session ([A-Za-z0-9_-]+)/); if (!match) throw new Error(`could not parse session ID: ${text}`); created.push(match[1]); report.sessions.push({ role: "orchestrator", id: match[1], harness: options.orchestratorHarness || options.harness, mode: options.mode }); const payload = await poll(r, "orchestrator session", () => run(r, ["session", "get", match[1], "--json"], true), (x) => sessionFrom(x)?.isTerminated === false); const observedStrings = strings(payload); r.observed = { session: payload, exactTaskVisible: observedStrings.some((x) => x.includes(options.task)), promptBytesReported: text.includes("prompt "), systemPromptBytesReported: text.includes("system "), mode: options.mode }; if (!r.observed.promptBytesReported || !r.observed.systemPromptBytesReported || !r.observed.exactTaskVisible) r.status = "unobservable"; });
   if (report.failure) return finish(report, options, created, command);
   await stage("delegation-and-worker", async (r) => { const before = await run(r, ["session", "ls", "--project", options.project, "--all", "--json"], true); const known = new Set(itemsFrom(before).map((x) => x.id)); const payload = await poll(r, "worker delegation", () => run(r, ["session", "ls", "--project", options.project, "--all", "--json"], true), (x) => itemsFrom(x).some((item) => item.kind !== "orchestrator" && !known.has(item.id) && !item.isTerminated)); const worker = itemsFrom(payload).find((x) => x.kind !== "orchestrator" && !known.has(x.id) && !x.isTerminated); created.push(worker.id); report.sessions.push({ role: "worker", id: worker.id, harness: worker.harness || options.harness }); r.observed = { worker, exactTaskVisible: false, taskEvidence: "unobservable from session CLI JSON" }; r.status = "unobservable"; });
+  if (report.failure) return finish(report, options, created, command);
   await stage("work-and-kanban", async (r) => { const worker = report.sessions.find((x) => x.role === "worker"); const payload = await run(r, ["session", "get", worker.id, "--json"], true); r.observed = { session: payload, activity: sessionFrom(payload)?.activity, status: sessionFrom(payload)?.status, fileChange: "unobservable without a worktree path in CLI JSON", kanban: "unobservable unless tracker facts are exposed in session JSON" }; r.status = "unobservable"; });
   await stage("pr-and-reviewer", async (r) => { const worker = report.sessions.find((x) => x.role === "worker"); const payload = await run(r, ["review", "ls", worker.id, "--json"], true); const latest = payload?.reviews?.[0]?.latestRun; r.observed = { reviews: payload }; if (!latest) { r.status = "unobservable"; return; } report.sessions.push({ role: "reviewer", id: latest.sessionId, reviewRunId: latest.id, harness: options.reviewerHarness || "configured-by-AO" }); });
   return finish(report, options, created, command);
