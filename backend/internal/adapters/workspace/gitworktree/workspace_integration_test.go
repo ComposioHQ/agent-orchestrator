@@ -519,6 +519,47 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersChildDefaultBranches(t *testi
 	}
 }
 
+func TestFetchDefaultBranchRefreshesRemoteTrackingRef(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	originURL := gitOutput(t, git, repo, "remote", "get-url", "origin")
+	updater := filepath.Join(tmp, "updater")
+	run(t, git, "clone", originURL, updater)
+	runGit(t, git, updater, "config", "user.email", "ao@example.com")
+	runGit(t, git, updater, "config", "user.name", "Ao Agents")
+	if err := os.WriteFile(filepath.Join(updater, "fresh.txt"), []byte("fresh\n"), 0o644); err != nil {
+		t.Fatalf("write fresh file: %v", err)
+	}
+	runGit(t, git, updater, "add", "fresh.txt")
+	runGit(t, git, updater, "commit", "-m", "fresh")
+	freshMain := gitOutput(t, git, updater, "rev-parse", "HEAD")
+	runGit(t, git, updater, "push", "origin", "main")
+
+	staleOriginMain := gitOutput(t, git, repo, "rev-parse", "refs/remotes/origin/main")
+	if staleOriginMain == freshMain {
+		t.Fatal("test setup did not leave local origin/main stale")
+	}
+	exists, err := ws.RemoteExists(context.Background(), repo, "origin")
+	if err != nil {
+		t.Fatalf("remote exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("origin remote was not detected")
+	}
+	if err := ws.FetchDefaultBranch(context.Background(), repo, "origin", "main"); err != nil {
+		t.Fatalf("fetch default branch: %v", err)
+	}
+	if got := gitOutput(t, git, repo, "rev-parse", "refs/remotes/origin/main"); got != freshMain {
+		t.Fatalf("origin/main = %s, want refreshed %s", got, freshMain)
+	}
+}
+
 func requireGit(t *testing.T) string {
 	t.Helper()
 	git, err := exec.LookPath("git")

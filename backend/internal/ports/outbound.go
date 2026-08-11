@@ -177,6 +177,14 @@ type Attacher interface {
 
 // Workspace is the isolated checkout an agent works in (a git worktree or clone).
 type Workspace interface {
+	// RemoteExists reports whether repoPath has a remote with the given name.
+	// It lets callers distinguish a qualified remote branch such as
+	// "upstream/main" from an ordinary branch name containing a slash such as
+	// "release/2026".
+	RemoteExists(ctx context.Context, repoPath, remote string) (bool, error)
+	// FetchDefaultBranch refreshes the remote-tracking ref used as the base for
+	// new session worktrees. Callers decide whether failures are fatal.
+	FetchDefaultBranch(ctx context.Context, repoPath, remote, branch string) error
 	Create(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	Destroy(ctx context.Context, info WorkspaceInfo) error
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)

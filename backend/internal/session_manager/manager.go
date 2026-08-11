@@ -520,6 +520,7 @@ const (
 	sendConfirmPollInterval    = 300 * time.Millisecond
 	sendConfirmAttemptDeadline = 2 * time.Second
 	sendConfirmMaxAttempts     = 3
+	defaultBranchFetchTimeout  = 5 * time.Second
 )
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
@@ -704,6 +705,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if branch == "" {
 		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
 	}
+	m.refreshDefaultBranchBestEffort(ctx, project)
 	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
@@ -887,6 +889,47 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 		return domain.ProjectRecord{}, nil
 	}
 	return row, nil
+}
+
+func (m *Manager) refreshDefaultBranchBestEffort(ctx context.Context, project domain.ProjectRecord) {
+	if project.Kind.WithDefault() == domain.ProjectKindScratch {
+		return
+	}
+	if strings.TrimSpace(project.Path) == "" {
+		return
+	}
+	defaultBranch := project.Config.WithDefaults().DefaultBranch
+	remote, branch := m.defaultBranchFetchTarget(ctx, project.Path, defaultBranch)
+	fetchCtx, cancel := context.WithTimeout(ctx, defaultBranchFetchTimeout)
+	defer cancel()
+	if err := m.workspace.FetchDefaultBranch(fetchCtx, project.Path, remote, branch); err != nil {
+		m.logger.Warn("spawn: default branch refresh failed; continuing with local refs",
+			"projectID", project.ID,
+			"remote", remote,
+			"branch", branch,
+			"error", err,
+		)
+	}
+}
+
+func (m *Manager) defaultBranchFetchTarget(ctx context.Context, repoPath, defaultBranch string) (remote, branch string) {
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	if defaultBranch == "" {
+		defaultBranch = domain.DefaultBranchName
+	}
+	if candidateRemote, candidateBranch, ok := strings.Cut(defaultBranch, "/"); ok && candidateRemote != "" && candidateBranch != "" {
+		exists, err := m.workspace.RemoteExists(ctx, repoPath, candidateRemote)
+		if err != nil {
+			m.logger.Warn("spawn: default branch remote probe failed; falling back to origin",
+				"remote", candidateRemote,
+				"branch", defaultBranch,
+				"error", err,
+			)
+		} else if exists {
+			return candidateRemote, candidateBranch
+		}
+	}
+	return "origin", defaultBranch
 }
 
 func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {

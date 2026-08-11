@@ -40,6 +40,14 @@ func New(opts Options) (*Workspace, error) {
 	return &Workspace{managedRoot: filepath.Clean(root)}, nil
 }
 
+func (w *Workspace) RemoteExists(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (w *Workspace) FetchDefaultBranch(context.Context, string, string, string) error {
+	return nil
+}
+
 // Create materializes a branchless scratch directory for one session.
 func (w *Workspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	path, err := w.managedPath(cfg)

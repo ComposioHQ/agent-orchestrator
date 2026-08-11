@@ -120,6 +120,37 @@ func New(opts Options) (*Workspace, error) {
 	}, nil
 }
 
+func (w *Workspace) RemoteExists(ctx context.Context, repoPath, remote string) (bool, error) {
+	repo, err := physicalAbs(repoPath)
+	if err != nil {
+		return false, fmt.Errorf("gitworktree: repo path: %w", err)
+	}
+	if strings.TrimSpace(remote) == "" {
+		return false, errors.New("gitworktree: remote is required")
+	}
+	if _, err := w.run(ctx, w.binary, remoteGetURLArgs(repo, remote)...); err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath, remote, branch string) error {
+	repo, err := physicalAbs(repoPath)
+	if err != nil {
+		return fmt.Errorf("gitworktree: repo path: %w", err)
+	}
+	if strings.TrimSpace(remote) == "" {
+		return errors.New("gitworktree: remote is required")
+	}
+	if strings.TrimSpace(branch) == "" {
+		return errors.New("gitworktree: branch is required")
+	}
+	if _, err := w.run(ctx, w.binary, fetchBranchArgs(repo, remote, branch)...); err != nil {
+		return fmt.Errorf("gitworktree: fetch %s %s: %w", remote, branch, err)
+	}
+	return nil
+}
+
 // Create adds a git worktree for the session under the managed root, checking
 // out the requested branch, and returns where it landed.
 func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {

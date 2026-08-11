@@ -86,6 +86,10 @@ func (stubAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return stubAg
 
 type stubWorkspace struct{ destroyed int }
 
+func (s *stubWorkspace) RemoteExists(context.Context, string, string) (bool, error) { return true, nil }
+func (s *stubWorkspace) FetchDefaultBranch(context.Context, string, string, string) error {
+	return nil
+}
 func (s *stubWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return ports.WorkspaceInfo{Path: "/ws/" + string(cfg.SessionID), Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }

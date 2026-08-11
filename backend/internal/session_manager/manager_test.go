@@ -650,6 +650,9 @@ type fakeWorkspace struct {
 	createErr  error
 	destroyErr error
 	destroyed  int
+	fetchErr   error
+	fetches    []fetchDefaultBranchCall
+	remotes    map[string]bool
 	// createRepoPath, when set, is returned as the RepoPath of a single-repo
 	// Create so tests can assert it survives the spawn->teardown metadata round
 	// trip (production Create resolves this path; the zero default keeps every
@@ -684,9 +687,34 @@ type fakeWorkspace struct {
 	sharedLog *[]string
 }
 
+type fetchDefaultBranchCall struct {
+	repoPath string
+	remote   string
+	branch   string
+}
+
+func (w *fakeWorkspace) RemoteExists(_ context.Context, _ string, remote string) (bool, error) {
+	if w.remotes == nil {
+		return remote == "origin", nil
+	}
+	return w.remotes[remote], nil
+}
+
+func (w *fakeWorkspace) FetchDefaultBranch(_ context.Context, repoPath, remote, branch string) error {
+	w.fetches = append(w.fetches, fetchDefaultBranchCall{repoPath: repoPath, remote: remote, branch: branch})
+	if w.sharedLog != nil {
+		*w.sharedLog = append(*w.sharedLog, "FetchDefaultBranch:"+remote+"/"+branch)
+	}
+	return w.fetchErr
+}
+
 func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	if w.createErr != nil {
 		return ports.WorkspaceInfo{}, w.createErr
+	}
+	w.calls = append(w.calls, "Create")
+	if w.sharedLog != nil {
+		*w.sharedLog = append(*w.sharedLog, "Create")
 	}
 	w.lastCfg = cfg
 	path := w.path
@@ -2981,6 +3009,71 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 	if !st.sessions[s.ID].AutoInjectReview {
 		t.Fatal("automatic review injection must default to enabled")
+	}
+}
+
+func TestSpawn_FetchesDefaultBranchBeforeCreatingWorkerWorktree(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Config: testRoleAgents()}
+	var calls []string
+	ws.sharedLog = &calls
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := ws.fetches, []fetchDefaultBranchCall{{repoPath: "/repo/mer", remote: "origin", branch: "main"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fetches = %#v, want %#v", got, want)
+	}
+	if got, want := calls[:2], []string{"FetchDefaultBranch:origin/main", "Create"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("workspace call order = %#v, want %#v", calls, want)
+	}
+}
+
+func TestSpawn_FetchesQualifiedDefaultBranchRemote(t *testing.T) {
+	m, st, _, ws := newManager()
+	cfg := testRoleAgents()
+	cfg.DefaultBranch = "upstream/main"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Config: cfg}
+	ws.remotes = map[string]bool{"origin": true, "upstream": true}
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := ws.fetches, []fetchDefaultBranchCall{{repoPath: "/repo/mer", remote: "upstream", branch: "main"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fetches = %#v, want %#v", got, want)
+	}
+}
+
+func TestSpawn_SlashDefaultBranchWithoutKnownRemoteFetchesFromOrigin(t *testing.T) {
+	m, st, _, ws := newManager()
+	cfg := testRoleAgents()
+	cfg.DefaultBranch = "release/2026"
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Config: cfg}
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := ws.fetches, []fetchDefaultBranchCall{{repoPath: "/repo/mer", remote: "origin", branch: "release/2026"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fetches = %#v, want %#v", got, want)
+	}
+}
+
+func TestSpawn_DefaultBranchFetchFailureDoesNotBlockWorkerSpawn(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Config: testRoleAgents()}
+	ws.fetchErr = errors.New("network unavailable")
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ws.fetches) != 1 {
+		t.Fatalf("fetches = %d, want 1", len(ws.fetches))
+	}
+	if ws.lastCfg.Branch != "ao/mer-1/root" {
+		t.Fatalf("created branch = %q, want ao/mer-1/root", ws.lastCfg.Branch)
 	}
 }
 

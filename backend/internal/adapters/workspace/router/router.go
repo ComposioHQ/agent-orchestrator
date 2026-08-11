@@ -43,6 +43,14 @@ func New(deps Deps) *Workspace {
 	}
 }
 
+func (w *Workspace) RemoteExists(ctx context.Context, repoPath, remote string) (bool, error) {
+	return w.git.RemoteExists(ctx, repoPath, remote)
+}
+
+func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath, remote, branch string) error {
+	return w.git.FetchDefaultBranch(ctx, repoPath, remote, branch)
+}
+
 // Create delegates session workspace creation to the project-appropriate
 // workspace adapter.
 func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
