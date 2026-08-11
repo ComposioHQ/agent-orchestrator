@@ -22,6 +22,7 @@ import { shouldKeepPolling } from "./connectionError";
 import { collectPRs } from "./prView";
 import { MOBILE_EVENTS } from "./telemetry/events";
 import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
+import { useConversationEventTransport } from "./chat/conversationEvents";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
 const POLL_INTERVAL_MS = 8000;
@@ -108,6 +109,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [errorStatus, setErrorStatus] = useState<number | null>(null);
+	// Start authenticated streaming only after the REST probe succeeds. A stale
+	// password must cost one failed request, not a poll plus a parallel SSE attempt.
+	useConversationEventTransport(connection === "open" ? config : null);
 
 	const cfgRef = useRef<ServerConfig | null>(null);
 	// Gate for the connected event: emit only on the not-open -> open transition,

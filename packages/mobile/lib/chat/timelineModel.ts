@@ -69,6 +69,14 @@ export function groupConversationByTurn(
 	return groups.sort((left, right) => left.anchor - right.anchor);
 }
 
+/** Latest-first data lets an inverted virtualized list paint the live edge first. */
+export function latestFirstConversationGroups(
+	snapshot: ConversationSnapshot,
+	items = readableConversationItems(snapshot),
+): ConversationGroup[] {
+	return groupConversationByTurn(snapshot, items).reverse();
+}
+
 export function conversationMarkers(snapshot: ConversationSnapshot): ConversationMarker[] {
 	return groupConversationByTurn(snapshot).map((group) => {
 		const human = group.items.find((item) => item.kind === "message" && item.role === "user" && item.origin === "human");

@@ -29,7 +29,8 @@ export { mergeConversationPages } from "./snapshot";
 export type { ConversationPage } from "./snapshot";
 
 const API = "/api/v1";
-export const CHAT_PAGE_SIZE = 200;
+export const CHAT_INITIAL_PAGE_SIZE = 50;
+export const CHAT_HISTORY_PAGE_SIZE = 200;
 
 export type SessionInterfaceTransition = {
 	id: string;
@@ -109,7 +110,8 @@ export async function getConversationPage(
 	sessionId: string,
 	beforeSequence?: number,
 ): Promise<ConversationPage> {
-	const query = new URLSearchParams({ limit: String(CHAT_PAGE_SIZE) });
+	const limit = beforeSequence === undefined ? CHAT_INITIAL_PAGE_SIZE : CHAT_HISTORY_PAGE_SIZE;
+	const query = new URLSearchParams({ limit: String(limit) });
 	if (beforeSequence !== undefined) query.set("beforeSequence", String(beforeSequence));
 	const res = await apiRequest(
 		cfg,
@@ -281,9 +283,8 @@ export async function closeShellTerminal(cfg: ServerConfig, handleId: string): P
  * deliberately because React Native's global fetch does not expose a streaming
  * response body consistently under Hermes.
  */
-export async function streamConversationEvents(
+export async function streamGlobalConversationEvents(
 	cfg: ServerConfig,
-	sessionId: string,
 	after: number,
 	signal: AbortSignal,
 	onEvent: (event: ConversationEvent) => void,
@@ -299,19 +300,28 @@ export async function streamConversationEvents(
 	const reader = res.body.getReader();
 	let buffer = "";
 	let cursor = after;
-	while (!signal.aborted) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		buffer += decoder.decode(value, { stream: true });
-		const split = takeSseFrames(buffer);
-		buffer = split.remainder;
-		for (const frame of split.frames) {
-			const parsed = parseSseFrame(frame);
-			if (parsed) {
-				cursor = Math.max(cursor, parsed.seq);
-				if (parsed.sessionId === sessionId) onEvent(parsed);
+	try {
+		while (!signal.aborted) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			const split = takeSseFrames(buffer);
+			buffer = split.remainder;
+			for (const frame of split.frames) {
+				const parsed = parseSseFrame(frame);
+				if (parsed) {
+					cursor = Math.max(cursor, parsed.seq);
+					onEvent(parsed);
+				}
 			}
 		}
+	} finally {
+		try {
+			await reader.cancel();
+		} catch {
+			// Aborting the native request can close the reader before cancel runs.
+		}
+		reader.releaseLock();
 	}
 	return cursor;
 }

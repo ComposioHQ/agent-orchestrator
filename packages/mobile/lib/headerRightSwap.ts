@@ -26,3 +26,17 @@ export function resetHeaderRightForSwap(
 		clearHeaderRight();
 	};
 }
+
+export function deferRouteContent(
+	onReady: () => void,
+	schedule: Schedule,
+): () => void {
+	let active = true;
+	const cancel = schedule(() => {
+		if (active) onReady();
+	});
+	return () => {
+		active = false;
+		cancel();
+	};
+}

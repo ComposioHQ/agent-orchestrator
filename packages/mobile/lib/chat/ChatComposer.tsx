@@ -3,7 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Image, Keyboard, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { haptics } from "../haptics";
 import type { Theme } from "../theme";
@@ -37,6 +37,8 @@ export function ChatComposer({
 	skills,
 	filePaths,
 	filePathsTruncated,
+	onLoadSkills,
+	onLoadFiles,
 	configOptions,
 	steerUnavailable,
 	pending,
@@ -51,6 +53,8 @@ export function ChatComposer({
 	skills: ChatSkill[];
 	filePaths: string[];
 	filePathsTruncated?: boolean;
+	onLoadSkills(): Promise<ChatSkill[]>;
+	onLoadFiles(): Promise<{ paths: string[]; truncated: boolean }>;
 	configOptions?: ChatConfigOption[];
 	steerUnavailable?: boolean;
 	pending?: boolean;
@@ -75,6 +79,7 @@ export function ChatComposer({
 	const steerEligible = canSteer && delivery === "steer" && attachments.length === 0;
 	const stopped = snapshot.controller.state === "stopped";
 	const draftKey = `ao.chat.draft.${sessionId}`;
+	const openingSuggestion = useRef<string | undefined>(undefined);
 
 	useEffect(() => { let mounted = true; void AsyncStorage.getItem(draftKey).then((value) => { if (mounted && value) setText((current) => current || value); }); return () => { mounted = false; }; }, [draftKey]);
 	useEffect(() => { const timer = setTimeout(() => void (text ? AsyncStorage.setItem(draftKey, text) : AsyncStorage.removeItem(draftKey)), 250); return () => clearTimeout(timer); }, [draftKey, text]);
@@ -154,22 +159,29 @@ export function ChatComposer({
 	const providerModel = configOptions?.find((option) => option.category === "model" || option.id === "model" || option.id === "agent");
 	const providerModelLabel = providerModel?.type === "select" ? providerModel.choices.find((choice) => choice.value === providerModel.currentValue)?.name ?? providerModel.currentValue : undefined;
 	const selectedModel = snapshot.modelReroute?.toModel || providerModelLabel || snapshot.settings.model;
-	const openPicker = useCallback((kind: "skills" | "files", activeTrigger?: ComposerSuggestion) => {
-		const choices = kind === "skills" ? rankComposerSkills(skills, activeTrigger?.query ?? "") : rankComposerFiles(filePaths, activeTrigger?.query ?? "");
-		router.push(chatSheetRoute({ kind: "composer-picker", pickerKind: kind, choices, truncated: kind === "files" ? filePathsTruncated : undefined, onSelect: (value) => {
+	const openPicker = useCallback(async (kind: "skills" | "files", activeTrigger?: ComposerSuggestion) => {
+		const loadedSkills = kind === "skills" ? await onLoadSkills() : skills;
+		const loadedFiles = kind === "files" ? await onLoadFiles() : { paths: filePaths, truncated: Boolean(filePathsTruncated) };
+		const choices = kind === "skills" ? rankComposerSkills(loadedSkills, activeTrigger?.query ?? "") : rankComposerFiles(loadedFiles.paths, activeTrigger?.query ?? "");
+		router.push(chatSheetRoute({ kind: "composer-picker", pickerKind: kind, choices, truncated: kind === "files" ? loadedFiles.truncated : undefined, onSelect: (value) => {
 			setText((old) => {
 				const next = activeTrigger ? replaceComposerSuggestion(old, activeTrigger, value) : `${old}${old && !/\s$/.test(old) ? " " : ""}${kind === "skills" ? `/${value}` : (/\s/.test(value) ? `"${value}"` : value)} `;
 				setCursor(next.length);
 				return next;
 			});
 		} }));
-	}, [filePaths, filePathsTruncated, router, skills]);
+	}, [filePaths, filePathsTruncated, onLoadFiles, onLoadSkills, router, skills]);
 	useEffect(() => {
 		const suggestion = findComposerSuggestion(text, cursor);
-		if (suggestion && (suggestion.kind === "skills" ? skills.length > 0 : filePaths.length > 0)) {
-			openPicker(suggestion.kind, suggestion);
+		if (!suggestion) {
+			openingSuggestion.current = undefined;
+			return;
 		}
-	}, [cursor, filePaths.length, openPicker, skills.length, text]);
+		const key = `${suggestion.kind}:${suggestion.start}:${suggestion.query}`;
+		if (openingSuggestion.current === key) return;
+		openingSuggestion.current = key;
+		void openPicker(suggestion.kind, suggestion);
+	}, [cursor, openPicker, text]);
 	return (
 		<View style={styles.dock}>
 			{voice.state === "starting" || voice.state === "recording" ? <View style={styles.voice}><Feather name="mic" size={12} color={t.red} /><Text style={styles.voiceText}>{voice.partial || (voice.state === "starting" ? "Keep holding…" : "Listening…")}</Text></View> : null}
@@ -182,7 +194,7 @@ export function ChatComposer({
 					value={text}
 					onChangeText={setText}
 					onSelectionChange={(event) => setCursor(event.nativeEvent.selection.start)}
-					placeholder={stopped ? "Agent is stopped" : active ? (steerEligible ? "Agent is working — this goes into its running turn" : "Agent is working — this sends when it finishes") : skills.length ? "Ask the agent…  / for skills, @ for files" : "Ask the agent…  @ for files"}
+					placeholder={stopped ? "Agent is stopped" : active ? (steerEligible ? "Agent is working — this goes into its running turn" : "Agent is working — this sends when it finishes") : "Ask the agent…  / for skills, @ for files"}
 					placeholderTextColor={t.textFaint}
 					style={styles.input}
 					multiline
@@ -192,8 +204,8 @@ export function ChatComposer({
 				<View style={styles.controls}>
 					<IconButton icon="paperclip" label="Attach image" onPress={addImage} disabled={stopped} />
 					{canEmbedFiles ? <IconButton icon="file-plus" label="Attach text file" onPress={addFile} disabled={stopped} /> : null}
-					{skills.length ? <IconButton icon="command" label="Skills" onPress={() => openPicker("skills")} disabled={stopped} /> : null}
-					{filePaths.length ? <IconButton icon="at-sign" label="Worktree files" onPress={() => openPicker("files")} disabled={stopped} /> : null}
+					<IconButton icon="command" label="Skills" onPress={() => { void openPicker("skills"); }} disabled={stopped} />
+					<IconButton icon="at-sign" label="Worktree files" onPress={() => { void openPicker("files"); }} disabled={stopped} />
 					<Pressable accessibilityRole="button" accessibilityLabel="Turn settings" onPress={() => { haptics.tap(); onOpenSettings(); }} style={styles.settingLabel}><Feather name="cpu" size={13} color={t.textTertiary} /><Text numberOfLines={1} style={styles.settingText}>{selectedModel || "Default"}</Text></Pressable>
 					<View style={{ flex: 1 }} />
 					<MicKey state={voice.state} mode={voice.mode} onPressIn={voice.pressIn} onPressOut={voice.pressOut} />

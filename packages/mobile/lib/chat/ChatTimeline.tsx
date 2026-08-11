@@ -42,7 +42,7 @@ import {
 	activityStartsExpanded,
 	canRollbackTurn,
 	countActivityNodes,
-	groupConversationByTurn,
+	latestFirstConversationGroups,
 	readableConversationItems,
 	type ActivityNode,
 	type ConversationGroup,
@@ -52,7 +52,7 @@ type TimelineRow =
 	| { kind: "single"; key: string; items: [ConversationItem] }
 	| { kind: "activities"; key: string; items: ConversationActivity[] };
 
-export function ChatTimeline({
+export const ChatTimeline = memo(function ChatTimeline({
 	snapshot,
 	loadingOlder,
 	onLoadOlder,
@@ -83,15 +83,15 @@ export function ChatTimeline({
 	// Usage is snapshot state, not conversation. Reasoning stays available in the
 	// durable record but hidden on mobile: prose and work are the primary surface.
 	const items = useMemo(() => readableConversationItems(snapshot), [snapshot]);
-	const groups = useMemo(() => groupConversationByTurn(snapshot, items), [items, snapshot.turns]);
+	const groups = useMemo(() => latestFirstConversationGroups(snapshot, items), [items, snapshot.turns]);
 
 	useEffect(() => {
 		if (jumpToSequence === undefined) return;
 		const index = groups.findIndex((group) => group.anchor === jumpToSequence);
 		if (index >= 0) {
-			followsTail.current = index === groups.length - 1;
+			followsTail.current = index === 0;
 			setShowJump(!followsTail.current);
-			requestAnimationFrame(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.18 }));
+			requestAnimationFrame(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.82 }));
 		}
 		onJumpHandled?.();
 	}, [groups, jumpToSequence, onJumpHandled]);
@@ -101,28 +101,30 @@ export function ChatTimeline({
 			<FlatList<ConversationGroup>
 				ref={listRef}
 				data={groups}
+				inverted
 				keyExtractor={(group) => group.key}
 				style={styles.list}
 				contentContainerStyle={styles.content}
 				keyboardShouldPersistTaps="handled"
-				initialNumToRender={28}
-				maxToRenderPerBatch={24}
-				windowSize={9}
+				initialNumToRender={4}
+				maxToRenderPerBatch={4}
+				updateCellsBatchingPeriod={32}
+				windowSize={5}
 				maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
 				onScroll={(event) => {
-					const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-					followsTail.current = contentSize.height - layoutMeasurement.height - contentOffset.y < 120;
+					const { contentOffset } = event.nativeEvent;
+					followsTail.current = Math.abs(contentOffset.y) < 120;
 					setShowJump(!followsTail.current);
 				}}
 				scrollEventThrottle={100}
 				onContentSizeChange={() => {
-					if (followsTail.current) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+					if (followsTail.current) requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: false }));
 				}}
 				onScrollToIndexFailed={({ index, averageItemLength }) => {
 					listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true });
-					setTimeout(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.18 }), 120);
+					setTimeout(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.82 }), 120);
 				}}
-				ListHeaderComponent={
+				ListFooterComponent={
 					snapshot.hasMoreBefore ? (
 						<Pressable
 							accessibilityRole="button"
@@ -146,10 +148,10 @@ export function ChatTimeline({
 					onRollback={onRollback}
 				/>}
 			/>
-			{showJump ? <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => { haptics.tap(); followsTail.current = true; setShowJump(false); listRef.current?.scrollToEnd({ animated: true }); }} style={styles.jump}><Feather name="arrow-down" size={14} color={jumpToLatestColors(t).foregroundColor} /><Text style={styles.jumpText}>Latest</Text></Pressable> : null}
+			{showJump ? <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => { haptics.tap(); followsTail.current = true; setShowJump(false); listRef.current?.scrollToOffset({ offset: 0, animated: true }); }} style={styles.jump}><Feather name="arrow-down" size={14} color={jumpToLatestColors(t).foregroundColor} /><Text style={styles.jumpText}>Latest</Text></Pressable> : null}
 		</View>
 	);
-}
+});
 
 function ConversationTurnGroup({ group, snapshot, approvalPending, inputPending, onDecide, onResolveInput, onRollback }: {
 	group: ConversationGroup;

@@ -4,9 +4,12 @@ vi.mock("@react-native-async-storage/async-storage", () => ({ default: { getItem
 vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn() }));
 vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 
+import { fetch as expoFetch } from "expo/fetch";
 import { ApiError, apiRequest, delegateTask, getAgentModels, getPreview, getSessions, getSettings, launchOrchestrator, mobileReachablePreviewURL, restoreSession, resumeSessionAgent, spawnSession } from "./api";
-import { getConversationPage, getWorkspacePaths } from "./chat/api";
+import * as chatApi from "./chat/api";
 import type { ServerConfig } from "./config";
+
+const { getConversationPage, getWorkspacePaths } = chatApi;
 
 const cfg: ServerConfig = { host: "ao.test", httpPort: "3011", muxPort: "3011", secure: false, password: "secret12" };
 
@@ -136,6 +139,49 @@ describe("mobile Chat API boundaries", () => {
 		expect(page.controller).toEqual({ state: "busy" });
 		expect(page.capabilities).toEqual(["config_options", "steer"]);
 		expect(page.items[0]).toMatchObject({ activityKind: "approval", requestId: "req-1", decisions: [{ id: "accept", label: "accept" }], detail: { output: { text: "legacy" } } });
+	});
+
+	it("keeps the first Chat payload small while allowing larger history pages", async () => {
+		const wire = {
+			conversationId: "c-1", sessionId: "w-1", harness: "codex", mode: "chat", controller: "idle",
+			latestSequence: 0, oldestSequence: 0, hasMoreBefore: false, settings: {}, turns: [], messages: [], activities: [],
+		};
+		vi.mocked(fetch)
+			.mockResolvedValueOnce(response(wire))
+			.mockResolvedValueOnce(response(wire));
+
+		await getConversationPage(cfg, "w-1");
+		await getConversationPage(cfg, "w-1", 100);
+
+		expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([
+			"http://ao.test:3011/api/v1/sessions/w-1/conversation?limit=50",
+			"http://ao.test:3011/api/v1/sessions/w-1/conversation?limit=200&beforeSequence=100",
+		]);
+	});
+
+	it("delivers the global event stream without filtering out other sessions", async () => {
+		vi.mocked(expoFetch).mockResolvedValue(new Response([
+			'id: 1\ndata: {"seq":1,"projectId":"p-1","sessionId":"w-1","type":"session_updated","payload":{"conversationId":"c-1"},"createdAt":"2026-08-11"}\n\n',
+			'id: 2\ndata: {"seq":2,"projectId":"p-1","sessionId":"w-2","type":"session_updated","payload":{"conversationId":"c-2"},"createdAt":"2026-08-11"}\n\n',
+		].join("")) as unknown as Awaited<ReturnType<typeof expoFetch>>);
+		const streamGlobalEvents = (
+			chatApi as unknown as {
+				streamGlobalConversationEvents?: (
+					cfg: ServerConfig,
+					after: number,
+					signal: AbortSignal,
+					onEvent: (event: { sessionId?: string }) => void,
+				) => Promise<number>;
+			}
+		).streamGlobalConversationEvents;
+		const sessions: string[] = [];
+
+		const cursor = await streamGlobalEvents?.(cfg, 0, new AbortController().signal, (event) => {
+			if (event.sessionId) sessions.push(event.sessionId);
+		});
+
+		expect(sessions).toEqual(["w-1", "w-2"]);
+		expect(cursor).toBe(2);
 	});
 });
 

@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import { useNavigation, useRouter } from "expo-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
+	InteractionManager,
 	Keyboard,
 	KeyboardAvoidingView,
 	LayoutAnimation,
@@ -19,7 +20,7 @@ import {
 import { restoreSession, resumeSessionAgent, type DashboardSession, type OrchestratorLink } from "../api";
 import { haptics } from "../haptics";
 import { headerActionStyle } from "../headerAction";
-import { resetHeaderRightForSwap } from "../headerRightSwap";
+import { deferRouteContent, resetHeaderRightForSwap } from "../headerRightSwap";
 import { useApp } from "../store";
 import {
 	mobileInterfaceTransitionIsActive,
@@ -48,6 +49,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const navigation = useNavigation();
 	const router = useRouter();
 	const [headerRightReady, setHeaderRightReady] = useState(false);
+	const [contentReadySessionId, setContentReadySessionId] = useState<string>();
 	useLayoutEffect(
 		() => resetHeaderRightForSwap(
 			() => navigation.setOptions({ headerRight: undefined }),
@@ -55,13 +57,22 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 		),
 		[navigation],
 	);
+	useEffect(() => deferRouteContent(
+		() => setContentReadySessionId(session.id),
+		(callback) => {
+			const task = InteractionManager.runAfterInteractions(callback);
+			return () => task.cancel();
+		},
+	), [session.id]);
 	const { config, refresh: refreshBoard, setActiveProject } = useApp();
 	const conversation = useMobileConversation(config, session.id);
 	const interfaceSwitch = useInterfaceTransition(config, session.id, refreshBoard);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [jumpToSequence, setJumpToSequence] = useState<number>();
+	const clearJumpToSequence = useCallback(() => setJumpToSequence(undefined), []);
 	const [filePaths, setFilePaths] = useState<string[]>([]);
 	const [filePathsTruncated, setFilePathsTruncated] = useState(false);
+	const filePathsRequest = useRef<Promise<{ paths: string[]; truncated: boolean }> | null>(null);
 	const [openingShell, setOpeningShell] = useState(false);
 	const [resuming, setResuming] = useState(false);
 	const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -116,14 +127,36 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 		});
 	}, [headerRightReady, navigation, title, styles, t]);
 
-	useEffect(() => {
-		if (!config || !conversation.snapshot) return;
-		let cancelled = false;
-		const load = () => void getWorkspacePaths(config, session.id).then((result) => { if (!cancelled) { setFilePaths(result.paths); setFilePathsTruncated(result.truncated); } }).catch(() => {});
-		load();
-		const poll = setInterval(load, 30_000);
-		return () => { cancelled = true; clearInterval(poll); };
-	}, [config, session.id, conversation.snapshot?.conversationId]);
+	const loadWorkspaceFiles = useCallback(async () => {
+		if (!config || !conversation.snapshot) return { paths: filePaths, truncated: filePathsTruncated };
+		if (filePathsRequest.current) return filePathsRequest.current;
+		const request = getWorkspacePaths(config, session.id)
+			.then((result) => {
+				setFilePaths(result.paths);
+				setFilePathsTruncated(result.truncated);
+				return result;
+			})
+			.catch(() => ({ paths: filePaths, truncated: filePathsTruncated }))
+			.finally(() => { filePathsRequest.current = null; });
+		filePathsRequest.current = request;
+		return request;
+	}, [config, conversation.snapshot, filePaths, filePathsTruncated, session.id]);
+
+	const openTurnSettings = useCallback(async () => {
+		const current = conversation.snapshot;
+		if (!current) return;
+		const catalog = await conversation.loadTurnOptions();
+		router.push(chatSheetRoute({
+			kind: "turn-settings",
+			snapshot: current,
+			models: catalog.models,
+			options: catalog.configOptions,
+			disabled: current.controller.state === "stopped" || conversation.pendingActions.includes("settings") || conversation.pendingActions.includes("config"),
+			error: conversation.actionErrors.settings ?? conversation.actionErrors.config,
+			onSettings: (settings) => void conversation.chooseSettings(settings).catch(() => {}),
+			onOption: (id, value) => void conversation.setConfigOption(id, value).catch(() => {}),
+		}));
+	}, [conversation, router]);
 
 	const openShell = useCallback(async () => {
 		if (!config || openingShell) return;
@@ -188,6 +221,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	if (conversation.loading && !conversation.snapshot) return <Centered icon="message-square" title="Loading conversation…" spinning />;
 	if (conversation.unavailable) return <Unavailable message={conversation.unavailable.message} onShell={() => void openShell()} openingShell={openingShell} />;
 	if (!conversation.snapshot) return <Centered icon="alert-triangle" title="Could not load conversation" message={conversation.error || "The daemon did not return a conversation."} action="Retry" onAction={() => void conversation.refresh()} />;
+	if (contentReadySessionId !== session.id) return <Centered icon="message-square" title="Preparing conversation…" spinning />;
 
 	const snapshot = conversation.snapshot;
 	const active = snapshot.turns.some((turn) => turn.state === "running" || turn.state === "queued");
@@ -195,7 +229,6 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const brokenServers = brokenMcpServers(snapshot);
 	const rolledBack = snapshot.turns.filter((turn) => turn.rolledBack).length;
 	const quota = quotaWarning(snapshot.rateLimits);
-	const markers = conversationMarkers(snapshot);
 	const compactSupported = can(snapshot, "compaction") && !conversationActionUnsupported("compact", conversation.actionCodes.compact);
 	const mcpReloadSupported = can(snapshot, "mcp_reload") && !conversationActionUnsupported("mcp", conversation.actionCodes.mcp);
 	const steerUnsupported = conversationActionUnsupported("steer", conversation.actionCodes.steer);
@@ -248,14 +281,14 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			<ChatTimeline
 				snapshot={snapshot}
 				loadingOlder={conversation.loadingOlder}
-				onLoadOlder={() => void conversation.loadOlder()}
+				onLoadOlder={conversation.loadOlder}
 				approvalPending={conversation.pendingActions.includes("approval")}
 				inputPending={conversation.pendingActions.includes("input")}
 				onDecide={conversation.resolveApproval}
 				onResolveInput={conversation.resolveInput}
 				onRollback={conversation.rollback}
 				jumpToSequence={jumpToSequence}
-				onJumpHandled={() => setJumpToSequence(undefined)}
+				onJumpHandled={clearJumpToSequence}
 			/>
 			{activeTurn ? <LiveTurnBar snapshot={snapshot} startedAt={activeTurn.startedAt ?? activeTurn.requestedAt} stopping={conversation.pendingActions.includes("interrupt")} onInterrupt={() => void conversation.interrupt().catch(() => {})} /> : null}
 			<ChatComposer
@@ -264,6 +297,8 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				skills={conversation.skills}
 				filePaths={filePaths}
 				filePathsTruncated={filePathsTruncated}
+				onLoadSkills={conversation.loadSkills}
+				onLoadFiles={loadWorkspaceFiles}
 				configOptions={conversation.configOptions}
 				steerUnavailable={steerUnsupported}
 				pending={interfaceTransitionActive || conversation.pendingSends.some((item) => item.state === "sending")}
@@ -271,7 +306,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				onSend={conversation.send}
 				onSteer={conversation.steer}
 				onInterrupt={() => void conversation.interrupt().catch(() => {})}
-				onOpenSettings={() => router.push(chatSheetRoute({ kind: "turn-settings", snapshot, models: conversation.models, options: conversation.configOptions, disabled: snapshot.controller.state === "stopped" || conversation.pendingActions.includes("settings") || conversation.pendingActions.includes("config"), error: conversation.actionErrors.settings ?? conversation.actionErrors.config, onSettings: (settings) => void conversation.chooseSettings(settings).catch(() => {}), onOption: (id, value) => void conversation.setConfigOption(id, value).catch(() => {}) }))}
+				onOpenSettings={() => void openTurnSettings()}
 			/>
 			<ConversationMenu
 				visible={menuOpen}
@@ -285,11 +320,11 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				interfaceSupported={Boolean(interfaceSwitch.status?.supported)}
 				interfaceReason={interfaceSwitch.status?.reason || interfaceSwitch.error}
 				interfaceSwitching={interfaceTransitionActive || interfaceSwitch.starting}
-				onMap={() => { setMenuOpen(false); router.push(chatSheetRoute({ kind: "conversation-map", markers, onSelect: setJumpToSequence })); }}
+				onMap={() => { setMenuOpen(false); router.push(chatSheetRoute({ kind: "conversation-map", markers: conversationMarkers(snapshot), onSelect: setJumpToSequence })); }}
 				onOpenShell={() => void openShell()}
 				onPreview={() => { setMenuOpen(false); router.push({ pathname: "/preview/[id]", params: { id: session.id, title, previewUrl: "previewUrl" in session ? session.previewUrl ?? undefined : undefined } }); }}
 				onPullRequests={() => { setMenuOpen(false); setActiveProject(session.projectId); router.push("/(tabs)/prs"); }}
-				onSettings={() => { setMenuOpen(false); router.push(chatSheetRoute({ kind: "turn-settings", snapshot, models: conversation.models, options: conversation.configOptions, disabled: snapshot.controller.state === "stopped" || conversation.pendingActions.includes("settings") || conversation.pendingActions.includes("config"), error: conversation.actionErrors.settings ?? conversation.actionErrors.config, onSettings: (settings) => void conversation.chooseSettings(settings).catch(() => {}), onOption: (id, value) => void conversation.setConfigOption(id, value).catch(() => {}) })); }}
+				onSettings={() => { setMenuOpen(false); void openTurnSettings(); }}
 				onSwitchInterface={requestInterfaceSwitch}
 				onCompact={() => { setMenuOpen(false); void conversation.compact().catch(() => {}); }}
 				onReload={() => { setMenuOpen(false); void conversation.reloadMcp().catch(() => {}); }}
