@@ -973,12 +973,23 @@ func (c *SessionsController) setAutoInjectCIPolicy(w http.ResponseWriter, r *htt
 		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/auto-inject-ci")
 		return
 	}
-	var in SetSessionAutoInjectCIRequest
+	// Decode through a pointer so an omitted required field remains distinct
+	// from the valid explicit value {"autoInjectCI":false}. The public request
+	// DTO stays non-pointer so the generated OpenAPI schema remains a required,
+	// non-nullable boolean.
+	var in struct {
+		AutoInjectCI *bool `json:"autoInjectCI"`
+	}
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	sess, err := c.Svc.SetAutoInjectCI(r.Context(), sessionID(r), in.AutoInjectCI)
+	if in.AutoInjectCI == nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "AUTO_INJECT_CI_REQUIRED", "autoInjectCI is required", nil)
+		return
+	}
+	autoInjectCI := *in.AutoInjectCI
+	sess, err := c.Svc.SetAutoInjectCI(r.Context(), sessionID(r), autoInjectCI)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -986,7 +997,7 @@ func (c *SessionsController) setAutoInjectCIPolicy(w http.ResponseWriter, r *htt
 	envelope.WriteJSON(w, http.StatusOK, SetSessionAutoInjectCIResponse{
 		OK:           true,
 		SessionID:    sessionID(r),
-		AutoInjectCI: in.AutoInjectCI,
+		AutoInjectCI: autoInjectCI,
 		Session:      sessionView(sess),
 	})
 }

@@ -32,30 +32,30 @@ import (
 )
 
 type fakeSessionService struct {
-	sessions         map[domain.SessionID]domain.Session
-	sent             string
-	sentAttachment   *ports.SpawnAttachment
-	delegationInput  sessionsvc.DelegateTaskInput
-	delegationErr    error
-	cleanupProjects  []domain.ProjectID
-	cleanupResult    []domain.SessionID
-	cleanupSkipped   []sessionsvc.CleanupSkipped
-	workspaceFiles   sessionsvc.WorkspaceFiles
-	workspaceFile    sessionsvc.WorkspaceFileDetail
-	workspacePaths   []string
-	spawnErr         error
-	orchestratorMode domain.SessionMode
-	claimErr         error
-	listPRErr        error
-	workspaceErr     error
-	staged           []ports.SpawnAttachment
-	stagedPaths      []string
-	stageErr         error
-	agentSwitches    map[domain.AgentSwitchID]domain.AgentSwitch
-	switchConfig     sessionsvc.SwitchAgentInput
-	switchErr        error
-	handoff          json.RawMessage
-	handoffSource    domain.AgentGenerationID
+	sessions            map[domain.SessionID]domain.Session
+	sent                string
+	sentAttachment      *ports.SpawnAttachment
+	delegationInput     sessionsvc.DelegateTaskInput
+	delegationErr       error
+	cleanupProjects     []domain.ProjectID
+	cleanupResult       []domain.SessionID
+	cleanupSkipped      []sessionsvc.CleanupSkipped
+	workspaceFiles      sessionsvc.WorkspaceFiles
+	workspaceFile       sessionsvc.WorkspaceFileDetail
+	workspacePaths      []string
+	spawnErr            error
+	orchestratorMode    domain.SessionMode
+	claimErr            error
+	listPRErr           error
+	workspaceErr        error
+	staged              []ports.SpawnAttachment
+	stagedPaths         []string
+	stageErr            error
+	agentSwitches       map[domain.AgentSwitchID]domain.AgentSwitch
+	switchConfig        sessionsvc.SwitchAgentInput
+	switchErr           error
+	handoff             json.RawMessage
+	handoffSource       domain.AgentGenerationID
 	autoInjectCISession domain.SessionID
 	autoInjectCIEnabled bool
 }
@@ -942,10 +942,23 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 }
 
 func TestSessionsAPI_SetAutoInjectCIValidatesBody(t *testing.T) {
-	srv := newSessionTestServer(t, newFakeSessionService())
-	body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1/auto-inject-ci", `{`)
-	if status != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", status, body)
+	for _, tt := range []struct {
+		name     string
+		body     string
+		wantCode string
+	}{
+		{name: "malformed JSON", body: `{`, wantCode: "INVALID_JSON"},
+		{name: "missing autoInjectCI", body: `{}`, wantCode: "AUTO_INJECT_CI_REQUIRED"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			srv := newSessionTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1/auto-inject-ci", tt.body)
+			assertErrorCode(t, body, status, http.StatusBadRequest, tt.wantCode)
+			if svc.autoInjectCISession != "" {
+				t.Fatalf("SetAutoInjectCI called for invalid body with session %q", svc.autoInjectCISession)
+			}
+		})
 	}
 }
 

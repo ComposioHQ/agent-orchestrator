@@ -29,6 +29,10 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
     OR OLD.session_mode <> NEW.session_mode
     OR OLD.auto_inject_review <> NEW.auto_inject_review
+    OR OLD.harness <> NEW.harness
+    OR OLD.runtime_launch_id <> NEW.runtime_launch_id
+    OR OLD.agent_session_id <> NEW.agent_session_id
+    OR OLD.native_transcript_path <> NEW.native_transcript_path
     OR OLD.auto_inject_ci <> NEW.auto_inject_ci
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
@@ -67,6 +71,10 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
     OR OLD.session_mode <> NEW.session_mode
     OR OLD.auto_inject_review <> NEW.auto_inject_review
+    OR OLD.harness <> NEW.harness
+    OR OLD.runtime_launch_id <> NEW.runtime_launch_id
+    OR OLD.agent_session_id <> NEW.agent_session_id
+    OR OLD.native_transcript_path <> NEW.native_transcript_path
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
