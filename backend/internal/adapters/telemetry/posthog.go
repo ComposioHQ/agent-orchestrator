@@ -223,6 +223,12 @@ type PostHogSink struct {
 	ch         chan ports.TelemetryEvent
 	wg         sync.WaitGroup
 	closeOnce  sync.Once
+	// ctx bounds every in-flight send and its retry backoff. Close cancels it
+	// when the caller's shutdown context is done, so pending retry work stops
+	// promptly instead of outliving shutdown on an uncancellable sleep or a
+	// long HTTP timeout.
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
@@ -240,6 +246,7 @@ func NewPostHogSink(dataDir, apiKey, host, appVersion, defaultAgent string, clie
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &PostHogSink{
 		apiKey:       apiKey,
 		host:         strings.TrimRight(host, "/"),
@@ -250,6 +257,8 @@ func NewPostHogSink(dataDir, apiKey, host, appVersion, defaultAgent string, clie
 		log:          telemetryLogger(log),
 		appVersion:   strings.TrimSpace(appVersion),
 		ch:           make(chan ports.TelemetryEvent, postHogBufferSize),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -275,8 +284,14 @@ func (s *PostHogSink) Close(ctx context.Context) error {
 	}()
 	select {
 	case <-ctx.Done():
+		// The caller's shutdown deadline elapsed: cancel in-flight sends and
+		// their retry backoff so the drain goroutine exits promptly rather than
+		// blocking on a sleep or a long HTTP timeout.
+		s.cancel()
+		<-done
 		return ctx.Err()
 	case <-done:
+		s.cancel()
 		return nil
 	}
 }
@@ -284,7 +299,7 @@ func (s *PostHogSink) Close(ctx context.Context) error {
 func (s *PostHogSink) loop() {
 	defer s.wg.Done()
 	for ev := range s.ch {
-		s.send(ev)
+		s.send(s.ctx, ev)
 	}
 }
 
@@ -300,12 +315,20 @@ const (
 	postHogSendRetryDelay  = 200 * time.Millisecond
 )
 
-func (s *PostHogSink) send(ev ports.TelemetryEvent) {
+func (s *PostHogSink) send(ctx context.Context, ev ports.TelemetryEvent) {
 	eventName := remoteEventName(ev.Name)
+	// A stable per-event UUID, reused across every attempt, is PostHog's
+	// idempotency key. A transport error only means AO received no response;
+	// PostHog may already have ingested the first attempt, so without a shared
+	// UUID a retry would land as a duplicate (inflating counts and the billed
+	// volume, breaking the "retries add no volume" guarantee). PostHog dedupes
+	// events that carry the same uuid.
+	eventUUID := uuid.NewString()
 	body := map[string]any{
 		"api_key":     s.apiKey,
 		"event":       eventName,
 		"distinct_id": s.distinctID,
+		"uuid":        eventUUID,
 		"properties":  s.properties(ev),
 		"timestamp":   ev.OccurredAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -316,7 +339,7 @@ func (s *PostHogSink) send(ev ports.TelemetryEvent) {
 	}
 
 	for attempt := 1; attempt <= postHogSendMaxAttempts; attempt++ {
-		retryable, err := s.sendOnce(payload)
+		retryable, err := s.sendOnce(ctx, payload)
 		if err == nil {
 			return
 		}
@@ -324,7 +347,15 @@ func (s *PostHogSink) send(ev ports.TelemetryEvent) {
 			s.log.Warn("telemetry posthog export failed", "name", ev.Name, "attempts", attempt, "error", err)
 			return
 		}
-		time.Sleep(postHogSendRetryDelay)
+		// Cancellable backoff: shutdown must be able to stop pending retry work
+		// instead of waiting out the full delay.
+		timer := time.NewTimer(postHogSendRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 }
 
@@ -333,8 +364,8 @@ func (s *PostHogSink) send(ev ports.TelemetryEvent) {
 // 5xx); a permanent rejection (any other non-2xx, e.g. a 4xx auth/shape error)
 // returns retryable=false so a retry does not waste a call that will fail
 // identically.
-func (s *PostHogSink) sendOnce(payload []byte) (retryable bool, err error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, s.host+"/capture/", bytes.NewReader(payload))
+func (s *PostHogSink) sendOnce(ctx context.Context, payload []byte) (retryable bool, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.host+"/capture/", bytes.NewReader(payload))
 	if err != nil {
 		return false, fmt.Errorf("build request: %w", err)
 	}
