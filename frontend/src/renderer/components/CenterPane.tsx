@@ -25,7 +25,6 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
-import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -592,7 +591,6 @@ function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: Ses
 					</span>
 				) : null}
 			</button>
-			{session ? <TerminalSwitchAgentButton key={session.id} session={session} /> : null}
 		</span>
 	);
 }

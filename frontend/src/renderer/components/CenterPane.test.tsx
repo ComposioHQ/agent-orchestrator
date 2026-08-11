@@ -38,14 +38,6 @@ vi.mock("../hooks/useSwitchAgent", () => ({
 	useSwitchAgentState: () => agentSwitchMocks.mutation,
 }));
 
-vi.mock("./TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: ({ session }: { session: WorkspaceSession }) => (
-		<button aria-label="Switch agent" data-testid="terminal-switch-agent" type="button">
-			{session.provider}
-		</button>
-	),
-}));
-
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
@@ -261,7 +253,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByRole("button", { name: `Close terminal ${shell.title}` })).toBeInTheDocument();
 		expect(mainTab.querySelector('[title="Working"]')).toHaveClass("self-center");
 		expect(mainTab.querySelector('[title="Working"]')).not.toHaveClass("-translate-y-px");
-		expect(within(mainContainer as HTMLElement).getByTestId("terminal-switch-agent")).toBeInTheDocument();
+		expect(
+			within(mainContainer as HTMLElement).queryByRole("button", { name: /switch agent/i }),
+		).not.toBeInTheDocument();
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
