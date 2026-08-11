@@ -824,6 +824,46 @@ func TestInterfaceTransitionTUIToChatStartsFreshWhenReservedIDHasNoHistory(t *te
 	}
 }
 
+func TestInterfaceTransitionTUIToChatAllowsFreshStartWhenNativeIDMissingWithProbe(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	manager.agents = singleAgent{agent: emptyTransitionAgent{}}
+	rec := store.sessions["session-1"]
+	rec.Metadata.AgentSessionID = ""
+	store.sessions["session-1"] = rec
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	if settled.NativeConversationID != "" {
+		t.Fatalf("native conversation = %q, want fresh sentinel", settled.NativeConversationID)
+	}
+	if chat.start.ProviderConversationID != "" {
+		t.Fatalf("Chat resumed %q, want a fresh conversation", chat.start.ProviderConversationID)
+	}
+}
+
+func TestInterfaceTransitionTUIToChatBlocksWhenNativeIDMissingWithoutProbe(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	rec := store.sessions["session-1"]
+	rec.Metadata.AgentSessionID = ""
+	store.sessions["session-1"] = rec
+
+	_, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err == nil {
+		t.Fatal("expected NATIVE_SESSION_MISSING error, got nil")
+	}
+	if !errors.Is(err, ErrNativeConversationMissing) {
+		t.Fatalf("expected NATIVE_SESSION_MISSING, got %v", err)
+	}
+}
+
 func TestInterfaceTransitionTUIToChatStartsFreshWhenCodexRolloutIsMissing(t *testing.T) {
 	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
 	t.Setenv("CODEX_HOME", t.TempDir())

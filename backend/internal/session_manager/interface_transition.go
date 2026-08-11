@@ -382,6 +382,12 @@ func (m *Manager) nativeConversationID(
 	}
 	id = strings.TrimSpace(id)
 	if !ok || id == "" {
+		// An adapter with a history probe can safely start fresh when the
+		// native id is missing; the probe distinguishes a real conversation
+		// from an empty TUI.
+		if _, ok := handoff.(ports.AgentInterfaceHandoffHistoryProbe); ok {
+			return "", handoff, nil
+		}
 		return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
 	}
 	return id, handoff, nil
