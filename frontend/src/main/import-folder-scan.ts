@@ -15,6 +15,7 @@ export type GitRepoScanResult = {
 	hasRemote: boolean;
 	status: "ok" | "error";
 	reason?: string;
+	needsGitInit?: boolean;
 };
 
 export type ImportFolderScanResult = {
@@ -159,9 +160,18 @@ async function scanGitRepo(
 				};
 			}
 		} catch {
-			// Not a git repository.
+			// Not a git repository — surface as needs-init.
 		}
-		return null;
+		return {
+			name,
+			path: repoPath,
+			relativePath,
+			branch: "",
+			remote: "",
+			hasRemote: false,
+			status: "ok",
+			needsGitInit: true,
+		};
 	}
 	if (!(await isGitRepo(repoPath, options))) return null;
 	const [branchResult, remoteResult, bareResult, headResult] = await Promise.allSettled([
@@ -243,13 +253,14 @@ export async function scanImportFolder(
 				],
 			};
 		}
-		const repo = await scanGitRepo(rootPath, rootPath, options);
-		if (repo) return { path: rootPath, repos: [repo] };
-		return {
-			path: rootPath,
-			repos: [],
-			setupWarning: await ancestorRepositorySetupWarning(rootPath, options),
-		};
+	const repo = await scanGitRepo(rootPath, rootPath, options);
+	if (repo && !repo.needsGitInit) return { path: rootPath, repos: [repo] };
+	const setupWarning = await ancestorRepositorySetupWarning(rootPath, options);
+	return {
+		path: rootPath,
+		repos: repo ? [repo] : [],
+		...(setupWarning ? { setupWarning } : {}),
+	};
 	}
 
 	const [entries, ancestorWarning] = await Promise.all([

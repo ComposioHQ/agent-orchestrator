@@ -66,6 +66,7 @@ export type ImportRepoScan = {
 	hasRemote: boolean;
 	status?: "ok" | "error";
 	reason?: string;
+	needsGitInit?: boolean;
 };
 
 export type ImportFolderScan = {
