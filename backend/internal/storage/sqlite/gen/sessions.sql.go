@@ -393,6 +393,55 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 	return items, nil
 }
 
+const listSessionPreviewRows = `-- name: ListSessionPreviewRows :many
+SELECT id, kind, is_terminated, workspace_path, preview_url, preview_revision
+FROM sessions
+WHERE is_terminated = 0
+`
+
+type ListSessionPreviewRowsRow struct {
+	ID              domain.SessionID
+	Kind            domain.SessionKind
+	IsTerminated    bool
+	WorkspacePath   string
+	PreviewURL      string
+	PreviewRevision int64
+}
+
+// Narrow projection for the preview poller's sub-second scan loop: identity,
+// kind, and preview/workspace fields only, not the multi-KB prompt and
+// transcript columns ListAllSessions carries. Terminated sessions are filtered
+// here because the poller always skips them.
+func (q *Queries) ListSessionPreviewRows(ctx context.Context) ([]ListSessionPreviewRowsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSessionPreviewRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionPreviewRowsRow{}
+	for rows.Next() {
+		var i ListSessionPreviewRowsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.IsTerminated,
+			&i.WorkspacePath,
+			&i.PreviewURL,
+			&i.PreviewRevision,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,

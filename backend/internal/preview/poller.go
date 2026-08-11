@@ -14,7 +14,11 @@ import (
 const DefaultPollInterval = 250 * time.Millisecond
 
 type sessionPreviewSource interface {
-	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+	// ListSessionPreviewRows returns sparse, non-terminated session records
+	// carrying only the identity/kind/preview/workspace fields this poller
+	// reads — a sub-second loop must not drag the full 38-column session
+	// projection (multi-KB prompt/transcript text) out of SQLite every tick.
+	ListSessionPreviewRows(ctx context.Context) ([]domain.SessionRecord, error)
 }
 
 type previewSetter interface {
@@ -101,7 +105,7 @@ func (p *Poller) Poll(ctx context.Context) error {
 	if p.source == nil || p.setter == nil {
 		return nil
 	}
-	sessions, err := p.source.ListAllSessions(ctx)
+	sessions, err := p.source.ListSessionPreviewRows(ctx)
 	if err != nil {
 		return fmt.Errorf("preview poller list sessions: %w", err)
 	}

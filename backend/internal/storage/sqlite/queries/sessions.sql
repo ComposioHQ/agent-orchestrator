@@ -101,6 +101,15 @@ SELECT id, project_id, num, issue_id, kind, harness,
 FROM sessions ORDER BY project_id, num;
 
 
+-- name: ListSessionPreviewRows :many
+-- Narrow projection for the preview poller's sub-second scan loop: identity,
+-- kind, and preview/workspace fields only, not the multi-KB prompt and
+-- transcript columns ListAllSessions carries. Terminated sessions are filtered
+-- here because the poller always skips them.
+SELECT id, kind, is_terminated, workspace_path, preview_url, preview_revision
+FROM sessions
+WHERE is_terminated = 0;
+
 -- name: RenameSession :execrows
 UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
 
