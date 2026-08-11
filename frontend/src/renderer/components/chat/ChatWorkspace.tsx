@@ -186,6 +186,8 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
+	/** Promote one already queued turn into the running turn. */
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
@@ -235,6 +237,7 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
+	onPromoteQueuedTurn,
 	steerPending,
 	steerRefusal,
 	onReloadMcpServers,
@@ -378,6 +381,7 @@ export function ChatWorkspace({
 					onResolveInput={onResolveInput}
 					busy={busy}
 					onRollback={rollbackTarget}
+					onPromoteQueuedTurn={turn?.state === "running" ? onPromoteQueuedTurn : undefined}
 				/>
 			</ChatLinkProvider>
 
@@ -892,6 +896,7 @@ function Timeline({
 	onResolveInput,
 	busy,
 	onRollback,
+	onPromoteQueuedTurn,
 }: {
 	snapshot: ConversationSnapshot;
 	hasOlder?: boolean;
@@ -901,6 +906,7 @@ function Timeline({
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
@@ -919,6 +925,7 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
+	const promoteQueuedTurn = onPromoteQueuedTurn;
 	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
@@ -1139,9 +1146,10 @@ function Timeline({
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
-							// Only a turn the provider actually accepted can be undone: a turn it
-							// never saw holds no history to discard, and the daemon refuses it
-							// rather than hiding rows the agent still remembers.
+								onPromoteQueuedTurn={promoteQueuedTurn}
+								// Only a turn the provider actually accepted can be undone: a turn it
+								// never saw holds no history to discard, and the daemon refuses it
+								// rather than hiding rows the agent still remembers.
 								canRollback={Boolean(onRollback && group.turnId && group.rollbackable)}
 								busy={busy}
 								queued={Boolean(group.turnId && queued.has(group.turnId))}
@@ -1257,6 +1265,7 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide,
 	onResolveInput,
 	onRollback,
+	onPromoteQueuedTurn,
 	canRollback,
 	busy,
 	queued,
@@ -1267,6 +1276,7 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
 	busy?: boolean;
@@ -1298,6 +1308,7 @@ const TurnGroup = memo(function TurnGroup({
 						apiBaseUrl={apiBaseUrl}
 						onDecide={onDecide}
 						onResolveInput={onResolveInput}
+						onPromoteQueuedTurn={onPromoteQueuedTurn}
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
@@ -1331,6 +1342,7 @@ function TimelineItem({
 	apiBaseUrl,
 	onDecide,
 	onResolveInput,
+	onPromoteQueuedTurn,
 	busy,
 	queued,
 	showCopy,
@@ -1341,6 +1353,7 @@ function TimelineItem({
 	apiBaseUrl: string;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	busy?: boolean;
 	/**
 	 * The enclosing turn was recorded but not yet sent, so a waiting message can say
@@ -1366,7 +1379,19 @@ function TimelineItem({
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
 		if (item.origin === "human") {
-			return <HumanMessage message={item} sessionId={sessionId} apiBaseUrl={apiBaseUrl} queued={queued} />;
+			return (
+				<HumanMessage
+					message={item}
+					sessionId={sessionId}
+					apiBaseUrl={apiBaseUrl}
+					queued={queued}
+					onSteerNow={
+						queued && item.turnId && onPromoteQueuedTurn
+							? () => onPromoteQueuedTurn(item.turnId as string)
+							: undefined
+					}
+				/>
+			);
 		}
 		return <OriginMessage message={item} />;
 	}

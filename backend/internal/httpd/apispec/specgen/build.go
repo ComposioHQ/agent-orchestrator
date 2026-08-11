@@ -176,6 +176,7 @@ var schemaNames = map[string]string{
 	"ControllersSetConversationTitleResponse":         "SetConversationTitleResponse",
 	"ControllersSteerConversationRequest":             "SteerConversationRequest",
 	"ControllersSteerConversationResponse":            "SteerConversationResponse",
+	"ControllersPromoteQueuedTurnResponse":            "PromoteQueuedTurnResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -683,6 +684,19 @@ func shellTerminalOperations() []operation {
 			reqBody:    controllers.SteerConversationRequest{},
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.SteerConversationResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", id: "promoteQueuedSessionConversationTurn", tag: "conversations",
+			summary:    "Promote a queued message into the in-flight turn",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.PromoteQueuedTurnResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},

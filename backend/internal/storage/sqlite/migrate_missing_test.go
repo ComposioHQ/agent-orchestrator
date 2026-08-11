@@ -146,6 +146,35 @@ func TestMigrateRecognizesBrowserVerifierFromEarlierBranchBuild(t *testing.T) {
 	}
 }
 
+func TestMigrateRepairsQueuedTurnPromotionColumnsWhenVersionAlreadyClaimed(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 85)
+	if _, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (86, 1)`); err != nil {
+		t.Fatalf("seed claimed promotion migration: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate database with claimed promotion version: %v", err)
+	}
+
+	for _, column := range []string{"promotion_started_at", "promoted_to_turn_id"} {
+		var columns int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('conversation_turns') WHERE name = ?`, column,
+		).Scan(&columns); err != nil {
+			t.Fatalf("query %s column: %v", column, err)
+		}
+		if columns != 1 {
+			t.Errorf("conversation_turns.%s count = %d, want 1", column, columns)
+		}
+	}
+}
+
 // TestMigrateAppliesAgentModelCatalogAfterUpstreamMigration covers a database
 // that has already applied main's version 41. The catalog must use the next
 // migration version so goose applies it independently.

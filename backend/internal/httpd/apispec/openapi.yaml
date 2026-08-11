@@ -2591,6 +2591,65 @@ paths:
       summary: Discard a turn and everything after it from the agent's memory
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer:
+    post:
+      operationId: promoteQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoteQueuedTurnResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Promote a queued message into the in-flight turn
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/interface-transition:
     delete:
       operationId: cancelSessionInterfaceTransition
@@ -6238,6 +6297,19 @@ components:
       - path
       - kind
       - sessionPrefix
+      type: object
+    PromoteQueuedTurnResponse:
+      properties:
+        activityId:
+          type: string
+        providerTurnId:
+          type: string
+        sourceTurnId:
+          type: string
+      required:
+      - sourceTurnId
+      - providerTurnId
+      - activityId
       type: object
     PushDeviceEnvelope:
       properties:

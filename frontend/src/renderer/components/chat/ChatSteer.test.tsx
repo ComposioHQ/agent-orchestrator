@@ -116,6 +116,59 @@ describe("ChatComposer steering", () => {
 });
 
 describe("ChatWorkspace steering", () => {
+	function withQueuedMessages() {
+		return {
+			...chatFixture,
+			turns: [
+				...chatFixture.turns,
+				{ id: "queued-1", state: "queued" as const, requestedAt: "2026-08-11T10:01:00Z" },
+				{ id: "queued-2", state: "queued" as const, requestedAt: "2026-08-11T10:02:00Z" },
+			],
+			items: [
+				...chatFixture.items,
+				{
+					kind: "message" as const,
+					id: "queued-message-1",
+					turnId: "queued-1",
+					sequence: 100,
+					revision: 0,
+					role: "user" as const,
+					origin: "human" as const,
+					text: "first queued",
+					streaming: false,
+					createdAt: "2026-08-11T10:01:00Z",
+				},
+				{
+					kind: "message" as const,
+					id: "queued-message-2",
+					turnId: "queued-2",
+					sequence: 101,
+					revision: 0,
+					role: "user" as const,
+					origin: "human" as const,
+					text: "second queued",
+					streaming: false,
+					createdAt: "2026-08-11T10:02:00Z",
+				},
+			],
+		};
+	}
+
+	it("can steer any selected queued message into the running turn", async () => {
+		const onPromoteQueuedTurn = vi.fn().mockResolvedValue(undefined);
+		render(
+			<ChatWorkspace
+				snapshot={withQueuedMessages()}
+				onSteer={vi.fn()}
+				onPromoteQueuedTurn={onPromoteQueuedTurn}
+			/>,
+		);
+		const actions = screen.getAllByRole("button", { name: "Steer now" });
+		expect(actions).toHaveLength(2);
+		await userEvent.click(actions[1]!);
+		expect(onPromoteQueuedTurn).toHaveBeenCalledWith("queued-2");
+	});
+
 	it("offers steering only into a turn the provider is actually running", () => {
 		render(<ChatWorkspace snapshot={chatFixture} onSteer={vi.fn()} />);
 		// The live fixture is mid-turn.
@@ -151,5 +204,25 @@ describe("ChatWorkspace steering", () => {
 	it("renders a landed steer as the user's own words", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		expect(screen.getByText(/Steered into the running turn/)).toBeInTheDocument();
+	});
+
+	it("renders a promoted steer attachment once on the running turn", () => {
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.map((item) =>
+				item.kind === "activity" && item.id === "a-steer-1"
+					? {
+							...item,
+							detail: {
+								...item.detail,
+								content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+							},
+						}
+					: item,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} />);
+		const image = screen.getByRole("img", { name: "Steered attachment 1" });
+		expect(image).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
 	});
 });

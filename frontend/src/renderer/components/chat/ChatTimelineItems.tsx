@@ -143,6 +143,7 @@ export function HumanMessage({
 	sessionId,
 	apiBaseUrl = getApiBaseUrl(),
 	queued,
+	onSteerNow,
 }: {
 	message: ConversationMessage;
 	/** The staged paths are relative to this session's workspace. */
@@ -151,8 +152,24 @@ export function HumanMessage({
 	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
+	/** Present only when this queued turn can join the running turn. */
+	onSteerNow?: () => Promise<unknown> | undefined;
 }) {
 	const { body, attachments } = humanMessageParts(message.text);
+	const [steering, setSteering] = useState(false);
+	const [steerError, setSteerError] = useState<string>();
+	async function steerNow() {
+		if (!onSteerNow || steering) return;
+		setSteering(true);
+		setSteerError(undefined);
+		try {
+			await onSteerNow();
+		} catch {
+			setSteerError("Could not steer this message. It remains queued.");
+		} finally {
+			setSteering(false);
+		}
+	}
 	return (
 		<div className="flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
@@ -197,8 +214,16 @@ export function HumanMessage({
 				) : null}
 			</div>
 			{queued ? (
-				<span className="text-[11px] text-muted-foreground">Queued · sends when the agent finishes</span>
+				<div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+					<span>Queued · sends when the agent finishes</span>
+					{onSteerNow ? (
+						<Button type="button" variant="ghost" size="sm" disabled={steering} onClick={() => void steerNow()}>
+							{steering ? "Steering…" : "Steer now"}
+						</Button>
+					) : null}
+				</div>
 			) : null}
+			{steerError ? <span role="status" className="text-[11px] text-warning">{steerError}</span> : null}
 			{message.delivery && message.delivery !== "accepted" ? (
 				<DeliveryNote state={message.delivery} />
 			) : null}
@@ -1217,10 +1242,30 @@ function ReauthRow({ activity }: { activity: ConversationActivity }) {
  */
 export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 	const text = activity.detail?.text ?? activity.summary;
+	const images = (activity.detail?.content ?? []).filter(
+		(item) =>
+			item.type === "image" &&
+			typeof item.data === "string" &&
+			typeof item.mimeType === "string" &&
+			item.mimeType.toLowerCase().startsWith("image/"),
+	);
 	return (
 		<div className="flex flex-col items-end gap-1">
 			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
-				{text}
+				{text ? <p>{text}</p> : null}
+				{images.length > 0 ? (
+					<ul aria-label="Steered attachments" className={cn("flex max-w-full flex-wrap gap-2", text && "mt-2")}>
+						{images.map((item, index) => (
+							<li key={`${item.mimeType}-${index}`} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
+								<img
+									src={`data:${item.mimeType};base64,${item.data}`}
+									alt={`Steered attachment ${index + 1}`}
+									className="block h-auto max-h-80 max-w-full object-contain"
+								/>
+							</li>
+						))}
+					</ul>
+				) : null}
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
 				<CornerDownRight aria-hidden="true" className="size-3" />

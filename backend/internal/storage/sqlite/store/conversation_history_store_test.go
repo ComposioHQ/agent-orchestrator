@@ -193,6 +193,67 @@ func TestConversationSnapshotPagesCombinedTimelineBySequence(t *testing.T) {
 	}
 }
 
+// A promotion reservation removes only the selected row from automatic drain.
+// Without the conditional reservation, two clients can steer the same queued
+// message or the drain loop can start it as a fresh turn while steering is in
+// flight.
+func TestQueuedTurnPromotionReservationPreservesTheOtherQueueOrder(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	for i, text := range []string{"first queued", "second queued", "third queued"} {
+		turnID := fmt.Sprintf("queued-%d", i+1)
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1",
+			domain.ConversationMessage{
+				ID: turnID + "-message", Text: text, Origin: domain.MessageOriginHuman,
+			}, turnID, histClock.Add(time.Duration(i)*time.Second))
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", turnID, created, err)
+		}
+	}
+
+	selected, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation, "queued-2", histClock.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("reserve second queued turn: %v", err)
+	}
+	if selected.TurnID != "queued-2" || selected.Text != "second queued" {
+		t.Fatalf("reserved = %+v, want queued-2 with its durable text", selected)
+	}
+	if _, err := s.ReserveQueuedTurnForPromotion(
+		ctx, conversation, "queued-2", histClock.Add(2*time.Minute)); !errors.Is(err, store.ErrQueuedTurnNotAvailable) {
+		t.Fatalf("second reservation error = %v, want ErrQueuedTurnNotAvailable", err)
+	}
+
+	next, err := s.NextQueuedTurn(ctx, conversation)
+	if err != nil {
+		t.Fatalf("next queued turn: %v", err)
+	}
+	if next.TurnID != "queued-1" {
+		t.Fatalf("queue head = %q, want queued-1", next.TurnID)
+	}
+	if err := s.SettleTurnByID(ctx, "queued-1", domain.TurnStateCompleted, "", histClock); err != nil {
+		t.Fatalf("remove queue head: %v", err)
+	}
+	next, err = s.NextQueuedTurn(ctx, conversation)
+	if err != nil {
+		t.Fatalf("next queued turn behind reservation: %v", err)
+	}
+	if next.TurnID != "queued-3" {
+		t.Fatalf("queue behind reservation = %q, want queued-3", next.TurnID)
+	}
+
+	if err := s.ReleaseQueuedTurnPromotion(ctx, conversation, "queued-2"); err != nil {
+		t.Fatalf("release reservation: %v", err)
+	}
+	next, err = s.NextQueuedTurn(ctx, conversation)
+	if err != nil {
+		t.Fatalf("next queued turn after release: %v", err)
+	}
+	if next.TurnID != "queued-2" {
+		t.Fatalf("released queue head = %q, want queued-2 in its original order", next.TurnID)
+	}
+}
+
 // seedTurn records one dispatched turn with a user message and an activity, which is
 // the shape a real turn leaves behind.
 func seedTurn(t *testing.T, s *sqlite.Store, conversationID string, session domain.SessionID, turnID, text string, at time.Time) {

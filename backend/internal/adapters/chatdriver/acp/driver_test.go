@@ -46,6 +46,7 @@ type fakeAgent struct {
 	setCalls            int
 	steering            bool
 	steerText           string
+	steerPrompt         []acpsdk.ContentBlock
 	steerMeta           map[string]any
 	steerOut            string
 }
@@ -98,6 +99,7 @@ func (a *fakeAgent) HandleExtensionMethod(_ context.Context, method string, raw 
 	}
 	a.mu.Lock()
 	a.steerText = text
+	a.steerPrompt = append([]acpsdk.ContentBlock(nil), params.Prompt...)
 	a.steerMeta = params.Meta
 	outcome := a.steerOut
 	a.mu.Unlock()
@@ -415,9 +417,12 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 		},
 	}
 	driver := New(Config{
-		Harness:      domain.HarnessClaudeCode,
-		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
-		Probe:        func(context.Context) error { return nil },
+		Harness: domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true,
+			ports.ChatCapabilityImages:    true,
+		},
+		Probe: func(context.Context) error { return nil },
 		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
@@ -1040,7 +1045,15 @@ func awaitSkillCount(t *testing.T, lister ports.ChatSkillLister, want int) []por
 }
 
 func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
-	agent := &fakeAgent{steering: true}
+	agent := &fakeAgent{
+		steering: true,
+		capabilities: &acpsdk.AgentCapabilities{
+			PromptCapabilities: acpsdk.PromptCapabilities{Image: true},
+			SessionCapabilities: acpsdk.SessionCapabilities{
+				Resume: &acpsdk.SessionResumeCapabilities{},
+			},
+		},
+	}
 	driver := New(Config{
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
@@ -1064,7 +1077,12 @@ func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
 	conv.activeTurn = "turn-1"
 	conv.mu.Unlock()
 
-	ref, err := conv.Steer(context.Background(), "turn-1", ports.ChatUserMessage{Text: "focus on the API"})
+	ref, err := conv.Steer(context.Background(), "turn-1", ports.ChatUserMessage{
+		Text: "focus on the API",
+		Content: []ports.ChatContent{{
+			Type: "image", Data: "aGVsbG8=", MIMEType: "image/png",
+		}},
+	})
 	if err != nil {
 		t.Fatalf("Steer: %v", err)
 	}
@@ -1072,10 +1090,13 @@ func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
 		t.Fatalf("steered turn = %q, want turn-1", ref.ProviderTurnID)
 	}
 	agent.mu.Lock()
-	text, meta := agent.steerText, agent.steerMeta
+	text, meta, prompt := agent.steerText, agent.steerMeta, agent.steerPrompt
 	agent.mu.Unlock()
 	if text != "focus on the API" {
 		t.Fatalf("steer text = %q", text)
+	}
+	if len(prompt) != 2 || prompt[1].Image == nil || prompt[1].Image.MimeType != "image/png" {
+		t.Fatalf("steer prompt = %#v, want text and image", prompt)
 	}
 	steering, _ := meta["steering"].(map[string]any)
 	if steering["idleBehavior"] != "promptRequired" {

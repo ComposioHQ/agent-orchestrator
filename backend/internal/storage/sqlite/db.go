@@ -759,6 +759,13 @@ BEGIN
 			`CREATE INDEX IF NOT EXISTS idx_conversations_current_session ON conversations(current_session_id)
     WHERE current_session_id IS NOT NULL`,
 		}},
+	// Development profiles can already have version 86 recorded by another
+	// feature branch. These columns are referenced by every generated conversation
+	// turn/message query, so verify their physical presence on every startup.
+	{version: 86, table: "conversation_turns", column: "promotion_started_at",
+		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promotion_started_at TIMESTAMP`},
+	{version: 86, table: "conversation_turns", column: "promoted_to_turn_id",
+		addDDL: `ALTER TABLE conversation_turns ADD COLUMN promoted_to_turn_id TEXT REFERENCES conversation_turns(id) ON DELETE SET NULL`},
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist

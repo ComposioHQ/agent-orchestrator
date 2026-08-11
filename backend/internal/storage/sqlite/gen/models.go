@@ -169,6 +169,8 @@ type ConversationTurn struct {
 	DiffJson             string
 	RolledBackAt         sql.NullTime
 	PlanJson             string
+	PromotionStartedAt   sql.NullTime
+	PromotedToTurnID     sql.NullString
 }
 
 type ModelUsageEvent struct {

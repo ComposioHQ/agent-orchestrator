@@ -303,6 +303,18 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const promoteQueuedTurn = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer",
+				{ params: { path: { sessionId: sessionId as string, turnId } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	/**
 	 * Restart the tool servers.
 	 *
@@ -369,6 +381,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		rollbackPending: rollback.isPending,
 		rollbackError: rollback.error ? apiErrorMessage(rollback.error) : undefined,
 		steer: (text: string) => steer.mutateAsync(text),
+		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
 		/**
 		 * Why the last steer was refused, or undefined. Only the retryable and

@@ -383,3 +383,83 @@ func TestSteerRecordsTheTurnTheProviderNames(t *testing.T) {
 		t.Errorf("reported turn = %q, want the one the provider named", result.ProviderTurnID)
 	}
 }
+
+// Promoting a selected queued turn must use AO's durable content, attach it to
+// the running provider turn, and remove only that source turn from the visible
+// queue. If this regresses to queue-head-only behavior, the second message below
+// is never the one the provider receives.
+func TestPromoteSelectedQueuedTurnIntoTheRunningTurn(t *testing.T) {
+	h, provider := steerHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "first queued", ClientMessageID: "queued-1", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("queue first: %v", err)
+	}
+	selected, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "second queued", ClientMessageID: "queued-2", Origin: domain.MessageOriginHuman,
+		Content: []ports.ChatContent{{Type: "image", Data: "aGVsbG8=", MIMEType: "image/png"}},
+	})
+	if err != nil {
+		t.Fatalf("queue selected: %v", err)
+	}
+
+	result, err := h.svc.PromoteQueuedTurn(ctx, testSession, selected.ID)
+	if err != nil {
+		t.Fatalf("PromoteQueuedTurn: %v", err)
+	}
+	if result.SourceTurnID != selected.ID || result.ProviderTurnID != "provider-turn-1" || result.ActivityID == "" {
+		t.Fatalf("promotion result = %+v", result)
+	}
+	calls := provider.steers()
+	if len(calls) != 1 {
+		t.Fatalf("provider steers = %+v, want one", calls)
+	}
+	if calls[0].msg.Text != "second queued" || calls[0].msg.ClientMessageID != "queued-2" {
+		t.Fatalf("provider message = %+v, want selected durable message", calls[0].msg)
+	}
+	if len(calls[0].msg.Content) != 1 || calls[0].msg.Content[0].MIMEType != "image/png" {
+		t.Fatalf("provider content = %+v, want stored image", calls[0].msg.Content)
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(steerMarkers(s)) == 1
+	})
+	for _, turn := range snapshot.Turns {
+		if turn.ID == selected.ID {
+			t.Fatalf("promoted source turn remains visible: %+v", turn)
+		}
+	}
+	next, err := h.st.NextQueuedTurn(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("remaining queue: %v", err)
+	}
+	if next.TurnID != first.ID {
+		t.Fatalf("remaining queue head = %q, want %q", next.TurnID, first.ID)
+	}
+}
+
+// A provider refusal has not delivered anything, so the exact selected message
+// must return to its original queue position instead of being lost or failed.
+func TestPromoteQueuedTurnRefusalRestoresItsQueuePosition(t *testing.T) {
+	h, provider := steerHarness(t)
+	ctx := context.Background()
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "keep me queued", ClientMessageID: "queued-refused", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("queue: %v", err)
+	}
+	provider.failWith(ports.ErrChatTurnNotSteerable)
+
+	_, err = h.svc.PromoteQueuedTurn(ctx, testSession, queued.ID)
+	if !errors.Is(err, chatsvc.ErrTurnNotSteerable) {
+		t.Fatalf("promotion error = %v, want ErrTurnNotSteerable", err)
+	}
+	next, err := h.st.NextQueuedTurn(ctx, h.ctrl.ConversationID())
+	if err != nil || next.TurnID != queued.ID {
+		t.Fatalf("restored queue head = %+v, %v; want %s", next, err, queued.ID)
+	}
+}
