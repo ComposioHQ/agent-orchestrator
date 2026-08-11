@@ -24,6 +24,7 @@ const (
 	dialTimeout      = 3 * time.Second
 	getOutputTimeout = 3 * time.Second
 	isAliveTimeout   = 2 * time.Second
+	restartTimeout   = 10 * time.Second
 )
 
 // dialHost opens a TCP connection to addr with a deadline. Callers close it.
@@ -285,7 +286,7 @@ func clientRestart(addr string, payload RestartPayload) (int, error) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	_ = conn.SetDeadline(time.Now().Add(dialTimeout))
+	_ = conn.SetDeadline(time.Now().Add(restartTimeout))
 
 	reqBody, err := json.Marshal(payload)
 	if err != nil {

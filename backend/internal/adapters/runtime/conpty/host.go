@@ -73,6 +73,7 @@ type host struct {
 	// = none applied yet). Guarded by mu; used to skip redundant resizes.
 	curCols, curRows int
 
+	restarting   bool          // true if a restart is in progress. Guarded by mu.
 	shutdownOnce sync.Once
 	shutdownC    chan struct{} // closed when Shutdown is called
 }
@@ -384,8 +385,20 @@ func (h *host) handleClientMsg(conn net.Conn, msgType byte, payload []byte) {
 		}
 
 		h.mu.Lock()
+		if h.restarting {
+			h.mu.Unlock()
+			h.sendRestartResponse(conn, false, "restart already in progress", 0)
+			return
+		}
+		h.restarting = true
 		oldPTY := h.cfg.PTY
 		h.mu.Unlock()
+
+		defer func() {
+			h.mu.Lock()
+			h.restarting = false
+			h.mu.Unlock()
+		}()
 
 		if oldPTY != nil {
 			_ = oldPTY.Close()

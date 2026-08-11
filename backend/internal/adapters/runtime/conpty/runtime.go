@@ -343,6 +343,10 @@ var osProcessFinder = defaultOSProcessFinder
 // Restart replaces the command in the existing pty-host while preserving
 // the host process and loopback connection. Satisfies ports.RuntimeRestarter.
 func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if handle.ID != string(cfg.SessionID) {
+		return ports.RuntimeHandle{}, fmt.Errorf("conpty: restart handle %s does not match session %s", handle.ID, cfg.SessionID)
+	}
+
 	sess := r.resolve(handle.ID)
 	if sess == nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("conpty: session %q not found for restart", handle.ID)

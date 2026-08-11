@@ -855,5 +855,20 @@ func TestRuntimeRestart(t *testing.T) {
 	}
 }
 
+// TestRuntimeRestart_MismatchedSessionID verifies that calling Restart with a handle
+// whose ID does not match the cfg.SessionID returns an error.
+func TestRuntimeRestart_MismatchedSessionID(t *testing.T) {
+	rt := New(Options{})
+	_, err := rt.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID: "sess-2",
+	})
+	if err == nil {
+		t.Fatal("expected error when handle ID does not match session ID, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not match session") {
+		t.Fatalf("expected error containing 'does not match session', got %q", err.Error())
+	}
+}
+
 // Ensure the packages compile (import check).
 var _ = io.Discard
