@@ -145,7 +145,7 @@ func (s *Store) DeleteProviderConnection(
 				org_id, actor_user_id, action, resource_type, resource_id, metadata
 			) VALUES (
 				$1, $2, 'provider_connection.deleted', 'provider_connection', $3,
-				jsonb_build_object('provider', $3, 'label', $4)
+				jsonb_build_object('provider', $3::text, 'label', $4::text)
 			)`,
 			orgID,
 			principal.UserID,

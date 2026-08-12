@@ -48,6 +48,7 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 		LocalAuthEnabled:    true,
 		LocalSessionTTL:     time.Hour,
 		SandboxProvider:     "docker",
+		Provisioning:        testDockerProvisioning(),
 		SecretCipher:        providerCipher,
 		CredentialValidator: acceptingCredentialValidator{},
 	})

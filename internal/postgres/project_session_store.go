@@ -358,7 +358,7 @@ func createSessionTx(
 			org_id, action, resource_type, resource_id, metadata
 		) VALUES (
 			$1, 'session.created', 'session', $2,
-			jsonb_build_object('parentSessionId', $3)
+			jsonb_build_object('parentSessionId', $3::text)
 		)`
 		auditArgs = []any{orgID, session.ID, parentSessionID}
 	}

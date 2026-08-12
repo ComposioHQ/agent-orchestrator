@@ -422,6 +422,7 @@ func TestSessionQuotaIsEnforcedAtIntentTime(t *testing.T) {
 		LocalSessionTTL:  time.Hour,
 		SandboxProvider:  "docker",
 		MaxSandboxes:     1,
+		Provisioning:     testDockerProvisioning(),
 	})
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
@@ -456,6 +457,17 @@ func TestSessionQuotaIsEnforcedAtIntentTime(t *testing.T) {
 	)
 	if got := response["code"]; got != "SANDBOX_QUOTA_EXCEEDED" {
 		t.Fatalf("error code = %v, want SANDBOX_QUOTA_EXCEEDED", got)
+	}
+}
+
+func testDockerProvisioning() sandbox.ProvisioningDefaults {
+	return sandbox.ProvisioningDefaults{
+		Docker: sandbox.DockerConfig{
+			Host:           "unix:///var/run/docker.sock",
+			WorkerImage:    "ao-cloud-worker:test",
+			Namespace:      "http-test",
+			WorkerTokenTTL: time.Minute,
+		},
 	}
 }
 
