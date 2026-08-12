@@ -830,11 +830,32 @@ async function activeWorkspace(): Promise<RemoteWorkspace | null> {
 }
 
 /**
+ * In-flight remote connect, so concurrent callers share one attempt.
+ *
+ * The local path has had this since forever as `daemonStartPromise`, but the
+ * remote branch runs *before* that guard and so needs its own: the supervisor
+ * calls startDaemon from app-ready, from the status IPC and from the re-dial
+ * loop, and without de-duplication each call spawned its own `ssh -N`. Only the
+ * last was retained, so every other one leaked a forward and a local port for
+ * the lifetime of the app.
+ */
+let remoteStartPromise: Promise<boolean> | null = null;
+
+/**
  * Connect to a remote workspace and publish it as the daemon status. Returns
  * false when the active workspace is local, so the caller falls through to the
  * unchanged local spawn path.
  */
 async function startRemoteWorkspaceDaemon(): Promise<boolean> {
+	if (remoteStartPromise) return remoteStartPromise;
+	const attempt = startRemoteWorkspaceDaemonInner().finally(() => {
+		if (remoteStartPromise === attempt) remoteStartPromise = null;
+	});
+	remoteStartPromise = attempt;
+	return attempt;
+}
+
+async function startRemoteWorkspaceDaemonInner(): Promise<boolean> {
 	const workspace = await activeWorkspace();
 	if (!workspace) {
 		// Switched back to local: drop any tunnel before the local daemon starts.
