@@ -5,9 +5,9 @@ import type {
   CreateSessionInput,
   Project,
 } from "@aoagents/cloud-client";
-import { X } from "lucide-react";
+import { AgentAvatar } from "@aoagents/product-ui";
+import { Bot, FolderGit2, X, type LucideIcon } from "lucide-react";
 import type {
-  FormEvent,
   InputHTMLAttributes,
   ReactNode,
 } from "react";
@@ -22,56 +22,92 @@ export function NewProjectDialog({
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"choose" | "project">("choose");
 
   return (
-    <Dialog onClose={onClose} title="New project">
-      <form
-        className="space-y-4 p-5"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setBusy(true);
-          setError("");
-          const form = new FormData(event.currentTarget);
-          try {
-            await onCreate({
-              displayName: String(form.get("displayName") || "").trim(),
-              repositoryUrl: String(form.get("repositoryUrl") || "").trim(),
-              defaultBranch:
-                String(form.get("defaultBranch") || "").trim() || "main",
-              config: {},
-            });
-            onClose();
-          } catch (cause) {
-            setError(
-              cause instanceof Error ? cause.message : "Could not create project.",
-            );
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <Field autoFocus label="Project name" name="displayName" required />
-        <Field
-          label="GitHub repository URL"
-          name="repositoryUrl"
-          placeholder="https://github.com/acme/project"
-          type="url"
-          pattern="https://github\.com/.+/.+"
-          required
-        />
-        <Field
-          defaultValue="main"
-          label="Default branch"
-          name="defaultBranch"
-          required
-        />
-        <DialogFooter
-          busy={busy}
-          error={error}
-          onCancel={onClose}
-          submitLabel="Create project"
-        />
-      </form>
+    <Dialog
+      onClose={onClose}
+      title={mode === "choose" ? "Create cloud work" : "Create project"}
+    >
+      {mode === "choose" ? (
+        <div className="p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <CreationOption
+              description="Use a GitHub repository with the project workflow."
+              icon={FolderGit2}
+              label="Create a Project"
+              onClick={() => setMode("project")}
+            />
+            <CreationOption
+              description="Start an independent agent runtime."
+              disabled
+              icon={Bot}
+              label="Create a Standalone Agent"
+              status="Execution unavailable"
+            />
+          </div>
+          <div className="-mx-4 -mb-4 mt-4 flex justify-end border-t border-[var(--color-border-strong)] px-4 py-3">
+            <button
+              className={secondaryButtonClass}
+              onClick={onClose}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="space-y-4 p-5"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError("");
+            const form = new FormData(event.currentTarget);
+            try {
+              await onCreate({
+                displayName: String(form.get("displayName") || "").trim(),
+                repositoryUrl: String(form.get("repositoryUrl") || "").trim(),
+                defaultBranch:
+                  String(form.get("defaultBranch") || "").trim() || "main",
+                config: {},
+              });
+              onClose();
+            } catch (cause) {
+              setError(
+                cause instanceof Error
+                  ? cause.message
+                  : "Could not create project.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <Field autoFocus label="Project name" name="displayName" required />
+          <Field
+            label="GitHub repository URL"
+            name="repositoryUrl"
+            placeholder="https://github.com/acme/project"
+            type="url"
+            pattern="https://github\.com/.+/.+"
+            required
+          />
+          <Field
+            defaultValue="main"
+            label="Default branch"
+            name="defaultBranch"
+            required
+          />
+          <DialogFooter
+            busy={busy}
+            error={error}
+            onBack={() => setMode("choose")}
+            onCancel={onClose}
+            submitLabel="Create project"
+          />
+        </form>
+      )}
     </Dialog>
   );
 }
@@ -89,29 +125,28 @@ export function NewSessionDialog({
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [harness, setHarness] = useState("claude-code");
+  const project =
+    projects.find(({ id }) => id === selectedProjectId) ?? projects[0];
 
   return (
-    <Dialog onClose={onClose} title="New session">
+    <Dialog onClose={onClose} title="New cloud worker">
       <form
-        className="space-y-4 p-5"
+        className="space-y-4 p-4"
         onSubmit={async (event) => {
           event.preventDefault();
+          if (!project) return;
           setBusy(true);
           setError("");
           const form = new FormData(event.currentTarget);
           try {
             await onCreate({
-              projectId: String(form.get("projectId") || ""),
-              kind: String(form.get("kind") || "worker") as
-                | "worker"
-                | "orchestrator",
-              harness: String(form.get("harness") || "claude-code"),
+              projectId: project.id,
+              kind: "worker",
+              harness,
               displayName: String(form.get("displayName") || "").trim(),
               prompt: String(form.get("prompt") || "").trim(),
-              mode: String(form.get("mode") || "standard") as
-                | "read-only"
-                | "standard"
-                | "trusted",
+              mode: "standard",
               deniedCommands: [],
             });
             onClose();
@@ -124,74 +159,107 @@ export function NewSessionDialog({
           }
         }}
       >
-        <Field autoFocus label="Session name" name="displayName" required />
+        {project ? (
+          <p className="text-xs text-[var(--color-text-passive)]">
+            Project{" "}
+            <span className="text-[var(--muted-foreground)]">
+              {project.displayName}
+            </span>
+          </p>
+        ) : null}
+        <Field
+          autoFocus
+          label="Worker name"
+          maxLength={40}
+          name="displayName"
+          placeholder="Worker name"
+          required
+        />
         <label className="block">
           <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
-            Project
+            Coding agent
           </span>
-          <select
-            className={controlClass}
-            defaultValue={selectedProjectId ?? projects[0]?.id}
-            name="projectId"
-            required
-          >
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.displayName}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <AgentAvatar
+              className="pointer-events-none absolute left-3 top-1/2 z-10 size-[18px] -translate-y-1/2"
+              provider={harness}
+            />
+            <select
+              className={`${controlClass} pl-10`}
+              name="harness"
+              onChange={(event) => setHarness(event.target.value)}
+              value={harness}
+            >
+              <option value="claude-code">Claude Code</option>
+              <option value="codex">Codex</option>
+              <option value="cursor">Cursor</option>
+            </select>
+          </div>
         </label>
-        <div className="grid grid-cols-2 gap-3">
-          <SelectField
-            label="Type"
-            name="kind"
-            options={[
-              ["worker", "Worker"],
-              ["orchestrator", "Orchestrator"],
-            ]}
-          />
-          <SelectField
-            label="Harness"
-            name="harness"
-            options={[
-              ["claude-code", "Claude Code"],
-              ["codex", "Codex"],
-              ["cursor", "Cursor"],
-            ]}
-          />
-        </div>
-        <SelectField
-          label="Security mode"
-          name="mode"
-          options={[
-            ["read-only", "Read only"],
-            ["standard", "Standard"],
-            ["trusted", "Trusted"],
-          ]}
-        />
         <label className="block">
           <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
             Initial prompt
           </span>
           <textarea
-            className={`${controlClass} min-h-24 resize-y py-2`}
+            className={`${controlClass} min-h-32 resize-y py-3`}
             name="prompt"
+            placeholder="What should this worker do?"
             required
           />
         </label>
-        <div className="rounded-md border border-[#facc15]/20 bg-[#facc15]/5 px-3 py-2 text-[11px] leading-5 text-[var(--muted-foreground)]">
-          This creates the durable session and policy record. Worker and
-          orchestrator execution is intentionally disabled.
+        <div className="text-xs leading-5 text-[var(--color-text-passive)]">
+          This saves the worker request. Runtime execution is not available yet.
         </div>
         <DialogFooter
           busy={busy}
           error={error}
           onCancel={onClose}
-          submitLabel="Create session"
+          submitDisabled={!project}
+          submitLabel="Create worker"
         />
       </form>
     </Dialog>
+  );
+}
+
+function CreationOption({
+  description,
+  disabled = false,
+  icon: Icon,
+  label,
+  onClick,
+  status,
+}: {
+  description: string;
+  disabled?: boolean;
+  icon: LucideIcon;
+  label: string;
+  onClick?: () => void;
+  status?: string;
+}) {
+  return (
+    <button
+      className="group flex min-h-44 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
+      disabled={disabled}
+      onClick={onClick}
+      title={status}
+      type="button"
+    >
+      <span className="flex h-16 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+        <Icon className="size-6 text-white/55 transition-colors group-hover:text-white" />
+      </span>
+      <span className="mt-4 text-sm font-medium text-white">
+        {label}
+      </span>
+      <span className="mt-1 text-xs leading-5 text-white/42">
+        {description}
+      </span>
+      {status ? (
+        <span className="mt-3 text-[10px] uppercase tracking-[0.08em] text-white/35">
+          {status}
+        </span>
+      ) : null}
+    </button>
   );
 }
 
@@ -248,40 +316,19 @@ function Field({
   );
 }
 
-function SelectField({
-  label,
-  name,
-  options,
-}: {
-  label: string;
-  name: string;
-  options: Array<[string, string]>;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
-        {label}
-      </span>
-      <select className={controlClass} name={name}>
-        {options.map(([value, text]) => (
-          <option key={value} value={value}>
-            {text}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 function DialogFooter({
   busy,
   error,
+  onBack,
   onCancel,
+  submitDisabled = false,
   submitLabel,
 }: {
   busy: boolean;
   error: string;
+  onBack?: () => void;
   onCancel: () => void;
+  submitDisabled?: boolean;
   submitLabel: string;
 }) {
   return (
@@ -292,8 +339,18 @@ function DialogFooter({
         </p>
       ) : null}
       <div className="flex justify-end gap-2 border-t border-[var(--color-border-strong)] pt-4">
+        {onBack ? (
+          <button
+            className={secondaryButtonClass}
+            disabled={busy}
+            onClick={onBack}
+            type="button"
+          >
+            Back
+          </button>
+        ) : null}
         <button
-          className="h-9 rounded-md px-3 text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)]"
+          className={secondaryButtonClass}
           onClick={onCancel}
           type="button"
         >
@@ -301,7 +358,7 @@ function DialogFooter({
         </button>
         <button
           className="h-9 rounded-md bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-foreground)] disabled:opacity-50"
-          disabled={busy}
+          disabled={busy || submitDisabled}
           type="submit"
         >
           {busy ? "Saving…" : submitLabel}
@@ -313,3 +370,6 @@ function DialogFooter({
 
 const controlClass =
   "h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--foreground)] outline-none focus:border-[#4d8dff]";
+
+const secondaryButtonClass =
+  "h-9 rounded-md px-3 text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] disabled:opacity-50";
