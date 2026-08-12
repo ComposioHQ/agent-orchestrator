@@ -491,6 +491,12 @@ func Run() error {
 		<-usageDone
 	}
 	lcStack.Stop()
+	// Tear the tailnet proxy down before the listener it fronts. `tailscale
+	// serve --bg` state lives in tailscaled and outlives this process, so
+	// leaving it would keep publishing a local port that no longer has the
+	// authenticated LAN listener behind it. Best-effort and never blocking:
+	// boot restore re-applies it against the next bound port.
+	bs.ShutdownServe()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {

@@ -322,3 +322,102 @@ func newSecureBridge(t *testing.T, info mobilebridge.TailscaleInfo, target func(
 		ServeTarget: target,
 	}
 }
+
+// `tailscale serve --https=443 off` is node-global: it removes whatever is on
+// :443, not merely what AO put there. Disabling a bridge that never enabled
+// secure pairing must therefore leave the tailnet proxy strictly alone, or AO
+// silently destroys a serve route its user configured for themselves — or one
+// belonging to another AO instance on the same node.
+func TestDisableLeavesServeAloneWhenSecurePairingNeverEnabled(t *testing.T) {
+	cleared := 0
+	b := newSecureBridge(t, tsUp, func() int { return 3011 })
+	b.ClearServe = func() error { cleared++; return nil }
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := b.Disable(); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if cleared != 0 {
+		t.Errorf("clearServe called %d times, want 0 — AO must not touch a proxy it never installed", cleared)
+	}
+}
+
+// When AO did install the proxy, disabling must still remove it.
+func TestDisableClearsServeWhenSecurePairingEnabled(t *testing.T) {
+	cleared := 0
+	b := newSecureBridge(t, tsUp, func() int { return 3011 })
+	b.ClearServe = func() error { cleared++; return nil }
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if _, err := b.SetSecurePairing(true); err != nil {
+		t.Fatalf("set secure: %v", err)
+	}
+	if err := b.Disable(); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if cleared != 1 {
+		t.Errorf("clearServe called %d times, want 1", cleared)
+	}
+}
+
+// `tailscale serve --bg` outlives this process, so a graceful shutdown that
+// stops only the listener leaves the tailnet routing to a local port with
+// nothing authenticated behind it. Whatever binds that port next would be
+// published to the tailnet in AO's place.
+func TestShutdownServeClearsProxyWhenSecurePairingEnabled(t *testing.T) {
+	cleared := 0
+	b := newSecureBridge(t, tsUp, func() int { return 3011 })
+	b.ClearServe = func() error { cleared++; return nil }
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if _, err := b.SetSecurePairing(true); err != nil {
+		t.Fatalf("set secure: %v", err)
+	}
+	b.ShutdownServe()
+	if cleared != 1 {
+		t.Errorf("clearServe called %d times on shutdown, want 1", cleared)
+	}
+}
+
+// The preference must survive shutdown so boot restore re-applies the proxy
+// against the next bound port without the user re-toggling anything.
+func TestShutdownServeKeepsSecurePairingPreference(t *testing.T) {
+	b := newSecureBridge(t, tsUp, func() int { return 3011 })
+	if _, err := b.Enable(); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if _, err := b.SetSecurePairing(true); err != nil {
+		t.Fatalf("set secure: %v", err)
+	}
+	b.ShutdownServe()
+	st, err := mobilebridge.Load(b.ConfigPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !st.SecurePairing {
+		t.Error("SecurePairing was cleared by shutdown; boot restore would not re-apply the proxy")
+	}
+}
+
+// A shutdown with the bridge off, or with secure pairing never enabled, must
+// not issue the node-global clear either.
+func TestShutdownServeNoopWhenNotOwned(t *testing.T) {
+	for name, setup := range map[string]func(*BridgeService){
+		"bridge disabled":         func(b *BridgeService) {},
+		"secure pairing never on": func(b *BridgeService) { _, _ = b.Enable() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cleared := 0
+			b := newSecureBridge(t, tsUp, func() int { return 3011 })
+			b.ClearServe = func() error { cleared++; return nil }
+			setup(b)
+			b.ShutdownServe()
+			if cleared != 0 {
+				t.Errorf("clearServe called %d times, want 0", cleared)
+			}
+		})
+	}
+}

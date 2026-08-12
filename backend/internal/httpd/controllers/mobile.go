@@ -338,8 +338,30 @@ func (b *BridgeService) Disable() error {
 	if err := b.LAN.Stop(ctx); err != nil {
 		return err
 	}
-	_ = b.clearServe()
 	st, _ := mobilebridge.Load(b.ConfigPath)
+	// Only touch the tailnet proxy when this bridge actually installed one.
+	// `tailscale serve --https=443 off` is node-global state: clearing it
+	// unconditionally would destroy a serve route the user configured for
+	// themselves, or one owned by another AO instance, for someone who never
+	// enabled secure pairing at all.
+	if st.SecurePairing {
+		_ = b.clearServe()
+	}
 	st.Enabled = false
 	return mobilebridge.Save(b.ConfigPath, st)
+}
+
+// ShutdownServe removes the tailnet proxy this bridge installed, for use on
+// daemon shutdown. `tailscale serve --bg` state lives in tailscaled and
+// outlives AO, so without this the tailnet keeps routing to a local port that
+// no longer has the authenticated LAN listener behind it — and any other
+// process that later binds that port would be published to the tailnet in its
+// place. The persisted SecurePairing preference is deliberately left set, so
+// RestoreOnBoot re-applies the proxy against the next bound port.
+func (b *BridgeService) ShutdownServe() {
+	st, _ := mobilebridge.Load(b.ConfigPath)
+	if !st.Enabled || !st.SecurePairing {
+		return
+	}
+	_ = b.clearServe()
 }
