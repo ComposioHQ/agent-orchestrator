@@ -9,11 +9,7 @@ import type {
 import { ChevronLeft, FileText, MessageSquare, Send, Terminal, X } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
-import {
-  browserCloudClient,
-  newIdempotencyKey,
-  writeWorkspaceFile,
-} from "@/lib/cloud-client";
+import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
 
 type PanelTab = "chat" | "files";
 
@@ -142,11 +138,10 @@ export function CloudSessionPanel({
     setFilesBusy(true);
     setError("");
     try {
-      const file = await writeWorkspaceFile(
+      const file = await client.writeWorkspaceFile(
         organizationId,
         session.id,
-        selectedFile.path,
-        fileContent,
+        { path: selectedFile.path, content: fileContent },
       );
       setSelectedFile(file);
       setFileContent(file.content);

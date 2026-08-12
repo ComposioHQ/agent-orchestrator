@@ -19,9 +19,9 @@ vi.mock("@/lib/cloud-client", () => ({
     replayEvents: mocks.replayEvents,
     sendMessage: mocks.sendMessage,
     streamEvents: mocks.streamEvents,
+    writeWorkspaceFile: mocks.writeWorkspaceFile,
   }),
   newIdempotencyKey: () => "message-key",
-  writeWorkspaceFile: mocks.writeWorkspaceFile,
 }));
 
 const session = {
@@ -118,8 +118,7 @@ it("lists, reads, and writes files while keeping terminal visibly unavailable", 
     expect(mocks.writeWorkspaceFile).toHaveBeenCalledWith(
       "org-1",
       "session-1",
-      "README.md",
-      "updated\n",
+      { path: "README.md", content: "updated\n" },
     ),
   );
 });
