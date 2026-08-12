@@ -43,7 +43,10 @@ jobs:
         env:
           AO_CLOUD_TEST_DATABASE_URL: postgres://ao_cloud_test_owner:ao_cloud_test_owner@127.0.0.1:5432/ao_cloud_test?sslmode=disable
         run: |
-          go test ./... -count=1
+          # Integration packages intentionally share this disposable database.
+          # Keep package processes serial so one fixture cannot reschedule
+          # another package's sandbox while it is being reconciled.
+          go test -p 1 ./... -count=1
           go vet ./...
       - name: Test deployment helpers
         run: python3 -m unittest discover -s scripts/tests -v
