@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 )
@@ -257,12 +258,16 @@ func TestRecreateDeletesThenCreates(t *testing.T) {
 	var calls []string
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodPost:
 			writeJSON(w, http.StatusCreated, sandboxView{ID: "sbx-2", Status: "creating", Name: "ao-session-1"})
-			return
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, sandboxView{ID: "sbx-1", Status: "destroyed"})
+		default:
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 		}
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
+	client.deletePoll = time.Millisecond
 
 	environment, err := client.Recreate(context.Background(), "sbx-1", sandbox.Spec{
 		Name: SandboxName("session-1"), Shape: "s-4vcpu-8gb",
@@ -273,11 +278,70 @@ func TestRecreateDeletesThenCreates(t *testing.T) {
 	if environment.ID != "sbx-2" {
 		t.Errorf("recreated id = %q, want sbx-2", environment.ID)
 	}
-	want := []string{"DELETE /v1/sandboxes/sbx-1", "POST /v1/sandboxes"}
+	want := []string{"DELETE /v1/sandboxes/sbx-1", "GET /v1/sandboxes/sbx-1", "POST /v1/sandboxes"}
 	for i, call := range want {
 		if calls[i] != call {
 			t.Errorf("call %d = %q, want %q", i, calls[i], call)
 		}
+	}
+}
+
+// The name is only free once the old VM leaves destroying, so the replacement
+// must not be created while the delete is still settling.
+func TestRecreateWaitsForTheOldSandboxToGoAway(t *testing.T) {
+	var calls []string
+	gets := 0
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch r.Method {
+		case http.MethodPost:
+			writeJSON(w, http.StatusCreated, sandboxView{ID: "sbx-2", Status: "creating"})
+		case http.MethodGet:
+			gets++
+			if gets < 3 {
+				writeJSON(w, http.StatusOK, sandboxView{ID: "sbx-1", Status: "destroying"})
+				return
+			}
+			http.Error(w, "gone", http.StatusNotFound)
+		default:
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		}
+	})
+	client.deletePoll = time.Millisecond
+
+	if _, err := client.Recreate(context.Background(), "sbx-1", sandbox.Spec{Shape: "s-4vcpu-8gb"}); err != nil {
+		t.Fatalf("Recreate() error = %v", err)
+	}
+	if gets != 3 {
+		t.Errorf("polled %d times, want 3 — until the sandbox was gone", gets)
+	}
+	if last := calls[len(calls)-1]; last != "POST /v1/sandboxes" {
+		t.Errorf("last call = %q, want the create to come after the delete settled", last)
+	}
+}
+
+func TestRecreateGivesUpWhenTheDeleteNeverSettles(t *testing.T) {
+	created := false
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			created = true
+			writeJSON(w, http.StatusCreated, sandboxView{ID: "sbx-2"})
+		case http.MethodGet:
+			writeJSON(w, http.StatusOK, sandboxView{ID: "sbx-1", Status: "destroying"})
+		default:
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		}
+	})
+	client.deletePoll = time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := client.Recreate(ctx, "sbx-1", sandbox.Spec{Shape: "s-4vcpu-8gb"}); err == nil {
+		t.Fatal("Recreate() succeeded while the old sandbox was still destroying")
+	}
+	if created {
+		t.Error("the replacement was created into a name the old sandbox still held")
 	}
 }
 
@@ -311,21 +375,33 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 		t.Fatalf("BootstrapWorker() error = %v", err)
 	}
 
-	if uploadPath != "/usr/local/bin/ao-worker" {
-		t.Errorf("upload path = %q, want the absolute destination", uploadPath)
+	// The binary lands beside its destination, never on top of it: overwriting
+	// the running worker in place would fail with ETXTBSY on every repair.
+	if uploadPath != "/usr/local/bin/ao-worker.new" {
+		t.Errorf("upload path = %q, want the staging path beside the destination", uploadPath)
 	}
 	if string(uploaded) != "ELF-worker" {
 		t.Errorf("uploaded %q, want the worker binary bytes", uploaded)
 	}
-	if len(execCommands) != 3 {
-		t.Fatalf("exec called %d times, want mkdir, chmod, and launch", len(execCommands))
+	if len(execCommands) != 5 {
+		t.Fatalf("exec called %d times, want mkdir, chmod, pkill, mv, and launch", len(execCommands))
 	}
 	if execCommands[0].Cmd != "mkdir" || execCommands[1].Cmd != "chmod" {
 		t.Errorf("exec sequence = %q/%q, want mkdir then chmod", execCommands[0].Cmd, execCommands[1].Cmd)
 	}
-	launch := strings.Join(execCommands[2].Args, " ")
-	if execCommands[2].Cmd != "bash" || !strings.Contains(launch, "ao-worker") {
-		t.Errorf("launch command = %s %v, want the worker started under bash", execCommands[2].Cmd, execCommands[2].Args)
+	stop := strings.Join(execCommands[2].Args, " ")
+	if !strings.Contains(stop, "pkill") || !strings.Contains(stop, "|| true") {
+		t.Errorf("stop command = %v, want a pkill that tolerates no match", execCommands[2].Args)
+	}
+	if execCommands[3].Cmd != "mv" {
+		t.Errorf("swap command = %q, want the staged binary renamed into place", execCommands[3].Cmd)
+	}
+	if got := strings.Join(execCommands[3].Args, " "); got != "-f /usr/local/bin/ao-worker.new /usr/local/bin/ao-worker" {
+		t.Errorf("swap args = %q, want the staging path renamed over the destination", got)
+	}
+	launch := strings.Join(execCommands[4].Args, " ")
+	if execCommands[4].Cmd != "bash" || !strings.Contains(launch, "ao-worker") {
+		t.Errorf("launch command = %s %v, want the worker started under bash", execCommands[4].Cmd, execCommands[4].Args)
 	}
 }
 
