@@ -157,6 +157,40 @@ function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", revi
 	});
 }
 
+// Same shape as mockCommonGets but with no reviewer configured on the project,
+// so the default reviewer has to be derived from the worker's own harness.
+function mockGetsWithoutProjectReviewer() {
+	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/agents") {
+			const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+			return { data: { supported: agents, installed: agents, authorized: agents } };
+		}
+		if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+			return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
+		}
+		if (path === "/api/v1/sessions/{sessionId}/reviews") {
+			return { data: { reviewerHandleId: "", reviews: [] } };
+		}
+		if (path === "/api/v1/projects/{id}") {
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "ws-1",
+						kind: "git",
+						name: "my-app",
+						path: "/repo",
+						repo: "my-app",
+						defaultBranch: "main",
+						config: {},
+					},
+				},
+			};
+		}
+		return { data: undefined };
+	});
+}
+
 const approvedReview = {
 	id: "run-1",
 	reviewId: "review-1",
@@ -996,7 +1030,10 @@ describe("SessionInspector summary reviews", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
-	it("shows claude-code as the default reviewer before a run exists", async () => {
+	// The daemon inherits the worker's harness when no reviewer is configured
+	// (ResolveReviewerHarness), so a codex worker reviews with codex. Naming
+	// claude-code here told the user one agent and ran another.
+	it("names the worker's own harness as the default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return { data: { reviewerHandleId: "", reviews: [] } };
@@ -1023,8 +1060,35 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+	});
+
+	// A worker whose harness is not in the inherited set falls through to the
+	// daemon's final fallback, which is claude-code. The project config must stay
+	// empty here: a configured reviewer outranks both the worker harness and the
+	// fallback.
+	it("falls back to claude-code when the worker harness is not an inherited reviewer", async () => {
+		mockGetsWithoutProjectReviewer();
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "amp")} />);
+		await openReviewsSection();
+
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Claude Code");
+	});
+
+	// The label is a display name, not the wire id: the trigger used to print the
+	// raw harness id, which read as a second, selectable "claude-code" entry
+	// alongside the catalog's properly-cased "Claude Code".
+	it("labels the default reviewer with its display name, not the raw id", async () => {
+		mockGetsWithoutProjectReviewer();
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "claude-code")} />);
+		await openReviewsSection();
+
+		const trigger = await screen.findByRole("button", { name: /Select reviewer agent/ });
+		expect(trigger).toHaveTextContent("Claude Code");
+		expect(trigger).not.toHaveTextContent("claude-code");
 	});
 
 	it("hides review summary sections when no review data exists", async () => {
@@ -1083,7 +1147,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsSection();
 
-		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 4")).toBeInTheDocument();
 		expect(
@@ -1648,7 +1712,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();

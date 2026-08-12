@@ -47,3 +47,23 @@ export const KNOWN_REVIEWER_HARNESS_IDS: ReadonlySet<string> = new Set(REVIEWER_
 export function toReviewerHarnessId(value?: string): ReviewerHarnessId | undefined {
 	return value && KNOWN_REVIEWER_HARNESS_IDS.has(value) ? (value as ReviewerHarnessId) : undefined;
 }
+
+// Mirrors domain.ProjectConfig.ResolveReviewerHarness: with no project reviewer
+// configured, only this original, unattended-safe set is inherited from the
+// worker's own harness. Every other reviewer requires an explicit choice, so a
+// new experimental adapter never silently becomes a project's reviewer. Keep
+// this list in step with the daemon's switch — it is deliberately much narrower
+// than KNOWN_REVIEWER_HARNESS_IDS.
+const WORKER_INHERITED_REVIEWER_IDS: ReadonlySet<string> = new Set([
+	"claude-code",
+	"codex",
+	"opencode",
+	"muse",
+	"kimchi",
+] satisfies readonly ReviewerHarnessId[]);
+
+// The reviewer a worker harness contributes when nothing else names one, or
+// undefined when that harness is not inherited and the caller must fall back.
+export function inheritedReviewerHarness(worker?: string): ReviewerHarnessId | undefined {
+	return worker && WORKER_INHERITED_REVIEWER_IDS.has(worker) ? (worker as ReviewerHarnessId) : undefined;
+}
