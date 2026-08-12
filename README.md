@@ -95,49 +95,49 @@ AO stays local and supervisory: your coding agents keep doing the implementation
 
 <table>
   <tr>
-    <td width="33%"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="Claude Code" height="24" /> <b>Claude Code</b></td>
-    <td width="33%"><img src="frontend/src/renderer/assets/agents/codex.svg" alt="Codex" height="24" /> <b>Codex</b></td>
-    <td width="33%"><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="Cursor" height="24" /> <b>Cursor</b></td>
+    <td width="33%" nowrap><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="Claude Code" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Claude Code</b></td>
+    <td width="33%" nowrap><img src="frontend/src/renderer/assets/agents/codex.svg" alt="Codex" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Codex</b></td>
+    <td width="33%" nowrap><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="Cursor" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Cursor</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="opencode" height="24" /> <b>opencode</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/aider.png" alt="Aider" height="24" /> <b>Aider</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="GitHub Copilot" height="24" /> <b>GitHub Copilot</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="opencode" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>opencode</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/aider.png" alt="Aider" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Aider</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="GitHub Copilot" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>GitHub Copilot</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/grok.png" alt="Grok" height="24" /> <b>Grok</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/kimi.png" alt="Kimi" height="24" /> <b>Kimi</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/pi.png" alt="Pi" height="24" /> <b>Pi</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/grok.png" alt="Grok" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Grok</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/kimi.png" alt="Kimi" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Kimi</b></td>
+    <td nowrap><img src="docs/assets/readme/agents/pi-coding-agent.svg" alt="Pi" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Pi</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/amp.svg" alt="Amp" height="24" /> <b>Amp</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="Auggie" height="24" /> <b>Auggie</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/droid.png" alt="Droid" height="24" /> <b>Droid</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/amp.svg" alt="Amp" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Amp</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="Auggie" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Auggie</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/droid.png" alt="Droid" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Droid</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/crush.png" alt="Crush" height="24" /> <b>Crush</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/cline.svg" alt="Cline" height="24" /> <b>Cline</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/goose.svg" alt="Goose" height="24" /> <b>Goose</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/crush.png" alt="Crush" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Crush</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/cline.svg" alt="Cline" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Cline</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/goose.svg" alt="Goose" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Goose</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/qwen.png" alt="Qwen" height="24" /> <b>Qwen</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/continue.png" alt="Continue" height="24" /> <b>Continue</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/devin.png" alt="Devin" height="24" /> <b>Devin</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/qwen.png" alt="Qwen" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Qwen</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/continue.png" alt="Continue" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Continue</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/devin.png" alt="Devin" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Devin</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/kiro.png" alt="Kiro" height="24" /> <b>Kiro</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="Kilo Code" height="24" /> <b>Kilo Code</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/vibe.png" alt="Vibe" height="24" /> <b>Vibe</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/kiro.png" alt="Kiro" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Kiro</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="Kilo Code" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Kilo Code</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/vibe.png" alt="Vibe" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Vibe</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/muse.png" alt="Muse" height="24" /> <b>Muse</b></td>
-    <td><img src="frontend/src/renderer/assets/agents/agy.png" alt="Agy" height="24" /> <b>Agy</b></td>
-    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/agents/autohand-stacked-dark.png" /><img src="docs/assets/readme/agents/autohand-stacked-light.png" alt="Autohand" height="36" /></picture> <b>Autohand</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/muse.png" alt="Muse" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Muse</b></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/agy.png" alt="Agy" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Agy</b></td>
+    <td nowrap><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/agents/autohand-stacked-dark.png" /><img src="docs/assets/readme/agents/autohand-stacked-light.png" alt="Autohand" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /></picture> <b>Autohand</b></td>
   </tr>
   <tr>
-    <td><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="Kimchi" height="24" /> <b>Kimchi</b></td>
-    <td><img src="docs/assets/readme/agents/prime-agent.svg" alt="Prime Agent" height="24" /> <b>Prime Agent</b></td>
-    <td></td>
+    <td nowrap><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="Kimchi" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Kimchi</b></td>
+    <td nowrap><img src="docs/assets/readme/agents/prime-agent.svg" alt="Prime Agent" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Prime Agent</b></td>
+    <td nowrap></td>
   </tr>
 </table>
 
