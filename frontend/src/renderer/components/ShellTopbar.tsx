@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { Folder, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -56,7 +56,13 @@ const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
 
-export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
+export function ShellTopbar({
+	embedded = false,
+	sessionAction,
+}: {
+	embedded?: boolean;
+	sessionAction?: ReactNode;
+} = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -273,6 +279,11 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 						{isOrchestrator ? (
 							<>
 								<ProjectTerminationFeedback projectId={projectId} />
+								{sessionAction ? (
+									<div className="inline-flex shrink-0 items-center" style={noDragStyle}>
+										{sessionAction}
+									</div>
+								) : null}
 								<Tooltip>
 									<TooltipTrigger asChild>
 										<span className="inline-flex" style={noDragStyle}>
@@ -309,24 +320,33 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 								</Tooltip>
 							</>
 						) : null}
-						{/* Kill control sits beside the orchestrator link for active workers —
-						    moved here from the inspector's Summary "Danger zone". */}
-						{!isOrchestrator && session && sessionIsActive(session) ? (
-							<TopbarKillButton
-								key={session.id}
-								session={session}
-								orchestratorId={orchestrator?.id}
-								onKilled={(workspaceId, orchestratorId) => {
-									if (orchestratorId) {
-										void navigate({
-											to: "/projects/$projectId/sessions/$sessionId",
-											params: { projectId: workspaceId, sessionId: orchestratorId },
-										});
-										return;
-									}
-									void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
-								}}
-							/>
+						{/* Local worker actions share one tight control group. Navigation
+						    remains a separate visual target in the outer top-bar row. */}
+						{!isOrchestrator && session && (sessionAction || sessionIsActive(session)) ? (
+							<div
+								className="mr-0.5 inline-flex shrink-0 items-center gap-px"
+								data-testid="session-local-actions"
+								style={noDragStyle}
+							>
+								{sessionAction ? <div className="inline-flex shrink-0 items-center">{sessionAction}</div> : null}
+								{sessionIsActive(session) ? (
+									<TopbarKillButton
+										key={session.id}
+										session={session}
+										orchestratorId={orchestrator?.id}
+										onKilled={(workspaceId, orchestratorId) => {
+											if (orchestratorId) {
+												void navigate({
+													to: "/projects/$projectId/sessions/$sessionId",
+													params: { projectId: workspaceId, sessionId: orchestratorId },
+												});
+												return;
+											}
+											void navigate({ to: "/projects/$projectId", params: { projectId: workspaceId } });
+										}}
+									/>
+								) : null}
+							</div>
 						) : null}
 						{!isOrchestrator ? (
 							<Tooltip>

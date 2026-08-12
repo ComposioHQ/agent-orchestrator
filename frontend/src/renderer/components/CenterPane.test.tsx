@@ -1,11 +1,9 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSwitch } from "../hooks/useAgentSwitches";
 import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
 import type { WorkspaceSession } from "../types/workspace";
-import { isMacPlatform } from "../lib/platform";
 import { CenterPane } from "./CenterPane";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -261,7 +259,14 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByRole("button", { name: `Close terminal ${shell.title}` })).toBeInTheDocument();
 		expect(mainTab.querySelector('[title="Working"]')).toHaveClass("self-center");
 		expect(mainTab.querySelector('[title="Working"]')).not.toHaveClass("-translate-y-px");
-		expect(within(mainContainer as HTMLElement).getByTestId("terminal-switch-agent")).toBeInTheDocument();
+		expect(within(mainContainer as HTMLElement).queryByTestId("terminal-switch-agent")).toBeNull();
+	});
+
+	it("leaves agent switching out of the permanent terminal tab", () => {
+		renderCenterPane({ session: worker });
+
+		const mainTab = screen.getByRole("tab", { name: /^do the thing/ });
+		expect(mainTab.parentElement?.querySelector('[data-testid="terminal-switch-agent"]')).toBeNull();
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
@@ -358,28 +363,10 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
-	// The button used to open a dropdown that also listed every session across
-	// every project (#3208); it now only ever creates a terminal.
-	it("opens a new terminal straight from the tab-strip button", () => {
-		const onNewShellTerminal = vi.fn();
-		renderCenterPane({ session: worker, onNewShellTerminal });
+	it("leaves terminal creation out of the terminal strip", () => {
+		renderCenterPane({ session: worker });
 
-		const newTerminalButton = screen.getByRole("button", { name: "New terminal" });
-		expect(newTerminalButton).toHaveClass("size-control-md", "border", "border-border");
-		expect(screen.queryByText("New terminal")).not.toBeInTheDocument();
-		fireEvent.click(newTerminalButton);
-		expect(onNewShellTerminal).toHaveBeenCalledOnce();
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-	});
-
-	it("explains compact controls with tooltips", async () => {
-		const user = userEvent.setup();
-		renderCenterPane({ session: worker, onNewShellTerminal: vi.fn() });
-
-		await user.hover(screen.getByRole("button", { name: "New terminal" }));
-		expect(await screen.findByRole("tooltip")).toHaveTextContent(
-			isMacPlatform() ? "New terminal (⌘T)" : "New terminal (Ctrl+T)",
-		);
+		expect(screen.queryByRole("button", { name: "New terminal" })).toBeNull();
 	});
 
 	it("shows 'Orchestrator' for an orchestrator session", () => {
@@ -387,15 +374,6 @@ describe("CenterPane toolbar session label", () => {
 			session: { ...worker, id: "sess-orch", kind: "orchestrator" },
 		});
 		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
-	});
-
-	it("does not offer a new terminal for an orchestrator session", () => {
-		renderCenterPane({
-			session: { ...worker, id: "sess-orch", kind: "orchestrator" },
-			onNewShellTerminal: vi.fn(),
-		});
-
-		expect(screen.queryByRole("button", { name: "New terminal" })).not.toBeInTheDocument();
 	});
 
 	it("shows 'No session' when there is no session", () => {
@@ -415,7 +393,6 @@ describe("CenterPane toolbar session label", () => {
 	it("keeps terminal controls in the measured terminal region and session actions outside it", () => {
 		renderCenterPane({
 			session: worker,
-			onNewShellTerminal: vi.fn(),
 			topbarActions: <button type="button">Session action</button>,
 		});
 
@@ -424,7 +401,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(workspaceTopbar).toHaveClass("session-topbar-surface");
 		expect(workspaceTopbar).toContainElement(terminalRegion);
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
-		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
+		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
 		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
 		const actionRegion = screen.getByTestId("session-action-region");

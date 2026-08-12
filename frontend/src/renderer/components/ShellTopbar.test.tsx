@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -93,11 +94,16 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
-function renderTopbar(session: WorkspaceSession, embedded = false) {
-	return renderTopbarSessions([session], session.id, embedded);
+function renderTopbar(session: WorkspaceSession, embedded = false, sessionAction?: ReactNode) {
+	return renderTopbarSessions([session], session.id, embedded, sessionAction);
 }
 
-function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, embedded = false) {
+function renderTopbarSessions(
+	sessions: WorkspaceSession[],
+	sessionId: string,
+	embedded = false,
+	sessionAction?: ReactNode,
+) {
 	const data: WorkspaceSummary[] = [
 		{
 			id: sessions[0].workspaceId,
@@ -114,7 +120,7 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, e
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
 			<TooltipProvider>
-				<ShellTopbar embedded={embedded} />
+				<ShellTopbar embedded={embedded} sessionAction={sessionAction} />
 			</TooltipProvider>
 		</QueryClientProvider>
 	);
@@ -191,12 +197,26 @@ describe("ShellTopbar status pill", () => {
 	});
 
 	it("renders only session actions when embedded in the terminal bar", () => {
-		renderTopbar(sessionWith(), true);
+		renderTopbar(
+			sessionWith(),
+			true,
+			<>
+				<button type="button">New terminal</button>
+				<button type="button">Switch agent</button>
+				<button type="button">Switch to chat UI</button>
+			</>,
+		);
 
-		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
-		expect(screen.queryByText("Working")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
+		expect(screen.queryByText("ao/sess-1")).toBeNull();
+		expect(screen.queryByText("Working")).toBeNull();
+		const localActions = screen.getByTestId("session-local-actions");
+		expect(localActions.classList.contains("gap-px")).toBe(true);
+		expect(localActions.classList.contains("mr-0.5")).toBe(true);
+		expect(localActions.contains(screen.getByRole("button", { name: "New terminal" }))).toBe(true);
+		expect(localActions.contains(screen.getByRole("button", { name: "Switch agent" }))).toBe(true);
+		expect(localActions.contains(screen.getByRole("button", { name: "Switch to chat UI" }))).toBe(true);
+		expect(localActions.contains(screen.getByRole("button", { name: "Kill session" }))).toBe(true);
+		expect(localActions.contains(screen.getByRole("button", { name: "Open orchestrator" }))).toBe(false);
 	});
 
 	it.each([

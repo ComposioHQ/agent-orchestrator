@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -16,6 +17,8 @@ import {
 	SessionInterfaceTransitionNotice,
 } from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
+import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
+import { TopbarButton } from "./TopbarButton";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
@@ -354,12 +357,24 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}}
 		/>
 	) : null;
-	const sessionHeaderActions = (
+	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
+	const sessionLocalActions = session ? (
 		<SessionInterfaceActionGroup>
+			<TopbarButton
+				aria-label={t("shortcut.new-shell-terminal")}
+				disabled={openShellTerminal.isPending}
+				onClick={addShellTerminal}
+				title={newTerminalError ?? t("shortcut.new-shell-terminal")}
+				type="button"
+				variant="icon"
+			>
+				<Plus aria-hidden="true" className="size-icon-md" />
+			</TopbarButton>
+			<TerminalSwitchAgentButton session={session} />
 			{interfaceSwitchAction}
-			<ShellTopbar embedded />
 		</SessionInterfaceActionGroup>
-	);
+	) : null;
+	const sessionHeaderActions = <ShellTopbar embedded sessionAction={sessionLocalActions} />;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -656,7 +671,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								}
 								daemonReady={daemonStatus.state === "ready"}
 								onCloseShellTerminal={closeShellTerminalByHandle}
-								onNewShellTerminal={addShellTerminal}
 								onRenameShellTerminal={renameShellTerminalByHandle}
 								onSelectSessionTerminal={selectSessionTerminal}
 								onSelectReviewerTerminal={selectReviewerTerminal}
