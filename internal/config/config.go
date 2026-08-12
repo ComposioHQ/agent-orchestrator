@@ -34,7 +34,35 @@ type Config struct {
 	LocalSessionTTL      time.Duration
 	SandboxProvider      string
 	Release              string
-	GitHub               GitHubConfig
+
+	// PublicURL is the origin a sandbox worker dials back to. A worker opens
+	// no inbound port, so this is the only way it can reach the control plane.
+	PublicURL string
+	// WorkerSigningKey signs the short-lived worker tokens.
+	WorkerSigningKey string
+	// WorkerBinaryPath is the ao-worker executable uploaded into sandboxes.
+	WorkerBinaryPath string
+	// MaxSandboxesPerOrg caps how much provider capacity one organization can
+	// hold at once.
+	MaxSandboxesPerOrg int
+	// ReconcileInterval is the sandbox reconcile tick.
+	ReconcileInterval time.Duration
+	// SandboxStartupTimeout is the budget from Create to the first heartbeat.
+	SandboxStartupTimeout time.Duration
+	// WorkerHeartbeatTimeout is how long a silent worker is tolerated.
+	WorkerHeartbeatTimeout time.Duration
+
+	NodeOpsBaseURL          string
+	NodeOpsAPIKey           string
+	NodeOpsDefaultShape     string
+	NodeOpsDefaultRootFS    string
+	NodeOpsIngress          string
+	NodeOpsSSHKeyPath       string
+	NodeOpsRegion           string
+	NodeOpsAutoPauseMinutes int
+	NodeOpsWorkerTokenTTL   time.Duration
+
+	GitHub GitHubConfig
 }
 
 type GitHubConfig struct {
@@ -79,8 +107,33 @@ func Load() (Config, error) {
 		WorkOSJWKSURL:        strings.TrimSpace(os.Getenv("AO_CLOUD_WORKOS_JWKS_URL")),
 		LocalAuthEnabled:     boolEnv("AO_CLOUD_LOCAL_AUTH", false),
 		LocalSessionTTL:      durationEnv("AO_CLOUD_LOCAL_SESSION_TTL", 24*time.Hour),
-		SandboxProvider:      strings.ToLower(envOrDefault("AO_CLOUD_SANDBOX_PROVIDER", "ecs")),
-		Release:              strings.TrimSpace(os.Getenv("AO_CLOUD_RELEASE")),
+		SandboxProvider: strings.ToLower(
+			envOrDefault("AO_CLOUD_SANDBOX_PROVIDER", defaultSandboxProvider(hosted)),
+		),
+		Release: strings.TrimSpace(os.Getenv("AO_CLOUD_RELEASE")),
+
+		PublicURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_PUBLIC_URL")), "/"),
+		WorkerSigningKey:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKER_SIGNING_KEY")),
+		WorkerBinaryPath:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKER_BINARY_PATH")),
+		MaxSandboxesPerOrg:     intEnvOrDefault("AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG", 10),
+		ReconcileInterval:      durationEnv("AO_CLOUD_SANDBOX_RECONCILE_INTERVAL", 2*time.Second),
+		SandboxStartupTimeout:  durationEnv("AO_CLOUD_SANDBOX_STARTUP_TIMEOUT", 3*time.Minute),
+		WorkerHeartbeatTimeout: durationEnv("AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT", time.Minute),
+
+		NodeOpsBaseURL:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_BASE_URL")),
+		NodeOpsAPIKey:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_API_KEY")),
+		NodeOpsDefaultShape:  strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE")),
+		NodeOpsDefaultRootFS: strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS")),
+		NodeOpsIngress:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_INGRESS")),
+		NodeOpsSSHKeyPath:    strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH")),
+		NodeOpsRegion:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_REGION")),
+		NodeOpsAutoPauseMinutes: intEnvOrDefault(
+			"AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", sandbox.DefaultAutoPauseMinutes,
+		),
+		NodeOpsWorkerTokenTTL: durationEnv(
+			"AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
+		),
+
 		GitHub: GitHubConfig{
 			AppID:          int64Env("AO_CLOUD_GITHUB_APP_ID"),
 			AppSlug:        strings.TrimSpace(os.Getenv("AO_CLOUD_GITHUB_APP_SLUG")),
@@ -184,6 +237,17 @@ func Load() (Config, error) {
 		if cfg.PublicURL == "" {
 			return Config{}, errors.New("AO_CLOUD_PUBLIC_URL is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
 		}
+		// A worker reads this origin out of its environment and dials it with
+		// no user agent to fall back on, so a malformed value fails silently
+		// inside the sandbox. Reject it here instead.
+		workerHome, err := url.Parse(cfg.PublicURL)
+		if err != nil || workerHome.Host == "" ||
+			(workerHome.Scheme != "http" && workerHome.Scheme != "https") {
+			return Config{}, errors.New("AO_CLOUD_PUBLIC_URL must be an absolute http or https origin")
+		}
+		if cfg.Hosted() && workerHome.Scheme != "https" {
+			return Config{}, errors.New("AO_CLOUD_PUBLIC_URL must use HTTPS in hosted environments")
+		}
 		if len(cfg.WorkerSigningKey) < minWorkerSigningKeyLength {
 			return Config{}, fmt.Errorf(
 				"AO_CLOUD_WORKER_SIGNING_KEY must be at least %d characters when AO_CLOUD_SANDBOX_PROVIDER=nodeops",
@@ -226,7 +290,6 @@ func Load() (Config, error) {
 		cfg.GitHub.PrivateKeyPEM != "",
 		cfg.GitHub.WebhookSecret != "",
 		len(cfg.GitHub.StateKey) != 0,
-		cfg.GitHub.PublicURL != "",
 	}
 	configuredGitHubValues := 0
 	for _, configured := range githubValues {
@@ -235,7 +298,14 @@ func Load() (Config, error) {
 		}
 	}
 	if configuredGitHubValues != 0 && configuredGitHubValues != len(githubValues) {
-		return Config{}, errors.New("all AO_CLOUD_GITHUB_* credentials and AO_CLOUD_PUBLIC_URL must be set together")
+		return Config{}, errors.New("all AO_CLOUD_GITHUB_* credentials must be set together")
+	}
+	// AO_CLOUD_PUBLIC_URL is no longer a GitHub-only setting: a sandbox worker
+	// opens no inbound port and can only reach the control plane by dialing
+	// this origin. It is therefore validated on its own, and merely required
+	// by whichever features need it.
+	if cfg.GitHub.Enabled() && cfg.GitHub.PublicURL == "" {
+		return Config{}, errors.New("AO_CLOUD_PUBLIC_URL is required when the GitHub App is configured")
 	}
 	if cfg.GitHub.Enabled() && cfg.Environment != "production" {
 		return Config{}, errors.New("GitHub App credentials may only be configured in production")
@@ -295,6 +365,29 @@ func durationEnv(key string, fallback time.Duration) time.Duration {
 	parsed, err := time.ParseDuration(value)
 	if err != nil {
 		return fallback
+	}
+	return parsed
+}
+
+// defaultSandboxProvider picks the provider an unconfigured deployment gets.
+// Hosted environments run on NodeOps, which is also the only provider they are
+// allowed to run on; locally there is no NodeOps account, so the default is the
+// provider a developer can actually reach.
+func defaultSandboxProvider(hosted bool) string {
+	if hosted {
+		return sandbox.ProviderNodeOps
+	}
+	return sandbox.DefaultProvider
+}
+
+func intEnvOrDefault(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
 	}
 	return parsed
 }
