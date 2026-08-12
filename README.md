@@ -93,55 +93,34 @@ AO stays local and supervisory: your coding agents keep doing the implementation
 
 **26 coding agents supported** through one supervised workflow.
 
-<table>
-  <tr>
-    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="Claude Code" height="28" /><br /><sub><b>Claude Code</b></sub></td>
-    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/codex.svg" alt="Codex" height="28" /><br /><sub><b>Codex</b></sub></td>
-    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="Cursor" height="28" /><br /><sub><b>Cursor</b></sub></td>
-    <td align="center" width="25%"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="opencode" height="28" /><br /><sub><b>opencode</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/aider.png" alt="Aider" height="28" /><br /><sub><b>Aider</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="GitHub Copilot" height="28" /><br /><sub><b>GitHub Copilot</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/grok.png" alt="Grok" height="28" /><br /><sub><b>Grok</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/kimi.png" alt="Kimi" height="28" /><br /><sub><b>Kimi</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/pi.png" alt="Pi" height="28" /><br /><sub><b>Pi</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/amp.svg" alt="Amp" height="28" /><br /><sub><b>Amp</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="Auggie" height="28" /><br /><sub><b>Auggie</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/droid.png" alt="Droid" height="28" /><br /><sub><b>Droid</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/crush.png" alt="Crush" height="28" /><br /><sub><b>Crush</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/cline.svg" alt="Cline" height="28" /><br /><sub><b>Cline</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/goose.svg" alt="Goose" height="28" /><br /><sub><b>Goose</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/qwen.png" alt="Qwen" height="28" /><br /><sub><b>Qwen</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/continue.png" alt="Continue" height="28" /><br /><sub><b>Continue</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/devin.png" alt="Devin" height="28" /><br /><sub><b>Devin</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/kiro.png" alt="Kiro" height="28" /><br /><sub><b>Kiro</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="Kilo Code" height="28" /><br /><sub><b>Kilo Code</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/vibe.png" alt="Vibe" height="28" /><br /><sub><b>Vibe</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/muse.png" alt="Muse" height="28" /><br /><sub><b>Muse</b></sub></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/agy.png" alt="Agy" height="28" /><br /><sub><b>Agy</b></sub></td>
-    <td align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/agents/autohand-stacked-dark.png" />
-        <img src="docs/assets/readme/agents/autohand-stacked-light.png" alt="Autohand" height="44" />
-      </picture><br /><sub><b>Autohand</b></sub>
-    </td>
-  </tr>
-  <tr>
-    <td></td>
-    <td align="center"><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="Kimchi" height="28" /><br /><sub><b>Kimchi</b></sub></td>
-    <td align="center"><img src="docs/assets/readme/agents/prime-agent.svg" alt="Prime Agent" height="28" /><br /><sub><b>Prime Agent</b></sub></td>
-    <td></td>
-  </tr>
-</table>
+<ul>
+  <li><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="Claude Code" height="24" /> <b>Claude Code</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/codex.svg" alt="Codex" height="24" /> <b>Codex</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="Cursor" height="24" /> <b>Cursor</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="opencode" height="24" /> <b>opencode</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/aider.png" alt="Aider" height="24" /> <b>Aider</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="GitHub Copilot" height="24" /> <b>GitHub Copilot</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/grok.png" alt="Grok" height="24" /> <b>Grok</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/kimi.png" alt="Kimi" height="24" /> <b>Kimi</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/pi.png" alt="Pi" height="24" /> <b>Pi</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/amp.svg" alt="Amp" height="24" /> <b>Amp</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="Auggie" height="24" /> <b>Auggie</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/droid.png" alt="Droid" height="24" /> <b>Droid</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/crush.png" alt="Crush" height="24" /> <b>Crush</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/cline.svg" alt="Cline" height="24" /> <b>Cline</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/goose.svg" alt="Goose" height="24" /> <b>Goose</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/qwen.png" alt="Qwen" height="24" /> <b>Qwen</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/continue.png" alt="Continue" height="24" /> <b>Continue</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/devin.png" alt="Devin" height="24" /> <b>Devin</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/kiro.png" alt="Kiro" height="24" /> <b>Kiro</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="Kilo Code" height="24" /> <b>Kilo Code</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/vibe.png" alt="Vibe" height="24" /> <b>Vibe</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/muse.png" alt="Muse" height="24" /> <b>Muse</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/agy.png" alt="Agy" height="24" /> <b>Agy</b></li>
+  <li><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/agents/autohand-stacked-dark.png" /><img src="docs/assets/readme/agents/autohand-stacked-light.png" alt="Autohand" height="36" /></picture> <b>Autohand</b></li>
+  <li><img src="frontend/src/renderer/assets/agents/kimchi.svg" alt="Kimchi" height="24" /> <b>Kimchi</b></li>
+  <li><img src="docs/assets/readme/agents/prime-agent.svg" alt="Prime Agent" height="24" /> <b>Prime Agent</b></li>
+</ul>
 
 [Browse agent setup guides →](https://aoagents.dev/docs/plugins/agents)
 
