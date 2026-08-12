@@ -722,6 +722,80 @@ button.settings-link-row:active {
 	}
 }
 
+@utility settings-inline-edit-trigger {
+	display: inline-flex;
+	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
+	min-width: 0;
+	flex: 0 1 auto;
+	align-items: center;
+	justify-content: flex-end;
+	gap: calc(var(--spacing) * 1.5);
+	border: 0;
+	background: transparent;
+	padding: 0;
+	color: var(--color-text-settings-muted);
+	outline: none;
+	cursor: pointer;
+	transition-property: color;
+	transition-duration: var(--duration-fast);
+
+	&:hover,
+	&:focus-visible {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-radius: var(--radius-md);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+
+	& .settings-row-value {
+		max-width: none;
+	}
+}
+
+@utility settings-inline-edit-icon {
+	width: var(--size-icon-sm);
+	height: var(--size-icon-sm);
+	flex-shrink: 0;
+	opacity: 0.7;
+}
+
+@utility settings-inline-edit-input {
+	width: var(--size-settings-inline-input-max);
+	max-width: var(--size-settings-inline-input-max);
+	min-width: 0;
+	flex: 0 1 auto;
+	height: var(--size-settings-inline-input-height);
+	border: 1px solid var(--color-border-settings-input);
+	border-radius: var(--radius-lg);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: calc(var(--spacing) * 2.5);
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-input);
+	text-align: right;
+	outline: none;
+	box-shadow: none;
+	transition-property: border-color, box-shadow, color;
+	transition-duration: var(--duration-normal);
+
+	&::placeholder {
+		color: var(--color-text-settings-placeholder);
+	}
+
+	&:hover {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		color: var(--color-text-settings-row);
+		outline: none;
+	}
+}
+
 @utility settings-inline-input {
 	width: auto;
 	max-width: min(var(--size-settings-inline-input-max), var(--size-settings-inline-input-max-percent));
@@ -3070,11 +3144,17 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-po
 .browser-panel__toolbar {
 	display: flex;
 	align-items: center;
-	gap: 5px;
+	gap: 2px;
 	flex-shrink: 0;
 	min-width: 0;
-	min-height: 44px;
-	padding: 7px 8px;
+	/* Matches the 28px (--size-control-md) buttons + 3px top/bottom exactly, so
+	   this is the actual driver of the bar's height — a bigger min-height here
+	   would silently swallow any padding reduction above it (buttons would just
+	   stay centered in the leftover space instead of the bar getting shorter). */
+	min-height: 34px;
+	/* No right padding: the new-tab button's own column is flush against this
+	   edge so it lines up with the docked rail directly below it. */
+	padding: 3px 0 3px 4px;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
@@ -3167,12 +3247,6 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-po
 	box-shadow:
 		0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
 		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
-}
-
-.browser-panel__tabs-trigger {
-	min-width: 42px;
-	border: 1px solid color-mix(in srgb, var(--color-border) 56%, transparent);
-	background: color-mix(in srgb, var(--surface) 86%, var(--bg));
 }
 
 .browser-panel__content {

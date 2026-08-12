@@ -283,6 +283,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		reviewers,
 		runtime,
 		cfg.DataDir,
+		reviewcore.WithRunFilePath(cfg.RunFilePath),
 		reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents}),
 		reviewcore.WithLauncherContext(ctx),
 		reviewcore.WithCompletionHandler(completionHandler),

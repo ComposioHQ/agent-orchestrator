@@ -30,6 +30,11 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import {
+	decideRelocation,
+	inspectInstalledBundle,
+	installedBundlePath,
+} from "./main/relocation";
 import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -62,6 +67,12 @@ import {
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import {
+	handleCloudDeepLink,
+	installCloudIPC,
+	registerCloudProtocol,
+	showCloudSignInFailure,
+} from "./main/cloud-auth";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
@@ -203,6 +214,13 @@ protocol.registerSchemesAsPrivileged([
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
+
+// Register ao-app:// as the deep-link protocol for WorkOS auth callbacks.
+// Must run before app.whenReady().
+registerCloudProtocol();
+if (!app.requestSingleInstanceLock()) {
+	app.exit(0);
+}
 
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
@@ -1770,7 +1788,62 @@ ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.han
 
 ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
 
-// Auto-update only runs for packaged builds reading the GitHub Releases feed
+// Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
+// Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
+function cloudDataDir(): string {
+	return isDev
+		? path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR)
+		: path.join(os.homedir(), ".ao");
+}
+
+function notifyRenderersOfCloudSession(account: import("./shared/cloud-account").CloudAccount | null): void {
+	const contents = getShellWebContents();
+	if (!contents || contents.isDestroyed()) return;
+	contents.send("cloud:sessionChanged", account);
+}
+
+installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+function focusCloudWindow(): void {
+	const window = BaseWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+}
+
+async function handleCloudDeepLinkAndFocus(url: string): Promise<void> {
+	focusCloudWindow();
+	try {
+		const session = await handleCloudDeepLink(url, cloudDataDir());
+		if (!session) return;
+		notifyRenderersOfCloudSession(session);
+	} catch (error) {
+		console.error("WorkOS callback failed:", error);
+		await showCloudSignInFailure(error);
+	}
+}
+
+// macOS: the OS sends the ao-app:// URL via the open-url event when the app is
+// already running. If the app is not running, the URL is passed in process.argv
+// on first launch (handled in app.whenReady below).
+app.on("open-url", (event, url) => {
+	event.preventDefault();
+	void handleCloudDeepLinkAndFocus(url);
+});
+
+app.on("second-instance", (_event, argv) => {
+	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
+	if (deepLink) {
+		void handleCloudDeepLinkAndFocus(deepLink);
+		return;
+	}
+	const window = BaseWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+});
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
 // A live updater additionally requires a signed + notarized build — see
 // frontend/docs/desktop-release.md.
@@ -1844,12 +1917,32 @@ app.whenReady().then(async () => {
 	}
 
 	if (process.platform === "darwin" && app.isPackaged) {
-		try {
-			// On success this restarts the app from /Applications, so code past
-			// here only runs when no move happened (already there, or declined).
-			app.moveToApplicationsFolder();
-		} catch (err) {
-			console.error("relocation to Applications failed:", err);
+		const bundlePath = resolveBundlePath();
+		const action = decideRelocation({
+			inApplicationsFolder: app.isInApplicationsFolder(),
+			runningVersion: app.getVersion(),
+			...inspectInstalledBundle(bundlePath),
+		});
+		if (action === "handoff") {
+			// A stale copy (the original download, a mounted dmg) launching while a
+			// newer build sits in /Applications. Relocating here would trash that
+			// build and pin the user to this bundle's version forever, so open the
+			// install and quit instead. Return before the marker write below: the
+			// instance we just launched records the path and version.
+			const installed = installedBundlePath(bundlePath);
+			console.info(`newer install at ${installed}; handing off and quitting`);
+			await shell.openPath(installed);
+			app.quit();
+			return;
+		}
+		if (action === "relocate") {
+			try {
+				// On success this restarts the app from /Applications, so code past
+				// here only runs when no move happened (already there, or declined).
+				app.moveToApplicationsFolder();
+			} catch (err) {
+				console.error("relocation to Applications failed:", err);
+			}
 		}
 	}
 
@@ -1880,6 +1973,13 @@ app.whenReady().then(async () => {
 	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
+
+	// Windows/Linux: on first launch, the deep-link URL may arrive as a
+	// process.argv entry (e.g. ao-app://callback?token=...).
+	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
+	if (deepLinkArg) {
+		void handleCloudDeepLinkAndFocus(deepLinkArg);
+	}
 
 	app.on("activate", () => {
 		if (BaseWindow.getAllWindows().length === 0) {

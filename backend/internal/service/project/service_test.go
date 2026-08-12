@@ -1084,13 +1084,21 @@ func TestManager_AddWorkspaceInsideAncestorRepo(t *testing.T) {
 func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
-	m := newManager(t)
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
 	parent := t.TempDir()
 	if err := os.WriteFile(filepath.Join(parent, "package.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitRepoWithCommit(t, filepath.Join(parent, "cli"))
-	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	apiRepo := gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	if out, err := exec.Command("git", "-C", apiRepo, "branch", "-m", "main", "dev").CombinedOutput(); err != nil {
+		t.Fatalf("rename api branch: %v (%s)", err, out)
+	}
 
 	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
 	if err != nil {
@@ -1101,6 +1109,19 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	}
 	if len(proj.WorkspaceRepos) != 2 || proj.WorkspaceRepos[0].Name != "api" || proj.WorkspaceRepos[1].Name != "cli" {
 		t.Fatalf("WorkspaceRepos = %#v", proj.WorkspaceRepos)
+	}
+	registeredRepos, err := store.ListWorkspaceRepos(ctx, "ws")
+	if err != nil {
+		t.Fatalf("list workspace repos: %v", err)
+	}
+	if len(registeredRepos) != 2 {
+		t.Fatalf("registered workspace repos = %#v, want 2", registeredRepos)
+	}
+	if registeredRepos[0].Name != "api" || registeredRepos[0].DefaultBranch != "dev" {
+		t.Fatalf("registered api repo = %#v, want persisted default branch dev", registeredRepos[0])
+	}
+	if registeredRepos[1].Name != "cli" || registeredRepos[1].DefaultBranch != "main" {
+		t.Fatalf("registered cli repo = %#v, want persisted default branch main", registeredRepos[1])
 	}
 	ignored, err := os.ReadFile(filepath.Join(parent, ".gitignore"))
 	if err != nil {

@@ -46,6 +46,11 @@ import { ProjectSettingsForm, type ProjectSettingsSaveState, type ProjectSetting
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
 
+async function beginEdit(label: string) {
+	await userEvent.click(await screen.findByRole("button", { name: `Edit ${label}` }));
+	return screen.getByLabelText(label);
+}
+
 function TestProjectSettings({
 	projectId,
 	section,
@@ -195,11 +200,39 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByLabelText("Project name");
+		await screen.findByRole("button", { name: "Edit Project name" });
 
 		// Close button is now in SettingsDialog, not in the form itself
 		expect(screen.queryByRole("button", { name: "Close settings" })).not.toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("shows the project name as text with a pencil until edit is clicked", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("button", { name: "Edit Project name" })).toHaveTextContent("Project One");
+		expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Edit Project name" }));
+		expect(screen.getByRole("textbox", { name: "Project name" })).toHaveValue("Project One");
+		expect(screen.queryByRole("button", { name: "Edit Project name" })).not.toBeInTheDocument();
+
+		await userEvent.keyboard("{Escape}");
+		expect(await screen.findByRole("button", { name: "Edit Project name" })).toBeInTheDocument();
+		expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
 	});
 
 	it("does not navigate on Escape (dialog handles closing)", async () => {
@@ -217,7 +250,7 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByLabelText("Project name");
+		await screen.findByRole("button", { name: "Edit Project name" });
 
 		await userEvent.keyboard("{Escape}");
 
@@ -241,7 +274,7 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("tg_content_factory_5863f66be3");
 
-		const projectName = await screen.findByLabelText("Project name");
+		const projectName = await beginEdit("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "TG Content Factory");
 		submitSettings();
@@ -392,10 +425,11 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("proj-1", undefined, "workflow");
 
-		expect(await screen.findByLabelText("Default branch")).toHaveValue("develop");
-		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
+		expect(await beginEdit("Default branch")).toHaveValue("develop");
+		await userEvent.keyboard("{Escape}");
+		expect(await beginEdit("Session prefix")).toHaveValue("po");
 		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
-		expect(reviewerAgent).toHaveTextContent("claude-code");
+		expect(reviewerAgent).toHaveTextContent("Claude Code");
 	});
 
 	it("shows the full model catalog again after selecting a model", async () => {
@@ -578,7 +612,7 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const projectName = await screen.findByLabelText("Project name");
+		const projectName = await beginEdit("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "Updated Project");
 		submitSettings();
@@ -646,7 +680,7 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const projectName = await screen.findByLabelText("Project name");
+		const projectName = await beginEdit("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "   ");
 		submitSettings();
@@ -1236,7 +1270,7 @@ describe("ProjectSettingsForm", () => {
 			"href",
 			"https://github.com/acme/project-one",
 		);
-		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+		await userEvent.type(await beginEdit("Assignee"), "octocat");
 
 		submitSettings();
 
