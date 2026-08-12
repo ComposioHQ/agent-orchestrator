@@ -176,25 +176,28 @@ describe("buildActivityPayload", () => {
 		expect(result!.buttons).toBeUndefined();
 	});
 
-	it("uses oldest working session start timestamp", () => {
+	it("uses provided start time as activity start timestamp", () => {
+		const startTime = Date.parse("2026-01-01T06:00:00Z");
 		const result = buildActivityPayload(
 			[
-				{ status: "working", isTerminated: false, createdAt: "2026-01-01T12:00:00Z" },
-				{ status: "working", isTerminated: false, createdAt: "2026-01-01T06:00:00Z" },
-				{ status: "working", isTerminated: false, createdAt: "2026-01-01T18:00:00Z" },
+				{ status: "working", isTerminated: false },
+				{ status: "working", isTerminated: false },
+				{ status: "working", isTerminated: false },
 			],
 			[],
+			startTime,
 		);
-		expect(result!.startTimestamp).toBe(Date.parse("2026-01-01T06:00:00Z"));
+		expect(result!.startTimestamp).toBe(startTime);
 	});
 
-	it("falls back to current time when no working sessions have createdAt", () => {
-		const before = Date.now();
+	it("start timestamp stays constant regardless of session createdAt", () => {
+		const startTime = Date.parse("2026-01-01T00:00:00Z");
 		const result = buildActivityPayload(
-			[{ status: "idle", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
+			[{ status: "idle", isTerminated: false, createdAt: "2026-01-02T00:00:00Z" }],
 			[],
+			startTime,
 		);
-		expect(result!.startTimestamp).toBeGreaterThanOrEqual(before);
+		expect(result!.startTimestamp).toBe(startTime);
 	});
 });
 

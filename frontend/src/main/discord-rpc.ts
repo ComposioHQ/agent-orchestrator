@@ -58,6 +58,7 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 let apiClient: ReturnType<typeof createClient<paths>> | null = null;
 let connectionState: RpcConnectionState = "disconnected";
 let statusListeners: ((status: RpcStatus) => void)[] = [];
+let rpcStartTimestamp: number | null = null;
 
 function makeApiClient(port: number): ReturnType<typeof createClient<paths>> {
 	return createClient<paths>({ baseUrl: `http://127.0.0.1:${port}` });
@@ -88,6 +89,7 @@ export function getRpcStatus(): RpcStatus {
 
 export async function startDiscordRpc(): Promise<void> {
 	if (client) return;
+	rpcStartTimestamp = Date.now();
 	client = new Client({ clientId: DISCORD_CLIENT_ID });
 	connectionState = "connecting";
 	broadcastStatus();
@@ -122,22 +124,16 @@ export function pickRepresentativeStatus(sessions: { status: string; isTerminate
 export function buildActivityPayload(
 	sessions: { status: string; isTerminated: boolean; createdAt?: string }[],
 	projects: { repo?: string }[],
+	startTime: number = Date.now(),
 ): ActivityPayload | null {
 	const rep = pickRepresentativeStatus(sessions);
 	if (!rep) return null;
-	const workingSessions = sessions.filter(
-		(s) => !s.isTerminated && s.status === "working" && s.createdAt,
-	);
-	const oldestWorking = workingSessions
-		.map((s) => Date.parse(s.createdAt!))
-		.filter((t): t is number => !Number.isNaN(t))
-		.sort((a, b) => a - b)[0];
 	const repoUrl = projects.find((p) => p.repo && p.repo.startsWith("http"))?.repo;
 	const buttons = repoUrl ? [{ label: "View on GitHub", url: repoUrl }] : undefined;
 	return {
 		details: `Orchestrating ${rep.count} ${rep.count === 1 ? "agent" : "agents"}`,
 		state: rep.label,
-		startTimestamp: oldestWorking ?? Date.now(),
+		startTimestamp: startTime,
 		largeImageKey: RPC_LARGE_IMAGE_KEY,
 		largeImageText: RPC_LARGE_IMAGE_TEXT,
 		buttons,
@@ -151,7 +147,7 @@ async function refreshPresence(): Promise<void> {
 	if (sessionsErr || projectsErr || !sessionsResp || !projectsResp) return;
 	const sessions = (sessionsResp as { sessions?: { status: string; isTerminated: boolean; createdAt?: string }[] }).sessions ?? [];
 	const projects = (projectsResp as { projects?: { repo?: string }[] }).projects ?? [];
-	const payload = buildActivityPayload(sessions, projects);
+	const payload = buildActivityPayload(sessions, projects, rpcStartTimestamp ?? undefined);
 	if (!payload) {
 		await clearActivity();
 		return;
