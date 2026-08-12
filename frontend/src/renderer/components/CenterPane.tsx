@@ -1,4 +1,5 @@
 import {
+	ArrowRight,
 	CheckCircle2,
 	ChevronLeft,
 	ChevronRight,
@@ -690,30 +691,11 @@ function AgentSwitchTerminalOverlay({
 							className="relative h-4 w-20 shrink-0 text-accent sm:w-28"
 							data-testid="agent-switch-transfer-arrow"
 						>
-							<svg
-								className="absolute inset-0 size-full overflow-visible"
-								fill="none"
-								preserveAspectRatio="none"
-								viewBox="0 0 112 16"
-							>
-								<path
-									className="text-foreground/55"
-									d="M1 8H109"
-									data-testid="agent-switch-transfer-shaft-line"
-									stroke="currentColor"
-									strokeLinecap="round"
-									strokeWidth="1.5"
-								/>
-								<path
-									className="text-foreground/55"
-									d="M102 1L109 8L102 15"
-									data-testid="agent-switch-transfer-arrowhead"
-									stroke="currentColor"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth="1.5"
-								/>
-							</svg>
+							<ArrowRight
+								className="absolute inset-0 size-full text-foreground/55"
+								data-testid="agent-switch-transfer-arrow-icon"
+								strokeWidth={1.5}
+							/>
 							<span
 								className="absolute inset-y-[7px] left-0 right-3 overflow-hidden"
 								data-testid="agent-switch-transfer-shaft"

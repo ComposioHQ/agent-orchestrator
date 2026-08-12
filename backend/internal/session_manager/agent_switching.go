@@ -44,7 +44,6 @@ Use the deterministic facts embedded in the hidden continuation. It may also con
 
 var (
 	errSourceHandoffOwnershipChanged = errors.New("source session ownership changed during handoff collection")
-	errAgentSwitchWorkersClosed      = errors.New("agent switch worker registration is closed")
 )
 
 // SwitchAgentConfig describes one deliberate, user-requested provider
@@ -138,6 +137,22 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 		} else if ok {
 			if !existing.RequestFingerprint.MatchesRequest(id, cfg.TargetHarness, cfg.Model) {
 				return existing, nil, fmt.Errorf("switch agent %s: %w", id, domain.ErrAgentSwitchIdempotencyConflict)
+			}
+			if !existing.State.Terminal() && m.agentSwitchRetained(id) {
+				resolved, recoverErr := m.reconcileRetainedAgentSwitchOnce(ctx, store, id)
+				if recoverErr != nil {
+					return existing, nil, fmt.Errorf("switch agent %s: recover retained idempotent switch: %w", id, recoverErr)
+				}
+				current, found, reloadErr := store.GetAgentSwitch(ctx, existing.ID)
+				if reloadErr != nil {
+					return existing, nil, fmt.Errorf("switch agent %s: reload recovered idempotent switch: %w", id, reloadErr)
+				}
+				if found {
+					existing = current
+				}
+				if !resolved {
+					return existing, nil, fmt.Errorf("switch agent %s: %w", id, ErrSwitchInProgress)
+				}
 			}
 			return existing, nil, nil
 		}
@@ -250,11 +265,15 @@ func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg
 	if err != nil {
 		// An autocommit can become durable even when SQLite returns an ambiguous
 		// commit error. Resolve by both immutable identities before releasing the
-		// input gate or attempting a second switch.
-		committed, found, reloadErr := store.GetAgentSwitch(ctx, requestedSwitch.ID)
+		// input gate or attempting a second switch. The request may have been
+		// canceled by the time the commit response is lost, so outcome recovery
+		// uses a short detached context just like every other durable boundary.
+		reloadCtx, cancelReload := switchDurableContext(ctx)
+		committed, found, reloadErr := store.GetAgentSwitch(reloadCtx, requestedSwitch.ID)
 		if reloadErr == nil && !found {
-			committed, found, reloadErr = store.GetAgentSwitchByIdempotencyKey(ctx, id, requestedSwitch.IdempotencyKey)
+			committed, found, reloadErr = store.GetAgentSwitchByIdempotencyKey(reloadCtx, id, requestedSwitch.IdempotencyKey)
 		}
+		cancelReload()
 		if reloadErr == nil && found && committed.SessionID == id && committed.RequestFingerprint == requestFingerprint {
 			switchRec = committed
 			created = true
@@ -315,16 +334,21 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 			cancel()
 			if cleanupErr != nil {
 				rollbackSafe = false
+				skipTerminalization = true
 				retErr = errors.Join(retErr, fmt.Errorf("clean target workspace before source rollback: %w", cleanupErr))
 			} else {
 				targetWorkspacePrepared = false
 			}
 		}
 		if rollbackSafe {
-			rollbackCtx, cancel := context.WithTimeout(workerCtx, switchPostStopWait)
+			// Daemon cancellation is exactly when rollback matters most. Once the
+			// source-stop boundary is durable, finish this bounded compensation even
+			// if the worker context has been canceled during shutdown.
+			rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(workerCtx), switchPostStopWait)
 			rollbackErr := m.rollbackStoppedAgentSwitchSource(rollbackCtx, store, result, project)
 			cancel()
 			if rollbackErr != nil {
+				skipTerminalization = true
 				retErr = errors.Join(retErr, fmt.Errorf("restore source after failed switch: %w", rollbackErr))
 				m.logger.Error("agent switch: automatic source rollback failed", "sessionID", id, "switchID", result.ID, "error", rollbackErr)
 			} else {
@@ -777,14 +801,14 @@ func (m *Manager) startAgentSwitchWorker(admitted *admittedAgentSwitch) error {
 		cancel()
 		if settleErr != nil {
 			m.retainAgentSwitch(admitted.record.SessionID)
-			return errors.Join(errAgentSwitchWorkersClosed, settleErr)
+			return errors.Join(ErrSwitchShuttingDown, settleErr)
 		}
 		if settled.State.Terminal() {
 			m.endAgentSwitch(admitted.record.SessionID)
 		} else {
 			m.retainAgentSwitch(admitted.record.SessionID)
 		}
-		return errAgentSwitchWorkersClosed
+		return ErrSwitchShuttingDown
 	}
 	m.agentSwitchWorkerMu.Unlock()
 
@@ -840,7 +864,7 @@ func (m *Manager) beginAgentSwitchAttempt() error {
 	m.agentSwitchWorkerMu.Lock()
 	defer m.agentSwitchWorkerMu.Unlock()
 	if m.agentSwitchWorkersClosed {
-		return errAgentSwitchWorkersClosed
+		return ErrSwitchShuttingDown
 	}
 	m.agentSwitchWorkers.Add(1)
 	return nil
@@ -3002,15 +3026,15 @@ func (m *Manager) failRecoveredSwitchWithSourceRollback(
 	sw domain.AgentSwitch,
 ) (bool, error) {
 	project, projectErr := m.loadProject(ctx, rec.ProjectID)
-	if projectErr == nil {
-		if rollbackErr := m.rollbackStoppedAgentSwitchSource(ctx, store, sw, project); rollbackErr != nil {
-			m.logger.Error("agent switch recovery: automatic source rollback failed", "sessionID", rec.ID, "switchID", sw.ID, "error", rollbackErr)
-		} else {
-			m.logger.Info("agent switch recovery: source restored", "sessionID", rec.ID, "switchID", sw.ID, "harness", sw.FromHarness)
-		}
-	} else {
+	if projectErr != nil {
 		m.logger.Error("agent switch recovery: source project unavailable for rollback", "sessionID", rec.ID, "switchID", sw.ID, "error", projectErr)
+		return false, projectErr
 	}
+	if rollbackErr := m.rollbackStoppedAgentSwitchSource(ctx, store, sw, project); rollbackErr != nil {
+		m.logger.Error("agent switch recovery: automatic source rollback failed", "sessionID", rec.ID, "switchID", sw.ID, "error", rollbackErr)
+		return false, rollbackErr
+	}
+	m.logger.Info("agent switch recovery: source restored", "sessionID", rec.ID, "switchID", sw.ID, "harness", sw.FromHarness)
 	_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 	return failErr == nil, failErr
 }

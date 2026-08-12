@@ -1041,7 +1041,7 @@ func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var in SwitchAgentRequest
-	if err := decodeJSON(r, &in); err != nil {
+	if err := decodeJSONStrict(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
@@ -1050,7 +1050,7 @@ func (c *SessionsController) switchAgent(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TARGET_HARNESS_REQUIRED", "targetHarness is required", nil)
 		return
 	}
-	model := strings.TrimSpace(in.Model)
+	model := strings.TrimSpace(domain.SanitizeControlChars(in.Model))
 	if utf8.RuneCountInString(model) > maxModelLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "Model must be 256 characters or fewer", nil)
 		return

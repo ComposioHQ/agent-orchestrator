@@ -1,4 +1,3 @@
-import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
@@ -18,6 +17,13 @@ import { AgentAvatar } from "./AgentAvatar";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { Button } from "./ui/button";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogTitle,
+} from "./ui/dialog";
 
 export const SWITCH_AGENT_OPTIONS = [
 	{ value: "claude-code", label: "Claude Code" },
@@ -161,7 +167,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	};
 
 	return (
-		<Dialog.Root
+		<Dialog
 			modal={false}
 			onOpenChange={(nextOpen) => {
 				if (!nextOpen && admissionPending) return;
@@ -169,14 +175,19 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 			}}
 			open={open}
 		>
-			<Dialog.Portal container={container}>
-				<div
-					aria-hidden="true"
-					className="agent-switch-terminal-scrim absolute inset-0 z-20 animate-overlay-in motion-reduce:animate-none"
-					data-testid="switch-agent-terminal-backdrop"
-				/>
-				<Dialog.Content className="absolute left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
-					<Dialog.Close asChild>
+			<DialogContent
+				portalContainer={container}
+				overlay={
+					<div
+						aria-hidden="true"
+						className="agent-switch-terminal-scrim absolute inset-0 z-20 animate-overlay-in motion-reduce:animate-none"
+						data-testid="switch-agent-terminal-backdrop"
+					/>
+				}
+				showCloseButton={false}
+				className="absolute left-1/2 top-1/2 z-overlay w-dialog-md max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+			>
+					<DialogClose asChild>
 						<button
 							aria-label={t("switchAgent.close")}
 							className="settings-dialog-close-button settings-close-button"
@@ -185,13 +196,13 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 						>
 							<X className="size-icon-base" aria-hidden="true" />
 						</button>
-					</Dialog.Close>
-					<Dialog.Title className="settings-dialog-title px-4 pr-12 pt-3">
+					</DialogClose>
+					<DialogTitle className="settings-dialog-title px-4 pr-12 pt-3">
 						{t("switchAgent.title")}
-					</Dialog.Title>
-					<Dialog.Description className="px-4 pr-12 pt-0.5 text-caption leading-4 text-muted-foreground">
+					</DialogTitle>
+					<DialogDescription className="px-4 pr-12 pt-0.5 text-caption leading-4 text-muted-foreground">
 						{t("switchAgent.description", { current: agentLabel(session.provider) })}
-					</Dialog.Description>
+					</DialogDescription>
 
 					{recoveryRequired ? (
 						<div className="flex flex-col gap-4 px-4 pb-4 pt-4">
@@ -283,8 +294,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 						</div>
 					</form>
 					)}
-				</Dialog.Content>
-			</Dialog.Portal>
-		</Dialog.Root>
+				</DialogContent>
+		</Dialog>
 	);
 }

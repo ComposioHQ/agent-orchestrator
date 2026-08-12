@@ -362,7 +362,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 		},
 	});
 
-	if (session.isTerminated === true || session.activity?.state !== "exited") return null;
+	if (session.isTerminated === true || session.activity?.state !== "exited" || session.activeAgentSwitch) return null;
 
 	const error = resume.error instanceof Error ? resume.error.message : null;
 	return (

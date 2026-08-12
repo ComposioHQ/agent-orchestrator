@@ -33,6 +33,7 @@ type fakeStore struct {
 	deleteErr     error
 	upsertWTErr   error
 	listAllErr    error
+	getProjectErr error
 	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
 	// Lifecycle Manager's atomic ownership-boundary commands.
 	agentSwitchStore any
@@ -53,6 +54,9 @@ func newFakeStore() *fakeStore {
 	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	if f.getProjectErr != nil {
+		return domain.ProjectRecord{}, false, f.getProjectErr
+	}
 	r, ok := f.projects[id]
 	return r, ok, nil
 }
@@ -1395,6 +1399,20 @@ func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
 	close(runtime.release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first resume: %v", err)
+	}
+}
+
+func TestResumeAgent_ReportsActiveAgentSwitch(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, _, _ := newExitedResumeManager(t, baseRuntime, agent)
+	if err := m.beginAgentSwitch(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	defer m.endAgentSwitch("mer-1")
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrSwitchInProgress) {
+		t.Fatalf("resume during switch error = %v, want ErrSwitchInProgress", err)
 	}
 }
 

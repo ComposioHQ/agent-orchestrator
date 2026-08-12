@@ -59,9 +59,11 @@ var (
 	// teardown/relaunch cycles over one worktree.
 	ErrSwitchInProgress = errors.New("session: switch already in progress")
 	// ErrSwitchUnavailable means the configured store does not expose the
-	// durable agent-switch contract. Production SQLite always does; the sentinel
-	// keeps deliberately narrow embedders and tests from panicking.
+	// durable agent-switch contract.
 	ErrSwitchUnavailable = errors.New("session: agent switching unavailable")
+	// ErrSwitchShuttingDown means daemon shutdown has closed background worker
+	// admission, so no new switch can be accepted safely.
+	ErrSwitchShuttingDown = errors.New("session: agent switching unavailable during shutdown")
 	// ErrUnsupportedSwitchHarness keeps the first release deliberately bounded
 	// to providers whose standing-instruction and native-resume behavior AO has
 	// verified end to end.

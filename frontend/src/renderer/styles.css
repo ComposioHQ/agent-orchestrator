@@ -1387,10 +1387,6 @@ textarea,
 	transition: background-color 320ms var(--ease-out);
 }
 
-.agent-switch-progress-step {
-	transition: color 280ms var(--ease-out);
-}
-
 .agent-switch-progress-dot {
 	transition:
 		border-color 280ms var(--ease-out),
@@ -1455,7 +1451,6 @@ textarea,
 	}
 
 	.agent-switch-progress-dot,
-	.agent-switch-progress-step,
 	.agent-switch-progress-step::before {
 		transition: none;
 	}

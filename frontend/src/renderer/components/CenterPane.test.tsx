@@ -211,15 +211,9 @@ describe("CenterPane toolbar session label", () => {
 		const card = screen.getByTestId("agent-switch-transition-card");
 		const arrow = within(card).getByTestId("agent-switch-transfer-arrow");
 		const shaft = within(arrow).getByTestId("agent-switch-transfer-shaft");
-		const shaftLine = within(arrow).getByTestId("agent-switch-transfer-shaft-line");
-		const arrowhead = within(arrow).getByTestId("agent-switch-transfer-arrowhead");
-		expect(arrow.querySelectorAll("svg")).toHaveLength(1);
-		expect(arrow.querySelector(".lucide-arrow-right")).toBeNull();
-		expect(shaftLine).toHaveAttribute("d", "M1 8H109");
-		expect(arrowhead).toHaveAttribute("d", "M102 1L109 8L102 15");
-		expect(shaftLine).toHaveClass("text-foreground/55");
-		expect(arrowhead).toHaveClass("text-foreground/55");
-		expect(arrowhead.querySelector(".agent-switch-transfer-pulse")).toBeNull();
+		const arrowIcon = within(arrow).getByTestId("agent-switch-transfer-arrow-icon");
+		expect(arrowIcon).toHaveClass("lucide-arrow-right", "text-foreground/55");
+		expect(arrowIcon.querySelector(".agent-switch-transfer-pulse")).toBeNull();
 		expect(shaft.querySelector(".agent-switch-transfer-pulse")).not.toBeNull();
 
 		const statusGroup = within(card).getByTestId("agent-switch-status-group");

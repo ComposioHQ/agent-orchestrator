@@ -82,6 +82,7 @@ describe("SwitchAgentDialog", () => {
 		renderDialog();
 
 		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+		expect(dialog).toHaveAttribute("data-slot", "dialog-content");
 		const backdrop = screen.getByTestId("switch-agent-terminal-backdrop");
 		expect(backdrop).toHaveClass("agent-switch-terminal-scrim");
 		expect(dialog).toHaveClass("w-dialog-md");

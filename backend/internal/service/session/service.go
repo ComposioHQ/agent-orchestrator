@@ -921,6 +921,12 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
 		return apierr.Conflict("AGENT_SWITCH_IN_PROGRESS",
 			"This session already has an agent switch in progress", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchShuttingDown):
+		return apierr.Conflict("AGENT_SWITCH_UNAVAILABLE",
+			"AO is shutting down and cannot start another agent switch", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchUnavailable):
+		return apierr.Conflict("AGENT_SWITCH_UNAVAILABLE",
+			"Agent switching is unavailable in this AO instance", nil)
 	case errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict):
 		return apierr.Conflict("AGENT_SWITCH_IDEMPOTENCY_CONFLICT",
 			"The idempotency key is already associated with a different agent switch", nil)
