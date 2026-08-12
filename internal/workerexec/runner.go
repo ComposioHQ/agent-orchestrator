@@ -2,12 +2,11 @@ package workerexec
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"sync"
+
+	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
 )
 
 const outputChunkSize = 8 << 10
@@ -30,64 +29,56 @@ func (OSRunner) Run(
 ) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, command.Path, command.Args...)
-	cmd.Dir = command.Dir
-	cmd.Env = mergedEnvironment(command.Env)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start coding agent: %w", err)
-	}
-
-	var wg sync.WaitGroup
 	var emitErr error
 	var emitMu sync.Mutex
-	stream := func(name string, reader io.Reader) {
-		defer wg.Done()
-		buffer := make([]byte, outputChunkSize)
-		for {
-			n, readErr := reader.Read(buffer)
-			if n > 0 {
+	stream := func(name string) writerFunc {
+		return func(value []byte) (int, error) {
+			written := len(value)
+			for len(value) > 0 {
+				size := min(len(value), outputChunkSize)
 				emitMu.Lock()
 				if emitErr == nil {
-					emitErr = emit(Output{Stream: name, Text: string(buffer[:n])})
+					emitErr = emit(Output{Stream: name, Text: string(value[:size])})
 					if emitErr != nil {
 						cancel()
 					}
 				}
 				emitMu.Unlock()
+				value = value[size:]
 			}
-			if readErr != nil {
-				if !errors.Is(readErr, io.EOF) {
-					emitMu.Lock()
-					if emitErr == nil {
-						emitErr = readErr
-					}
-					emitMu.Unlock()
-				}
-				return
-			}
+			return written, nil
 		}
 	}
-	wg.Add(2)
-	go stream("stdout", stdout)
-	go stream("stderr", stderr)
-	waitErr := cmd.Wait()
-	wg.Wait()
+	process, err := agentruntime.StartProcess(runCtx, agentruntime.ProcessConfig{
+		Argv:   append([]string{command.Path}, command.Args...),
+		Dir:    command.Dir,
+		Env:    mergedEnvironment(command.Env),
+		Stdout: stream("stdout"),
+		Stderr: stream("stderr"),
+	})
+	if err != nil {
+		return fmt.Errorf("start coding agent: %w", err)
+	}
+	result, waitErr := process.Wait(context.Background())
+	emitMu.Lock()
+	defer emitMu.Unlock()
 	if emitErr != nil {
 		return fmt.Errorf("publish coding-agent output: %w", emitErr)
 	}
 	if waitErr != nil {
-		return fmt.Errorf("coding agent exited: %w", waitErr)
+		return fmt.Errorf("wait for coding agent: %w", waitErr)
+	}
+	if result.Err != nil {
+		return fmt.Errorf("coding agent exited: %w", result.Err)
 	}
 	return nil
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (write writerFunc) Write(value []byte) (int, error) {
+	return write(value)
 }
 
 func mergedEnvironment(overrides map[string]string) []string {

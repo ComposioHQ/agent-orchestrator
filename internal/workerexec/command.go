@@ -26,8 +26,8 @@ type CommandBuilder interface {
 	Build(context.Context, worker.Turn, worker.CredentialResponse, string) (Command, error)
 }
 
-// HarnessBuilder keeps command construction behind a small boundary until the
-// public backend exposes a reusable agentruntime package.
+// HarnessBuilder owns Cloud's headless streaming flags and fail-closed policy
+// mapping; process lifecycle is shared with desktop AO through agentruntime.
 type HarnessBuilder struct {
 	Binaries map[string]string
 	DataDir  string
