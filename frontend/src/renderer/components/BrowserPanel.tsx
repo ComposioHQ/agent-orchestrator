@@ -1,30 +1,28 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import {
 	ArrowLeft,
 	ArrowRight,
-	Check,
+	Bug,
 	Globe2,
 	Layers3,
 	Maximize2,
 	Minimize2,
 	MousePointer2,
+	Plus,
 	RefreshCw,
 	X,
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
+import { appI18n, type MessageKey } from "../i18n";
 
 type BrowserPanelProps = {
 	session: WorkspaceSession;
@@ -34,6 +32,11 @@ type BrowserPanelProps = {
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
+
+// Docked rail visibility: collapsed (0px, tab access via the toolbar trigger) is
+// the default; pinning restores an always-visible icon rail. Persisted so it's a
+// one-time choice, not a state.
+const RAIL_PINNED_STORAGE_KEY = "ao.browserTabs.railPinned";
 
 export type BrowserAnnotationQueueModel = {
 	status: AnnotationStatus;
@@ -89,20 +92,20 @@ export function useBrowserAnnotationQueue({
 
 		void (async () => {
 			let sent = false;
-			let failureMessage = "Unable to send annotation.";
+			let failureMessage = appI18n.t("browser.unableSendAnnotation");
 			try {
 				const message = formatBrowserAnnotationMessage(payload);
 				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 					params: { path: { sessionId: sendSessionId } },
-					body: { message },
+					body: { message, attachment: payload.snapshot },
 				});
 				if (error) {
-					failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+					failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 					return;
 				}
 				sent = true;
 			} catch (error) {
-				failureMessage = apiErrorMessage(error, "Unable to send annotation.");
+				failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));
 			} finally {
 				if (sendGeneration !== generationRef.current || sendSessionId !== sessionIdRef.current) return;
 				annotationSendingRef.current = false;
@@ -223,11 +226,10 @@ export function BrowserPanelView({
 	browserView,
 	annotationQueue,
 }: BrowserPanelProps & { annotationQueue: BrowserAnnotationQueueModel; browserView: BrowserViewModel }) {
+	const { t } = useTranslation();
 	const {
 		viewId,
 		navState,
-		mirrorUrl,
-		mirrorStream,
 		slotRef,
 		navigate,
 		goBack,
@@ -239,22 +241,35 @@ export function BrowserPanelView({
 		tabNotice,
 		selectTab,
 		closeTab,
-		prepareForOverlay,
+		openTab,
+		reorderTabs,
 		agentBrowserActive,
 		agentBrowserActivity,
-		visualTransition,
+		devtoolsState = { viewId: "", open: false, activeTabId: "" },
+		openDevTools = async () => undefined,
+		closeDevTools = async () => undefined,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
-	const showStaticPreview = !window.ao?.browser && navState.url !== "";
+	const hasNativeBrowser = Boolean(window.ao?.browser);
+	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
-	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
-	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
-	const tabsMenuWarmupRef = useRef<Promise<void> | null>(null);
+	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
+	const railRef = useRef<BrowserTabsRailHandle>(null);
+	const urlInputRef = useRef<HTMLInputElement>(null);
+	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
+	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
+
+	const handlePinnedChange = useCallback((next: boolean) => {
+		setPinned(next);
+		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
+	}, []);
+
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -296,69 +311,48 @@ export function BrowserPanelView({
 				cancelPicking();
 			}
 		} catch (error) {
-			failPicking(error instanceof Error ? error.message : "Unable to start annotation.");
+			failPicking(error instanceof Error ? error.message : appI18n.t("browser.unableStartAnnotation"));
 		}
 	};
 
-	const prepareTabsMenuFrame = useCallback(() => {
-		if (!tabsMenuWarmupRef.current) {
-			tabsMenuWarmupRef.current = prepareForOverlay().finally(() => {
-				tabsMenuWarmupRef.current = null;
-			});
-		}
-		return tabsMenuWarmupRef.current;
-	}, [prepareForOverlay]);
+	// The button lives in the toolbar, not inside the rail, so a fast
+	// hover-rail-then-click-here still needs to force the flyout closed first —
+	// same reason rows inside the rail do it (see BrowserTabsRail.tsx). A blank
+	// new tab has nowhere to go on its own, so send focus straight to the URL
+	// bar afterward instead of leaving the user to click into it themselves.
+	const handleOpenTab = useCallback(async () => {
+		railRef.current?.closeFlyout(true);
+		await openTab();
+		urlInputRef.current?.focus();
+		urlInputRef.current?.select();
+	}, [openTab]);
 
-	const warmTabsMenuFrame = useCallback(() => {
-		void prepareTabsMenuFrame();
-	}, [prepareTabsMenuFrame]);
-
-	const openTabsMenu = useCallback(async () => {
-		if (tabs.length === 0) return;
-		await prepareTabsMenuFrame();
-		setTabsMenuOpen(true);
-	}, [prepareTabsMenuFrame, tabs.length]);
-
-	const handleTabsMenuOpenChange = useCallback(
-		(next: boolean) => {
-			if (!next) {
-				setTabsMenuOpen(false);
-				return;
+	const handleSelectTab = useCallback(
+		async (tabId: string) => {
+			try {
+				await selectTab(tabId);
+			} catch {
+				// The existing tab remains active.
 			}
-			void openTabsMenu();
 		},
-		[openTabsMenu],
+		[selectTab],
 	);
-
-	const handleTabsTriggerPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
-		if (tabsMenuOpen || tabs.length === 0) return;
-		event.preventDefault();
-		void openTabsMenu();
-	};
-
-	const handleTabsTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-		if (tabsMenuOpen || tabs.length === 0) return;
-		if (event.key !== "Enter" && event.key !== " " && event.key !== "ArrowDown") return;
-		event.preventDefault();
-		void openTabsMenu();
-	};
 
 	const annotationStatusLabel =
 		status === "picking"
-			? "Pick element"
+			? t("browser.pickElement")
 			: status === "queued"
 				? queuedCount > 1
-					? `Queued (${queuedCount})`
-					: "Queued"
+					? t("browser.queuedCount", { count: queuedCount })
+					: t("browser.queued")
 				: status === "sending"
-					? "Sending"
+					? t("browser.sending")
 					: status === "sent"
-						? "Sent"
+						? t("browser.sent")
 						: status === "error"
 							? error
 							: "";
 	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
-
 	return (
 		<div
 			className={cn(
@@ -366,17 +360,17 @@ export function BrowserPanelView({
 				poppedOut && "browser-panel--popped-out",
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
+			data-browser-native-page={navState.url ? "live" : "empty"}
 			data-testid="browser-panel"
-			data-transition={visualTransition?.kind}
 			role="tabpanel"
 		>
 			<form
-				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
 				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
 				<Button
-					aria-label="Back"
+					aria-label={t("browser.back")}
 					disabled={!navState.canGoBack}
 					onClick={() => void goBack()}
 					size="icon-sm"
@@ -386,7 +380,7 @@ export function BrowserPanelView({
 					<ArrowLeft aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
-					aria-label="Forward"
+					aria-label={t("browser.forward")}
 					disabled={!navState.canGoForward}
 					onClick={() => void goForward()}
 					size="icon-sm"
@@ -396,7 +390,7 @@ export function BrowserPanelView({
 					<ArrowRight aria-hidden="true" className="size-icon-base" />
 				</Button>
 				<Button
-					aria-label={navState.isLoading ? "Stop" : "Reload"}
+					aria-label={navState.isLoading ? t("browser.stop") : t("browser.reload")}
 					onClick={() => void (navState.isLoading ? stop() : reload())}
 					size="icon-sm"
 					type="button"
@@ -411,17 +405,17 @@ export function BrowserPanelView({
 				<Button
 					aria-label={
 						canRetryAnnotation
-							? "Retry annotation"
+							? t("browser.retryAnnotation")
 							: annotationMode || status === "picking"
-								? "Cancel annotation"
-								: "Annotate page"
+								? t("browser.cancelAnnotation")
+								: t("browser.annotate")
 					}
 					aria-pressed={annotationMode || status === "picking"}
 					className="browser-panel__annotate-btn"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
-					title={canRetryAnnotation ? "Retry annotation" : "Annotate page"}
+					title={canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate")}
 					type="button"
 					variant="ghost"
 				>
@@ -449,10 +443,11 @@ export function BrowserPanelView({
 							data-testid="browser-url-icon"
 						/>
 					<Input
-						aria-label="Browser URL"
+						aria-label={t("browser.url")}
 						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
 						onChange={(event) => setUrlInput(event.target.value)}
-						placeholder="localhost:5173"
+						placeholder={t("browser.urlPlaceholder")}
+						ref={urlInputRef}
 						value={urlInput}
 					/>
 				</div>
@@ -461,67 +456,22 @@ export function BrowserPanelView({
 						{tabNotice}
 					</span>
 				) : null}
-				<DropdownMenu modal={false} onOpenChange={handleTabsMenuOpenChange} open={tabsMenuOpen}>
-					<DropdownMenuTrigger asChild>
-						<Button
-							aria-label={`Browser tabs (${tabs.length})`}
-							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
-							disabled={tabs.length === 0}
-							onFocus={warmTabsMenuFrame}
-							onKeyDown={handleTabsTriggerKeyDown}
-							onPointerDown={handleTabsTriggerPointerDown}
-							onPointerEnter={warmTabsMenuFrame}
-							size="sm"
-							title={`${tabs.length} browser ${tabs.length === 1 ? "tab" : "tabs"}`}
-							type="button"
-							variant="ghost"
-						>
-							<Layers3 aria-hidden="true" className="size-icon-base" />
-							<span className="font-mono text-caption">{tabs.length}</span>
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
-						<DropdownMenuLabel>Browser tabs</DropdownMenuLabel>
-						{tabs.map((tab) => {
-							const label = browserTabLabel(tab.title, tab.url);
-							return (
-								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
-									<DropdownMenuItem
-										className="min-w-0 flex-1 cursor-pointer py-2"
-										onSelect={() => void selectTab(tab.id)}
-										textValue={`${label.title} ${label.subtitle}`}
-									>
-										<span className="flex size-4 shrink-0 items-center justify-center">
-											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-accent" /> : null}
-										</span>
-										<span className="min-w-0 flex-1">
-											<span className="block truncate text-xs text-foreground">{label.title}</span>
-											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
-										</span>
-									</DropdownMenuItem>
-									<DropdownMenuItem
-										aria-label={`Close tab ${label.title}`}
-										className="size-8 shrink-0 cursor-pointer justify-center px-0"
-										disabled={tabs.length === 1}
-										onSelect={() => void closeTab(tab.id)}
-										title={tabs.length === 1 ? "The only tab cannot be closed" : `Close ${label.title}`}
-									>
-										<X aria-hidden="true" className="size-icon-sm" />
-									</DropdownMenuItem>
-								</div>
-							);
-						})}
-					</DropdownMenuContent>
-				</DropdownMenu>
 				<Button
-					aria-label={poppedOut ? "Return to panel" : "Pop out"}
-					disabled={!canPopOut}
-					onClick={() => {
-						if (!canPopOut) return;
-						onTogglePopOut(!poppedOut);
-					}}
+					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
+					disabled={!canUseDevTools}
+					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
 					size="icon-sm"
-					title={canPopOut ? undefined : "Open a page before maximizing the browser"}
+					title={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					type="button"
+					variant="ghost"
+				>
+					<Bug aria-hidden="true" className="size-icon-base" />
+				</Button>
+				<Button
+					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
+					onClick={() => onTogglePopOut(!poppedOut)}
+					size="icon-sm"
 					type="button"
 					variant="ghost"
 				>
@@ -531,41 +481,110 @@ export function BrowserPanelView({
 						<Maximize2 aria-hidden="true" className="size-icon-base" />
 					)}
 				</Button>
-			</form>
-			<div
-				className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
-				data-testid="browser-viewport"
-			>
-				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorStream ? (
-					<MirrorVideo stream={mirrorStream} />
-				) : mirrorUrl ? (
-					<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
-				) : null}
-				{visualTransition ? (
-					<img
-						alt=""
-						className="browser-panel__transition-frame"
-						data-testid="browser-transition-frame"
-						src={visualTransition.snapshotUrl}
-					/>
-				) : null}
-				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
-				{navState.url === "" ? (
-					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
-						<p>Enter a URL or click one in the terminal.</p>
+				{/* Docked mode has no reserved rail column by default (see
+				    BrowserTabsRail.tsx) — this trigger is the only way to reach the tab
+				    list until the user pins the rail. Hidden at a single tab, same as
+				    the rail's own hover trigger was before this existed. Hover/focus
+				    drive the rail's flyout imperatively since the two live in separate
+				    DOM subtrees (toolbar row vs. body row) — see BrowserTabsRail.tsx's
+				    BrowserTabsRailHandle for why the close side stays debounced here. */}
+				{showTabsTrigger ? (
+					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+						<Button
+							aria-label={t("browser.tabsTitle", { count: tabs.length })}
+							className="relative"
+							onBlur={() => railRef.current?.closeFlyout()}
+							onFocus={() => railRef.current?.openFlyout(true)}
+							onPointerEnter={() => railRef.current?.openFlyout()}
+							onPointerLeave={() => railRef.current?.closeFlyout()}
+							size="icon-sm"
+							title={t("browser.tabsTitle", { count: tabs.length })}
+							type="button"
+							variant="ghost"
+						>
+							<Layers3 aria-hidden="true" className="size-icon-base" />
+							<span
+								aria-hidden="true"
+								className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm"
+							>
+								{tabs.length}
+							</span>
+						</Button>
 					</div>
 				) : null}
-				{navState.error ? (
-					<p
-						className={cn(
-							"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
-							"rounded-md text-xs text-destructive",
-						)}
-						data-testid="browser-preview-error"
-					>
-						{navState.error}
-					</p>
+				{/* Fixed at the rail's own width (w-8) and flush against the panel's
+				    right edge (the form has no right padding) so this column lines up
+				    with the docked rail directly below it. Popped-out has no icon rail
+				    to align with, and gets its own "+" row inside BrowserTabsRail. */}
+				{!poppedOut ? (
+					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+						<Button
+							aria-label={t("browser.openNewTab")}
+							disabled={!canOpenTab}
+							onClick={() => void handleOpenTab()}
+							size="icon-sm"
+							title={t("browser.openNewTab")}
+							type="button"
+							variant="ghost"
+						>
+							<Plus aria-hidden="true" className="size-icon-base" />
+						</Button>
+					</div>
+				) : null}
+			</form>
+			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
+				{/* Docked keeps the rail on the right (out of the way of the toolbar/
+				    address bar); popped-out keeps it on the left. */}
+				{poppedOut ? (
+					<BrowserTabsRail
+						activeTabId={activeTabId}
+						onCloseTab={closeTab}
+						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
+						onReorderTabs={reorderTabs}
+						onSelectTab={handleSelectTab}
+						pinned={pinned}
+						poppedOut={poppedOut}
+						ref={railRef}
+						tabs={tabs}
+					/>
+				) : null}
+				<div
+					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
+					data-testid="browser-viewport"
+				>
+					<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
+					{navState.url === "" ? (
+						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
+							<p>{t("browser.emptyUrl")}</p>
+						</div>
+					) : null}
+					{navState.error ? (
+						<p
+							className={cn(
+								"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
+								"rounded-md text-xs text-destructive",
+							)}
+							data-testid="browser-preview-error"
+						>
+							{navState.error}
+						</p>
+					) : null}
+				</div>
+				{!poppedOut ? (
+					<BrowserTabsRail
+						activeTabId={activeTabId}
+						onCloseTab={closeTab}
+						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
+						onReorderTabs={reorderTabs}
+						onSelectTab={handleSelectTab}
+						pinned={pinned}
+						poppedOut={poppedOut}
+						ref={railRef}
+						tabs={tabs}
+					/>
 				) : null}
 			</div>
 		</div>
@@ -575,89 +594,68 @@ export function BrowserPanelView({
 function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
 	if (!active && !activity?.active) return "";
 	const action = activity?.active ? activity.action : "";
-	if (!action) return "Agent using browser";
-	return `Agent ${browserActionVerb(action)}`;
+	if (!action) return appI18n.t("browser.agentUsing");
+	return appI18n.t("browser.agentAction", { verb: browserActionVerb(action) });
 }
 
 function browserActionVerb(action: string): string {
-	switch (action) {
-		case "click":
-			return "clicking";
-		case "fill":
-		case "type":
-			return "typing";
-		case "press":
-			return "pressing";
-		case "hover":
-			return "hovering";
-		case "scroll":
-			return "scrolling";
-		case "open":
-			return "opening";
-		case "wait":
-			return "waiting";
-		case "snapshot":
-			return "reading";
-		case "highlight":
-			return "highlighting";
-		case "unhighlight":
-			return "clearing highlight";
-		case "tab-new":
-			return "opening tab";
-		case "tab-select":
-			return "switching tabs";
-		case "tab-close":
-			return "closing tab";
-		case "tabs":
-			return "checking tabs";
-		default:
-			return "using browser";
-	}
-}
-
-function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
-	const cleanTitle = title.trim();
-	if (!url) return { title: cleanTitle || "New tab", subtitle: "Blank page" };
-	try {
-		const parsed = new URL(url);
-		const subtitle = parsed.protocol === "file:" ? parsed.pathname.split("/").filter(Boolean).at(-1) || url : parsed.host;
-		return { title: cleanTitle || subtitle, subtitle };
-	} catch {
-		return { title: cleanTitle || url, subtitle: url };
-	}
-}
-
-function MirrorVideo({ stream }: { stream: MediaStream }) {
-	const attach = useCallback(
-		(node: HTMLVideoElement | null) => {
-			if (node && node.srcObject !== stream) {
-				node.srcObject = stream;
-			}
-		},
-		[stream],
-	);
-	return <video autoPlay className="absolute inset-0 h-full w-full object-cover" muted playsInline ref={attach} />;
+	const key = ((): MessageKey => {
+		switch (action) {
+			case "click":
+				return "browser.verb.click";
+			case "fill":
+			case "type":
+				return "browser.verb.type";
+			case "press":
+				return "browser.verb.press";
+			case "hover":
+				return "browser.verb.hover";
+			case "scroll":
+				return "browser.verb.scroll";
+			case "open":
+				return "browser.verb.open";
+			case "wait":
+				return "browser.verb.wait";
+			case "snapshot":
+				return "browser.verb.read";
+			case "highlight":
+				return "browser.verb.highlight";
+			case "unhighlight":
+				return "browser.verb.clearHighlight";
+			case "tab-new":
+				return "browser.verb.openTab";
+			case "tab-select":
+				return "browser.verb.switchTab";
+			case "tab-close":
+				return "browser.verb.closeTab";
+			case "tabs":
+				return "browser.verb.checkTabs";
+			default:
+				return "browser.verb.using";
+		}
+	})();
+	return appI18n.t(key);
 }
 
 function StaticPreview({ url }: { url: string }) {
 	return (
-		<div className="absolute inset-0 overflow-auto bg-preview text-preview-foreground">
-			<div className="border-b border-preview bg-surface px-4 py-3">
-				<div className="text-caption font-semibold uppercase tracking-wide-md text-preview-muted">AO Preview</div>
-				<div className="mt-1 truncate font-mono text-xs text-preview-link">{url}</div>
+		<div className="absolute inset-0 overflow-auto bg-background text-foreground">
+			<div className="border-b border-border bg-surface px-4 py-3">
+				<div className="text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">AO Preview</div>
+				<div className="mt-1 truncate font-mono text-xs text-accent">{url}</div>
 			</div>
 			<div className="mx-auto max-w-preview-max px-5 py-6">
-				<div className="rounded-lg border border-preview-card bg-surface p-5 shadow-sm">
+				<div className="rounded-lg border border-border bg-card p-5 shadow-sm">
 					<div className="flex items-center justify-between gap-3">
 						<div>
-							<h1 className="text-heading-lg font-semibold leading-tight tracking-normal text-preview-heading">
+							<h1 className="text-heading-lg font-semibold leading-tight tracking-normal text-foreground">
 								Demo app preview
 							</h1>
-							<p className="mt-1 text-control leading-row text-preview-body">
+							<p className="mt-1 text-control leading-row text-muted-foreground">
 								The worker exposed a local Vite app with <span className="font-mono">ao preview</span>.
 							</p>
 						</div>
-						<span className="rounded-md bg-preview-success px-2.5 py-1 text-caption font-semibold text-success">
+						<span className="rounded-md bg-success/15 px-2.5 py-1 text-caption font-semibold text-success">
 							Loaded
 						</span>
 					</div>
@@ -667,13 +665,13 @@ function StaticPreview({ url }: { url: string }) {
 							["Build", "ready"],
 							["Latency", "42 ms"],
 						].map(([label, value]) => (
-							<div key={label} className="rounded-md border border-preview-tile bg-preview-tile p-3">
-								<div className="text-caption font-medium uppercase tracking-wide text-preview-muted">{label}</div>
-								<div className="mt-1 text-subtitle font-semibold text-preview-heading">{value}</div>
+							<div key={label} className="rounded-md border border-border bg-raised p-3">
+								<div className="text-caption font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+								<div className="mt-1 text-subtitle font-semibold text-foreground">{value}</div>
 							</div>
 						))}
 					</div>
-					<div className="mt-5 rounded-md border border-preview-terminal bg-preview-terminal p-3 font-mono text-xs leading-row text-preview-terminal">
+					<div className="mt-5 rounded-md border border-border bg-terminal p-3 font-mono text-xs leading-row text-terminal-dim">
 						<div>$ npm run dev -- --host 127.0.0.1</div>
 						<div className="text-success-bright">ready in 418 ms</div>
 						<div>Local: http://localhost:5173/</div>

@@ -13,8 +13,9 @@ export function PopoverContent({
 		<PopoverPrimitive.Portal>
 			<PopoverPrimitive.Content
 				className={cn(
-					"z-overlay rounded-lg border border-border bg-popover text-popover-foreground shadow-md outline-none",
-					"data-[state=open]:animate-overlay-in",
+					"z-overlay rounded-lg border border-border bg-popover text-popover-foreground outline-none",
+					"origin-(--radix-popover-content-transform-origin)",
+					"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
 					className,
 				)}
 				sideOffset={sideOffset}

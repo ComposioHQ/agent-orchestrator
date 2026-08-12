@@ -76,8 +76,9 @@ func buildSystemPromptText(cfg systemPromptConfig) string {
 			sections = append(sections, "## Project-Specific Orchestrator Rules\n"+rules)
 		}
 	case sessionPromptRoleWorker:
-		sections = append(sections, workerSystemPrompt(cfg.Project))
-		if orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID); orchestratorID != "" {
+		orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID)
+		sections = append(sections, workerSystemPrompt(cfg.Project, orchestratorID != ""))
+		if orchestratorID != "" {
 			sections = append(sections, workerOrchestratorPrompt(orchestratorID))
 		}
 		sections = append(sections, workerMultiPRPrompt(), workerContainerLabelPrompt())
@@ -174,7 +175,9 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 - If the human explicitly insists that the orchestrator itself make code changes, ask for explicit confirmation before making any code changes, and prefer spawning or redirecting a worker unless the human explicitly confirms direct orchestrator edits are required.
 - Delegate implementation, fixes, tests, and PR ownership to worker sessions.
 - Before spawning new work, inspect current state so you do not duplicate active sessions.
-- For complex planning, research, or large coordination tasks, write a short plan first. If your agent runtime has native subagent or task-delegation support, use it for independent analysis or planning work when that helps keep your context window clean.
+- For complex planning, research, or large coordination tasks, write a short plan first.
+- Do not use the agent runtime's built-in subagent or task-delegation tools for implementation work.
+- You may coordinate multiple workers, but AO workers only. If parallel help is needed, spawn or redirect additional AO worker sessions.
 - If a worker is stuck, clarify the task with `+"`ao send`"+`, or spawn/redirect another worker when appropriate.
 - Never claim a PR into the orchestrator session. If a PR needs continuation, assign or spawn a worker.
 - Use `+"`ao send`"+` for session communication. Do not bypass AO by writing directly to tmux, PTY, pipes, or runtime internals.
@@ -212,7 +215,7 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 %s`, projectName(project), project.ID, project.ID, project.ID, projectContextSection(project))
 }
 
-func workerSystemPrompt(project promptProject) string {
+func workerSystemPrompt(project promptProject, hasOrchestrator bool) string {
 	taskSourceRules := `## Task Source and PR/MR Behavior
 
 - Treat the explicit task description, provider issue context, or claimed PR/MR context as the source of truth for this session.
@@ -238,6 +241,10 @@ func workerSystemPrompt(project promptProject) string {
 - Do not invent issue, PR, or MR requirements when no remote or SCM provider is available.
 - Clearly report what changed, what was verified, and any remaining risks.`
 	}
+	parallelHelpRules := "- If parallel help is needed for CI or review follow-up and an orchestrator is attached to this project, ask it to spawn additional AO worker sessions instead of delegating inside the runtime.\n- If no orchestrator is attached, continue serially and report the need for additional AO workers to the human."
+	if hasOrchestrator {
+		parallelHelpRules = "- If parallel help is needed for CI or review follow-up, ask the orchestrator to spawn additional AO worker sessions instead of using the agent runtime's built-in subagent or task-delegation tools."
+	}
 	return fmt.Sprintf(`## AO Worker Role
 
 You are an implementation worker for an Agent Orchestrator session.
@@ -259,12 +266,13 @@ Your job is to complete the assigned task in this workspace. Inspect the relevan
 
 - When you address PR/MR review comments, address each relevant thread, push the fix, and mark every thread you fixed as resolved when the platform supports it.
 - If this session owns multiple PRs/MRs with CI failures or review comments, inspect all actionable items first, decide the order based on blockers, stack order, failing scope, and user priority, then work through them in that order.
-- If your agent runtime has native subagent or task-delegation support, use it for independent CI or review-fix tasks when that is likely to reduce turnaround time. Coordinate the subagents, review their results, and make sure the final branch state is coherent.
+- Do not use the agent runtime's built-in subagent or task-delegation tools. Complete the assigned task in this AO session only.
+- %s
 - For complex tasks, write a short implementation plan before editing. Keep the plan focused, then implement and update the plan if the work changes materially.
 
 %s
 
-%s`, taskSourceRules, repoRules, projectContextSection(project))
+%s`, taskSourceRules, parallelHelpRules, repoRules, projectContextSection(project))
 }
 
 func workerOrchestratorPrompt(orchestratorID string) string {

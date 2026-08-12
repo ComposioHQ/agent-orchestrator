@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -100,6 +101,93 @@ func TestServeOpenStreamsAndWritesTerminal(t *testing.T) {
 	})
 }
 
+type fixedSessionInputLease bool
+
+func (l fixedSessionInputLease) AcquireSessionInput(domain.SessionID) (func(), bool) {
+	if !l {
+		return nil, false
+	}
+	return func() {}, true
+}
+
+type observedTerminalInputLease struct {
+	acquired chan struct{}
+	released chan struct{}
+}
+
+func (l *observedTerminalInputLease) AcquireSessionInput(domain.SessionID) (func(), bool) {
+	close(l.acquired)
+	return func() { close(l.released) }, true
+}
+
+func TestServeRejectsTerminalInputWhileSessionGateIsClosed(t *testing.T) {
+	pty := newFakePTY()
+	src := &fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{pty}}}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	mgr.SetSessionInputLease(fixedSessionInputLease(false))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "worker-1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	conn.in <- clientMsg{Ch: chTerminal, ID: "worker-1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("unsafe\n"))}
+	errFrame := recv(t, conn, chTerminal, msgError, time.Second)
+	if errFrame.ID != "worker-1" || errFrame.Error == "" {
+		t.Fatalf("error frame = %#v", errFrame)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := string(pty.writtenBytes()); got != "" {
+		t.Fatalf("blocked input reached PTY: %q", got)
+	}
+}
+
+func TestServeHoldsSessionInputLeaseThroughPTYWrite(t *testing.T) {
+	pty := newFakePTY()
+	pty.writeStarted = make(chan struct{}, 1)
+	pty.writeUnblock = make(chan struct{})
+	src := &fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{pty}}}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	lease := &observedTerminalInputLease{acquired: make(chan struct{}), released: make(chan struct{})}
+	mgr.SetSessionInputLease(lease)
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "worker-1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	conn.in <- clientMsg{Ch: chTerminal, ID: "worker-1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("status\n"))}
+
+	select {
+	case <-lease.acquired:
+	case <-time.After(time.Second):
+		t.Fatal("input lease was not acquired")
+	}
+	select {
+	case <-pty.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("PTY write did not start")
+	}
+	select {
+	case <-lease.released:
+		t.Fatal("input lease released before PTY write returned")
+	default:
+	}
+	close(pty.writeUnblock)
+	select {
+	case <-lease.released:
+	case <-time.After(time.Second):
+		t.Fatal("input lease was not released after PTY write")
+	}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "status\n" })
+}
+
 func TestServeBuffersInputUntilAttachReady(t *testing.T) {
 	pty := newFakePTY()
 	spawnStarted := make(chan struct{})
@@ -110,6 +198,8 @@ func TestServeBuffersInputUntilAttachReady(t *testing.T) {
 		return pty, nil
 	}}
 	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	lease := &observedTerminalInputLease{acquired: make(chan struct{}), released: make(chan struct{})}
+	mgr.SetSessionInputLease(lease)
 	defer mgr.Close()
 
 	conn := newFakeConn()
@@ -124,10 +214,85 @@ func TestServeBuffersInputUntilAttachReady(t *testing.T) {
 		t.Fatal("spawn was not reached")
 	}
 	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("status\n"))}
+	select {
+	case <-lease.acquired:
+	case <-time.After(time.Second):
+		t.Fatal("buffered input did not acquire a lease")
+	}
+	select {
+	case <-lease.released:
+		t.Fatal("buffered input released its lease before the pending PTY write")
+	default:
+	}
 	close(releaseSpawn)
 
 	recv(t, conn, chTerminal, msgOpened, time.Second)
 	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "status\n" })
+	select {
+	case <-lease.released:
+	case <-time.After(time.Second):
+		t.Fatal("buffered input lease was not released after PTY write")
+	}
+}
+
+func TestBeginInputDrainBlocksMuxWritesUntilReleased(t *testing.T) {
+	pty := newFakePTY()
+	mgr := NewManager(&fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{pty}}}, nil, testLogger(), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	_, release := mgr.BeginInputDrain("t1")
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("lost work\n"))}
+	// The pong proves the sequential read loop has already handled the data frame.
+	conn.in <- clientMsg{Ch: chSystem, Type: msgPing}
+	recv(t, conn, chSystem, msgPong, time.Second)
+	if got := string(pty.writtenBytes()); got != "" {
+		t.Fatalf("blocked terminal wrote %q", got)
+	}
+
+	release()
+	release() // release is safe under duplicate cleanup paths.
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("allowed\n"))}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "allowed\n" })
+}
+
+func TestBeginInputDrainReturnsTheLastAcceptedWriteBarrier(t *testing.T) {
+	pty := newFakePTY()
+	mgr := NewManager(&fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{pty}}}, nil, testLogger(), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("before\n"))}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "before\n" })
+
+	first, release := mgr.BeginInputDrain("t1")
+	if first.IsZero() {
+		t.Fatal("accepted input did not produce a drain barrier")
+	}
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("blocked\n"))}
+	conn.in <- clientMsg{Ch: chSystem, Type: msgPing}
+	recv(t, conn, chSystem, msgPong, time.Second)
+	release()
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("after\n"))}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "before\nafter\n" })
+	second, releaseSecond := mgr.BeginInputDrain("t1")
+	defer releaseSecond()
+	if !second.After(first) {
+		t.Fatalf("second barrier = %s, want after first %s", second, first)
+	}
 }
 
 // nextTerminal returns the next frame on conn.out (no skipping), so callers can
@@ -387,6 +552,33 @@ func TestServeOpenAppliesInitialSize(t *testing.T) {
 	})
 }
 
+func TestServeDeduplicatesResizeUnlessExplicitlyForced(t *testing.T) {
+	pty := newFakePTY()
+	sp := &fakeSpawner{ptys: []*fakePTY{pty}}
+	src := &fakeSource{alive: true, spawner: sp}
+	mgr := NewManager(src, nil, testLogger(), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen, Rows: 40, Cols: 120}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	eventually(t, time.Second, func() bool { return len(pty.resizeCalls()) == 1 })
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize, Rows: 40, Cols: 120}
+	conn.in <- clientMsg{Ch: chSystem, Type: msgPing}
+	recv(t, conn, chSystem, msgPong, time.Second)
+	if got := len(pty.resizeCalls()); got != 1 {
+		t.Fatalf("duplicate normal resize calls = %d, want 1", got)
+	}
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize, Rows: 40, Cols: 120, Force: true}
+	eventually(t, time.Second, func() bool { return len(pty.resizeCalls()) == 2 })
+}
+
 // A primary and a secondary client share one PTY: the primary drives the grid,
 // the secondary is told the primary's grid (not its own) and its attach Stream is
 // sized to it, and when the primary leaves the grid falls back to the secondary.
@@ -421,11 +613,27 @@ func TestServePrimaryDrivesSharedGridSecondaryFollows(t *testing.T) {
 		s := sp.spawnSizes()
 		return len(s) == 2 && s[1] == [2]uint16{40, 120}
 	})
+	eventually(t, time.Second, func() bool {
+		return len(p1.resizeCalls()) > 0 && len(p2.resizeCalls()) > 0
+	})
+	primaryResizeCount, secondaryResizeCount := len(p1.resizeCalls()), len(p2.resizeCalls())
+
+	// A secondary may change its local viewport, but while the primary still
+	// drives the same 120x40 authoritative grid that must not re-signal either PTY.
+	secondary.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgResize, Cols: 60, Rows: 50}
+	secondary.in <- clientMsg{Ch: chSystem, Type: msgPing}
+	recv(t, secondary, chSystem, msgPong, time.Second)
+	if got := len(p1.resizeCalls()); got != primaryResizeCount {
+		t.Fatalf("primary resize calls after secondary-only change = %d, want %d", got, primaryResizeCount)
+	}
+	if got := len(p2.resizeCalls()); got != secondaryResizeCount {
+		t.Fatalf("secondary resize calls under unchanged shared grid = %d, want %d", got, secondaryResizeCount)
+	}
 
 	// Primary leaves: the grid falls back to the secondary's own size.
 	primary.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgClose}
-	if r := recv(t, secondary, chTerminal, msgResize, 2*time.Second); r.Cols != 55 || r.Rows != 48 {
-		t.Fatalf("after primary left, grid = %dx%d, want the secondary's 55x48", r.Cols, r.Rows)
+	if r := recv(t, secondary, chTerminal, msgResize, 2*time.Second); r.Cols != 60 || r.Rows != 50 {
+		t.Fatalf("after primary left, grid = %dx%d, want the secondary's 60x50", r.Cols, r.Rows)
 	}
 }
 

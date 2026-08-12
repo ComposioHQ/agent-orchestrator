@@ -18,10 +18,65 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
 - Renderer exceptions, reduced to error name and coarse context
 - Daemon operational events: CLI invocation, session spawn/failure, waiting-input
   transitions, HTTP 5xx, and daemon panics
-- AO version context (`app_version` / `ao_version`), platform, and build mode
+- Code review outcomes: `ao.review.triggered`, `ao.review.submitted`,
+  `ao.review.cancelled`, and `ao.review.trigger_failed`. These carry the reviewer
+  `harness`, the `verdict` (`approved` / `changes_requested`), how long the pass
+  took, whether the review reached the provider, and a coarse `error_kind` on
+  failure. The review body is never sent: it is reviewer prose about a user's
+  source code. The PR URL and target SHA are also withheld, because both identify
+  the repository. `ao.review.submitted` fires only on the real running-to-complete
+  transition, so a reviewer retrying a submit cannot double-count a verdict
+- Desktop update outcomes: `ao.renderer.update_failed`,
+  `ao.renderer.update_downloaded`, and `ao.renderer.update_unsupported`. These
+  carry a coarse `error_category`, the `phase` (`check` or `download`), whether
+  the operation was `automatic` or `manual`, and the target version. The
+  updater's raw error message is never sent, because it can contain feed URLs
+  and local staging paths; it is bucketed into a category first. Progress is not
+  reported, since it fires per percent tick and the UI already shows it.
 
-PostHog session recording is disabled by default. If a time-boxed investigation
-enables it, network request names are masked before recording.
+  These are decided in the **main process**, at the updater's operation
+  boundary, and pushed to the renderer on a channel separate from
+  `updates:status`. That separation matters: `auto-updater.ts` deliberately
+  suppresses the UI status when an *automatic* check fails, and automatic checks
+  run hourly. A renderer observer watching statuses would therefore miss the
+  silent-failure case these exist to diagnose. Owning it in main also makes
+  `phase` and `to_version` authoritative, since only main knows which operation
+  was running and what it was fetching
+- Agent inventory: `ao.renderer.agents_available`, reported once per app launch
+  with `installed_count`, `authorized_count`, `supported_count`, and a sorted list
+  of authorized agent ids. Agent ids are a fixed vocabulary from AO's own
+  registry, never user input. This exists because `ao.session.spawned` only shows
+  which harness *ran*, so an install with six authorized agents that always picks
+  one was indistinguishable from an install that only had that one
+- AO version context (`app_version` / `ao_version`), platform, and build mode
+- Mobile app product events (`client = "mobile"` / `"mobile-web"`), all under the
+  `ao.v2.*` namespace and carrying `telemetry_schema_version = 2`:
+  `ao.v2.app.active` (once per UTC day), `ao.v2.mobile_app.paired`
+  (`method`, `from_onboarding`), `ao.v2.mobile_app.connected` (`trigger`,
+  emitted only on the not-open-to-open transition, never per poll tick),
+  `ao.v2.mobile_app.onboarding_started` / `_completed` / `_skipped`,
+  `ao.v2.mobile_app.notification_opened` (`target`, `cold_start`), and
+  `ao.v2.mobile_app.feature_used` (`feature`, `outcome`). Every event carries
+  `$process_person_profile: false` (anonymous rate), and the client is built with
+  `personProfiles: "never"`, `enableSessionReplay: false`, and
+  `captureAppLifecycleEvents: false`. There is no screen recording, no touch or
+  screen autocapture, and no free-text property: the allowlist in
+  `packages/mobile/lib/telemetry/events.ts` drops any unregistered key, so session
+  titles, project names, terminal output, and the connection password cannot
+  leave the device. Identity is posthog-react-native's persisted anonymous
+  install id, device-based and never IP. Errors are out of scope here and go to
+  Sentry, not PostHog. A dev client (`npm start`) constructs no client and sends
+  nothing.
+
+PostHog session recording is disabled in the client via
+`disable_session_recording`, so the project-side replay toggle cannot turn it on.
+Replay is billed per recording rather than per event, which puts it outside every
+rate limit described below, and AO does not watch replays. If a time-boxed
+investigation ever needs it, network request names are masked before recording.
+
+Feature flags and surveys are also disabled in the client
+(`advanced_disable_flags`, `disable_surveys`). AO reads no flags and ships no
+surveys, and `/flags` requests are billed, so those requests were pure cost.
 
 ## Privacy
 
@@ -146,70 +201,6 @@ Signals that should not drive active-user metrics:
   as separate agent-activity or command-adoption metrics.
 - Raw polling frequency for read-only state commands.
 
-## Volume Investigation: 2026-07-21
-
-Read-only HogQL queries against PostHog project `475752` over the trailing
-30-day window found 3,203,364 total events. The dominant event names were:
-
-| Event                              |     Count | Installs | Events/install |
-| ---------------------------------- | --------: | -------: | -------------: |
-| `ao.cli.invoked`                   | 1,508,888 |      870 |       1,734.35 |
-| `ao.app.active`                    | 1,411,807 |    1,434 |         984.52 |
-| `ao.renderer.route_viewed`         |   114,940 |    1,388 |          82.81 |
-| `ao.renderer.api_error`            |    18,634 |      662 |          28.15 |
-| `ao.session.waiting_input_entered` |    17,583 |      377 |          46.64 |
-| `$exception`                       |    16,563 |      681 |          24.32 |
-| `ao.cli.usage_errors`              |    15,349 |      215 |          71.39 |
-| `ao.session.waiting_input_exited`  |    15,343 |      339 |          45.26 |
-| `$set`                             |    13,211 |    1,137 |          11.62 |
-| `ao.session.spawned`               |    11,439 |      887 |          12.90 |
-
-The top two events were almost entirely CLI-sourced and moved together:
-`ao.cli.invoked` had 1,508,888 events and CLI-channel `ao.app.active` had
-1,403,170 events. The largest command paths were polling/hook paths:
-
-| Command path         | `ao.cli.invoked` count | Install-days | Projected events saved by persistent daily cap |
-| -------------------- | ---------------------: | -----------: | ---------------------------------------------: |
-| `ao hooks`           |                589,338 |        1,624 |                                        587,714 |
-| `ao session ls`      |                270,977 |          764 |                                        270,213 |
-| `ao orchestrator ls` |                236,877 |          177 |                                        236,700 |
-| `ao status`          |                220,436 |          524 |                                        219,912 |
-| `ao session get`     |                 75,946 |          603 |                                         75,343 |
-| `ao project ls`      |                 40,435 |          462 |                                         39,973 |
-| `ao project get`     |                 31,048 |          356 |                                         30,692 |
-| `ao send`            |                 19,104 |          536 |                                         18,568 |
-
-Using `ao.session.spawned` as the AO-session denominator, the 30-day window had
-11,439 spawned sessions, 131.91 `ao.cli.invoked` events per spawned session,
-and 10.05 `ao.renderer.route_viewed` events per spawned session. Looking only
-at renderer/PostHog browser sessions, there were 211,532 renderer SDK events
-across 6,988 PostHog sessions, or 30.27 events per PostHog session. Route
-views were the largest renderer contributor at 17.67 events per PostHog
-session.
-
-Projected 30-day reduction from the implemented changes, using the observed
-install-day cardinalities:
-
-- Persisting the CLI command daily cap: `ao.cli.invoked` drops from 1,508,888
-  to about 8,416 events, saving about 1,500,472 events.
-- Persisting the CLI active six-hour slot cap: CLI-channel `ao.app.active`
-  drops from 1,403,170 to at most about 7,508 events, saving at least about
-  1,395,662 events.
-- Daily renderer route-surface capping: `ao.renderer.route_viewed` drops from
-  114,940 to about 8,483 events, saving about 106,457 events.
-
-Total projected event-volume savings from those three changes are still roughly
-3.0M events per trailing 30 days before adoption effects.
-
-Anonymous-vs-identified check: all events had a `person_id` in HogQL, but the
-event-level profile-processing property showed renderer exceptions as the
-remaining identified-risk path: 16,534 of 16,563 `$exception` events carried
-`$process_person_profile=true`, while only 29 carried `false`. Renderer
-captures now force `$process_person_profile=false` on the event properties, and
-Web Vitals capture is disabled because the 7,017 `$web_vitals` events in the
-window were diagnostic noise rather than activation, feature usage, or
-crash/error signal.
-
 ## Install ID
 
 On first run, a random install identifier is generated and stored at
@@ -240,39 +231,46 @@ AO_TELEMETRY_POSTHOG_KEY=phc_yourkey
 AO_TELEMETRY_POSTHOG_HOST=https://us.i.posthog.com
 ```
 
+The supervisor also passes `AO_TELEMETRY_APP_VERSION` (the Electron app version)
+so daemon events carry `app_version`/`ao_version`. The daemon binary has no
+version of its own that release tooling sets, so without this every daemon event
+arrives unattributable to a release and a failure rate cannot be traced to the
+build that caused it.
+
 Local daemon telemetry is retained in SQLite for 30 days.
 
-## PostHog Retention And Geography Dashboard
+### Kill switch
 
-Use `ao.v2.app.active` as the current active-user event for DAU, weekly
-retention, and country-level active-user maps. During migration, union it with
-legacy `ao.app.active` where `channel=renderer` or where `channel=cli` and
-`actor_type=user`. AO emits active-user telemetry from:
+`AO_TELEMETRY_DISABLED_EVENTS` is a comma-separated list of event streams that
+must never reach PostHog:
 
-- `channel=renderer` when the desktop app initializes and at most once per UTC
-  six-hour slot while the app stays open
-- `channel=cli` when the CLI reports a meaningful user-typed command
-  invocation to the local daemon, at most once per UTC six-hour slot per install
+```bash
+AO_TELEMETRY_DISABLED_EVENTS="ao.v2.app.active, ao.renderer.*"
+```
 
-Recommended PostHog setup:
+An entry ending in `*` matches by prefix. Matching is case-insensitive and
+accepts either the internal name (`ao.app.active`) or the exported PostHog alias
+(`ao.v2.app.active`), so the name visible in PostHog works without translation.
 
-1. Enable PostHog GeoIP enrichment for the project.
-2. Create an "AO Active Users" dashboard.
-3. Add a Trends insight:
-   - Event: `ao.v2.app.active`
-   - Aggregation: unique users
-   - Chart type: world map
-   - Breakdown: GeoIP country code, for example `$geoip_country_code`
-4. Add a Retention insight:
-   - Start event: `ao.v2.app.active`
-   - Return event: `ao.v2.app.active`
-   - Interval: weekly
-   - Range: last 12 weeks
-5. Add optional filters or breakdowns for `channel=renderer` and `channel=cli`
-   when comparing desktop app and CLI activity.
+The list is enforced in two places, because AO has two producers: the daemon's
+billed sink, and the renderer, which talks to PostHog directly. The supervisor
+passes the list to the daemon as an environment variable and to the renderer on
+the telemetry bootstrap, so denying `ao.v2.app.active` silences both rather than
+leaving the renderer sending under the same exported name.
 
-PostHog references:
+Renderer export is additionally off by default on unpackaged builds, so a
+developer's ordinary session does not appear in the production project as a real
+install. `AO_TELEMETRY_RENDERER=on` opts a dev build back in for deliberate
+testing; `off` opts a packaged build out.
 
-- GeoIP enrichment: https://posthog.com/docs/cdp/geoip-enrichment
-- Trends insights: https://posthog.com/docs/product-analytics/trends
-- Retention insights: https://posthog.com/docs/product-analytics/retention
+This exists because every other control in this document is compiled into the
+build. Silencing a stream previously meant shipping a release and waiting for
+users to install it, which took weeks the one time a stream turned out to be
+expensive. The denylist is applied by the daemon at startup, so it takes effect
+on installs that already exist.
+
+The switch is applied outermost on the remote chain: a silenced stream consumes
+no aggregation window, no rate-limit slot, and no export. Local SQLite storage is
+deliberately unaffected, so a stream silenced in production stays debuggable
+locally. Unrecognized entries are inert rather than fatal, because the switch has
+to be usable in a hurry.
