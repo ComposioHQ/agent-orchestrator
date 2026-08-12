@@ -3,6 +3,9 @@ package androidemulator
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +41,19 @@ func TestHelperProcess(t *testing.T) {
 			_ = os.WriteFile(marker, []byte("crashed"), 0o644)
 			os.Exit(1)
 		}
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	case "spawn-child-and-sleep":
+		// Mirrors the real emulator's own process shape: emulator.exe is a
+		// launcher whose actual VM backend (qemu-system-x86_64-headless.exe on
+		// Windows) runs as a separate OS-level child process, not merged into
+		// one process image.
+		child := exec.Command(os.Args[0], "-test.run=TestHelperProcess")
+		child.Env = append(os.Environ(), "AO_WANT_HELPER_PROCESS=1", "AO_HELPER_MODE=sleep")
+		if err := child.Start(); err != nil {
+			os.Exit(1)
+		}
+		_ = os.WriteFile(os.Getenv("AO_CHILD_PID_FILE"), []byte(strconv.Itoa(child.Process.Pid)), 0o644)
 		time.Sleep(10 * time.Second)
 		os.Exit(0)
 	}
@@ -109,6 +125,52 @@ func TestKillStopsARunningProcess(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("process did not exit within 5s of Kill")
 	}
+}
+
+// TestKillStopsTheWholeProcessTree covers a real boot failure: the Android
+// emulator's own process is a launcher whose actual VM backend
+// (qemu-system-x86_64-headless.exe on Windows) runs as a separate child
+// process. Killing only the tracked PID leaves that child running, and it
+// keeps holding the AVD's lock files -- the next Start then fails with
+// "Running multiple emulators with the same AVD is an experimental feature."
+// even though the Manager itself believes the device is stopped.
+func TestKillStopsTheWholeProcessTree(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	p, err := Spawn(helperSpawnConfig("spawn-child-and-sleep", "AO_CHILD_PID_FILE="+pidFile))
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	var childPID int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(pidFile)
+		if err == nil && len(data) > 0 {
+			childPID, err = strconv.Atoi(string(data))
+			if err != nil {
+				t.Fatalf("parse child pid file: %v", err)
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if childPID == 0 {
+		t.Fatal("grandchild process never reported its PID")
+	}
+
+	if err := p.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	_ = p.Wait()
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !processAlive(childPID) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("grandchild process %d is still alive 5s after Kill; Kill must terminate the whole tree, not just the direct child", childPID)
 }
 
 func TestWaitIsSafeForConcurrentCallers(t *testing.T) {

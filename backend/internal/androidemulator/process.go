@@ -105,6 +105,7 @@ func Spawn(cfg SpawnConfig) (*Process, error) {
 	if len(cfg.Env) > 0 {
 		cmd.Env = append(cmd.Environ(), cfg.Env...)
 	}
+	configureProcAttr(cmd)
 	logs := newLineBuffer(defaultLogBufferLines)
 	cmd.Stdout = logs
 	cmd.Stderr = logs
@@ -133,14 +134,18 @@ func (p *Process) Logs(limit int) []string {
 	return p.logs.Last(limit)
 }
 
-// Kill terminates the process immediately (no graceful shutdown signal --
-// the emulator's own state is disposable/re-creatable, so there's nothing to
-// flush).
+// Kill terminates the process AND every descendant it spawned (no graceful
+// shutdown signal -- the emulator's own state is disposable/re-creatable, so
+// there's nothing to flush). A plain single-PID kill is not enough here: the
+// emulator binary is a launcher whose actual VM backend runs as a separate
+// child process, and a surviving child keeps holding the AVD's lock files,
+// making every subsequent boot fail with "Running multiple emulators with
+// the same AVD".
 func (p *Process) Kill() error {
 	if p.cmd.Process == nil {
 		return nil
 	}
-	return p.cmd.Process.Kill()
+	return killTree(p.cmd.Process.Pid)
 }
 
 // Pid returns the OS process id, or 0 if the process has not started.
