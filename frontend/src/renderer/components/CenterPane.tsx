@@ -359,14 +359,12 @@ export function CenterPane({
 						</TerminalControl>
 					</div>
 				</div>
-				{isFullscreen ? null : (
-					<div
-						className="ml-auto flex shrink-0 items-center px-3"
-						data-testid="session-action-region"
-					>
-						{topbarActions}
-					</div>
-				)}
+				<div
+					className="ml-auto flex shrink-0 items-center px-3"
+					data-testid="session-action-region"
+				>
+					{topbarActions}
+				</div>
 			</div>
 		</div>
 	);

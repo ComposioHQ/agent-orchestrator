@@ -13,10 +13,10 @@ const topbarButtonVariants = cva(
 				feature:
 					"topbar-control--feature h-control-lg gap-1.5 rounded-md border px-3 text-control font-semibold leading-none",
 				icon:
-					"topbar-control--icon grid size-control-lg place-items-center rounded-md text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+					"topbar-control--icon grid size-control-md place-items-center rounded-md text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 				kill: "h-control-lg gap-1.5 rounded-md border border-transparent bg-transparent px-3.5 text-sm font-semibold leading-none text-error/80 hover:border-error/50 hover:bg-error/10 hover:text-error",
 				killIcon:
-					"topbar-control--icon topbar-control--danger-icon grid size-control-lg place-items-center rounded-md text-error/80 hover:bg-error/10 hover:text-error",
+					"topbar-control--icon topbar-control--danger-icon grid size-control-md place-items-center rounded-md text-error/80 hover:bg-error/10 hover:text-error",
 				killConfirm:
 					"h-control-lg gap-1.5 rounded-md border border-error/40 bg-error/10 px-3 text-control font-semibold leading-none text-error hover:bg-error/16",
 				killCancel:

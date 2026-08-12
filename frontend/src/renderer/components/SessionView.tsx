@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import type { components } from "../../api/schema";
+import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
@@ -34,7 +35,7 @@ import {
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { hidesShellTopbar } from "../lib/platform";
+import { hidesShellTopbar, isMacPlatform } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
@@ -46,6 +47,8 @@ const INSPECTOR_MIN_PERCENT = 30;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
+const isMac = isMacPlatform();
+const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
@@ -360,16 +363,18 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
 	const sessionLocalActions = session ? (
 		<SessionInterfaceActionGroup>
-			<TopbarButton
-				aria-label={t("shortcut.new-shell-terminal")}
-				disabled={openShellTerminal.isPending}
-				onClick={addShellTerminal}
-				title={newTerminalError ?? t("shortcut.new-shell-terminal")}
-				type="button"
-				variant="icon"
-			>
-				<Plus aria-hidden="true" className="size-icon-md" />
-			</TopbarButton>
+			{!isOrchestrator ? (
+				<TopbarButton
+					aria-label={t("shortcut.new-shell-terminal")}
+					disabled={openShellTerminal.isPending}
+					onClick={addShellTerminal}
+					title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+					type="button"
+					variant="icon"
+				>
+					<Plus aria-hidden="true" className="size-icon-md" />
+				</TopbarButton>
+			) : null}
 			<TerminalSwitchAgentButton session={session} />
 			{interfaceSwitchAction}
 		</SessionInterfaceActionGroup>

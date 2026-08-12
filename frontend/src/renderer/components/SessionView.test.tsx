@@ -556,8 +556,16 @@ describe("SessionView", () => {
 	it("opens new terminals in the on-screen session's worktree", () => {
 		render(<SessionView sessionId="sess-2" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		const newTerminalButton = screen.getByRole("button", { name: "New terminal" });
+		expect(newTerminalButton).toHaveAttribute("title", "New terminal (Ctrl+T)");
+		fireEvent.click(newTerminalButton);
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+	});
+
+	it("does not offer a new terminal for orchestrator sessions", () => {
+		render(<SessionView sessionId="sess-orch" />);
+
+		expect(screen.queryByRole("button", { name: "New terminal" })).not.toBeInTheDocument();
 	});
 
 	it("shows a shell opened from chat and returns to the chat agent tab", () => {

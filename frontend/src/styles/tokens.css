@@ -312,8 +312,8 @@
 		var(--size-titlebar-cluster-left) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 
-	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
-	--size-traffic-light-clearance: 40px;
+	/* Keep macOS traffic-light chrome aligned with the shared route topbar. */
+	--size-traffic-light-clearance: var(--size-toolbar);
 	/* Fullscreen has no traffic lights, but the left navigation still needs one
 	 * compact row before sidebar content begins. */
 	--size-traffic-light-clearance-fullscreen: calc(var(--size-control-md) + var(--space-1));

@@ -87,7 +87,8 @@ describe("TerminalSwitchAgentButton", () => {
 
 		const button = await screen.findByRole("button", { name: "Switch agent" });
 		expect(button.classList.contains("topbar-control--icon")).toBe(true);
-		expect(button.classList.contains("size-control-lg")).toBe(true);
+		expect(button.classList.contains("size-control-md")).toBe(true);
+		expect(button.classList.contains("size-control-lg")).toBe(false);
 		expect(button.classList.contains("rounded-md")).toBe(true);
 		expect(button.classList.contains("ml-1")).toBe(false);
 		expect(button.classList.contains("rounded-full")).toBe(false);
