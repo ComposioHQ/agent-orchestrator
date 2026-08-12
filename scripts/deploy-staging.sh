@@ -71,6 +71,12 @@ image_digest="$(
 		--output text
 )"
 image="${repository_uri}@${image_digest}"
+provider_secret_arn="$(
+	aws_cli secretsmanager describe-secret \
+		--secret-id ao-cloud/staging/provider-secret-key \
+		--query ARN \
+		--output text
+)"
 
 aws_cli ecr start-image-scan \
 	--repository-name "$REPOSITORY" \
@@ -126,6 +132,7 @@ register_task_definition() {
 			RELEASE="$RELEASE" \
 			CONTAINER_NAME="$container_name" \
 			RUNTIME_DATABASE_USER="$RUNTIME_DATABASE_USER" \
+			PROVIDER_SECRET_ARN="$provider_secret_arn" \
 			python3 - <<'PY'
 import json
 import os
@@ -168,6 +175,17 @@ for container in payload["containerDefinitions"]:
         environment.append({
             "name": "AO_CLOUD_RUNTIME_DATABASE_USER",
             "value": os.environ["RUNTIME_DATABASE_USER"],
+        })
+    else:
+        secrets = container.setdefault("secrets", [])
+        secrets[:] = [
+            secret
+            for secret in secrets
+            if secret["name"] != "AO_CLOUD_PROVIDER_SECRET_KEY"
+        ]
+        secrets.append({
+            "name": "AO_CLOUD_PROVIDER_SECRET_KEY",
+            "valueFrom": os.environ["PROVIDER_SECRET_ARN"],
         })
 payload["tags"] = [
     tag for tag in source.get("tags", []) if tag["key"] != "Release"

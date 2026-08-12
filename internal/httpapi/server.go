@@ -14,6 +14,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -37,34 +38,38 @@ type Store interface {
 }
 
 type Server struct {
-	store            Store
-	workos           auth.WorkOSVerifier
-	localAuthEnabled bool
-	localSessionTTL  time.Duration
-	localAuthLimiter *fixedWindowLimiter
-	sandboxProvider  string
-	environment      string
-	release          string
-	draining         atomic.Bool
-	drainOnce        sync.Once
-	drain            chan struct{}
-	logger           *slog.Logger
-	github           *githubapp.Service
-	webhookMaxBody   int64
-	handler          http.Handler
+	store               Store
+	workos              auth.WorkOSVerifier
+	localAuthEnabled    bool
+	localSessionTTL     time.Duration
+	localAuthLimiter    *fixedWindowLimiter
+	sandboxProvider     string
+	environment         string
+	release             string
+	draining            atomic.Bool
+	drainOnce           sync.Once
+	drain               chan struct{}
+	logger              *slog.Logger
+	github              *githubapp.Service
+	secretCipher        *secrets.Cipher
+	credentialValidator credentialValidator
+	webhookMaxBody      int64
+	handler             http.Handler
 }
 
 type Options struct {
-	Store            Store
-	WorkOS           auth.WorkOSVerifier
-	LocalAuthEnabled bool
-	LocalSessionTTL  time.Duration
-	SandboxProvider  string
-	Environment      string
-	Release          string
-	Logger           *slog.Logger
-	GitHub           *githubapp.Service
-	WebhookMaxBody   int64
+	Store               Store
+	WorkOS              auth.WorkOSVerifier
+	LocalAuthEnabled    bool
+	LocalSessionTTL     time.Duration
+	SandboxProvider     string
+	Environment         string
+	Release             string
+	Logger              *slog.Logger
+	GitHub              *githubapp.Service
+	SecretCipher        *secrets.Cipher
+	CredentialValidator credentialValidator
+	WebhookMaxBody      int64
 }
 
 func New(options Options) *Server {
@@ -89,18 +94,23 @@ func New(options Options) *Server {
 		webhookMaxBody = 2 << 20
 	}
 	server := &Server{
-		store:            options.Store,
-		workos:           options.WorkOS,
-		localAuthEnabled: options.LocalAuthEnabled,
-		localSessionTTL:  options.LocalSessionTTL,
-		localAuthLimiter: newFixedWindowLimiter(10, time.Minute, 4096),
-		sandboxProvider:  sandboxProvider,
-		environment:      environment,
-		release:          release,
-		drain:            make(chan struct{}),
-		logger:           logger,
-		github:           options.GitHub,
-		webhookMaxBody:   webhookMaxBody,
+		store:               options.Store,
+		workos:              options.WorkOS,
+		localAuthEnabled:    options.LocalAuthEnabled,
+		localSessionTTL:     options.LocalSessionTTL,
+		localAuthLimiter:    newFixedWindowLimiter(10, time.Minute, 4096),
+		sandboxProvider:     sandboxProvider,
+		environment:         environment,
+		release:             release,
+		drain:               make(chan struct{}),
+		logger:              logger,
+		github:              options.GitHub,
+		secretCipher:        options.SecretCipher,
+		credentialValidator: options.CredentialValidator,
+		webhookMaxBody:      webhookMaxBody,
+	}
+	if server.credentialValidator == nil {
+		server.credentialValidator = newAgentCredentialValidator(nil)
 	}
 	router := chi.NewRouter()
 	router.Use(server.requestID)
@@ -130,6 +140,9 @@ func New(options Options) *Server {
 			}
 			router.Get("/projects", server.listProjects)
 			router.Post("/projects", server.createProject)
+			router.Get("/provider-connections", server.listProviderConnections)
+			router.Put("/provider-connections/agents/{agent}", server.putAgentConnection)
+			router.Delete("/provider-connections/agents/{agent}", server.deleteAgentConnection)
 			router.Get("/sessions", server.listSessions)
 			router.Post("/sessions", server.createSession)
 			router.Get("/sessions/{sessionId}", server.getSession)

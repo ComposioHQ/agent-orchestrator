@@ -48,11 +48,9 @@ const boardLabels = {
 };
 
 export function CloudBoard({
-  onNewSession,
   onSelectSession,
   sessions,
 }: {
-  onNewSession: () => void;
   onSelectSession: (sessionId: string) => void;
   sessions: Session[];
 }) {
@@ -64,16 +62,9 @@ export function CloudBoard({
             No sessions yet
           </p>
           <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">
-            Create a durable session to test projects, policies, chat history,
-            and event replay. Agent execution remains disabled.
+            Workers and their activity will appear here when Cloud execution is
+            available.
           </p>
-          <button
-            className="mt-5 h-9 rounded-md bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-foreground)]"
-            onClick={onNewSession}
-            type="button"
-          >
-            New worker
-          </button>
         </div>
       </div>
     );

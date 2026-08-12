@@ -1,12 +1,8 @@
 "use client";
 
 import type {
-  CreateProjectInput,
-  CreateSessionInput,
   GitHubRepository,
-  Project,
 } from "@aoagents/cloud-client";
-import { AgentAvatar } from "@aoagents/product-ui";
 import {
   Bot,
   FolderGit2,
@@ -14,10 +10,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import type {
-  InputHTMLAttributes,
-  ReactNode,
-} from "react";
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 import type { GitHubCapability } from "./cloud-ui-types";
@@ -25,21 +18,17 @@ import type { GitHubCapability } from "./cloud-ui-types";
 export function NewProjectDialog({
   github,
   onClose,
-  onCreate,
   onCreateFromGitHub,
   onOpenProviderSettings,
 }: {
   github: GitHubCapability;
   onClose: () => void;
-  onCreate: (input: CreateProjectInput) => Promise<void>;
   onCreateFromGitHub: (repository: GitHubRepository) => Promise<void>;
   onOpenProviderSettings: () => void;
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<
-    "choose" | "project" | "github" | "manual"
-  >("choose");
+  const [mode, setMode] = useState<"choose" | "project" | "github">("choose");
   const activeRepositories = github.repositories.filter(
     ({ access, isArchived }) => access === "active" && !isArchived,
   );
@@ -125,22 +114,13 @@ export function NewProjectDialog({
             >
               Back
             </button>
-            <div className="flex items-center gap-2">
-              <button
-                className={secondaryButtonClass}
-                onClick={() => setMode("manual")}
-                type="button"
-              >
-                Use repository URL
-              </button>
-              <button
-                className={secondaryButtonClass}
-                onClick={onClose}
-                type="button"
-              >
-                Cancel
-              </button>
-            </div>
+            <button
+              className={secondaryButtonClass}
+              onClick={onClose}
+              type="button"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       ) : mode === "github" ? (
@@ -211,168 +191,7 @@ export function NewProjectDialog({
             submitLabel="Add project"
           />
         </form>
-      ) : (
-        <form
-          className="space-y-4 p-5"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            setBusy(true);
-            setError("");
-            const form = new FormData(event.currentTarget);
-            try {
-              await onCreate({
-                displayName: String(form.get("displayName") || "").trim(),
-                repositoryUrl: String(form.get("repositoryUrl") || "").trim(),
-                defaultBranch:
-                  String(form.get("defaultBranch") || "").trim() || "main",
-                config: {},
-              });
-              onClose();
-            } catch (cause) {
-              setError(
-                cause instanceof Error
-                  ? cause.message
-                  : "Could not create project.",
-              );
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <Field autoFocus label="Project name" name="displayName" required />
-          <Field
-            label="GitHub repository URL"
-            name="repositoryUrl"
-            placeholder="https://github.com/acme/project"
-            type="url"
-            pattern="https://github\.com/.+/.+"
-            required
-          />
-          <Field
-            defaultValue="main"
-            label="Default branch"
-            name="defaultBranch"
-            required
-          />
-          <DialogFooter
-            busy={busy}
-            error={error}
-            onBack={() => setMode("project")}
-            onCancel={onClose}
-            submitLabel="Create project"
-          />
-        </form>
-      )}
-    </Dialog>
-  );
-}
-
-export function NewSessionDialog({
-  onClose,
-  onCreate,
-  projects,
-  selectedProjectId,
-}: {
-  onClose: () => void;
-  onCreate: (input: CreateSessionInput) => Promise<void>;
-  projects: Project[];
-  selectedProjectId: string | null;
-}) {
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [harness, setHarness] = useState("claude-code");
-  const project =
-    projects.find(({ id }) => id === selectedProjectId) ?? projects[0];
-
-  return (
-    <Dialog onClose={onClose} title="New cloud worker">
-      <form
-        className="space-y-4 p-4"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (!project) return;
-          setBusy(true);
-          setError("");
-          const form = new FormData(event.currentTarget);
-          try {
-            await onCreate({
-              projectId: project.id,
-              kind: "worker",
-              harness,
-              displayName: String(form.get("displayName") || "").trim(),
-              prompt: String(form.get("prompt") || "").trim(),
-              mode: "standard",
-              deniedCommands: [],
-            });
-            onClose();
-          } catch (cause) {
-            setError(
-              cause instanceof Error ? cause.message : "Could not create session.",
-            );
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        {project ? (
-          <p className="text-xs text-[var(--color-text-passive)]">
-            Project{" "}
-            <span className="text-[var(--muted-foreground)]">
-              {project.displayName}
-            </span>
-          </p>
-        ) : null}
-        <Field
-          autoFocus
-          label="Worker name"
-          maxLength={40}
-          name="displayName"
-          placeholder="Worker name"
-          required
-        />
-        <label className="block">
-          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
-            Coding agent
-          </span>
-          <div className="relative">
-            <AgentAvatar
-              className="pointer-events-none absolute left-3 top-1/2 z-10 size-[18px] -translate-y-1/2"
-              provider={harness}
-            />
-            <select
-              className={`${controlClass} pl-10`}
-              name="harness"
-              onChange={(event) => setHarness(event.target.value)}
-              value={harness}
-            >
-              <option value="claude-code">Claude Code</option>
-              <option value="codex">Codex</option>
-              <option value="cursor">Cursor</option>
-            </select>
-          </div>
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
-            Initial prompt
-          </span>
-          <textarea
-            className={`${controlClass} min-h-32 resize-y py-3`}
-            name="prompt"
-            placeholder="What should this worker do?"
-            required
-          />
-        </label>
-        <div className="text-xs leading-5 text-[var(--color-text-passive)]">
-          This saves the worker request. Runtime execution is not available yet.
-        </div>
-        <DialogFooter
-          busy={busy}
-          error={error}
-          onCancel={onClose}
-          submitDisabled={!project}
-          submitLabel="Create worker"
-        />
-      </form>
+      ) : null}
     </Dialog>
   );
 }
@@ -454,20 +273,6 @@ function Dialog({
         {children}
       </div>
     </div>
-  );
-}
-
-function Field({
-  label,
-  ...props
-}: { label: string } & InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
-        {label}
-      </span>
-      <input {...props} className={controlClass} />
-    </label>
   );
 }
 

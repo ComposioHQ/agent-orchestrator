@@ -16,6 +16,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/auth"
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
 	"github.com/google/uuid"
 )
 
@@ -38,11 +39,17 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer replicaStore.Close()
+	providerCipher, err := secrets.New(bytes.Repeat([]byte{9}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	api := New(Options{
-		Store:            store,
-		LocalAuthEnabled: true,
-		LocalSessionTTL:  time.Hour,
-		SandboxProvider:  "docker",
+		Store:               store,
+		LocalAuthEnabled:    true,
+		LocalSessionTTL:     time.Hour,
+		SandboxProvider:     "docker",
+		SecretCipher:        providerCipher,
+		CredentialValidator: acceptingCredentialValidator{},
 	})
 	server := httptest.NewServer(api.Handler())
 	defer server.Close()
@@ -57,6 +64,53 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 
 	first := registerUser(t, server.URL, "first")
 	second := registerUser(t, server.URL, "second")
+
+	putProvider := requestJSON(
+		t,
+		http.MethodPut,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+
+			"/provider-connections/agents/claude-code",
+		first.Token,
+		"",
+		map[string]any{
+			"credentialType": "api_key",
+			"secret":         "sk-ant-test",
+		},
+		http.StatusOK,
+	)
+	providerConnection := objectField(t, putProvider, "providerConnection")
+	if stringField(t, providerConnection, "provider") != "claude-code" {
+		t.Fatalf("provider connection = %#v", providerConnection)
+	}
+	connections := requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/provider-connections",
+		first.Token,
+		"",
+		nil,
+		http.StatusOK,
+	)
+	if items, ok := connections["providerConnections"].([]any); !ok || len(items) != 1 {
+		t.Fatalf("provider connections = %#v", connections)
+	}
+	requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/provider-connections",
+		second.Token,
+		"",
+		nil,
+		http.StatusForbidden,
+	)
+	requestNoContent(
+		t,
+		http.MethodDelete,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+
+			"/provider-connections/agents/claude-code",
+		first.Token,
+		http.StatusNoContent,
+	)
 
 	projectBody := map[string]any{
 		"displayName":   "API",
@@ -476,6 +530,17 @@ type errorVerifier struct {
 	err error
 }
 
+type acceptingCredentialValidator struct{}
+
+func (acceptingCredentialValidator) Validate(
+	context.Context,
+	string,
+	string,
+	[]byte,
+) error {
+	return nil
+}
+
 func (v errorVerifier) Verify(context.Context, string) (domain.Principal, error) {
 	return domain.Principal{}, v.err
 }
@@ -636,6 +701,29 @@ func requestJSON(
 		t.Fatalf("status = %d, want %d; body = %#v", response.StatusCode, wantStatus, result)
 	}
 	return result
+}
+
+func requestNoContent(
+	t *testing.T,
+	method string,
+	url string,
+	token string,
+	wantStatus int,
+) {
+	t.Helper()
+	request, err := http.NewRequest(method, url, http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != wantStatus {
+		t.Fatalf("status = %d, want %d", response.StatusCode, wantStatus)
+	}
 }
 
 func objectField(t *testing.T, value map[string]any, key string) map[string]any {

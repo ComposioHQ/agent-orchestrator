@@ -31,6 +31,7 @@ type Config struct {
 	LocalAuthEnabled     bool
 	LocalSessionTTL      time.Duration
 	SandboxProvider      string
+	ProviderSecretKey    []byte
 	Release              string
 	GitHub               GitHubConfig
 }
@@ -94,6 +95,18 @@ func Load() (Config, error) {
 		}
 		cfg.GitHub.StateKey = decoded
 	}
+	providerSecretKey := strings.TrimSpace(
+		os.Getenv("AO_CLOUD_PROVIDER_SECRET_KEY"),
+	)
+	if providerSecretKey != "" {
+		decoded, err := base64.StdEncoding.DecodeString(providerSecretKey)
+		if err != nil || len(decoded) != 32 {
+			return Config{}, errors.New(
+				"AO_CLOUD_PROVIDER_SECRET_KEY must be base64-encoded 32 bytes",
+			)
+		}
+		cfg.ProviderSecretKey = decoded
+	}
 	if value := strings.TrimSpace(os.Getenv("AO_CLOUD_MIGRATION_TIMEOUT")); value != "" {
 		timeout, err := time.ParseDuration(value)
 		if err != nil || timeout <= 0 {
@@ -147,6 +160,11 @@ func Load() (Config, error) {
 	}
 	if cfg.LocalAuthEnabled && cfg.WorkOSIssuer != "" {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_AUTH cannot be combined with WorkOS")
+	}
+	if cfg.Hosted() && len(cfg.ProviderSecretKey) != 32 {
+		return Config{}, errors.New(
+			"AO_CLOUD_PROVIDER_SECRET_KEY is required in hosted environments",
+		)
 	}
 	if cfg.LocalSessionTTL <= 0 {
 		return Config{}, errors.New("AO_CLOUD_LOCAL_SESSION_TTL must be positive")

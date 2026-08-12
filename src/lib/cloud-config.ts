@@ -26,6 +26,26 @@ export function cloudApiBaseUrl(): string {
   return url.origin;
 }
 
+export function githubApiBaseUrl(): string {
+  const value =
+    process.env.AO_CLOUD_GITHUB_API_BASE_URL?.trim() ||
+    "https://api.aoagents.dev";
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.search ||
+    url.hash ||
+    url.pathname !== "/" ||
+    url.username ||
+    url.password
+  ) {
+    throw new Error(
+      "AO_CLOUD_GITHUB_API_BASE_URL must be an HTTPS origin without credentials.",
+    );
+  }
+  return url.origin;
+}
+
 export function workosRedirectUri(): string {
   const value = process.env.WORKOS_REDIRECT_URI?.trim();
   if (!value) {

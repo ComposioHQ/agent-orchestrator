@@ -48,6 +48,17 @@ func TestLoadRejectsInvalidMigrationTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidProviderSecretKey(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
+	t.Setenv("AO_CLOUD_PROVIDER_SECRET_KEY", "not-base64")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with an invalid provider secret key")
+	}
+}
+
 func TestLoadRejectsUnknownSandboxProvider(t *testing.T) {
 	t.Setenv("AO_CLOUD_ENV", "development")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
@@ -82,6 +93,7 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-staging")
+	setProviderSecretKey(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -129,6 +141,7 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_JWKS_URL", "")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+	setProviderSecretKey(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -211,6 +224,7 @@ func TestLoadRejectsGitHubAppCredentialsOutsideProduction(t *testing.T) {
 		base64.StdEncoding.EncodeToString(make([]byte, 32)),
 	)
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://staging-api.aoagents.dev")
+	setProviderSecretKey(t)
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with staging GitHub App credentials")
@@ -233,8 +247,17 @@ func TestLoadRequiresHTTPSGitHubCallbackInHostedEnvironment(t *testing.T) {
 		base64.StdEncoding.EncodeToString(make([]byte, 32)),
 	)
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "http://api.aoagents.dev")
+	setProviderSecretKey(t)
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with a plaintext hosted GitHub callback URL")
 	}
+}
+
+func setProviderSecretKey(t *testing.T) {
+	t.Helper()
+	t.Setenv(
+		"AO_CLOUD_PROVIDER_SECRET_KEY",
+		base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	)
 }
