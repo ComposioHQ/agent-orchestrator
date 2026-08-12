@@ -88,6 +88,7 @@ export type AgentProvider =
 	| "vibe"
 	| "pi"
 	| "kimchi"
+	| "prime-agent"
 	| "autohand"
 	| "fake";
 
@@ -379,6 +380,7 @@ export function toAgentProvider(provider?: string): AgentProvider {
 		case "vibe":
 		case "pi":
 		case "kimchi":
+		case "prime-agent":
 		case "autohand":
 		case "fake":
 			return provider;

@@ -260,6 +260,7 @@ describe("toAgentProvider", () => {
 	it("passes through a known provider", () => {
 		expect(toAgentProvider("opencode")).toBe("opencode");
 		expect(toAgentProvider("muse")).toBe("muse");
+		expect(toAgentProvider("prime-agent")).toBe("prime-agent");
 	});
 
 	it("defaults unknown and undefined providers to codex", () => {
