@@ -1018,8 +1018,8 @@ function SessionRow({
 // email with a sign-out action in a dropdown.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { session, status, signIn, signOut } = useCloudSession();
-	if (status === "loading") return null;
+	const { configured, session, status, signIn, signOut } = useCloudSession();
+	if (!configured || status === "loading") return null;
 
 	if (status === "unauthenticated") {
 		return (
@@ -1080,8 +1080,8 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 // Icon-rail variant for collapsed sidebar.
 function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { session, status, signIn, signOut } = useCloudSession();
-	if (status === "loading") return null;
+	const { configured, session, status, signIn, signOut } = useCloudSession();
+	if (!configured || status === "loading") return null;
 
 	if (status === "unauthenticated") {
 		return (
