@@ -409,9 +409,10 @@ func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
 	if len(config.Permissions) == 0 {
 		t.Fatalf("unrelated settings clobbered: %s", data)
 	}
-	// SessionStart carries the required matcher; UserPromptSubmit omits it.
-	if m := matcherForCommand(config.Hooks["SessionStart"], "ao hooks claude-code session-start"); m == nil || *m != "startup" {
-		t.Fatalf("SessionStart matcher = %v, want startup", m)
+	// SessionStart covers both a fresh spawn and AO's resume path;
+	// UserPromptSubmit omits a matcher.
+	if m := matcherForCommand(config.Hooks["SessionStart"], "ao hooks claude-code session-start"); m == nil || *m != "startup|resume" {
+		t.Fatalf("SessionStart matcher = %v, want startup|resume", m)
 	}
 	if m := matcherForCommand(config.Hooks["UserPromptSubmit"], "ao hooks claude-code user-prompt-submit"); m != nil {
 		t.Fatalf("UserPromptSubmit matcher = %v, want none", m)
@@ -423,6 +424,47 @@ func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
 	}
 	if m := matcherForCommand(config.Hooks["SessionEnd"], "ao hooks claude-code session-end"); m != nil {
 		t.Fatalf("SessionEnd matcher = %v, want none", m)
+	}
+}
+
+func TestGetAgentHooksMigratesStartupOnlySessionStartMatcher(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	workspace := t.TempDir()
+	settingsPath := filepath.Join(workspace, ".claude", "settings.local.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"ao hooks claude-code session-start","timeout":30},{"type":"command","command":"custom startup hook","timeout":3}]}]}}`
+	if err := os.WriteFile(settingsPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Hooks map[string][]hooksjson.MatcherGroup `json:"hooks"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	groups := config.Hooks["SessionStart"]
+	if m := matcherForCommand(groups, "ao hooks claude-code session-start"); m == nil || *m != "startup|resume" {
+		t.Fatalf("migrated SessionStart matcher = %v, want startup|resume", m)
+	}
+	if got := countClaudeHookCommand(groups, "ao hooks claude-code session-start"); got != 1 {
+		t.Fatalf("managed SessionStart count = %d, want 1", got)
+	}
+	if got := countClaudeHookCommand(groups, "custom startup hook"); got != 1 {
+		t.Fatalf("custom startup hook count = %d, want 1", got)
+	}
+	if m := matcherForCommand(groups, "custom startup hook"); m == nil || *m != "startup" {
+		t.Fatalf("custom startup hook matcher = %v, want startup", m)
 	}
 }
 

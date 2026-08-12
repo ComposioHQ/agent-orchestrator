@@ -15,12 +15,14 @@ const (
 	claudeHookTimeout       = 30
 )
 
-// claudeStartupMatcher is referenced by pointer so SessionStart serializes with
-// its required "startup" matcher.
-var claudeStartupMatcher = "startup"
+// claudeSessionStartMatcher is referenced by pointer so SessionStart
+// serializes with both launch sources AO uses: a fresh start and a resume.
+// Claude filters SessionStart hooks by source, so startup-only silently drops
+// the callback from AO's `claude --resume` restore path.
+var claudeSessionStartMatcher = "startup|resume"
 
 // claudeManagedHooks is the source of truth for the hooks AO installs:
-// SessionStart (under the "startup" matcher), UserPromptSubmit, the tool-use
+// SessionStart (under the startup/resume matcher), UserPromptSubmit, the tool-use
 // trio (PreToolUse, PostToolUse, PostToolUseFailure), PermissionRequest,
 // Stop, Notification, and SessionEnd. They report normalized session metadata
 // and activity-state signals back into AO's store (see DeriveActivityState).
@@ -35,7 +37,7 @@ var claudeStartupMatcher = "startup"
 // dialog appears and carries the blocking tool_name; `ao hooks` writes nothing
 // to stdout, so installing it never injects a permission decision.
 var claudeManagedHooks = []hooksjson.HookSpec{
-	{Event: "SessionStart", Matcher: &claudeStartupMatcher, Command: claudeHookCommandPrefix + "session-start"},
+	{Event: "SessionStart", Matcher: &claudeSessionStartMatcher, Command: claudeHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: claudeHookCommandPrefix + "user-prompt-submit"},
 	{Event: "PreToolUse", Command: claudeHookCommandPrefix + "pre-tool-use"},
 	{Event: "PostToolUse", Command: claudeHookCommandPrefix + "post-tool-use"},

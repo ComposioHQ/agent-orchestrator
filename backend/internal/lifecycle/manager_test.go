@@ -2734,9 +2734,8 @@ func TestActivity_MetadataOnlySessionStartStampsReceiptWithoutActivity(t *testin
 	st.sessions["mer-1"] = rec
 
 	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
-		Event:          "session-start",
-		AgentSessionID: "native-1",
-		Timestamp:      signalAt,
+		Event:     "session-start",
+		Timestamp: signalAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2747,9 +2746,6 @@ func TestActivity_MetadataOnlySessionStartStampsReceiptWithoutActivity(t *testin
 	}
 	if got.Activity != rec.Activity {
 		t.Fatalf("metadata-only start changed activity: %+v -> %+v", rec.Activity, got.Activity)
-	}
-	if got.Metadata.AgentSessionID != "native-1" {
-		t.Fatalf("agent session id = %q, want native-1", got.Metadata.AgentSessionID)
 	}
 }
 
@@ -2770,6 +2766,31 @@ func TestActivity_RepeatedMetadataOnlySessionStartDoesNotMoveReceipt(t *testing.
 	}
 	if got := st.sessions["mer-1"]; got != rec {
 		t.Fatalf("repeated receipt rewrote session: %+v", got)
+	}
+}
+
+func TestActivity_LateMetadataOnlySessionStartDoesNotOverwriteActivityOrReceipt(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	activityAt := time.Unix(123, 0).UTC()
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:     true,
+		State:     domain.ActivityActive,
+		Event:     "user-prompt-submit",
+		Timestamp: activityAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before := st.sessions["mer-1"]
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Event:     "session-start",
+		Timestamp: activityAt.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got != before {
+		t.Fatalf("late receipt overwrote real activity or first receipt: %+v -> %+v", before, got)
 	}
 }
 
