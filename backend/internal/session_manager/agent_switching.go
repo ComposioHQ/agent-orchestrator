@@ -122,6 +122,45 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	return record, nil
 }
 
+// RecoverAgentSwitch retries only a durable source-side recovery boundary. It
+// never retries target startup and returns after daemon-owned recovery is
+// accepted.
+func (m *Manager) RecoverAgentSwitch(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
+	if err := m.beginAgentSwitchAttempt(); err != nil {
+		return domain.AgentSwitch{}, err
+	}
+	attemptOwned := true
+	defer func() {
+		if attemptOwned {
+			m.agentSwitchWorkers.Done()
+		}
+	}()
+
+	store, err := m.switchStore()
+	if err != nil {
+		return domain.AgentSwitch{}, fmt.Errorf("recover agent switch %s: %w", switchID, err)
+	}
+	sw, found, err := store.GetAgentSwitch(ctx, switchID)
+	if err != nil {
+		return domain.AgentSwitch{}, fmt.Errorf("recover agent switch %s: %w", switchID, err)
+	}
+	if !found || sw.SessionID != id {
+		return domain.AgentSwitch{}, ErrSwitchNotFound
+	}
+	if !sw.RequiresSourceRecovery() {
+		return sw, ErrSwitchRecoveryNotRequired
+	}
+	if err := m.beginAgentSwitchRecovery(ctx, id); err != nil {
+		return sw, err
+	}
+	if err := m.startAgentSwitchRecoveryWorker(store, sw); err != nil {
+		m.retainAgentSwitch(id)
+		return sw, err
+	}
+	attemptOwned = false
+	return sw, nil
+}
+
 func (m *Manager) admitAgentSwitch(ctx context.Context, id domain.SessionID, cfg SwitchAgentConfig) (domain.AgentSwitch, *admittedAgentSwitch, error) {
 	store, err := m.switchStore()
 	if err != nil {
@@ -353,6 +392,16 @@ func (m *Manager) executeAgentSwitch(ctx context.Context, admitted *admittedAgen
 				m.logger.Error("agent switch: automatic source rollback failed", "sessionID", id, "switchID", result.ID, "error", rollbackErr)
 			} else {
 				m.logger.Info("agent switch: source restored after target failure", "sessionID", id, "switchID", result.ID, "harness", result.FromHarness)
+			}
+		}
+		if retErr != nil && !result.State.Terminal() && skipTerminalization && !result.RequiresRecovery() {
+			markerCtx, markerCancel := switchDurableContext(workerCtx)
+			marked, markerErr := m.markRetainedSourceRecovery(markerCtx, store, result, targetRuntimeAmbiguous)
+			markerCancel()
+			if markerErr != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("persist retained switch recovery marker: %w", markerErr))
+			} else {
+				result = marked
 			}
 		}
 		if retErr != nil && !result.State.Terminal() && !skipTerminalization {
@@ -856,6 +905,35 @@ func (m *Manager) startAgentSwitchWorker(admitted *admittedAgentSwitch) error {
 			"switchID", result.ID,
 			"state", result.State,
 		)
+	}()
+	return nil
+}
+
+func (m *Manager) startAgentSwitchRecoveryWorker(store ports.AgentSwitchStore, sw domain.AgentSwitch) error {
+	m.agentSwitchWorkerMu.Lock()
+	if m.agentSwitchWorkersClosed {
+		m.agentSwitchWorkerMu.Unlock()
+		return ErrSwitchShuttingDown
+	}
+	m.agentSwitchWorkerMu.Unlock()
+
+	m.logger.Info("agent switch recovery accepted", "sessionID", sw.SessionID, "switchID", sw.ID, "sourceHarness", sw.FromHarness, "errorCode", sw.ErrorCode)
+	go func() {
+		defer m.agentSwitchWorkers.Done()
+		defer func() {
+			if panicValue := recover(); panicValue != nil {
+				m.retainAgentSwitch(sw.SessionID)
+				m.logger.Error("agent switch recovery panicked", "sessionID", sw.SessionID, "switchID", sw.ID, "panic", panicValue)
+			}
+		}()
+		recoveryCtx, cancel := context.WithTimeout(m.backgroundContext, switchPostStopWait)
+		defer cancel()
+		resolved, err := m.reconcileOwnedAgentSwitchOnce(recoveryCtx, store, sw.SessionID)
+		if err != nil {
+			m.logger.Error("agent switch recovery failed", "sessionID", sw.SessionID, "switchID", sw.ID, "resolved", resolved, "error", err)
+			return
+		}
+		m.logger.Info("agent switch recovery finished", "sessionID", sw.SessionID, "switchID", sw.ID, "resolved", resolved)
 	}()
 	return nil
 }
@@ -2417,7 +2495,7 @@ func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.Ag
 }
 
 func (m *Manager) markTargetStartUnconfirmed(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
-	if sw.RequiresRecovery() {
+	if sw.RequiresTargetStartRecovery() {
 		return sw, nil
 	}
 	if sw.State != domain.AgentSwitchStartingTarget || strings.TrimSpace(sw.TargetRuntimeHandleID) != "" {
@@ -2425,6 +2503,55 @@ func (m *Manager) markTargetStartUnconfirmed(ctx context.Context, store ports.Ag
 	}
 	if err := m.advanceAgentSwitch(ctx, store, &sw, sw.State, func(next *domain.AgentSwitch) {
 		next.ErrorCode = domain.AgentSwitchErrorTargetStartUnconfirmed
+	}); err != nil {
+		return sw, err
+	}
+	return sw, nil
+}
+
+func (m *Manager) markSourceStopUnconfirmed(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
+	if sw.RequiresSourceStopRecovery() {
+		return sw, nil
+	}
+	if sw.State != domain.AgentSwitchStoppingSource {
+		return sw, fmt.Errorf("agent switch %s: source-stop recovery marker requires stopping_source", sw.ID)
+	}
+	if err := m.advanceAgentSwitch(ctx, store, &sw, sw.State, func(next *domain.AgentSwitch) {
+		next.ErrorCode = domain.AgentSwitchErrorSourceStopUnconfirmed
+	}); err != nil {
+		return sw, err
+	}
+	return sw, nil
+}
+
+func (m *Manager) markRetainedSourceRecovery(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	sw domain.AgentSwitch,
+	targetRuntimeAmbiguous bool,
+) (domain.AgentSwitch, error) {
+	switch sw.State {
+	case domain.AgentSwitchStoppingSource:
+		return m.markSourceStopUnconfirmed(ctx, store, sw)
+	case domain.AgentSwitchSourceStopped:
+		return m.markSourceRestoreUnconfirmed(ctx, store, sw)
+	case domain.AgentSwitchStartingTarget:
+		if !targetRuntimeAmbiguous {
+			return m.markSourceRestoreUnconfirmed(ctx, store, sw)
+		}
+	}
+	return sw, nil
+}
+
+func (m *Manager) markSourceRestoreUnconfirmed(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
+	if sw.RequiresSourceRestore() {
+		return sw, nil
+	}
+	if sw.State != domain.AgentSwitchSourceStopped && sw.State != domain.AgentSwitchStartingTarget {
+		return sw, fmt.Errorf("agent switch %s: source-restore recovery marker requires a post-stop, pre-ownership state", sw.ID)
+	}
+	if err := m.advanceAgentSwitch(ctx, store, &sw, sw.State, func(next *domain.AgentSwitch) {
+		next.ErrorCode = domain.AgentSwitchErrorSourceRestoreUnconfirmed
 	}); err != nil {
 		return sw, err
 	}
@@ -2706,23 +2833,33 @@ func (m *Manager) ReconcileAgentSwitches(ctx context.Context) error {
 }
 
 func (m *Manager) reconcileRetainedAgentSwitchOnce(ctx context.Context, store ports.AgentSwitchStore, id domain.SessionID) (bool, error) {
+	if err := m.beginAgentSwitchRecovery(ctx, id); err != nil {
+		return false, err
+	}
+	return m.reconcileOwnedAgentSwitchOnce(ctx, store, id)
+}
+
+// reconcileOwnedAgentSwitchOnce settles one durable switch while the caller
+// owns its input/operation gate. Unresolved outcomes retain that gate so no
+// second provider or user turn can race ambiguous ownership.
+func (m *Manager) reconcileOwnedAgentSwitchOnce(ctx context.Context, store ports.AgentSwitchStore, id domain.SessionID) (bool, error) {
 	sw, ok, err := store.GetActiveAgentSwitch(ctx, id)
 	if err != nil {
+		m.retainAgentSwitch(id)
 		return false, err
 	}
 	if !ok {
-		m.releaseRetainedAgentSwitch(id)
+		m.endAgentSwitch(id)
 		return true, nil
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
+		m.retainAgentSwitch(id)
 		return false, err
 	}
 	if !ok {
+		m.retainAgentSwitch(id)
 		return false, ErrNotFound
-	}
-	if err := m.beginAgentSwitchRecovery(ctx, id); err != nil {
-		return false, err
 	}
 	resolved, reconcileErr := m.reconcileAgentSwitch(ctx, store, rec, sw)
 	if resolved {
@@ -2875,11 +3012,12 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 	handle := ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
-		// No target can exist in stopping_source, so closing the saga cannot
-		// create dual ownership. Normal runtime reconciliation will retry the
-		// liveness probe independently.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorSourceStopUnconfirmed)
-		return failErr == nil, failErr
+		if _, markerErr := m.markSourceStopUnconfirmed(ctx, store, sw); markerErr != nil {
+			m.logger.Warn("agent switch recovery: could not persist source-stop marker", "sessionID", sw.SessionID, "switchID", sw.ID, "error", markerErr)
+		}
+		// The source may still be live, and no target exists yet. Keep the gate
+		// closed until a later explicit recovery can prove the source boundary.
+		return false, nil
 	}
 	if alive {
 		// Target creation is ordered strictly after the source-stopped
@@ -2914,6 +3052,12 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 }
 
 func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
+	if sw.RequiresSourceRestore() {
+		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
+			return false, cleanupErr
+		}
+		return m.failRecoveredSwitchWithSourceRollback(ctx, store, rec, sw)
+	}
 	targetHandleID := strings.TrimSpace(sw.TargetRuntimeHandleID)
 	if targetHandleID == "" {
 		if _, err := m.markTargetStartUnconfirmed(ctx, store, sw); err != nil {
@@ -3028,11 +3172,17 @@ func (m *Manager) failRecoveredSwitchWithSourceRollback(
 	project, projectErr := m.loadProject(ctx, rec.ProjectID)
 	if projectErr != nil {
 		m.logger.Error("agent switch recovery: source project unavailable for rollback", "sessionID", rec.ID, "switchID", sw.ID, "error", projectErr)
-		return false, projectErr
+		markerCtx, cancel := switchDurableContext(ctx)
+		_, markerErr := m.markSourceRestoreUnconfirmed(markerCtx, store, sw)
+		cancel()
+		return false, errors.Join(projectErr, markerErr)
 	}
 	if rollbackErr := m.rollbackStoppedAgentSwitchSource(ctx, store, sw, project); rollbackErr != nil {
 		m.logger.Error("agent switch recovery: automatic source rollback failed", "sessionID", rec.ID, "switchID", sw.ID, "error", rollbackErr)
-		return false, rollbackErr
+		markerCtx, cancel := switchDurableContext(ctx)
+		_, markerErr := m.markSourceRestoreUnconfirmed(markerCtx, store, sw)
+		cancel()
+		return false, errors.Join(rollbackErr, markerErr)
 	}
 	m.logger.Info("agent switch recovery: source restored", "sessionID", rec.ID, "switchID", sw.ID, "harness", sw.FromHarness)
 	_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)

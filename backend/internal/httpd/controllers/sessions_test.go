@@ -54,6 +54,7 @@ type fakeSessionService struct {
 	agentSwitches    map[domain.AgentSwitchID]domain.AgentSwitch
 	switchConfig     sessionsvc.SwitchAgentInput
 	switchErr        error
+	recoveredSwitch  domain.AgentSwitchID
 	handoff          json.RawMessage
 	handoffSource    domain.AgentGenerationID
 }
@@ -300,6 +301,15 @@ func (f *fakeSessionService) ListAgentSwitches(_ context.Context, id domain.Sess
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeSessionService) RecoverAgentSwitch(_ context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
+	record, ok := f.agentSwitches[switchID]
+	if !ok || record.SessionID != id {
+		return domain.AgentSwitch{}, apierr.NotFound("AGENT_SWITCH_NOT_FOUND", "Unknown agent switch")
+	}
+	f.recoveredSwitch = switchID
+	return record, nil
 }
 
 func (f *fakeSessionService) SubmitAgentHandoff(
@@ -553,6 +563,18 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 	}
 	if handoff["summary"] != "tests pass" {
 		t.Fatalf("recorded handoff = %#v", handoff)
+	}
+	recovery := svc.agentSwitches["switch-1"]
+	recovery.State = domain.AgentSwitchSourceStopped
+	recovery.ErrorCode = domain.AgentSwitchErrorSourceRestoreUnconfirmed
+	svc.agentSwitches[recovery.ID] = recovery
+	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/agent-switches/switch-1/recover", "")
+	if status != http.StatusAccepted {
+		t.Fatalf("recover switch = %d, want 202; body=%s", status, body)
+	}
+	assertAgentSwitchResponseRedacted(t, body)
+	if svc.recoveredSwitch != "switch-1" {
+		t.Fatalf("recovered switch = %q, want switch-1", svc.recoveredSwitch)
 	}
 
 }

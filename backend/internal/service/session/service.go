@@ -56,6 +56,7 @@ type ListFilter struct {
 type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error)
 	SwitchAgent(ctx context.Context, id domain.SessionID, cfg sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error)
+	RecoverAgentSwitch(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error)
 	ListAgentSwitches(ctx context.Context, id domain.SessionID) ([]domain.AgentSwitch, error)
 	SubmitAgentHandoff(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID, sourceGenerationID domain.AgentGenerationID, handoff json.RawMessage) (domain.AgentSwitch, error)
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
@@ -909,6 +910,9 @@ func toAPIError(err error) error {
 			"The session is already using the requested harness", nil)
 	case errors.Is(err, sessionmanager.ErrSwitchNotFound):
 		return apierr.NotFound("AGENT_SWITCH_NOT_FOUND", "Unknown agent switch")
+	case errors.Is(err, sessionmanager.ErrSwitchRecoveryNotRequired):
+		return apierr.Conflict("AGENT_SWITCH_RECOVERY_NOT_REQUIRED",
+			"This agent switch does not require source restoration", nil)
 	case errors.Is(err, sessionmanager.ErrStaleHandoff):
 		return apierr.Conflict("STALE_AGENT_HANDOFF",
 			"The handoff is stale or its collection window has closed", nil)

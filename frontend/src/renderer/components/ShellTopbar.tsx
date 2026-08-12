@@ -31,6 +31,10 @@ import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import {
+	agentSwitchStatusVisual,
+	deriveSessionAgentSwitchPresentation,
+} from "../lib/agent-switch-presentation";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -465,6 +469,19 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
+	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
+	if (switchPresentation) {
+		const visual = agentSwitchStatusVisual(switchPresentation);
+		return (
+			<StatusPill
+				label={t(switchPresentation.compactLabelKey, switchPresentation.values)}
+				tone={visual.tone}
+				breathe={visual.breathe}
+				leading="none"
+				className="px-3.5 py-2 text-sm"
+			/>
+		);
+	}
 	const activity = getAgentActivityView(session.activity, t);
 	return <StatusPill label={activity.label} tone={activity.tone} breathe={activity.breathe} leading="none" className="px-3.5 py-2 text-sm" />;
 }

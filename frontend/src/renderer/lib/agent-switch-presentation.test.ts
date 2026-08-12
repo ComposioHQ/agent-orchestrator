@@ -113,6 +113,46 @@ describe("deriveAgentSwitchPresentation", () => {
 		});
 	});
 
+	it("treats a failed source restoration as a provider-specific recovery action", () => {
+		const presentation = deriveAgentSwitchPresentation(
+			input(switchSummary({ errorCode: "source_restore_unconfirmed", state: "source_stopped" })),
+		);
+
+		expectRelationship(presentation, {
+			allowSourceInput: false,
+			animate: false,
+			lockAgentTerminal: true,
+			outcome: "recovery",
+			stage: "needs_attention",
+			tone: "warning",
+		});
+		expect(presentation).toMatchObject({
+			compactLabelKey: "switchAgent.sourceRecovery.compact",
+			descriptionKey: "switchAgent.sourceRecovery.description",
+			titleKey: "switchAgent.sourceRecovery.title",
+		});
+	});
+
+	it("treats an unconfirmed source stop as actionable recovery", () => {
+		const presentation = deriveAgentSwitchPresentation(
+			input(switchSummary({ errorCode: "source_stop_unconfirmed", state: "stopping_source" })),
+		);
+
+		expectRelationship(presentation, {
+			allowSourceInput: false,
+			animate: false,
+			lockAgentTerminal: true,
+			outcome: "recovery",
+			stage: "needs_attention",
+			tone: "warning",
+		});
+		expect(presentation).toMatchObject({
+			compactLabelKey: "switchAgent.recovery.compact",
+			descriptionKey: "switchAgent.sourceStopRecovery.description",
+			titleKey: "switchAgent.sourceStopRecovery.title",
+		});
+	});
+
 	it("keeps a completed row in confirmation until the target harness and terminal settle", () => {
 		const presentation = deriveAgentSwitchPresentation(input(switchSummary({ state: "completed" })));
 

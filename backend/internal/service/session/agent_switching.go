@@ -26,6 +26,13 @@ func (s *Service) SwitchAgent(ctx context.Context, id domain.SessionID, in Switc
 	return switchRecord, toAPIError(err)
 }
 
+// RecoverAgentSwitch retries a durable source restoration without restarting
+// the target side of the failed switch.
+func (s *Service) RecoverAgentSwitch(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
+	switchRecord, err := s.manager.RecoverAgentSwitch(ctx, id, switchID)
+	return switchRecord, toAPIError(err)
+}
+
 // ListAgentSwitches returns the session's durable switch history, newest first.
 func (s *Service) ListAgentSwitches(ctx context.Context, id domain.SessionID) ([]domain.AgentSwitch, error) {
 	switches, err := s.manager.ListAgentSwitches(ctx, id)

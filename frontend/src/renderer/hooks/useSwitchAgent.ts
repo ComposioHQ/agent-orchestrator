@@ -15,6 +15,7 @@ export type SwitchAgentInput = {
 };
 
 export const switchAgentMutationKey = ["switch-agent"] as const;
+export const recoverAgentSwitchMutationKey = ["recover-agent-switch"] as const;
 
 type SwitchAgentMutationState = {
 	error: unknown;
@@ -113,6 +114,36 @@ export function useSwitchAgent() {
 		onSettled: (_data, _error, variables) => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.session.id) });
+		},
+	});
+}
+
+export function useRecoverAgentSwitch() {
+	const queryClient = useQueryClient();
+	return useMutation({
+		mutationKey: recoverAgentSwitchMutationKey,
+		mutationFn: async ({ sessionId, switchId }: { sessionId: string; switchId: string }) => {
+			const { data, error, response } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover",
+				{ params: { path: { sessionId, switchId } } },
+			);
+			if (error || response.status !== 202 || !data?.switch) {
+				const fallback = response
+					? `Failed to recover agent switch (${response.status})`
+					: "Failed to recover agent switch";
+				throw new Error(apiErrorMessage(error, fallback));
+			}
+			return data.switch;
+		},
+		onSuccess: (agentSwitch, variables) => {
+			queryClient.setQueryData<AgentSwitch[]>(
+				agentSwitchesQueryKey(variables.sessionId),
+				(current = []) => [agentSwitch, ...current.filter((entry) => entry.id !== agentSwitch.id)],
+			);
+		},
+		onSettled: (_data, _error, variables) => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			void queryClient.invalidateQueries({ queryKey: agentSwitchesQueryKey(variables.sessionId) });
 		},
 	});
 }

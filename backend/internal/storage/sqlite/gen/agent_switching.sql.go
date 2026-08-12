@@ -714,6 +714,7 @@ func (q *Queries) MarkAgentHandoffUnavailable(ctx context.Context, arg MarkAgent
 const markAgentSwitchSourceStopped = `-- name: MarkAgentSwitchSourceStopped :execrows
 UPDATE agent_switches SET
     state = 'source_stopped',
+	error_code = '',
     updated_at = ?1
 WHERE id = ?2
   AND session_id = ?3
@@ -948,7 +949,16 @@ WHERE id = ?8
   AND state = ?10
   AND source_generation_id = ?11
   AND target_generation_id = ?12
-  AND (error_code = '' OR error_code = ?6)
+  AND (
+      error_code = ''
+      OR error_code = ?6
+      OR (
+		  error_code IN ('source_stop_unconfirmed', 'source_restore_unconfirmed')
+          AND ?3 = 'failed'
+          AND ?6 <> ''
+		  AND ?6 <> error_code
+      )
+  )
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = ?5

@@ -15,7 +15,26 @@ export function isTerminalAgentSwitch(agentSwitch: AgentSwitch): boolean {
 }
 
 export function agentSwitchNeedsRecovery(agentSwitch: AgentSwitch): boolean {
+	return (
+		agentSwitchNeedsTargetStartRecovery(agentSwitch) ||
+		agentSwitchNeedsSourceStopRecovery(agentSwitch) ||
+		agentSwitchNeedsSourceRestore(agentSwitch)
+	);
+}
+
+export function agentSwitchNeedsTargetStartRecovery(agentSwitch: AgentSwitch): boolean {
 	return agentSwitch.state === "starting_target" && agentSwitch.errorCode === "target_start_unconfirmed";
+}
+
+export function agentSwitchNeedsSourceStopRecovery(agentSwitch: AgentSwitch): boolean {
+	return agentSwitch.state === "stopping_source" && agentSwitch.errorCode === "source_stop_unconfirmed";
+}
+
+export function agentSwitchNeedsSourceRestore(agentSwitch: AgentSwitch): boolean {
+	return (
+		(agentSwitch.state === "source_stopped" || agentSwitch.state === "starting_target") &&
+		agentSwitch.errorCode === "source_restore_unconfirmed"
+	);
 }
 
 export function findActiveAgentSwitch(agentSwitches: AgentSwitch[]): AgentSwitch | undefined {

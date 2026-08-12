@@ -53,6 +53,10 @@ import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./Topbar
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import {
+	agentSwitchStatusVisual,
+	deriveSessionAgentSwitchPresentation,
+} from "../lib/agent-switch-presentation";
 import { formatTimeCompact } from "../lib/format-time";
 import { formatTokenCount } from "../lib/format-token-count";
 import { aoBridge } from "../lib/bridge";
@@ -844,8 +848,17 @@ function SessionCard({
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status, t);
 	const activity = getAgentActivityView(session.activity, t);
+	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
+	const switchVisual = switchPresentation ? agentSwitchStatusVisual(switchPresentation) : undefined;
 	const showLiveActivity = session.status === "working" && activity.state === "active";
-	const activityIndicatorClassName = showLiveActivity ? activity.indicatorClassName : "bg-current";
+	const activityIndicatorClassName = switchVisual
+		? `${switchVisual.indicatorClassName}${switchVisual.breathe ? " animate-status-pulse" : ""}`
+		: showLiveActivity
+			? activity.indicatorClassName
+			: "bg-current";
+	const statusLabel = switchPresentation
+		? t(switchPresentation.compactLabelKey, switchPresentation.values)
+		: badge.label;
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -944,8 +957,11 @@ function SessionCard({
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center justify-between gap-2">
 					<span
-						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
-						style={showLiveActivity ? { color: activity.tone } : undefined}
+						className={cn(
+							"inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium",
+							switchVisual?.className ?? badge.className,
+						)}
+						style={!switchVisual && showLiveActivity ? { color: activity.tone } : undefined}
 					>
 						<span
 							aria-hidden="true"
@@ -954,7 +970,7 @@ function SessionCard({
 								activityIndicatorClassName,
 							)}
 						/>
-						{badge.label}
+						{statusLabel}
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						<SessionUsageMetric usage={usage} />

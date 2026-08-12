@@ -105,12 +105,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
-	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
 	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
+	const previewBaselineRef = useRef<{ sessionId: string; key: string } | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
@@ -456,25 +456,31 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		if (!hasInspector) return;
 		const previewKey = previewRevealKey(previewUrl, previewRevision);
-		const seenKey = useUiStore.getState().inspectorSessions[sessionId]?.previewKey;
-		if (seenKey === undefined) {
-			markInspectorPreviewSeen(sessionId, previewKey);
+		const baseline = previewBaselineRef.current;
+		if (!baseline || baseline.sessionId !== sessionId) {
+			previewBaselineRef.current = { sessionId, key: previewKey };
 			return;
 		}
-		if (seenKey === previewKey) return;
-		markInspectorPreviewSeen(sessionId, previewKey);
+		if (baseline.key === previewKey) return;
+		previewBaselineRef.current = { sessionId, key: previewKey };
 		if (!previewKey) return;
-		const current = useUiStore.getState().inspectorSessions[sessionId];
-		const viewingBrowser = browserIsVisible(sessionId, browserPoppedOut);
-		if (current?.browserContentRevealed && !viewingBrowser) setBrowserUnseen(sessionId, true);
+		setBrowserContentRevealed(sessionId, true);
+		if (browserIsVisible(sessionId, browserPoppedOut)) {
+			setBrowserUnseen(sessionId, false);
+			return;
+		}
+		setInspectorViewForSession(sessionId, "browser");
+		setInspectorOpenForSession(sessionId, true);
 	}, [
 		browserPoppedOut,
 		hasInspector,
-		markInspectorPreviewSeen,
 		previewRevision,
 		previewUrl,
 		sessionId,
+		setBrowserContentRevealed,
 		setBrowserUnseen,
+		setInspectorOpenForSession,
+		setInspectorViewForSession,
 	]);
 
 	// Agent browser commands are genuine browser activity even when they do not
