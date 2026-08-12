@@ -95,7 +95,7 @@ it("keeps execution disabled while allowing durable session creation", async () 
       name: "Orchestrator execution unavailable",
     }),
   ).toBeDisabled();
-  expect(screen.getByRole("button", { name: "New session" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "New worker" })).toBeEnabled();
 });
 
 it("searches the loaded workspace without demo commands", async () => {

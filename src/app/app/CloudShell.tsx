@@ -42,13 +42,13 @@ export function CloudTopbar({
       <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
-          aria-label="New session"
+          aria-label="New worker"
           className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--color-bg-tertiary)] px-3.5 py-2.5 text-sm font-semibold leading-none text-[var(--muted-foreground)] transition-[filter,background-color,color,border-color,transform] duration-150 hover:bg-[var(--color-bg-secondary)] hover:text-[var(--foreground)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transform-none motion-reduce:transition-none"
           disabled={!canCreateSession}
           onClick={onNewSession}
         >
           <Plus className="size-[15px]" aria-hidden="true" />
-          <span className="max-[760px]:hidden">New session</span>
+          <span className="max-[760px]:hidden">New worker</span>
         </button>
 
         <button

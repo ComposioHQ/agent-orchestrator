@@ -72,7 +72,7 @@ export function CloudBoard({
             onClick={onNewSession}
             type="button"
           >
-            New session
+            New worker
           </button>
         </div>
       </div>
