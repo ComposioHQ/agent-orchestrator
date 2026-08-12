@@ -167,22 +167,22 @@ func TestStateNormalization(t *testing.T) {
 	}
 }
 
+// CreateOS pages by offset against an unpaged total, so a match on any page but
+// the first only turns up if the client advances the offset correctly.
 func TestFindBySessionMatchesOnNameAcrossPages(t *testing.T) {
+	var offsets []string
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("cursor") == "" {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"items": []sandboxView{
-					{ID: "sbx-other", Status: "running", Name: "ao-session-other"},
-				},
-				"next_cursor": "page-2",
-			})
+		offset := r.URL.Query().Get("offset")
+		offsets = append(offsets, offset)
+		if offset == "0" {
+			writePage(w, []sandboxView{
+				{ID: "sbx-other", Status: "running", Name: "ao-session-other"},
+			}, 0, 2)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"items": []sandboxView{
-				{ID: "sbx-1", Status: "running", Name: "ao-session-1"},
-			},
-		})
+		writePage(w, []sandboxView{
+			{ID: "sbx-1", Status: "running", Name: "ao-session-1"},
+		}, 1, 2)
 	})
 
 	environment, found, err := client.FindBySession(context.Background(), "session-1")
@@ -192,13 +192,34 @@ func TestFindBySessionMatchesOnNameAcrossPages(t *testing.T) {
 	if !found || environment.ID != "sbx-1" {
 		t.Fatalf("FindBySession() = %+v, %v; want sbx-1 found on page 2", environment, found)
 	}
+	if len(offsets) != 2 || offsets[0] != "0" || offsets[1] != "1" {
+		t.Errorf("offsets requested = %v, want [0 1]", offsets)
+	}
+}
+
+// Without a stop condition the caller would keep asking for pages past the end
+// until it hit maxListPages, turning one lookup into 50 requests.
+func TestFindBySessionStopsAtTheReportedTotal(t *testing.T) {
+	pages := 0
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		pages++
+		writePage(w, []sandboxView{
+			{ID: "sbx-other", Status: "running", Name: "ao-session-other"},
+		}, 0, 1)
+	})
+	if _, found, err := client.FindBySession(context.Background(), "session-1"); err != nil || found {
+		t.Fatalf("FindBySession() = %v, %v; want not found", found, err)
+	}
+	if pages != 1 {
+		t.Errorf("requested %d pages, want 1 — the total said there were no more", pages)
+	}
 }
 
 func TestFindBySessionIgnoresDestroyedSandboxes(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, []sandboxView{
+		writePage(w, []sandboxView{
 			{ID: "sbx-old", Status: "destroyed", Name: "ao-session-1"},
-		})
+		}, 0, 1)
 	})
 	_, found, err := client.FindBySession(context.Background(), "session-1")
 	if err != nil {
@@ -209,18 +230,14 @@ func TestFindBySessionIgnoresDestroyedSandboxes(t *testing.T) {
 	}
 }
 
-func TestFindBySessionAcceptsABareArray(t *testing.T) {
+// A response that is not wrapped must fail loudly. Silently reading it as a
+// zero value is what let an empty sandbox id reach the reconciler.
+func TestUnwrappedResponseIsRejected(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, []sandboxView{
-			{ID: "sbx-1", Status: "running", Name: "ao-session-1"},
-		})
+		writeRaw(w, http.StatusOK, sandboxView{ID: "sbx-1", Status: "running"})
 	})
-	_, found, err := client.FindBySession(context.Background(), "session-1")
-	if err != nil {
-		t.Fatalf("FindBySession() error = %v", err)
-	}
-	if !found {
-		t.Fatal("a bare-array list response was not understood")
+	if _, err := client.Get(context.Background(), "sbx-1"); err == nil {
+		t.Fatal("Get() accepted a response with no JSend envelope")
 	}
 }
 
@@ -435,8 +452,35 @@ func TestBootstrapWorkerFailsOnNonZeroExit(t *testing.T) {
 	}
 }
 
+// writeJSON answers the way CreateOS does: every payload wrapped in a JSend
+// envelope, {"status":"success","data":{...}}. Tests that spoke the bare shape
+// agreed with the client and with nothing else, which is how a client that
+// never unwrapped the envelope stayed green.
 func writeJSON(w http.ResponseWriter, status int, value any) {
+	writeRaw(w, status, map[string]any{"status": "success", "data": value})
+}
+
+// writeRaw answers with an unwrapped body, for tests that check what happens
+// when the envelope is missing or malformed.
+func writeRaw(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// writePage answers a list endpoint the way CreateOS does: items nested at
+// data.data[] beside a pagination block counted against the unpaged total.
+func writePage(w http.ResponseWriter, views []sandboxView, offset, total int) {
+	writeRaw(w, http.StatusOK, map[string]any{
+		"status": "success",
+		"data": map[string]any{
+			"data": views,
+			"pagination": map[string]any{
+				"total":  total,
+				"limit":  listPageLimit,
+				"offset": offset,
+				"count":  len(views),
+			},
+		},
+	})
 }

@@ -169,17 +169,16 @@ func (c *Client) Get(ctx context.Context, id sandbox.ID) (sandbox.Environment, e
 // create time, which the API keeps unique per account.
 func (c *Client) FindBySession(ctx context.Context, sessionID string) (sandbox.Environment, bool, error) {
 	wanted := SandboxName(sessionID)
-	cursor := ""
+	offset := 0
 	for page := 0; page < maxListPages; page++ {
-		path := "/v1/sandboxes?limit=" + strconv.Itoa(listPageLimit)
-		if cursor != "" {
-			path += "&cursor=" + url.QueryEscape(cursor)
-		}
+		path := "/v1/sandboxes?limit=" + strconv.Itoa(listPageLimit) +
+			"&offset=" + strconv.Itoa(offset)
 		var response listResponse
 		if err := c.do(ctx, http.MethodGet, path, nil, &response); err != nil {
 			return sandbox.Environment{}, false, err
 		}
-		for _, view := range response.items() {
+		items := response.items()
+		for _, view := range items {
 			if view.Name != wanted {
 				continue
 			}
@@ -189,10 +188,10 @@ func (c *Client) FindBySession(ctx context.Context, sessionID string) (sandbox.E
 			}
 			return toEnvironment(view), true, nil
 		}
-		cursor = response.cursor()
-		if cursor == "" {
+		if len(items) == 0 || response.exhausted(offset, len(items)) {
 			break
 		}
+		offset += len(items)
 	}
 	return sandbox.Environment{}, false, nil
 }
@@ -422,10 +421,30 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxResponseBody))
 		return nil
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(out); err != nil {
+	// CreateOS wraps every payload in a JSend envelope, so the fields callers
+	// want sit one level down under "data". Decoding the body straight into the
+	// caller's struct would silently yield a zero value: a sandbox with no id,
+	// or an exec result reporting exit code 0 for a command that never ran.
+	var wrapped envelope
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(&wrapped); err != nil {
+		return fmt.Errorf("createos: decode %s response: %w", path, err)
+	}
+	if len(wrapped.Data) == 0 {
+		return fmt.Errorf("createos: %s response carried no data", path)
+	}
+	if err := json.Unmarshal(wrapped.Data, out); err != nil {
 		return fmt.Errorf("createos: decode %s response: %w", path, err)
 	}
 	return nil
+}
+
+// envelope is the JSend wrapper CreateOS puts around every response:
+// {"status":"success","data":{...}}. A non-2xx status is already rejected by
+// statusError, so only the success shape needs unwrapping here.
+type envelope struct {
+	Status  string          `json:"status"`
+	Data    json.RawMessage `json:"data"`
+	Message string          `json:"message"`
 }
 
 // statusError converts a non-2xx response. A 404 becomes ErrNotFound, which is
@@ -452,9 +471,12 @@ type listResponse struct {
 	Sandboxes []sandboxView `json:"sandboxes"`
 	Items     []sandboxView `json:"items"`
 	Data      []sandboxView `json:"data"`
-	NextPage  string        `json:"next_cursor"`
-	Cursor    string        `json:"cursor"`
-	Next      string        `json:"next"`
+	Pagination struct {
+		Total  int `json:"total"`
+		Limit  int `json:"limit"`
+		Offset int `json:"offset"`
+		Count  int `json:"count"`
+	} `json:"pagination"`
 }
 
 func (l *listResponse) UnmarshalJSON(raw []byte) error {
@@ -484,8 +506,14 @@ func (l *listResponse) items() []sandboxView {
 	}
 }
 
-func (l *listResponse) cursor() string {
-	return firstNonEmpty(l.NextPage, l.Next, l.Cursor)
+// exhausted reports whether the page just read was the last one. CreateOS pages
+// by offset and reports the unpaged total, so the caller stops as soon as it has
+// walked past that total rather than asking for a page that cannot exist.
+func (l *listResponse) exhausted(offset, read int) bool {
+	if l.Pagination.Total <= 0 {
+		return true
+	}
+	return offset+read >= l.Pagination.Total
 }
 
 // SandboxName is the correlation key between an AO session and its sandbox.
