@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const scratchRepositoryHost = "scratch.ao.local"
+
 type GitRunner interface {
 	Run(context.Context, string, map[string]string, ...string) (string, error)
 }
@@ -91,6 +93,68 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 		return err
 	}
 	return validateOrigin(ctx, runner, workspace, expected)
+}
+
+// IsScratchRepositoryURL identifies AO's non-network repository sentinel.
+func IsScratchRepositoryURL(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	return err == nil &&
+		parsed.Scheme == "https" &&
+		strings.EqualFold(parsed.Hostname(), scratchRepositoryHost) &&
+		parsed.Port() == "" &&
+		parsed.User == nil &&
+		parsed.RawQuery == "" &&
+		parsed.Fragment == "" &&
+		strings.Trim(parsed.Path, "/") != ""
+}
+
+// PrepareScratchWorkspace initializes an empty persistent workspace as a Git
+// repository. Existing scratch repositories survive worker replacements.
+func PrepareScratchWorkspace(
+	ctx context.Context,
+	runner GitRunner,
+	workspace string,
+) error {
+	if runner == nil {
+		return errors.New("git runner is required")
+	}
+	workspace = filepath.Clean(strings.TrimSpace(workspace))
+	if !filepath.IsAbs(workspace) || workspace == string(filepath.Separator) {
+		return errors.New("workspace path must be an absolute non-root directory")
+	}
+	info, err := os.Stat(workspace)
+	if err == nil {
+		if !info.IsDir() {
+			return errors.New("workspace path is not a directory")
+		}
+		entries, readErr := os.ReadDir(workspace)
+		if readErr != nil {
+			return fmt.Errorf("inspect workspace contents: %w", readErr)
+		}
+		if len(entries) > 0 {
+			if gitInfo, statErr := os.Stat(filepath.Join(workspace, ".git")); statErr != nil ||
+				!gitInfo.IsDir() {
+				return errors.New("existing scratch workspace is not a Git repository")
+			}
+			if _, runErr := runner.Run(
+				ctx, workspace, nil, "rev-parse", "--is-inside-work-tree",
+			); runErr != nil {
+				return fmt.Errorf("validate scratch workspace: %w", runErr)
+			}
+			return nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect workspace: %w", err)
+	}
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		return fmt.Errorf("create scratch workspace: %w", err)
+	}
+	if _, err := runner.Run(
+		ctx, workspace, nil, "init", "--initial-branch", "main",
+	); err != nil {
+		return fmt.Errorf("initialize scratch workspace: %w", err)
+	}
+	return nil
 }
 
 func validateOrigin(ctx context.Context, runner GitRunner, workspace, expected string) error {

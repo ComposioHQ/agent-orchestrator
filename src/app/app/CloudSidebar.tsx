@@ -6,6 +6,7 @@ import type {
   Session,
 } from "@aoagents/cloud-client";
 import {
+  Bot,
   Folder,
   FolderOpen,
   LogOut,
@@ -50,6 +51,14 @@ export function CloudSidebar({
 }) {
   const [closedProjects, setClosedProjects] = useState<Set<string>>(new Set());
   const [openProjectMenu, setOpenProjectMenu] = useState<string | null>(null);
+  const projectItems = projects.filter((project) => !isStandaloneProject(project));
+  const standaloneRows = projects
+    .filter(isStandaloneProject)
+    .flatMap((project) =>
+      sessions
+        .filter((session) => session.projectId === project.id)
+        .map((session) => ({ project, session })),
+    );
 
   return (
     <aside className="flex min-h-0 flex-col bg-[var(--color-bg-sidebar)]">
@@ -105,10 +114,10 @@ export function CloudSidebar({
             onClick={onNewProject}
             type="button"
           >
-            Add a GitHub repository to create your first project.
+            Create a project or standalone agent to get started.
           </button>
         ) : null}
-        {projects.map((project) => {
+        {projectItems.map((project) => {
           const open = !closedProjects.has(project.id);
           const projectSessions = sessions.filter(
             (session) => session.projectId === project.id,
@@ -222,6 +231,37 @@ export function CloudSidebar({
             </div>
           );
         })}
+        {standaloneRows.length > 0 ? (
+          <div className="mt-4 border-t border-[var(--color-border-strong)] pt-3">
+            <div className="mb-1 px-2 font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-passive)]">
+              Standalone Agents
+            </div>
+            <div className="space-y-1">
+              {standaloneRows.map(({ project, session }) => (
+                <button
+                  className={`flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                    selectedSessionId === session.id
+                      ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
+                      : "text-[var(--muted-foreground)]"
+                  }`}
+                  key={session.id}
+                  onClick={() => onSelectSession(session.id)}
+                  title={project.displayName}
+                  type="button"
+                >
+                  <Bot className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {session.displayName}
+                  </span>
+                  <span
+                    className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                    aria-hidden="true"
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-auto border-t border-[var(--color-border-strong)] p-2">
@@ -250,6 +290,14 @@ export function CloudSidebar({
         </a>
       </div>
     </aside>
+  );
+}
+
+function isStandaloneProject(project: Project): boolean {
+  return (
+    project.config?.standalone === true ||
+    project.config?.source === "standalone-agent" ||
+    project.repositoryUrl.startsWith("ao-standalone://")
   );
 }
 

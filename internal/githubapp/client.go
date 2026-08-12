@@ -96,8 +96,30 @@ type Repository struct {
 }
 
 type RepositoryOwner struct {
-	ID int64 `json:"id"`
+	ID    int64  `json:"id"`
+	Login string `json:"login"`
+	Type  string `json:"type"`
 }
+
+type User struct {
+	ID        int64  `json:"id"`
+	Login     string `json:"login"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+// UserAccessToken redacts GitHub user-to-server credentials from formatting
+// and JSON. Callers should encrypt it immediately.
+type UserAccessToken struct {
+	value            string
+	refreshValue     string
+	ExpiresAt        *time.Time
+	RefreshExpiresAt *time.Time
+}
+
+func (token UserAccessToken) Token() string        { return token.value }
+func (token UserAccessToken) RefreshToken() string { return token.refreshValue }
+func (UserAccessToken) String() string             { return "[REDACTED GitHub user token]" }
+func (UserAccessToken) GoString() string           { return "[REDACTED GitHub user token]" }
 
 type installationAccessToken struct {
 	Token     string    `json:"token"`
@@ -187,6 +209,22 @@ func (c *Client) OAuthCallbackURL() string {
 	return c.publicURL + "/api/cloud/v1/github/oauth/callback"
 }
 
+func (c *Client) UserOAuthCallbackURL() string {
+	return c.publicURL + "/api/cloud/v1/github/user/callback"
+}
+
+func (c *Client) UserAuthorizationURL(state, challenge string) string {
+	query := url.Values{
+		"client_id":             {c.clientID},
+		"redirect_uri":          {c.UserOAuthCallbackURL()},
+		"state":                 {state},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"allow_signup":          {"false"},
+	}
+	return c.webBaseURL + "/login/oauth/authorize?" + query.Encode()
+}
+
 func (c *Client) GetInstallation(ctx context.Context, installationID int64) (Installation, error) {
 	var installation Installation
 	err := c.appJSON(ctx, http.MethodGet, "/app/installations/"+strconv.FormatInt(installationID, 10), nil, &installation)
@@ -219,6 +257,228 @@ func (c *Client) ExchangeOAuthCode(ctx context.Context, code, verifier string) (
 		return "", errors.New("GitHub OAuth exchange was rejected")
 	}
 	return response.AccessToken, nil
+}
+
+func (c *Client) ExchangeUserCode(
+	ctx context.Context,
+	code, verifier string,
+) (UserAccessToken, error) {
+	return c.exchangeUserToken(ctx, map[string]string{
+		"client_id":     c.clientID,
+		"client_secret": c.clientSecret,
+		"code":          strings.TrimSpace(code),
+		"redirect_uri":  c.UserOAuthCallbackURL(),
+		"code_verifier": strings.TrimSpace(verifier),
+	})
+}
+
+func (c *Client) RefreshUserAccessToken(
+	ctx context.Context,
+	refreshToken string,
+) (UserAccessToken, error) {
+	return c.exchangeUserToken(ctx, map[string]string{
+		"client_id":     c.clientID,
+		"client_secret": c.clientSecret,
+		"grant_type":    "refresh_token",
+		"refresh_token": strings.TrimSpace(refreshToken),
+	})
+}
+
+func (c *Client) exchangeUserToken(
+	ctx context.Context,
+	payload map[string]string,
+) (UserAccessToken, error) {
+	for key, value := range payload {
+		if strings.TrimSpace(value) == "" {
+			return UserAccessToken{}, fmt.Errorf("GitHub user token %s is required", key)
+		}
+	}
+	var response struct {
+		AccessToken           string `json:"access_token"`
+		ExpiresIn             int64  `json:"expires_in"`
+		RefreshToken          string `json:"refresh_token"`
+		RefreshTokenExpiresIn int64  `json:"refresh_token_expires_in"`
+		Error                 string `json:"error"`
+	}
+	if err := c.jsonRequest(
+		ctx,
+		http.MethodPost,
+		c.webBaseURL+"/login/oauth/access_token",
+		"",
+		payload,
+		&response,
+	); err != nil {
+		return UserAccessToken{}, err
+	}
+	response.AccessToken = strings.TrimSpace(response.AccessToken)
+	if response.Error != "" || response.AccessToken == "" {
+		return UserAccessToken{}, errors.New("GitHub user authorization was rejected")
+	}
+	token := UserAccessToken{
+		value:        response.AccessToken,
+		refreshValue: strings.TrimSpace(response.RefreshToken),
+	}
+	if response.ExpiresIn > 0 {
+		expiresAt := c.now().Add(time.Duration(response.ExpiresIn) * time.Second)
+		token.ExpiresAt = &expiresAt
+	}
+	if response.RefreshTokenExpiresIn > 0 {
+		expiresAt := c.now().Add(time.Duration(response.RefreshTokenExpiresIn) * time.Second)
+		token.RefreshExpiresAt = &expiresAt
+	}
+	if token.refreshValue != "" && token.RefreshExpiresAt == nil {
+		return UserAccessToken{}, errors.New("GitHub omitted the refresh token expiry")
+	}
+	return token, nil
+}
+
+func (c *Client) GetUser(ctx context.Context, token string) (User, error) {
+	var user User
+	if err := c.userJSON(ctx, token, http.MethodGet, "/user", nil, &user); err != nil {
+		return User{}, err
+	}
+	if user.ID <= 0 || strings.TrimSpace(user.Login) == "" {
+		return User{}, errors.New("GitHub returned an invalid user")
+	}
+	return user, nil
+}
+
+func (c *Client) ListUserInstallations(
+	ctx context.Context,
+	token string,
+) ([]Installation, error) {
+	var installations []Installation
+	for page := 1; page <= 100; page++ {
+		var response struct {
+			Installations []Installation `json:"installations"`
+		}
+		path := fmt.Sprintf("/user/installations?per_page=100&page=%d", page)
+		if err := c.userJSON(
+			ctx,
+			token,
+			http.MethodGet,
+			path,
+			nil,
+			&response,
+		); err != nil {
+			return nil, err
+		}
+		installations = append(installations, response.Installations...)
+		if len(response.Installations) < 100 {
+			return installations, nil
+		}
+	}
+	return nil, errors.New("GitHub user installation pagination exceeded limit")
+}
+
+func (c *Client) RevokeUserAuthorization(
+	ctx context.Context,
+	token string,
+) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("GitHub user token is required")
+	}
+	endpoint := c.apiBaseURL + "/applications/" +
+		url.PathEscape(c.clientID) + "/grant"
+	body, err := json.Marshal(map[string]string{"access_token": token})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodDelete,
+		endpoint,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return err
+	}
+	request.SetBasicAuth(c.clientID, c.clientSecret)
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("revoke GitHub user authorization: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent ||
+		response.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	return &HTTPError{StatusCode: response.StatusCode}
+}
+
+func (c *Client) CreateRepositoryAsUser(
+	ctx context.Context,
+	token, accountLogin, accountType, name string,
+	private bool,
+) (Repository, error) {
+	accountLogin = strings.TrimSpace(accountLogin)
+	name = strings.TrimSpace(name)
+	path := "/user/repos"
+	switch strings.ToLower(strings.TrimSpace(accountType)) {
+	case "user":
+	case "organization":
+		path = "/orgs/" + url.PathEscape(accountLogin) + "/repos"
+	default:
+		return Repository{}, errors.New("unsupported GitHub account type")
+	}
+	if accountLogin == "" || name == "" {
+		return Repository{}, errors.New("GitHub repository owner and name are required")
+	}
+	var repository Repository
+	if err := c.userJSON(ctx, token, http.MethodPost, path, map[string]any{
+		"name":      name,
+		"private":   private,
+		"auto_init": true,
+	}, &repository); err != nil {
+		return Repository{}, err
+	}
+	return repository, nil
+}
+
+func (c *Client) GetRepositoryAsUser(
+	ctx context.Context,
+	token, owner, name string,
+) (Repository, error) {
+	owner = strings.TrimSpace(owner)
+	name = strings.TrimSpace(name)
+	if owner == "" || name == "" {
+		return Repository{}, errors.New("GitHub repository owner and name are required")
+	}
+	var repository Repository
+	if err := c.userJSON(
+		ctx,
+		token,
+		http.MethodGet,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name),
+		nil,
+		&repository,
+	); err != nil {
+		return Repository{}, err
+	}
+	return repository, nil
+}
+
+func (c *Client) DeleteRepositoryAsUser(
+	ctx context.Context,
+	token, owner, name string,
+) error {
+	owner = strings.TrimSpace(owner)
+	name = strings.TrimSpace(name)
+	if owner == "" || name == "" {
+		return errors.New("GitHub repository owner and name are required")
+	}
+	return c.userJSON(
+		ctx,
+		token,
+		http.MethodDelete,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name),
+		nil,
+		nil,
+	)
 }
 
 func (c *Client) UserHasInstallation(ctx context.Context, accessToken string, installationID int64) (bool, error) {

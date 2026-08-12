@@ -23,6 +23,9 @@ vi.mock("@/lib/cloud-client", () => ({
   }),
   newIdempotencyKey: () => "message-key",
 }));
+vi.mock("./CloudTerminal", () => ({
+  CloudTerminal: () => <div>Live terminal</div>,
+}));
 
 const session = {
   id: "session-1",
@@ -97,7 +100,7 @@ it("sends turns only through a connected worker session", async () => {
   );
 });
 
-it("lists, reads, and writes files while keeping terminal visibly unavailable", async () => {
+it("lists, reads, and writes files while standard-mode terminal stays disabled", async () => {
   render(
     <CloudSessionPanel
       onClose={vi.fn()}
@@ -105,9 +108,7 @@ it("lists, reads, and writes files while keeping terminal visibly unavailable", 
       session={session}
     />,
   );
-  expect(
-    screen.getByRole("button", { name: "Terminal unavailable" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Terminal" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Files" }));
   expect(await screen.findByText("README.md")).toBeVisible();
   fireEvent.click(screen.getByText("README.md"));
@@ -121,6 +122,18 @@ it("lists, reads, and writes files while keeping terminal visibly unavailable", 
       { path: "README.md", content: "updated\n" },
     ),
   );
+});
+
+it("opens the live terminal for a connected trusted session", () => {
+  render(
+    <CloudSessionPanel
+      onClose={vi.fn()}
+      organizationId="org-1"
+      session={{ ...session, mode: "trusted" }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+  expect(screen.getByText("Live terminal")).toBeVisible();
 });
 
 it("keeps execution actions disabled while the worker is disconnected", () => {

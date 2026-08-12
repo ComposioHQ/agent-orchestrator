@@ -17,6 +17,29 @@ ao_docker_socket_gid() {
 	fi
 }
 
+ao_docker_load_teardown_keys() {
+	local state_root="${AO_DATA_DIR:-$HOME/.ao}"
+	local provider_key_file="$state_root/cloud/provider-secret-key"
+	local worker_key_file="$state_root/cloud/worker-signing-key"
+
+	if [[ -z "${AO_CLOUD_PROVIDER_SECRET_KEY:-}" ]]; then
+		export AO_CLOUD_PROVIDER_SECRET_KEY
+		if [[ -s "$provider_key_file" ]]; then
+			AO_CLOUD_PROVIDER_SECRET_KEY="$(<"$provider_key_file")"
+		else
+			AO_CLOUD_PROVIDER_SECRET_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+		fi
+	fi
+	if [[ -z "${AO_CLOUD_WORKER_SIGNING_KEY:-}" ]]; then
+		export AO_CLOUD_WORKER_SIGNING_KEY
+		if [[ -s "$worker_key_file" ]]; then
+			AO_CLOUD_WORKER_SIGNING_KEY="$(<"$worker_key_file")"
+		else
+			AO_CLOUD_WORKER_SIGNING_KEY="0000000000000000000000000000000000000000000000000000000000000000"
+		fi
+	fi
+}
+
 ao_docker_remove_workers() {
 	local namespace="$1"
 	local container_id

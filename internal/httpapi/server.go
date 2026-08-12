@@ -80,7 +80,7 @@ type WorkerTokens interface {
 	Verify(string) (worker.Claims, error)
 }
 
-type checkoutBroker interface {
+type CheckoutBroker interface {
 	IssueCheckoutGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
 }
 
@@ -95,41 +95,46 @@ type Server struct {
 	workerTokens     WorkerTokens
 	// workerTokenLifetime is zero when the deployment does not override the
 	// protocol default; workerTokenTTL() resolves that.
-	workerTokenLifetime  time.Duration
-	workerRequestTimeout time.Duration
-	maxSandboxes         int
-	environment          string
-	release              string
-	draining             atomic.Bool
-	drainOnce            sync.Once
-	drain                chan struct{}
-	logger               *slog.Logger
-	github               *githubapp.Service
-	checkoutBroker       checkoutBroker
-	secretCipher         *secrets.Cipher
-	credentialValidator  credentialValidator
-	webhookMaxBody       int64
-	handler              http.Handler
+	workerTokenLifetime     time.Duration
+	workerRequestTimeout    time.Duration
+	maxSandboxes            int
+	environment             string
+	release                 string
+	draining                atomic.Bool
+	drainOnce               sync.Once
+	drain                   chan struct{}
+	logger                  *slog.Logger
+	github                  *githubapp.Service
+	checkoutBroker          CheckoutBroker
+	brokerAuthToken         string
+	environmentControlToken string
+	secretCipher            *secrets.Cipher
+	credentialValidator     credentialValidator
+	webhookMaxBody          int64
+	handler                 http.Handler
 }
 
 type Options struct {
-	Store                Store
-	WorkOS               auth.WorkOSVerifier
-	LocalAuthEnabled     bool
-	LocalSessionTTL      time.Duration
-	SandboxProvider      string
-	Provisioning         sandbox.ProvisioningDefaults
-	WorkerTokens         WorkerTokens
-	WorkerTokenTTL       time.Duration
-	WorkerRequestTimeout time.Duration
-	MaxSandboxes         int
-	Environment          string
-	Release              string
-	Logger               *slog.Logger
-	GitHub               *githubapp.Service
-	SecretCipher         *secrets.Cipher
-	CredentialValidator  credentialValidator
-	WebhookMaxBody       int64
+	Store                   Store
+	WorkOS                  auth.WorkOSVerifier
+	LocalAuthEnabled        bool
+	LocalSessionTTL         time.Duration
+	SandboxProvider         string
+	Provisioning            sandbox.ProvisioningDefaults
+	WorkerTokens            WorkerTokens
+	WorkerTokenTTL          time.Duration
+	WorkerRequestTimeout    time.Duration
+	MaxSandboxes            int
+	Environment             string
+	Release                 string
+	Logger                  *slog.Logger
+	GitHub                  *githubapp.Service
+	CheckoutBroker          CheckoutBroker
+	BrokerAuthToken         string
+	EnvironmentControlToken string
+	SecretCipher            *secrets.Cipher
+	CredentialValidator     credentialValidator
+	WebhookMaxBody          int64
 }
 
 func New(options Options) *Server {
@@ -164,30 +169,33 @@ func New(options Options) *Server {
 		maxSandboxes = DefaultMaxSandboxesPerOrg
 	}
 	server := &Server{
-		store:                options.Store,
-		workos:               options.WorkOS,
-		localAuthEnabled:     options.LocalAuthEnabled,
-		localSessionTTL:      options.LocalSessionTTL,
-		localAuthLimiter:     newFixedWindowLimiter(10, time.Minute, 4096),
-		sandboxProvider:      sandboxProvider,
-		provisioning:         options.Provisioning,
-		workerTokens:         options.WorkerTokens,
-		workerTokenLifetime:  options.WorkerTokenTTL,
-		workerRequestTimeout: workerRequestTimeout,
-		maxSandboxes:         maxSandboxes,
-		environment:          environment,
-		release:              release,
-		drain:                make(chan struct{}),
-		logger:               logger,
-		github:               options.GitHub,
-		secretCipher:         options.SecretCipher,
-		credentialValidator:  options.CredentialValidator,
-		webhookMaxBody:       webhookMaxBody,
+		store:                   options.Store,
+		workos:                  options.WorkOS,
+		localAuthEnabled:        options.LocalAuthEnabled,
+		localSessionTTL:         options.LocalSessionTTL,
+		localAuthLimiter:        newFixedWindowLimiter(10, time.Minute, 4096),
+		sandboxProvider:         sandboxProvider,
+		provisioning:            options.Provisioning,
+		workerTokens:            options.WorkerTokens,
+		workerTokenLifetime:     options.WorkerTokenTTL,
+		workerRequestTimeout:    workerRequestTimeout,
+		maxSandboxes:            maxSandboxes,
+		environment:             environment,
+		release:                 release,
+		drain:                   make(chan struct{}),
+		logger:                  logger,
+		github:                  options.GitHub,
+		checkoutBroker:          options.CheckoutBroker,
+		brokerAuthToken:         options.BrokerAuthToken,
+		environmentControlToken: options.EnvironmentControlToken,
+		secretCipher:            options.SecretCipher,
+		credentialValidator:     options.CredentialValidator,
+		webhookMaxBody:          webhookMaxBody,
 	}
 	if server.credentialValidator == nil {
 		server.credentialValidator = newAgentCredentialValidator(nil)
 	}
-	if options.GitHub != nil {
+	if server.checkoutBroker == nil && options.GitHub != nil {
 		server.checkoutBroker = options.GitHub
 	}
 	server.provisioning.Provider = sandboxProvider
@@ -203,13 +211,34 @@ func New(options Options) *Server {
 	if server.github != nil {
 		router.Get("/api/cloud/v1/github/install/setup", server.githubSetupCallback)
 		router.Get("/api/cloud/v1/github/oauth/callback", server.githubOAuthCallback)
+		router.Get("/api/cloud/v1/github/user/callback", server.githubUserCallback)
 		router.Post("/api/cloud/v1/github/webhooks", server.githubWebhook)
+		if server.brokerAuthToken != "" {
+			router.Post("/api/cloud/v1/control/github/capabilities/validate", server.validateRepositoryCapability)
+			router.Post("/api/cloud/v1/control/github/capabilities/redeem", server.redeemRepositoryCapability)
+			router.With(server.authenticateBrokerUser).Post(
+				"/api/cloud/v1/orgs/{orgId}/github/scratch-capabilities",
+				server.createGitHubScratchCapability,
+			)
+			router.With(server.authenticateBrokerUser).Post(
+				"/api/cloud/v1/orgs/{orgId}/github/scratch-capabilities/revoke",
+				server.revokeGitHubScratchCapability,
+			)
+		}
+	}
+	if server.environmentControlToken != "" {
+		router.Post("/api/cloud/v1/control/github/scratch-projects", server.createEnvironmentScratchProject)
 	}
 	router.Route("/api/cloud/v1", func(router chi.Router) {
 		router.Post("/auth/local/register", server.registerLocal)
 		router.Post("/auth/local/login", server.loginLocal)
 		router.With(server.authenticate).Post("/auth/local/logout", server.logoutLocal)
 		router.With(server.authenticate).Get("/me", server.me)
+		if server.github != nil {
+			router.With(server.authenticate).Get("/github/user", server.getGitHubUser)
+			router.With(server.authenticate).Post("/github/user/authorize", server.startGitHubUserAuthorization)
+			router.With(server.authenticate).Delete("/github/user", server.disconnectGitHubUser)
+		}
 		// Workers hold no user identity, so they never pass through
 		// server.authenticate. Bootstrap is gated by a one-time ticket;
 		// everything after it by a short-lived worker token.
@@ -242,6 +271,7 @@ func New(options Options) *Server {
 				router.Post("/github/installations/{installationId}/disconnect", server.disconnectGitHubInstallation)
 				router.Get("/github/repositories", server.listGitHubRepositories)
 				router.Post("/github/projects", server.createGitHubProject)
+				router.Post("/projects/scratch", server.createGitHubScratchProject)
 			}
 			router.Get("/projects", server.listProjects)
 			router.Post("/projects", server.createProject)
@@ -359,24 +389,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		token = strings.TrimSpace(token)
-		var principal domain.Principal
-		var err error
-		if strings.HasPrefix(token, "ao_local_") {
-			if !s.localAuthEnabled {
-				writeError(w, r, http.StatusUnauthorized, "unauthorized", "Local authentication is disabled.")
-				return
-			}
-			principal, err = s.store.PrincipalFromLocalToken(r.Context(), auth.HashToken(token))
-		} else {
-			if s.workos == nil {
-				writeError(w, r, http.StatusUnauthorized, "unauthorized", "WorkOS authentication is not configured.")
-				return
-			}
-			principal, err = s.workos.Verify(r.Context(), token)
-			if err == nil {
-				principal, err = s.store.UpsertWorkOSUser(r.Context(), principal)
-			}
-		}
+		principal, err := s.principalForBearer(r.Context(), token)
 		if err != nil {
 			if errors.Is(err, postgres.ErrNotFound) || errors.Is(err, auth.ErrInvalidToken) {
 				writeError(w, r, http.StatusUnauthorized, "unauthorized", "The access token is invalid or expired.")
@@ -390,6 +403,26 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, bearerKey, token)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (s *Server) principalForBearer(
+	ctx context.Context,
+	token string,
+) (domain.Principal, error) {
+	if strings.HasPrefix(token, "ao_local_") {
+		if !s.localAuthEnabled {
+			return domain.Principal{}, auth.ErrInvalidToken
+		}
+		return s.store.PrincipalFromLocalToken(ctx, auth.HashToken(token))
+	}
+	if s.workos == nil {
+		return domain.Principal{}, auth.ErrInvalidToken
+	}
+	principal, err := s.workos.Verify(ctx, token)
+	if err != nil {
+		return domain.Principal{}, err
+	}
+	return s.store.UpsertWorkOSUser(ctx, principal)
 }
 
 func principalFrom(r *http.Request) domain.Principal {

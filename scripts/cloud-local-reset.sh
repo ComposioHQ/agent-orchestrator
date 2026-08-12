@@ -16,6 +16,7 @@ case "$data_directory" in
 esac
 
 cd "$root"
+ao_docker_load_teardown_keys
 ao_docker_remove_workers "$namespace"
 docker compose down --remove-orphans
 ao_docker_remove_workspaces "$namespace"

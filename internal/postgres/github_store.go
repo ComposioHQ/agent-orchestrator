@@ -389,6 +389,96 @@ func (s *Store) CompleteGitHubInstallation(
 	return installation, err
 }
 
+func (s *Store) BindGitHubInstallation(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID string,
+	installation domain.GitHubInstallation,
+) (domain.GitHubInstallation, error) {
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		if err := requireOrgAdmin(ctx, tx, orgID, principal.UserID); err != nil {
+			return err
+		}
+		permissions, err := json.Marshal(installation.Permissions)
+		if err != nil {
+			return err
+		}
+		err = tx.QueryRow(
+			ctx,
+			`INSERT INTO ao_github_installations (
+				org_id, github_installation_id, github_account_id,
+				account_login, account_type, status, repository_selection,
+				permissions, events, installed_by_user_id, sync_status
+			) VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8, $9, 'pending')
+			ON CONFLICT (github_installation_id) DO UPDATE
+			SET account_login = EXCLUDED.account_login,
+			    account_type = EXCLUDED.account_type,
+			    status = 'active',
+			    repository_selection = EXCLUDED.repository_selection,
+			    permissions = EXCLUDED.permissions,
+			    events = EXCLUDED.events,
+			    sync_status = 'pending',
+			    suspended_at = NULL,
+			    disconnected_at = NULL,
+			    deleted_at = NULL,
+			    updated_at = now()
+			WHERE ao_github_installations.org_id = EXCLUDED.org_id
+			RETURNING id, org_id, github_installation_id, github_account_id,
+				account_login, account_type, status, repository_selection,
+				permissions, events, sync_status, sync_generation,
+				last_synced_at, last_error,
+				installed_by_user_id, created_at, updated_at`,
+			orgID,
+			installation.GitHubInstallationID,
+			installation.GitHubAccountID,
+			installation.AccountLogin,
+			installation.AccountType,
+			installation.RepositorySelection,
+			permissions,
+			installation.Events,
+			principal.UserID,
+		).Scan(githubInstallationScanTargets(&installation)...)
+		if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
+			return ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(
+			ctx,
+			`INSERT INTO ao_github_installation_routes (
+				github_installation_id, org_id, installation_id
+			) VALUES ($1, $2, $3)
+			ON CONFLICT (github_installation_id) DO UPDATE
+			SET org_id = EXCLUDED.org_id,
+			    installation_id = EXCLUDED.installation_id
+			WHERE ao_github_installation_routes.org_id = EXCLUDED.org_id`,
+			installation.GitHubInstallationID,
+			orgID,
+			installation.ID,
+		); err != nil {
+			return err
+		}
+		_, err = tx.Exec(
+			ctx,
+			`INSERT INTO ao_audit_events (
+				org_id, actor_user_id, action, resource_type, resource_id,
+				metadata
+			) VALUES (
+				$1, $2, 'github.installation.bound_for_scratch',
+				'github_installation', $3,
+				jsonb_build_object('githubInstallationId', $4::bigint)
+			)`,
+			orgID,
+			principal.UserID,
+			installation.ID,
+			installation.GitHubInstallationID,
+		)
+		return err
+	})
+	return installation, err
+}
+
 func (s *Store) ListGitHubInstallations(
 	ctx context.Context,
 	principal domain.Principal,

@@ -3,9 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   cloudApiBaseUrl,
+  cloudControlEnvironment,
   cloudWebMode,
+  environmentControlToken,
   githubApiBaseUrl,
   localAuthCookie,
+  repositoryBrokerToken,
 } from "@/lib/cloud-config";
 
 const localEntryPaths = new Set([
@@ -26,6 +29,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
 }
 
 export async function PUT(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
+export async function DELETE(request: NextRequest, context: RouteContext) {
   return forward(request, context);
 }
 
@@ -54,11 +61,16 @@ async function forward(request: NextRequest, context: RouteContext) {
 
   const mode = cloudWebMode();
   const githubRoute = parseGitHubRoute(segments);
+  const githubUserRoute =
+    path === "github/user" || path === "github/user/authorize";
+  const scratchRoute = parseScratchRoute(segments);
+  const githubBrokerRoute =
+    Boolean(githubRoute) || githubUserRoute || Boolean(scratchRoute);
   let environmentAccessToken: string | undefined;
   let workosAccessToken: string | undefined;
   if (mode === "local") {
     environmentAccessToken = request.cookies.get(localAuthCookie)?.value;
-    if (githubRoute) {
+    if (githubBrokerRoute) {
       const auth = await withAuth();
       workosAccessToken = auth.user ? auth.accessToken : undefined;
     }
@@ -80,7 +92,7 @@ async function forward(request: NextRequest, context: RouteContext) {
       { status: 401 },
     );
   }
-  if (githubRoute && !workosAccessToken) {
+  if (githubBrokerRoute && !workosAccessToken) {
     return NextResponse.json(
       {
         error: "GitHub authentication required",
@@ -100,6 +112,22 @@ async function forward(request: NextRequest, context: RouteContext) {
     return forwardGitHub(
       request,
       githubRoute,
+      environmentAccessToken,
+      workosAccessToken,
+    );
+  }
+  if (githubUserRoute && workosAccessToken) {
+    return forwardGitHubUser(request, path, workosAccessToken);
+  }
+  if (
+    scratchRoute &&
+    request.method === "POST" &&
+    environmentAccessToken &&
+    workosAccessToken
+  ) {
+    return createSplitAuthorityScratchProject(
+      request,
+      scratchRoute.localOrganizationId,
       environmentAccessToken,
       workosAccessToken,
     );
@@ -196,10 +224,50 @@ async function forward(request: NextRequest, context: RouteContext) {
   return response;
 }
 
+async function forwardGitHubUser(
+  request: NextRequest,
+  path: string,
+  workosAccessToken: string,
+): Promise<Response> {
+  const productionURL = new URL(
+    `/api/cloud/v1/${path}${request.nextUrl.search}`,
+    githubApiBaseUrl(),
+  );
+  try {
+    const upstream = await fetch(productionURL, {
+      method: request.method,
+      headers: forwardedHeaders(request, workosAccessToken),
+      body:
+        request.method === "GET" || request.method === "HEAD"
+          ? undefined
+          : await request.arrayBuffer(),
+      cache: "no-store",
+      signal: request.signal,
+    });
+    return upstreamResponse(upstream);
+  } catch {
+    return gatewayError("The production GitHub service is unavailable.");
+  }
+}
+
 type GitHubRoute = {
   localOrganizationId: string;
   suffix: string;
 };
+
+function parseScratchRoute(
+  segments: string[],
+): { localOrganizationId: string } | null {
+  if (
+    segments.length === 4 &&
+    segments[0] === "orgs" &&
+    segments[2] === "projects" &&
+    segments[3] === "scratch"
+  ) {
+    return { localOrganizationId: segments[1] };
+  }
+  return null;
+}
 
 type AccountOrganization = {
   id: string;
@@ -373,6 +441,197 @@ async function resolveProductionOrganization(
     },
     { status: 409 },
   );
+}
+
+type ScratchRequest = {
+  displayName?: string;
+  githubInstallationId?: string;
+  private?: boolean;
+  config?: Record<string, unknown>;
+  orchestrator?: {
+    harness?: string;
+    prompt?: string;
+  };
+};
+
+type ScratchCapabilityResponse = {
+  capability: string;
+  githubInstallationId: string;
+  githubRepositoryId: string;
+  userExternalId: string;
+  targetEnvironment: "development" | "staging";
+};
+
+async function createSplitAuthorityScratchProject(
+  request: NextRequest,
+  localOrganizationId: string,
+  environmentAccessToken: string,
+  workosAccessToken: string,
+): Promise<Response> {
+  const controlToken = environmentControlToken();
+  const brokerToken = repositoryBrokerToken();
+  let input: ScratchRequest;
+  try {
+    input = (await request.json()) as ScratchRequest;
+  } catch {
+    return NextResponse.json(
+      {
+        error: "Invalid request",
+        code: "INVALID_REQUEST",
+        message: "The request body is invalid.",
+        requestId: "",
+      },
+      { status: 400 },
+    );
+  }
+  const productionOrganization = await resolveProductionOrganization(
+    request,
+    localOrganizationId,
+    environmentAccessToken,
+    workosAccessToken,
+  );
+  if (productionOrganization instanceof Response) {
+    return productionOrganization;
+  }
+  const targetEnvironment = cloudControlEnvironment();
+  const capabilityURL = new URL(
+    `/api/cloud/v1/orgs/${encodeURIComponent(productionOrganization)}/github/scratch-capabilities`,
+    githubApiBaseUrl(),
+  );
+  let capabilityResponse: Response;
+  try {
+    capabilityResponse = await fetch(capabilityURL, {
+      method: "POST",
+      headers: brokerUserHeaders(request, brokerToken, workosAccessToken),
+      body: JSON.stringify({ ...input, targetEnvironment }),
+      cache: "no-store",
+      signal: request.signal,
+    });
+  } catch {
+    return gatewayError("The production GitHub service is unavailable.");
+  }
+  if (!capabilityResponse.ok) {
+    return upstreamResponse(capabilityResponse);
+  }
+  let authority: ScratchCapabilityResponse;
+  try {
+    authority =
+      (await capabilityResponse.json()) as ScratchCapabilityResponse;
+  } catch {
+    return gatewayError("The production GitHub service returned an invalid response.");
+  }
+  if (
+    !authority.capability ||
+    !authority.githubInstallationId ||
+    !authority.githubRepositoryId ||
+    !authority.userExternalId ||
+    authority.targetEnvironment !== targetEnvironment
+  ) {
+    if (authority.capability) {
+      await compensateScratchCapability(
+        request,
+        productionOrganization,
+        workosAccessToken,
+        brokerToken,
+        authority.capability,
+      );
+    }
+    return gatewayError("The production GitHub service returned an invalid response.");
+  }
+
+  const environmentURL = new URL(
+    "/api/cloud/v1/control/github/scratch-projects",
+    cloudApiBaseUrl(),
+  );
+  const headers = new Headers({
+    Accept: "application/json",
+    Authorization: `Bearer ${controlToken}`,
+    "Content-Type": "application/json",
+    "X-AO-Target-Environment": targetEnvironment,
+    "X-AO-User-Authorization": `Bearer ${environmentAccessToken}`,
+  });
+  const idempotencyKey = request.headers.get("idempotency-key");
+  if (idempotencyKey) headers.set("Idempotency-Key", idempotencyKey);
+  const environmentBody = JSON.stringify({
+    orgId: localOrganizationId,
+    ...input,
+    capability: authority.capability,
+    githubInstallationId: authority.githubInstallationId,
+    githubRepositoryId: authority.githubRepositoryId,
+    userExternalId: authority.userExternalId,
+  });
+  let environmentResponse: Response;
+  try {
+    environmentResponse = await fetch(environmentURL, {
+      method: "POST",
+      headers,
+      body: environmentBody,
+      cache: "no-store",
+      signal: request.signal,
+    });
+  } catch {
+    try {
+      environmentResponse = await fetch(environmentURL, {
+        method: "POST",
+        headers,
+        body: environmentBody,
+        cache: "no-store",
+      });
+    } catch {
+      await compensateScratchCapability(
+        request,
+        productionOrganization,
+        workosAccessToken,
+        brokerToken,
+        authority.capability,
+      );
+      return gatewayError("The environment Cloud API is unavailable.");
+    }
+  }
+  if (!environmentResponse.ok) {
+    await compensateScratchCapability(
+      request,
+      productionOrganization,
+      workosAccessToken,
+      brokerToken,
+      authority.capability,
+    );
+  }
+  return upstreamResponse(environmentResponse);
+}
+
+async function compensateScratchCapability(
+  request: NextRequest,
+  productionOrganizationId: string,
+  workosAccessToken: string,
+  brokerToken: string,
+  capability: string,
+): Promise<void> {
+  const url = new URL(
+    `/api/cloud/v1/orgs/${encodeURIComponent(productionOrganizationId)}/github/scratch-capabilities/revoke`,
+    githubApiBaseUrl(),
+  );
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: brokerUserHeaders(request, brokerToken, workosAccessToken),
+      body: JSON.stringify({ capability }),
+      cache: "no-store",
+    });
+  } catch {
+    // The capability remains fail-closed if compensation is temporarily
+    // unavailable; operators can retry cleanup with the same idempotency key.
+  }
+}
+
+function brokerUserHeaders(
+  request: NextRequest,
+  brokerToken: string,
+  userAccessToken: string,
+): Headers {
+  const headers = forwardedHeaders(request, brokerToken);
+  headers.set("X-AO-User-Authorization", `Bearer ${userAccessToken}`);
+  return headers;
 }
 
 async function createEnvironmentProjectFromGitHub(

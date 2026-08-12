@@ -39,8 +39,8 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	).Scan(&tableCount); err != nil {
 		t.Fatal(err)
 	}
-	if tableCount != 33 {
-		t.Fatalf("found %d AO tables, want 33", tableCount)
+	if tableCount != 35 {
+		t.Fatalf("found %d AO tables, want 35", tableCount)
 	}
 	var forcedRLSTableCount int
 	if err := pool.QueryRow(
@@ -54,8 +54,8 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	).Scan(&forcedRLSTableCount); err != nil {
 		t.Fatal(err)
 	}
-	if forcedRLSTableCount != 27 {
-		t.Fatalf("found %d forced-RLS AO tables, want 27", forcedRLSTableCount)
+	if forcedRLSTableCount != 28 {
+		t.Fatalf("found %d forced-RLS AO tables, want 28", forcedRLSTableCount)
 	}
 
 	store, err := Open(ctx, databaseURL)

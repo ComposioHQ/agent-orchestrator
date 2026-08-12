@@ -20,21 +20,24 @@ var githubSlugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,99}$`)
 const workOSAPIBaseURL = "https://api.workos.com"
 
 type Config struct {
-	Environment          string
-	HTTPAddress          string
-	DatabaseURL          string
-	MigrationDatabaseURL string
-	MigrateOnStartup     bool
-	MigrationTimeout     time.Duration
-	WorkOSIssuer         string
-	WorkOSClientID       string
-	WorkOSAPIKey         string
-	WorkOSJWKSURL        string
-	LocalAuthEnabled     bool
-	LocalSessionTTL      time.Duration
-	SandboxProvider      string
-	ProviderSecretKey    []byte
-	Release              string
+	Environment             string
+	HTTPAddress             string
+	DatabaseURL             string
+	MigrationDatabaseURL    string
+	MigrateOnStartup        bool
+	MigrationTimeout        time.Duration
+	WorkOSIssuer            string
+	WorkOSClientID          string
+	WorkOSAPIKey            string
+	WorkOSJWKSURL           string
+	LocalAuthEnabled        bool
+	LocalSessionTTL         time.Duration
+	SandboxProvider         string
+	ProviderSecretKey       []byte
+	Release                 string
+	RepositoryBrokerURL     string
+	RepositoryBrokerToken   string
+	EnvironmentControlToken string
 
 	// PublicURL is the origin a sandbox worker dials back to. A worker opens
 	// no inbound port, so this is the only way it can reach the control plane.
@@ -117,6 +120,15 @@ func Load() (Config, error) {
 			envOrDefault("AO_CLOUD_SANDBOX_PROVIDER", defaultSandboxProvider(hosted)),
 		),
 		Release: strings.TrimSpace(os.Getenv("AO_CLOUD_RELEASE")),
+		RepositoryBrokerURL: strings.TrimRight(
+			strings.TrimSpace(os.Getenv("AO_CLOUD_REPOSITORY_BROKER_URL")), "/",
+		),
+		RepositoryBrokerToken: strings.TrimSpace(
+			os.Getenv("AO_CLOUD_REPOSITORY_BROKER_TOKEN"),
+		),
+		EnvironmentControlToken: strings.TrimSpace(
+			os.Getenv("AO_CLOUD_ENV_CONTROL_TOKEN"),
+		),
 
 		PublicURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_PUBLIC_URL")), "/"),
 		WorkerSigningKey:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKER_SIGNING_KEY")),
@@ -375,6 +387,27 @@ func Load() (Config, error) {
 		if cfg.GitHub.WebhookMaxBody < 1024 || cfg.GitHub.WebhookMaxBody > 10<<20 {
 			return Config{}, errors.New("AO_CLOUD_GITHUB_WEBHOOK_MAX_BYTES must be between 1024 and 10485760")
 		}
+		if len(cfg.RepositoryBrokerToken) < 32 {
+			return Config{}, errors.New("AO_CLOUD_REPOSITORY_BROKER_TOKEN must be at least 32 characters when GitHub is configured")
+		}
+	}
+	brokerConfigured := cfg.RepositoryBrokerURL != "" ||
+		cfg.EnvironmentControlToken != ""
+	if cfg.Environment != "production" && brokerConfigured {
+		if len(cfg.RepositoryBrokerToken) < 32 ||
+			len(cfg.EnvironmentControlToken) < 32 {
+			return Config{}, errors.New("repository broker and environment control tokens must be at least 32 characters")
+		}
+		brokerURL, err := url.Parse(cfg.RepositoryBrokerURL)
+		if err != nil || brokerURL.Scheme != "https" ||
+			brokerURL.Host == "" || brokerURL.User != nil ||
+			(brokerURL.Path != "" && brokerURL.Path != "/") ||
+			brokerURL.RawQuery != "" || brokerURL.Fragment != "" {
+			return Config{}, errors.New("AO_CLOUD_REPOSITORY_BROKER_URL must be an HTTPS origin")
+		}
+	}
+	if cfg.Environment == "staging" && !brokerConfigured {
+		return Config{}, errors.New("repository broker configuration is required in staging")
 	}
 	return cfg, nil
 }

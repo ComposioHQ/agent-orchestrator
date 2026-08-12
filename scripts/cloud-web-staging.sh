@@ -25,6 +25,24 @@ export AO_CLOUD_WEB_MODE=staging
 export AO_CLOUD_WEB_API_BASE_URL="${api_url%/}"
 source "$root/scripts/lib/workos-web-env.sh"
 configure_workos_web "$web_port" "127.0.0.1"
+broker_secret="$(
+	aws secretsmanager get-secret-value \
+		--profile "${AWS_PROFILE:-ao-cloud}" \
+		--region "${AWS_REGION:-eu-north-1}" \
+		--secret-id "${AO_CLOUD_REPOSITORY_BROKER_SECRET_ID:-ao-cloud/repository-broker}" \
+		--query SecretString \
+		--output text
+)"
+export AO_CLOUD_ENV_CONTROL_TOKEN
+export AO_CLOUD_REPOSITORY_BROKER_TOKEN
+read -r AO_CLOUD_REPOSITORY_BROKER_TOKEN AO_CLOUD_ENV_CONTROL_TOKEN < <(
+	BROKER_SECRET="$broker_secret" python3 -c '
+import json, os
+value = json.loads(os.environ["BROKER_SECRET"])
+print(value["auth_token"], value["staging_control_token"])
+'
+)
+unset broker_secret
 
 printf 'Cloud API: %s\n' "$AO_CLOUD_WEB_API_BASE_URL"
 printf 'Cloud web: http://127.0.0.1:%s\n' "$web_port"

@@ -19,6 +19,13 @@ import (
 )
 
 type Store interface {
+	CreateGitHubUserAuthAttempt(context.Context, string, []byte, []byte, []byte, time.Time) (domain.GitHubUserAuthAttempt, error)
+	GitHubUserAuthAttempt(context.Context, []byte) (domain.GitHubUserAuthAttempt, error)
+	CompleteGitHubUserAuthorization(context.Context, []byte, postgres.GitHubUserConnectionInput) (domain.GitHubUserConnection, error)
+	GitHubUserConnection(context.Context, string) (domain.GitHubUserConnection, error)
+	UpdateGitHubUserConnection(context.Context, string, postgres.GitHubUserConnectionInput) (domain.GitHubUserConnection, error)
+	DeleteGitHubUserConnection(context.Context, string) error
+	DeleteGitHubUserConnectionByGitHubID(context.Context, int64) error
 	CreateGitHubInstallAttempt(context.Context, domain.Principal, string, []byte, time.Time) (domain.GitHubInstallAttempt, error)
 	ValidateGitHubInstallState(context.Context, []byte) error
 	BeginGitHubOAuth(context.Context, []byte, domain.GitHubInstallation, []byte, []byte, []byte, time.Time) (domain.GitHubInstallAttempt, error)
@@ -30,6 +37,7 @@ type Store interface {
 	ReconcileGitHubRepositories(context.Context, string, domain.GitHubInstallation, int64, []domain.GitHubRepository) error
 	MarkGitHubSyncFailure(context.Context, string, domain.GitHubInstallation, int64, string) error
 	DisconnectGitHubInstallation(context.Context, domain.Principal, string, string) (domain.GitHubInstallation, error)
+	BindGitHubInstallation(context.Context, domain.Principal, string, domain.GitHubInstallation) (domain.GitHubInstallation, error)
 	ListGitHubRepositories(context.Context, domain.Principal, string, *domain.Cursor, int) ([]domain.GitHubRepository, bool, error)
 	InsertGitHubWebhook(context.Context, domain.GitHubWebhookDelivery, []byte) (bool, error)
 	ClaimGitHubWebhook(context.Context, string, time.Time) (domain.GitHubWebhookDelivery, error)
@@ -39,12 +47,17 @@ type Store interface {
 	GitHubInstallationByRoute(context.Context, string, string) (domain.GitHubInstallation, error)
 	ApplyGitHubInstallationEvent(context.Context, string, string, string) error
 	WorkerGitHubCheckoutContext(context.Context, string, string) (domain.GitHubCheckoutContext, error)
+	ReserveGitHubRepositoryCapability(context.Context, domain.Principal, string, string, string, []byte, int64) (domain.GitHubRepositoryCapability, bool, error)
+	ActivateGitHubRepositoryCapability(context.Context, domain.Principal, string, string, domain.GitHubRepository, []byte, []byte, []byte) (domain.GitHubRepositoryCapability, error)
+	GitHubRepositoryCapability(context.Context, []byte, string) (domain.GitHubRepositoryCapability, error)
+	RevokeGitHubRepositoryCapability(context.Context, domain.Principal, string, []byte, string) (domain.GitHubRepositoryCapability, error)
+	RevokeGitHubRepositoryCapabilitiesForUser(context.Context, string, string) error
 }
 
 type CheckoutGrant struct {
-	CloneURL  string
-	Token     string
-	ExpiresAt time.Time
+	CloneURL  string    `json:"cloneUrl"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 type Service struct {
@@ -55,6 +68,8 @@ type Service struct {
 	installTTL    time.Duration
 	logger        *slog.Logger
 	workerID      string
+	credentialKey []byte
+	userTokenMu   sync.Mutex
 	checkMu       sync.Mutex
 	checkAt       time.Time
 	checkErr      error
@@ -75,11 +90,13 @@ func NewService(
 	store Store,
 	client *Client,
 	stateKey []byte,
+	credentialKey []byte,
 	webhookSecret string,
 	installTTL time.Duration,
 	logger *slog.Logger,
 ) (*Service, error) {
 	if store == nil || client == nil || len(stateKey) != 32 ||
+		len(credentialKey) != 32 ||
 		webhookSecret == "" || installTTL <= 0 {
 		return nil, errors.New("GitHub App service configuration is incomplete")
 	}
@@ -90,6 +107,7 @@ func NewService(
 		store:         store,
 		client:        client,
 		stateKey:      append([]byte(nil), stateKey...),
+		credentialKey: append([]byte(nil), credentialKey...),
 		webhookSecret: webhookSecret,
 		installTTL:    installTTL,
 		logger:        logger,

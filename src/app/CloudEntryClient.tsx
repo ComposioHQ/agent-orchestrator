@@ -166,7 +166,7 @@ export function CloudEntryClient({ mode }: { mode: "local" | "staging" }) {
         </div>
 
         <p className="text-[11px] leading-5 text-[#646a73]">
-          Worker and orchestrator execution is disabled in this build.
+          Agent execution runs in an isolated sandbox for each session.
         </p>
       </section>
 

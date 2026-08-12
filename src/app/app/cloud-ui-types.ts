@@ -1,6 +1,7 @@
 import type {
   GitHubInstallation,
   GitHubRepository,
+  GitHubUserConnection,
   RedactedProviderConnection,
 } from "@aoagents/cloud-client";
 
@@ -22,6 +23,20 @@ export const initialGitHubCapability: GitHubCapability = {
   status: "loading",
   installations: [],
   repositories: [],
+};
+
+export type GitHubUserCapability = {
+  status: "loading" | "available" | "auth-required" | "error";
+  connection: GitHubUserConnection;
+  message?: string;
+};
+
+export const initialGitHubUserCapability: GitHubUserCapability = {
+  status: "loading",
+  connection: {
+    connected: false,
+    installations: [],
+  },
 };
 
 export type ProviderCapability = {

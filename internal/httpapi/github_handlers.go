@@ -49,6 +49,33 @@ type createGitHubProjectRequest struct {
 	Config             map[string]any `json:"config,omitempty"`
 }
 
+type githubUserConnectionResponse struct {
+	Connected     bool                             `json:"connected"`
+	Login         string                           `json:"login,omitempty"`
+	AvatarURL     string                           `json:"avatarUrl,omitempty"`
+	Installations []githubUserInstallationResponse `json:"installations"`
+	LastSyncedAt  *time.Time                       `json:"lastSyncedAt,omitempty"`
+}
+
+type githubUserInstallationResponse struct {
+	GitHubInstallationID string `json:"githubInstallationId"`
+	AccountLogin         string `json:"accountLogin"`
+	AccountType          string `json:"accountType"`
+	RepositorySelection  string `json:"repositorySelection"`
+	CanCreateRepository  bool   `json:"canCreateRepository"`
+	UnavailableReason    string `json:"unavailableReason,omitempty"`
+}
+
+type createGitHubScratchProjectRequest struct {
+	DisplayName          string `json:"displayName"`
+	GitHubInstallationID string `json:"githubInstallationId"`
+	Private              *bool  `json:"private,omitempty"`
+	Orchestrator         struct {
+		Harness string `json:"harness"`
+		Prompt  string `json:"prompt,omitempty"`
+	} `json:"orchestrator"`
+}
+
 type githubProjectStore interface {
 	CreateGitHubProject(
 		context.Context,
@@ -57,6 +84,17 @@ type githubProjectStore interface {
 		string,
 		domain.CreateGitHubProject,
 	) (domain.Project, error)
+}
+
+type githubScratchProjectStore interface {
+	CreateGitHubScratchProject(
+		context.Context,
+		domain.Principal,
+		string,
+		string,
+		int,
+		domain.CreateGitHubScratchProject,
+	) (domain.Project, domain.Session, error)
 }
 
 func (s *Server) githubHealth(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +185,91 @@ func (s *Server) githubOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(s.github.CompletionHTML(true))
+}
+
+func (s *Server) startGitHubUserAuthorization(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	authorizeURL, expiresAt, err := s.github.StartUserAuthorization(
+		r.Context(),
+		principalFrom(r),
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"authorizeUrl": authorizeURL,
+		"expiresAt":    expiresAt,
+	})
+}
+
+func (s *Server) githubUserCallback(w http.ResponseWriter, r *http.Request) {
+	setGitHubCallbackHeaders(w)
+	if strings.TrimSpace(r.URL.Query().Get("error")) != "" {
+		s.githubCallbackError(w, r, postgres.ErrForbidden)
+		return
+	}
+	if _, err := s.github.CompleteUserAuthorization(
+		r.Context(),
+		strings.TrimSpace(r.URL.Query().Get("state")),
+		strings.TrimSpace(r.URL.Query().Get("code")),
+	); err != nil {
+		s.githubCallbackError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(s.github.CompletionHTML(true))
+}
+
+func (s *Server) getGitHubUser(w http.ResponseWriter, r *http.Request) {
+	connection, installations, err := s.github.UserConnection(
+		r.Context(),
+		principalFrom(r),
+	)
+	if errors.Is(err, postgres.ErrNotFound) {
+		writeJSON(w, http.StatusOK, githubUserConnectionResponse{
+			Installations: []githubUserInstallationResponse{},
+		})
+		return
+	}
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	items := make([]githubUserInstallationResponse, 0, len(installations))
+	for _, installation := range installations {
+		items = append(items, githubUserInstallationResponse{
+			GitHubInstallationID: strconv.FormatInt(
+				installation.GitHubInstallationID,
+				10,
+			),
+			AccountLogin:        installation.AccountLogin,
+			AccountType:         installation.AccountType,
+			RepositorySelection: installation.RepositorySelection,
+			CanCreateRepository: installation.CanCreateRepository,
+			UnavailableReason:   installation.UnavailableReason,
+		})
+	}
+	lastSyncedAt := connection.LastSyncedAt
+	writeJSON(w, http.StatusOK, githubUserConnectionResponse{
+		Connected:     true,
+		Login:         connection.GitHubLogin,
+		AvatarURL:     connection.GitHubAvatarURL,
+		Installations: items,
+		LastSyncedAt:  &lastSyncedAt,
+	})
+}
+
+func (s *Server) disconnectGitHubUser(w http.ResponseWriter, r *http.Request) {
+	if err := s.github.DisconnectUser(r.Context(), principalFrom(r)); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) githubCallbackError(w http.ResponseWriter, r *http.Request, err error) {
@@ -318,6 +441,130 @@ func (s *Server) createGitHubProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"project": toProjectResponse(project)})
 }
 
+func (s *Server) createGitHubScratchProject(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	orgID := chi.URLParam(r, "orgId")
+	if requireUUID(orgID, "orgId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId must be a UUID.")
+		return
+	}
+	key, err := idempotencyKey(r)
+	if err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	var request createGitHubScratchProjectRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	request.Orchestrator.Harness = strings.TrimSpace(request.Orchestrator.Harness)
+	installationID, err := strconv.ParseInt(
+		strings.TrimSpace(request.GitHubInstallationID),
+		10,
+		64,
+	)
+	if err != nil || installationID <= 0 ||
+		request.DisplayName == "" || len(request.DisplayName) > 80 ||
+		request.Orchestrator.Harness == "" ||
+		len(request.Orchestrator.Harness) > 120 ||
+		len(request.Orchestrator.Prompt) > 65536 {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The scratch project request is invalid.")
+		return
+	}
+	private := true
+	if request.Private != nil {
+		private = *request.Private
+	}
+	requestBinding, err := json.Marshal(request)
+	if err != nil {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The scratch project request is invalid.")
+		return
+	}
+	plan, err := s.provisioning.SessionPlan()
+	if err != nil {
+		s.logger.Error("resolve scratch provisioning plan", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "Sandbox provisioning is misconfigured.")
+		return
+	}
+	grant, err := s.github.PrepareScratchCapability(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		key,
+		"production",
+		installationID,
+		request.DisplayName,
+		private,
+		requestBinding,
+	)
+	if errors.Is(err, postgres.ErrNotFound) {
+		writeError(w, r, http.StatusConflict, "github_connection_required", "Connect GitHub before creating a repository.")
+		return
+	}
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	store, ok := s.store.(githubScratchProjectStore)
+	if !ok {
+		_ = s.github.RevokeScratchCapability(
+			context.WithoutCancel(r.Context()),
+			principalFrom(r),
+			orgID,
+			grant.Capability,
+		)
+		writeError(w, r, http.StatusNotImplemented, "not_implemented", "GitHub scratch projects are unavailable.")
+		return
+	}
+	project, session, err := store.CreateGitHubScratchProject(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		key,
+		s.maxSandboxes,
+		domain.CreateGitHubScratchProject{
+			Repository:              grant.Authority.Repository,
+			GitHubInstallationID:    grant.Authority.GitHubInstallationID,
+			AuthorityUserExternalID: grant.Authority.UserExternalID,
+			AuthorityEnvironment:    "production",
+			CapabilityHash:          grant.Authority.CapabilityHash,
+			DisplayName:             request.DisplayName,
+			Config:                  json.RawMessage(`{"source":"scratch"}`),
+			Session: domain.CreateSession{
+				Kind:             "orchestrator",
+				Harness:          request.Orchestrator.Harness,
+				DisplayName:      request.DisplayName + " orchestrator",
+				Prompt:           request.Orchestrator.Prompt,
+				Mode:             "trusted",
+				DeniedCommands:   []string{},
+				Provider:         plan.Provider,
+				ResourceProfile:  plan.ResourceProfile,
+				BootstrapContext: plan.BootstrapContext,
+				Release:          s.release,
+			},
+		},
+	)
+	if err != nil {
+		_ = s.github.RevokeScratchCapability(
+			context.WithoutCancel(r.Context()),
+			principalFrom(r),
+			orgID,
+			grant.Capability,
+		)
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"project":    toProjectResponse(project),
+		"repository": toGitHubRepositoryResponse(grant.Authority.Repository),
+		"session":    toSessionResponse(session),
+	})
+}
+
 func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 	deliveryID := strings.TrimSpace(r.Header.Get("X-GitHub-Delivery"))
 	event := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
@@ -341,7 +588,8 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if event != "installation" && event != "installation_repositories" {
+	if event != "installation" && event != "installation_repositories" &&
+		event != "github_app_authorization" {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -353,6 +601,9 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		Repository *struct {
 			ID int64 `json:"id"`
 		} `json:"repository"`
+		Sender *struct {
+			ID int64 `json:"id"`
+		} `json:"sender"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_webhook", "The GitHub webhook payload is invalid.")
@@ -364,6 +615,20 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	if envelope.Repository != nil {
 		repositoryID = envelope.Repository.ID
+	}
+	if event == "github_app_authorization" {
+		if envelope.Action == "revoked" && envelope.Sender != nil &&
+			envelope.Sender.ID > 0 {
+			if err := s.github.RevokeUserByGitHubID(
+				r.Context(),
+				envelope.Sender.ID,
+			); err != nil {
+				s.writeStoreError(w, r, err)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
 	}
 	inserted, err := s.github.EnqueueVerifiedWebhook(r.Context(), domain.GitHubWebhookDelivery{
 		DeliveryID:           deliveryID,

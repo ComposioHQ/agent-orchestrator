@@ -107,23 +107,34 @@ func run(logger *slog.Logger) error {
 		"repository_url", bootstrap.Launch.RepositoryURL,
 	)
 
-	checkoutGrant, err := client.checkoutGrant(ctx)
-	if err != nil {
-		if !anonymousCheckoutEnabled() {
-			return fmt.Errorf("request checkout grant: %w", err)
+	if worker.IsScratchRepositoryURL(bootstrap.Launch.RepositoryURL) {
+		if err := worker.PrepareScratchWorkspace(
+			ctx,
+			worker.ExecGitRunner{},
+			workspace,
+		); err != nil {
+			return fmt.Errorf("prepare scratch workspace: %w", err)
 		}
-		checkoutGrant = worker.CheckoutGrantResponse{
-			CloneURL: bootstrap.Launch.RepositoryURL,
+		logger.Info("initialized scratch workspace")
+	} else {
+		checkoutGrant, err := client.checkoutGrant(ctx)
+		if err != nil {
+			if !anonymousCheckoutEnabled() {
+				return fmt.Errorf("request checkout grant: %w", err)
+			}
+			checkoutGrant = worker.CheckoutGrantResponse{
+				CloneURL: bootstrap.Launch.RepositoryURL,
+			}
+			logger.Info("using anonymous public GitHub checkout")
 		}
-		logger.Info("using anonymous public GitHub checkout")
-	}
-	if err := worker.PrepareCheckout(
-		ctx,
-		worker.ExecGitRunner{},
-		workspace,
-		checkoutGrant,
-	); err != nil {
-		return fmt.Errorf("prepare repository checkout: %w", err)
+		if err := worker.PrepareCheckout(
+			ctx,
+			worker.ExecGitRunner{},
+			workspace,
+			checkoutGrant,
+		); err != nil {
+			return fmt.Errorf("prepare repository checkout: %w", err)
+		}
 	}
 	if err := verifyHarnessAvailable(bootstrap.Launch.Harness); err != nil {
 		return err

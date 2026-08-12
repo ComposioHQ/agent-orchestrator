@@ -24,6 +24,7 @@ import { useEffect, useState } from "react";
 
 import type {
   GitHubCapability,
+  GitHubUserCapability,
   ProviderCapability,
 } from "./cloud-ui-types";
 
@@ -34,13 +35,16 @@ export function CloudSettings({
   account,
   busy,
   github,
+  githubUser,
   initialPanel,
   onBack,
   onConnectAgent,
   onDisconnectAgent,
   onDisconnectGitHub,
+  onDisconnectGitHubUser,
   onSelectOrganization,
   onStartGitHub,
+  onStartGitHubUser,
   onSyncGitHub,
   providerBusy,
   providers,
@@ -49,6 +53,7 @@ export function CloudSettings({
   account: CurrentAccount;
   busy: boolean;
   github: GitHubCapability;
+  githubUser: GitHubUserCapability;
   initialPanel: "organization" | "providers";
   onBack: () => void;
   onConnectAgent: (
@@ -59,8 +64,10 @@ export function CloudSettings({
     connection: RedactedProviderConnection,
   ) => Promise<void>;
   onDisconnectGitHub: (installation: GitHubInstallation) => Promise<void>;
+  onDisconnectGitHubUser: () => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
   onStartGitHub: () => Promise<void>;
+  onStartGitHubUser: () => Promise<void>;
   onSyncGitHub: (installation: GitHubInstallation) => Promise<void>;
   providerBusy: boolean;
   providers: ProviderCapability;
@@ -245,8 +252,11 @@ export function CloudSettings({
               <GitHubSettings
                 busy={busy}
                 github={github}
+                githubUser={githubUser}
                 onDisconnect={onDisconnectGitHub}
+                onDisconnectUser={onDisconnectGitHubUser}
                 onStart={onStartGitHub}
+                onStartUser={onStartGitHubUser}
                 onSync={onSyncGitHub}
               />
               <CodingAgentSettings
@@ -438,14 +448,20 @@ function CodingAgentSettings({
 function GitHubSettings({
   busy,
   github,
+  githubUser,
   onDisconnect,
+  onDisconnectUser,
   onStart,
+  onStartUser,
   onSync,
 }: {
   busy: boolean;
   github: GitHubCapability;
+  githubUser: GitHubUserCapability;
   onDisconnect: (installation: GitHubInstallation) => Promise<void>;
+  onDisconnectUser: () => Promise<void>;
   onStart: () => Promise<void>;
+  onStartUser: () => Promise<void>;
   onSync: (installation: GitHubInstallation) => Promise<void>;
 }) {
   return (
@@ -453,6 +469,48 @@ function GitHubSettings({
       description="Controls which repositories this organization can use for Cloud projects."
       title="GitHub"
     >
+      <div className="mb-5 flex items-start gap-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3">
+        <User className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-[var(--foreground)]">
+            {githubUser.connection.connected
+              ? `Authorized as ${githubUser.connection.login}`
+              : "GitHub account authorization"}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
+            {githubUser.connection.connected
+              ? `${githubUser.connection.installations.length} eligible or configurable repository owners.`
+              : "Authorize AO to create initialized scratch repositories for your personal account or organizations."}
+          </p>
+        </div>
+        {githubUser.status === "auth-required" ? (
+          <a className={primaryButtonClass} href="/github-sign-in">
+            Continue
+          </a>
+        ) : githubUser.connection.connected ? (
+          <button
+            className={buttonClass}
+            disabled={busy}
+            onClick={() => {
+              if (window.confirm("Revoke AO's GitHub user authorization?")) {
+                void onDisconnectUser();
+              }
+            }}
+            type="button"
+          >
+            Disconnect
+          </button>
+        ) : (
+          <button
+            className={primaryButtonClass}
+            disabled={busy || githubUser.status === "loading"}
+            onClick={() => void onStartUser()}
+            type="button"
+          >
+            Authorize GitHub
+          </button>
+        )}
+      </div>
       {github.status === "loading" ? (
         <p className="text-sm text-[var(--color-text-passive)]">
           Loading GitHub connection…

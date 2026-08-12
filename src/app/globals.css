@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
+@import "@xterm/xterm/css/xterm.css";
 @import "../styles/tokens.css";
 @source "../../node_modules/@aoagents/product-ui/dist";
 

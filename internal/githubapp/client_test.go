@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClientUsesPKCEAndVerifiesUserInstallation(t *testing.T) {
@@ -183,6 +184,107 @@ func TestInstallationAuthorityProofRequiresMembersPermission(t *testing.T) {
 	installation.Account.Type = "Enterprise"
 	if InstallationSupportsAuthorityProof(installation) {
 		t.Fatal("enterprise installation without authority proof was accepted")
+	}
+}
+
+func TestGitHubUserAuthorizationUsesPKCEAndRedactsRotatingTokens(t *testing.T) {
+	var exchange map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login/oauth/access_token":
+			if err := json.NewDecoder(r.Body).Decode(&exchange); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write([]byte(`{
+				"access_token":"access-secret",
+				"expires_in":3600,
+				"refresh_token":"refresh-secret",
+				"refresh_token_expires_in":28800
+			}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := testClient(t, server.URL)
+	authorizationURL, err := url.Parse(
+		client.UserAuthorizationURL("state-value", "challenge-value"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query := authorizationURL.Query(); query.Get("state") != "state-value" ||
+		query.Get("code_challenge") != "challenge-value" ||
+		query.Get("code_challenge_method") != "S256" ||
+		query.Get("allow_signup") != "false" {
+		t.Fatalf("authorization query = %v", query)
+	}
+	token, err := client.ExchangeUserCode(
+		context.Background(),
+		"authorization-code",
+		"pkce-verifier",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exchange["code_verifier"] != "pkce-verifier" ||
+		exchange["redirect_uri"] != client.UserOAuthCallbackURL() {
+		t.Fatalf("exchange = %#v", exchange)
+	}
+	if token.Token() != "access-secret" ||
+		token.RefreshToken() != "refresh-secret" ||
+		token.ExpiresAt == nil ||
+		token.RefreshExpiresAt == nil {
+		t.Fatalf("token metadata = %#v", token)
+	}
+	if strings.Contains(token.String(), "secret") ||
+		strings.Contains(token.GoString(), "secret") {
+		t.Fatal("formatted user token exposed a credential")
+	}
+}
+
+func TestCreateRepositoryAsUserInitializesRequestedOwner(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/orgs/acme/repos" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer user-token" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(Repository{
+			ID:            42,
+			Name:          "scratch",
+			FullName:      "acme/scratch",
+			HTMLURL:       "https://github.com/acme/scratch",
+			CloneURL:      "https://github.com/acme/scratch.git",
+			DefaultBranch: "main",
+			Owner:         RepositoryOwner{ID: 7, Login: "acme", Type: "Organization"},
+			UpdatedAt:     time.Now().UTC(),
+		})
+	}))
+	defer server.Close()
+
+	repository, err := testClient(t, server.URL).CreateRepositoryAsUser(
+		context.Background(),
+		"user-token",
+		"acme",
+		"Organization",
+		"scratch",
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.FullName != "acme/scratch" ||
+		requestBody["auto_init"] != true ||
+		requestBody["private"] != true {
+		t.Fatalf("repository = %#v request = %#v", repository, requestBody)
 	}
 }
 

@@ -120,6 +120,33 @@ func (s *Store) withOrg(ctx context.Context, orgID string, fn tenantFn) error {
 	return nil
 }
 
+// withUser runs account-scoped work under the RLS identity of one AO user.
+// It is used for credentials that belong to the person rather than an
+// organization. Callers must derive userID from an authenticated principal or
+// from a hashed, single-use callback route.
+func (s *Store) withUser(ctx context.Context, userID string, fn tenantFn) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT set_config('ao.user_id', $1, true)`,
+		userID,
+	); err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit user transaction: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) withTenant(
 	ctx context.Context,
 	principal domain.Principal,

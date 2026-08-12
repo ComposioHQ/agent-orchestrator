@@ -46,6 +46,30 @@ export function githubApiBaseUrl(): string {
   return url.origin;
 }
 
+export function environmentControlToken(): string {
+  const value = process.env.AO_CLOUD_ENV_CONTROL_TOKEN?.trim();
+  if (!value || value.length < 32) {
+    throw new Error(
+      "AO_CLOUD_ENV_CONTROL_TOKEN must contain at least 32 characters.",
+    );
+  }
+  return value;
+}
+
+export function repositoryBrokerToken(): string {
+  const value = process.env.AO_CLOUD_REPOSITORY_BROKER_TOKEN?.trim();
+  if (!value || value.length < 32) {
+    throw new Error(
+      "AO_CLOUD_REPOSITORY_BROKER_TOKEN must contain at least 32 characters.",
+    );
+  }
+  return value;
+}
+
+export function cloudControlEnvironment(): "development" | "staging" {
+  return cloudWebMode() === "local" ? "development" : "staging";
+}
+
 export function workosRedirectUri(): string {
   const value = process.env.WORKOS_REDIRECT_URI?.trim();
   if (!value) {

@@ -201,6 +201,236 @@ func (s *Store) CreateSession(
 	return session, err
 }
 
+func (s *Store) CreateGitHubScratchProject(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID, idempotencyKey string,
+	maxActiveSandboxes int,
+	input domain.CreateGitHubScratchProject,
+) (domain.Project, domain.Session, error) {
+	var project domain.Project
+	var session domain.Session
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		payload, err := json.Marshal(struct {
+			RepositoryID            int64                `json:"repositoryId"`
+			InstallationID          int64                `json:"installationId"`
+			AuthorityUserExternalID string               `json:"authorityUserExternalId"`
+			AuthorityEnvironment    string               `json:"authorityEnvironment"`
+			CapabilityHash          []byte               `json:"capabilityHash"`
+			DisplayName             string               `json:"displayName"`
+			Config                  json.RawMessage      `json:"config"`
+			Session                 domain.CreateSession `json:"session"`
+		}{
+			RepositoryID:            input.Repository.GitHubRepositoryID,
+			InstallationID:          input.GitHubInstallationID,
+			AuthorityUserExternalID: input.AuthorityUserExternalID,
+			AuthorityEnvironment:    input.AuthorityEnvironment,
+			CapabilityHash:          input.CapabilityHash,
+			DisplayName:             input.DisplayName,
+			Config:                  input.Config,
+			Session:                 input.Session,
+		})
+		if err != nil {
+			return err
+		}
+		var commandID string
+		err = tx.QueryRow(
+			ctx,
+			`INSERT INTO ao_commands (
+				org_id, idempotency_key, kind, payload
+			) VALUES ($1, $2, 'github.scratch.create', $3)
+			ON CONFLICT (org_id, idempotency_key) DO NOTHING
+			RETURNING id`,
+			orgID,
+			idempotencyKey,
+			payload,
+		).Scan(&commandID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			var storedPayload []byte
+			var projectID, sessionID, kind, status string
+			if err := tx.QueryRow(
+				ctx,
+				`SELECT kind, status, payload, result->>'projectId',
+					result->>'sessionId'
+				FROM ao_commands
+				WHERE org_id = $1 AND idempotency_key = $2`,
+				orgID,
+				idempotencyKey,
+			).Scan(
+				&kind, &status, &storedPayload, &projectID, &sessionID,
+			); err != nil {
+				return err
+			}
+			if kind != "github.scratch.create" || status != "succeeded" ||
+				!jsonEqual(storedPayload, payload) ||
+				projectID == "" || sessionID == "" {
+				return ErrIdempotencyMismatch
+			}
+			if err := scanProject(tx.QueryRow(
+				ctx,
+				`SELECT id, org_id, display_name, repository_url,
+					default_branch, github_repository_id, config,
+					created_at, updated_at
+				FROM ao_projects WHERE org_id = $1 AND id = $2`,
+				orgID,
+				projectID,
+			), &project); err != nil {
+				return err
+			}
+			return getSession(ctx, tx, orgID, sessionID, &session)
+		}
+		if err != nil {
+			return err
+		}
+		config := input.Config
+		if len(config) == 0 {
+			config = json.RawMessage(`{"source":"scratch"}`)
+		}
+		remote := len(input.CapabilityCiphertext) > 0
+		if remote {
+			if _, err := tx.Exec(
+				ctx,
+				`INSERT INTO ao_github_repositories (
+					github_repository_id, github_owner_account_id, name,
+					full_name, html_url, clone_url, ssh_url, default_branch,
+					visibility, is_private, is_archived, is_disabled,
+					github_updated_at, last_synced_at
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now())
+				ON CONFLICT (github_repository_id) DO UPDATE SET
+					github_owner_account_id = EXCLUDED.github_owner_account_id,
+					name = EXCLUDED.name, full_name = EXCLUDED.full_name,
+					html_url = EXCLUDED.html_url, clone_url = EXCLUDED.clone_url,
+					ssh_url = EXCLUDED.ssh_url,
+					default_branch = EXCLUDED.default_branch,
+					visibility = EXCLUDED.visibility,
+					is_private = EXCLUDED.is_private,
+					is_archived = EXCLUDED.is_archived,
+					is_disabled = EXCLUDED.is_disabled,
+					github_updated_at = EXCLUDED.github_updated_at,
+					last_synced_at = now()`,
+				input.Repository.GitHubRepositoryID,
+				input.Repository.GitHubOwnerID,
+				input.Repository.Name,
+				input.Repository.FullName,
+				input.Repository.HTMLURL,
+				input.Repository.CloneURL,
+				input.Repository.SSHURL,
+				input.Repository.DefaultBranch,
+				input.Repository.Visibility,
+				input.Repository.IsPrivate,
+				input.Repository.IsArchived,
+				input.Repository.IsDisabled,
+				input.Repository.GitHubUpdatedAt,
+			); err != nil {
+				return err
+			}
+			err = scanProject(tx.QueryRow(
+				ctx,
+				`INSERT INTO ao_projects (
+					id, org_id, display_name, repository_url, default_branch, config,
+					github_repository_id, github_installation_id,
+					github_capability_ciphertext, github_capability_nonce,
+					github_authority_user_id, github_authority_environment
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+				RETURNING id, org_id, display_name, repository_url,
+					default_branch, github_repository_id, config,
+					created_at, updated_at`,
+				input.ProjectID,
+				orgID,
+				input.DisplayName,
+				input.Repository.HTMLURL,
+				input.Repository.DefaultBranch,
+				config,
+				input.Repository.GitHubRepositoryID,
+				input.GitHubInstallationID,
+				input.CapabilityCiphertext,
+				input.CapabilityNonce,
+				input.AuthorityUserExternalID,
+				input.AuthorityEnvironment,
+			), &project)
+		} else {
+			err = scanProject(tx.QueryRow(
+				ctx,
+				`INSERT INTO ao_projects (
+					org_id, display_name, repository_url, default_branch, config,
+					github_repository_id, github_repository_grant_id
+				)
+				SELECT $1, $2, repository.html_url,
+					COALESCE(NULLIF(repository.default_branch, ''), 'main'),
+					$3, repository.github_repository_id, grant_row.id
+				FROM ao_github_repository_grants grant_row
+				JOIN ao_github_repositories repository
+				  ON repository.github_repository_id = grant_row.github_repository_id
+				JOIN ao_github_installations installation
+				  ON installation.org_id = grant_row.org_id
+				 AND installation.id = grant_row.installation_id
+				WHERE grant_row.org_id = $1
+				  AND grant_row.github_repository_id = $4
+				  AND grant_row.revoked_at IS NULL
+				  AND installation.status = 'active'
+				RETURNING id, org_id, display_name, repository_url, default_branch,
+					github_repository_id, config, created_at, updated_at`,
+				orgID,
+				input.DisplayName,
+				config,
+				input.Repository.GitHubRepositoryID,
+			), &project)
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrForbidden
+		}
+		if err != nil {
+			return normalizeConstraintError(err)
+		}
+		input.Session.ProjectID = project.ID
+		input.Session.Kind = "orchestrator"
+		session, err = createSessionTx(
+			ctx,
+			tx,
+			orgID,
+			"github-scratch:"+commandID,
+			maxActiveSandboxes,
+			input.Session,
+			"",
+			principal.UserID,
+		)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(
+			ctx,
+			`UPDATE ao_commands
+			SET status = 'succeeded',
+				result = jsonb_build_object(
+					'projectId', $1::text, 'sessionId', $2::text
+				),
+				updated_at = now()
+			WHERE id = $3`,
+			project.ID,
+			session.ID,
+			commandID,
+		); err != nil {
+			return err
+		}
+		_, err = tx.Exec(
+			ctx,
+			`INSERT INTO ao_audit_events (
+				org_id, actor_user_id, action, resource_type, resource_id,
+				metadata
+			) VALUES (
+				$1, $2, 'github_scratch_project.created', 'project', $3,
+				jsonb_build_object('githubRepositoryId', $4::bigint)
+			)`,
+			orgID,
+			principal.UserID,
+			project.ID,
+			input.Repository.GitHubRepositoryID,
+		)
+		return err
+	})
+	return project, session, err
+}
+
 func createSessionTx(
 	ctx context.Context,
 	tx pgx.Tx,

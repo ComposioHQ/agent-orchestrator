@@ -69,3 +69,59 @@ func (s *Store) WorkerGitHubCheckoutContext(
 	}
 	return authorization, nil
 }
+
+// WorkerRemoteGitHubCheckoutContext returns only the encrypted production
+// capability bound to the worker's own session. Repository and installation
+// identifiers are read from the project row and are never supplied by the
+// worker.
+func (s *Store) WorkerRemoteGitHubCheckoutContext(
+	ctx context.Context,
+	orgID, sessionID string,
+) (domain.RemoteGitHubCheckoutContext, error) {
+	authorization := domain.RemoteGitHubCheckoutContext{
+		OrgID: orgID, SessionID: sessionID,
+	}
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		err := tx.QueryRow(
+			ctx,
+			`SELECT project.id, project.github_installation_id,
+				project.github_repository_id, project.github_authority_user_id,
+				project.github_authority_environment, project.repository_url,
+				project.github_capability_ciphertext,
+				project.github_capability_nonce
+			FROM ao_sessions session
+			JOIN ao_projects project
+			  ON project.org_id = session.org_id
+			 AND project.id = session.project_id
+			WHERE session.org_id = $1 AND session.id = $2
+			  AND session.is_terminated = false
+			  AND project.github_repository_grant_id IS NULL
+			  AND project.github_installation_id IS NOT NULL
+			  AND project.github_repository_id IS NOT NULL
+			  AND project.github_capability_ciphertext IS NOT NULL
+			  AND project.github_capability_nonce IS NOT NULL`,
+			orgID,
+			sessionID,
+		).Scan(
+			&authorization.ProjectID,
+			&authorization.GitHubInstallationID,
+			&authorization.GitHubRepositoryID,
+			&authorization.UserExternalID,
+			&authorization.TargetEnvironment,
+			&authorization.RepositoryURL,
+			&authorization.CapabilityCiphertext,
+			&authorization.CapabilityNonce,
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrForbidden
+		}
+		if err != nil {
+			return fmt.Errorf("resolve remote GitHub checkout context: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.RemoteGitHubCheckoutContext{}, err
+	}
+	return authorization, nil
+}

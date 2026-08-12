@@ -1,34 +1,48 @@
 "use client";
 
-import type {
-  GitHubRepository,
-} from "@aoagents/cloud-client";
-import {
-  Bot,
-  FolderGit2,
-  GitFork,
-  X,
-  type LucideIcon,
-} from "lucide-react";
+import type { GitHubRepository } from "@aoagents/cloud-client";
+import { Bot, FolderGit2, GitFork, X, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-import type { GitHubCapability } from "./cloud-ui-types";
+import type {
+  GitHubCapability,
+  GitHubUserCapability,
+} from "./cloud-ui-types";
+
+export type LocalAgentInput = {
+  displayName: string;
+  harness: "claude-code" | "codex" | "cursor";
+  prompt: string;
+};
+
+export type ScratchProjectInput = LocalAgentInput & {
+  githubInstallationId?: string;
+  private?: boolean;
+};
 
 export function NewProjectDialog({
   github,
+  githubUser,
   onClose,
   onCreateFromGitHub,
+  onCreateScratchProject,
+  onCreateStandalone,
   onOpenProviderSettings,
 }: {
   github: GitHubCapability;
+  githubUser: GitHubUserCapability;
   onClose: () => void;
   onCreateFromGitHub: (repository: GitHubRepository) => Promise<void>;
+  onCreateScratchProject: (input: ScratchProjectInput) => Promise<void>;
+  onCreateStandalone: (input: LocalAgentInput) => Promise<void>;
   onOpenProviderSettings: () => void;
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"choose" | "project" | "github">("choose");
+  const [mode, setMode] = useState<
+    "choose" | "project" | "github" | "scratch" | "standalone"
+  >("choose");
   const activeRepositories = github.repositories.filter(
     ({ access, isArchived }) => access === "active" && !isArchived,
   );
@@ -47,24 +61,27 @@ export function NewProjectDialog({
           ? "Create cloud work"
           : mode === "github"
             ? "Add GitHub project"
-            : "Create project"
+            : mode === "scratch"
+              ? "Create scratch project"
+              : mode === "standalone"
+                ? "Create standalone agent"
+                : "Create project"
       }
     >
       {mode === "choose" ? (
         <div className="p-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <CreationOption
-              description="Use a GitHub repository with the project workflow."
+              description="Create a project with its own orchestrator."
               icon={FolderGit2}
               label="Create a Project"
               onClick={() => setMode("project")}
             />
             <CreationOption
               description="Start an independent agent runtime."
-              disabled
               icon={Bot}
               label="Create a Standalone Agent"
-              status="Execution unavailable"
+              onClick={() => setMode("standalone")}
             />
           </div>
           <div className="-mx-4 -mb-4 mt-4 flex justify-end border-t border-[var(--color-border-strong)] px-4 py-3">
@@ -99,11 +116,10 @@ export function NewProjectDialog({
               }
             />
             <CreationOption
-              description="Start an empty Cloud project, optionally backed by a new GitHub repository."
-              disabled
+              description="Start an empty persistent Git workspace with an orchestrator."
               icon={FolderGit2}
               label="Start from scratch"
-              status="Backend unavailable"
+              onClick={() => setMode("scratch")}
             />
           </div>
           <div className="-mx-4 -mb-4 mt-4 flex items-center justify-between border-t border-[var(--color-border-strong)] px-4 py-3">
@@ -191,8 +207,224 @@ export function NewProjectDialog({
             submitLabel="Add project"
           />
         </form>
+      ) : mode === "scratch" || mode === "standalone" ? (
+        <LocalAgentForm
+          busy={busy}
+          error={error}
+          mode={mode}
+          githubUser={githubUser}
+          onBack={() => setMode(mode === "scratch" ? "project" : "choose")}
+          onCancel={onClose}
+          onOpenProviderSettings={onOpenProviderSettings}
+          onSubmit={async (input) => {
+            setBusy(true);
+            setError("");
+            try {
+              if (mode === "scratch") {
+                await onCreateScratchProject(input);
+              } else {
+                await onCreateStandalone(input);
+              }
+              onClose();
+            } catch (cause) {
+              setError(
+                cause instanceof Error
+                  ? cause.message
+                  : "Could not create the agent.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
       ) : null}
     </Dialog>
+  );
+}
+
+function LocalAgentForm({
+  busy,
+  error,
+  mode,
+  githubUser,
+  onBack,
+  onCancel,
+  onOpenProviderSettings,
+  onSubmit,
+}: {
+  busy: boolean;
+  error: string;
+  mode: "scratch" | "standalone";
+  githubUser: GitHubUserCapability;
+  onBack: () => void;
+  onCancel: () => void;
+  onOpenProviderSettings: () => void;
+  onSubmit: (input: ScratchProjectInput) => Promise<void>;
+}) {
+  const isProject = mode === "scratch";
+  const eligibleInstallations = githubUser.connection.installations.filter(
+    ({ canCreateRepository }) => canCreateRepository,
+  );
+  const [useGitHub, setUseGitHub] = useState(false);
+  const [installationId, setInstallationId] = useState(
+    eligibleInstallations.length === 1
+      ? eligibleInstallations[0].githubInstallationId
+      : "",
+  );
+  const [privateRepository, setPrivateRepository] = useState(true);
+  const selectedInstallation = eligibleInstallations.find(
+    ({ githubInstallationId }) => githubInstallationId === installationId,
+  );
+  return (
+    <form
+      className="space-y-4 p-5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        void onSubmit({
+          displayName: String(form.get("displayName") ?? "").trim(),
+          harness: String(
+            form.get("harness") ?? "claude-code",
+          ) as LocalAgentInput["harness"],
+          prompt: String(form.get("prompt") ?? "").trim(),
+          githubInstallationId:
+            isProject && useGitHub
+              ? selectedInstallation?.githubInstallationId
+              : undefined,
+          private: isProject && useGitHub ? privateRepository : undefined,
+        });
+      }}
+    >
+      <label className="block">
+        <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+          {isProject ? "Project name" : "Agent name"}
+        </span>
+        <input
+          autoFocus
+          className={controlClass}
+          maxLength={isProject ? 60 : 80}
+          name="displayName"
+          placeholder={isProject ? "My project" : "Standalone agent"}
+          required
+        />
+      </label>
+      {isProject ? (
+        <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
+          <input
+            checked={useGitHub}
+            className="mt-1"
+            disabled={busy}
+            onChange={(event) => setUseGitHub(event.target.checked)}
+            type="checkbox"
+          />
+          <span>
+            Create a GitHub repository for this project.
+            <span className="block text-[var(--color-text-passive)]">
+              Leave unchecked for an AO-managed local Git repository.
+            </span>
+          </span>
+        </label>
+      ) : null}
+      {isProject && useGitHub ? (
+        githubUser.status === "available" &&
+        githubUser.connection.connected ? (
+          <>
+            <label className="block">
+              <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+                GitHub owner
+              </span>
+              <select
+                className={controlClass}
+                disabled={busy || githubUser.connection.installations.length === 0}
+                onChange={(event) => setInstallationId(event.target.value)}
+                required
+                value={installationId}
+              >
+                <option value="">Choose personal account or organization</option>
+                {githubUser.connection.installations.map((installation) => (
+                  <option
+                    disabled={!installation.canCreateRepository}
+                    key={installation.githubInstallationId}
+                    value={installation.githubInstallationId}
+                  >
+                    {installation.accountLogin}
+                    {installation.accountType.toLowerCase() === "user"
+                      ? " · personal"
+                      : " · organization"}
+                    {installation.canCreateRepository
+                      ? ""
+                      : " · configure all repositories"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
+              <input
+                checked={privateRepository}
+                className="mt-1"
+                disabled={busy}
+                onChange={(event) => setPrivateRepository(event.target.checked)}
+                type="checkbox"
+              />
+              <span>Create the GitHub repository as private.</span>
+            </label>
+          </>
+        ) : (
+          <div className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3 text-xs text-[var(--color-text-passive)]">
+            Authorize AO with GitHub to choose an owner and create a repository.{" "}
+            <button
+              className="text-[#8eb6ff] hover:underline"
+              onClick={onOpenProviderSettings}
+              type="button"
+            >
+              Open GitHub settings
+            </button>
+          </div>
+        )
+      ) : null}
+      <label className="block">
+        <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+          Agent harness
+        </span>
+        <select
+          className={controlClass}
+          defaultValue="claude-code"
+          name="harness"
+        >
+          <option value="claude-code">Claude Code</option>
+          <option value="codex">Codex</option>
+          <option value="cursor">Cursor Agent</option>
+        </select>
+      </label>
+      <label className="block">
+        <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+          Initial task <span className="text-white/35">(optional)</span>
+        </span>
+        <textarea
+          className={`${controlClass} min-h-24 resize-y py-2`}
+          maxLength={65536}
+          name="prompt"
+          placeholder={
+            isProject
+              ? "Describe what the project orchestrator should do."
+              : "Give the agent its first task."
+          }
+        />
+      </label>
+      <p className="text-xs leading-5 text-[var(--color-text-passive)]">
+        {isProject
+          ? "AO will initialize a persistent Git workspace and start the project orchestrator."
+          : "AO will initialize a persistent Git workspace for this independent agent."}
+      </p>
+      <DialogFooter
+        busy={busy}
+        error={error}
+        onBack={onBack}
+        onCancel={onCancel}
+        submitDisabled={isProject && useGitHub && !selectedInstallation}
+        submitLabel={isProject ? "Create project" : "Create agent"}
+      />
+    </form>
   );
 }
 

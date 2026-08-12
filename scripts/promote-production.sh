@@ -182,6 +182,7 @@ aws_cli secretsmanager describe-secret \
 aws_cli secretsmanager describe-secret \
 	--secret-id ao-cloud/production/workos >/dev/null
 github_secret_arn="$(secret_arn ao-cloud/production/github)"
+broker_secret_arn="$(secret_arn "${AO_CLOUD_REPOSITORY_BROKER_SECRET_ID:-ao-cloud/repository-broker}")"
 
 register_api_task() {
 	local source payload
@@ -209,6 +210,7 @@ register_api_task() {
 				--set-secret "AO_CLOUD_GITHUB_PRIVATE_KEY=${github_secret_arn}:private_key::" \
 				--set-secret "AO_CLOUD_GITHUB_WEBHOOK_SECRET=${github_secret_arn}:webhook_secret::" \
 				--set-secret "AO_CLOUD_GITHUB_STATE_KEY=${github_secret_arn}:state_key::" \
+				--set-secret "AO_CLOUD_REPOSITORY_BROKER_TOKEN=${broker_secret_arn}:auth_token::" \
 				--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}" \
 				--set-secret "AO_CLOUD_NODEOPS_BASE_URL=${nodeops_secret_arn}:base_url::" \
 				--set-secret "AO_CLOUD_NODEOPS_API_KEY=${nodeops_secret_arn}:api_key::" \

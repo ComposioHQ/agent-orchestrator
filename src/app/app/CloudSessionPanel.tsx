@@ -10,8 +10,9 @@ import { ChevronLeft, FileText, MessageSquare, Send, Terminal, X } from "lucide-
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
+import { CloudTerminal } from "./CloudTerminal";
 
-type PanelTab = "chat" | "files";
+type PanelTab = "chat" | "files" | "terminal";
 
 export function CloudSessionPanel({
   onClose,
@@ -188,16 +189,14 @@ export function CloudSessionPanel({
         >
           <FileText className="size-3.5" />
         </TabButton>
-        <button
-          aria-label="Terminal unavailable"
-          className="flex h-7 cursor-not-allowed items-center gap-1.5 rounded-md px-2 text-[11px] text-[var(--color-text-passive)] opacity-45"
-          disabled
-          title="The web gateway cannot upgrade terminal WebSockets yet"
-          type="button"
+        <TabButton
+          active={tab === "terminal"}
+          disabled={!session.runtimeConnected || session.mode !== "trusted"}
+          label="Terminal"
+          onClick={() => setTab("terminal")}
         >
           <Terminal className="size-3.5" />
-          Terminal
-        </button>
+        </TabButton>
       </div>
 
       {tab === "chat" ? (
@@ -211,7 +210,7 @@ export function CloudSessionPanel({
             <EventView event={event} key={event.sequence} />
           ))}
         </div>
-      ) : (
+      ) : tab === "files" ? (
         <FileBrowser
           busy={filesBusy}
           content={fileContent}
@@ -232,6 +231,11 @@ export function CloudSessionPanel({
           }
           onSave={() => void saveFile()}
           readOnly={session.mode === "read-only"}
+        />
+      ) : (
+        <CloudTerminal
+          organizationId={organizationId}
+          sessionId={session.id}
         />
       )}
 
@@ -270,9 +274,13 @@ export function CloudSessionPanel({
               <Send className="size-4" />
             </button>
           </form>
-        ) : (
+        ) : tab === "files" ? (
           <p className="text-[10px] text-[var(--color-text-passive)]">
             Files are read from the connected worker workspace.
+          </p>
+        ) : (
+          <p className="font-mono text-[10px] text-[var(--color-text-passive)]">
+            /workspace/repository · trusted session
           </p>
         )}
       </div>

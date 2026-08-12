@@ -18,7 +18,7 @@ type recordingGitRunner struct {
 }
 
 func (r *recordingGitRunner) Run(
-	_ context.Context, _ string, environment map[string]string, arguments ...string,
+	_ context.Context, directory string, environment map[string]string, arguments ...string,
 ) (string, error) {
 	r.commands = append(r.commands, slices.Clone(arguments))
 	if environment["AO_GIT_TOKEN"] != "" {
@@ -31,6 +31,11 @@ func (r *recordingGitRunner) Run(
 	}
 	if arguments[0] == "clone" {
 		if err := os.MkdirAll(filepath.Join(arguments[len(arguments)-1], ".git"), 0o700); err != nil {
+			return "", err
+		}
+	}
+	if arguments[0] == "init" {
+		if err := os.MkdirAll(filepath.Join(directory, ".git"), 0o700); err != nil {
 			return "", err
 		}
 	}
@@ -86,6 +91,49 @@ func TestPrepareCheckoutAllowsAnonymousPublicGitHubClone(t *testing.T) {
 	if runner.credentialCalls != 0 || len(runner.commands) != 2 ||
 		runner.commands[0][0] != "clone" || runner.commands[1][0] != "remote" {
 		t.Fatalf("commands = %#v, credential calls = %d", runner.commands, runner.credentialCalls)
+	}
+}
+
+func TestPrepareScratchWorkspaceInitializesAndReusesRepository(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	runner := &recordingGitRunner{}
+
+	if err := PrepareScratchWorkspace(
+		context.Background(), runner, workspace,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 || runner.commands[0][0] != "init" {
+		t.Fatalf("commands after initialization = %#v", runner.commands)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workspace, "README.md"), []byte("persistent\n"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareScratchWorkspace(
+		context.Background(), runner, workspace,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 2 || runner.commands[1][0] != "rev-parse" {
+		t.Fatalf("commands after reuse = %#v", runner.commands)
+	}
+}
+
+func TestScratchRepositoryURLUsesReservedLocalHost(t *testing.T) {
+	for _, test := range []struct {
+		raw  string
+		want bool
+	}{
+		{raw: "https://scratch.ao.local/agent-123", want: true},
+		{raw: "https://scratch.ao.local", want: false},
+		{raw: "https://scratch.ao.local.evil.example/agent-123", want: false},
+		{raw: "https://github.com/acme/repository", want: false},
+	} {
+		if got := IsScratchRepositoryURL(test.raw); got != test.want {
+			t.Errorf("IsScratchRepositoryURL(%q) = %v, want %v", test.raw, got, test.want)
+		}
 	}
 }
 

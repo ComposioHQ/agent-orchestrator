@@ -55,6 +55,7 @@ secret_arn() {
 provider_secret_arn="$(secret_arn ao-cloud/staging/provider-secret-key)"
 nodeops_secret_arn="$(secret_arn "$NODEOPS_SECRET_ID")"
 worker_secret_arn="$(secret_arn "$WORKER_SECRET_ID")"
+broker_secret_arn="$(secret_arn "${AO_CLOUD_REPOSITORY_BROKER_SECRET_ID:-ao-cloud/repository-broker}")"
 nodeops_settings="$(
 	aws_cli secretsmanager get-secret-value \
 		--secret-id "$NODEOPS_SECRET_ID" \
@@ -183,7 +184,10 @@ register_task_definition() {
 		render_args+=(
 			--worker-image "$worker_image"
 			--set-environment AO_CLOUD_PUBLIC_URL=https://staging-api.aoagents.dev
+			--set-environment AO_CLOUD_REPOSITORY_BROKER_URL=https://api.aoagents.dev
 			--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}"
+			--set-secret "AO_CLOUD_REPOSITORY_BROKER_TOKEN=${broker_secret_arn}:auth_token::"
+			--set-secret "AO_CLOUD_ENV_CONTROL_TOKEN=${broker_secret_arn}:staging_control_token::"
 			--set-secret "AO_CLOUD_NODEOPS_BASE_URL=${nodeops_secret_arn}:base_url::"
 			--set-secret "AO_CLOUD_NODEOPS_API_KEY=${nodeops_secret_arn}:api_key::"
 			--set-secret "AO_CLOUD_NODEOPS_DEFAULT_SHAPE=${nodeops_secret_arn}:default_shape::"

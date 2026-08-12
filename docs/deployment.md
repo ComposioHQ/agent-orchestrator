@@ -84,6 +84,7 @@ role:
 - `ao-cloud/staging/provider-secret-key`
 - `ao-cloud/staging/nodeops`
 - `ao-cloud/staging/worker`
+- `ao-cloud/repository-broker`
 
 The API task gets only the runtime database credential. The elevated migration
 credential is available only to the one-off migration task. Secrets are not
@@ -97,6 +98,16 @@ baked into the image or task-definition environment.
 every field before building or registering a task, and ECS injects each value
 directly from its environment-scoped secret. Provider auto-pause is
 intentionally absent from this deployment configuration.
+
+`ao-cloud/repository-broker` is shared only by the production control plane,
+environment control planes, and the server-side web BFF. It is a JSON secret
+with `auth_token` and `staging_control_token`, each containing at least 32
+random characters. `auth_token` authenticates staging-to-production capability
+validation and redemption. `staging_control_token` authenticates the web BFF
+to the staging control plane. Neither value is exposed through a
+`NEXT_PUBLIC_` variable.
+Both ECS execution roles need `secretsmanager:GetSecretValue` for this one
+secret in addition to their environment-scoped secrets.
 
 The configured NodeOps `default_rootfs` must provide `bash`, `git`, `claude`,
 `codex`, and `cursor-agent`. The reconciler copies the release's fenced
@@ -143,8 +154,10 @@ revision so that rolling deploys and application rollback are safe.
 
 Production is deliberately a separate environment. It has its own PostgreSQL
 instance, ECS cluster, service, ALB, IAM roles, logs, alarms, and Secrets Manager
-entries. Staging and production share only the immutable control-plane and
-worker image digests selected for promotion.
+entries. Staging and production share the immutable control-plane/worker image
+digests and the narrowly scoped repository-broker authentication secret; their
+databases, provider credentials, workers, and application state remain
+separate.
 
 Run this only after the release is healthy in staging:
 
@@ -204,6 +217,7 @@ The service reads only these production-scoped secrets:
 - `ao-cloud/production/github`
 - `ao-cloud/production/nodeops`
 - `ao-cloud/production/worker`
+- `ao-cloud/repository-broker`
 
 The production `nodeops` and `worker` documents use the same schema as staging.
 Promotion reads and validates production values; it never copies secret values
@@ -273,9 +287,14 @@ and webhook handlers are implemented with PostgreSQL-backed state:
 
 The shared GitHub App routes these three global URLs to production. Staging must
 not independently enable the same App credentials: its callback state would
-live in a different database. Staging may exercise the public typed contract
-and WorkOS auth, but its GitHub UI must remain disabled until the production
-broker exists. Production reads the App ID, slug, client credentials, RSA
+live in a different database. Production creates scratch repositories only
+after reserving an idempotency record, then issues an opaque capability bound
+to the repository, installation, user, and target environment. The server-side
+web BFF passes that capability directly to the authenticated environment
+control-plane endpoint; browser responses never contain it. Environments
+encrypt it with their provider credential key and redeem it server-to-server
+for short-lived, repository-scoped installation tokens when workers check out.
+Production reads the App ID, slug, client credentials, RSA
 private key, webhook secret, and base64 32-byte state key from Secrets Manager
 through the ECS task definition. `AO_CLOUD_PUBLIC_URL` is
 `https://api.aoagents.dev`.

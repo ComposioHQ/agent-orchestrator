@@ -15,7 +15,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
 import { CloudBoard } from "./CloudBoard";
-import { NewProjectDialog } from "./CloudDialogs";
+import {
+  NewProjectDialog,
+  type LocalAgentInput,
+  type ScratchProjectInput,
+} from "./CloudDialogs";
 import { CloudSettings } from "./CloudSettings";
 import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
@@ -23,7 +27,9 @@ import { CloudSessionPanel } from "./CloudSessionPanel";
 import { CloudSidebar } from "./CloudSidebar";
 import {
   initialGitHubCapability,
+  initialGitHubUserCapability,
   type GitHubCapability,
+  type GitHubUserCapability,
   initialProviderCapability,
   type ProviderCapability,
 } from "./cloud-ui-types";
@@ -54,6 +60,9 @@ export function CloudWorkspace() {
   const [github, setGitHub] = useState<GitHubCapability>(
     initialGitHubCapability,
   );
+  const [githubUser, setGitHubUser] = useState<GitHubUserCapability>(
+    initialGitHubUserCapability,
+  );
   const [githubBusy, setGitHubBusy] = useState(false);
   const [providers, setProviders] = useState<ProviderCapability>(
     initialProviderCapability,
@@ -62,6 +71,35 @@ export function CloudWorkspace() {
   const organizationRequest = useRef(0);
   const githubRequest = useRef(0);
   const providerRequest = useRef(0);
+
+  const loadGitHubUser = useCallback(async () => {
+    setGitHubUser(initialGitHubUserCapability);
+    try {
+      const connection = await client.getGitHubUserConnection();
+      setGitHubUser({ status: "available", connection });
+    } catch (cause) {
+      if (
+        cause instanceof CloudApiError &&
+        cause.status === 401 &&
+        cause.code === "GITHUB_AUTH_REQUIRED"
+      ) {
+        setGitHubUser({
+          status: "auth-required",
+          connection: { connected: false, installations: [] },
+          message: cause.message,
+        });
+        return;
+      }
+      setGitHubUser({
+        status: "error",
+        connection: { connected: false, installations: [] },
+        message:
+          cause instanceof Error
+            ? cause.message
+            : "Could not load GitHub authorization.",
+      });
+    }
+  }, [client]);
 
   const loadGitHub = useCallback(
     async (orgId: string) => {
@@ -138,6 +176,7 @@ export function CloudWorkspace() {
             : (projectPage.items[0]?.id ?? null),
         );
         void loadGitHub(orgId);
+        void loadGitHubUser();
         const providerLoad = providerRequest.current + 1;
         providerRequest.current = providerLoad;
         setProviders(initialProviderCapability);
@@ -166,7 +205,7 @@ export function CloudWorkspace() {
         if (organizationRequest.current === request) setLoading(false);
       }
     },
-    [client, loadGitHub],
+    [client, loadGitHub, loadGitHubUser],
   );
 
   useEffect(() => {
@@ -195,6 +234,38 @@ export function CloudWorkspace() {
       active = false;
     };
   }, [client, loadOrganization]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    let active = true;
+    let refreshing = false;
+    const refreshSessions = async () => {
+      if (refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      try {
+        const page = await client.listSessions(organizationId, { limit: 100 });
+        if (active) setSessions(page.items);
+      } catch (cause) {
+        if (
+          active &&
+          cause instanceof CloudApiError &&
+          cause.status === 401
+        ) {
+          window.location.assign("/");
+        }
+      } finally {
+        refreshing = false;
+      }
+    };
+    const interval = window.setInterval(() => void refreshSessions(), 1_500);
+    const onVisibility = () => void refreshSessions();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [client, organizationId]);
 
   useEffect(() => {
     const settings = new URLSearchParams(window.location.search).get("settings");
@@ -232,6 +303,72 @@ export function CloudWorkspace() {
     setSelectedProjectId(response.project.id);
   };
 
+  const createScratchWork = async (
+    input: LocalAgentInput,
+    kind: "worker" | "orchestrator",
+  ) => {
+    const suffix = crypto.randomUUID();
+    const projectResponse = await client.createProject(
+      organizationId,
+      {
+        displayName: input.displayName,
+        repositoryUrl: `https://scratch.ao.local/${suffix}`,
+        defaultBranch: "main",
+        config: {
+          source: kind === "worker" ? "standalone-agent" : "scratch",
+          scratch: true,
+          standalone: kind === "worker",
+        },
+      },
+      { idempotencyKey: newIdempotencyKey("scratch-project") },
+    );
+    const sessionResponse = await client.createSession(
+      organizationId,
+      {
+        projectId: projectResponse.project.id,
+        kind,
+        harness: input.harness,
+        displayName:
+          kind === "orchestrator"
+            ? `${input.displayName} orchestrator`
+            : input.displayName,
+        prompt: input.prompt,
+        mode: "trusted",
+        deniedCommands: [],
+      },
+      { idempotencyKey: newIdempotencyKey("scratch-session") },
+    );
+    setProjects((current) => [...current, projectResponse.project]);
+    setSessions((current) => [...current, sessionResponse.session]);
+    setSelectedProjectId(projectResponse.project.id);
+    setSelectedSessionId(sessionResponse.session.id);
+  };
+
+  const createScratchProject = async (input: ScratchProjectInput) => {
+    if (!input.githubInstallationId) {
+      await createScratchWork(input, "orchestrator");
+      return;
+    }
+    const response = await client.createGitHubScratchProject(
+      organizationId,
+      {
+        displayName: input.displayName,
+        githubInstallationId: input.githubInstallationId,
+        private: input.private ?? true,
+        orchestrator: {
+          harness: input.harness,
+          prompt: input.prompt,
+        },
+      },
+      { idempotencyKey: newIdempotencyKey("github-scratch-project") },
+    );
+    setProjects((current) => [...current, response.project]);
+    setSessions((current) => [...current, response.session]);
+    setSelectedProjectId(response.project.id);
+    setSelectedSessionId(response.session.id);
+    void loadGitHub(organizationId);
+  };
+
   const startGitHubInstallation = async () => {
     setGitHubBusy(true);
     setError("");
@@ -254,6 +391,45 @@ export function CloudWorkspace() {
       }, 500);
     } catch (cause) {
       handleLoadError(cause, setError);
+      setGitHubBusy(false);
+    }
+  };
+
+  const startGitHubUserAuthorization = async () => {
+    setGitHubBusy(true);
+    setError("");
+    try {
+      const attempt = await client.startGitHubUserAuthorization();
+      const popup = window.open(
+        attempt.authorizeUrl,
+        "ao-github-user",
+        "popup,width=900,height=760",
+      );
+      if (!popup) {
+        window.location.assign(attempt.authorizeUrl);
+        return;
+      }
+      setGitHubBusy(false);
+      const refresh = window.setInterval(() => {
+        if (!popup.closed) return;
+        window.clearInterval(refresh);
+        void loadGitHubUser();
+      }, 500);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+      setGitHubBusy(false);
+    }
+  };
+
+  const disconnectGitHubUser = async () => {
+    setGitHubBusy(true);
+    setError("");
+    try {
+      await client.disconnectGitHubUser();
+      await loadGitHubUser();
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
       setGitHubBusy(false);
     }
   };
@@ -414,11 +590,13 @@ export function CloudWorkspace() {
                 account={account}
                 busy={githubBusy}
                 github={github}
+                githubUser={githubUser}
                 initialPanel={settingsTarget}
                 onConnectAgent={connectAgentProvider}
                 onDisconnectAgent={disconnectAgentProvider}
                 onBack={() => setView("board")}
                 onDisconnectGitHub={disconnectGitHubInstallation}
+                onDisconnectGitHubUser={disconnectGitHubUser}
                 onSelectOrganization={(id) => {
                   setOrganizationId(id);
                   setSelectedProjectId(null);
@@ -426,6 +604,7 @@ export function CloudWorkspace() {
                   void loadOrganization(id);
                 }}
                 onStartGitHub={startGitHubInstallation}
+                onStartGitHubUser={startGitHubUserAuthorization}
                 onSyncGitHub={syncGitHubInstallation}
                 providerBusy={providerBusy}
                 providers={providers}
@@ -487,8 +666,11 @@ export function CloudWorkspace() {
       {newProjectOpen ? (
         <NewProjectDialog
           github={github}
+          githubUser={githubUser}
           onClose={() => setNewProjectOpen(false)}
           onCreateFromGitHub={createProjectFromGitHub}
+          onCreateScratchProject={createScratchProject}
+          onCreateStandalone={(input) => createScratchWork(input, "worker")}
           onOpenProviderSettings={() => {
             setNewProjectOpen(false);
             setSettingsTarget("providers");

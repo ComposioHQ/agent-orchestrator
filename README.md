@@ -233,6 +233,7 @@ All resource routes use `/api/cloud/v1`. Project and session creation require an
 | `POST` | `/orgs/{orgId}/github/installations/{id}/disconnect` | Revoke AO's installation grants |
 | `GET` | `/orgs/{orgId}/github/repositories` | List active and revoked repository grants |
 | `POST` | `/orgs/{orgId}/github/projects` | Create a project from an active repository grant |
+| `POST` | `/orgs/{orgId}/projects/scratch` | Idempotently create a private repository, project, and orchestrator session |
 | `GET/POST` | `/orgs/{orgId}/sessions` | List or create sessions |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}` | Read a session |
 | `POST` | `/orgs/{orgId}/sessions/{sessionId}/messages` | Durably queue a message |
@@ -259,6 +260,15 @@ rows with bounded retries. Sync generations prevent slower stale requests from
 restoring newer revoked grants. Repository removals, suspension, deletion, and
 explicit disconnect revoke grants; project creation checks an active grant in
 the same database transaction.
+
+Local and staging scratch creation uses server-only broker routes that are not
+part of the public Cloud contract. Production reserves the user's idempotency
+key before creating a GitHub repository and returns an encrypted-at-rest,
+recoverable opaque capability only to the authenticated BFF. The target
+environment validates it with production before encrypting it under its
+provider credential key and creating project/session rows. Workers redeem that
+stored capability through production for a fresh token restricted to the exact
+repository. Revoked, mismatched, or unavailable capabilities fail closed.
 
 The GitHub App needs at least organization **Members: read** permission so AO can
 prove that the person binding an organization installation is an active admin.
@@ -346,8 +356,8 @@ AO_CLOUD_TEST_DATABASE_URL='postgres://localhost/ao_cloud_test?sslmode=disable' 
   go test ./... -count=1
 ```
 
-The integration suite applies the migration, asserts 28 tenant/domain tables
-plus two callback-routing tables,
+The integration suite applies the migration, asserts 35 AO tables and 28
+forced-RLS tenant/domain tables,
 exercises local and WorkOS-backed principals, checks idempotent project,
 session, and message creation, verifies concurrent message retries, durable
 cross-replica event delivery/replay and workspace intent, and proves

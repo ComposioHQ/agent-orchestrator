@@ -202,6 +202,14 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 	}
+	var providerCipher *secrets.Cipher
+	if len(cfg.ProviderSecretKey) > 0 {
+		providerCipher, err = secrets.New(cfg.ProviderSecretKey)
+		if err != nil {
+			return err
+		}
+	}
+
 	var githubService *githubapp.Service
 	if cfg.GitHub.Enabled() {
 		githubClient, err := githubapp.New(githubapp.Config{
@@ -219,6 +227,7 @@ func run(logger *slog.Logger) error {
 			store,
 			githubClient,
 			cfg.GitHub.StateKey,
+			cfg.ProviderSecretKey,
 			cfg.GitHub.WebhookSecret,
 			cfg.GitHub.InstallTTL,
 			logger,
@@ -227,6 +236,22 @@ func run(logger *slog.Logger) error {
 			return err
 		}
 		go githubService.Run(ctx)
+	}
+	var checkoutBroker httpapi.CheckoutBroker
+	if githubService != nil {
+		checkoutBroker = githubService
+	} else if cfg.RepositoryBrokerURL != "" {
+		checkoutBroker, err = githubapp.NewRemoteCheckoutBroker(
+			store,
+			providerCipher,
+			cfg.RepositoryBrokerURL,
+			cfg.Environment,
+			cfg.RepositoryBrokerToken,
+			nil,
+		)
+		if err != nil {
+			return err
+		}
 	}
 	reconciler, err := newSandboxReconciler(cfg, store, logger)
 	if err != nil {
@@ -240,29 +265,25 @@ func run(logger *slog.Logger) error {
 		workerTokens = worker.NewTokenManager([]byte(cfg.WorkerSigningKey))
 	}
 
-	var providerCipher *secrets.Cipher
-	if len(cfg.ProviderSecretKey) > 0 {
-		providerCipher, err = secrets.New(cfg.ProviderSecretKey)
-		if err != nil {
-			return err
-		}
-	}
 	api := httpapi.New(httpapi.Options{
-		Store:            store,
-		WorkOS:           workosVerifier,
-		LocalAuthEnabled: cfg.LocalAuthEnabled,
-		LocalSessionTTL:  cfg.LocalSessionTTL,
-		SandboxProvider:  cfg.SandboxProvider,
-		Provisioning:     provisioningDefaults(cfg),
-		WorkerTokens:     workerTokens,
-		WorkerTokenTTL:   cfg.WorkerTokenTTL(),
-		MaxSandboxes:     cfg.MaxSandboxesPerOrg,
-		Environment:      cfg.Environment,
-		Release:          cfg.Release,
-		Logger:           logger,
-		GitHub:           githubService,
-		SecretCipher:     providerCipher,
-		WebhookMaxBody:   cfg.GitHub.WebhookMaxBody,
+		Store:                   store,
+		WorkOS:                  workosVerifier,
+		LocalAuthEnabled:        cfg.LocalAuthEnabled,
+		LocalSessionTTL:         cfg.LocalSessionTTL,
+		SandboxProvider:         cfg.SandboxProvider,
+		Provisioning:            provisioningDefaults(cfg),
+		WorkerTokens:            workerTokens,
+		WorkerTokenTTL:          cfg.WorkerTokenTTL(),
+		MaxSandboxes:            cfg.MaxSandboxesPerOrg,
+		Environment:             cfg.Environment,
+		Release:                 cfg.Release,
+		Logger:                  logger,
+		GitHub:                  githubService,
+		CheckoutBroker:          checkoutBroker,
+		BrokerAuthToken:         cfg.RepositoryBrokerToken,
+		EnvironmentControlToken: cfg.EnvironmentControlToken,
+		SecretCipher:            providerCipher,
+		WebhookMaxBody:          cfg.GitHub.WebhookMaxBody,
 	})
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
