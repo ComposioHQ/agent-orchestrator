@@ -23,7 +23,7 @@ Every session gets a live interface and its own feedback loop.
 
 <br />
 
-<img src="docs/assets/readme/dashboard.png" alt="Agent Orchestrator dashboard showing parallel coding agent sessions" width="100%" />
+<img src="docs/assets/readme/hero.png" alt="Agent Orchestrator dashboard showing parallel coding agent sessions" width="100%" />
 </div>
 
 ## Run more agents without managing more terminals
@@ -48,7 +48,7 @@ Instead of coordinating a pile of agent terminals by hand, you get one visible, 
       <p>Start multiple coding agents from the same project without mixing files, branches, terminals, or pull request state.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/dashboard.png" alt="Agent Orchestrator board with multiple parallel sessions" width="100%" />
+      <img src="docs/assets/readme/hero.png" alt="Agent Orchestrator board with multiple parallel sessions" width="100%" />
     </td>
   </tr>
   <tr>
@@ -57,7 +57,7 @@ Instead of coordinating a pile of agent terminals by hand, you get one visible, 
       <p>Use a structured Chat controller or attach to the agent's native terminal UI while keeping session and pull request state in view.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/session-terminal.png" alt="Session terminal inside Agent Orchestrator" width="100%" />
+      <img src="docs/assets/readme/tui.png" alt="Session terminal inside Agent Orchestrator" width="100%" />
     </td>
   </tr>
   <tr>
@@ -66,7 +66,7 @@ Instead of coordinating a pile of agent terminals by hand, you get one visible, 
       <p>Run reviewer agents, inspect review status, and route requested changes back to the worker that owns them.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/reviews-tab.png" alt="Session summary showing pull request and reviewer status" width="100%" />
+      <img src="docs/assets/readme/review.png" alt="Session summary showing pull request and reviewer status" width="100%" />
     </td>
   </tr>
   <tr>
@@ -75,7 +75,7 @@ Instead of coordinating a pile of agent terminals by hand, you get one visible, 
       <p>Preview a session's local app beside its interface so UI work, browser state, and agent output stay together.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/browser-preview.png" alt="Browser preview tab showing a local app preview" width="100%" />
+      <img src="docs/assets/readme/browser.png" alt="Browser preview tab showing a local app preview" width="100%" />
     </td>
   </tr>
 </table>
