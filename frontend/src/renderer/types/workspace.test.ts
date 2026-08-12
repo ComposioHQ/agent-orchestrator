@@ -8,6 +8,8 @@ import {
 	orchestratorHealth,
 	sessionIsActive,
 	sessionNeedsAttention,
+	sessionNeedsHumanInput,
+	sessionNeedsTechnicalAttention,
 	toAgentProvider,
 	toSessionActivity,
 	toSessionStatus,
@@ -201,8 +203,11 @@ describe("sessionNeedsAttention", () => {
 		},
 	);
 
-	it("treats no_signal as needing attention", () => {
-		expect(sessionNeedsAttention(sessionWith({ status: "no_signal" }))).toBe(true);
+	it("distinguishes a human question from technical attention", () => {
+		expect(sessionNeedsHumanInput(sessionWith({ status: "needs_input" }))).toBe(true);
+		expect(sessionNeedsHumanInput(sessionWith({ status: "no_signal" }))).toBe(false);
+		expect(sessionNeedsTechnicalAttention(sessionWith({ status: "no_signal" }))).toBe(true);
+		expect(sessionNeedsTechnicalAttention(sessionWith({ status: "needs_input" }))).toBe(false);
 	});
 
 	it("is false for statuses that don't need the user", () => {
@@ -312,11 +317,11 @@ describe("attentionZone", () => {
 		["mergeable", "merge"],
 		["approved", "merge"],
 		["needs_input", "action"],
-		["exited", "action"],
-		["no_signal", "action"],
-		["ci_failed", "action"],
-		["changes_requested", "action"],
-		["unknown", "action"],
+		["exited", "technical"],
+		["no_signal", "technical"],
+		["ci_failed", "technical"],
+		["changes_requested", "technical"],
+		["unknown", "technical"],
 		["review_pending", "pending"],
 		["pr_open", "pending"],
 		["draft", "pending"],

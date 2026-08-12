@@ -1,4 +1,4 @@
-export type TrayAttentionZone = "action" | "merge";
+export type TrayAttentionZone = "action" | "technical" | "merge";
 
 export type TraySessionEntry = {
 	projectId: string;

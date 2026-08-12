@@ -1035,6 +1035,7 @@
 	"zone.done": "已终止",
 	"zone.merge": "可合并",
 	"zone.pending": "评审中",
+	"zone.technical": "技术问题",
 	"zone.working": "工作中",
 	"settings.developer": "开发者",
 	"settings.help": "帮助",

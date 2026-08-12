@@ -1,13 +1,35 @@
 import { describe, expect, it } from "vitest";
+import { SESSION_STATUSES, type SessionStatus } from "./session-models";
 import {
 	attentionZone,
+	attentionZoneOrder,
+	boardAttentionZoneOrder,
 	getAgentActivityView,
 	getAttentionZoneView,
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	isAgentActivityWorking,
 	isSessionIdle,
+	type AttentionZone,
 } from "./session-presentation";
+
+const expectedAttentionZones: Record<SessionStatus, AttentionZone> = {
+	working: "working",
+	pr_open: "pending",
+	draft: "pending",
+	ci_failed: "technical",
+	review_pending: "pending",
+	changes_requested: "technical",
+	approved: "merge",
+	mergeable: "merge",
+	merged: "merge",
+	needs_input: "action",
+	exited: "technical",
+	no_signal: "technical",
+	idle: "working",
+	terminated: "done",
+	unknown: "technical",
+};
 
 describe("session presentation", () => {
 	it.each([
@@ -34,14 +56,13 @@ describe("session presentation", () => {
 		);
 	});
 
-	it.each([
-		["approved", "merge"],
-		["needs_input", "action"],
-		["review_pending", "pending"],
-		["working", "working"],
-		["terminated", "done"],
-	] as const)("maps %s to the %s attention zone", (status, zone) => {
-		expect(attentionZone(status)).toBe(zone);
+	it.each(SESSION_STATUSES)("maps %s to exactly one attention zone", (status) => {
+		expect(attentionZone(status)).toBe(expectedAttentionZones[status]);
+	});
+
+	it("publishes stable attention and board ordering", () => {
+		expect(attentionZoneOrder).toEqual(["merge", "action", "technical", "pending", "working", "done"]);
+		expect(boardAttentionZoneOrder).toEqual(["working", "action", "technical", "pending", "merge"]);
 	});
 
 	it("keeps lifecycle predicates independent of presentation labels", () => {

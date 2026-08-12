@@ -7,9 +7,13 @@ import type { TrayAttentionState, TrayAttentionZone, TrayOpenSessionTarget, Tray
 
 const MAX_MENU_SESSIONS = 8;
 
-const zoneRank: Record<TrayAttentionZone, number> = { merge: 0, action: 1 };
+const zoneRank: Record<TrayAttentionZone, number> = { merge: 0, action: 1, technical: 2 };
 
-const zoneLabelKey: Record<TrayAttentionZone, MessageKey> = { merge: "zone.merge", action: "zone.action" };
+const zoneLabelKey: Record<TrayAttentionZone, MessageKey> = {
+	merge: "zone.merge",
+	action: "zone.action",
+	technical: "zone.technical",
+};
 
 function format(template: string, vars: Record<string, string | number>): string {
 	return template.replace(/\{\{(\w+)\}\}/g, (match, key: string) => String(vars[key] ?? match));

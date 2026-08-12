@@ -1040,6 +1040,7 @@
 	"zone.done": "Beendet",
 	"zone.merge": "Bereit zum Mergen",
 	"zone.pending": "In Review",
+	"zone.technical": "Technischer Handlungsbedarf",
 	"zone.working": "In Arbeit",
 	"settings.developer": "Developer",
 	"settings.help": "Help",

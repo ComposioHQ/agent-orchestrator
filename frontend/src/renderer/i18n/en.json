@@ -1050,6 +1050,7 @@
 	"zone.done": "Terminated",
 	"zone.merge": "Ready to merge",
 	"zone.pending": "In review",
+	"zone.technical": "Technical attention",
 	"zone.working": "Working",
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "e.g. Fix the flaky checkout test (optional)…",

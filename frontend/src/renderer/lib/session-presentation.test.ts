@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
+	attentionZoneOrder,
+	boardAttentionZoneOrder,
 	getAgentActivityView,
 	getAttentionZoneView,
 	getSessionStatusView,
@@ -91,11 +93,11 @@ describe("session presentation", () => {
 		["approved", "merge", "Ready to merge"],
 		["mergeable", "merge", "Ready to merge"],
 		["needs_input", "action", "Needs you"],
-		["exited", "action", "Needs you"],
-		["no_signal", "action", "Needs you"],
-		["ci_failed", "action", "Needs you"],
-		["changes_requested", "action", "Needs you"],
-		["unknown", "action", "Needs you"],
+		["exited", "technical", "Technical attention"],
+		["no_signal", "technical", "Technical attention"],
+		["ci_failed", "technical", "Technical attention"],
+		["changes_requested", "technical", "Technical attention"],
+		["unknown", "technical", "Technical attention"],
 		["review_pending", "pending", "In review"],
 		["pr_open", "pending", "In review"],
 		["draft", "pending", "In review"],
@@ -106,6 +108,11 @@ describe("session presentation", () => {
 	] as const)("maps %s to the %s attention zone", (status, zone, label) => {
 		expect(attentionZone(sessionWith({ status }))).toBe(zone);
 		expect(getAttentionZoneView(status)).toMatchObject({ zone, label });
+	});
+
+	it("orders merge, human, and technical attention consistently across consumers", () => {
+		expect(attentionZoneOrder).toEqual(["merge", "action", "technical", "pending", "working", "done"]);
+		expect(boardAttentionZoneOrder).toEqual(["working", "action", "technical", "pending", "merge"]);
 	});
 
 	it("keeps activity indicator color independent from PR and CI presentation", () => {
@@ -122,6 +129,19 @@ describe("session presentation", () => {
 			titleClassName: "text-status-in-review",
 			dotClassName: "bg-status-in-review",
 		});
+	});
+
+	it("uses a prominent technical tone without changing status-specific badges", () => {
+		expect(getAttentionZoneView("no_signal")).toMatchObject({
+		zone: "technical",
+		dot: "var(--color-status-exited)",
+		titleClassName: "text-status-exited",
+		dotClassName: "bg-status-exited",
+	});
+		expect(getSessionStatusView("no_signal")).toMatchObject({
+		label: "No signal",
+		className: "text-status-unknown",
+	});
 	});
 
 	it("classifies only backend-derived idle sessions for the work lane", () => {

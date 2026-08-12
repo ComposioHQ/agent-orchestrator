@@ -125,7 +125,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	// First-run orientation replaces the empty column shells (only once the
 	// query has resolved, so the welcome never flashes over real data): the
 	// global board teaches the app before any project exists, and a fresh
-	// project board invites the first task instead of showing four zeros.
+	// project board invites the first task instead of showing empty column shells.
 	const isDaemonReady = usesPreviewWorkspaceData || (shell ? shell.daemonStatus.state === "ready" : true);
 	const daemonHasFailed = Boolean(shell?.daemonStatus.code);
 	const workspaceStartupState = shell?.workspaceStartupState ?? "ready";

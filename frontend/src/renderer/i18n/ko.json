@@ -1040,6 +1040,7 @@
 	"zone.done": "종료됨",
 	"zone.merge": "병합 준비 완료",
 	"zone.pending": "리뷰 중",
+	"zone.technical": "기술 점검 필요",
 	"zone.working": "작업 중",
 	"settings.developer": "Developer",
 	"settings.help": "Help",

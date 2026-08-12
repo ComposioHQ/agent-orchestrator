@@ -10,22 +10,22 @@ import { prLifecycle, type Tone } from "./prView";
 import { attentionOf } from "./sessionStatus";
 import type { Theme } from "./theme";
 
-/** The four board columns, as desktop names them. */
-export type BoardZone = "working" | "action" | "pending" | "merge";
+/** The five board columns, as desktop names them. */
+export type BoardZone = "working" | "action" | "technical" | "pending" | "merge";
 
 /** Desktop's left-to-right column order (`boardAttentionZoneOrder`). */
-export const BOARD_ZONES: BoardZone[] = ["working", "action", "pending", "merge"];
+export const BOARD_ZONES: BoardZone[] = ["working", "action", "technical", "pending", "merge"];
 
 /**
  * Which column a session belongs in.
  *
  * A presentation mapping over `attentionOf`, not a replacement for it — the
- * orchestrator tab's zone pills use its finer six-bucket taxonomy, and changing
+ * orchestrator tab's zone pills use its finer attention taxonomy, and changing
  * that would change them too.
  *
- * `respond` and `review` both fold into `action`: desktop files `ci_failed` and
- * `changes_requested` under "Needs you" rather than giving review its own
- * column, and a phone has even less room to split them.
+ * The portable product contract reserves `action` for a human question and
+ * gives technical recovery its own zone. `review` remains the mobile API's
+ * legacy fallback for PR facts that have not produced a concrete status.
  */
 export function boardZoneOf(session: DashboardSession): BoardZone {
 	switch (attentionOf(session)) {
@@ -33,10 +33,13 @@ export function boardZoneOf(session: DashboardSession): BoardZone {
 			return "merge";
 		case "pending":
 			return "pending";
+		case "technical":
+			return "technical";
 		case "respond":
 		case "action":
-		case "review":
 			return "action";
+		case "review":
+			return "technical";
 		default:
 			// `working` and `done`. A session only reaches here as `done` when it is
 			// finished but its runtime is still alive — a dead one is archived
@@ -51,6 +54,8 @@ export function zoneMeta(t: Theme, zone: BoardZone): { label: string; color: str
 			return { label: "Ready to merge", color: t.green };
 		case "action":
 			return { label: "Needs you", color: t.amber };
+		case "technical":
+			return { label: "Technical attention", color: t.red };
 		case "pending":
 			return { label: "In review", color: t.textTertiary };
 		default:

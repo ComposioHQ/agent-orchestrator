@@ -52,6 +52,9 @@ describe("SessionsBoardView", () => {
 		const sessions: BoardSessionPresentation[] = [
 			baseSession,
 			{ ...baseSession, id: "working", status: "working", title: "working task" },
+			{ ...baseSession, id: "human", status: "needs_input", title: "human question" },
+			{ ...baseSession, id: "technical", status: "no_signal", title: "missing signal" },
+			{ ...baseSession, id: "review", status: "review_pending", title: "review task" },
 			{ ...baseSession, id: "ready", status: "mergeable", title: "ready task" },
 			{ ...baseSession, id: "merged", status: "merged", title: "merged task" },
 		];
@@ -68,10 +71,37 @@ describe("SessionsBoardView", () => {
 		expect(within(workLane).getByRole("region", { name: "Idle sessions" })).toHaveTextContent("portable task");
 		expect(within(workLane).getByRole("region", { name: "Working sessions" })).toHaveTextContent("working task");
 		expect(workLane.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+		expect(screen.getAllByTestId("board-column").map((column) => column.dataset.column)).toEqual([
+			"working",
+			"action",
+			"technical",
+			"pending",
+			"merge",
+		]);
+		const humanLane = screen.getByRole("region", { name: "Needs you sessions" });
+		expect(within(humanLane).getByLabelText("1 Needs you session")).toHaveTextContent("1");
+		expect(within(humanLane).getByText("human question")).toBeInTheDocument();
+		const technicalLane = screen.getByRole("region", { name: "Technical attention sessions" });
+		expect(within(technicalLane).getByLabelText("1 Technical attention session")).toHaveTextContent("1");
+		expect(within(technicalLane).getByText("missing signal")).toBeInTheDocument();
 
 		const mergeLane = screen.getByRole("region", { name: "Ready / Merged sessions" });
 		expect(within(mergeLane).getByLabelText("1 ready session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
+	});
+
+	it("keeps an empty technical lane visible with an accessible zero count", () => {
+		render(
+			<SessionsBoardGridView
+				columns={boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone))}
+				labels={splitLabels}
+				renderSessionCard={(session) => <div>{session.title}</div>}
+				sessions={[baseSession]}
+			/>,
+		);
+
+		const technicalLane = screen.getByRole("region", { name: "Technical attention sessions" });
+		expect(within(technicalLane).getByLabelText("0 Technical attention sessions")).toHaveTextContent("0");
 	});
 
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {

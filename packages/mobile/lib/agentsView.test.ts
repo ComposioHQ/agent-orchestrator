@@ -18,17 +18,16 @@ const session = (over: Partial<DashboardSession> = {}): DashboardSession =>
 const pr = (over: Partial<DashboardPR> = {}): DashboardPR => ({ number: 1, url: "", state: "open", ...over });
 
 describe("boardZoneOf", () => {
-	it("uses desktop's four columns in its order", () => {
-		expect(BOARD_ZONES).toEqual(["working", "action", "pending", "merge"]);
+	it("uses desktop's five columns in its order", () => {
+		expect(BOARD_ZONES).toEqual(["working", "action", "technical", "pending", "merge"]);
 	});
 
-	// Desktop files ci_failed and changes_requested under "Needs you" rather than
-	// giving review its own column; mobile used to split them.
-	it("folds review and respond into Needs you", () => {
+	it("reserves Needs you for human input and separates technical recovery", () => {
 		expect(boardZoneOf(session({ status: "needs_input" }))).toBe("action");
 		expect(boardZoneOf(session({ status: "stuck" }))).toBe("action");
-		expect(boardZoneOf(session({ status: "ci_failed" }))).toBe("action");
-		expect(boardZoneOf(session({ status: "changes_requested" }))).toBe("action");
+		for (const status of ["ci_failed", "changes_requested", "no_signal", "exited", "unknown"]) {
+			expect(boardZoneOf(session({ status }))).toBe("technical");
+		}
 	});
 
 	it("maps the remaining zones straight through", () => {
@@ -46,6 +45,7 @@ describe("zoneMeta", () => {
 		expect(BOARD_ZONES.map((z) => zoneMeta(darkTheme, z).label)).toEqual([
 			"Working",
 			"Needs you",
+			"Technical attention",
 			"In review",
 			"Ready to merge",
 		]);
@@ -86,6 +86,16 @@ describe("groupSessions", () => {
 		]);
 		expect(sections.map((s) => s.zone)).toEqual(["working", "action"]);
 		expect(archived.map((s) => s.id)).toEqual(["z"]);
+	});
+
+	it("keeps human and technical sessions in distinct ordered sections", () => {
+		const { sections } = groupSessions(darkTheme, [
+			session({ id: "technical", status: "no_signal" }),
+			session({ id: "human", status: "needs_input" }),
+		]);
+		expect(sections.map((section) => section.zone)).toEqual(["action", "technical"]);
+		expect(sections[0].data.map((item) => item.id)).toEqual(["human"]);
+		expect(sections[1].data.map((item) => item.id)).toEqual(["technical"]);
 	});
 
 	// A run of empty section titles is most of a phone screen.

@@ -1054,6 +1054,7 @@
 	"zone.done": "Terminé",
 	"zone.merge": "Prêt à fusionner",
 	"zone.pending": "En revue",
+	"zone.technical": "Attention technique",
 	"zone.working": "En cours",
 	"settings.developer": "Developer",
 	"settings.help": "Help",

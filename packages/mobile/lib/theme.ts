@@ -251,7 +251,15 @@ export function terminalTheme(scheme: ColorScheme): TerminalTheme {
 // ---- Status vocabulary -----------------------------------------------------
 
 // AO's attention levels, in urgency order. Drives the board sections.
-export type AttentionLevel = "merge" | "action" | "respond" | "review" | "pending" | "working" | "done";
+export type AttentionLevel =
+	| "merge"
+	| "action"
+	| "respond"
+	| "technical"
+	| "review"
+	| "pending"
+	| "working"
+	| "done";
 
 export type AttentionMeta = { label: string; color: string; tint: string; order: number };
 
@@ -260,10 +268,11 @@ export function attentionMetaFor(t: Theme): Record<string, AttentionMeta> {
 		merge: { label: "Ready to merge", color: t.green, tint: t.tintGreen, order: 0 },
 		action: { label: "Needs you", color: t.amber, tint: t.tintAmber, order: 1 },
 		respond: { label: "Needs you", color: t.amber, tint: t.tintAmber, order: 1 },
-		review: { label: "Review", color: t.red, tint: t.tintRed, order: 2 },
-		pending: { label: "In review", color: t.textTertiary, tint: t.bgSubtle, order: 3 },
-		working: { label: "Working", color: t.orange, tint: t.tintOrange, order: 4 },
-		done: { label: "Done", color: t.textTertiary, tint: t.bgSubtle, order: 5 },
+		technical: { label: "Technical attention", color: t.red, tint: t.tintRed, order: 2 },
+		review: { label: "Review", color: t.red, tint: t.tintRed, order: 3 },
+		pending: { label: "In review", color: t.textTertiary, tint: t.bgSubtle, order: 4 },
+		working: { label: "Working", color: t.orange, tint: t.tintOrange, order: 5 },
+		done: { label: "Done", color: t.textTertiary, tint: t.bgSubtle, order: 6 },
 	};
 }
 

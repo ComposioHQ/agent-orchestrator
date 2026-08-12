@@ -213,7 +213,16 @@ export function sessionIsActive(session: WorkspaceSession): boolean {
 }
 
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {
+	const zone = presentationAttentionZone(session);
+	return zone === "action" || zone === "technical";
+}
+
+export function sessionNeedsHumanInput(session: WorkspaceSession): boolean {
 	return presentationAttentionZone(session) === "action";
+}
+
+export function sessionNeedsTechnicalAttention(session: WorkspaceSession): boolean {
+	return presentationAttentionZone(session) === "technical";
 }
 
 export { attentionZone, attentionZoneLabel, attentionZoneOrder } from "../lib/session-presentation";

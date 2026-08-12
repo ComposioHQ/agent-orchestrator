@@ -59,6 +59,7 @@ function workspaces(): WorkspaceSummary[] {
 			sessions: [
 				worker({ id: "s-need", title: "needs it", status: "needs_input" }),
 				worker({ id: "s-work", title: "working", status: "working" }),
+				worker({ id: "s-tech", title: "repair hook", status: "no_signal" }),
 				worker({ id: "s-merge", title: "merge me", status: "mergeable" }),
 				worker({ id: "s-merged", title: "already merged", status: "merged" }),
 				worker({ id: "orch", title: "orchestrator", kind: "orchestrator", status: "needs_input" }),
@@ -80,6 +81,13 @@ describe("TrayRuntime", () => {
 		expect(h.setAttentionState).toHaveBeenLastCalledWith({
 			sessions: [
 				{ projectId: "proj-1", projectName: "note-tauri", sessionId: "s-need", title: "needs it", zone: "action" },
+				{
+					projectId: "proj-1",
+					projectName: "note-tauri",
+					sessionId: "s-tech",
+					title: "repair hook",
+					zone: "technical",
+				},
 				{ projectId: "proj-1", projectName: "note-tauri", sessionId: "s-merge", title: "merge me", zone: "merge" },
 			],
 		});

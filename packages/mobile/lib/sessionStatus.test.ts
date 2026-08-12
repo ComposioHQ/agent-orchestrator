@@ -92,9 +92,19 @@ describe("attentionOf", () => {
 		expect(attentionOf(session({ status: "stuck" }))).toBe("respond");
 	});
 
-	it("maps failing CI and requested changes to review", () => {
-		expect(attentionOf(session({ status: "ci_failed" }))).toBe("review");
+	it("keeps fact-only failing PRs in the legacy review bucket", () => {
+		expect(attentionOf(session({ status: "ci_failed" }))).toBe("technical");
 		expect(attentionOf(session({ prs: [{ number: 1, url: "u", ciStatus: "failing" }] as never }))).toBe("review");
+	});
+
+	it("maps every concrete recovery status to technical attention", () => {
+		for (const status of ["no_signal", "exited", "ci_failed", "changes_requested", "unknown"]) {
+			expect(attentionOf(session({ status }))).toBe("technical");
+		}
+	});
+
+	it("overrides a stale server attention bucket for a concrete technical status", () => {
+		expect(attentionOf(session({ status: "no_signal", attentionLevel: "action" }))).toBe("technical");
 	});
 
 	it("defaults to working", () => {

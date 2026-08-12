@@ -342,7 +342,7 @@ export function matchScore(query: string, item: CommandItem): number {
 }
 
 function isAttentionItem(item: CommandItem): boolean {
-	return item.zone === "action" || item.zone === "merge";
+	return item.zone === "action" || item.zone === "technical" || item.zone === "merge";
 }
 
 function attentionRank(item: CommandItem): number {
