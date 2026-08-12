@@ -29,15 +29,15 @@ node .agents/skills/ao-agent-e2e/scripts/run_agent_e2e.mjs \
 
 The default mode is `tui`, which works with installed native harnesses. Use `--mode chat` only when the AO ACP runtime is installed. Use `--ao /tmp/ao` or `AO_BIN` when a bare `ao` may resolve to another install. Use `--task` for a different brief. Use `--cleanup` only when it is safe to terminate sessions created by this run; it never force-deletes dirty worktrees.
 
-The runner exits 0 only when no stage failed. Exit 1 means an observable assertion failed. Exit 2 means configuration or preflight could not start the test. `unobservable` is reported explicitly when the public CLI does not expose a fact; it is not a pass.
+The runner exits 0 only when every stage passes. Exit 1 means an observable assertion failed or a required fact was `unobservable`. Exit 2 means configuration or preflight could not start the test. Use `--allow-unobservable` only to produce a diagnostic baseline against a CLI/API that cannot yet expose every fact; do not treat that run as acceptance.
 
 ## What the runner checks
 
 - Preflight: AO binary, daemon, project, and harness configuration.
 - Orchestrator: real role spawn, live session, prompt/system-prompt byte evidence, and exact task visibility when exposed.
-- Delegation: a new non-orchestrator worker appears in the target project after the orchestrator starts.
-- Work/Kanban: session activity and status evidence; exact file and tracker checks are marked unobservable when session JSON does not expose a worktree/tracker fact.
-- PR/reviewer: review records, latest review run, reviewer session ID, and review result when AO exposes them.
+- Delegation: a new non-orchestrator worker appears in the target project after the run's baseline and remains inspectable.
+- Work/Kanban/PR: worker activity/status changes are sampled, PR facts are detected when exposed by session JSON, and missing branch/worktree/tracker/PR facts are recorded as non-passing observation gaps.
+- Reviewer: review records are polled until a completed reviewer run with session, status, and verdict evidence is visible.
 
 Keep the report. It records commands, exit codes, stdout/stderr, timestamps, IDs, observations, the first failed stage, and cleanup results.
 
@@ -68,7 +68,7 @@ For worker placement, inspect the worktree and branch recorded by AO, then verif
 - `preflight`: wrong binary/daemon, missing project, missing credentials, or unsupported harness.
 - `orchestrator`: role spawn, prompt construction, or session startup failure.
 - `delegation-and-worker`: orchestrator did not produce an inspectable worker in the project before timeout.
-- `work-and-kanban`: observable activity/status mismatch, or evidence is unavailable through the CLI.
-- `pr-and-reviewer`: PR/review run/reviewer evidence missing or reviewer result not submitted.
+- `work-kanban-and-pr`: observable activity/status mismatch, missing PR evidence, or branch/worktree/tracker evidence unavailable through the CLI.
+- `reviewer`: review run, reviewer session, or submitted verdict evidence missing before timeout.
 
 Do not auto-retry externally visible actions. Do not kill or delete sessions unless the user explicitly selected cleanup. Escalate with the JSON report and the exact failed stage.
