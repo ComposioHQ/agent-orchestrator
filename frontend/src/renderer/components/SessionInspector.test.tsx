@@ -391,7 +391,7 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 
-	it("stacks the injection toggles as unboxed completion-style rows", () => {
+	it("renders PRs and reviews before the stacked compact policy rows", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		const policyRow = (name: string) =>
@@ -399,9 +399,14 @@ describe("SessionInspector PR section", () => {
 		const ciRow = policyRow("Automatically send CI failures");
 		const reviewRow = policyRow("Automatically send reviews");
 		const terminateRow = policyRow("Terminate session when pull requests merge");
+		const prCard = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
+		const runReview = await screen.findByRole("button", { name: "Run review" });
+		const appearsBefore = (first: HTMLElement, second: HTMLElement) =>
+			Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
 
 		expect(ciRow.nextElementSibling).toBe(reviewRow);
-		expect(ciRow.parentElement?.nextElementSibling).toHaveRole("article");
+		expect(appearsBefore(prCard, ciRow)).toBe(true);
+		expect(appearsBefore(runReview, ciRow)).toBe(true);
 		expect(ciRow.className).toBe(terminateRow.className);
 		expect(reviewRow.className).toBe(terminateRow.className);
 		expect(ciRow.parentElement).not.toHaveClass("rounded-lg", "border", "bg-surface");

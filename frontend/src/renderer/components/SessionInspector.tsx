@@ -219,10 +219,6 @@ function SummaryView({
 			completion={showCompletion ? <CompletionControls session={session} /> : undefined}
 			pullRequestCards={
 				<div className="flex flex-col gap-1.5">
-					<div>
-						<AutoInjectCIPolicyControl session={session} />
-						{hasPRs ? <AutoInjectReviewPolicyControl session={session} /> : null}
-					</div>
 					{hasPRs ? (
 						prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
@@ -233,7 +229,15 @@ function SummaryView({
 				</div>
 			}
 			pullRequestTitle={prSectionTitle}
-			reviews={hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined}
+			reviews={
+				<>
+					{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
+					<div className="mb-4">
+						<AutoInjectCIPolicyControl session={session} />
+						{hasPRs ? <AutoInjectReviewPolicyControl session={session} /> : null}
+					</div>
+				</>
+			}
 		/>
 	);
 }
