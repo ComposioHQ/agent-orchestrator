@@ -2811,7 +2811,7 @@ var _ ports.AgentTranscriptReader = (*fakeTranscriptAgent)(nil)
 func TestTranscriptSessionNotFound(t *testing.T) {
 	svc := &Service{manager: &fakeCommander{}, store: newFakeStore()}
 
-	_, err := svc.Transcript(context.Background(), "ghost")
+	_, err := svc.Transcript(context.Background(), "ghost", nil, nil)
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "SESSION_NOT_FOUND" {
 		t.Fatalf("Transcript error = %v, want SESSION_NOT_FOUND", err)
@@ -2830,7 +2830,7 @@ func TestTranscriptUnsupportedAgentDegradesToEmpty(t *testing.T) {
 	// degrade to an empty transcript rather than error.
 	svc := &Service{manager: &fakeCommander{}, store: st}
 
-	got, err := svc.Transcript(context.Background(), "mer-1")
+	got, err := svc.Transcript(context.Background(), "mer-1", nil, nil)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -2855,7 +2855,7 @@ func TestTranscriptAgentWithoutReaderDegradesToEmpty(t *testing.T) {
 		store:   st,
 	}
 
-	got, err := svc.Transcript(context.Background(), "mer-1")
+	got, err := svc.Transcript(context.Background(), "mer-1", nil, nil)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -2913,7 +2913,7 @@ func TestTranscriptHappyPath(t *testing.T) {
 		store:   st,
 	}
 
-	got, err := svc.Transcript(context.Background(), "mer-1")
+	got, err := svc.Transcript(context.Background(), "mer-1", nil, nil)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -2941,6 +2941,29 @@ func TestTranscriptHappyPath(t *testing.T) {
 	}
 }
 
+func TestTranscriptPartialRange(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}
+	fake := &fakeTranscriptAgent{messages: []ports.TranscriptMessage{
+		{Role: "user", Text: "one", Index: 0}, {Role: "assistant", Text: "two", Index: 1}, {Role: "user", Text: "three", Index: 2},
+	}, ok: true}
+	svc := &Service{manager: &fakeCommander{agent: fake}, store: st}
+	from, to := 1, 2
+	got, err := svc.Transcript(context.Background(), "mer-1", &from, &to)
+	if err != nil || len(got) != 2 || got[0].Index != 1 || got[1].Index != 2 {
+		t.Fatalf("range = %#v, err = %v", got, err)
+	}
+	index := 2
+	got, err = svc.Transcript(context.Background(), "mer-1", &index, &index)
+	if err != nil || len(got) != 1 || got[0].Index != 2 {
+		t.Fatalf("index = %#v, err = %v", got, err)
+	}
+	missing := 9
+	if _, err := svc.Transcript(context.Background(), "mer-1", &missing, &missing); err == nil {
+		t.Fatal("out-of-bounds index returned nil error")
+	}
+}
+
 func TestTranscriptReaderErrorPropagates(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{
@@ -2952,7 +2975,7 @@ func TestTranscriptReaderErrorPropagates(t *testing.T) {
 	fake := &fakeTranscriptAgent{err: errors.New("boom")}
 	svc := &Service{manager: &fakeCommander{agent: fake}, store: st}
 
-	_, err := svc.Transcript(context.Background(), "mer-1")
+	_, err := svc.Transcript(context.Background(), "mer-1", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("Transcript error = %v, want boom", err)
 	}
@@ -2969,7 +2992,7 @@ func TestTranscriptEmptyOkDegradesToEmpty(t *testing.T) {
 	fake := &fakeTranscriptAgent{ok: false}
 	svc := &Service{manager: &fakeCommander{agent: fake}, store: st}
 
-	got, err := svc.Transcript(context.Background(), "mer-1")
+	got, err := svc.Transcript(context.Background(), "mer-1", nil, nil)
 	if err != nil {
 		t.Fatalf("Transcript: %v", err)
 	}
@@ -3012,7 +3035,7 @@ func TestTranscriptNonDefaultConfigDirPerHarness(t *testing.T) {
 				store:   st,
 			}
 
-			got, err := svc.Transcript(context.Background(), "mer-1")
+			got, err := svc.Transcript(context.Background(), "mer-1", nil, nil)
 			if err != nil {
 				t.Fatalf("Transcript: %v", err)
 			}

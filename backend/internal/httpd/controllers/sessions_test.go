@@ -496,7 +496,7 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
 }
 
-func (f *fakeSessionService) Transcript(_ context.Context, id domain.SessionID) ([]ports.TranscriptMessage, error) {
+func (f *fakeSessionService) Transcript(_ context.Context, id domain.SessionID, from, to *int) ([]ports.TranscriptMessage, error) {
 	if _, ok := f.sessions[id]; !ok {
 		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
@@ -506,10 +506,17 @@ func (f *fakeSessionService) Transcript(_ context.Context, id domain.SessionID) 
 	if f.transcriptEmpty {
 		return nil, nil
 	}
-	return []ports.TranscriptMessage{
+	messages := []ports.TranscriptMessage{
 		{Role: "user", Text: "hello", Index: 0},
 		{Role: "assistant", Text: "hi", Index: 1},
-	}, nil
+	}
+	if from != nil && to != nil {
+		if *from >= len(messages) || *to >= len(messages) {
+			return nil, apierr.NotFound("TRANSCRIPT_MESSAGE_NOT_FOUND", "Transcript message not found")
+		}
+		return messages[*from : *to+1], nil
+	}
+	return messages, nil
 }
 
 func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
@@ -2449,6 +2456,31 @@ func TestSessionsAPI_GetTranscriptEmpty(t *testing.T) {
 	}
 	if len(got.Messages) != 0 {
 		t.Fatalf("messages = %#v, want empty", got.Messages)
+	}
+}
+
+func TestSessionsAPI_GetTranscriptPartial(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+	for _, query := range []string{"?index=1", "?from=0&to=1"} {
+		body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/transcript"+query, "")
+		if status != http.StatusOK {
+			t.Fatalf("GET transcript%s = %d, want 200; body=%s", query, status, body)
+		}
+		var got controllers.GetSessionTranscriptResponse
+		mustJSON(t, body, &got)
+		if len(got.Messages) == 0 || got.Messages[len(got.Messages)-1].Index != 1 {
+			t.Fatalf("messages for %s = %#v", query, got.Messages)
+		}
+	}
+}
+
+func TestSessionsAPI_GetTranscriptInvalidRange(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+	for _, query := range []string{"?index=-1", "?from=1&to=0", "?index=1&from=0"} {
+		body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/transcript"+query, "")
+		assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_TRANSCRIPT_RANGE")
 	}
 }
 

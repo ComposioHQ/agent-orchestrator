@@ -1317,7 +1317,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the full transcript of a session from its agent adapter */
+        /** Get the full or partial transcript of a session from its agent adapter */
         get: operations["getSessionTranscript"];
         put?: never;
         post?: never;
@@ -7937,7 +7937,14 @@ export interface operations {
     };
     getSessionTranscript: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Return one message at this 0-based index. */
+                index?: null | number;
+                /** @description Inclusive first message index. */
+                from?: null | number;
+                /** @description Inclusive last message index; omitted means transcript end. */
+                to?: null | number;
+            };
             header?: never;
             path: {
                 /** @description Session identifier, e.g. project-1. */
@@ -7954,6 +7961,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GetSessionTranscriptResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */

@@ -972,7 +972,13 @@ func (s *Service) harnessSignals(h domain.AgentHarness) bool {
 }
 
 // Transcript returns the normalized transcript messages for a session.
-func (s *Service) Transcript(ctx context.Context, id domain.SessionID) ([]ports.TranscriptMessage, error) {
+func (s *Service) Transcript(ctx context.Context, id domain.SessionID, from, to *int) ([]ports.TranscriptMessage, error) {
+	if from != nil && *from < 0 || to != nil && *to < 0 {
+		return nil, apierr.Invalid("INVALID_TRANSCRIPT_RANGE", "transcript indexes must be non-negative", nil)
+	}
+	if from != nil && to != nil && *from > *to {
+		return nil, apierr.Invalid("INVALID_TRANSCRIPT_RANGE", "from must be less than or equal to to", nil)
+	}
 	rec, ok, err := s.store.GetSession(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get session %s: %w", id, err)
@@ -1033,5 +1039,22 @@ func (s *Service) Transcript(ctx context.Context, id domain.SessionID) ([]ports.
 	if !ok {
 		return nil, nil
 	}
-	return messages, nil
+	if from == nil && to == nil {
+		return messages, nil
+	}
+	start := 0
+	if from != nil {
+		start = *from
+	}
+	end := len(messages) - 1
+	if to != nil {
+		end = *to
+	}
+	if start >= len(messages) || (to != nil && end >= len(messages)) {
+		if from != nil && to != nil && *from == *to {
+			return nil, apierr.NotFound("TRANSCRIPT_MESSAGE_NOT_FOUND", "Transcript message not found")
+		}
+		return nil, apierr.Invalid("INVALID_TRANSCRIPT_RANGE", "transcript range is out of bounds", nil)
+	}
+	return messages[start : end+1], nil
 }
