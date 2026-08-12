@@ -8,7 +8,6 @@ import {
 	ChevronRight,
 	Folder,
 	FolderOpen,
-	LogIn,
 	LogOut,
 	MoreVertical,
 	Pencil,
@@ -1018,33 +1017,8 @@ function SessionRow({
 // email with a sign-out action in a dropdown.
 function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { session, status, signIn, signOut } = useCloudSession();
-	if (status === "loading") return null;
-
-	if (status === "unauthenticated") {
-		return (
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label={t("shell.signInToAOCloud")}
-						className={cn(
-							NAV_ROW_CLASS,
-							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
-						)}
-						onClick={() => signIn()}
-						tabIndex={tabIndex}
-						type="button"
-					>
-						<User aria-hidden="true" />
-						<span className="tracking-tight">{t("shell.signIn")}</span>
-					</button>
-				</TooltipTrigger>
-				<TooltipContent side="right" hidden={tabIndex !== -1}>
-					{t("shell.signInToAOCloud")}
-				</TooltipContent>
-			</Tooltip>
-		);
-	}
+	const { session, status, signOut } = useCloudSession();
+	if (status !== "authenticated") return null;
 
 	return (
 		<DropdownMenu>
@@ -1080,27 +1054,8 @@ function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
 // Icon-rail variant for collapsed sidebar.
 function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
 	const { t } = useTranslation();
-	const { session, status, signIn, signOut } = useCloudSession();
-	if (status === "loading") return null;
-
-	if (status === "unauthenticated") {
-		return (
-			<Tooltip>
-				<TooltipTrigger asChild>
-					<button
-						aria-label={t("shell.signInToAOCloud")}
-						className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
-						onClick={() => signIn()}
-						tabIndex={tabIndex}
-						type="button"
-					>
-						<LogIn aria-hidden="true" />
-					</button>
-				</TooltipTrigger>
-				<TooltipContent side="right">{t("shell.signInToAOCloud")}</TooltipContent>
-			</Tooltip>
-		);
-	}
+	const { session, status, signOut } = useCloudSession();
+	if (status !== "authenticated") return null;
 
 	return (
 		<Tooltip>

@@ -28,7 +28,6 @@ import {
 	getAgentActivityView,
 	getAttentionZoneViewForZone,
 	getSessionStatusView,
-	isSessionIdle,
 	type AttentionZone,
 	type AttentionZoneView,
 } from "../lib/session-presentation";
@@ -412,7 +411,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							>
 								<path d="m9 18 6-6-6-6" />
 							</svg>
-							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">{t("shell.archive")}</span>
+							<span className="font-sans text-2xs font-medium">{t("shell.archive")}</span>
 							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
 					</div>
@@ -469,6 +468,7 @@ function BoardColumn({
 	if (col.zone === "working") {
 		return (
 			<WorkLaneColumn
+				col={col}
 				sessions={sessions}
 				onOpen={onOpen}
 				onTerminate={onTerminate}
@@ -526,7 +526,7 @@ function ZoneColumn({
 						boxShadow: col.dotGlow ? `0 0 7px color-mix(in srgb, ${col.dot} 60%, transparent)` : undefined,
 					}}
 				/>
-				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", col.titleClassName)}>
+				<span className={cn("font-sans text-2xs font-medium", col.titleClassName)}>
 					{col.label}
 				</span>
 				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
@@ -605,34 +605,19 @@ function splitLaneTones(t: TFunction): {
 }
 
 function WorkLaneColumn({
+	col,
 	sessions,
 	onOpen,
 	onTerminate,
 	usageBySession,
 }: {
+	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 	usageBySession: UsageBySession;
 }) {
-	const { t } = useTranslation();
-	const tones = splitLaneTones(t);
-	const idleSessions = sessions.filter(isSessionIdle);
-	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
-
-	return (
-		<SplitLaneColumn
-			ariaLabel={t("shell.idleWorkingSessions")}
-			zone="working"
-			primarySessions={idleSessions}
-			primaryTone={tones.idle}
-			secondarySessions={workingSessions}
-			secondaryTone={tones.working}
-			onOpen={onOpen}
-			onTerminate={onTerminate}
-			usageBySession={usageBySession}
-		/>
-	);
+	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} usageBySession={usageBySession} />;
 }
 
 function MergeLaneColumn({
@@ -657,7 +642,9 @@ function MergeLaneColumn({
 
 	return (
 		<SplitLaneColumn
-			ariaLabel={t("shell.readyMergedSessions")}
+			ariaLabel={t("zone.merge")}
+			columnLabel={t("zone.merge")}
+			headerTone={tones.ready}
 			zone="merge"
 			primarySessions={readySessions}
 			primaryTone={tones.ready}
@@ -672,6 +659,8 @@ function MergeLaneColumn({
 
 function SplitLaneColumn({
 	ariaLabel,
+	columnLabel,
+	headerTone,
 	zone,
 	primarySessions,
 	primaryTone,
@@ -682,6 +671,8 @@ function SplitLaneColumn({
 	usageBySession,
 }: {
 	ariaLabel: string;
+	columnLabel: string;
+	headerTone: SplitLaneTone;
 	zone: Extract<AttentionZone, "working" | "merge">;
 	primarySessions: WorkspaceSession[];
 	primaryTone: SplitLaneTone;
@@ -691,7 +682,6 @@ function SplitLaneColumn({
 	onTerminate: (s: WorkspaceSession) => void;
 	usageBySession: UsageBySession;
 }) {
-	const { t } = useTranslation();
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
 
@@ -704,17 +694,13 @@ function SplitLaneColumn({
 		>
 			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<div
-					aria-label={t("shell.laneSummaryAria", { primary: primaryTone.label, secondary: secondaryTone.label })}
-					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
+					aria-label={columnLabel}
+					className="flex min-w-0 items-center gap-2 font-sans text-2xs font-medium"
 					role="group"
 				>
-					<LaneStatusLabel tone={primaryTone} />
-					<span className="text-passive" aria-hidden="true">
-						/
-					</span>
-					<LaneStatusLabel tone={secondaryTone} />
+					<LaneStatusLabel tone={headerTone} />
 				</div>
-				<div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-2xs leading-none text-passive">
+				<div className="ml-auto flex shrink-0 items-center gap-2 font-sans text-2xs leading-none text-passive">
 					<SessionCount count={primarySessions.length} label={primaryTone.countLabel} />
 					<span aria-hidden="true">/</span>
 					<SessionCount count={secondarySessions.length} label={secondaryTone.countLabel} />
@@ -800,7 +786,7 @@ function SecondaryLaneSection({
 			role="region"
 		>
 			<div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
-				<div className="font-mono text-2xs font-medium uppercase tracking-wide-sm">
+				<div className="font-sans text-2xs font-medium">
 					<LaneStatusLabel tone={tone} />
 				</div>
 				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>

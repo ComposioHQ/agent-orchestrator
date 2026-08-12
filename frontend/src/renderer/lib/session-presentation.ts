@@ -208,7 +208,12 @@ export const attentionZoneLabel: Record<AttentionZone, string> = {
 	},
 };
 
-export function attentionZone(input: SessionStatus | Pick<WorkspaceSession, "status">): AttentionZone {
+export function attentionZone(
+	input: SessionStatus | Pick<WorkspaceSession, "status" | "activity">,
+): AttentionZone {
+	if (typeof input !== "string" && (input.activity?.state === "waiting_input" || input.activity?.state === "blocked")) {
+		return "action";
+	}
 	const status = typeof input === "string" ? input : input.status;
 	switch (status) {
 		case "merged":
