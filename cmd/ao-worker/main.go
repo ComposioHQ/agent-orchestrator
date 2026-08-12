@@ -16,13 +16,16 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/Untrivial-ai/ao-cloud/internal/workerexec"
 )
 
 const (
@@ -37,7 +40,12 @@ const (
 	maxResponseBody      = 1 << 20
 )
 
-var workerCapabilities = []string{"worker.heartbeat", "worker.events"}
+var workerCapabilities = []string{
+	"worker.heartbeat",
+	"worker.events",
+	"worker.turns",
+	"worker.credentials",
+}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -75,7 +83,7 @@ func run(logger *slog.Logger) error {
 	}
 	// The ticket is single-use and now spent; from here the only credential is
 	// the rotating worker token.
-	client.token = bootstrap.WorkerToken
+	client.setToken(bootstrap.WorkerToken)
 	logger.Info("worker bootstrapped",
 		"session_id", bootstrap.SessionID,
 		"worker_id", bootstrap.WorkerID,
@@ -93,39 +101,46 @@ func run(logger *slog.Logger) error {
 		logger.Warn("publish worker.ready failed", "error", err)
 	}
 
-	ticker := time.NewTicker(heartbeatInterval)
-	defer ticker.Stop()
-	failures := 0
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("worker shutting down")
-			return nil
-		case <-ticker.C:
-			renewed, err := client.heartbeat(ctx)
-			if errors.Is(err, errStaleWorker) {
-				return errors.New("worker credential was replaced; a newer worker owns this session")
-			}
-			if err != nil {
-				failures++
-				logger.Warn("heartbeat failed", "error", err, "consecutive_failures", failures)
-				if failures >= maxHeartbeatFailures {
-					return fmt.Errorf("heartbeat failed %d times: %w", failures, err)
-				}
-				continue
-			}
-			failures = 0
-			client.token = renewed
-		}
+	if bootstrap.SessionID != sessionID {
+		return errors.New("bootstrap session does not match AO_CLOUD_SESSION_ID")
 	}
+	workspace := strings.TrimSpace(os.Getenv("AO_WORKSPACE_DIR"))
+	if workspace == "" {
+		return errors.New("AO_WORKSPACE_DIR is required")
+	}
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir == "" {
+		dataDir = os.TempDir()
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	supervisor := workerexec.Supervisor{
+		Control:   client,
+		Builder:   workerexec.HarnessBuilder{DataDir: dataDir},
+		Runner:    workerexec.OSRunner{},
+		Workspace: workspace,
+		Logger:    logger,
+	}
+	results := make(chan error, 2)
+	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
+	go func() { results <- supervisor.Run(runCtx) }()
+	first := <-results
+	cancel()
+	<-results
+	if ctx.Err() != nil {
+		logger.Info("worker shutting down")
+		return nil
+	}
+	return first
 }
 
 var errStaleWorker = errors.New("worker credential replaced")
 
 type client struct {
 	baseURL string
-	token   string
 	http    *http.Client
+	mu      sync.RWMutex
+	token   string
 }
 
 func (c *client) bootstrap(ctx context.Context, bootstrapToken string) (worker.BootstrapResponse, error) {
@@ -159,22 +174,130 @@ func (c *client) heartbeat(ctx context.Context) (string, error) {
 	return response.WorkerToken, nil
 }
 
+func (c *client) heartbeatLoop(ctx context.Context, logger *slog.Logger) error {
+	ticker := time.NewTicker(heartbeatInterval)
+	defer ticker.Stop()
+	failures := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			renewed, err := c.heartbeat(ctx)
+			if errors.Is(err, errStaleWorker) {
+				return errors.New("worker credential was replaced; a newer worker owns this session")
+			}
+			if err != nil {
+				failures++
+				logger.Warn("heartbeat failed", "error", err, "consecutive_failures", failures)
+				if failures >= maxHeartbeatFailures {
+					return fmt.Errorf("heartbeat failed %d times: %w", failures, err)
+				}
+				continue
+			}
+			failures = 0
+			c.setToken(renewed)
+		}
+	}
+}
+
+func (c *client) ClaimTurn(ctx context.Context) (*worker.Turn, error) {
+	var response worker.ClaimTurnResponse
+	if err := c.do(ctx, "/worker/turns/claim", worker.ClaimTurnRequest{}, &response); err != nil {
+		return nil, err
+	}
+	return response.Turn, nil
+}
+
+func (c *client) Credential(ctx context.Context) (worker.CredentialResponse, error) {
+	var response worker.CredentialResponse
+	err := c.doMethod(ctx, http.MethodGet, "/worker/credential", nil, &response)
+	if err != nil {
+		return worker.CredentialResponse{}, err
+	}
+	if response.Provider == "" || response.CredentialType == "" || response.Secret == "" {
+		return worker.CredentialResponse{}, errors.New("control plane returned an incomplete coding-agent credential")
+	}
+	return response, nil
+}
+
+func (c *client) PublishOutput(ctx context.Context, output worker.OutputEvent) error {
+	return c.publishEvent(ctx, "chat.assistant_delta", output)
+}
+
+func (c *client) CancellationRequested(
+	ctx context.Context,
+	turnID string,
+	attempt int,
+) (bool, error) {
+	var response worker.CancellationResponse
+	path := "/worker/turns/" + url.PathEscape(turnID) +
+		"/cancellation?attempt=" + url.QueryEscape(fmt.Sprint(attempt))
+	if err := c.doMethod(ctx, http.MethodGet, path, nil, &response); err != nil {
+		return false, err
+	}
+	return response.Requested, nil
+}
+
+func (c *client) CompleteTurn(
+	ctx context.Context,
+	turnID string,
+	attempt int,
+	cancelled bool,
+) error {
+	return c.do(
+		ctx,
+		"/worker/turns/"+url.PathEscape(turnID)+"/complete",
+		worker.FinishTurnRequest{Attempt: attempt, Cancelled: cancelled},
+		nil,
+	)
+}
+
+func (c *client) FailTurn(
+	ctx context.Context,
+	turnID string,
+	attempt int,
+	message string,
+) error {
+	return c.do(
+		ctx,
+		"/worker/turns/"+url.PathEscape(turnID)+"/fail",
+		worker.FailTurnRequest{Attempt: attempt, Error: message},
+		nil,
+	)
+}
+
 func (c *client) publishEvent(ctx context.Context, eventType string, payload any) error {
 	return c.do(ctx, "/worker/events", worker.EventRequest{Type: eventType, Payload: payload}, nil)
 }
 
 func (c *client) do(ctx context.Context, path string, body any, out any) error {
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("encode %s request: %w", path, err)
+	return c.doMethod(ctx, http.MethodPost, path, body, out)
+}
+
+func (c *client) doMethod(
+	ctx context.Context,
+	method, path string,
+	body any,
+	out any,
+) error {
+	var encoded []byte
+	var err error
+	if body != nil {
+		encoded, err = json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("encode %s request: %w", path, err)
+		}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(encoded))
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Content-Type", "application/json")
-	if c.token != "" {
-		request.Header.Set("Authorization", "Worker "+c.token)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	if token := c.currentToken(); token != "" {
+		request.Header.Set("Authorization", "Worker "+token)
 	}
 	response, err := c.http.Do(request)
 	if err != nil {
@@ -197,4 +320,16 @@ func (c *client) do(ctx context.Context, path string, body any, out any) error {
 		return fmt.Errorf("decode %s response: %w", path, err)
 	}
 	return nil
+}
+
+func (c *client) setToken(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.token = token
+}
+
+func (c *client) currentToken() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.token
 }
