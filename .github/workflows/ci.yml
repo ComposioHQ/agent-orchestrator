@@ -71,7 +71,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: Untrivial-ai/agent-orchestrator
-          ref: 5290ebcb5b9fdbfb5319f95b9c9040931545d3fb
+          ref: 000e8f269827525b7d5ce62a2acfe4f26fa12cba
           path: public
       - name: Check out private Cloud change
         uses: actions/checkout@v5
