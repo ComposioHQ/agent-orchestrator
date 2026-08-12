@@ -9,7 +9,7 @@ Use this skill only with a real supplied harness. The canonical task is:
 
 > Change the background color of the notification icon to red. Implement the change, run the relevant checks, open a PR, and wait for review.
 
-The runner uses only the AO CLI and keeps a JSON evidence trail. It does not use fake agents, direct SQLite reads, or internal Go packages.
+The runner uses the AO CLI plus the public loopback daemon API exposed by `ao status --json`, and keeps a JSON evidence trail. It does not use fake agents, direct SQLite reads, or internal Go packages.
 
 ## Live run
 
@@ -34,9 +34,9 @@ The runner exits 0 only when every stage passes. Exit 1 means an observable asse
 ## What the runner checks
 
 - Preflight: AO binary, daemon, project, and harness configuration.
-- Orchestrator: real role spawn, live session, prompt/system-prompt byte evidence, and exact task visibility when exposed.
-- Delegation: a new non-orchestrator worker appears in the target project after the run's baseline and remains inspectable.
-- Work/Kanban/PR: worker activity/status changes are sampled, PR facts are detected when exposed by session JSON, and missing branch/worktree/tracker/PR facts are recorded as non-passing observation gaps.
+- Orchestrator: real role spawn, live session, prompt/system-prompt byte evidence, prompt artifact evidence under the AO data dir, and exact task visibility when exposed.
+- Delegation: a new non-orchestrator worker appears in the target project after the run's baseline and remains inspectable through CLI or API detail.
+- Work/Kanban/PR: worker activity/status changes are sampled, branch and PR facts are detected from API session detail when available, and missing worktree/tracker/PR facts are recorded as non-passing observation gaps.
 - Reviewer: review records are polled until a completed reviewer run with session, status, and verdict evidence is visible.
 
 Keep the report. It records commands, exit codes, stdout/stderr, timestamps, IDs, observations, the first failed stage, and cleanup results.
@@ -61,7 +61,7 @@ Classify every finding:
 - **Failed:** an observable assertion contradicts the expected lifecycle.
 - **Unobservable:** the current CLI/API does not expose the fact; do not infer it from spawn success.
 
-For worker placement, inspect the worktree and branch recorded by AO, then verify the notification-icon diff and relevant frontend checks from that worktree. For Kanban alignment, capture tracker status and AO `activity.state` at each transition; do not treat a failed runtime probe as proof the worker is dead. For review, compare the worker PR owner, `ao review ls` latest run, reviewer session, submitted verdict, and any review comments.
+For prompt delivery, prefer observed role behavior and AO-generated prompt artifacts under `<dataDir>/prompts/<session-id>/system.md`; do not ask agents to reveal their exact system prompt. For worker placement, inspect the worktree and branch recorded by AO, then verify the notification-icon diff and relevant frontend checks from that worktree. For Kanban alignment, capture tracker status and AO `activity.state` at each transition; do not treat a failed runtime probe as proof the worker is dead. For review, compare the worker PR owner, `ao review ls` latest run, reviewer session, submitted verdict, and any review comments.
 
 ## Failure interpretation
 

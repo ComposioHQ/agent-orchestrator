@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { access, mkdir, rename, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -74,6 +74,32 @@ function markUnobservable(record, reason) {
   record.status = "unobservable";
   record.reason = reason;
 }
+async function readPromptArtifact(dataDir, sessionID) {
+  if (!dataDir) return { status: "unobservable", reason: "ao status did not expose dataDir" };
+  const path = join(resolve(expandHome(dataDir)), "prompts", sessionID, "system.md");
+  try {
+    const body = await readFile(path, "utf8");
+    return { status: body.trim() ? "observed" : "failed", path, bytes: Buffer.byteLength(body), body };
+  } catch (error) {
+    return { status: "unobservable", path, reason: error.message };
+  }
+}
+async function apiJSON(port, method, apiPath, body) {
+  if (!port) throw new Error("ao status did not expose daemon port");
+  const url = `http://127.0.0.1:${port}/api/v1${apiPath}`;
+  const res = await fetch(url, {
+    method,
+    headers: { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed = {};
+  if (text.trim()) {
+    try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+  }
+  if (!res.ok) throw new Error(`${method} ${apiPath} failed with HTTP ${res.status}: ${text}`);
+  return parsed;
+}
 
 async function save(report, path) {
   if (!path) return;
@@ -89,17 +115,30 @@ async function main() {
   const created = [];
   const command = (args) => runCommand([ao, ...args], options.commandTimeoutSeconds);
   async function run(record, args, parse = false) { const result = await command(args); record.evidence.push({ command: [ao, ...args], result }); if (result.code !== 0) throw new Error(`${args.join(" ")}: ${result.stderr || result.stdout || `exit ${result.code}`}`); return parse ? json(result.stdout) : result.stdout; }
+  async function getSessionDetail(record, sessionID) {
+    const status = report.stages[0]?.observed?.status ?? {};
+    if (status.port) {
+      try {
+        const payload = await apiJSON(status.port, "GET", `/sessions/${encodeURIComponent(sessionID)}`);
+        record.evidence.push({ api: { method: "GET", path: `/sessions/${sessionID}` }, observed: payload });
+        return payload;
+      } catch (error) {
+        record.evidence.push({ api: { method: "GET", path: `/sessions/${sessionID}` }, error: error.message });
+      }
+    }
+    return run(record, ["session", "get", sessionID, "--json"], true);
+  }
   async function poll(record, label, read, predicate) { const deadline = Date.now() + options.pollTimeoutSeconds * 1000; let last; while (Date.now() < deadline) { last = await read(); record.evidence.push({ poll: label, observed: last }); if (predicate(last)) return last; await new Promise((done) => setTimeout(done, options.pollIntervalSeconds * 1000)); } throw new Error(`${label} timed out; last observed: ${JSON.stringify(last)}`); }
   async function stage(name, fn) { const record = { name, status: "running", startedAt: new Date().toISOString(), evidence: [] }; report.stages.push(record); try { await fn(record); if (record.status === "running") record.status = "passed"; } catch (error) { record.status = "failed"; record.reason = error.message; report.failure ??= { stage: name, reason: error.message }; } record.finishedAt = new Date().toISOString(); return record; }
 
-  await stage("preflight", async (r) => { r.observed = { ao, version: await run(r, ["version"]), status: await run(r, ["status"], true), project: await run(r, ["project", "get", options.project, "--json"], true), harness: options.harness, baselineSessions: await run(r, ["session", "ls", "--project", options.project, "--all", "--json"], true) }; });
+  await stage("preflight", async (r) => { r.observed = { ao, version: await run(r, ["version"]), status: await run(r, ["status", "--json"], true), project: await run(r, ["project", "get", options.project, "--json"], true), harness: options.harness, baselineSessions: await run(r, ["session", "ls", "--project", options.project, "--all", "--json"], true) }; });
   if (report.failure) return finish(report, options, created, command);
   const baseline = new Set(itemsFrom(report.stages[0]?.observed?.baselineSessions).map((x) => x.id));
-  await stage("orchestrator", async (r) => { const text = await run(r, ["spawn", "--project", options.project, "--kind", "orchestrator", "--mode", options.mode, "--harness", options.orchestratorHarness || options.harness, "--name", "e2e-orchestrator", "--prompt", options.task]); const match = text.match(/spawned session ([A-Za-z0-9_-]+)/); if (!match) throw new Error(`could not parse session ID: ${text}`); created.push(match[1]); report.sessions.push({ role: "orchestrator", id: match[1], harness: options.orchestratorHarness || options.harness, mode: options.mode }); const payload = await poll(r, "orchestrator session", () => run(r, ["session", "get", match[1], "--json"], true), (x) => sessionFrom(x)?.isTerminated === false); r.observed = { session: payload, taskEvidence: classifyTaskEvidence(payload, options.task), promptBytesReported: text.includes("prompt "), systemPromptBytesReported: text.includes("system "), mode: options.mode }; if (!r.observed.promptBytesReported || !r.observed.systemPromptBytesReported || r.observed.taskEvidence !== "observed") markUnobservable(r, "orchestrator prompt bytes or exact task text are not fully observable through CLI output"); });
+  await stage("orchestrator", async (r) => { const text = await run(r, ["spawn", "--project", options.project, "--kind", "orchestrator", "--mode", options.mode, "--harness", options.orchestratorHarness || options.harness, "--name", "e2e-orchestrator", "--prompt", options.task]); const match = text.match(/spawned session ([A-Za-z0-9_-]+)/); if (!match) throw new Error(`could not parse session ID: ${text}`); created.push(match[1]); report.sessions.push({ role: "orchestrator", id: match[1], harness: options.orchestratorHarness || options.harness, mode: options.mode }); const payload = await poll(r, "orchestrator session", () => getSessionDetail(r, match[1]), (x) => sessionFrom(x)?.isTerminated === false); const promptArtifact = await readPromptArtifact(report.stages[0]?.observed?.status?.dataDir, match[1]); const promptText = promptArtifact.body || ""; delete promptArtifact.body; r.observed = { session: payload, taskEvidence: classifyTaskEvidence(payload, options.task), promptArtifact, rolePromptMarker: promptText.includes("AO Orchestrator Role") ? "observed" : "unobservable", promptBytesReported: text.includes("prompt "), systemPromptBytesReported: text.includes("system "), mode: options.mode }; if (promptArtifact.status === "failed") throw new Error(`orchestrator prompt artifact is empty: ${promptArtifact.path}`); if (!r.observed.promptBytesReported || !r.observed.systemPromptBytesReported || (r.observed.taskEvidence !== "observed" && promptArtifact.status !== "observed")) markUnobservable(r, "orchestrator prompt/task evidence is not fully observable through CLI/API/prompt artifacts"); });
   if (report.failure) return finish(report, options, created, command);
-  await stage("delegation-and-worker", async (r) => { const payload = await poll(r, "worker delegation", () => run(r, ["session", "ls", "--project", options.project, "--all", "--json"], true), (x) => itemsFrom(x).some((item) => item.kind !== "orchestrator" && !baseline.has(item.id) && !item.isTerminated)); const worker = itemsFrom(payload).find((x) => x.kind !== "orchestrator" && !baseline.has(x.id) && !x.isTerminated); created.push(worker.id); report.sessions.push({ role: "worker", id: worker.id, harness: worker.harness || options.harness }); const detail = await run(r, ["session", "get", worker.id, "--json"], true); const workerSession = sessionFrom(detail); r.observed = { worker, session: detail, taskEvidence: classifyTaskEvidence(detail, options.task), activity: workerSession?.activity, status: workerSession?.status }; if (r.observed.taskEvidence !== "observed") markUnobservable(r, "worker task prompt is not visible through session CLI JSON"); });
+  await stage("delegation-and-worker", async (r) => { const payload = await poll(r, "worker delegation", () => run(r, ["session", "ls", "--project", options.project, "--all", "--json"], true), (x) => itemsFrom(x).some((item) => item.kind !== "orchestrator" && !baseline.has(item.id) && !item.isTerminated)); const worker = itemsFrom(payload).find((x) => x.kind !== "orchestrator" && !baseline.has(x.id) && !x.isTerminated); created.push(worker.id); report.sessions.push({ role: "worker", id: worker.id, harness: worker.harness || options.harness }); const detail = await getSessionDetail(r, worker.id); const workerSession = sessionFrom(detail); const promptArtifact = await readPromptArtifact(report.stages[0]?.observed?.status?.dataDir, worker.id); const promptText = promptArtifact.body || ""; delete promptArtifact.body; r.observed = { worker, session: detail, taskEvidence: classifyTaskEvidence(detail, options.task), promptArtifact, rolePromptMarker: promptText.includes("AO Worker Role") ? "observed" : "unobservable", activity: workerSession?.activity, status: workerSession?.status, branch: workerSession?.branch }; if (promptArtifact.status === "failed") throw new Error(`worker prompt artifact is empty: ${promptArtifact.path}`); if (r.observed.taskEvidence !== "observed" && promptArtifact.status !== "observed") markUnobservable(r, "worker task prompt is not visible through session CLI/API JSON or prompt artifact"); });
   if (report.failure) return finish(report, options, created, command);
-  await stage("work-kanban-and-pr", async (r) => { const worker = report.sessions.find((x) => x.role === "worker"); const payload = await poll(r, "worker activity or PR", () => run(r, ["session", "get", worker.id, "--json"], true), (x) => { const s = sessionFrom(x); return Boolean(firstPR(s) || ["working", "pr_open", "draft", "review_pending", "changes_requested", "approved", "mergeable", "merged"].includes(s?.status)); }); const session = sessionFrom(payload); const pr = firstPR(session); r.observed = { session: payload, activity: session?.activity, status: session?.status, branch: session?.branch, pr, scmStatus: session?.scmStatus }; if (!session?.activity?.state && !session?.status) throw new Error("worker session exposes neither activity nor status"); if (!pr) markUnobservable(r, "worker PR facts are not observable yet; continue polling manually or inspect the worker branch/worktree"); });
+  await stage("work-kanban-and-pr", async (r) => { const worker = report.sessions.find((x) => x.role === "worker"); const payload = await poll(r, "worker activity or PR", () => getSessionDetail(r, worker.id), (x) => { const s = sessionFrom(x); return Boolean(firstPR(s) || ["working", "pr_open", "draft", "review_pending", "changes_requested", "approved", "mergeable", "merged"].includes(s?.status)); }); const session = sessionFrom(payload); const pr = firstPR(session); r.observed = { session: payload, activity: session?.activity, status: session?.status, branch: session?.branch, pr, scmStatus: session?.scmStatus }; if (!session?.activity?.state && !session?.status) throw new Error("worker session exposes neither activity nor status"); if (!session?.branch) markUnobservable(r, "worker branch/worktree metadata is not observable through CLI/API"); if (!pr) markUnobservable(r, "worker PR facts are not observable yet; continue polling manually or inspect the worker branch/worktree"); });
   if (report.failure) return finish(report, options, created, command);
   await stage("reviewer", async (r) => { const worker = report.sessions.find((x) => x.role === "worker"); const payload = await poll(r, "review result", () => run(r, ["review", "ls", worker.id, "--json"], true), (x) => x?.reviews?.some((review) => reviewCompleted(review.latestRun))); const review = payload.reviews.find((item) => reviewCompleted(item.latestRun)); const latest = review.latestRun; r.observed = { reviews: payload, selected: review }; report.sessions.push({ role: "reviewer", id: latest.sessionId, reviewRunId: latest.id, harness: latest.harness || options.reviewerHarness || "configured-by-AO", verdict: latest.verdict, status: latest.status }); if (!latest.sessionId || !latest.verdict || latest.verdict === "none") markUnobservable(r, "review run exists but reviewer session or verdict is not exposed"); });
   return finish(report, options, created, command);
