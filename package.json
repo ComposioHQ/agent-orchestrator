@@ -10,7 +10,7 @@
     "prebuild": "npm run build:shared",
     "start": "next start",
     "cloud:local": "./scripts/cloud-web-local.sh",
-    "cloud:local:down": "docker compose down --remove-orphans",
+    "cloud:local:down": "./scripts/cloud-local-down.sh",
     "cloud:local:reset": "./scripts/cloud-local-reset.sh",
     "cloud:local:smoke": "./scripts/test-cloud-local.sh",
     "cloud:staging": "./scripts/cloud-staging.sh",

@@ -9,9 +9,15 @@ readonly api_url="http://127.0.0.1:${AO_CLOUD_PORT:-8081}"
 readonly web_port="${AO_CLOUD_WEB_PORT:-3000}"
 export AO_CLOUD_LOCAL_POSTGRES_DATA_DIR="${AO_CLOUD_LOCAL_POSTGRES_DATA_DIR:-${AO_DATA_DIR:-$HOME/.ao}/cloud/postgres}"
 readonly provider_key_file="${AO_DATA_DIR:-$HOME/.ao}/cloud/provider-secret-key"
+readonly worker_key_file="${AO_DATA_DIR:-$HOME/.ao}/cloud/worker-signing-key"
+source "$root/scripts/lib/docker-local.sh"
 
 if [[ ! -f "$public_root/packages/product-ui/src/index.ts" || ! -f "$public_root/packages/cloud-client/src/index.ts" ]]; then
 	echo "The Cloud web UI must run from private/ao-cloud inside an Agent Orchestrator checkout." >&2
+	exit 1
+fi
+if ! ao_docker_available; then
+	echo "Docker Engine with Compose is required for local Cloud workers." >&2
 	exit 1
 fi
 
@@ -24,6 +30,15 @@ if [[ ! -s "$provider_key_file" ]]; then
 fi
 export AO_CLOUD_PROVIDER_SECRET_KEY
 AO_CLOUD_PROVIDER_SECRET_KEY="$(<"$provider_key_file")"
+if [[ ! -s "$worker_key_file" ]]; then
+	umask 077
+	openssl rand -hex 32 >"$worker_key_file"
+fi
+export AO_CLOUD_WORKER_SIGNING_KEY
+AO_CLOUD_WORKER_SIGNING_KEY="$(<"$worker_key_file")"
+export AO_CLOUD_DOCKER_GID
+AO_CLOUD_DOCKER_GID="$(ao_docker_socket_gid)"
+docker compose --profile worker-image build worker-image
 docker compose up --build --detach --remove-orphans
 
 ready=false

@@ -22,6 +22,7 @@ services:
   migrate:
     build:
       context: .
+      target: control-plane
     entrypoint: ["/ao-cloud-migrate"]
     environment:
       AO_CLOUD_MIGRATION_DATABASE_URL: postgres://ao_cloud_owner:ao_cloud_local_owner@postgres:5432/ao_cloud?sslmode=disable
@@ -34,6 +35,7 @@ services:
   control-plane:
     build:
       context: .
+      target: control-plane
     environment:
       AO_CLOUD_ENV: development
       AO_CLOUD_RELEASE: local-compose
@@ -43,6 +45,17 @@ services:
       AO_CLOUD_LOCAL_AUTH: "true"
       AO_CLOUD_SANDBOX_PROVIDER: docker
       AO_CLOUD_PROVIDER_SECRET_KEY: "${AO_CLOUD_PROVIDER_SECRET_KEY:?AO_CLOUD_PROVIDER_SECRET_KEY is required}"
+      AO_CLOUD_PUBLIC_URL: http://control-plane:8080
+      AO_CLOUD_WORKER_SIGNING_KEY: "${AO_CLOUD_WORKER_SIGNING_KEY:?AO_CLOUD_WORKER_SIGNING_KEY is required}"
+      AO_CLOUD_DOCKER_HOST: unix:///var/run/docker.sock
+      AO_CLOUD_DOCKER_WORKER_IMAGE: "${AO_CLOUD_DOCKER_WORKER_IMAGE:-ao-cloud-worker:local}"
+      AO_CLOUD_DOCKER_NETWORK: "${COMPOSE_PROJECT_NAME:-ao-cloud-local}_default"
+      AO_CLOUD_DOCKER_NAMESPACE: "${COMPOSE_PROJECT_NAME:-ao-cloud-local}"
+      AO_CLOUD_DOCKER_WORKER_TOKEN_TTL: 15m
+    group_add:
+      - "${AO_CLOUD_DOCKER_GID:-0}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "127.0.0.1:${AO_CLOUD_PORT:-8081}:8080"
     depends_on:
@@ -57,3 +70,10 @@ services:
       retries: 20
       start_period: 5s
     restart: unless-stopped
+
+  worker-image:
+    profiles: ["worker-image"]
+    image: "${AO_CLOUD_DOCKER_WORKER_IMAGE:-ao-cloud-worker:local}"
+    build:
+      context: .
+      target: worker

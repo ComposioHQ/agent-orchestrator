@@ -51,6 +51,13 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH", "")
 	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "")
+	t.Setenv("AO_CLOUD_DOCKER_HOST", "unix:///var/run/docker.sock")
+	t.Setenv("AO_CLOUD_DOCKER_WORKER_IMAGE", "ao-cloud-worker:test")
+	t.Setenv("AO_CLOUD_DOCKER_NETWORK", "ao-cloud-test_default")
+	t.Setenv("AO_CLOUD_DOCKER_NAMESPACE", "ao-cloud-test")
+	t.Setenv("AO_CLOUD_DOCKER_WORKER_TOKEN_TTL", "10m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "http://control-plane:8080")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("d", 64))
 	t.Setenv("AO_CLOUD_RELEASE", "")
 
 	cfg, err := Load()
@@ -63,6 +70,8 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 		cfg.MigrationTimeout != 15*time.Minute ||
 		cfg.HTTPAddress != "127.0.0.1:8080" ||
 		cfg.SandboxProvider != "docker" ||
+		cfg.DockerWorkerImage != "ao-cloud-worker:test" ||
+		cfg.WorkerTokenTTL() != 10*time.Minute ||
 		cfg.Release != "dev" ||
 		cfg.MigrationDatabaseURL != cfg.DatabaseURL {
 		t.Fatalf("config = %#v", cfg)

@@ -20,6 +20,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/reconcile"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox/createos"
+	dockerprovider "github.com/Untrivial-ai/ao-cloud/internal/sandbox/docker"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandboxresolve"
 	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
@@ -62,6 +63,13 @@ func provisioningDefaults(cfg config.Config) sandbox.ProvisioningDefaults {
 			AutoPauseMinutes: cfg.NodeOpsAutoPauseMinutes,
 			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
 		},
+		Docker: sandbox.DockerConfig{
+			Host:           cfg.DockerHost,
+			WorkerImage:    cfg.DockerWorkerImage,
+			Network:        cfg.DockerNetwork,
+			Namespace:      cfg.DockerNamespace,
+			WorkerTokenTTL: cfg.DockerWorkerTokenTTL,
+		},
 	}
 }
 
@@ -74,32 +82,52 @@ func newSandboxReconciler(
 	store *postgres.Store,
 	logger *slog.Logger,
 ) (*reconcile.Reconciler, error) {
-	if cfg.SandboxProvider != sandbox.ProviderNodeOps {
+	if cfg.SandboxProvider != sandbox.ProviderNodeOps &&
+		cfg.SandboxProvider != sandbox.ProviderDocker {
 		return nil, nil
 	}
-	// The worker binary is read once, at startup. Reading it per provision
-	// would let a mid-flight deploy hand two sandboxes different builds, and a
-	// missing file would surface as a stuck session instead of a failed boot.
-	workerBinary, err := os.ReadFile(cfg.WorkerBinaryPath)
-	if err != nil {
-		return nil, fmt.Errorf("read worker binary %s: %w", cfg.WorkerBinaryPath, err)
+	var (
+		nodeOpsProvider sandbox.Provider
+		dockerProvider  sandbox.Provider
+		workerBinary    []byte
+	)
+	switch cfg.SandboxProvider {
+	case sandbox.ProviderNodeOps:
+		// The worker binary is read once, at startup. Reading it per provision
+		// would let a mid-flight deploy hand two sandboxes different builds.
+		var err error
+		workerBinary, err = os.ReadFile(cfg.WorkerBinaryPath)
+		if err != nil {
+			return nil, fmt.Errorf("read worker binary %s: %w", cfg.WorkerBinaryPath, err)
+		}
+		if len(workerBinary) == 0 {
+			return nil, fmt.Errorf("worker binary %s is empty", cfg.WorkerBinaryPath)
+		}
+		sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
+		if err != nil {
+			return nil, err
+		}
+		nodeOpsProvider = createos.New(createos.Config{
+			BaseURL:      cfg.NodeOpsBaseURL,
+			APIKey:       cfg.NodeOpsAPIKey,
+			DefaultShape: cfg.NodeOpsDefaultShape,
+			DefaultRoot:  cfg.NodeOpsDefaultRootFS,
+			Region:       cfg.NodeOpsRegion,
+			SSHPubKeys:   sshPubKeys,
+		})
+	case sandbox.ProviderDocker:
+		provider, err := dockerprovider.New(dockerprovider.Config{
+			Host:        cfg.DockerHost,
+			WorkerImage: cfg.DockerWorkerImage,
+			Network:     cfg.DockerNetwork,
+			Namespace:   cfg.DockerNamespace,
+		})
+		if err != nil {
+			return nil, err
+		}
+		dockerProvider = provider
 	}
-	if len(workerBinary) == 0 {
-		return nil, fmt.Errorf("worker binary %s is empty", cfg.WorkerBinaryPath)
-	}
-	sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
-	if err != nil {
-		return nil, err
-	}
-	provider := createos.New(createos.Config{
-		BaseURL:      cfg.NodeOpsBaseURL,
-		APIKey:       cfg.NodeOpsAPIKey,
-		DefaultShape: cfg.NodeOpsDefaultShape,
-		DefaultRoot:  cfg.NodeOpsDefaultRootFS,
-		Region:       cfg.NodeOpsRegion,
-		SSHPubKeys:   sshPubKeys,
-	})
-	return reconcile.New(store, sandboxresolve.New(provider), reconcile.Options{
+	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, dockerProvider), reconcile.Options{
 		PublicURL:        cfg.PublicURL,
 		WorkerBinary:     workerBinary,
 		Interval:         cfg.ReconcileInterval,
@@ -228,7 +256,7 @@ func run(logger *slog.Logger) error {
 		SandboxProvider:  cfg.SandboxProvider,
 		Provisioning:     provisioningDefaults(cfg),
 		WorkerTokens:     workerTokens,
-		WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
+		WorkerTokenTTL:   cfg.WorkerTokenTTL(),
 		MaxSandboxes:     cfg.MaxSandboxesPerOrg,
 		Environment:      cfg.Environment,
 		Release:          cfg.Release,

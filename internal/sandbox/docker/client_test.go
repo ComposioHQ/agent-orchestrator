@@ -24,6 +24,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 		Network:     "ao-cloud-test_default",
 		Namespace:   "ao-cloud-test",
 		HTTPClient:  server.Client(),
+		APIVersion:  "1.43",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -294,6 +295,28 @@ func TestNewRejectsRemoteDaemonAndUnsafeInputs(t *testing.T) {
 	spec.Environment["BAD\x00KEY"] = "value"
 	if _, err := client.Create(context.Background(), spec); err == nil {
 		t.Fatal("Create() accepted an environment key containing NUL")
+	}
+}
+
+func TestNewNegotiatesTheEngineAPIVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/version" {
+			t.Fatalf("version negotiation hit %s", r.URL.Path)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ApiVersion": "1.51"})
+	}))
+	defer server.Close()
+	client, err := New(Config{
+		Host:        server.URL,
+		WorkerImage: "worker:test",
+		Namespace:   "local",
+		HTTPClient:  server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.baseURL != server.URL+"/v1.51" {
+		t.Errorf("base URL = %q, want negotiated v1.51", client.baseURL)
 	}
 }
 

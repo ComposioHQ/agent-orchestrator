@@ -27,7 +27,6 @@ import (
 )
 
 const (
-	apiVersion      = "v1.43"
 	defaultHost     = "unix:///var/run/docker.sock"
 	defaultTimeout  = 30 * time.Second
 	maxResponseBody = 4 << 20
@@ -57,6 +56,7 @@ type Config struct {
 	// production client accepts unix:// only so an accidentally exposed,
 	// unauthenticated TCP daemon can never become a control-plane target.
 	HTTPClient *http.Client
+	APIVersion string
 }
 
 // Client manages worker containers in one local Docker namespace.
@@ -105,7 +105,7 @@ func New(config Config) (*Client, error) {
 			(endpoint.Scheme != "http" && endpoint.Scheme != "https") {
 			return nil, errors.New("docker: test HTTP endpoint must be an absolute http or https URL")
 		}
-		baseURL = strings.TrimRight(host, "/") + "/" + apiVersion
+		baseURL = strings.TrimRight(host, "/")
 		httpClient = config.HTTPClient
 	} else {
 		if !strings.HasPrefix(host, "unix://") {
@@ -120,16 +120,62 @@ func New(config Config) (*Client, error) {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, "unix", socketPath)
 		}
-		baseURL = "http://docker/" + apiVersion
+		baseURL = "http://docker"
 		httpClient = &http.Client{Transport: transport, Timeout: defaultTimeout}
 	}
-	return &Client{
-		baseURL:   baseURL,
+	client := &Client{
 		image:     image,
 		network:   network,
 		namespace: namespace,
 		http:      httpClient,
-	}, nil
+	}
+	version := strings.TrimSpace(config.APIVersion)
+	if version == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+		defer cancel()
+		var err error
+		version, err = negotiateAPIVersion(ctx, baseURL, httpClient)
+		if err != nil {
+			return nil, err
+		}
+	} else if config.HTTPClient == nil {
+		return nil, errors.New("docker: an explicit API version is only supported by tests")
+	}
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(version) {
+		return nil, fmt.Errorf("docker: engine returned invalid API version %q", version)
+	}
+	client.baseURL = baseURL + "/v" + version
+	return client, nil
+}
+
+func negotiateAPIVersion(ctx context.Context, baseURL string, httpClient *http.Client) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/version", nil)
+	if err != nil {
+		return "", err
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("docker: negotiate engine API: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		snippet, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
+		return "", fmt.Errorf(
+			"docker: negotiate engine API returned %d: %s",
+			response.StatusCode,
+			truncate(strings.TrimSpace(string(snippet)), 512),
+		)
+	}
+	var version struct {
+		APIVersion string `json:"ApiVersion"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxResponseBody)).Decode(&version); err != nil {
+		return "", fmt.Errorf("docker: decode engine version: %w", err)
+	}
+	if strings.TrimSpace(version.APIVersion) == "" {
+		return "", errors.New("docker: engine version response carried no API version")
+	}
+	return strings.TrimSpace(version.APIVersion), nil
 }
 
 type mount struct {

@@ -63,6 +63,12 @@ type Config struct {
 	NodeOpsAutoPauseMinutes int
 	NodeOpsWorkerTokenTTL   time.Duration
 
+	DockerHost           string
+	DockerWorkerImage    string
+	DockerNetwork        string
+	DockerNamespace      string
+	DockerWorkerTokenTTL time.Duration
+
 	GitHub GitHubConfig
 }
 
@@ -133,6 +139,14 @@ func Load() (Config, error) {
 		),
 		NodeOpsWorkerTokenTTL: durationEnv(
 			"AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
+		),
+
+		DockerHost:        envOrDefault("AO_CLOUD_DOCKER_HOST", "unix:///var/run/docker.sock"),
+		DockerWorkerImage: envOrDefault("AO_CLOUD_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
+		DockerNetwork:     strings.TrimSpace(os.Getenv("AO_CLOUD_DOCKER_NETWORK")),
+		DockerNamespace:   envOrDefault("AO_CLOUD_DOCKER_NAMESPACE", "ao-cloud-local"),
+		DockerWorkerTokenTTL: durationEnv(
+			"AO_CLOUD_DOCKER_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
 		),
 
 		GitHub: GitHubConfig{
@@ -237,6 +251,17 @@ func Load() (Config, error) {
 	if cfg.Hosted() && cfg.SandboxProvider != "nodeops" {
 		return Config{}, errors.New("AO_CLOUD_SANDBOX_PROVIDER must be nodeops in staging and production")
 	}
+	if cfg.SandboxProvider == "docker" {
+		if err := (sandbox.DockerConfig{
+			Host:           cfg.DockerHost,
+			WorkerImage:    cfg.DockerWorkerImage,
+			Network:        cfg.DockerNetwork,
+			Namespace:      cfg.DockerNamespace,
+			WorkerTokenTTL: cfg.DockerWorkerTokenTTL,
+		}).Validate(); err != nil {
+			return Config{}, err
+		}
+	}
 	if cfg.SandboxProvider == "nodeops" || cfg.Hosted() {
 		if err := (sandbox.NodeOpsConfig{
 			BaseURL:          cfg.NodeOpsBaseURL,
@@ -250,10 +275,15 @@ func Load() (Config, error) {
 		}).Validate(); err != nil {
 			return Config{}, err
 		}
+	}
+	if cfg.SandboxProvider == "nodeops" || cfg.SandboxProvider == "docker" {
 		// A worker can only dial home if it is told where home is, and can only
 		// be trusted if its token is signed by a key strong enough to matter.
 		if cfg.PublicURL == "" {
-			return Config{}, errors.New("AO_CLOUD_PUBLIC_URL is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+			return Config{}, fmt.Errorf(
+				"AO_CLOUD_PUBLIC_URL is required when AO_CLOUD_SANDBOX_PROVIDER=%s",
+				cfg.SandboxProvider,
+			)
 		}
 		// A worker reads this origin out of its environment and dials it with
 		// no user agent to fall back on, so a malformed value fails silently
@@ -268,10 +298,12 @@ func Load() (Config, error) {
 		}
 		if len(cfg.WorkerSigningKey) < minWorkerSigningKeyLength {
 			return Config{}, fmt.Errorf(
-				"AO_CLOUD_WORKER_SIGNING_KEY must be at least %d characters when AO_CLOUD_SANDBOX_PROVIDER=nodeops",
+				"AO_CLOUD_WORKER_SIGNING_KEY must be at least %d characters when sandbox workers are enabled",
 				minWorkerSigningKeyLength,
 			)
 		}
+	}
+	if cfg.SandboxProvider == "nodeops" {
 		if cfg.WorkerBinaryPath == "" {
 			return Config{}, errors.New("AO_CLOUD_WORKER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
 		}
@@ -354,6 +386,13 @@ func Load() (Config, error) {
 
 func (c Config) Hosted() bool {
 	return c.Environment == "staging" || c.Environment == "production"
+}
+
+func (c Config) WorkerTokenTTL() time.Duration {
+	if c.SandboxProvider == sandbox.ProviderDocker {
+		return c.DockerWorkerTokenTTL
+	}
+	return c.NodeOpsWorkerTokenTTL
 }
 
 func envOrDefault(key, fallback string) string {

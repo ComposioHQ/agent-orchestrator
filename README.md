@@ -31,8 +31,8 @@ production deployments.
   PostgreSQL, and the local control-plane container. WorkOS is used only for an
   optional hosted-account session when the user opens GitHub settings; the app
   itself remains on local auth. GitHub App credentials never leave production.
-  Docker workers are the intended execution backend, but no worker is started
-  until the worker protocol is implemented.
+  Each requested session is provisioned as a labeled sibling Docker container
+  with a persistent, per-session workspace volume.
 - **Staging desktop (`npm run cloud:staging`)** runs the desktop locally against
   `https://staging-api.aoagents.dev`. The hosted staging control plane uses the
   shared WorkOS environment and its own staging database. Future workers run in
@@ -88,16 +88,17 @@ npm run cloud:local
 ```
 
 This builds the same distroless control-plane image used in hosted
-environments, starts PostgreSQL on `127.0.0.1:54329`, runs migrations with an
-isolated non-superuser schema-owner role, grants only runtime DML privileges to
-the separate non-superuser `ao_cloud_app` role, disables login for the
-image-bootstrap superuser, and exposes the API on
+environments plus the local worker image, starts PostgreSQL on
+`127.0.0.1:54329`, runs migrations with an isolated non-superuser schema-owner
+role, grants only runtime DML privileges to the separate non-superuser
+`ao_cloud_app` role, disables login for the image-bootstrap superuser, and
+exposes the API on
 `http://127.0.0.1:8081` (avoiding the desktop daemon's usual port). Local auth
 is enabled. The command then starts the Cloud UI on `http://127.0.0.1:3000`;
 create a development account with email/password on its sign-in screen. The
-browser receives only an HttpOnly session cookie. No worker is started:
-sessions store durable execution intent, but provisioning remains a separate
-feature.
+browser receives only an HttpOnly session cookie. The Docker socket is mounted
+only into the control-plane container so it can create sibling workers; worker
+containers never receive the socket. Local Docker workers do not auto-pause.
 
 Use `npm run cloud:local:down` to stop containers while retaining data and
 `npm run cloud:local:reset` to stop them and delete the local database
@@ -107,7 +108,9 @@ application state out of OS-default app-data locations. Ports can be changed
 with `AO_CLOUD_PORT` and `AO_CLOUD_POSTGRES_PORT`.
 `npm run cloud:local:smoke` uses an isolated Compose project and random
 loopback ports to verify the complete create/restart/persist/down/reset
-lifecycle without touching normal local Cloud data.
+lifecycle, including worker replacement with workspace persistence, without
+touching normal local Cloud data. It reports a clean skip when Docker is not
+available.
 
 To launch the desktop's currently implemented auth-only flow against a hosted
 staging deployment:

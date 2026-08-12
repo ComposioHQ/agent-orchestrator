@@ -32,6 +32,30 @@ type NodeOpsConfig struct {
 	WorkerTokenTTL   time.Duration
 }
 
+type DockerConfig struct {
+	Host           string
+	WorkerImage    string
+	Network        string
+	Namespace      string
+	WorkerTokenTTL time.Duration
+}
+
+func (c DockerConfig) Validate() error {
+	if !strings.HasPrefix(strings.TrimSpace(c.Host), "unix:///") {
+		return errors.New("AO_CLOUD_DOCKER_HOST must be an absolute unix:// path")
+	}
+	if strings.TrimSpace(c.WorkerImage) == "" {
+		return errors.New("AO_CLOUD_DOCKER_WORKER_IMAGE is required")
+	}
+	if strings.TrimSpace(c.Namespace) == "" {
+		return errors.New("AO_CLOUD_DOCKER_NAMESPACE is required")
+	}
+	if c.WorkerTokenTTL <= 0 {
+		return errors.New("AO_CLOUD_DOCKER_WORKER_TOKEN_TTL must be positive")
+	}
+	return nil
+}
+
 func (c NodeOpsConfig) Validate() error {
 	if strings.TrimSpace(c.BaseURL) == "" {
 		return errors.New("AO_CLOUD_NODEOPS_BASE_URL is required")
@@ -61,6 +85,7 @@ type ProvisioningDefaults struct {
 	Provider string
 	Release  string
 	NodeOps  NodeOpsConfig
+	Docker   DockerConfig
 }
 
 type Plan struct {
@@ -79,23 +104,26 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 	if release == "" {
 		release = "dev"
 	}
-	autoPauseMinutes := d.NodeOps.AutoPauseMinutes
-	if autoPauseMinutes < minAutoPauseMinutes {
-		autoPauseMinutes = DefaultAutoPauseMinutes
-	}
+	autoStopMinutes := 0
 	resourceProfile := map[string]any{
 		"provider":        provider,
 		"release":         release,
-		"autoStopMinutes": autoPauseMinutes,
+		"autoStopMinutes": autoStopMinutes,
 	}
 	bootstrapContext := map[string]any{
 		"provider": provider,
 		"release":  release,
 	}
 	if provider == ProviderNodeOps {
+		autoPauseMinutes := d.NodeOps.AutoPauseMinutes
+		if autoPauseMinutes < minAutoPauseMinutes {
+			autoPauseMinutes = DefaultAutoPauseMinutes
+		}
 		if err := d.NodeOps.Validate(); err != nil {
 			return Plan{}, err
 		}
+		autoStopMinutes = autoPauseMinutes
+		resourceProfile["autoStopMinutes"] = autoPauseMinutes
 		resourceProfile["nodeOps"] = map[string]any{
 			"baseUrl":               strings.TrimSpace(d.NodeOps.BaseURL),
 			"defaultShape":          strings.TrimSpace(d.NodeOps.DefaultShape),
@@ -114,6 +142,21 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 			"autoPauseMinutes":      autoPauseMinutes,
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),
 		}
+	} else if provider == ProviderDocker {
+		if err := d.Docker.Validate(); err != nil {
+			return Plan{}, err
+		}
+		resourceProfile["docker"] = map[string]any{
+			"workerImage":           strings.TrimSpace(d.Docker.WorkerImage),
+			"network":               strings.TrimSpace(d.Docker.Network),
+			"namespace":             strings.TrimSpace(d.Docker.Namespace),
+			"workerTokenTtlSeconds": int64(d.Docker.WorkerTokenTTL / time.Second),
+		}
+		bootstrapContext["docker"] = map[string]any{
+			"workerImage": strings.TrimSpace(d.Docker.WorkerImage),
+			"network":     strings.TrimSpace(d.Docker.Network),
+			"namespace":   strings.TrimSpace(d.Docker.Namespace),
+		}
 	}
 	resourceJSON, err := json.Marshal(resourceProfile)
 	if err != nil {
@@ -127,7 +170,7 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 		Provider:         provider,
 		ResourceProfile:  resourceJSON,
 		BootstrapContext: bootstrapJSON,
-		AutoStopMinutes:  autoPauseMinutes,
+		AutoStopMinutes:  autoStopMinutes,
 	}, nil
 }
 
