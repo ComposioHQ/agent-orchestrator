@@ -55,7 +55,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes shellcheck
           bash -n scripts/*.sh
-          shellcheck scripts/*.sh
+          shellcheck -x scripts/*.sh
       - name: Build and verify deployment images
         run: |
           docker build --target control-plane --tag ao-cloud:test .
@@ -71,7 +71,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: Untrivial-ai/agent-orchestrator
-          ref: 9b2a8522aec738b157ceaa80efc74a93b846901f
+          ref: 5290ebcb5b9fdbfb5319f95b9c9040931545d3fb
           path: public
       - name: Check out private Cloud change
         uses: actions/checkout@v5

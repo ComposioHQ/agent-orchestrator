@@ -23,12 +23,12 @@ func TestSupervisorRunsWorkspaceTerminalAndStopsOnCancellation(t *testing.T) {
 	go func() { done <- supervisor.Run(ctx) }()
 
 	control.requests <- &worker.TransportRequest{
-		ID: "open", Kind: "terminal.open",
+		ID: "open", Kind: "terminal.open", Attempt: 1,
 		Payload: map[string]any{"terminalId": "terminal-1", "kind": "workspace"},
 	}
 	waitString(t, control.completed, "open")
 	control.requests <- &worker.TransportRequest{
-		ID: "input", Kind: "terminal.input",
+		ID: "input", Kind: "terminal.input", Attempt: 1,
 		Payload: map[string]any{
 			"terminalId": "terminal-1",
 			"data":       []byte("printf 'terminal-ready\\n'; exit\n"),
@@ -70,6 +70,7 @@ func (c *recordingControl) ClaimTransport(ctx context.Context) (*worker.Transpor
 func (c *recordingControl) CompleteTransport(
 	_ context.Context,
 	id string,
+	_ int,
 	_ any,
 ) error {
 	c.completed <- id
@@ -78,7 +79,9 @@ func (c *recordingControl) CompleteTransport(
 
 func (c *recordingControl) FailTransport(
 	_ context.Context,
-	id, _, _ string,
+	id string,
+	_ int,
+	_, _ string,
 ) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

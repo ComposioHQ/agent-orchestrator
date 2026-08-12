@@ -35,7 +35,8 @@ func (s *Server) workerClaimTransport(w http.ResponseWriter, r *http.Request) {
 	response := worker.ClaimTransportResponse{}
 	if ok {
 		response.Request = &worker.TransportRequest{
-			ID: request.ID, Kind: request.Kind, Payload: request.Payload,
+			ID: request.ID, Kind: request.Kind,
+			Attempt: request.Attempt, Payload: request.Payload,
 		}
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -53,6 +54,7 @@ func (s *Server) workerCompleteTransport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input struct {
+		Attempt  int             `json:"attempt"`
 		Response json.RawMessage `json:"response"`
 	}
 	if err := decodeJSONLimit(w, r, &input, maxWorkerTransportResult); err != nil {
@@ -61,6 +63,7 @@ func (s *Server) workerCompleteTransport(w http.ResponseWriter, r *http.Request)
 	}
 	var object map[string]any
 	if len(input.Response) == 0 ||
+		input.Attempt <= 0 ||
 		json.Unmarshal(input.Response, &object) != nil ||
 		object == nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", "response must be a JSON object.")
@@ -68,7 +71,7 @@ func (s *Server) workerCompleteTransport(w http.ResponseWriter, r *http.Request)
 	}
 	if err := s.store.CompleteWorkerRequest(
 		r.Context(), claims.OrgID, claims.SessionID, claims.WorkerID,
-		requestID, claims.Epoch, input.Response,
+		requestID, claims.Epoch, input.Attempt, input.Response,
 	); err != nil {
 		s.writeWorkerTransportError(w, r, err)
 		return
@@ -95,13 +98,14 @@ func (s *Server) workerFailTransport(w http.ResponseWriter, r *http.Request) {
 	input.Code = strings.TrimSpace(input.Code)
 	input.Message = strings.TrimSpace(input.Message)
 	if input.Code == "" || len(input.Code) > 100 ||
+		input.Attempt <= 0 ||
 		input.Message == "" || len(input.Message) > maxWorkerError {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The worker failure is invalid.")
 		return
 	}
 	if err := s.store.FailWorkerRequest(
 		r.Context(), claims.OrgID, claims.SessionID, claims.WorkerID,
-		requestID, claims.Epoch, input.Code, input.Message,
+		requestID, claims.Epoch, input.Attempt, input.Code, input.Message,
 	); err != nil {
 		s.writeWorkerTransportError(w, r, err)
 		return

@@ -46,6 +46,7 @@ func TestWorkerTransportRoutesDurablyAcrossStoresAndFencesEpochs(t *testing.T) {
 		workerID,
 		request.ID,
 		epoch,
+		claimed.Attempt,
 		json.RawMessage(`{"path":"README.md","content":"hello","size":5}`),
 	); err != nil {
 		t.Fatal(err)
@@ -55,6 +56,67 @@ func TestWorkerTransportRoutesDurablyAcrossStoresAndFencesEpochs(t *testing.T) {
 	)
 	if err != nil || completed.Status != "succeeded" {
 		t.Fatalf("completed = %+v, err = %v", completed, err)
+	}
+
+	reclaimedRequest, err := fixture.store.CreateWorkspaceRequest(
+		ctx,
+		fixture.principal,
+		fixture.orgID,
+		fixture.sessionID,
+		"workspace.read",
+		json.RawMessage(`{"path":"README.md"}`),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAttempt, ok, err := fixture.store.ClaimWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, 5*time.Millisecond,
+	)
+	if err != nil || !ok || firstAttempt.ID != reclaimedRequest.ID {
+		t.Fatalf("first attempt = %+v, ok = %v, err = %v", firstAttempt, ok, err)
+	}
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_worker_requests
+			SET lease_until = now() - interval '1 second'
+			WHERE id = $1`,
+			reclaimedRequest.ID,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondAttempt, ok, err := fixture.store.ClaimWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, time.Minute,
+	)
+	if err != nil || !ok || secondAttempt.ID != reclaimedRequest.ID ||
+		secondAttempt.Attempt != firstAttempt.Attempt+1 {
+		t.Fatalf("second attempt = %+v, ok = %v, err = %v", secondAttempt, ok, err)
+	}
+	if err := fixture.store.CompleteWorkerRequest(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		reclaimedRequest.ID,
+		epoch,
+		firstAttempt.Attempt,
+		json.RawMessage(`{"path":"README.md","content":"late","size":4}`),
+	); !errors.Is(err, ErrTransportExpired) {
+		t.Fatalf("late completion error = %v", err)
+	}
+	if err := fixture.store.CompleteWorkerRequest(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		reclaimedRequest.ID,
+		epoch,
+		secondAttempt.Attempt,
+		json.RawMessage(`{"path":"README.md","content":"current","size":7}`),
+	); err != nil {
+		t.Fatal(err)
 	}
 
 	staleRequest, err := fixture.store.CreateWorkspaceRequest(
@@ -69,9 +131,10 @@ func TestWorkerTransportRoutesDurablyAcrossStoresAndFencesEpochs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := fixture.store.ClaimWorkerRequest(
+	staleClaim, ok, err := fixture.store.ClaimWorkerRequest(
 		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, time.Minute,
-	); err != nil || !ok {
+	)
+	if err != nil || !ok {
 		t.Fatalf("stale request claim ok=%v err=%v", ok, err)
 	}
 	if _, err := fixture.store.IssueAccessTicket(
@@ -91,6 +154,7 @@ func TestWorkerTransportRoutesDurablyAcrossStoresAndFencesEpochs(t *testing.T) {
 		workerID,
 		staleRequest.ID,
 		epoch,
+		staleClaim.Attempt,
 		json.RawMessage(`{"path":"README.md","content":"stale","size":5}`),
 	); !errors.Is(err, ErrStaleWorker) {
 		t.Fatalf("stale completion error = %v", err)
@@ -181,6 +245,7 @@ func TestTerminalTicketAndFramesAreDurableAndEpochFenced(t *testing.T) {
 		workerID,
 		openRequest.ID,
 		epoch,
+		openRequest.Attempt,
 		json.RawMessage(`{"open":true}`),
 	); err != nil {
 		t.Fatal(err)

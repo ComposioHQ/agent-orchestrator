@@ -13,12 +13,10 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type sandboxFixture struct {
 	store     *Store
-	pool      *pgxpool.Pool
 	principal domain.Principal
 	orgID     string
 	projectID string
@@ -54,11 +52,6 @@ func newSandboxFixture(t *testing.T, label string) sandboxFixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(store.Close)
-	pool, err := pgxpool.New(ctx, databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
 
 	now := time.Now()
 	principal, orgID := registerTestUser(t, store, email, slug, now)
@@ -85,32 +78,36 @@ func newSandboxFixture(t *testing.T, label string) sandboxFixture {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := pool.Exec(
-		ctx,
-		`UPDATE ao_sandboxes
-		SET reconcile_after = now() + interval '1 day'
-		WHERE session_id = $1`,
-		session.ID,
-	); err != nil {
+	if err := store.withService(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes
+			SET reconcile_after = now() + interval '1 day'
+			WHERE session_id = $1`,
+			session.ID,
+		)
+		return err
+	}); err != nil {
 		t.Fatalf("park fixture sandbox: %v", err)
 	}
 	// Park only this fixture at cleanup. Updating every other sandbox made
 	// lifecycle tests in concurrently running packages steal each other's work.
 	t.Cleanup(func() {
-		_, _ = pool.Exec(
-			context.Background(),
-			`UPDATE ao_sandboxes
-			SET reconcile_after = now() + interval '1 day',
-				reconcile_lease_owner = '',
-				reconcile_lease_until = NULL
-			WHERE org_id = $1`,
-			orgID,
-		)
+		_ = store.withService(context.Background(), func(tx pgx.Tx) error {
+			_, err := tx.Exec(
+				context.Background(),
+				`UPDATE ao_sandboxes
+				SET reconcile_after = now() + interval '1 day',
+					reconcile_lease_owner = '',
+					reconcile_lease_until = NULL
+				WHERE org_id = $1`,
+				orgID,
+			)
+			return err
+		})
 	})
 
 	return sandboxFixture{
 		store:     store,
-		pool:      pool,
 		principal: principal,
 		orgID:     orgID,
 		projectID: project.ID,
@@ -124,11 +121,15 @@ func newSandboxFixture(t *testing.T, label string) sandboxFixture {
 // wait for.
 func (f sandboxFixture) makeDue(t *testing.T) {
 	t.Helper()
-	if _, err := f.pool.Exec(
-		context.Background(),
-		`UPDATE ao_sandboxes SET reconcile_after = now() WHERE session_id = $1`,
-		f.sessionID,
-	); err != nil {
+	ctx := context.Background()
+	if err := f.store.withService(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes SET reconcile_after = now() WHERE session_id = $1`,
+			f.sessionID,
+		)
+		return err
+	}); err != nil {
 		t.Fatalf("make sandbox due: %v", err)
 	}
 }
@@ -287,13 +288,15 @@ func TestExpiredLeaseCannotWriteAndLiveLeaseRenews(t *testing.T) {
 	fixture := newSandboxFixture(t, "fence")
 	ctx := context.Background()
 	fixture.claimOwn(t, "owner-a")
-	if _, err := fixture.pool.Exec(
-		ctx,
-		`UPDATE ao_sandboxes
-		SET reconcile_lease_until = now() - interval '1 second'
-		WHERE session_id = $1`,
-		fixture.sessionID,
-	); err != nil {
+	if err := fixture.store.withService(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes
+			SET reconcile_lease_until = now() - interval '1 second'
+			WHERE session_id = $1`,
+			fixture.sessionID,
+		)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.store.UpdateSandboxObservation(
@@ -411,14 +414,16 @@ func TestExpiredAndUnknownTicketsAreRejected(t *testing.T) {
 	}
 	// The schema requires expires_at > created_at, so age the whole row rather
 	// than pulling the expiry back behind its creation.
-	if _, err := fixture.pool.Exec(
-		ctx,
-		`UPDATE ao_access_tickets
-		SET created_at = now() - interval '10 minutes',
-			expires_at = now() - interval '1 minute'
-		WHERE session_id = $1`,
-		fixture.sessionID,
-	); err != nil {
+	if err := fixture.store.withService(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_access_tickets
+			SET created_at = now() - interval '10 minutes',
+				expires_at = now() - interval '1 minute'
+			WHERE session_id = $1`,
+			fixture.sessionID,
+		)
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.store.RedeemWorkerBootstrapTicket(ctx, token); !errors.Is(err, ErrInvalidTicket) {
@@ -458,11 +463,14 @@ func TestWorkerHeartbeatPromotesTheSandboxToRunning(t *testing.T) {
 
 	var observedState string
 	var seenAt *time.Time
-	if err := fixture.pool.QueryRow(
-		ctx,
-		`SELECT observed_state, worker_last_seen_at FROM ao_sandboxes WHERE session_id = $1`,
-		fixture.sessionID,
-	).Scan(&observedState, &seenAt); err != nil {
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`SELECT observed_state, worker_last_seen_at
+			FROM ao_sandboxes WHERE session_id = $1`,
+			fixture.sessionID,
+		).Scan(&observedState, &seenAt)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if observedState != domain.SandboxObservedRunning || seenAt == nil {
@@ -700,15 +708,17 @@ func TestQuotaIsReleasedOnlyAfterDurableSessionTermination(t *testing.T) {
 	var observed string
 	var terminated bool
 	var events int
-	if err := fixture.pool.QueryRow(
-		ctx,
-		`SELECT sandbox.observed_state, session.is_terminated,
-			(SELECT count(*) FROM ao_events event WHERE event.session_id = session.id)
-		FROM ao_sessions session
-		JOIN ao_sandboxes sandbox ON sandbox.session_id = session.id
-		WHERE session.id = $1`,
-		fixture.sessionID,
-	).Scan(&observed, &terminated, &events); err != nil {
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`SELECT sandbox.observed_state, session.is_terminated,
+				(SELECT count(*) FROM ao_events event WHERE event.session_id = session.id)
+			FROM ao_sessions session
+			JOIN ao_sandboxes sandbox ON sandbox.session_id = session.id
+			WHERE session.id = $1`,
+			fixture.sessionID,
+		).Scan(&observed, &terminated, &events)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if observed != domain.SandboxObservedDeleted || !terminated || events != 1 {
@@ -750,21 +760,26 @@ func TestAppendSessionEventIsVisibleOnTheSessionStream(t *testing.T) {
 	}
 
 	var types []string
-	rows, err := fixture.pool.Query(
-		ctx,
-		`SELECT type FROM ao_events WHERE session_id = $1 ORDER BY sequence`,
-		fixture.sessionID,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var eventType string
-		if err := rows.Scan(&eventType); err != nil {
-			t.Fatal(err)
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(
+			ctx,
+			`SELECT type FROM ao_events WHERE session_id = $1 ORDER BY sequence`,
+			fixture.sessionID,
+		)
+		if err != nil {
+			return err
 		}
-		types = append(types, eventType)
+		defer rows.Close()
+		for rows.Next() {
+			var eventType string
+			if err := rows.Scan(&eventType); err != nil {
+				return err
+			}
+			types = append(types, eventType)
+		}
+		return rows.Err()
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if len(types) != 2 || types[0] != "sandbox.provisioning" || types[1] != "worker.connected" {
 		t.Fatalf("session events = %v, want the two lifecycle events in order", types)

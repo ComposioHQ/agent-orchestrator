@@ -52,8 +52,9 @@ production database. The web BFF sends only GitHub integration requests to the
 production API using the user's hosted WorkOS token. Before creating a local or
 staging project it rechecks that the production repository grant is active,
 then writes the project to the current environment. Worker execution remains
-disabled; future worker checkout must obtain a fresh production-broker grant
-rather than treating the local project row as repository authority.
+isolated to that environment, and each checkout obtains a fresh
+production-broker grant rather than treating the local project row as
+repository authority.
 
 ## Hosted ingress
 

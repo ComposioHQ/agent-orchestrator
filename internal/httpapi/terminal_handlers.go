@@ -58,7 +58,7 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("ticket"))
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	if kind == "" {
-		kind = "agent"
+		kind = "workspace"
 	}
 	after, err := strconv.ParseInt(defaultString(r.URL.Query().Get("after"), "0"), 10, 64)
 	if token == "" || kind != "workspace" || err != nil || after < 0 {

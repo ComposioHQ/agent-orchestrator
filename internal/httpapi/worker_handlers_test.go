@@ -81,6 +81,26 @@ func TestWorkerEventAllowlistIsExact(t *testing.T) {
 	}
 }
 
+func TestWorkerTokenResponsesAreNeverCacheable(t *testing.T) {
+	server := &Server{logger: slog.Default()}
+	for name, handler := range map[string]http.HandlerFunc{
+		"bootstrap": server.workerBootstrap,
+		"heartbeat": server.workerHeartbeat,
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{}`))
+			request = request.WithContext(context.WithValue(
+				request.Context(), workerContextKey{}, worker.Claims{},
+			))
+			response := httptest.NewRecorder()
+			handler(response, request)
+			if response.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("Cache-Control = %q", response.Header().Get("Cache-Control"))
+			}
+		})
+	}
+}
+
 func TestWorkerCredentialIsDecryptedWithNoStore(t *testing.T) {
 	cipher, err := secrets.New(bytes.Repeat([]byte{7}, 32))
 	if err != nil {

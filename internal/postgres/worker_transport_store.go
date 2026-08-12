@@ -208,6 +208,7 @@ func (s *Store) CompleteWorkerRequest(
 	ctx context.Context,
 	orgID, sessionID, workerID, requestID string,
 	epoch int64,
+	attempt int,
 	response json.RawMessage,
 ) error {
 	if len(response) == 0 {
@@ -215,7 +216,7 @@ func (s *Store) CompleteWorkerRequest(
 	}
 	return s.finishWorkerRequest(
 		ctx, orgID, sessionID, workerID, requestID, epoch,
-		"succeeded", response, "", "",
+		attempt, "succeeded", response, "", "",
 	)
 }
 
@@ -223,11 +224,12 @@ func (s *Store) FailWorkerRequest(
 	ctx context.Context,
 	orgID, sessionID, workerID, requestID string,
 	epoch int64,
+	attempt int,
 	code, message string,
 ) error {
 	return s.finishWorkerRequest(
 		ctx, orgID, sessionID, workerID, requestID, epoch,
-		"failed", json.RawMessage(`{}`), code, message,
+		attempt, "failed", json.RawMessage(`{}`), code, message,
 	)
 }
 
@@ -235,10 +237,14 @@ func (s *Store) finishWorkerRequest(
 	ctx context.Context,
 	orgID, sessionID, workerID, requestID string,
 	epoch int64,
+	attempt int,
 	status string,
 	response json.RawMessage,
 	code, message string,
 ) error {
+	if attempt <= 0 {
+		return ErrInvalid
+	}
 	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
 		current, err := workerConnectionCurrent(ctx, tx, orgID, sessionID, workerID, epoch)
 		if err != nil {
@@ -254,10 +260,11 @@ func (s *Store) finishWorkerRequest(
 			SET status = $1, response = $2, error_code = $3, error_message = $4,
 				lease_until = NULL, completed_at = now(), updated_at = now()
 			WHERE org_id = $5 AND session_id = $6 AND id = $7
-			  AND worker_epoch = $8 AND status = 'claimed' AND expires_at > now()
+			  AND worker_epoch = $8 AND attempt_count = $9
+			  AND status = 'claimed' AND expires_at > now() AND lease_until > now()
 			RETURNING kind, payload`,
 			status, response, code, message,
-			orgID, sessionID, requestID, epoch,
+			orgID, sessionID, requestID, epoch, attempt,
 		).Scan(&kind, &payload)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrTransportExpired

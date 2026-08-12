@@ -8,56 +8,58 @@ alone is not sufficient.
 
 - [x] CreateOS responses are decoded through their JSend envelope and list
   pagination follows the provider's offset/limit contract.
-- [ ] Reconciliation remains single-owner while a slow provider operation runs,
+- [x] Reconciliation remains single-owner while a slow provider operation runs,
   including across multiple control-plane replicas.
-- [ ] Repair and recreation launch the replacement worker with the newly issued,
+- [x] Repair and recreation launch the replacement worker with the newly issued,
   one-time bootstrap ticket.
-- [ ] Session deletion retains durable session/event history and releases quota
+- [x] Session deletion retains durable session/event history and releases quota
   only after provider deletion is observed.
-- [ ] Concurrent session creation cannot exceed the organization sandbox quota.
-- [ ] Provider auto-pause is disabled. Heartbeats record liveness only.
-- [ ] Local Docker and hosted NodeOps use the same provider lifecycle contract.
+- [x] Concurrent session creation cannot exceed the organization sandbox quota.
+- [x] Provider auto-pause is disabled. Heartbeats record liveness only.
+- [x] Local Docker and hosted NodeOps use the same provider lifecycle contract.
 
 ## Worker and execution
 
-- [ ] The control-plane and worker artifacts both contain the `ao-worker`
+- [x] The control-plane and worker artifacts both contain the `ao-worker`
   binary expected by their startup configuration.
-- [ ] A local session creates one least-privilege worker container and one
+- [x] A local session creates one least-privilege worker container and one
   persistent workspace, and teardown leaves neither compute nor orphan state.
-- [ ] Queued turns are fenced to the current worker epoch and can be recovered
+- [x] Queued turns are fenced to the current worker epoch and can be recovered
   after worker replacement without duplicate completion.
-- [ ] Claude Code, Codex, and Cursor launch through the shared public runtime,
+- [x] Claude Code, Codex, and Cursor launch through the shared public runtime,
   with deterministic fake-binary tests for launch, output, cancellation, and
   failure.
-- [ ] Only the selected harness credential is delivered to the current worker;
+- [x] Only the selected harness credential is delivered to the current worker;
   plaintext credentials are not logged, stored in events, or returned with
   cacheable headers.
-- [ ] Session modes and denied-command policy fail closed for each supported
+- [x] Session modes and denied-command policy fail closed for each supported
   harness.
 
 ## Source control and orchestration
 
-- [ ] GitHub checkout credentials are bound to the worker's organization,
+- [x] GitHub checkout credentials are bound to the worker's organization,
   project, repository grant, environment, and current epoch.
-- [ ] Clone/fetch uses an askpass-style helper; tokens never enter URLs, argv,
+- [x] Clone/fetch uses an askpass-style helper; tokens never enter URLs, argv,
   git configuration, logs, or durable events.
-- [ ] Repository identity is checked before an existing workspace is reused.
-- [ ] Orchestrators can list/spawn/message only sessions in the same
+- [x] Repository identity is checked before an existing workspace is reused.
+- [x] Orchestrators can list/spawn/message only sessions in the same
   organization and project.
 
 ## API, UI, and operations
 
-- [ ] Public OpenAPI and `@aoagents/cloud-client` artifacts describe the worker,
+- [x] Public OpenAPI and `@aoagents/cloud-client` artifacts describe the worker,
   cancellation, SCM, terminal, and workspace operations used by Cloud.
 - [x] Execution controls are enabled only when the API advertises a working
   execution capability.
-- [ ] CI runs non-superuser PostgreSQL lifecycle tests, Docker lifecycle E2E,
+- [x] CI runs non-superuser PostgreSQL lifecycle tests, Docker lifecycle E2E,
   fake harness tests, policy/security tests, image builds, and contract drift
   checks.
-- [ ] Deployment builds and digest-pins separate control-plane and worker
+- [x] Deployment builds and digest-pins separate control-plane and worker
   artifacts and validates every required secret before changing ECS.
-- [ ] Local acceptance passes from registration through repository checkout,
-  first and follow-up turns, cancellation, restart recovery, and teardown.
+- [x] Local acceptance passes from registration through repository checkout,
+  first and follow-up turn dispatch, workspace transport, worker replacement,
+  restart recovery, and teardown; cancellation is covered by the fenced worker
+  integration suite.
 - [ ] Hosted NodeOps acceptance passes against the live provider.
 
 The final item may remain unchecked only when NodeOps credentials are

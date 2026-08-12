@@ -62,8 +62,8 @@ type Store interface {
 	GetWorkspaceRequest(context.Context, domain.Principal, string, string, string) (domain.WorkerRequest, error)
 	CancelWorkspaceRequest(context.Context, domain.Principal, string, string, string) error
 	ClaimWorkerRequest(context.Context, string, string, string, int64, time.Duration) (domain.WorkerRequest, bool, error)
-	CompleteWorkerRequest(context.Context, string, string, string, string, int64, json.RawMessage) error
-	FailWorkerRequest(context.Context, string, string, string, string, int64, string, string) error
+	CompleteWorkerRequest(context.Context, string, string, string, string, int64, int, json.RawMessage) error
+	FailWorkerRequest(context.Context, string, string, string, string, int64, int, string, string) error
 	IssueTerminalTicket(context.Context, domain.Principal, string, string, string, time.Duration) (string, []string, error)
 	OpenTerminal(context.Context, string, string, time.Duration) (domain.TerminalSession, error)
 	QueueTerminalInput(context.Context, domain.TerminalSession, []byte) error

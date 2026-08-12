@@ -120,8 +120,8 @@ type idleControl struct{}
 func (*idleControl) ClaimTransport(ctx context.Context) (*worker.TransportRequest, error) {
 	return nil, ctx.Err()
 }
-func (*idleControl) CompleteTransport(context.Context, string, any) error { return nil }
-func (*idleControl) FailTransport(context.Context, string, string, string) error {
+func (*idleControl) CompleteTransport(context.Context, string, int, any) error { return nil }
+func (*idleControl) FailTransport(context.Context, string, int, string, string) error {
 	return nil
 }
 func (*idleControl) PublishTerminalOutput(context.Context, string, []byte) error {

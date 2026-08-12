@@ -305,23 +305,30 @@ func (c *client) ClaimTransport(ctx context.Context) (*worker.TransportRequest, 
 	return response.Request, nil
 }
 
-func (c *client) CompleteTransport(ctx context.Context, requestID string, result any) error {
+func (c *client) CompleteTransport(
+	ctx context.Context,
+	requestID string,
+	attempt int,
+	result any,
+) error {
 	return c.do(
 		ctx,
 		"/worker/transport/"+url.PathEscape(requestID)+"/complete",
-		worker.CompleteTransportRequest{Response: result},
+		worker.CompleteTransportRequest{Attempt: attempt, Response: result},
 		nil,
 	)
 }
 
 func (c *client) FailTransport(
 	ctx context.Context,
-	requestID, code, message string,
+	requestID string,
+	attempt int,
+	code, message string,
 ) error {
 	return c.do(
 		ctx,
 		"/worker/transport/"+url.PathEscape(requestID)+"/fail",
-		worker.FailTransportRequest{Code: code, Message: message},
+		worker.FailTransportRequest{Attempt: attempt, Code: code, Message: message},
 		nil,
 	)
 }

@@ -32,6 +32,7 @@ const (
 // the only unauthenticated worker route: the ticket itself is the proof, and it
 // is consumed atomically so a replayed token buys nothing.
 func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if s.workerTokens == nil {
 		writeError(w, r, http.StatusNotFound, "not_found", "Worker bootstrap is not enabled.")
 		return
@@ -164,6 +165,7 @@ func workerFrom(r *http.Request) worker.Claims {
 // workerHeartbeat records liveness and renews the worker's short-lived token.
 // This is the only path that promotes a sandbox to running.
 func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	claims := workerFrom(r)
 	if !worker.HasScope(claims, "worker:connect") {
 		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:connect scope is required.")

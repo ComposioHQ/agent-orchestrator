@@ -118,6 +118,7 @@ type OutputEvent struct {
 type TransportRequest struct {
 	ID      string `json:"id"`
 	Kind    string `json:"kind"`
+	Attempt int    `json:"attempt"`
 	Payload any    `json:"payload"`
 }
 
@@ -126,10 +127,12 @@ type ClaimTransportResponse struct {
 }
 
 type CompleteTransportRequest struct {
+	Attempt  int `json:"attempt"`
 	Response any `json:"response"`
 }
 
 type FailTransportRequest struct {
+	Attempt int    `json:"attempt"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }

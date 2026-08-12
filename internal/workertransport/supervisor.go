@@ -16,8 +16,8 @@ import (
 
 type Control interface {
 	ClaimTransport(context.Context) (*worker.TransportRequest, error)
-	CompleteTransport(context.Context, string, any) error
-	FailTransport(context.Context, string, string, string) error
+	CompleteTransport(context.Context, string, int, any) error
+	FailTransport(context.Context, string, int, string, string) error
 	PublishTerminalOutput(context.Context, string, []byte) error
 }
 
@@ -135,13 +135,17 @@ func (s *Supervisor) handle(
 		err = errors.New("unsupported worker transport request")
 	}
 	if err == nil {
-		if completeErr := s.Control.CompleteTransport(ctx, request.ID, response); completeErr != nil {
+		if completeErr := s.Control.CompleteTransport(
+			ctx, request.ID, request.Attempt, response,
+		); completeErr != nil {
 			s.Logger.Warn("complete worker transport request", "error", completeErr, "kind", request.Kind)
 		}
 		return
 	}
 	code, message := transportError(err)
-	if failErr := s.Control.FailTransport(ctx, request.ID, code, message); failErr != nil {
+	if failErr := s.Control.FailTransport(
+		ctx, request.ID, request.Attempt, code, message,
+	); failErr != nil {
 		s.Logger.Warn("fail worker transport request", "error", failErr, "kind", request.Kind)
 	}
 }

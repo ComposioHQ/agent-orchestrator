@@ -98,6 +98,13 @@ every field before building or registering a task, and ECS injects each value
 directly from its environment-scoped secret. Provider auto-pause is
 intentionally absent from this deployment configuration.
 
+The configured NodeOps `default_rootfs` must provide `bash`, `git`, `claude`,
+`codex`, and `cursor-agent`. The reconciler copies the release's fenced
+`ao-worker` binary into that rootfs; the worker refuses to publish
+`worker.ready` when the selected harness binary is absent. The separately
+scanned worker image is the canonical local/reference runtime, but CreateOS
+does not consume that OCI image directly.
+
 Database password rotation must update the corresponding URL secret before the
 next rollout. For an immediate WorkOS or runtime database secret rotation,
 force a new ECS deployment so every replica fetches the new value.
