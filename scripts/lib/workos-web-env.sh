@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 configure_workos_web() {
-	local web_port="$1"
+	local configured_web_port="$1"
 	local aws_profile="${AWS_PROFILE:-ao-cloud}"
 	local secret_id="${AO_CLOUD_STAGING_WORKOS_SECRET_ID:-ao-cloud/staging/workos}"
 	local state_dir="${AO_CLOUD_WEB_STATE_DIR:-$HOME/.ao/cloud-web}"
@@ -55,7 +55,7 @@ PY
 	fi
 	export WORKOS_COOKIE_PASSWORD
 	WORKOS_COOKIE_PASSWORD="$(<"$cookie_file")"
-	export WORKOS_REDIRECT_URI="http://localhost:${web_port}/callback"
+	export WORKOS_REDIRECT_URI="http://localhost:${configured_web_port}/callback"
 	export NEXT_PUBLIC_WORKOS_REDIRECT_URI="$WORKOS_REDIRECT_URI"
 
 	WORKOS_REDIRECT_STATUS="$(
