@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
+import { TooltipProvider } from "./ui/tooltip";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, spawnMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -112,7 +113,9 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, e
 	const queryClient = new QueryClient();
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
-			<ShellTopbar embedded={embedded} />
+			<TooltipProvider>
+				<ShellTopbar embedded={embedded} />
+			</TooltipProvider>
 		</QueryClientProvider>
 	);
 	const result = render(topbar());
@@ -162,6 +165,31 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
+	it("shows the worker session name and activity in the full topbar identity", () => {
+		renderTopbar(sessionWith());
+
+		const identity = screen.getByTestId("session-topbar-identity");
+		expect(identity.textContent).toContain("do the thing");
+		expect(identity.textContent).toContain("Working");
+		expect(identity.textContent).not.toContain("ao/sess-1");
+		expect(identity.querySelector(".workspace-topbar__identity-separator")).not.toBeNull();
+	});
+
+	it("shows project identity and activity without redundant Orchestrator text", () => {
+		renderTopbar(
+			sessionWith({
+				...orchestrator,
+				activity: { state: "idle", lastActivityAt: "2026-06-10T00:00:00Z" },
+			}),
+		);
+
+		const identity = screen.getByTestId("session-topbar-identity");
+		expect(identity.textContent).toContain("my-app");
+		expect(identity.textContent).toContain("Idle");
+		expect(identity.textContent).not.toContain("Orchestrator");
+		expect(identity.querySelector(".lucide-folder")).not.toBeNull();
+	});
+
 	it("renders only session actions when embedded in the terminal bar", () => {
 		renderTopbar(sessionWith(), true);
 
@@ -243,8 +271,8 @@ describe("ShellTopbar orchestrator actions", () => {
 		renderTopbar(orchestrator, true);
 
 		const kanbanButton = screen.getByRole("button", { name: "Open Kanban" });
-		expect(kanbanButton).toHaveTextContent("Kanban");
-		expect(kanbanButton).toHaveClass("bg-accent-strong");
+		expect(kanbanButton).toHaveTextContent("Open Kanban");
+		expect(kanbanButton).toHaveClass("topbar-control--feature");
 		expect(screen.queryByText("my-app")).not.toBeInTheDocument();
 		await userEvent.click(kanbanButton);
 		expect(navigateMock).toHaveBeenCalledWith({
@@ -257,8 +285,8 @@ describe("ShellTopbar orchestrator actions", () => {
 		renderTopbar(orchestrator);
 
 		const kanbanButton = screen.getByRole("button", { name: "Open Kanban" });
-		expect(kanbanButton).toHaveTextContent("Kanban");
-		expect(kanbanButton).toHaveClass("bg-accent-strong");
+		expect(kanbanButton).toHaveTextContent("Open Kanban");
+		expect(kanbanButton).toHaveClass("topbar-control--feature");
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
 		await userEvent.click(kanbanButton);
 		expect(navigateMock).toHaveBeenCalledWith({
@@ -284,7 +312,9 @@ describe("ShellTopbar orchestrator actions", () => {
 		paramsMock.sessionId = "sess-1";
 		render(
 			<QueryClientProvider client={new QueryClient()}>
-				<ShellTopbar />
+				<TooltipProvider>
+					<ShellTopbar />
+				</TooltipProvider>
 			</QueryClientProvider>,
 		);
 
