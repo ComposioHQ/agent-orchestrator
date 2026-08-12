@@ -144,7 +144,31 @@ rather than tearing anything down.
 ## Status of the implementation
 
 Landed: the registry, the SSH transport and failure taxonomy, supervisor
-placement and re-dial, and the workspace switcher in settings.
+placement and re-dial, the workspace switcher (including a picker over the
+user's `~/.ssh/config` aliases), and port discovery via the remote run-file.
+
+Verified against a real remote host, end to end: the desktop app attaches to
+the VM's daemon over the forward, starts one when none is running, serves the
+whole UI from it (`/api/v1/projects`, `/sessions`, `/agents/refresh`), and
+upgrades the terminal-mux WebSocket through the tunnel (HTTP 101).
+
+Four bugs were found only by connecting to a real host, and none of them was
+reachable from unit tests — they are recorded here because each is a trap for
+the next person touching this code:
+
+1. **`ssh` re-parses the remote command.** Everything after the target is
+   joined into one string and re-split by the remote login shell, so local argv
+   boundaries do not survive. `["/bin/sh", "-c", "command -v ao"]` arrived as
+   `/bin/sh -c command -v ao`, running the no-op `command` builtin — exit 0. The
+   preflight *passed* on a host with no `ao` installed.
+2. **`ControlMaster` + `ControlPersist` forks the tunnel to the background** and
+   exits 0 in the foreground, so the supervisor saw its child die while the
+   forward was still alive in a process it could no longer kill.
+3. **The remote port cannot be assumed.** `AO_PORT` is only a request; with the
+   port taken the daemon binds an ephemeral one and records it. The test host
+   had 3001 in use, so the tunnel was forwarding to an unrelated service.
+4. **Concurrent connects each spawned a tunnel.** The local path had shared one
+   in-flight attempt for years; the remote branch runs before that guard.
 
 Not yet addressed:
 
