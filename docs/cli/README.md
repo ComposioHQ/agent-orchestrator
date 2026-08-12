@@ -50,6 +50,9 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |
 | `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`              |
 | `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`           |
+| `ao session switch-agent <id> <target-harness>` | `POST /api/v1/sessions/{id}/switch-agent` |
+| `ao session agent-switch ls <session-id>` | `GET /api/v1/sessions/{id}/agent-switches` |
+| `ao session handoff submit`         | `POST /api/v1/sessions/{id}/agent-switches/{switchId}/handoff` |
 | `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                  |
 | `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                |
 | `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`          |
@@ -69,6 +72,40 @@ print the raw inventory response.
 daemon), then the current working directory matched against registered project
 paths. If `AO_SESSION_ID` is set but the session cannot be fetched, pass
 `--project` explicitly.
+
+Agent switching is initially available only for worker sessions whose source
+and target harnesses are Claude Code or Codex. The main command
+accepts optional handoff guidance and an idempotency key:
+
+```bash
+ao session switch-agent ao-7 codex \
+  --note "Continue the failing integration test" \
+  --idempotency-key switch-ao-7-to-codex
+
+ao session agent-switch ls ao-7 --json
+```
+
+`switch-agent` and `agent-switch ls` both support `--json`.
+The `agent-switch` command also has the `agent-switches` alias, and `ls` has the
+`list` alias.
+
+`ao session handoff submit` is the internal source-agent path for optional
+semantic enrichment, not a required human step in a normal switch. It requires
+the switch ID, exact source launch generation, and a regular file containing
+one JSON object no larger than 64 KiB. `--session` defaults to
+`AO_SESSION_ID`:
+
+```bash
+AO_SESSION_ID=ao-7 ao session handoff submit \
+  --switch switch-123 \
+  --source-generation generation-456 \
+  --file /tmp/ao-handoff.json \
+  --json
+```
+
+Switching preserves the AO worker session and worktree. It does not translate,
+clip, or rewrite provider transcript files; providers continue to own their
+native history and compaction.
 
 If `--agent` / `--harness` is omitted, `ao spawn` uses the resolved project's
 `worker.agent` config. Before spawning, the CLI refreshes the advisory agent
@@ -101,10 +138,12 @@ directly. Supporting assets must not replace an active application preview.
 `ao browser` also resolves its target from `AO_SESSION_ID`, but controls the
 session-owned live Electron browser rather than only setting its preview URL.
 The target-isolated command set includes `status`, `open`, `snapshot`, `click`,
-`fill`, `type`, `press`, `hover`, `scroll`, `select`, `check`, `uncheck`, `get`,
-`highlight`, `unhighlight`, `tabs`, `tab new`, `tab select`, `tab close`,
+`dblclick`, `focus`, `fill`, `type`, `press`, `hover`, `scroll`,
+`scrollintoview`, `drag`, `select`, `check`, `uncheck`, `get`, `highlight`,
+`unhighlight`, `tabs`, `tab new`, `tab select`, `tab close`, `frame`, `dialog`,
 `wait`, `screenshot`, `network start/status/list/stop/clear`, `console`, and
-`errors`. Logical tab IDs remain stable for the session, and allowed popups
+`errors`. The native engine is bound internally; there is no second command or
+connection setup. Logical tab IDs remain stable for the session, and allowed popups
 become AO browser tabs rather than separate OS-browser windows. The AO desktop
 app must be open because Electron owns the `WebContentsView`.
 References from a snapshot are invalidated after navigation or DOM replacement;

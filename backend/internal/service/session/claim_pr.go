@@ -118,7 +118,7 @@ func (s *Service) ClaimPR(ctx context.Context, id domain.SessionID, ref string, 
 		return ClaimPRResult{}, err
 	}
 	now := s.clock().UTC()
-	pr, checks, reviews, threads, comments := claimRowsFromSCM(id, obs, now)
+	pr, checks, reviews, threads, comments := claimRowsFromSCM(id, obs, now, rec)
 	outcome, err := s.prClaimer.ClaimPR(ctx, pr, checks, reviews, threads, comments, reviewMode, opts.AllowTakeover)
 	if err != nil {
 		return ClaimPRResult{}, err
@@ -187,7 +187,7 @@ func scmRepoForClaim(provider scmProvider, projectOrigin, prURL string) (ports.S
 	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: name, Repo: owner + "/" + name}, nil
 }
 
-func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now time.Time) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
+func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now time.Time, sessionRecord domain.SessionRecord) (domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment) {
 	observedAt := obs.ObservedAt
 	if observedAt.IsZero() {
 		observedAt = now
@@ -239,13 +239,14 @@ func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now 
 			submittedAt = now
 		}
 		reviews = append(reviews, domain.PullRequestReview{
-			ID:          review.ID,
-			Author:      review.Author,
-			State:       domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
-			URL:         review.URL,
-			Body:        review.Body,
-			IsBot:       review.IsBot,
-			SubmittedAt: submittedAt,
+			ID:               review.ID,
+			Author:           review.Author,
+			State:            domain.ReviewDecision(firstNonEmpty(review.State, string(domain.ReviewNone))),
+			URL:              review.URL,
+			Body:             review.Body,
+			IsBot:            review.IsBot,
+			SubmittedAt:      submittedAt,
+			AutoInjectReview: sessionRecord.AutoInjectReview,
 		})
 	}
 	threads := make([]domain.PullRequestReviewThread, 0, len(obs.Review.Threads))
@@ -257,7 +258,7 @@ func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now 
 	for _, th := range obs.Review.Threads {
 		threads = append(threads, domain.PullRequestReviewThread{ThreadID: th.ID, Path: th.Path, Line: th.Line, Resolved: th.Resolved, IsBot: th.IsBot, UpdatedAt: now})
 		for _, c := range th.Comments {
-			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now})
+			comments = append(comments, domain.PullRequestComment{ThreadID: th.ID, ID: c.ID, Author: c.Author, File: th.Path, Line: th.Line, Body: c.Body, URL: c.URL, Resolved: th.Resolved, IsBot: c.IsBot || th.IsBot, CreatedAt: now, AutoInjectReview: sessionRecord.AutoInjectReview})
 		}
 	}
 	return pr, checks, reviews, threads, comments
@@ -272,13 +273,18 @@ func (s *Service) listPRFacts(ctx context.Context, id domain.SessionID) ([]domai
 	if err != nil {
 		return nil, err
 	}
-	facts := make([]domain.PRFacts, 0, len(prs))
-	for _, pr := range prs {
-		comments, err := s.store.ListPRComments(ctx, pr.URL)
-		if err != nil {
-			return nil, err
+	groups := groupPullRequestAliases(prs)
+	facts := make([]domain.PRFacts, 0, len(groups))
+	for _, group := range groups {
+		var comments []domain.PullRequestComment
+		for _, pr := range group.aliases {
+			prComments, err := s.store.ListPRComments(ctx, pr.URL)
+			if err != nil {
+				return nil, err
+			}
+			comments = append(comments, prComments...)
 		}
-		facts = append(facts, pullRequestFacts(pr, comments))
+		facts = append(facts, pullRequestFacts(group.primary, comments))
 	}
 	sortPRFacts(facts)
 	return facts, nil
@@ -292,7 +298,7 @@ func pullRequestFacts(pr domain.PullRequest, comments []domain.PullRequestCommen
 			break
 		}
 	}
-	return domain.PRFacts{URL: pr.URL, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: unresolved, UpdatedAt: pr.UpdatedAt}
+	return domain.PRFacts{URL: pr.URL, Number: pr.Number, Draft: pr.Draft, Merged: pr.Merged, Closed: pr.Closed, CI: pr.CI, Review: pr.Review, Mergeability: pr.Mergeability, ReviewComments: unresolved, SourceBranch: pr.SourceBranch, TargetBranch: pr.TargetBranch, HeadSHA: pr.HeadSHA, UpdatedAt: pr.UpdatedAt}
 }
 
 func sortPRFacts(prs []domain.PRFacts) {

@@ -1,6 +1,6 @@
 import {
 	app,
-	BrowserWindow,
+	BaseWindow,
 	clipboard,
 	dialog,
 	ipcMain,
@@ -13,6 +13,7 @@ import {
 	shell,
 	WebContentsView,
 	webContents,
+	type WebContents,
 	type OpenDialogOptions,
 } from "electron";
 import {
@@ -29,6 +30,12 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import {
+	decideRelocation,
+	inspectInstalledBundle,
+	installedBundlePath,
+} from "./main/relocation";
+import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -42,8 +49,15 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
+import { createTrayController, type TrayController } from "./main/tray";
+import { createTrayLifecycle, isTrayEnabled } from "./main/tray-lifecycle";
+import {
+	TRAY_RENDERER_READY_CHANNEL,
+	TRAY_SET_ATTENTION_STATE_CHANNEL,
+} from "./shared/tray";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -51,18 +65,28 @@ import {
 	resolveDaemonFromPort,
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
-import { shouldReplacePortHolder } from "./shared/daemon-takeover";
+import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import {
+	handleCloudDeepLink,
+	installCloudIPC,
+	registerCloudProtocol,
+	showCloudSignInFailure,
+} from "./main/cloud-auth";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
+import { createWindowComposition, type WindowComposition } from "./main/window-composition";
+import { AgentBrowserRuntime } from "./main/agent-browser-runtime";
+import { sameBrowserRuntimeIdentity, type BrowserRuntimeIdentity } from "./main/browser-runtime-identity";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/browser-runtime-link";
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
-import { scanImportFolder } from "./main/import-folder-scan";
+import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -106,7 +130,14 @@ app.setPath(
 	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
 );
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: BaseWindow | null = null;
+let trayController: TrayController | null = null;
+const trayLifecycle = createTrayLifecycle({
+	getWindow: () => null,
+	getContents: () => getShellWebContents(),
+	getTrayController: () => trayController,
+	focusWindow: () => focusMainWindow(),
+});
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -115,11 +146,21 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
+let windowComposition: WindowComposition | null = null;
+const browserCleanupPromises = new Set<Promise<void>>();
+let browserQuitCleanupPromise: Promise<void> | null = null;
+let browserCleanupComplete = false;
+let browserQuitRequested = false;
+let createWindowPromise: Promise<void> | null = null;
 let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
+let browserRuntimeLinkIdentity: BrowserRuntimeIdentity | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
+let closeShellTerminalShortcutEnabled = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
+// Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
+let isFlashing = false;
 
 const isDev = !app.isPackaged;
 
@@ -130,9 +171,10 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
-// Height (px) of the custom Windows title bar. Must stay in sync with the Window
-// Controls Overlay height passed to BrowserWindow and the .window-titlebar height
-// in styles.css, so the native min/max/close buttons line up with the app's bar.
+// Height (px) of the custom Windows title bar. Must stay in sync with
+// --size-window-titlebar (tokens.css) and .window-titlebar, plus the Window
+// Controls Overlay height passed to BaseWindow, so the native min/max/close
+// buttons line up with the app's bar.
 const TITLEBAR_HEIGHT = 36;
 // Traffic lights stay fixed across sidebar expand/collapse. Y matches the
 // natural macOS titlebar band (TitlebarNav is h-traffic-light-clearance).
@@ -142,6 +184,21 @@ const MAC_WINDOW_BUTTON_Y = 12;
 const RENDERER_SCHEME = "app";
 const RENDERER_HOST = "renderer";
 const RENDERER_ORIGIN = `${RENDERER_SCHEME}://${RENDERER_HOST}`;
+const NATIVE_WINDOW_BACKGROUND_DARK = "#0f1014";
+const NATIVE_WINDOW_BACKGROUND_LIGHT = "#fbfbfb";
+
+function getShellWebContents(): WebContents | null {
+	return windowComposition?.shellWebContents ?? null;
+}
+
+function syncNativeWindowBackground(): void {
+	if (!windowComposition || !mainWindow || mainWindow.isDestroyed()) return;
+	mainWindow.setBackgroundColor(
+		nativeTheme.shouldUseDarkColors ? NATIVE_WINDOW_BACKGROUND_DARK : NATIVE_WINDOW_BACKGROUND_LIGHT,
+	);
+}
+
+nativeTheme.on("updated", syncNativeWindowBackground);
 
 // The packaged renderer is served from a custom standard scheme, not file://.
 // A file:// page has the opaque "null" origin, which the daemon must never
@@ -157,6 +214,13 @@ protocol.registerSchemesAsPrivileged([
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
+
+// Register ao-app:// as the deep-link protocol for WorkOS auth callbacks.
+// Must run before app.whenReady().
+registerCloudProtocol();
+if (!app.requestSingleInstanceLock()) {
+	app.exit(0);
+}
 
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
@@ -221,9 +285,20 @@ function applyRuntimeAppIcon(): void {
 	}
 }
 
+function focusMainWindow(): void {
+	if (!mainWindow) {
+		createWindow();
+		return;
+	}
+	if (mainWindow.isMinimized()) mainWindow.restore();
+	mainWindow.show();
+	mainWindow.focus();
+}
+
 function setDaemonStatus(nextStatus: DaemonStatus): void {
+	if (nextStatus.state !== "ready") disposeBrowserRuntimeLink();
 	daemonStatus = nextStatus;
-	mainWindow?.webContents.send("daemon:status", daemonStatus);
+	getShellWebContents()?.send("daemon:status", daemonStatus);
 	if (nextStatus.state === "ready" && browserViewHost) {
 		establishBrowserRuntimeLink();
 	}
@@ -235,25 +310,70 @@ function appendDaemonOutput(text: string): void {
 	daemonOutput = (daemonOutput + text).slice(-MAX_DAEMON_OUTPUT_CHARS);
 }
 
-// Role-based menu installed on Windows where the native menu bar is hidden. The
-// bar stays out of sight, but the roles keep their accelerators alive (Reload,
-// DevTools, zoom, full screen, edit commands) and each acts on the *focused*
-// webContents — including a BrowserView panel — matching native menu behaviour.
+// Menu installed on Windows where the native menu bar is hidden. The bar stays
+// out of sight, but the roles keep their accelerators alive (Reload, zoom, full
+// screen, edit commands). DevTools uses the AO browser toggle so the focused
+// Browser panel opens the same native Chromium surface as the toolbar.
 function buildWindowsAppMenu(): Menu {
-	return Menu.buildFromTemplate(buildWindowsAppMenuTemplate());
+	return Menu.buildFromTemplate(
+		buildWindowsAppMenuTemplate(() => {
+			const fallback = () => getShellWebContents()?.toggleDevTools();
+			void browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
+				if (!state) fallback();
+			}).catch(fallback);
+		}),
+	);
 }
 
-function createWindow(): void {
-	browserViewHost?.dispose();
+async function disposeBrowserViewHost(): Promise<void> {
+	const host = browserViewHost;
 	browserViewHost = null;
-	mainWindow = new BrowserWindow({
+	if (!host) return;
+	const cleanup = Promise.resolve()
+		.then(() => host.dispose())
+		.catch((error) => {
+			console.error("browser host cleanup failed:", error);
+		});
+	browserCleanupPromises.add(cleanup);
+	void cleanup.then(
+		() => browserCleanupPromises.delete(cleanup),
+		() => browserCleanupPromises.delete(cleanup),
+	);
+	await cleanup;
+}
+
+async function disposeAllBrowserViewHosts(): Promise<void> {
+	for (;;) {
+		if (browserViewHost) await disposeBrowserViewHost();
+		const pending = [...browserCleanupPromises];
+		if (pending.length === 0 && !browserViewHost) return;
+		if (pending.length > 0) await Promise.all(pending);
+	}
+}
+
+async function createWindowInternal(): Promise<void> {
+	await disposeAllBrowserViewHosts();
+	const agentBrowserRuntime = new AgentBrowserRuntime({
+		binaryPath: resolveAgentBrowserBinaryPath(),
+		// Agent Browser creates Unix sockets below each run root. Keep this base
+		// deliberately short so the namespace/session suffix stays below macOS's
+		// 103-byte sockaddr_un limit; all AO state remains under ~/.ao.
+		dataDir: path.join(os.homedir(), ".ao", ...(app.isPackaged ? ["br"] : ["dev", "br"])),
+		log: (message) => console.log(`AO: ${message}`),
+	});
+	await agentBrowserRuntime.prepare();
+	if (browserQuitRequested) {
+		await agentBrowserRuntime.dispose();
+		return;
+	}
+	const windowOptions: Electron.BaseWindowConstructorOptions = {
 		width: 1320,
 		height: 860,
 		minWidth: 960,
 		minHeight: 640,
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
-		backgroundColor: "#0f1014",
+		backgroundColor: NATIVE_WINDOW_BACKGROUND_DARK,
 		// Windows goes frameless with a Window Controls Overlay: Electron still draws
 		// native min/max/close on the right, while the renderer paints its own
 		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
@@ -272,13 +392,17 @@ function createWindow(): void {
 					// Fixed natural titlebar position — never moved on sidebar toggle.
 					trafficLightPosition: { x: MAC_WINDOW_BUTTON_X, y: MAC_WINDOW_BUTTON_Y },
 				}),
-		webPreferences: {
-			preload: preloadPath(),
-			contextIsolation: true,
-			nodeIntegration: false,
-			sandbox: true,
-		},
+	};
+	mainWindow = new BaseWindow(windowOptions);
+	const composition = createWindowComposition({
+		mainWindow,
+		WebContentsView,
+		preload: preloadPath(),
 	});
+	windowComposition = composition;
+	syncNativeWindowBackground();
+	const shellWebContents = getShellWebContents();
+	if (!shellWebContents) throw new Error("AO shell WebContents was not created");
 
 	// On Windows the app paints its own title bar (WindowTitlebar), so the native
 	// menu bar is hidden (autoHideMenuBar above). The role-based menu is still
@@ -293,15 +417,15 @@ function createWindow(): void {
 	// Harden navigation: never let renderer/terminal content open in-app windows or
 	// navigate the privileged window away from the app origin. External links go to
 	// the OS browser. Keep this in place before exposing any daemon output to the renderer.
-	mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+	shellWebContents.setWindowOpenHandler(({ url }) => {
 		if (isAllowedAppExternalURL(url)) {
 			void shell.openExternal(url);
 		}
 		return { action: "deny" };
 	});
 
-	mainWindow.webContents.on("will-navigate", (event, url) => {
-		if (url !== mainWindow?.webContents.getURL()) {
+	shellWebContents.on("will-navigate", (event, url) => {
+		if (url !== shellWebContents.getURL()) {
 			event.preventDefault();
 		}
 	});
@@ -311,16 +435,22 @@ function createWindow(): void {
 	// browser-preview view (wired per-view in the browser host).
 	const isMac = process.platform === "darwin";
 	attachAppShortcuts(
-		mainWindow.webContents,
+		shellWebContents,
 		isMac,
-		mainWindow.webContents,
+		shellWebContents,
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
+		() => true,
+		(id) => {
+			if (id !== "toggle-browser-devtools") return;
+			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
+		},
 	);
 
 	browserViewHost = createBrowserViewHost({
 		mainWindow,
+		shellWebContents,
 		ipcMain,
 		shell,
 		WebContentsView,
@@ -329,14 +459,16 @@ function createWindow(): void {
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
+		agentBrowserRuntime,
+		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
-	void mainWindow.loadURL(rendererUrl());
+	void shellWebContents.loadURL(rendererUrl());
 
 	if (isDev && process.env.AO_OPEN_DEVTOOLS === "1") {
-		mainWindow.webContents.once("did-frame-finish-load", () => {
-			mainWindow?.webContents.openDevTools({ mode: "detach" });
+		shellWebContents.once("did-frame-finish-load", () => {
+			shellWebContents.openDevTools({ mode: "detach" });
 		});
 	}
 
@@ -345,25 +477,53 @@ function createWindow(): void {
 	// without polling isFullScreen().
 	const pushFullScreen = () => {
 		if (!mainWindow) return;
-		mainWindow.webContents.send("window:fullscreen", mainWindow.isFullScreen());
+		getShellWebContents()?.send("window:fullscreen", mainWindow.isFullScreen());
 	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
 	mainWindow.on("blur", () => {
 		keybindingRecordingActive = false;
 	});
-	mainWindow.webContents.on("render-process-gone", () => {
+	shellWebContents.on("render-process-gone", () => {
 		keybindingRecordingActive = false;
 	});
+	shellWebContents.on("did-start-loading", () => trayLifecycle.clear());
+	shellWebContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
-		browserRuntimeLink?.dispose();
-		browserRuntimeLink = null;
+		disposeBrowserRuntimeLink();
 		keybindingRecordingActive = false;
-		browserViewHost?.dispose();
-		browserViewHost = null;
+		if (windowComposition === composition) windowComposition = null;
+		void disposeBrowserViewHost().finally(() => {
+			composition.dispose();
+		});
 		mainWindow = null;
+		trayLifecycle.clearPendingTarget();
 	});
+}
+
+function createWindow(): Promise<void> {
+	if (createWindowPromise) return createWindowPromise;
+	const pending = createWindowInternal();
+	createWindowPromise = pending;
+	void pending.then(
+		() => {
+			if (createWindowPromise === pending) createWindowPromise = null;
+		},
+		() => {
+			if (createWindowPromise === pending) createWindowPromise = null;
+		},
+	);
+	return pending;
+}
+
+function resolveAgentBrowserBinaryPath(): string {
+	const override = process.env.AO_AGENT_BROWSER_PATH?.trim();
+	if (override) return path.resolve(override);
+	const binary = process.platform === "win32" ? "agent-browser.exe" : "agent-browser";
+	return app.isPackaged
+		? path.join(process.resourcesPath, "agent-browser", binary)
+		: path.join(app.getAppPath(), "agent-browser", binary);
 }
 
 // How long the supervisor waits for the daemon to confirm its bound port (via
@@ -397,12 +557,25 @@ let shellEnvPromise: Promise<void> | null = null;
 
 // Telemetry defaults stamped on the daemon env on every platform; explicit env
 // always wins.
+//
+// Unpackaged builds keep local event recording but never export to PostHog: a
+// dev loop or a CI job driving the real app would otherwise bill production
+// events and inflate install/DAU counts. Set AO_TELEMETRY_REMOTE explicitly to
+// exercise the export path from a dev build.
 function telemetryOverrides(): Record<string, string> {
 	return {
 		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
-		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+		// The daemon binary has no version of its own that release tooling sets,
+		// so without this every daemon event lands unattributable to a release.
+		AO_TELEMETRY_APP_VERSION: process.env.AO_TELEMETRY_APP_VERSION ?? app.getVersion(),
+		// Kill switch: forwarded so a noisy stream can be silenced by env on an
+		// install that already exists, without shipping a new build.
+		...(process.env.AO_TELEMETRY_DISABLED_EVENTS
+			? { AO_TELEMETRY_DISABLED_EVENTS: process.env.AO_TELEMETRY_DISABLED_EVENTS }
+			: {}),
 	};
 }
 
@@ -466,7 +639,7 @@ function ensureShellEnv(): Promise<void> {
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
 const browserRuntimeToken = randomBytes(32).toString("base64url");
 
-function daemonEnv(): NodeJS.ProcessEnv {
+function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
 	// into running.json and the attach path reads it to decide the supervisor
 	// link from the daemon's own state (not this Electron process's env, which
@@ -479,11 +652,23 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// standalone shell terminals survive; a later app launch gets a new id, which
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
-	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
+	const AO_OWNER = forceKeep ? "persistent" : "app";
 	const ownerTag = {
 		AO_OWNER,
 		AO_APP_RUN_ID: appRunId,
-		AO_BROWSER_RUNTIME_TOKEN: browserRuntimeToken,
+		// The browser runtime token is handed over through the child's private
+		// stdin pipe below. Never put it in the daemon environment, where a
+		// same-UID worker could inspect the parent process.
+		AO_BROWSER_RUNTIME_TOKEN: "",
+		AO_BROWSER_RUNTIME_TOKEN_STDIN: "1",
+		// Claude Code Chat uses AO's packaged ACP adapter + Node runtime. The
+		// provider executable itself is resolved by the daemon from the user's PATH
+		// and passed through CLAUDE_CODE_EXECUTABLE; it is not part of this resource.
+		AO_ACP_RUNTIME_DIR:
+			process.env.AO_ACP_RUNTIME_DIR ??
+			(app.isPackaged
+				? path.join(process.resourcesPath, "acp-runtime")
+				: path.join(app.getAppPath(), "resources", "acp-runtime")),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
@@ -586,8 +771,14 @@ function supervisorPipeFromRunFile(rfp: string | null): string {
 	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
+function disposeBrowserRuntimeLink(): void {
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
+	browserRuntimeLinkIdentity = null;
+}
+
 function establishBrowserRuntimeLink(): void {
-	if (!browserViewHost || browserRuntimeLink) return;
+	if (!browserViewHost) return;
 	const rfp = runFilePath();
 	if (!rfp) {
 		console.warn("AO: browser runtime link skipped; run-file path unavailable");
@@ -604,8 +795,17 @@ function establishBrowserRuntimeLink(): void {
 		console.warn("AO: browser runtime link skipped; daemon did not publish an address");
 		return;
 	}
-	let token = browserRuntimeToken;
-	token = runInfo?.browserRuntimeToken ?? token;
+	const token = browserRuntimeToken;
+	const identity = {
+		pid: runInfo?.pid ?? 0,
+		startedAtMs: runInfo?.startedAtMs ?? 0,
+		address,
+		token,
+	};
+	if (browserRuntimeLink && browserRuntimeLinkIdentity && sameBrowserRuntimeIdentity(browserRuntimeLinkIdentity, identity)) {
+		return;
+	}
+	if (browserRuntimeLink) disposeBrowserRuntimeLink();
 	browserRuntimeLink = connectBrowserRuntime(address, {
 		token,
 		execute: (command, signal) => {
@@ -619,6 +819,7 @@ function establishBrowserRuntimeLink(): void {
 		},
 		log: (message) => console.log(`AO: ${message}`),
 	});
+	browserRuntimeLinkIdentity = identity;
 }
 
 function establishSupervisorLink(): void {
@@ -641,7 +842,7 @@ function establishSupervisorLink(): void {
 
 async function inspectExistingDaemon(
 	launch: DaemonLaunchSpec,
-): Promise<{ status: DaemonStatus; owner: string | undefined } | null> {
+): Promise<{ status: DaemonStatus; owner: string | undefined; appRunId: string | undefined } | null> {
 	const handshakePath = runFilePath();
 	let runFileContents: string | null = null;
 	if (handshakePath) {
@@ -658,8 +859,21 @@ async function inspectExistingDaemon(
 		identityError: (probe) => daemonIdentityError(launch, probe),
 	});
 	if (!status) return null;
-	const owner = runFileContents ? (parseRunFile(runFileContents)?.owner ?? undefined) : undefined;
-	return { status, owner };
+	const info = runFileContents ? parseRunFile(runFileContents) : null;
+	return { status, owner: info?.owner, appRunId: info?.appRunId };
+}
+
+async function gracefullyReplaceDaemonForBrowser(status: DaemonStatus): Promise<void> {
+	if (!status.port) throw new Error("the running daemon did not report a port");
+	const response = await fetch(`http://127.0.0.1:${status.port}/shutdown`, { method: "POST" });
+	if (!response.ok) throw new Error(`daemon shutdown returned HTTP ${response.status}`);
+
+	const deadline = Date.now() + 8_000;
+	while (Date.now() < deadline) {
+		if (!(await readDaemonProbe(status.port, "healthz"))) return;
+		await new Promise<void>((resolve) => setTimeout(resolve, 200));
+	}
+	throw new Error("the previous daemon did not stop within 8 seconds");
 }
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
@@ -677,6 +891,9 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	if (!launch) return daemonStatus;
 	const existing = await inspectExistingDaemon(launch);
 	if (existing) {
+		if (browserDaemonOwnershipDecision(appRunId, existing).action === "replace") {
+			return startDaemon();
+		}
 		setDaemonStatus(existing.status);
 	} else if (
 		daemonStatus.state === "ready" ||
@@ -739,19 +956,35 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 
+	let replacementKeepAlive: boolean | undefined;
 	const existing = await inspectExistingDaemon(launch);
 	if (startEpoch !== daemonStartEpoch) {
 		return daemonStatus;
 	}
 	if (existing) {
-		setDaemonStatus(existing.status);
-		// Re-link the supervisor only when attaching to an app-owned daemon (one we
-		// previously spawned). Headless `ao start` daemons (owner unset) stay unlinked
-		// so they remain persistent after app quit.
-		if (shouldLinkOnAttach(existing.owner)) {
-			establishSupervisorLink();
+		const ownership = browserDaemonOwnershipDecision(appRunId, existing);
+		if (ownership.action === "replace") {
+			try {
+				await gracefullyReplaceDaemonForBrowser(existing.status);
+				replacementKeepAlive = ownership.keepAlive;
+			} catch (err) {
+				setDaemonStatus({
+					state: "error",
+					message: `Could not take ownership of the browser runtime: ${(err as Error).message}`,
+					code: "not_ready",
+				});
+				return daemonStatus;
+			}
+		} else {
+			setDaemonStatus(existing.status);
+			// Re-link the supervisor only when attaching to an app-owned daemon (one we
+			// previously spawned). Headless `ao start` daemons (owner unset) stay unlinked
+			// so they remain persistent after app quit.
+			if (shouldLinkOnAttach(existing.owner)) {
+				establishSupervisorLink();
+			}
+			return daemonStatus;
 		}
-		return daemonStatus;
 	}
 
 	// Defensive: inspectExistingDaemon only attaches when the run-file agrees with
@@ -771,7 +1004,8 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 	if (directDaemon) {
-		setDaemonStatus(directDaemon);
+		let portAttachOwner: string | undefined;
+		let portAttachAppRunId: string | undefined;
 		// Re-link iff the daemon is app-owned. Read the run-file for the owner tag;
 		// if unavailable (run-file absent or unreadable), treat as headless and skip.
 		// ponytail: narrow TOCTOU here (the port was probed live, then the run-file
@@ -780,18 +1014,36 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// linking a headless daemon, and establishSupervisorLink disposes any prior
 		// link so nothing leaks.
 		const rfp = runFilePath();
-		let portAttachOwner: string | undefined;
 		if (rfp) {
 			try {
-				portAttachOwner = parseRunFile(await readFile(rfp, "utf8"))?.owner ?? undefined;
+				const info = parseRunFile(await readFile(rfp, "utf8"));
+				portAttachOwner = info?.owner;
+				portAttachAppRunId = info?.appRunId;
 			} catch {
 				// run-file absent or unreadable: treat as headless, skip link.
 			}
 		}
-		if (shouldLinkOnAttach(portAttachOwner)) {
-			establishSupervisorLink();
+		const ownership = browserDaemonOwnershipDecision(appRunId, {
+			owner: portAttachOwner,
+			appRunId: portAttachAppRunId,
+		});
+		if (ownership.action === "replace") {
+			try {
+				await gracefullyReplaceDaemonForBrowser(directDaemon);
+				replacementKeepAlive = ownership.keepAlive;
+			} catch (err) {
+				setDaemonStatus({
+					state: "error",
+					message: `Could not take ownership of the browser runtime: ${(err as Error).message}`,
+					code: "not_ready",
+				});
+				return daemonStatus;
+			}
+		} else {
+			setDaemonStatus(directDaemon);
+			if (shouldLinkOnAttach(portAttachOwner)) establishSupervisorLink();
+			return daemonStatus;
 		}
-		return daemonStatus;
 	}
 
 	// Wedged-orphan kill+replace: both attach paths returned null, but a process
@@ -896,28 +1148,28 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// defeating the keep-alive. Redirect stdio to ~/.ao/daemon.log and unref the
 	// child so the parent does not wait on it. Port discovery then relies on the
 	// running.json handshake (the log pipe scan is skipped).
-	const keep = keepDaemonAlive(process.env);
+	const keep = replacementKeepAlive ?? keepDaemonAlive(process.env);
 	let keepDaemonLogFd: number | undefined;
-	let stdio: "pipe" | "ignore" | ["ignore", number, number] = "pipe";
+	let stdio: "pipe" | "ignore" | ["pipe", number | "ignore", number | "ignore"] = "pipe";
 	if (keep) {
 		const logPath = path.join(os.homedir(), ".ao", "daemon.log");
 		try {
 			keepDaemonLogFd = openSync(logPath, "a");
-			stdio = ["ignore", keepDaemonLogFd, keepDaemonLogFd];
+			stdio = ["pipe", keepDaemonLogFd, keepDaemonLogFd];
 		} catch {
 			// Log redirect failed (e.g. ~/.ao not creatable, permission denied):
 			// fall back to "ignore" so the daemon still runs, but warn — otherwise
 			// a long-lived keep-alive daemon would run with zero log output.
 			console.warn(`AO: keep-daemon log redirect failed; daemon will run with stdio disabled: ${logPath}`);
 			keepDaemonLogFd = undefined;
-			stdio = "ignore";
+			stdio = ["pipe", "ignore", "ignore"];
 		}
 	}
 	let child: ChildProcess;
 	try {
 		child = spawn(launch.command, launch.args, {
 			cwd: launch.cwd,
-			env: daemonEnv(),
+			env: daemonEnv(keep),
 			shell: launch.shell,
 			detached: true,
 			// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
@@ -945,6 +1197,15 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			// best-effort — the child still holds its inherited copy
 		}
 		keepDaemonLogFd = undefined;
+	}
+	// daemonEnv deliberately contains only a marker. Deliver the actual token
+	// over the inherited pipe, then close it; Go does not pass this descriptor to
+	// worker processes when it spawns them.
+	if (child.stdin) {
+		child.stdin.on("error", () => undefined);
+		child.stdin.end(`${browserRuntimeToken}\n`);
+	} else {
+		console.warn("AO: browser runtime token handoff pipe was unavailable");
 	}
 	if (keep) child.unref();
 	daemonProcess = child;
@@ -1131,8 +1392,7 @@ function stopDaemon(): DaemonStatus {
 	// A later daemon:start re-establishes the link via reportBoundPort.
 	supervisorLink?.dispose();
 	supervisorLink = null;
-	browserRuntimeLink?.dispose();
-	browserRuntimeLink = null;
+	disposeBrowserRuntimeLink();
 	killDaemon(daemonProcess);
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;
@@ -1230,11 +1490,21 @@ ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false)
 ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") => {
 	if (preference === "light" || preference === "dark" || preference === "system") {
 		nativeTheme.themeSource = preference;
+		syncNativeWindowBackground();
 	}
 });
 
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
+
+ipcMain.on("browser:overlay", (event, open: unknown) => {
+	if (event.sender !== getShellWebContents() || typeof open !== "boolean") return;
+	windowComposition?.setOverlayOpen(open);
+});
+
+ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
+	closeShellTerminalShortcutEnabled = enabled === true;
+});
 
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.
@@ -1243,9 +1513,10 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 	if (!win) return;
 	// Clicking this shell-painted menu moves focus off the panel, so prefer the last-focused panel, else the focused contents, else the shell.
 	const focused = webContents.getFocusedWebContents();
+	const shell = getShellWebContents();
 	const wc =
-		(focused && focused !== win.webContents ? focused : browserViewHost?.getLastFocusedPanelContents()) ??
-		win.webContents;
+		(focused && focused !== shell ? focused : browserViewHost?.getLastFocusedPanelContents()) ?? shell;
+	if (!wc) return;
 	switch (action) {
 		case "edit.undo":
 			return wc.undo();
@@ -1262,7 +1533,10 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "view.reload":
 			return wc.reload();
 		case "view.devtools":
-			return wc.toggleDevTools();
+			return browserViewHost?.toggleDevToolsForLastFocused().then((state) => {
+				if (state) return state;
+				return wc.toggleDevTools();
+			}).catch(() => wc.toggleDevTools()) ?? wc.toggleDevTools();
 		case "view.zoomIn":
 			return wc.setZoomLevel(wc.getZoomLevel() + 0.5);
 		case "view.zoomOut":
@@ -1280,8 +1554,8 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 		case "app.quit":
 			return app.quit();
 		case "help.shortcuts":
-			win.webContents.focus();
-			return win.webContents.send(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
+			shell?.focus();
+			return shell?.send(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
 		case "help.about":
 			void dialog.showMessageBox(win, {
 				type: "info",
@@ -1294,7 +1568,7 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 	}
 });
 ipcMain.handle("telemetry:getBootstrap", () =>
-	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
+	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
 );
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
@@ -1317,6 +1591,10 @@ ipcMain.handle("app:chooseDirectory", async (_event, title?: string) => {
 ipcMain.handle("app:scanImportFolder", async (_event, input: { path: string; mode: "project" | "workspace" }) => {
 	await ensureShellEnv();
 	return scanImportFolder(input.path, input.mode, { env: daemonEnv(), homeDir: os.homedir() });
+});
+ipcMain.handle("app:checkAncestorRepo", async (_event, path: string) => {
+	await ensureShellEnv();
+	return ancestorRepositorySetupWarning(path, { env: daemonEnv(), homeDir: os.homedir() });
 });
 ipcMain.handle("clipboard:writeText", (_event, text: string) => {
 	clipboard.writeText(text, "clipboard");
@@ -1362,6 +1640,18 @@ ipcMain.handle("updateSettings:set", async (_event, settings: UpdateSettings) =>
 	await setUpdateSettings(path.dirname(runFile), settings);
 });
 
+ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
+	const runFile = runFilePath();
+	if (!runFile) return { locale: "en" };
+	return readUiSettings(path.dirname(runFile));
+});
+	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+		const runFile = runFilePath();
+	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
+	trayController?.setLocale(result.locale);
+	return result;
+	});
+
 ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
 ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
 	const runFile = runFilePath();
@@ -1370,7 +1660,7 @@ ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides)
 	return keybindingOverrides;
 });
 ipcMain.handle("keybindings:setRecording", (event, active: unknown): void => {
-	if (event.sender !== mainWindow?.webContents || typeof active !== "boolean") return;
+	if (event.sender !== getShellWebContents() || typeof active !== "boolean") return;
 	keybindingRecordingActive = active;
 });
 
@@ -1395,23 +1685,165 @@ ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
 });
 
-ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
-	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
-	const toast = new ElectronNotification({
-		title: notification.title,
-		body: notification.body,
-	});
-	toast.on("click", () => {
+ipcMain.handle(
+	"notifications:show",
+	(_event, notification: { id: string; title: string; body?: string; type?: string }) => {
+		if (!notification.id || !mainWindow) return;
+		// Only signal when the window isn't already focused (the user is looking).
+		if (mainWindow.isFocused()) return;
+		// OS toast: a native banner the user can click to jump straight back to the
+		// session. Fires for every backend notification type (see shouldToast), so a
+		// new type in notification.go never silently loses its toast.
+		if (shouldToast(notification, ElectronNotification.isSupported())) {
+			const toast = new ElectronNotification({
+				title: notification.title,
+				body: notification.body,
+				// AO logo as the notification icon on Windows/Linux. Omitted on macOS,
+				// where a custom icon renders only as a redundant right-side content image —
+				// macOS uses the app-bundle icon (the AO logo in a packaged build) as the
+				// single main icon.
+				icon: process.platform === "darwin" ? undefined : windowIconPath(),
+			});
+			toast.on("click", () => {
+				if (!mainWindow) return;
+				if (mainWindow.isMinimized()) mainWindow.restore();
+				mainWindow.show();
+				mainWindow.focus();
+				getShellWebContents()?.send("notifications:click", notification.id);
+			});
+			toast.show();
+		}
+
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal — only for the
+		// actionable types. A merged/closed PR still toasts above, but shouldn't
+		// bounce the dock as insistently as an agent blocked waiting on the user.
+		if (shouldSignalAttention(notification.type)) {
+			if (process.platform === "darwin" && app.dock) {
+				app.dock.bounce("informational");
+			} else if (process.platform === "win32" || process.platform === "linux") {
+				if (!isFlashing) {
+					isFlashing = true;
+					mainWindow.flashFrame(true);
+					mainWindow.once("focus", () => {
+						isFlashing = false;
+						mainWindow?.flashFrame(false);
+					});
+				}
+			}
+		}
+	},
+);
+
+// Dev-only: force attention signal regardless of window focus (for testing)
+if (!app.isPackaged) {
+	ipcMain.handle("notifications:devBounce", () => {
 		if (!mainWindow) return;
-		if (mainWindow.isMinimized()) mainWindow.restore();
-		mainWindow.show();
-		mainWindow.focus();
-		mainWindow.webContents.send("notifications:click", notification.id);
+		if (process.platform === "darwin") {
+			const id = app.dock?.bounce("critical");
+			setTimeout(() => {
+				if (id !== undefined) app.dock?.cancelBounce(id);
+			}, 2000);
+		} else if (process.platform === "win32" || process.platform === "linux") {
+			mainWindow.flashFrame(true);
+			setTimeout(() => {
+				mainWindow?.flashFrame(false);
+			}, 2000);
+		}
 	});
-	toast.show();
+}
+
+ipcMain.handle("notifications:setBadge", (_event, count: number) => {
+	if (!mainWindow) return { error: "no mainWindow" };
+	const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+	if (process.platform === "darwin") {
+		const dock = app.dock;
+		if (!dock) return { error: "no app.dock" };
+		try {
+			dock.setBadge(n > 0 ? String(n) : "");
+		} catch (e) {
+			return { error: String(e) };
+		}
+	} else if (process.platform === "win32") {
+		if (n > 0) {
+			// Pre-built red dot PNG overlay — indicates unread without needing Canvas.
+			const badgeDataUrl =
+				"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAN0lEQVR42mNgoAW4o6b2HxumSDNRhhDSjNcQYjVjNYRUzRiGjBpABQMojkaqJCSqJGWqZCZSAQASKE/UCaPI8AAAAABJRU5ErkJggg==";
+			const icon = nativeImage.createFromDataURL(badgeDataUrl);
+			mainWindow.setOverlayIcon(icon, `${n} unread`);
+		} else {
+			mainWindow.setOverlayIcon(null, "");
+		}
+	} else if (process.platform === "linux") {
+		// setBadgeCount drives a numeric launcher badge on Unity only, and only
+		// when the app ships a matching .desktop entry. Other Linux launchers
+		// (KDE, GNOME) expose no equivalent API, so the call is a no-op there.
+		// Surface the boolean result so the renderer can tell the badge was not
+		// applied instead of assuming unconditional success.
+		return { ok: app.setBadgeCount(n) };
+	}
+	return { ok: true };
 });
 
-// Auto-update only runs for packaged builds reading the GitHub Releases feed
+ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
+
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
+
+// Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
+// Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
+function cloudDataDir(): string {
+	return isDev
+		? path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR)
+		: path.join(os.homedir(), ".ao");
+}
+
+function notifyRenderersOfCloudSession(account: import("./shared/cloud-account").CloudAccount | null): void {
+	const contents = getShellWebContents();
+	if (!contents || contents.isDestroyed()) return;
+	contents.send("cloud:sessionChanged", account);
+}
+
+installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+function focusCloudWindow(): void {
+	const window = BaseWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+}
+
+async function handleCloudDeepLinkAndFocus(url: string): Promise<void> {
+	focusCloudWindow();
+	try {
+		const session = await handleCloudDeepLink(url, cloudDataDir());
+		if (!session) return;
+		notifyRenderersOfCloudSession(session);
+	} catch (error) {
+		console.error("WorkOS callback failed:", error);
+		await showCloudSignInFailure(error);
+	}
+}
+
+// macOS: the OS sends the ao-app:// URL via the open-url event when the app is
+// already running. If the app is not running, the URL is passed in process.argv
+// on first launch (handled in app.whenReady below).
+app.on("open-url", (event, url) => {
+	event.preventDefault();
+	void handleCloudDeepLinkAndFocus(url);
+});
+
+app.on("second-instance", (_event, argv) => {
+	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
+	if (deepLink) {
+		void handleCloudDeepLinkAndFocus(deepLink);
+		return;
+	}
+	const window = BaseWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+});
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
 // A live updater additionally requires a signed + notarized build — see
 // frontend/docs/desktop-release.md.
@@ -1485,12 +1917,32 @@ app.whenReady().then(async () => {
 	}
 
 	if (process.platform === "darwin" && app.isPackaged) {
-		try {
-			// On success this restarts the app from /Applications, so code past
-			// here only runs when no move happened (already there, or declined).
-			app.moveToApplicationsFolder();
-		} catch (err) {
-			console.error("relocation to Applications failed:", err);
+		const bundlePath = resolveBundlePath();
+		const action = decideRelocation({
+			inApplicationsFolder: app.isInApplicationsFolder(),
+			runningVersion: app.getVersion(),
+			...inspectInstalledBundle(bundlePath),
+		});
+		if (action === "handoff") {
+			// A stale copy (the original download, a mounted dmg) launching while a
+			// newer build sits in /Applications. Relocating here would trash that
+			// build and pin the user to this bundle's version forever, so open the
+			// install and quit instead. Return before the marker write below: the
+			// instance we just launched records the path and version.
+			const installed = installedBundlePath(bundlePath);
+			console.info(`newer install at ${installed}; handing off and quitting`);
+			await shell.openPath(installed);
+			app.quit();
+			return;
+		}
+		if (action === "relocate") {
+			try {
+				// On success this restarts the app from /Applications, so code past
+				// here only runs when no move happened (already there, or declined).
+				app.moveToApplicationsFolder();
+			} catch (err) {
+				console.error("relocation to Applications failed:", err);
+			}
 		}
 	}
 
@@ -1510,13 +1962,28 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
-	createWindow();
+	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
+		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
+		trayController = createTrayController({
+			focusWindow: focusMainWindow,
+			openSession: trayLifecycle.openSession,
+			locale: initialUiSettings.locale,
+		});
+	}
+	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
 
+	// Windows/Linux: on first launch, the deep-link URL may arrive as a
+	// process.argv entry (e.g. ao-app://callback?token=...).
+	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
+	if (deepLinkArg) {
+		void handleCloudDeepLinkAndFocus(deepLinkArg);
+	}
+
 	app.on("activate", () => {
-		if (BrowserWindow.getAllWindows().length === 0) {
-			createWindow();
+		if (BaseWindow.getAllWindows().length === 0) {
+			void createWindow().catch((error) => console.error("failed to recreate main window:", error));
 		}
 	});
 });
@@ -1525,11 +1992,22 @@ app.whenReady().then(async () => {
 // self-stops ~5s after the last client (this process) drops its connection.
 // The supervisorLink fd is NOT explicitly closed on quit; the OS closes it when
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
-app.on("before-quit", () => {
-	browserRuntimeLink?.dispose();
-	browserRuntimeLink = null;
-	browserViewHost?.dispose();
-	browserViewHost = null;
+app.on("before-quit", (event) => {
+	browserQuitRequested = true;
+	disposeBrowserRuntimeLink();
+	trayLifecycle.dispose();
+	trayController = null;
+	if (!browserCleanupComplete) {
+		event.preventDefault();
+		if (!browserQuitCleanupPromise) {
+			browserQuitCleanupPromise = disposeAllBrowserViewHosts().finally(() => {
+				browserCleanupComplete = true;
+				browserQuitCleanupPromise = null;
+				app.quit();
+			});
+		}
+		return;
+	}
 });
 
 // Last resort: if the OS-native supervisor link is not actually connected

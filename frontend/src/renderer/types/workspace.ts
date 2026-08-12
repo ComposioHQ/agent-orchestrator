@@ -1,91 +1,20 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
+import {
+	AGENT_OPTIONS,
+	toSessionActivity,
+	toSessionStatus,
+	type AgentId,
+	type SessionActivity,
+	type SessionActivityState,
+	type SessionStatus,
+} from "@aoagents/product-ui";
 
-export type SessionStatus =
-	| "working"
-	| "pr_open"
-	| "draft"
-	| "ci_failed"
-	| "review_pending"
-	| "changes_requested"
-	| "approved"
-	| "mergeable"
-	| "merged"
-	| "needs_input"
-	| "exited"
-	| "no_signal"
-	| "idle"
-	| "terminated"
-	| "unknown";
+import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
-const sessionStatuses = new Set<SessionStatus>([
-	"working",
-	"pr_open",
-	"draft",
-	"ci_failed",
-	"review_pending",
-	"changes_requested",
-	"approved",
-	"mergeable",
-	"merged",
-	"needs_input",
-	"exited",
-	"no_signal",
-	"idle",
-	"terminated",
-]);
+export { toSessionActivity, toSessionStatus };
+export type { SessionActivity, SessionActivityState, SessionStatus };
 
-export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
-	if (status && sessionStatuses.has(status as SessionStatus)) return status as SessionStatus;
-	return isTerminated ? "terminated" : "unknown";
-}
-
-export type SessionActivityState = "active" | "idle" | "waiting_input" | "blocked" | "exited" | "unknown";
-
-const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "blocked", "exited"]);
-
-export type SessionActivity = {
-	state: SessionActivityState;
-	lastActivityAt: string;
-};
-
-export function toSessionActivity(
-	activity?: { state?: string; lastActivityAt?: string } | null,
-): SessionActivity | undefined {
-	if (!activity) return undefined;
-	const state = sessionActivityStates.has(activity.state as SessionActivityState)
-		? (activity.state as SessionActivityState)
-		: "unknown";
-	return {
-		state,
-		lastActivityAt: activity.lastActivityAt ?? "",
-	};
-}
-
-export type AgentProvider =
-	| "codex"
-	| "claude-code"
-	| "opencode"
-	| "aider"
-	| "grok"
-	| "droid"
-	| "amp"
-	| "agy"
-	| "crush"
-	| "cursor"
-	| "qwen"
-	| "copilot"
-	| "goose"
-	| "auggie"
-	| "continue"
-	| "devin"
-	| "cline"
-	| "kimi"
-	| "kiro"
-	| "kilocode"
-	| "vibe"
-	| "pi"
-	| "autohand"
-	| "fake";
+export type AgentProvider = AgentId | "fake";
 
 /** A file changed in a worker workspace (drives the review rail). */
 export type ChangedFile = {
@@ -117,6 +46,9 @@ export type PullRequestFacts = {
 	updatedAt: string;
 };
 
+/** The daemon-committed controller currently responsible for the session. */
+export type SessionMode = "chat" | "tui";
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -126,7 +58,15 @@ export type WorkspaceSession = {
 	/** Raw issue/task identifier from the daemon. Intake ids are provider-prefixed. */
 	issueId?: string;
 	provider: AgentProvider;
+	/** Reviewer selected for this session; absent means use the project default. */
+	reviewerHarness?: ReviewerHarnessId;
 	kind?: SessionKind;
+	/**
+	 * Which controller is currently committed for this session. The session
+	 * surface renders from THIS value, never from the current creation default.
+	 * Only the daemon's durable interface-transition coordinator may change it.
+	 */
+	mode?: SessionMode;
 	branch?: string;
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
@@ -135,10 +75,14 @@ export type WorkspaceSession = {
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
+	/** Whether SCM review feedback is automatically injected into the worker. */
+	autoInjectReview?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	isPinned?: boolean;
+	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
 	/**
@@ -338,32 +282,6 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 }
 
 export function toAgentProvider(provider?: string): AgentProvider {
-	switch (provider) {
-		case "claude-code":
-		case "opencode":
-		case "aider":
-		case "grok":
-		case "droid":
-		case "amp":
-		case "agy":
-		case "crush":
-		case "cursor":
-		case "qwen":
-		case "copilot":
-		case "goose":
-		case "auggie":
-		case "continue":
-		case "devin":
-		case "cline":
-		case "kimi":
-		case "kiro":
-		case "kilocode":
-		case "vibe":
-		case "pi":
-		case "autohand":
-		case "fake":
-			return provider;
-		default:
-			return "codex";
-	}
+	if (provider === "fake") return provider;
+	return AGENT_OPTIONS.find((candidate) => candidate === provider) ?? "codex";
 }

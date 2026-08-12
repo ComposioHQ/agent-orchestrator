@@ -134,7 +134,7 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 		InitialDelay: 750 * time.Millisecond,
 		Patterns:     []string{"│ >"},
 		PollInterval: 200 * time.Millisecond,
-		Timeout:      8 * time.Second,
+		Timeout:      90 * time.Second,
 		Lines:        80,
 	}, nil
 }
@@ -222,7 +222,7 @@ var kimiBinarySpec = binaryutil.BinarySpec{
 	Names:         []string{"kimi"},
 	WinNames:      []string{"kimi.cmd", "kimi.exe", "kimi"},
 	UnixPaths:     []string{"/usr/local/bin/kimi", "/opt/homebrew/bin/kimi"},
-	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimi", []string{".cargo", "bin", "kimi"}),
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimi", []string{".kimi-code", "bin", "kimi"}, []string{".cargo", "bin", "kimi"}),
 	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimi.cmd"}},
