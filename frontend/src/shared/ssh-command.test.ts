@@ -72,8 +72,12 @@ describe("controlPath", () => {
 
 describe("tunnelArgv", () => {
 	it("forwards a local port to the remote loopback and runs no remote command", () => {
-		expect(tunnelArgv({ sshTarget: "build-vm", control, localPort: 51234, remotePort: 3001 })).toEqual([
-			...sshControlFlags(control),
+		expect(tunnelArgv({ sshTarget: "build-vm", localPort: 51234, remotePort: 3001 })).toEqual([
+			"-o",
+			"ControlMaster=no",
+			"-o",
+			"ControlPath=none",
+			...sshControlFlags(null),
 			"-N",
 			"-L",
 			"51234:127.0.0.1:3001",
@@ -81,16 +85,28 @@ describe("tunnelArgv", () => {
 		]);
 	});
 
+	// Regression, found against a real host: ControlMaster=auto + ControlPersist
+	// makes ssh fork the master to the background and exit 0 in the foreground.
+	// The supervisor would read that as the tunnel dying while the forward was
+	// still alive in a process it could no longer kill — leaking both. Passed
+	// explicitly because the user's ~/.ssh/config may set ControlMaster globally.
+	it("never multiplexes the tunnel, so the process cannot fork away from the forward", () => {
+		const argv = tunnelArgv({ sshTarget: "vm", localPort: 1, remotePort: 2 });
+		expect(argv).toContain("ControlMaster=no");
+		expect(argv).toContain("ControlPath=none");
+		expect(argv.join(" ")).not.toContain("ControlPersist");
+	});
+
 	// The remote daemon binds 127.0.0.1; a remote resolver that maps `localhost`
 	// to ::1 first would have the forward refused.
 	it("targets 127.0.0.1 rather than localhost", () => {
-		const argv = tunnelArgv({ sshTarget: "vm", control: null, localPort: 1, remotePort: 2 });
+		const argv = tunnelArgv({ sshTarget: "vm", localPort: 1, remotePort: 2 });
 		expect(argv).toContain("1:127.0.0.1:2");
 		expect(argv.join(" ")).not.toContain("localhost");
 	});
 
 	it("puts the target last so nothing can be read as a flag to it", () => {
-		expect(tunnelArgv({ sshTarget: "vm", control, localPort: 1, remotePort: 2 }).at(-1)).toBe("vm");
+		expect(tunnelArgv({ sshTarget: "vm", localPort: 1, remotePort: 2 }).at(-1)).toBe("vm");
 	});
 });
 

@@ -13,10 +13,16 @@
 // remedy and must not be reported as the next step's:
 //
 //   1. preflight  — is `ssh` here, is the host reachable, is `ao` there
-//   2. tunnel     — `ssh -N -L <local>:127.0.0.1:<remote>`
-//   3. attach     — probe the forwarded port; a daemon may already be running
-//   4. start      — only if nothing answered, launch `ao daemon` detached
-//   5. wait       — poll until /healthz and /readyz agree
+//   2. discover   — read the remote run-file for a LIVE daemon and its real port
+//   3. start      — only if none, launch `ao daemon` detached, then re-discover
+//   4. tunnel     — `ssh -N -L <local>:127.0.0.1:<discovered>`
+//   5. wait       — probe the forward until /healthz and /readyz agree
+//
+// The port is discovered, never assumed. `AO_PORT` is only a *request*: when it
+// is taken the daemon binds an ephemeral port instead and records the real one
+// in ~/.ao/running.json (the same handshake the local supervisor trusts).
+// Forwarding to a guessed 3001 on a busy host reaches whatever else is
+// listening there, not AO.
 //
 // Process plumbing lives here; the argv builders and the failure taxonomy are
 // pure modules under shared/ so they can be tested without opening a socket.
@@ -38,16 +44,17 @@ import {
 	type SshFailure,
 } from "../shared/ssh-failure";
 import type { DaemonProber } from "../shared/daemon-attach";
-import { DEFAULT_DAEMON_PORT } from "../shared/daemon-attach";
+import { parseRunFile } from "../shared/daemon-discovery";
 import type { RemoteWorkspace } from "../shared/workspaces";
 
 /** Bound on a single preflight/start command, including the ssh handshake. */
 const REMOTE_COMMAND_TIMEOUT_MS = (CONNECT_TIMEOUT_SECONDS + 10) * 1000;
-/** How long to wait for an already-running remote daemon to answer. */
-const ATTACH_PROBE_TIMEOUT_MS = 3_000;
-/** How long to wait for a freshly started remote daemon to become ready. */
+/** How long to wait for a freshly started remote daemon to publish its port. */
 const START_READY_TIMEOUT_MS = 30_000;
+/** How long the forward gets to carry a daemon already known to be listening. */
+const TUNNEL_READY_TIMEOUT_MS = 10_000;
 const READY_POLL_INTERVAL_MS = 250;
+const RUN_FILE_POLL_INTERVAL_MS = 500;
 
 export type RemoteConnection = {
 	/** Loopback port on this machine that reaches the remote daemon. */
@@ -213,15 +220,15 @@ async function startRemoteDaemon(
 	spawn: SpawnFn,
 	workspace: RemoteWorkspace,
 	control: { path: string } | null,
-	remotePort: number,
+	preferredPort: number | null,
 ): Promise<void> {
 	// The port is exported rather than used as a command prefix: `setsid FOO=1 ao`
-	// would have setsid try to exec "FOO=1" as the program name.
+	// would have setsid try to exec "FOO=1" as the program name. It is only a
+	// request; the daemon records what it actually bound in the run-file.
 	const launch = `ao daemon >> "$HOME/.ao/daemon.log" 2>&1 < /dev/null &`;
 	const script = [
 		'mkdir -p "$HOME/.ao"',
-		`AO_PORT=${shellQuote(String(remotePort))}`,
-		"export AO_PORT",
+		...(preferredPort === null ? [] : [`AO_PORT=${shellQuote(String(preferredPort))}`, "export AO_PORT"]),
 		`if command -v setsid > /dev/null 2>&1; then setsid ${launch} else nohup ${launch} fi`,
 	].join("; ");
 
@@ -264,6 +271,55 @@ async function waitForReady(
  * On any failure the tunnel is torn down before throwing, so a failed connect
  * never leaves an orphaned `ssh -N` holding a port.
  */
+/**
+ * Read the remote run-file, but only when it describes a LIVE daemon.
+ *
+ * A stale run-file (daemon killed, host rebooted) must not be trusted, so the
+ * recorded pid is checked with `kill -0` on the remote before the contents are
+ * returned — the remote analogue of the local attach path's isProcessAlive.
+ * Empty stdout means "no live daemon", which is a normal outcome, not an error.
+ */
+async function readRemoteRunFile(
+	spawn: SpawnFn,
+	workspace: RemoteWorkspace,
+	control: { path: string } | null,
+): Promise<{ pid: number; port: number } | null> {
+	const script = [
+		'f="$HOME/.ao/running.json"',
+		'[ -f "$f" ] || exit 0',
+		`p=$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' "$f" | head -n 1)`,
+		'[ -n "$p" ] && kill -0 "$p" 2>/dev/null && cat "$f"',
+	].join("; ");
+
+	const result = await runSsh(
+		spawn,
+		remoteCommandArgv({ sshTarget: workspace.sshTarget, control, script }),
+		REMOTE_COMMAND_TIMEOUT_MS,
+	);
+	if (result.exitCode !== 0) {
+		throw new RemoteWorkspaceError(classifySshFailure(result.exitCode, result.stderr, workspace.sshTarget));
+	}
+	const info = parseRunFile(result.stdout.trim());
+	return info ? { pid: info.pid, port: info.port } : null;
+}
+
+/** Poll the remote run-file until a freshly started daemon publishes its port. */
+async function pollRemoteRunFile(
+	spawn: SpawnFn,
+	workspace: RemoteWorkspace,
+	control: { path: string } | null,
+	delay: (ms: number) => Promise<void>,
+	now: () => number,
+): Promise<{ pid: number; port: number } | null> {
+	const deadline = now() + START_READY_TIMEOUT_MS;
+	for (;;) {
+		const live = await readRemoteRunFile(spawn, workspace, control);
+		if (live) return live;
+		if (now() >= deadline) return null;
+		await delay(RUN_FILE_POLL_INTERVAL_MS);
+	}
+}
+
 export async function connectRemoteWorkspace(
 	workspace: RemoteWorkspace,
 	deps: RemoteWorkspaceDeps,
@@ -272,13 +328,30 @@ export async function connectRemoteWorkspace(
 	const allocatePort = deps.allocatePort ?? allocateLoopbackPort;
 	const delay = deps.delay ?? defaultDelay;
 	const now = deps.now ?? Date.now;
-	const remotePort = workspace.remotePort ?? DEFAULT_DAEMON_PORT;
 	const control = resolveControl(deps.controlDir, workspace.sshTarget);
 
 	await preflight(spawn, workspace, control);
 
+	// The run-file is always the authority on the port. A configured
+	// remotePort is only a preference handed to a daemon we start: AO_PORT is a
+	// request, and a daemon that finds it taken binds elsewhere and says so.
+	let live = await readRemoteRunFile(spawn, workspace, control);
+	const started = live === null;
+	if (!live) {
+		await startRemoteDaemon(spawn, workspace, control, workspace.remotePort ?? null);
+		live = await pollRemoteRunFile(spawn, workspace, control, delay, now);
+	}
+	if (!live) {
+		throw new RemoteWorkspaceError({
+			kind: "remote_command_failed",
+			message: `Started \`ao daemon\` on ${workspace.sshTarget}, but it never reported a listening port.`,
+			details: `See ~/.ao/daemon.log on ${workspace.sshTarget}.`,
+		});
+	}
+	const remotePort = live.port;
+
 	const localPort = await allocatePort();
-	const tunnel = spawn("ssh", tunnelArgv({ sshTarget: workspace.sshTarget, control, localPort, remotePort }));
+	const tunnel = spawn("ssh", tunnelArgv({ sshTarget: workspace.sshTarget, localPort, remotePort }));
 
 	// `ssh -N` normally stays silent and running; anything it prints is a
 	// diagnosis for a connect that is about to fail its probes, so keep the tail.
@@ -302,24 +375,20 @@ export async function connectRemoteWorkspace(
 	});
 
 	try {
-		if (await waitForReady(deps.probe, localPort, ATTACH_PROBE_TIMEOUT_MS, delay, now)) {
-			return { localPort, remotePort, started: false, closed, dispose };
+		if (!(await waitForReady(deps.probe, localPort, TUNNEL_READY_TIMEOUT_MS, delay, now))) {
+			// The daemon was confirmed listening before the tunnel was opened, so a
+			// failure here is the forward's, not the daemon's.
+			throw new RemoteWorkspaceError(
+				gone
+					? classifySshFailure(null, tunnelStderr, workspace.sshTarget)
+					: {
+							kind: "unreachable",
+							message: `Opened a tunnel to ${workspace.sshTarget}, but its daemon did not answer on port ${remotePort}.`,
+							details: tunnelStderr.trim(),
+						},
+			);
 		}
-		// Nothing answered. Distinguish "the tunnel itself failed" from "the tunnel
-		// is fine, no daemon is listening yet" — starting a daemon over a dead
-		// transport would only produce a second, more confusing failure.
-		if (gone) {
-			throw new RemoteWorkspaceError(classifySshFailure(null, tunnelStderr, workspace.sshTarget));
-		}
-		await startRemoteDaemon(spawn, workspace, control, remotePort);
-		if (!(await waitForReady(deps.probe, localPort, START_READY_TIMEOUT_MS, delay, now))) {
-			throw new RemoteWorkspaceError({
-				kind: "remote_command_failed",
-				message: `Started \`ao daemon\` on ${workspace.sshTarget}, but it never became ready.`,
-				details: `${tunnelStderr}\nSee ~/.ao/daemon.log on ${workspace.sshTarget}.`.trim(),
-			});
-		}
-		return { localPort, remotePort, started: true, closed, dispose };
+		return { localPort, remotePort, started, closed, dispose };
 	} catch (error) {
 		dispose();
 		throw error;

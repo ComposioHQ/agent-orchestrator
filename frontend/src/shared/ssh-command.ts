@@ -140,10 +140,28 @@ export type SshTargetOptions = {
  *
  * `-N` runs no remote command, so sshd never allocates a shell — the forward is
  * the entire purpose of the connection.
+ *
+ * **The tunnel is deliberately NOT multiplexed, and this is load-bearing.**
+ * `ControlMaster=auto` together with `ControlPersist` makes ssh fork the master
+ * into the background and exit 0 in the foreground. The supervisor would then
+ * see its child exit immediately and conclude the tunnel had died, while the
+ * forward was in fact alive in a process it no longer had a handle on — so
+ * tearing the connection down would leak both the forward and the master
+ * socket. A dedicated foreground connection makes the process lifetime and the
+ * forward's lifetime the same thing, which is what the supervisor's
+ * `closed()` / `dispose()` contract assumes.
+ *
+ * Both options are passed explicitly rather than merely omitted: the user's own
+ * `~/.ssh/config` may set `ControlMaster` globally, which would silently
+ * reintroduce the fork.
  */
-export function tunnelArgv(options: SshTargetOptions & { localPort: number; remotePort: number }): string[] {
+export function tunnelArgv(options: { sshTarget: string; localPort: number; remotePort: number }): string[] {
 	return [
-		...sshControlFlags(options.control),
+		"-o",
+		"ControlMaster=no",
+		"-o",
+		"ControlPath=none",
+		...sshControlFlags(null),
 		"-N",
 		"-L",
 		`${options.localPort}:127.0.0.1:${options.remotePort}`,

@@ -17,7 +17,8 @@ class FakeSsh extends EventEmitter {
 		this.emit("close", null);
 		return true;
 	}
-	finish(exitCode: number, stderr = "") {
+	finish(exitCode: number, stderr = "", stdout = "") {
+		if (stdout) this.stdout.emit("data", Buffer.from(stdout));
 		if (stderr) this.stderr.emit("data", Buffer.from(stderr));
 		this.emit("close", exitCode);
 	}
@@ -25,30 +26,56 @@ class FakeSsh extends EventEmitter {
 
 type Invocation = { args: string[]; child: FakeSsh };
 
+/** The remote port the fake daemon reports. Deliberately not 3001: the run-file
+ * is the authority, and a test that used the default would not notice the
+ * connect guessing instead of discovering. */
+const REMOTE_PORT = 43215;
+
 /**
- * Script the fake ssh by role. Preflight (`command -v ao`) and the start command
- * complete immediately with the given exit code; the tunnel (`-N`) stays open
- * until disposed, exactly as `ssh -N` does.
+ * Script the fake ssh by role, modelling the real connect sequence:
+ * preflight (`command -v ao`) → run-file read → start → run-file poll → tunnel.
  *
- * `daemonStarted` flips when the start command runs, so a probe can model the
- * only sequence that matters: nothing answers until the daemon is launched.
+ * `alreadyRunning` decides whether the first run-file read finds a live daemon,
+ * which is the fork between attaching and starting. The tunnel (`-N`) stays open
+ * until disposed, exactly as an unmultiplexed `ssh -N` does.
  */
-function fakeSpawn(plan: { preflight?: number; start?: number; preflightStderr?: string }) {
+function fakeSpawn(plan: {
+	preflight?: number;
+	start?: number;
+	preflightStderr?: string;
+	alreadyRunning?: boolean;
+	neverPublishesPort?: boolean;
+}) {
 	const calls: Invocation[] = [];
-	const state = { daemonStarted: false };
+	const state = { daemonStarted: plan.alreadyRunning ?? false };
+	const runFile = () => JSON.stringify({ pid: 4242, port: REMOTE_PORT, startedAt: "2026-08-12T00:00:00Z" });
+
 	const spawn = (_command: string, args: string[]) => {
 		const child = new FakeSsh();
 		calls.push({ args, child });
 		if (args.includes("-N")) return child;
 
-		const isPreflight = args.at(-1)?.includes("command -v ao") ?? false;
-		const code = isPreflight ? (plan.preflight ?? 0) : (plan.start ?? 0);
-		if (!isPreflight && code === 0) state.daemonStarted = true;
-		queueMicrotask(() => child.finish(code, isPreflight ? (plan.preflightStderr ?? "") : ""));
+		const script = args.at(-1) ?? "";
+		queueMicrotask(() => {
+			if (script.includes("command -v ao")) {
+				child.finish(plan.preflight ?? 0, plan.preflightStderr ?? "");
+			} else if (script.includes("running.json")) {
+				// Empty stdout is the normal "no live daemon" answer, not an error.
+				const live = state.daemonStarted && !plan.neverPublishesPort;
+				child.finish(0, "", live ? runFile() : "");
+			} else {
+				const code = plan.start ?? 0;
+				if (code === 0) state.daemonStarted = true;
+				child.finish(code);
+			}
+		});
 		return child;
 	};
 	return { calls, state, spawn: spawn as unknown as (c: string, a: string[]) => ChildProcess };
 }
+
+const isTunnel = (call: Invocation) => call.args.includes("-N");
+const isStart = (call: Invocation) => (call.args.at(-1) ?? "").includes("ao daemon");
 
 const probeOk: DaemonProbe = { status: "ok", service: "agent-orchestrator-daemon", pid: 42 };
 
@@ -56,11 +83,6 @@ const answer: DaemonProber = async (_port, endpoint) => ({
 	...probeOk,
 	status: endpoint === "healthz" ? "ok" : "ready",
 });
-
-/** A prober that stays silent until the fake ssh has actually started a daemon. */
-function probeAfterStart(state: { daemonStarted: boolean }): DaemonProber {
-	return async (port, endpoint) => (state.daemonStarted ? answer(port, endpoint) : null);
-}
 
 /**
  * A deterministic clock: every injected sleep advances it by exactly the
@@ -83,27 +105,49 @@ function deps(overrides: Partial<RemoteWorkspaceDeps> & Pick<RemoteWorkspaceDeps
 
 describe("connectRemoteWorkspace", () => {
 	it("attaches to an already-running remote daemon without starting one", async () => {
+		const { calls, spawn } = fakeSpawn({ alreadyRunning: true });
+		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer }));
+
+		expect(connection).toMatchObject({ localPort: 51234, remotePort: REMOTE_PORT, started: false });
+		expect(calls.some(isStart)).toBe(false);
+		connection.dispose();
+		expect(calls.find(isTunnel)?.child.killed).toBe("SIGTERM");
+	});
+
+	// The bug this pins, found on a real host: AO_PORT is only a request. With
+	// 3001 taken the daemon binds an ephemeral port and records it, so forwarding
+	// to a guessed 3001 reaches whatever *else* is listening there.
+	it("forwards to the port the run-file reports, not the default", async () => {
+		const { calls, spawn } = fakeSpawn({ alreadyRunning: true });
+		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer }));
+
+		expect(connection.remotePort).toBe(REMOTE_PORT);
+		expect(calls.find(isTunnel)?.args).toContain(`51234:127.0.0.1:${REMOTE_PORT}`);
+		connection.dispose();
+	});
+
+	it("starts the daemon when none is running, then reports started", async () => {
 		const { calls, spawn } = fakeSpawn({});
 		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer }));
 
-		expect(connection).toMatchObject({ localPort: 51234, remotePort: 3001, started: false });
-		// Exactly two invocations: the preflight and the tunnel. No start command.
-		expect(calls).toHaveLength(2);
-		expect(calls[1].args).toContain("51234:127.0.0.1:3001");
-		connection.dispose();
-		expect(calls[1].child.killed).toBe("SIGTERM");
-	});
-
-	it("starts the daemon when nothing answers, then reports started", async () => {
-		const { calls, state, spawn } = fakeSpawn({});
-		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: probeAfterStart(state) }));
-
 		expect(connection.started).toBe(true);
-		const start = calls.at(-1)?.args.at(-1) ?? "";
+		const start = calls.find(isStart)?.args.at(-1) ?? "";
 		expect(start).toContain("ao daemon");
+		// setsid (with a nohup fallback) is what keeps the daemon alive after the
+		// SSH session that launched it goes away.
 		expect(start).toContain("setsid");
 		expect(start).toContain("nohup");
+		// Nothing pins the port when the user expressed no preference.
+		expect(start).not.toContain("AO_PORT");
 		connection.dispose();
+	});
+
+	it("gives up when a started daemon never publishes a port", async () => {
+		const { spawn } = fakeSpawn({ neverPublishesPort: true });
+		const error = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer })).catch((e) => e);
+
+		expect(error).toBeInstanceOf(RemoteWorkspaceError);
+		expect(error.message).toContain("never reported a listening port");
 	});
 
 	// Detect and report; never install. AO does not become a config-management
@@ -131,32 +175,30 @@ describe("connectRemoteWorkspace", () => {
 	});
 
 	// A failed connect must not leave an orphaned `ssh -N` holding a local port.
-	it("tears the tunnel down when the daemon never becomes ready", async () => {
-		const { calls, spawn } = fakeSpawn({});
-		const error = await connectRemoteWorkspace(
-			workspace,
-			deps({ spawn, probe: async () => null }),
-		).catch((e) => e);
+	// The daemon was confirmed listening before the tunnel opened, so a failure
+	// here is the forward's fault and must not be blamed on the daemon.
+	it("tears the tunnel down when the forward never carries the daemon", async () => {
+		const { calls, spawn } = fakeSpawn({ alreadyRunning: true });
+		const error = await connectRemoteWorkspace(workspace, deps({ spawn, probe: async () => null })).catch((e) => e);
 
 		expect(error).toBeInstanceOf(RemoteWorkspaceError);
-		expect(error.message).toContain("never became ready");
-		const tunnel = calls.find((call) => call.args.includes("-N"));
-		expect(tunnel?.child.killed).toBe("SIGTERM");
+		expect(error.message).toContain("did not answer");
+		expect(calls.find(isTunnel)?.child.killed).toBe("SIGTERM");
 	});
 
-	it("honours a per-workspace remote port on both the forward and the start command", async () => {
-		const { calls, state, spawn } = fakeSpawn({});
+	it("passes a configured remote port to the daemon it starts, as a preference", async () => {
+		const { calls, spawn } = fakeSpawn({});
 		const connection = await connectRemoteWorkspace(
 			{ ...workspace, remotePort: 4100 },
-			deps({ spawn, probe: probeAfterStart(state) }),
+			deps({ spawn, probe: answer }),
 		);
 
-		expect(connection.remotePort).toBe(4100);
-		expect(calls.find((call) => call.args.includes("-N"))?.args).toContain("51234:127.0.0.1:4100");
 		// Assert on what the remote /bin/sh actually receives, i.e. after the
 		// remote login shell strips the outer layer of quoting.
-		const sent = calls.at(-1)?.args.at(-1) ?? "";
+		const sent = calls.find(isStart)?.args.at(-1) ?? "";
 		expect(sent.slice(1, -1).replaceAll(`'\\''`, "'")).toContain("AO_PORT='4100'");
+		// ...but the run-file still decides where the tunnel actually points.
+		expect(connection.remotePort).toBe(REMOTE_PORT);
 		connection.dispose();
 	});
 
@@ -164,19 +206,19 @@ describe("connectRemoteWorkspace", () => {
 	// If `closed()` stayed false after the process died, a wifi blink would
 	// strand the client on a dead forward forever.
 	it("reports a tunnel that died on its own as closed", async () => {
-		const { calls, spawn } = fakeSpawn({});
+		const { calls, spawn } = fakeSpawn({ alreadyRunning: true });
 		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer }));
 		expect(connection.closed()).toBe(false);
 
-		const tunnel = calls.find((call) => call.args.includes("-N"));
+		const tunnel = calls.find(isTunnel);
 		tunnel?.child.emit("close", 255);
 		expect(connection.closed()).toBe(true);
 	});
 
 	it("reports a disposed tunnel as closed and ignores a second dispose", async () => {
-		const { calls, spawn } = fakeSpawn({});
+		const { calls, spawn } = fakeSpawn({ alreadyRunning: true });
 		const connection = await connectRemoteWorkspace(workspace, deps({ spawn, probe: answer }));
-		const tunnel = calls.find((call) => call.args.includes("-N"));
+		const tunnel = calls.find(isTunnel);
 
 		connection.dispose();
 		expect(connection.closed()).toBe(true);
