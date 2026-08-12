@@ -448,8 +448,8 @@ describe("CenterPane toolbar session label", () => {
 
 		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
 		const header = tablist.closest(".h-inspector-tabs");
-		expect(header).toHaveClass("h-inspector-tabs");
-		expect(tablist.parentElement).toHaveClass("h-full");
+		expect(header?.classList.contains("h-inspector-tabs")).toBe(true);
+		expect(tablist.classList.contains("h-full")).toBe(true);
 	});
 
 	it("keeps terminal controls in the measured terminal region and session actions outside it", () => {
