@@ -244,5 +244,5 @@ export function SessionInterfaceTransitionNotice({
 }
 
 export function SessionInterfaceActionGroup({ children }: { children: ReactNode }) {
-	return <div className="workspace-topbar-actions flex items-center">{children}</div>;
+	return <div className="flex items-center gap-1">{children}</div>;
 }
