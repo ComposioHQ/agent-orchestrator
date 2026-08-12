@@ -103,13 +103,31 @@ describe("remoteCommandArgv", () => {
 			"vm",
 			"/bin/sh",
 			"-c",
-			"ao daemon",
+			"'ao daemon'",
 		]);
 	});
 
-	it("passes the script as one argv element, so no local shell is involved", () => {
+	// Regression, found against a real host: ssh joins everything after the
+	// target into one string and the remote login shell re-splits it, so an
+	// unquoted `command -v ao` arrived as `/bin/sh -c command -v ao` and ran the
+	// no-op `command` builtin — exit 0, no output, every probe passing vacuously.
+	it("quotes the script so it survives the remote shell's re-parse", () => {
+		expect(remoteCommandArgv({ sshTarget: "vm", control: null, script: "command -v ao" }).at(-1)).toBe(
+			"'command -v ao'",
+		);
+	});
+
+	it("keeps operators inside the quoted script rather than leaking them to the remote shell", () => {
 		const argv = remoteCommandArgv({ sshTarget: "vm", control: null, script: "a; b && c > /dev/null" });
-		expect(argv.at(-1)).toBe("a; b && c > /dev/null");
+		expect(argv.at(-1)).toBe("'a; b && c > /dev/null'");
+	});
+
+	// The script already contains shellQuote'd values; the escape must nest.
+	it("nests correctly around values the script itself quoted", () => {
+		const script = `AO_PORT=${shellQuote("4100")}; export AO_PORT`;
+		const sent = remoteCommandArgv({ sshTarget: "vm", control: null, script }).at(-1) ?? "";
+		// What the remote shell yields after stripping one layer of quoting.
+		expect(sent.slice(1, -1).replaceAll(`'\\''`, "'")).toBe(script);
 	});
 });
 

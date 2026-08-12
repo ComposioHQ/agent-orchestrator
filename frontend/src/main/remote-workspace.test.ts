@@ -41,7 +41,7 @@ function fakeSpawn(plan: { preflight?: number; start?: number; preflightStderr?:
 		calls.push({ args, child });
 		if (args.includes("-N")) return child;
 
-		const isPreflight = args.at(-1) === "command -v ao";
+		const isPreflight = args.at(-1)?.includes("command -v ao") ?? false;
 		const code = isPreflight ? (plan.preflight ?? 0) : (plan.start ?? 0);
 		if (!isPreflight && code === 0) state.daemonStarted = true;
 		queueMicrotask(() => child.finish(code, isPreflight ? (plan.preflightStderr ?? "") : ""));
@@ -153,7 +153,10 @@ describe("connectRemoteWorkspace", () => {
 
 		expect(connection.remotePort).toBe(4100);
 		expect(calls.find((call) => call.args.includes("-N"))?.args).toContain("51234:127.0.0.1:4100");
-		expect(calls.at(-1)?.args.at(-1)).toContain("AO_PORT='4100'");
+		// Assert on what the remote /bin/sh actually receives, i.e. after the
+		// remote login shell strips the outer layer of quoting.
+		const sent = calls.at(-1)?.args.at(-1) ?? "";
+		expect(sent.slice(1, -1).replaceAll(`'\\''`, "'")).toContain("AO_PORT='4100'");
 		connection.dispose();
 	});
 

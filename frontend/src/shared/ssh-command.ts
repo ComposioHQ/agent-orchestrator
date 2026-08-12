@@ -160,12 +160,20 @@ export function tunnelArgv(options: SshTargetOptions & { localPort: number; remo
  * same way, so a script written for `sh` and handed to sshd silently misbehaves
  * on those accounts. Pinning `/bin/sh` removes the variable entirely.
  *
- * `script` is passed as a single argv element, so the local shell is never
- * involved and nothing here needs local quoting. Any value interpolated *into*
- * `script` still needs POSIX single-quoting — use {@link shellQuote}.
+ * **The script must be quoted, and this is the trap.** Local argv boundaries do
+ * not survive the trip: `ssh` joins everything after the target into ONE string
+ * and hands it to the remote login shell, which re-splits it on whitespace. So
+ * passing `["/bin/sh", "-c", "command -v ao"]` arrives as
+ * `/bin/sh -c command -v ao` — the remote shell runs the no-op builtin
+ * `command` with `$0=-v`, which exits 0 and prints nothing. Every probe would
+ * then "succeed" while testing nothing.
+ *
+ * Quoting the script makes it survive that one re-parse. Values interpolated
+ * *into* the script are quoted independently; the nesting is correct because
+ * {@link shellQuote}'s `'\''` escape is itself quote-safe.
  */
 export function remoteCommandArgv(options: SshTargetOptions & { script: string }): string[] {
-	return [...sshControlFlags(options.control), options.sshTarget, "/bin/sh", "-c", options.script];
+	return [...sshControlFlags(options.control), options.sshTarget, "/bin/sh", "-c", shellQuote(options.script)];
 }
 
 /**
