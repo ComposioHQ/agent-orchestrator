@@ -82,15 +82,24 @@ func (s Session) Status(now time.Time) contract.SessionStatus {
 }
 
 type CreateSession struct {
-	ProjectID           string
-	Kind                string
-	Harness             string
-	DisplayName         string
-	Prompt              string
-	Mode                string
-	DeniedCommands      []string
-	Provider            string
+	ProjectID      string
+	Kind           string
+	Harness        string
+	DisplayName    string
+	Prompt         string
+	Mode           string
+	DeniedCommands []string
+	Provider       string
+	// SandboxConnectionID names a bring-your-own provider credential. It is
+	// empty for sandboxes that run on the platform's own account.
 	SandboxConnectionID string
+	// ResourceProfile and BootstrapContext are the provisioning plan the
+	// sandbox row is created with. They are stamped at intent time so a later
+	// configuration change cannot disturb an in-flight session.
+	ResourceProfile  json.RawMessage
+	BootstrapContext json.RawMessage
+	AutoStopMinutes  int
+	Release          string
 }
 
 type ClientEvent struct {
