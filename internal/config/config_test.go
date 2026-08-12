@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
@@ -328,4 +329,83 @@ func setProviderSecretKey(t *testing.T) {
 		"AO_CLOUD_PROVIDER_SECRET_KEY",
 		base64.StdEncoding.EncodeToString(make([]byte, 32)),
 	)
+}
+
+// The tests below all start from a complete nodeops environment and remove
+// exactly the one variable under test, so a failure names the missing guard
+// rather than whichever check happened to run first.
+
+func TestLoadAcceptsCompleteNodeOpsConfiguration(t *testing.T) {
+	nodeOpsEnvironment(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SandboxProvider != "nodeops" {
+		t.Errorf("SandboxProvider = %q, want nodeops", cfg.SandboxProvider)
+	}
+	if cfg.NodeOpsWorkerTokenTTL != 15*time.Minute {
+		t.Errorf("NodeOpsWorkerTokenTTL = %v, want 15m", cfg.NodeOpsWorkerTokenTTL)
+	}
+	if cfg.NodeOpsAutoPauseMinutes != 30 {
+		t.Errorf("NodeOpsAutoPauseMinutes = %d, want 30", cfg.NodeOpsAutoPauseMinutes)
+	}
+	if cfg.MaxSandboxesPerOrg != 10 {
+		t.Errorf("MaxSandboxesPerOrg = %d, want the default 10", cfg.MaxSandboxesPerOrg)
+	}
+	if cfg.ReconcileInterval <= 0 || cfg.SandboxStartupTimeout < 30*time.Second {
+		t.Errorf("reconcile defaults = %v/%v, want positive and >= 30s",
+			cfg.ReconcileInterval, cfg.SandboxStartupTimeout)
+	}
+}
+
+func TestLoadRejectsIncompleteNodeOpsConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "missing base url", key: "AO_CLOUD_NODEOPS_BASE_URL"},
+		{name: "missing api key", key: "AO_CLOUD_NODEOPS_API_KEY"},
+		{name: "missing shape", key: "AO_CLOUD_NODEOPS_DEFAULT_SHAPE"},
+		{name: "missing rootfs", key: "AO_CLOUD_NODEOPS_DEFAULT_ROOTFS"},
+		{name: "missing public url", key: "AO_CLOUD_PUBLIC_URL"},
+		{name: "missing worker binary", key: "AO_CLOUD_WORKER_BINARY_PATH"},
+		{name: "missing signing key", key: "AO_CLOUD_WORKER_SIGNING_KEY"},
+		{
+			name:  "signing key too short to resist forgery",
+			key:   "AO_CLOUD_WORKER_SIGNING_KEY",
+			value: strings.Repeat("a", minWorkerSigningKeyLength-1),
+		},
+		{
+			name:  "plaintext worker callback origin",
+			key:   "AO_CLOUD_PUBLIC_URL",
+			value: "http://cloud.example.com",
+		},
+		{
+			name:  "startup budget shorter than a cold boot",
+			key:   "AO_CLOUD_SANDBOX_STARTUP_TIMEOUT",
+			value: "5s",
+		},
+		{name: "zero sandbox quota", key: "AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG", value: "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nodeOpsEnvironment(t)
+			t.Setenv(tc.key, tc.value)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load succeeded with %s=%q", tc.key, tc.value)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNonNodeOpsProviderInHostedEnvironments(t *testing.T) {
+	nodeOpsEnvironment(t)
+	t.Setenv("AO_CLOUD_SANDBOX_PROVIDER", "docker")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with a docker sandbox provider in staging")
+	}
 }
