@@ -93,6 +93,17 @@ func run(logger *slog.Logger) error {
 		logger.Warn("publish worker.ready failed", "error", err)
 	}
 
+	// Heartbeat once before waiting out the first interval. Bootstrapping is not
+	// something the control plane records as a check-in, so until a heartbeat
+	// lands the sandbox still looks like a worker that never arrived — and the
+	// repair that follows kills this process well before the first tick, which
+	// leaves the two sides reinstalling and dying forever.
+	if renewed, err := client.heartbeat(ctx); err != nil {
+		logger.Warn("first heartbeat failed", "error", err)
+	} else {
+		client.token = renewed
+	}
+
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 	failures := 0

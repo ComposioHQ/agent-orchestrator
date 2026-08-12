@@ -59,7 +59,7 @@ func TestCreateSendsShapeRootfsAndEnvironment(t *testing.T) {
 	if received.Shape != "s-4vcpu-8gb" || received.RootFS != "devbox:1" {
 		t.Errorf("shape/rootfs = %q/%q, want the configured defaults", received.Shape, received.RootFS)
 	}
-	if received.Name != "ao-session-1" {
+	if received.Name != SandboxName("session-1") {
 		t.Errorf("name = %q, want ao-session-1", received.Name)
 	}
 	if received.Envs["AO_WORKER_BOOTSTRAP_TOKEN"] != "ticket" {
@@ -176,12 +176,12 @@ func TestFindBySessionMatchesOnNameAcrossPages(t *testing.T) {
 		offsets = append(offsets, offset)
 		if offset == "0" {
 			writePage(w, []sandboxView{
-				{ID: "sbx-other", Status: "running", Name: "ao-session-other"},
+				{ID: "sbx-other", Status: "running", Name: SandboxName("session-other")},
 			}, 0, 2)
 			return
 		}
 		writePage(w, []sandboxView{
-			{ID: "sbx-1", Status: "running", Name: "ao-session-1"},
+			{ID: "sbx-1", Status: "running", Name: SandboxName("session-1")},
 		}, 1, 2)
 	})
 
@@ -204,7 +204,7 @@ func TestFindBySessionStopsAtTheReportedTotal(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		pages++
 		writePage(w, []sandboxView{
-			{ID: "sbx-other", Status: "running", Name: "ao-session-other"},
+			{ID: "sbx-other", Status: "running", Name: SandboxName("session-other")},
 		}, 0, 1)
 	})
 	if _, found, err := client.FindBySession(context.Background(), "session-1"); err != nil || found {
@@ -218,7 +218,7 @@ func TestFindBySessionStopsAtTheReportedTotal(t *testing.T) {
 func TestFindBySessionIgnoresDestroyedSandboxes(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		writePage(w, []sandboxView{
-			{ID: "sbx-old", Status: "destroyed", Name: "ao-session-1"},
+			{ID: "sbx-old", Status: "destroyed", Name: SandboxName("session-1")},
 		}, 0, 1)
 	})
 	_, found, err := client.FindBySession(context.Background(), "session-1")
@@ -277,7 +277,7 @@ func TestRecreateDeletesThenCreates(t *testing.T) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch r.Method {
 		case http.MethodPost:
-			writeJSON(w, http.StatusCreated, sandboxView{ID: "sbx-2", Status: "creating", Name: "ao-session-1"})
+			writeJSON(w, http.StatusCreated, sandboxView{ID: "sbx-2", Status: "creating", Name: SandboxName("session-1")})
 		case http.MethodGet:
 			writeJSON(w, http.StatusOK, sandboxView{ID: "sbx-1", Status: "destroyed"})
 		default:
@@ -387,6 +387,7 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 	err := client.BootstrapWorker(context.Background(), "sbx-1", sandbox.WorkerBootstrap{
 		Binary:      []byte("ELF-worker"),
 		Destination: "/usr/local/bin/ao-worker",
+		Environment: map[string]string{"AO_WORKER_BOOTSTRAP_TOKEN": "fresh-ticket"},
 	})
 	if err != nil {
 		t.Fatalf("BootstrapWorker() error = %v", err)
@@ -410,6 +411,11 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 	if !strings.Contains(stop, "pkill") || !strings.Contains(stop, "|| true") {
 		t.Errorf("stop command = %v, want a pkill that tolerates no match", execCommands[2].Args)
 	}
+	// An unanchored pattern also matches the shell running it, so pkill kills
+	// itself and the exec comes back exit -1 with nothing on stderr.
+	if !strings.Contains(stop, "'^/usr/local/bin/ao-worker( |$)'") {
+		t.Errorf("stop pattern = %v, want it anchored so the shell does not match itself", execCommands[2].Args)
+	}
 	if execCommands[3].Cmd != "mv" {
 		t.Errorf("swap command = %q, want the staged binary renamed into place", execCommands[3].Cmd)
 	}
@@ -419,6 +425,12 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 	launch := strings.Join(execCommands[4].Args, " ")
 	if execCommands[4].Cmd != "bash" || !strings.Contains(launch, "ao-worker") {
 		t.Errorf("launch command = %s %v, want the worker started under bash", execCommands[4].Cmd, execCommands[4].Args)
+	}
+	// Create-time environment is fixed for the life of the sandbox and holds a
+	// single-use ticket. A repair relaunching without the fresh one gets 401 on
+	// every attempt, forever.
+	if !strings.Contains(launch, "AO_WORKER_BOOTSTRAP_TOKEN=fresh-ticket") {
+		t.Errorf("launch command = %v, want the freshly minted ticket in the environment", execCommands[4].Args)
 	}
 }
 

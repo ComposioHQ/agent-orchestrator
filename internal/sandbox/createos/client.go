@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,13 @@ const (
 	// deletePollTimeout bounds that wait. Giving up is not fatal on its own:
 	// the reconciler retries the whole recreate on a later tick.
 	deletePollTimeout = 2 * time.Minute
+	// maxSandboxNameLength is the CreateOS limit on a sandbox name. Exceeding it
+	// fails the create with 400 "too long", which the reconciler can only retry
+	// into the same rejection.
+	maxSandboxNameLength = 22
+	sandboxNamePrefix    = "ao-"
+	// sandboxNameDigits is how much of the session id fits after the prefix.
+	sandboxNameDigits = maxSandboxNameLength - len(sandboxNamePrefix)
 )
 
 // HTTPError is a non-2xx response from the CreateOS API. The body is truncated
@@ -138,10 +146,18 @@ func (c *Client) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Environ
 	if shape == "" {
 		return sandbox.Environment{}, errors.New("createos: no shape configured for this sandbox")
 	}
+	// The caller names a sandbox for AO's own vocabulary, which is longer than
+	// CreateOS accepts. Deriving the name here keeps that limit inside the one
+	// package that knows about it, and keeps it identical to what FindBySession
+	// will later look for.
+	name := strings.TrimSpace(spec.Name)
+	if spec.SessionID != "" {
+		name = SandboxName(spec.SessionID)
+	}
 	body := createSandboxRequest{
 		Shape:                 shape,
 		RootFS:                firstNonEmpty(spec.RootFS, c.defaultRoot),
-		Name:                  spec.Name,
+		Name:                  name,
 		Envs:                  spec.Environment,
 		SSHPubKeys:            c.sshPubKeys,
 		Region:                c.region,
@@ -327,9 +343,12 @@ func (c *Client) BootstrapWorker(
 		return err
 	}
 	// Stop the old worker before the swap so a repaired sandbox does not end up
-	// with two processes heartbeating under the same identity. pkill exits 1
-	// when nothing matches, which is the normal first-bootstrap case.
-	stop := "pkill -f " + shellQuote(destination) + " || true"
+	// with two processes heartbeating under the same identity. The pattern is
+	// anchored at the start of the command line because an unanchored one also
+	// matches this very shell — whose arguments contain the destination — so
+	// pkill kills itself, the exec reports exit -1, and the "|| true" never
+	// runs. pkill exits 1 when nothing matches, the normal first-boot case.
+	stop := "pkill -f " + shellQuote("^"+destination+"( |$)") + " || true"
 	if err := c.exec(ctx, id, "bash", []string{"-c", stop}); err != nil {
 		return err
 	}
@@ -337,9 +356,14 @@ func (c *Client) BootstrapWorker(
 		return err
 	}
 
-	// Environment variables set at create time are already present for every
-	// command, so the launch only needs to detach the process and keep a log.
-	launch := "nohup " + shellQuote(destination) + " >> /var/log/ao-worker.log 2>&1 &"
+	// Create-time environment is present for every command, but it is fixed for
+	// the life of the sandbox — and it holds a single-use bootstrap ticket. On
+	// the repair path that ticket is already spent, so a worker relaunched with
+	// only the create-time environment dies on 401 forever. The caller passes a
+	// freshly minted ticket here; put it on the launch so it wins over the
+	// stale one.
+	launch := "nohup " + launchEnvironment(bootstrap.Environment) + shellQuote(destination) +
+		" >> /var/log/ao-worker.log 2>&1 &"
 	return c.exec(ctx, id, "bash", []string{"-c", launch})
 }
 
@@ -517,8 +541,22 @@ func (l *listResponse) exhausted(offset, read int) bool {
 }
 
 // SandboxName is the correlation key between an AO session and its sandbox.
+// CreateOS caps a sandbox name at maxSandboxNameLength, which a full session
+// UUID overruns, so the name carries the leading hex of the session instead:
+// still unique in practice, still eyeball-matchable against a session id in a
+// log line, and stable for the lifetime of the session because FindBySession
+// has nothing else to correlate on.
 func SandboxName(sessionID string) string {
-	return "ao-" + sessionID
+	compact := strings.Map(func(r rune) rune {
+		if r == '-' {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(sessionID))
+	if len(compact) > sandboxNameDigits {
+		compact = compact[:sandboxNameDigits]
+	}
+	return sandboxNamePrefix + compact
 }
 
 // normalizeState maps CreateOS lifecycle states onto AO's provider-neutral
@@ -590,6 +628,26 @@ func path(absolute string) (string, string) {
 		return absolute, ""
 	}
 	return absolute[index+1:], absolute[:index]
+}
+
+// launchEnvironment renders "env K=V ... " for the worker launch, or the empty
+// string when there is nothing to set. Keys are sorted so a relaunch produces a
+// byte-identical command, which keeps the pkill pattern and the logs stable.
+func launchEnvironment(environment map[string]string) string {
+	if len(environment) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(environment))
+	for key := range environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys)+1)
+	parts = append(parts, "env")
+	for _, key := range keys {
+		parts = append(parts, shellQuote(key+"="+environment[key]))
+	}
+	return strings.Join(parts, " ") + " "
 }
 
 func shellQuote(value string) string {
