@@ -853,6 +853,7 @@
 	"terminal.closeNamed": "Fermer le terminal {{title}}",
 	"terminal.closeSessionTab": "Fermer l'onglet de session {{label}}",
 	"terminal.connectionFailed": "échec de la connexion",
+	"terminal.copyFullTranscript": "Copier la transcription complète",
 	"terminal.decreaseFontSize": "Réduire la taille de police du terminal",
 	"terminal.controlsAria": "Contrôles d'affichage du terminal",
 	"terminal.emptyHint": "Appuyez sur <shortcut>{{shortcut}}</shortcut> ou utilisez le bouton + pour en ouvrir un.",

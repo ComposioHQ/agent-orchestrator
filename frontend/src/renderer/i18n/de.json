@@ -842,6 +842,7 @@
 	"terminal.closeNamed": "Terminal {{title}} schließen",
 	"terminal.closeSessionTab": "Sitzungs-Tab {{label}} schließen",
 	"terminal.connectionFailed": "Verbindung fehlgeschlagen",
+	"terminal.copyFullTranscript": "Vollständiges Transkript kopieren",
 	"terminal.decreaseFontSize": "Terminal-Schriftgröße verkleinern",
 	"terminal.controlsAria": "Terminal-Anzeigesteuerung",
 	"terminal.emptyHint": "Drücken Sie <shortcut>{{shortcut}}</shortcut> oder nutzen Sie die +-Schaltfläche, um eines zu öffnen.",
