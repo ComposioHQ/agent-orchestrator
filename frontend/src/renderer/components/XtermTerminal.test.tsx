@@ -333,6 +333,31 @@ describe("XtermTerminal", () => {
 		expect(trigger.style.top).toBe("88px");
 	});
 
+	it("toggles terminal fullscreen from the right-click menu", async () => {
+		const onToggleFullscreen = vi.fn();
+		const { container, rerender } = render(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen={false} onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+
+		fireEvent.contextMenu(container.querySelector(".terminal-pane-frame")!.firstElementChild!);
+		fireEvent.click(await screen.findByText("Fullscreen terminal"));
+		expect(onToggleFullscreen).toHaveBeenCalledOnce();
+
+		const pane = container.querySelector(".terminal-pane-frame") as HTMLElement;
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
+		rerender(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+		fireEvent.contextMenu(pane.firstElementChild!);
+		const exitFullscreenItem = await screen.findByText("Exit fullscreen");
+		expect(pane.contains(exitFullscreenItem.closest<HTMLElement>("[role='menu']"))).toBe(true);
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
+	});
+
 	it("runs context menu copy, select all, and clear against the xterm instance", async () => {
 		const { container } = render(<XtermTerminal theme="dark" />);
 		const host = container.firstElementChild!;
