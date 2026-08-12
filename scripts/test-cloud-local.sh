@@ -165,7 +165,7 @@ if mode == "create":
         f"/api/cloud/v1/orgs/{org_id}/projects",
         body={
             "displayName": "Persistence Test",
-            "repositoryUrl": "https://github.com/aoagents/cloud-smoke",
+            "repositoryUrl": "https://github.com/Untrivial-ai/agent-orchestrator",
             "defaultBranch": "main",
             "config": {},
         },
@@ -188,6 +188,30 @@ if mode == "create":
         expected=201,
     )["session"]
     wait_for_running(org_id, session["id"], token)
+    workspace_file = request(
+        "PUT",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/workspace/file",
+        body={"path": ".ao-cloud-smoke-api", "content": "durable-worker-transport\n"},
+        token=token,
+    )
+    if workspace_file.get("content") != "durable-worker-transport\n":
+        raise RuntimeError(f"workspace write returned unexpected content: {workspace_file!r}")
+    read_back = request(
+        "GET",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/workspace/file?path=.ao-cloud-smoke-api",
+        token=token,
+    )
+    if read_back != workspace_file:
+        raise RuntimeError(
+            f"workspace read did not match the durable write: {read_back!r}"
+        )
+    listing = request(
+        "GET",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/workspace/files?limit=100",
+        token=token,
+    )
+    if ".ao-cloud-smoke-api" not in {item.get("path") for item in listing["items"]}:
+        raise RuntimeError(f"workspace listing omitted the written file: {listing!r}")
     request(
         "POST",
         f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/messages",

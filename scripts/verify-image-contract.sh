@@ -56,5 +56,12 @@ if ! cmp -s "$work_dir/control-plane-ao-worker" "$work_dir/worker-ao-worker"; th
 	echo "Control-plane and worker images contain different ao-worker binaries." >&2
 	exit 1
 fi
+if ! docker run --rm --entrypoint /bin/sh "$worker_image" -c \
+	'command -v claude >/dev/null &&
+	 command -v codex >/dev/null &&
+	 command -v cursor-agent >/dev/null'; then
+	echo "Worker image must contain Claude Code, Codex, and Cursor Agent." >&2
+	exit 1
+fi
 
 printf 'Verified control-plane %s and worker %s\n' "$control_image" "$worker_image"

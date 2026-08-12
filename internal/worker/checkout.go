@@ -54,8 +54,8 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 	if err != nil {
 		return fmt.Errorf("validate checkout grant: %w", err)
 	}
-	if grant.Token == "" || !grant.ExpiresAt.After(time.Now().Add(30*time.Second)) {
-		return errors.New("checkout grant is missing or expired")
+	if grant.Token != "" && !grant.ExpiresAt.After(time.Now().Add(30*time.Second)) {
+		return errors.New("checkout grant is expired")
 	}
 	info, statErr := os.Stat(workspace)
 	if statErr == nil {
@@ -65,7 +65,7 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 		if err := validateOrigin(ctx, runner, workspace, expected); err != nil {
 			return err
 		}
-		return withAskpass(grant.Token, func(env map[string]string) error {
+		return withGitCredential(grant.Token, func(env map[string]string) error {
 			_, err := runner.Run(ctx, workspace, env, "fetch", "--prune", "--", "origin")
 			return err
 		})
@@ -76,7 +76,7 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 	if err := os.MkdirAll(filepath.Dir(workspace), 0o700); err != nil {
 		return fmt.Errorf("create workspace parent: %w", err)
 	}
-	if err := withAskpass(grant.Token, func(env map[string]string) error {
+	if err := withGitCredential(grant.Token, func(env map[string]string) error {
 		_, err := runner.Run(ctx, filepath.Dir(workspace), env,
 			"clone", "--origin", "origin", "--no-tags", "--", grant.CloneURL, workspace)
 		return err
@@ -99,6 +99,13 @@ func validateOrigin(ctx context.Context, runner GitRunner, workspace, expected s
 		return errors.New("workspace origin does not match the authorized repository")
 	}
 	return nil
+}
+
+func withGitCredential(token string, operation func(map[string]string) error) error {
+	if token == "" {
+		return operation(map[string]string{"GIT_TERMINAL_PROMPT": "0"})
+	}
+	return withAskpass(token, operation)
 }
 
 func withAskpass(token string, operation func(map[string]string) error) error {

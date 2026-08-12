@@ -18,7 +18,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -104,7 +106,13 @@ func run(logger *slog.Logger) error {
 
 	checkoutGrant, err := client.checkoutGrant(ctx)
 	if err != nil {
-		return fmt.Errorf("request checkout grant: %w", err)
+		if !anonymousCheckoutEnabled() {
+			return fmt.Errorf("request checkout grant: %w", err)
+		}
+		checkoutGrant = worker.CheckoutGrantResponse{
+			CloneURL: bootstrap.Launch.RepositoryURL,
+		}
+		logger.Info("using anonymous public GitHub checkout")
 	}
 	if err := worker.PrepareCheckout(
 		ctx,
@@ -113,6 +121,9 @@ func run(logger *slog.Logger) error {
 		checkoutGrant,
 	); err != nil {
 		return fmt.Errorf("prepare repository checkout: %w", err)
+	}
+	if err := verifyHarnessAvailable(bootstrap.Launch.Harness); err != nil {
+		return err
 	}
 
 	if err := client.publishEvent(ctx, "worker.ready", map[string]any{
@@ -250,10 +261,36 @@ func (c *client) checkoutGrant(ctx context.Context) (worker.CheckoutGrantRespons
 	if err := c.do(ctx, "/worker/checkout-grant", struct{}{}, &response); err != nil {
 		return worker.CheckoutGrantResponse{}, err
 	}
-	if response.Token == "" || response.CloneURL == "" || !response.ExpiresAt.After(time.Now()) {
+	if response.CloneURL == "" ||
+		(response.Token != "" && !response.ExpiresAt.After(time.Now())) {
 		return worker.CheckoutGrantResponse{}, errors.New("control plane returned an invalid checkout grant")
 	}
 	return response, nil
+}
+
+func anonymousCheckoutEnabled() bool {
+	enabled, err := strconv.ParseBool(strings.TrimSpace(
+		os.Getenv("AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT"),
+	))
+	return err == nil && enabled
+}
+
+func verifyHarnessAvailable(harness string) error {
+	var binary string
+	switch harness {
+	case "claude-code":
+		binary = "claude"
+	case "codex":
+		binary = "codex"
+	case "cursor":
+		binary = "cursor-agent"
+	default:
+		return fmt.Errorf("unsupported coding-agent harness %q", harness)
+	}
+	if _, err := exec.LookPath(binary); err != nil {
+		return fmt.Errorf("%s harness binary %q is unavailable: %w", harness, binary, err)
+	}
+	return nil
 }
 
 func (c *client) PublishOutput(ctx context.Context, output worker.OutputEvent) error {

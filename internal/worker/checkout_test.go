@@ -71,6 +71,21 @@ func TestPrepareCheckoutClonesWithoutPersistingCredential(t *testing.T) {
 	}
 }
 
+func TestPrepareCheckoutAllowsAnonymousPublicGitHubClone(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "repository")
+	runner := &recordingGitRunner{origin: "https://github.com/aoagents/cloud-smoke.git"}
+	err := PrepareCheckout(context.Background(), runner, workspace, CheckoutGrantResponse{
+		CloneURL: "https://github.com/aoagents/cloud-smoke",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.credentialCalls != 0 || len(runner.commands) != 2 ||
+		runner.commands[0][0] != "clone" || runner.commands[1][0] != "remote" {
+		t.Fatalf("commands = %#v, credential calls = %d", runner.commands, runner.credentialCalls)
+	}
+}
+
 func TestPrepareCheckoutValidatesThenFetchesPersistentWorkspace(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "repository")
 	if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0o700); err != nil {

@@ -529,6 +529,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 			"worker:turn:poll",
 			"worker:turn:complete",
 			"worker:credential:read",
+			"worker:git",
 			"worker:transport",
 		},
 		bootstrapTicketTTL,
@@ -541,6 +542,19 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 	if len(record.ResourceProfile) > 0 {
 		_ = json.Unmarshal(record.ResourceProfile, &profile)
 	}
+	workerEnvironment := map[string]string{
+		"AO_CLOUD_PUBLIC_URL":       r.options.PublicURL,
+		"AO_CLOUD_SESSION_ID":       record.SessionID,
+		"AO_WORKER_BOOTSTRAP_TOKEN": ticket,
+		"AO_WORKSPACE_DIR":          "/workspace/repository",
+		"AO_DATA_DIR":               "/workspace/.ao/worker",
+		"HOME":                      "/workspace/.ao/home",
+		"CLAUDE_CONFIG_DIR":         "/workspace/.ao/home/.claude",
+		"CODEX_HOME":                "/workspace/.ao/home/.codex",
+	}
+	if record.Provider == sandbox.ProviderDocker {
+		workerEnvironment["AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT"] = "true"
+	}
 	return sandbox.Spec{
 		Name:            "ao-" + record.SessionID,
 		SessionID:       record.SessionID,
@@ -549,16 +563,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		Shape:           profile.NodeOps.DefaultShape,
 		RootFS:          profile.NodeOps.DefaultRootFS,
 		Ingress:         profile.NodeOps.Ingress,
-		Environment: map[string]string{
-			"AO_CLOUD_PUBLIC_URL":       r.options.PublicURL,
-			"AO_CLOUD_SESSION_ID":       record.SessionID,
-			"AO_WORKER_BOOTSTRAP_TOKEN": ticket,
-			"AO_WORKSPACE_DIR":          "/workspace/repository",
-			"AO_DATA_DIR":               "/workspace/.ao/worker",
-			"HOME":                      "/workspace/.ao/home",
-			"CLAUDE_CONFIG_DIR":         "/workspace/.ao/home/.claude",
-			"CODEX_HOME":                "/workspace/.ao/home/.codex",
-		},
+		Environment:     workerEnvironment,
 		Labels: map[string]string{
 			"ao.session_id": record.SessionID,
 			"ao.org_id":     record.OrgID,
