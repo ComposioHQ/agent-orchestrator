@@ -20,13 +20,14 @@ const (
 )
 
 type NodeOpsConfig struct {
-	BaseURL        string
-	APIKey         string
-	DefaultShape   string
-	DefaultRootFS  string
-	Ingress        string
-	SSHKeyPath     string
-	WorkerTokenTTL time.Duration
+	BaseURL          string
+	APIKey           string
+	DefaultShape     string
+	DefaultRootFS    string
+	Ingress          string
+	SSHKeyPath       string
+	WorkerTokenTTL   time.Duration
+	AutoPauseSeconds int
 }
 
 type DockerConfig struct {
@@ -72,6 +73,9 @@ func (c NodeOpsConfig) Validate() error {
 	if c.WorkerTokenTTL <= 0 {
 		return errors.New("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL must be positive")
 	}
+	if c.AutoPauseSeconds < 0 {
+		return errors.New("AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS must not be negative")
+	}
 	return nil
 }
 
@@ -116,6 +120,7 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 			"ingress":               strings.TrimSpace(d.NodeOps.Ingress),
 			"sshKeyPath":            strings.TrimSpace(d.NodeOps.SSHKeyPath),
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),
+			"autoPauseSeconds":      d.NodeOps.AutoPauseSeconds,
 		}
 		bootstrapContext["nodeOps"] = map[string]any{
 			"baseUrl":               strings.TrimSpace(d.NodeOps.BaseURL),
@@ -124,6 +129,7 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 			"ingress":               strings.TrimSpace(d.NodeOps.Ingress),
 			"sshKeyPath":            strings.TrimSpace(d.NodeOps.SSHKeyPath),
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),
+			"autoPauseSeconds":      d.NodeOps.AutoPauseSeconds,
 		}
 	} else if provider == ProviderDocker {
 		if err := d.Docker.Validate(); err != nil {

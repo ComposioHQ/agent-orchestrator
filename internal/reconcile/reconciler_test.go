@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -814,5 +815,23 @@ func TestWorkerSpecReadsShapeFromTheStoredProfile(t *testing.T) {
 		if !gotScopes[required] {
 			t.Errorf("worker bootstrap ticket lacks %q", required)
 		}
+	}
+}
+
+func TestCreateAtCapacityRetriesInsteadOfFailing(t *testing.T) {
+	store := &fakeStore{pending: []domain.Sandbox{runningSandbox()}}
+	provider := newFakeProvider()
+	// A quota rejection, wrapped so errors.Is finds the capacity sentinel.
+	provider.createErr = fmt.Errorf("%w: concurrent quota reached", sandbox.ErrAtCapacity)
+	reconciler := newReconciler(store, provider)
+
+	_ = reconciler.ReconcileOnce(context.Background())
+
+	got := store.lastObservation(t)
+	if got.state == domain.SandboxObservedFailed {
+		t.Fatal("a capacity rejection failed the session; it must stay provisioning and retry")
+	}
+	if got.state != domain.SandboxObservedProvisioning {
+		t.Errorf("observed state = %q, want provisioning (queued for capacity)", got.state)
 	}
 }

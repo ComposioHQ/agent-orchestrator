@@ -56,14 +56,15 @@ type Config struct {
 	// WorkerHeartbeatTimeout is how long a silent worker is tolerated.
 	WorkerHeartbeatTimeout time.Duration
 
-	NodeOpsBaseURL        string
-	NodeOpsAPIKey         string
-	NodeOpsDefaultShape   string
-	NodeOpsDefaultRootFS  string
-	NodeOpsIngress        string
-	NodeOpsSSHKeyPath     string
-	NodeOpsRegion         string
-	NodeOpsWorkerTokenTTL time.Duration
+	NodeOpsBaseURL          string
+	NodeOpsAPIKey           string
+	NodeOpsDefaultShape     string
+	NodeOpsDefaultRootFS    string
+	NodeOpsIngress          string
+	NodeOpsSSHKeyPath       string
+	NodeOpsRegion           string
+	NodeOpsWorkerTokenTTL   time.Duration
+	NodeOpsAutoPauseSeconds int
 
 	DockerHost           string
 	DockerWorkerImage    string
@@ -95,6 +96,12 @@ func (c GitHubConfig) Enabled() bool {
 // tokens. Short keys make the HMAC forgeable, and a forged worker token is a
 // grant to write onto someone else's session stream.
 const minWorkerSigningKeyLength = 32
+
+// defaultNodeOpsAutoPauseSeconds is the idle timeout stamped onto sandboxes when
+// AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS is unset: 15 minutes, long enough not to
+// pause an agent mid-think, short enough to stop billing and free a concurrency
+// slot soon after a session goes idle. Zero disables idle auto-pause.
+const defaultNodeOpsAutoPauseSeconds = 15 * 60
 
 func Load() (Config, error) {
 	environment := strings.ToLower(strings.TrimSpace(os.Getenv("AO_CLOUD_ENV")))
@@ -145,6 +152,8 @@ func Load() (Config, error) {
 		NodeOpsIngress:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_INGRESS")),
 		NodeOpsSSHKeyPath:    strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH")),
 		NodeOpsRegion:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_REGION")),
+		NodeOpsAutoPauseSeconds: intEnvOrDefault(
+			"AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS", defaultNodeOpsAutoPauseSeconds),
 		NodeOpsWorkerTokenTTL: durationEnv(
 			"AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
 		),
@@ -272,13 +281,14 @@ func Load() (Config, error) {
 	}
 	if cfg.SandboxProvider == "nodeops" || cfg.Hosted() {
 		if err := (sandbox.NodeOpsConfig{
-			BaseURL:        cfg.NodeOpsBaseURL,
-			APIKey:         cfg.NodeOpsAPIKey,
-			DefaultShape:   cfg.NodeOpsDefaultShape,
-			DefaultRootFS:  cfg.NodeOpsDefaultRootFS,
-			Ingress:        cfg.NodeOpsIngress,
-			SSHKeyPath:     cfg.NodeOpsSSHKeyPath,
-			WorkerTokenTTL: cfg.NodeOpsWorkerTokenTTL,
+			BaseURL:          cfg.NodeOpsBaseURL,
+			APIKey:           cfg.NodeOpsAPIKey,
+			DefaultShape:     cfg.NodeOpsDefaultShape,
+			DefaultRootFS:    cfg.NodeOpsDefaultRootFS,
+			Ingress:          cfg.NodeOpsIngress,
+			SSHKeyPath:       cfg.NodeOpsSSHKeyPath,
+			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
+			AutoPauseSeconds: cfg.NodeOpsAutoPauseSeconds,
 		}).Validate(); err != nil {
 			return Config{}, err
 		}

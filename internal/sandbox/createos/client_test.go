@@ -492,3 +492,68 @@ func writePage(w http.ResponseWriter, views []sandboxView, offset, total int) {
 		},
 	})
 }
+
+func TestCreateSendsAutoPauseWhenConfigured(t *testing.T) {
+	var receivedRaw map[string]any
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(body, &receivedRaw); err != nil {
+			t.Fatalf("decode raw request: %v", err)
+		}
+		writeJSON(w, http.StatusCreated, sandboxView{ID: "sbx-1", Status: "creating"})
+	})
+
+	if _, err := client.Create(context.Background(), sandbox.Spec{
+		SessionID:        "session-1",
+		AutoPauseSeconds: 900,
+	}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	value, ok := receivedRaw["auto_pause_after_seconds"]
+	if !ok {
+		t.Fatal("Create did not send auto_pause_after_seconds when AutoPauseSeconds was set")
+	}
+	// JSON numbers decode into float64.
+	if seconds, _ := value.(float64); seconds != 900 {
+		t.Errorf("auto_pause_after_seconds = %v, want 900", value)
+	}
+}
+
+func TestCreateAtQuotaMapsToErrAtCapacity(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"403 with quota body", http.StatusForbidden, `{"status":"fail","data":"sandbox concurrent quota reached (1 / 1)."}`},
+		{"429 too many requests", http.StatusTooManyRequests, `{"status":"fail","data":"rate limited"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			})
+			_, err := client.Create(context.Background(), sandbox.Spec{SessionID: "session-1", Shape: "s-1vcpu-1gb"})
+			if !errors.Is(err, sandbox.ErrAtCapacity) {
+				t.Errorf("Create() error = %v, want ErrAtCapacity", err)
+			}
+		})
+	}
+}
+
+func TestCreateOn403WithoutQuotaStaysHardError(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"status":"fail","data":"invalid api key"}`)
+	})
+	_, err := client.Create(context.Background(), sandbox.Spec{SessionID: "s", Shape: "s-1vcpu-1gb"})
+	if errors.Is(err, sandbox.ErrAtCapacity) {
+		t.Errorf("a non-quota 403 was treated as capacity: %v", err)
+	}
+	if err == nil {
+		t.Fatal("Create() with a 403 succeeded, want an error")
+	}
+}

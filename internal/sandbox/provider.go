@@ -12,6 +12,14 @@ import (
 // other failure leaves observed reality untouched.
 var ErrNotFound = errors.New("sandbox environment not found")
 
+// ErrAtCapacity indicates the provider rejected a create because the account
+// has hit its concurrent-sandbox quota. A provider wraps it (so errors.Is finds
+// it) whenever it can tell a rejection apart from a permanent failure. The
+// reconciler treats it as a transient wait, not a failed session: the sandbox
+// stays desired-running and is retried on a later tick, so a session at the
+// ceiling queues for a freed slot instead of dying.
+var ErrAtCapacity = errors.New("sandbox provider at capacity")
+
 // ID uniquely identifies a provider sandbox.
 type ID string
 
@@ -27,6 +35,12 @@ type Spec struct {
 	Environment       map[string]string
 	Labels            map[string]string
 	AutoDeleteMinutes int
+	// AutoPauseSeconds asks the provider to pause the sandbox after this many
+	// seconds with no activity. Pausing an idle sandbox stops its compute
+	// billing and frees the account's concurrency slot while preserving state,
+	// so a worker suspended here resumes in place. Zero leaves the sandbox
+	// running until AO or the user stops it explicitly.
+	AutoPauseSeconds int
 }
 
 // Environment is the provider-neutral view of a sandbox. State is always one of
