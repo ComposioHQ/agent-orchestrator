@@ -229,6 +229,53 @@ func TestResolveSystemImageArchive(t *testing.T) {
 	}
 }
 
+// TestParseManifestToleratesNonIntegerAPILevel covers a real fetch failure:
+// Google's live repository2-3.xml now ships point-release packages like
+// "platforms;android-37.1" whose <api-level> is "37.1", not a plain integer.
+// AO never reads that field (packages are matched by their path attribute,
+// confirmed in ResolvePlatformTools/ResolveEmulator/ResolveSystemImage), so
+// parsing must not fail just because some unrelated package's api-level
+// isn't an integer.
+func TestParseManifestToleratesNonIntegerAPILevel(t *testing.T) {
+	const manifestWithPointRelease = `<?xml version="1.0" encoding="UTF-8"?>
+<sdk:sdk-repository xmlns:sdk="http://schemas.android.com/sdk/android/repo/repository2/3">
+  <license id="android-sdk-license" type="text">Terms</license>
+  <channel id="channel-0">stable</channel>
+  <remotePackage path="platforms;android-37.1">
+    <type-details xsi:type="sdk:apiDetailsType" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <api-level>37.1</api-level>
+    </type-details>
+    <channelRef ref="channel-0"/>
+  </remotePackage>
+  <remotePackage path="platform-tools">
+    <channelRef ref="channel-0"/>
+    <archives>
+      <archive>
+        <complete>
+          <size>123</size>
+          <checksum type="sha1">abc123</checksum>
+          <url>platform-tools.zip</url>
+        </complete>
+        <host-os>windows</host-os>
+      </archive>
+    </archives>
+  </remotePackage>
+</sdk:sdk-repository>`
+
+	m, err := ParseManifest([]byte(manifestWithPointRelease))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	plat := Platform{RepoOS: "windows", RepoArch: "x64", SysImgABI: "x86_64"}
+	archive, err := m.ResolvePlatformTools(plat)
+	if err != nil {
+		t.Fatalf("ResolvePlatformTools: %v", err)
+	}
+	if archive.URL != "platform-tools.zip" {
+		t.Errorf("URL = %q, want platform-tools.zip", archive.URL)
+	}
+}
+
 func TestResolveSystemImageArchiveUnknownAPILevel(t *testing.T) {
 	m, err := ParseManifest([]byte(fixtureSysImgManifest))
 	if err != nil {

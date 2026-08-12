@@ -4,7 +4,13 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
+
+// installTimeout bounds the background download so a stalled connection
+// cannot hang forever — generous for a ~2GB fetch over a slow link, but
+// finite. See StartInstall for why this isn't a caller-supplied context.
+const installTimeout = 30 * time.Minute
 
 // State is the lifecycle state of an Android SDK install managed by Manager.
 type State string
@@ -69,7 +75,13 @@ func (m *Manager) Status() Status {
 // StartInstall kicks off Install in the background and returns immediately;
 // poll Status for progress and the final installed/failed outcome. Returns an
 // error synchronously only if an install is already running.
-func (m *Manager) StartInstall(ctx context.Context, cfg InstallConfig) error {
+//
+// The download runs on its own timeout-bounded context, not a caller-supplied
+// one. The real caller is an HTTP handler (POST /android-device/sdk/setup)
+// that hands off and returns immediately; net/http cancels that request's
+// context the moment the handler returns, which would otherwise abort the
+// still-running, multi-minute download out from under the caller.
+func (m *Manager) StartInstall(cfg InstallConfig) error {
 	m.mu.Lock()
 	if m.running {
 		m.mu.Unlock()
@@ -88,6 +100,8 @@ func (m *Manager) StartInstall(ctx context.Context, cfg InstallConfig) error {
 	}
 
 	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), installTimeout)
+		defer cancel()
 		err := Install(ctx, cfg)
 		m.mu.Lock()
 		defer m.mu.Unlock()

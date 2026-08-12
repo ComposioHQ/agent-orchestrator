@@ -1,7 +1,6 @@
 package androidsdk
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -46,7 +45,7 @@ func TestStartInstallTransitionsToInstalled(t *testing.T) {
 	defer srv.Close()
 
 	m := NewManager(cfg.ToolsDir)
-	if err := m.StartInstall(context.Background(), cfg); err != nil {
+	if err := m.StartInstall(cfg); err != nil {
 		t.Fatalf("StartInstall: %v", err)
 	}
 
@@ -61,10 +60,10 @@ func TestStartInstallRejectsConcurrentRun(t *testing.T) {
 	defer srv.Close()
 
 	m := NewManager(cfg.ToolsDir)
-	if err := m.StartInstall(context.Background(), cfg); err != nil {
+	if err := m.StartInstall(cfg); err != nil {
 		t.Fatalf("first StartInstall: %v", err)
 	}
-	if err := m.StartInstall(context.Background(), cfg); err == nil {
+	if err := m.StartInstall(cfg); err == nil {
 		t.Error("second concurrent StartInstall: want an error, got nil")
 	}
 	waitForState(t, m, StateInstalled)
@@ -92,7 +91,7 @@ func TestStartInstallTransitionsToFailedOnError(t *testing.T) {
 	}
 
 	m := NewManager(toolsDir)
-	if err := m.StartInstall(context.Background(), cfg); err != nil {
+	if err := m.StartInstall(cfg); err != nil {
 		t.Fatalf("StartInstall: %v", err)
 	}
 

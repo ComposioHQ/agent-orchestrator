@@ -38,20 +38,10 @@ type xmlChannel struct {
 }
 
 type xmlRemotePackage struct {
-	Path        string         `xml:"path,attr"`
-	TypeDetails xmlTypeDetails `xml:"type-details"`
-	UsesLicense xmlRef         `xml:"uses-license"`
-	ChannelRef  xmlRef         `xml:"channelRef"`
-	Archives    []xmlArchive   `xml:"archives>archive"`
-}
-
-type xmlTypeDetails struct {
-	APILevel int    `xml:"api-level"`
-	Tag      xmlTag `xml:"tag"`
-}
-
-type xmlTag struct {
-	ID string `xml:"id"`
+	Path        string       `xml:"path,attr"`
+	UsesLicense xmlRef       `xml:"uses-license"`
+	ChannelRef  xmlRef       `xml:"channelRef"`
+	Archives    []xmlArchive `xml:"archives>archive"`
 }
 
 type xmlRef struct {

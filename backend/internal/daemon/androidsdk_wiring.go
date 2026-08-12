@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -92,7 +93,7 @@ func newAndroidDeviceService(toolsDir string) (*androidDeviceService, error) {
 	}
 	return &androidDeviceService{
 		manager:         androidsdk.NewManager(toolsDir),
-		client:          &http.Client{}, // no blanket timeout: downloads are large and long-running, bounded by ctx instead
+		client:          &http.Client{}, // no per-request timeout: the download is large and long-running, bounded by StartInstall's own timeout context instead
 		plat:            plat,
 		toolsDir:        toolsDir,
 		emulatorManager: androidemulator.NewManager(),
@@ -110,8 +111,8 @@ func (s *androidDeviceService) Status() controllers.AndroidSDKStatusResponse {
 	return resp
 }
 
-func (s *androidDeviceService) Setup(ctx context.Context, acceptLicenses bool) error {
-	return s.manager.StartInstall(ctx, androidsdk.InstallConfig{
+func (s *androidDeviceService) Setup(_ context.Context, acceptLicenses bool) error {
+	return s.manager.StartInstall(androidsdk.InstallConfig{
 		Client:                s.client,
 		RepositoryManifestURL: androidRepositoryManifestURL,
 		SysImgManifestURL:     androidSysImgManifestURL(androidDefaultTag),
@@ -141,6 +142,20 @@ func (s *androidDeviceService) DeviceStatus() controllers.AndroidEmulatorStatusR
 // invalidates a stale quick-boot snapshot if the installed version changed
 // since last boot, then hands off to emulatorManager for the actual
 // spawn/health-check/crash-restart lifecycle.
+// ensureAndroidPrefsRoot creates and returns the directory the emulator uses
+// for ANDROID_PREFS_ROOT (its own preferences/feature-flags lock file). The
+// emulator does not create this directory itself; without it, boot fails
+// immediately with a flood of "Unexpected error while creating ...
+// emu-last-feature-flags.protobuf.lock (error: 3)" and the ready-poll times
+// out, surfacing as a generic "crashed" state.
+func ensureAndroidPrefsRoot(toolsDir string) (string, error) {
+	dir := filepath.Join(toolsDir, "android-prefs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create android-prefs dir: %w", err)
+	}
+	return dir, nil
+}
+
 func (s *androidDeviceService) StartDevice(ctx context.Context) error {
 	sysImageSHA1, ok := androidsdk.InstalledSystemImageSHA1(s.toolsDir)
 	if !ok {
@@ -162,12 +177,17 @@ func (s *androidDeviceService) StartDevice(ctx context.Context) error {
 		return fmt.Errorf("check quick-boot snapshot validity: %w", err)
 	}
 
+	prefsRoot, err := ensureAndroidPrefsRoot(s.toolsDir)
+	if err != nil {
+		return err
+	}
+
 	emulatorPath := filepath.Join(androidsdk.EmulatorDir(s.toolsDir), androidemulator.EmulatorBinaryName())
 	adbPath := filepath.Join(androidsdk.PlatformToolsDir(s.toolsDir), androidsdk.AdbBinaryName())
 	env := []string{
 		"ANDROID_AVD_HOME=" + avdHome,
 		"ANDROID_SDK_ROOT=" + androidsdk.Dir(s.toolsDir),
-		"ANDROID_PREFS_ROOT=" + filepath.Join(s.toolsDir, "android-prefs"),
+		"ANDROID_PREFS_ROOT=" + prefsRoot,
 	}
 
 	return s.emulatorManager.Start(ctx, androidemulator.BootConfig{
