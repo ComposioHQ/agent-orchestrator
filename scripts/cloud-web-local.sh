@@ -42,7 +42,7 @@ fi
 export AO_CLOUD_WEB_MODE=local
 export AO_CLOUD_WEB_API_BASE_URL="$api_url"
 source "$root/scripts/lib/workos-web-env.sh"
-configure_workos_web "$web_port"
+configure_workos_web "$web_port" "127.0.0.1"
 
 printf 'Cloud API: %s\n' "$api_url"
 printf 'Cloud web: http://127.0.0.1:%s\n' "$web_port"

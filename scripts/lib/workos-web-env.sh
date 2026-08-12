@@ -2,11 +2,16 @@
 
 configure_workos_web() {
 	local configured_web_port="$1"
+	local callback_host="${2:-localhost}"
 	local aws_profile="${AWS_PROFILE:-ao-cloud}"
 	local secret_id="${AO_CLOUD_STAGING_WORKOS_SECRET_ID:-ao-cloud/staging/workos}"
 	local state_dir="${AO_CLOUD_WEB_STATE_DIR:-$HOME/.ao/cloud-web}"
 	local cookie_file="$state_dir/auth-cookie-password"
 	local secret_json
+	if [[ "$callback_host" != "localhost" && "$callback_host" != "127.0.0.1" ]]; then
+		echo "WorkOS callback host must be localhost or 127.0.0.1." >&2
+		return 1
+	fi
 
 	if [[ -z "${WORKOS_API_KEY:-}" || -z "${WORKOS_CLIENT_ID:-}" ]]; then
 		secret_json="$(
@@ -55,7 +60,7 @@ PY
 	fi
 	export WORKOS_COOKIE_PASSWORD
 	WORKOS_COOKIE_PASSWORD="$(<"$cookie_file")"
-	export WORKOS_REDIRECT_URI="http://localhost:${configured_web_port}/callback"
+	export WORKOS_REDIRECT_URI="http://${callback_host}:${configured_web_port}/callback"
 	export NEXT_PUBLIC_WORKOS_REDIRECT_URI="$WORKOS_REDIRECT_URI"
 
 	WORKOS_REDIRECT_STATUS="$(
