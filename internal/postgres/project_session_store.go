@@ -280,7 +280,7 @@ func (s *Store) CreateSession(
 			orgID,
 			session.ID,
 			input.Release,
-			input.ProviderConnectionID,
+			input.SandboxConnectionID,
 			false,
 		)
 		if err != nil {
@@ -292,7 +292,7 @@ func (s *Store) CreateSession(
 			orgID,
 			session.ID,
 			input.Release,
-			input.ProviderConnectionID,
+			input.SandboxConnectionID,
 			true,
 		)
 		if err != nil {
@@ -312,6 +312,9 @@ func (s *Store) CreateSession(
 			orgID,
 			provider,
 			input.SandboxConnectionID,
+			resourceProfile,
+			autoStopMinutes,
+			bootstrapContext,
 		); err != nil {
 			return normalizeConstraintError(err)
 		}
