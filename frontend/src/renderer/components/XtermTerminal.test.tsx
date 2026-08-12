@@ -371,6 +371,64 @@ describe("XtermTerminal", () => {
 		});
 	});
 
+	it("copies an arbitrary message or inclusive range from the context menu", async () => {
+		state.apiGet.mockResolvedValue({
+			data: {
+				messages: [
+					{ role: "user", text: "first", index: 2 },
+					{ role: "assistant", text: "second", index: 3 },
+				],
+			},
+		});
+		const { container } = render(<XtermTerminal sessionId="ao-1" theme="dark" />);
+
+		fireEvent.contextMenu(container.firstElementChild!);
+		fireEvent.click(await screen.findByText("Copy message or range"));
+		fireEvent.change(screen.getByLabelText("Copy from here"), { target: { value: "2" } });
+		fireEvent.change(screen.getByLabelText("Copy to here"), { target: { value: "3" } });
+		fireEvent.submit(screen.getByRole("button", { name: "Copy" }).closest("form")!);
+
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("User:\nfirst\n\n---\n\nAssistant:\nsecond"));
+		expect(state.apiGet).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/transcript", {
+			params: { path: { sessionId: "ao-1" }, query: { from: 2, to: 3 } },
+		});
+	});
+
+	it("copies one arbitrary message when the range end is omitted", async () => {
+		state.apiGet.mockResolvedValue({ data: { messages: [{ role: "assistant", text: "picked", index: 7 }] } });
+		const { container } = render(<XtermTerminal sessionId="ao-1" theme="dark" />);
+		fireEvent.contextMenu(container.firstElementChild!);
+		fireEvent.click(await screen.findByText("Copy message or range"));
+		fireEvent.change(screen.getByLabelText("Copy from here"), { target: { value: "7" } });
+		fireEvent.submit(screen.getByRole("button", { name: "Copy" }).closest("form")!);
+
+		await waitFor(() => expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("Assistant:\npicked"));
+		expect(state.apiGet).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/transcript", {
+			params: { path: { sessionId: "ao-1" }, query: { index: 7 } },
+		});
+	});
+
+	it("does not overwrite the clipboard for an empty or stale transcript response", async () => {
+		let resolveFirst!: (value: unknown) => void;
+		const first = new Promise((resolve) => {
+			resolveFirst = resolve;
+		});
+		state.apiGet.mockReturnValueOnce(first).mockResolvedValueOnce({ data: { messages: [] } });
+		const { container } = render(<XtermTerminal sessionId="ao-1" theme="dark" />);
+
+		const openRange = async (index: string) => {
+			fireEvent.contextMenu(container.firstElementChild!);
+			fireEvent.click(await screen.findByText("Copy message or range"));
+			fireEvent.change(screen.getByLabelText("Copy from here"), { target: { value: index } });
+			fireEvent.submit(screen.getByRole("button", { name: "Copy" }).closest("form")!);
+		};
+		await openRange("1");
+		await openRange("2");
+		resolveFirst({ data: { messages: [{ role: "user", text: "stale", index: 1 }] } });
+		await waitFor(() => expect(state.apiGet).toHaveBeenCalledTimes(2));
+		expect(window.ao!.clipboard.writeText).not.toHaveBeenCalled();
+	});
+
 	it("pastes from the context menu through the terminal paste path", async () => {
 		const onInput = vi.fn();
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("menu\npaste");

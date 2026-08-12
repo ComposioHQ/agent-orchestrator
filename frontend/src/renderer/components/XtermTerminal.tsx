@@ -19,7 +19,8 @@
 //    itself only fires onResize when the grid actually changed, so repeated
 //    fits don't spam the PTY.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { Terminal } from "@xterm/xterm";
 import { useTranslation } from "react-i18next";
 import { CanvasAddon } from "@xterm/addon-canvas";
@@ -216,7 +217,15 @@ type TerminalContextMenuState = {
 	link: string | null;
 };
 
-type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear" | "copyTranscript" | "copyLastResponse" | "copyLastPrompt";
+type TerminalContextMenuAction =
+	| "copy"
+	| "paste"
+	| "selectAll"
+	| "clear"
+	| "copyTranscript"
+	| "copyLastResponse"
+	| "copyLastPrompt"
+	| "copyTranscriptRange";
 
 type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
 
@@ -270,6 +279,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	// still current when the data arrives, so a late-arriving transcript can
 	// never overwrite newer clipboard content the user copied in the meantime.
 	const clipboardTokenRef = useRef(0);
+	const transcriptCopyRef = useRef<((from?: number, to?: number) => Promise<void>) | null>(null);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
 		canCopy: false,
 		open: false,
@@ -277,6 +287,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		y: 0,
 		link: null,
 	});
+	const [copyRangeOpen, setCopyRangeOpen] = useState(false);
+	const [copyRangeFrom, setCopyRangeFrom] = useState("");
+	const [copyRangeTo, setCopyRangeTo] = useState("");
+	const [copyRangeError, setCopyRangeError] = useState(false);
 	// The web link currently under the cursor, tracked via the link providers'
 	// hover/leave callbacks so the right-click menu can offer "Open in system
 	// browser" for it.
@@ -479,14 +493,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// Terminal is being torn down or its hidden textarea is unavailable.
 			}
 		};
-		const copyTranscript = async (index?: number) => {
+		const copyTranscript = async (from?: number, to?: number) => {
 			const sessionId = callbacksRef.current.sessionId;
 			if (!sessionId) return;
 			clipboardTokenRef.current += 1;
 			const token = clipboardTokenRef.current;
 			try {
 				const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", {
-					params: { path: { sessionId }, query: index === undefined ? {} : { index } },
+					params: {
+						path: { sessionId },
+						query: from === undefined ? {} : to === undefined ? { index: from } : { from, to },
+					},
 				});
 				if (error || !data || !data.messages?.length || clipboardTokenRef.current !== token) return;
 				const text = data.messages
@@ -498,6 +515,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 			focusTerminal();
 		};
+		transcriptCopyRef.current = copyTranscript;
 		contextMenuActionsRef.current = {
 			clear: () => {
 				term.clear();
@@ -531,6 +549,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				const { data } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", { params: { path: { sessionId } } });
 				const index = [...(data?.messages ?? [])].reverse().find((message) => message.role === "user")?.index;
 				if (index !== undefined) await copyTranscript(index);
+			},
+			copyTranscriptRange: () => {
+				setCopyRangeFrom("");
+				setCopyRangeTo("");
+				setCopyRangeError(false);
+				setCopyRangeOpen(true);
 			},
 		};
 		const openContextMenu = (event: MouseEvent) => {
@@ -988,6 +1012,19 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (term) callbacksRef.current.onVisibleSize?.(term.cols, term.rows);
 	}, [props.isVisible]);
 
+	const submitCopyRange = (event: FormEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		const from = Number(copyRangeFrom);
+		const to = copyRangeTo === "" ? undefined : Number(copyRangeTo);
+		if (!/^\d+$/.test(copyRangeFrom) || (to !== undefined && !/^\d+$/.test(copyRangeTo)) || (to !== undefined && to < from)) {
+			setCopyRangeError(true);
+			return;
+		}
+		setCopyRangeError(false);
+		setCopyRangeOpen(false);
+		void transcriptCopyRef.current?.(from, to);
+	};
+
 	return (
 		<>
 			<div
@@ -1058,12 +1095,39 @@ export function XtermTerminal(props: XtermTerminalProps) {
 							<DropdownMenuItem onSelect={() => runContextMenuAction("copyLastPrompt")}>
 								{t("terminal.copyLastPrompt")}
 							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => runContextMenuAction("copyTranscriptRange")}>
+								{t("terminal.copyMessageOrRange")}
+							</DropdownMenuItem>
 						</>
 					) : null}
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
+			<Dialog.Root open={copyRangeOpen} onOpenChange={setCopyRangeOpen}>
+				<Dialog.Portal>
+					<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+					<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+						<Dialog.Title className="settings-dialog-title">{t("terminal.copyMessageOrRange")}</Dialog.Title>
+						<Dialog.Description className="mt-1 text-sm text-muted-foreground">{t("terminal.copyMessageOrRangeDescription")}</Dialog.Description>
+						<form className="mt-4 space-y-3" onSubmit={submitCopyRange}>
+							<label className="block text-sm">
+								<span>{t("terminal.copyFromHere")}</span>
+								<input className="mt-1 w-full rounded border border-border bg-background px-2 py-1" min="0" inputMode="numeric" value={copyRangeFrom} onChange={(event) => setCopyRangeFrom(event.target.value)} autoFocus />
+							</label>
+							<label className="block text-sm">
+								<span>{t("terminal.copyToHere")}</span>
+								<input className="mt-1 w-full rounded border border-border bg-background px-2 py-1" min="0" inputMode="numeric" placeholder={t("terminal.copyToHereOptional")} value={copyRangeTo} onChange={(event) => setCopyRangeTo(event.target.value)} />
+							</label>
+							{copyRangeError ? <p className="text-sm text-destructive">{t("terminal.copyRangeInvalid")}</p> : null}
+							<div className="flex justify-end gap-2 pt-2">
+								<Dialog.Close asChild><button type="button" className="rounded px-3 py-1.5 text-sm">{t("confirm.cancel")}</button></Dialog.Close>
+								<button type="submit" className="rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground">{t("titlebar.copy")}</button>
+							</div>
+						</form>
+					</Dialog.Content>
+				</Dialog.Portal>
+			</Dialog.Root>
 		</>
 	);
 }
