@@ -176,6 +176,7 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			Name:          name,
 			RelativePath:  filepath.ToSlash(name),
 			RepoOriginURL: resolveGitOriginURL(child),
+			DefaultBranch: resolveDefaultBranch(child),
 			RegisteredAt:  registeredAt,
 		})
 	}

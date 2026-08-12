@@ -23,7 +23,7 @@ import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNee
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
-import { SettingsRow } from "./settings/SettingsRow";
+import { SettingsInputRow, SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 import { Input } from "./ui/input";
 
@@ -664,33 +664,6 @@ function ModelRefreshButton({
 		>
 			<RefreshCw className={cn("size-icon-sm", pending && "animate-spin")} aria-hidden="true" />
 		</button>
-	);
-}
-
-function SettingsInputRow({
-	label,
-	id,
-	value,
-	onChange,
-	placeholder,
-}: {
-	label: string;
-	id: string;
-	value: string;
-	onChange: (value: string) => void;
-	placeholder?: string;
-}) {
-	return (
-		<SettingsRow label={label}>
-			<Input
-				id={id}
-				aria-label={label}
-				className="settings-inline-input"
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-				placeholder={placeholder}
-			/>
-		</SettingsRow>
 	);
 }
 

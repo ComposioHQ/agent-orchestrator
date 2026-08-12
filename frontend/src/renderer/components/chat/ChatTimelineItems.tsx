@@ -22,6 +22,7 @@ import {
 	Keyboard,
 	ListChecks,
 	Loader2,
+	Pencil,
 	Plug,
 	Shuffle,
 	ShieldCheck,
@@ -51,6 +52,8 @@ import { getApiBaseUrl } from "../../lib/api-client";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
+import { HumanMessageEditor } from "./HumanMessageEditor";
+import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
@@ -62,6 +65,7 @@ import {
 	reviewedPaths,
 	type ActivityKind,
 	type ConversationActivity,
+	type ConversationBranchPoint,
 	type ConversationMessage,
 	type DecisionOption,
 	type DeliveryState,
@@ -143,6 +147,19 @@ export function HumanMessage({
 	sessionId,
 	apiBaseUrl = getApiBaseUrl(),
 	queued,
+	onEdit,
+	editing = false,
+	editText,
+	onEditStart,
+	onEditDraftChange,
+	onEditCancel,
+	editPending = false,
+	editBusy = false,
+	editError,
+	branchPoint,
+	onActivateBranch,
+	activateBranchPending = false,
+	activateBranchError,
 }: {
 	message: ConversationMessage;
 	/** The staged paths are relative to this session's workspace. */
@@ -151,51 +168,94 @@ export function HumanMessage({
 	apiBaseUrl?: string;
 	/** Typed while the agent was busy, and not sent yet. */
 	queued?: boolean;
+	onEdit?: (turnId: string, text: string) => Promise<unknown> | void;
+	editing?: boolean;
+	editText?: string;
+	onEditStart?: () => void;
+	onEditDraftChange?: (text: string) => void;
+	onEditCancel?: () => void;
+	editPending?: boolean;
+	editBusy?: boolean;
+	editError?: string;
+	branchPoint?: ConversationBranchPoint;
+	onActivateBranch?: (branchId: string) => Promise<unknown> | void;
+	activateBranchPending?: boolean;
+	activateBranchError?: string;
 }) {
 	const { body, attachments } = humanMessageParts(message.text);
 	return (
-		<div className="flex flex-col items-end gap-1">
+		<div className="group/message flex flex-col items-end gap-1">
 			{/* A queued message reads as not-yet-sent rather than as sent-and-ignored:
 			    the agent has not seen it, and the timeline should not imply it has. */}
-			<div
-				className={cn(
-					"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
-					queued
-						? "border-dashed border-border-strong bg-transparent text-muted-foreground"
-						: "border-border bg-raised text-foreground",
-				)}
-			>
-				{body ? <p className="whitespace-pre-wrap text-pretty">{body}</p> : null}
-				{attachments.length > 0 ? (
-					<ul
-						aria-label="Attached files"
-						className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}
-					>
-						{attachments.map((path) => {
-							const name = attachmentName(path);
-							return IMAGE_ATTACHMENT_PATH.test(path) ? (
-								<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
-									<img
-										src={attachmentURL(apiBaseUrl, sessionId, path)}
-										alt={name}
-										loading="lazy"
-										className="block h-auto max-h-80 max-w-full object-contain"
-									/>
-								</li>
-							) : (
-								<li
-									key={path}
-									title={path}
-									className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground"
-								>
-									<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
-									<span className="truncate">{name}</span>
-								</li>
-							);
-						})}
-					</ul>
-				) : null}
-			</div>
+			{editing ? (
+				<HumanMessageEditor
+					text={editText ?? message.text}
+					content={message.content ?? []}
+					pending={editPending}
+					busy={editBusy}
+					error={editError}
+					onDraftChange={onEditDraftChange}
+					onCancel={() => onEditCancel?.()}
+					onSend={(text) => {
+						if (!message.turnId || !onEdit) return;
+						return onEdit(message.turnId, text);
+					}}
+				/>
+			) : (
+				<div
+					className={cn(
+						"cursor-chat-human-message w-fit max-w-[min(78%,560px)] rounded-[10px] border px-3 py-2.5 text-sm leading-[1.55]",
+						queued
+							? "border-dashed border-border-strong bg-transparent text-muted-foreground"
+							: "border-border bg-raised text-foreground",
+					)}
+				>
+					{body ? <p className="whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{attachments.length > 0 ? (
+						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
+							{attachments.map((path) => {
+								const name = attachmentName(path);
+								return IMAGE_ATTACHMENT_PATH.test(path) ? (
+									<li key={path} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
+										<img src={attachmentURL(apiBaseUrl, sessionId, path)} alt={name} loading="lazy" className="block h-auto max-h-80 max-w-full object-contain" />
+									</li>
+								) : (
+									<li key={path} title={path} className="flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5 text-xs text-muted-foreground">
+										<FileIcon aria-hidden="true" className="size-3.5 shrink-0" />
+										<span className="truncate">{name}</span>
+									</li>
+								);
+							})}
+						</ul>
+					) : null}
+				</div>
+			)}
+			{editing ? null : (
+				<div className="flex h-[18px] items-center gap-0.5">
+					<div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
+						<CopyButton text={message.text} label="Copy user message" compact className="-mr-1" />
+						{onEdit && onEditStart && message.turnId ? (
+							<button
+								type="button"
+								onClick={onEditStart}
+								aria-label="Edit user message"
+								title="Edit user message"
+								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+							>
+								<Pencil aria-hidden="true" className="size-3" />
+							</button>
+						) : null}
+					</div>
+					{branchPoint && onActivateBranch ? (
+						<ConversationBranchNavigator
+							point={branchPoint}
+							pending={activateBranchPending}
+							error={activateBranchError}
+							onActivate={onActivateBranch}
+						/>
+					) : null}
+				</div>
+			)}
 			{queued ? (
 				<span className="text-[11px] text-muted-foreground">Queued · sends when the agent finishes</span>
 			) : null}

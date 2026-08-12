@@ -209,10 +209,12 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation: rows.Conversation,
-				Turns:        rows.Turns,
-				Messages:     rows.Messages,
-				Activities:   rows.Activities,
+				Conversation:               rows.Conversation,
+				Turns:                      rows.Turns,
+				Messages:                   rows.Messages,
+				Activities:                 rows.Activities,
+				BranchPoints:               rows.BranchPoints,
+				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
 			}, nil
 		}),
 		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
@@ -221,12 +223,14 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation:   rows.Conversation,
-				Turns:          rows.Turns,
-				Messages:       rows.Messages,
-				Activities:     rows.Activities,
-				OldestSequence: rows.OldestSequence,
-				HasMoreBefore:  rows.HasMoreBefore,
+				Conversation:               rows.Conversation,
+				Turns:                      rows.Turns,
+				Messages:                   rows.Messages,
+				Activities:                 rows.Activities,
+				BranchPoints:               rows.BranchPoints,
+				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+				OldestSequence:             rows.OldestSequence,
+				HasMoreBefore:              rows.HasMoreBefore,
 			}, nil
 		}),
 		Drivers: chatDrivers,

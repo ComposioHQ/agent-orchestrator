@@ -47,6 +47,11 @@ UPDATE sessions
 SET controller_generation = ?, updated_at = ?
 WHERE id = ? AND session_mode = 'chat';
 
+-- name: ActivateConversationBranchSession :execrows
+UPDATE sessions
+SET provider_conversation_id = ?, controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat' AND is_terminated = 0;
+
 -- name: CommitSessionControllerEpoch :execrows
 -- Lifecycle Manager owns this controller-epoch fact. The source-mode CAS keeps
 -- a stale transition from replacing a newer controller, while clearing every
