@@ -216,7 +216,7 @@ type TerminalContextMenuState = {
 	link: string | null;
 };
 
-type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear" | "copyTranscript";
+type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear" | "copyTranscript" | "copyLastResponse" | "copyLastPrompt";
 
 type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
 
@@ -479,6 +479,25 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// Terminal is being torn down or its hidden textarea is unavailable.
 			}
 		};
+		const copyTranscript = async (index?: number) => {
+			const sessionId = callbacksRef.current.sessionId;
+			if (!sessionId) return;
+			clipboardTokenRef.current += 1;
+			const token = clipboardTokenRef.current;
+			try {
+				const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", {
+					params: { path: { sessionId }, query: index === undefined ? {} : { index } },
+				});
+				if (error || !data || !data.messages?.length || clipboardTokenRef.current !== token) return;
+				const text = data.messages
+					.map((m) => `${m.role === "user" ? "User" : "Assistant"}:\n${m.text}`)
+					.join("\n\n---\n\n");
+				await aoBridge.clipboard.writeText(text);
+			} catch (err) {
+				console.warn("Failed to copy transcript:", err);
+			}
+			focusTerminal();
+		};
 		contextMenuActionsRef.current = {
 			clear: () => {
 				term.clear();
@@ -497,33 +516,21 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				focusTerminal();
 			},
 			copyTranscript: async () => {
+				await copyTranscript();
+			},
+			copyLastResponse: async () => {
 				const sessionId = callbacksRef.current.sessionId;
 				if (!sessionId) return;
-				// Bump the token so an older in-flight transcript fetch can no
-				// longer clobber the clipboard with stale content.
-				clipboardTokenRef.current += 1;
-				const token = clipboardTokenRef.current;
-				try {
-					const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", {
-						params: { path: { sessionId } },
-					});
-					if (error || !data) {
-						console.warn("Failed to fetch transcript:", error);
-						return;
-					}
-					const messages = data.messages;
-					if (!messages || messages.length === 0) return;
-					// A newer copy intent (selection, another transcript, paste
-					// selection copy) supersedes this one; don't overwrite it.
-					if (clipboardTokenRef.current !== token) return;
-					const text = messages
-						.map((m) => `${m.role === "user" ? "User" : "Assistant"}:\n${m.text}`)
-						.join("\n\n---\n\n");
-					await aoBridge.clipboard.writeText(text);
-				} catch (err) {
-					console.warn("Failed to copy transcript:", err);
-				}
-				focusTerminal();
+				const { data } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", { params: { path: { sessionId } } });
+				const index = [...(data?.messages ?? [])].reverse().find((message) => message.role === "assistant")?.index;
+				if (index !== undefined) await copyTranscript(index);
+			},
+			copyLastPrompt: async () => {
+				const sessionId = callbacksRef.current.sessionId;
+				if (!sessionId) return;
+				const { data } = await apiClient.GET("/api/v1/sessions/{sessionId}/transcript", { params: { path: { sessionId } } });
+				const index = [...(data?.messages ?? [])].reverse().find((message) => message.role === "user")?.index;
+				if (index !== undefined) await copyTranscript(index);
 			},
 		};
 		const openContextMenu = (event: MouseEvent) => {
@@ -1044,6 +1051,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 							<DropdownMenuSeparator />
 							<DropdownMenuItem onSelect={() => runContextMenuAction("copyTranscript")}>
 								{t("terminal.copyFullTranscript")}
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => runContextMenuAction("copyLastResponse")}>
+								{t("terminal.copyLastResponse")}
+							</DropdownMenuItem>
+							<DropdownMenuItem onSelect={() => runContextMenuAction("copyLastPrompt")}>
+								{t("terminal.copyLastPrompt")}
 							</DropdownMenuItem>
 						</>
 					) : null}
