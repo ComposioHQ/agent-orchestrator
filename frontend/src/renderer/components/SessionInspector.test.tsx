@@ -405,6 +405,15 @@ describe("SessionInspector PR section", () => {
 		expect(ciRow.className).toBe(terminateRow.className);
 		expect(reviewRow.className).toBe(terminateRow.className);
 		expect(ciRow.parentElement).not.toHaveClass("rounded-lg", "border", "bg-surface");
+		for (const name of [
+			"Automatically send CI failures",
+			"Automatically send reviews",
+			"Terminate session when pull requests merge",
+		]) {
+			const toggle = screen.getByRole("switch", { name });
+			expect(toggle).toHaveClass("h-4", "w-8", "rounded-full");
+			expect(toggle.querySelector("[data-slot='switch-thumb']")).toHaveClass("size-3", "rounded-full");
+		}
 		expect(
 			screen.getByRole("button", {
 				name: "When disabled, CI failures for newly created pull requests will not be sent to the worker agent but will still be displayed. Existing pull requests keep their original setting.",
