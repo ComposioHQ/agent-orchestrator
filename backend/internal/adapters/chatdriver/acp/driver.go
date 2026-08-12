@@ -111,10 +111,10 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	if err != nil {
 		return nil, err
 	}
-	if init.AgentCapabilities.SessionCapabilities.Resume == nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("%w: ACP agent does not support session/resume", ports.ErrChatDriverIncompatible)
-	}
+	// An agent that does not advertise session/resume can still start new
+	// sessions; it just cannot be resumed after a disconnect. The resume
+	// capability is downgraded in conversationCapabilities, and Resume()
+	// returns ErrChatResumeFailed if called.
 	additional, err := normalizeAdditionalDirectories(cfg.WorkspacePath, cfg.AdditionalDirectories,
 		init.AgentCapabilities.SessionCapabilities.AdditionalDirectories != nil)
 	if err != nil {
@@ -152,8 +152,14 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		d.cfg.SessionMode, d.cfg.SessionOptions, resp.ConfigOptions,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Model: cfg.Model, Approval: cfg.Permissions}); err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("configure ACP session: %w", err)
+		// Initial model and permission mode may have been applied via launch-time
+		// flags (e.g. kimchiacp passes --model, --auto, --yolo). An agent that
+		// does not implement the runtime ACP setters returns -32601; tolerate it
+		// at session start so those bindings can still open a session.
+		if !errors.Is(err, ErrACPSetterUnsupported) {
+			_ = conv.Close()
+			return nil, fmt.Errorf("configure ACP session: %w", err)
+		}
 	}
 	return conv, nil
 }
@@ -237,8 +243,10 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		d.cfg.SessionMode, d.cfg.SessionOptions, configOptions,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
+		if !errors.Is(err, ErrACPSetterUnsupported) {
+			_ = conv.Close()
+			return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
+		}
 	}
 	return conv, nil
 }
@@ -336,6 +344,15 @@ func pointer[T any](value T) *T { return &value }
 func isACPAuthRequired(err error) bool {
 	var requestErr *acpsdk.RequestError
 	return errors.As(err, &requestErr) && requestErr.Code == -32000
+}
+
+// isACPMethodNotFound reports whether err is a JSON-RPC -32601 "Method not
+// found" from the ACP agent. Agents that implement a subset of the protocol
+// (e.g. no session/set_mode or session/set_config_option) return this code;
+// the driver treats those calls as optional so a minimal agent can still run.
+func isACPMethodNotFound(err error) bool {
+	var requestErr *acpsdk.RequestError
+	return errors.As(err, &requestErr) && requestErr.Code == -32601
 }
 
 func normalizeACPError(operation string, err error) error {
