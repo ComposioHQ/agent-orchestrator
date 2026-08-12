@@ -24,7 +24,12 @@
 				"NSLocalNetworkUsageDescription": "AO connects to Agent Orchestrator running on your computer over your local network.",
 				"NSPhotoLibraryUsageDescription": "AO uses camera-related system features to help pair with your desktop.",
 				"NSAppTransportSecurity": {
-					"NSAllowsLocalNetworking": true
+					"NSAllowsLocalNetworking": true,
+					"NSExceptionDomains": {
+						"100.64.0.0/10": {
+							"NSExceptionAllowsInsecureHTTPLoads": true
+						}
+					}
 				},
 				"LSApplicationQueriesSchemes": ["github"]
 			}
