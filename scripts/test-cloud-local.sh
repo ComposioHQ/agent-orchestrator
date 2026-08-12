@@ -159,6 +159,30 @@ def wait_for_running(org_id, session_id, token):
     raise RuntimeError(f"worker did not become running; last state was {last_state!r}")
 
 
+def events(org_id, session_id, token):
+    return request(
+        "GET",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}/chat-events?after=0&limit=100",
+        token=token,
+    )["events"]
+
+
+def wait_for_terminal_turn(org_id, session_id, token, previous):
+    terminal_types = {
+        "chat.turn_completed",
+        "chat.turn_interrupted",
+        "chat.turn_aborted",
+    }
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        current = events(org_id, session_id, token)
+        terminal = [event for event in current if event.get("type") in terminal_types]
+        if len(terminal) > previous:
+            return len(terminal)
+        time.sleep(0.5)
+    raise RuntimeError("worker did not durably finish the queued turn")
+
+
 if mode == "create":
     suffix = str(time.time_ns())
     auth = request(
@@ -227,14 +251,21 @@ if mode == "create":
     )
     if ".ao-cloud-smoke-api" not in {item.get("path") for item in listing["items"]}:
         raise RuntimeError(f"workspace listing omitted the written file: {listing!r}")
-    request(
-        "POST",
-        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/messages",
-        body={"text": "Message persisted before restart"},
-        token=token,
-        idempotency_key=f"message-{suffix}",
-        expected=202,
-    )
+    terminal_turns = 0
+    for index, text in enumerate(
+        ("First turn persisted before restart", "Follow-up turn persisted before restart")
+    ):
+        request(
+            "POST",
+            f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/messages",
+            body={"text": text},
+            token=token,
+            idempotency_key=f"message-{suffix}-{index}",
+            expected=202,
+        )
+        terminal_turns = wait_for_terminal_turn(
+            org_id, session["id"], token, terminal_turns
+        )
     state_file.write_text(
         json.dumps(
             {
@@ -250,17 +281,16 @@ elif mode == "verify":
     org_id = state["orgId"]
     session_id = state["sessionId"]
     wait_for_running(org_id, session_id, token)
-    events = request(
-        "GET",
-        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}/chat-events?after=0&limit=100",
-        token=token,
-    )["events"]
+    session_events = events(org_id, session_id, token)
     messages = [
         event.get("payload", {}).get("text")
-        for event in events
+        for event in session_events
         if event.get("type") == "chat.user_message"
     ]
-    expected = {"Message persisted before restart"}
+    expected = {
+        "First turn persisted before restart",
+        "Follow-up turn persisted before restart",
+    }
     if not expected.issubset(messages):
         raise RuntimeError(f"durable messages missing after restart: {messages!r}")
 else:
