@@ -13,7 +13,8 @@ import (
 
 func TestWriteSpawnAttachments(t *testing.T) {
 	dir := t.TempDir()
-	refs, err := writeSpawnAttachments(dir, []ports.SpawnAttachment{
+	m := New(Deps{})
+	refs, err := m.writeSpawnAttachments("ao-1", dir, []ports.SpawnAttachment{
 		{Ext: ".html", Data: []byte("first")},
 		{Ext: ".png", Data: []byte("second")},
 		{Ext: "", Data: []byte("third")},
@@ -42,12 +43,13 @@ func TestWriteSpawnAttachments(t *testing.T) {
 
 func TestStageAttachmentsUsesNeutralFileNames(t *testing.T) {
 	dir := t.TempDir()
+	dataDir := t.TempDir()
 	st := newFakeStore()
 	st.sessions["ao-1"] = domain.SessionRecord{
 		ID:       "ao-1",
 		Metadata: domain.SessionMetadata{WorkspacePath: dir},
 	}
-	m := New(Deps{Store: st, Workspace: &fakeWorkspace{}})
+	m := New(Deps{Store: st, Workspace: &fakeWorkspace{}, DataDir: dataDir})
 
 	refs, err := m.StageAttachments(context.Background(), "ao-1", []ports.SpawnAttachment{
 		{Ext: ".html", Data: []byte("<main>hi</main>")},
@@ -63,6 +65,9 @@ func TestStageAttachmentsUsesNeutralFileNames(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(refs[0]))); err != nil {
 		t.Fatalf("staged attachment missing on disk: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "attachments", "ao-1", filepath.Base(refs[0]))); err != nil {
+		t.Fatalf("canonical attachment missing on disk: %v", err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -298,6 +299,7 @@ type Manager struct {
 	preview             PreviewLifecycle
 	browser             BrowserLifecycle
 	browserCapabilities BrowserCapabilityIssuer
+	attachments         *attachmentstore.Store
 	dataDir             string
 	clock               func() time.Time
 	// openTranscriptFile is os.Open in production. The narrow seam lets tests
@@ -540,8 +542,8 @@ type Deps struct {
 	Preview             PreviewLifecycle
 	Browser             BrowserLifecycle
 	BrowserCapabilities BrowserCapabilityIssuer
-	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
-	// commands can open the same store.
+	// DataDir owns durable attachment storage and is exported to spawned agents
+	// as AO_DATA_DIR so their hook commands can open the same store.
 	DataDir string
 	Clock   func() time.Time
 	// LookPath overrides exec.LookPath for the pre-launch agent-binary check.
@@ -573,6 +575,7 @@ func New(d Deps) *Manager {
 		preview:                      d.Preview,
 		browser:                      d.Browser,
 		browserCapabilities:          d.BrowserCapabilities,
+		attachments:                  attachmentstore.New(d.DataDir),
 		dataDir:                      d.DataDir,
 		clock:                        d.Clock,
 		openTranscriptFile:           os.Open,
@@ -726,7 +729,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// exists) and before the launch command is built (so the references reach
 	// the agent).
 	if len(cfg.Attachments) > 0 {
-		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
+		refs, err := m.writeSpawnAttachments(id, ws.Path, cfg.Attachments)
 		if err != nil {
 			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
@@ -1159,6 +1162,7 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
 	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
 		m.cleanupSystemPromptDir(id)
+		m.cleanupAttachments(id)
 		return
 	}
 	m.markSpawnFailedTerminated(ctx, id)
@@ -1182,6 +1186,7 @@ func (m *Manager) rollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	}
 	if deleted {
 		m.cleanupSystemPromptDir(id)
+		m.cleanupAttachments(id)
 		return true, false, nil
 	}
 	killed, err = m.Kill(ctx, id)
@@ -1239,6 +1244,12 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	} else if ok {
 		workspaceProjectRows = rows
 		workspaceProject = true
+	}
+	// Attachments are deliberately ignored by git, so stash cannot preserve
+	// legacy worktree-only files. Import them before any controller or worktree
+	// teardown; a failed import leaves the live session intact.
+	if err := m.importAttachments(rec); err != nil {
+		return false, fmt.Errorf("kill %s: preserve attachments: %w", id, err)
 	}
 
 	// Exactly one controller exists, so exactly one gets torn down. A chat
@@ -1382,6 +1393,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	}
 	if release != nil {
 		defer release()
+	}
+	if err := m.importAttachments(rec); err != nil {
+		return fmt.Errorf("retire replacement %s: preserve attachments: %w", id, err)
 	}
 
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
@@ -1827,6 +1841,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	if release != nil {
 		defer release()
 	}
+	if err := m.importAttachments(rec); err != nil {
+		return fmt.Errorf("save %s: preserve attachments: %w", rec.ID, err)
+	}
 
 	if rows, ok, err := m.workspaceProjectRows(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: workspace rows: %w", rec.ID, err)
@@ -2111,6 +2128,10 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", "empty restored root path")
 			continue
 		}
+		if err := m.materializeAttachments(rec.ID, ws.Path); err != nil {
+			m.logger.Error("restore-all: materialize attachments failed", "sessionID", rec.ID, "error", err)
+			continue
+		}
 
 		// Step 2: replay preserve ref when one was recorded.
 		if restoredWorkspaceProject {
@@ -2200,7 +2221,7 @@ func (m *Manager) markSessionWorktreesActive(ctx context.Context, rows []domain.
 
 func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord) (ports.WorkspaceInfo, error) {
 	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
-		return m.workspace.Restore(ctx, ports.WorkspaceConfig{
+		ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
 			ProjectID:     rec.ProjectID,
 			SessionID:     rec.ID,
 			Kind:          rec.Kind,
@@ -2208,6 +2229,13 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 			Branch:        rec.Metadata.Branch,
 			Path:          rec.Metadata.WorkspacePath,
 		})
+		if err != nil {
+			return ports.WorkspaceInfo{}, err
+		}
+		if err := m.materializeAttachments(rec.ID, ws.Path); err != nil {
+			return ports.WorkspaceInfo{}, fmt.Errorf("materialize attachments: %w", err)
+		}
+		return ws, nil
 	}
 	rows, err := m.workspaceProjectRestoreRows(ctx, project, rec)
 	if err != nil {
@@ -2222,7 +2250,11 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 			return ports.WorkspaceInfo{}, fmt.Errorf("mark repo %s active: %w", row.RepoName, err)
 		}
 	}
-	return workspaceInfoFromRepoInfo(root), nil
+	ws := workspaceInfoFromRepoInfo(root)
+	if err := m.materializeAttachments(rec.ID, ws.Path); err != nil {
+		return ports.WorkspaceInfo{}, fmt.Errorf("materialize attachments: %w", err)
+	}
+	return ws, nil
 }
 
 func (m *Manager) workspaceProjectRestoreRows(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord) ([]ports.WorkspaceRepoInfo, error) {
@@ -2826,6 +2858,10 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 	if release != nil {
 		defer release()
 	}
+	if err := m.importAttachments(rec); err != nil {
+		m.logger.Warn("cleanup: attachment preservation failed", "sessionID", rec.ID, "error", err)
+		return "attachment preservation failed"
+	}
 
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
@@ -2996,18 +3032,13 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 }
 
 // attachmentsDir is the worktree-relative directory where spawn file
-// attachments are written.
-const attachmentsDir = ".ao/attachments"
+// attachments are projected for agents.
+const attachmentsDir = attachmentstore.WorkspaceDir
 
-// writeSpawnAttachments writes each attachment into the worktree under
-// attachmentsDir as attachment-1<ext>, attachment-2<ext>, ... and returns the
-// worktree-relative paths in order. The files are excluded from git via the
-// worktree's info/exclude so they do not dirty the working tree.
-func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
-	dir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil, fmt.Errorf("create attachments dir: %w", err)
-	}
+// writeSpawnAttachments writes canonical and worktree-projected copies named
+// attachment-1<ext>, attachment-2<ext>, ... and returns the worktree-relative
+// paths in order. The projections are excluded from git via info/exclude.
+func (m *Manager) writeSpawnAttachments(id domain.SessionID, workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
 	refs := make([]string, 0, len(attachments))
 	for i, a := range attachments {
 		ext := a.Ext
@@ -3015,13 +3046,30 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 			ext = ".bin"
 		}
 		name := fmt.Sprintf("attachment-%d%s", i+1, ext)
-		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
+		if err := m.attachments.Put(id, workspacePath, name, a.Data); err != nil {
 			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
 		}
 		// Worktree-relative reference, always forward-slashed for the prompt.
 		refs = append(refs, attachmentsDir+"/"+name)
 	}
 	return refs, nil
+}
+
+func (m *Manager) importAttachments(rec domain.SessionRecord) error {
+	if rec.Metadata.WorkspacePath == "" {
+		return nil
+	}
+	return m.attachments.ImportWorkspace(rec.ID, rec.Metadata.WorkspacePath)
+}
+
+func (m *Manager) materializeAttachments(id domain.SessionID, workspacePath string) error {
+	return m.attachments.MaterializeWorkspace(id, workspacePath)
+}
+
+func (m *Manager) cleanupAttachments(id domain.SessionID) {
+	if err := m.attachments.RemoveSession(id); err != nil {
+		m.logger.Warn("attachment cleanup failed", "sessionID", id, "error", err)
+	}
 }
 
 // appendAttachmentReferences appends a block listing the attached file paths so

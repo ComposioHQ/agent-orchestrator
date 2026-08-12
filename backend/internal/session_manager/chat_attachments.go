@@ -5,15 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// StageAttachments writes files into a live session's worktree and returns their
-// worktree-relative paths.
+// StageAttachments durably stores files, projects them into a live session's
+// worktree, and returns their worktree-relative paths.
 //
 // This is the spawn attachment path applied to a conversation that is already
 // running: files land in the worktree and the caller names the paths in the
@@ -47,11 +45,6 @@ func (m *Manager) StageAttachments(
 		return nil, fmt.Errorf("session %s has no workspace", id)
 	}
 
-	dir := filepath.Join(rec.Metadata.WorkspacePath, filepath.FromSlash(attachmentsDir))
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil, fmt.Errorf("create attachments dir: %w", err)
-	}
-
 	refs := make([]string, 0, len(attachments))
 	for i, a := range attachments {
 		ext := a.Ext
@@ -63,7 +56,7 @@ func (m *Manager) StageAttachments(
 			return nil, fmt.Errorf("name attachment %d: %w", i+1, err)
 		}
 		name := "attachment-" + suffix + ext
-		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
+		if err := m.attachments.Put(id, rec.Metadata.WorkspacePath, name, a.Data); err != nil {
 			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
 		}
 		refs = append(refs, attachmentsDir+"/"+name)
