@@ -208,8 +208,13 @@ function Sidebar({
 	const isOffcanvasCollapsed = state === "collapsed" && collapsible === "offcanvas";
 	const isIconCollapsed = state === "collapsed" && collapsible === "icon";
 	const containerX = isOffcanvasCollapsed ? (side === "left" ? "-100%" : "100%") : "0%";
+	// Peek overlays skip the slide-in spring entirely: the hover-preview close
+	// timer in _shell.tsx reads getBoundingClientRect() on every pointermove,
+	// and a mid-animation rect made the preview vanish before the cursor could
+	// reach it (#3372). Overlays are temporary, so appearing instantly reads as
+	// intentional rather than janky.
 	const activeTransition: typeof SHELL_PANEL_SPRING | { duration: number } =
-		!isReady || prefersReducedMotion ? { duration: 0 } : SHELL_PANEL_SPRING;
+		!isReady || prefersReducedMotion || overlay ? { duration: 0 } : SHELL_PANEL_SPRING;
 
 	// Target width for the gap placeholder. Animating the actual width lets the
 	// flex sibling <main> follow in real time instead of snapping separately.
