@@ -6,9 +6,15 @@ import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
-import { agentLabelCompare, buildRankedAgentOptions } from "../lib/agent-select-options";
+import {
+	agentLabelCompare,
+	buildRankedAgentOptions,
+	DEFAULT_AGENT_PRIORITY,
+	DEFAULT_AGENT_PRIORITY_RANK,
+} from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
 import { AgentAvatar } from "./AgentAvatar";
+import { FieldDefaultHint } from "./FieldDefaultHint";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsRow } from "./settings/SettingsRow";
@@ -30,11 +36,6 @@ export type CreateProjectAgentSelection = {
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
-const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
-const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
-	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
-);
-
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;
@@ -336,6 +337,7 @@ export function CreateProjectAgentSheet({
 export const RequiredAgentField = memo(function RequiredAgentField({
 	authorized,
 	disabled = false,
+	hint,
 	icon,
 	id,
 	invalid = false,
@@ -352,6 +354,8 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 }: {
 	authorized?: AgentInfo[];
 	disabled?: boolean;
+	/** Caption beside the label, e.g. naming where a preselected default came from. */
+	hint?: string;
 	icon?: LucideIcon;
 	id: string;
 	invalid?: boolean;
@@ -364,7 +368,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	labelClassName?: string;
 	contentClassName?: string;
 	value: string;
-	variant?: "stacked" | "settings-row";
+	variant?: "stacked" | "settings-row" | "chip";
 }) {
 	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
 	const options = buildRankedAgentOptions({
@@ -419,11 +423,71 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 		);
 	}
 
+	const selectedOption = options.find((agent) => agent.id === value);
+
+	// Chip: the value reads as part of a sentence ("Runs with Codex") rather than
+	// as a form field, so the label is carried by that sentence, not by a <Label>.
+	// Built on the same SettingsOptionMenu as the settings-row variant (and the
+	// model chip beside it) so both halves of the pill share one dropdown
+	// component instead of a Select-based menu and a DropdownMenu-based one.
+	if (variant === "chip") {
+		const menuOptions = options.map((agent) => ({
+			value: agent.id,
+			label: agent.label,
+			disabled: agent.disabled,
+		}));
+
+		return (
+			<SettingsOptionMenu
+				aria-label={label}
+				value={value}
+				placeholder={placeholder}
+				options={menuOptions}
+				disabled={disabled}
+				onChange={onChange}
+				menuAlign="start"
+				triggerClassName={cn(
+					"composer-chip composer-toolbar-option w-full justify-between",
+					invalid && "text-error",
+					triggerClassName,
+				)}
+				menuClassName={contentClassName}
+				renderTrigger={() => (
+					<span className="flex min-w-0 items-center gap-2">
+						{selectedOption ? (
+							<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
+						) : null}
+						<span className="min-w-0 truncate text-control text-foreground" title={selectedOption?.label ?? placeholder}>
+							{selectedOption?.label ?? placeholder}
+						</span>
+					</span>
+				)}
+				renderMenuItem={(option, selected) => {
+					const agent = options.find((entry) => entry.id === option.value);
+					if (!agent) return option.label;
+					return (
+						<AgentSelectMenuItem
+							agentId={agent.id}
+							label={agent.label}
+							selected={selected}
+							status={agent.status}
+							statusTone={agent.statusTone}
+							disabled={agent.disabled}
+						/>
+					);
+				}}
+			/>
+		);
+	}
+
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
-				{label}
-			</Label>
+			<div className="flex min-w-0 items-baseline gap-1.5">
+				<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
+					{label}
+				</Label>
+				{hint && <FieldDefaultHint text={hint} />}
+			</div>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
 				<SelectTrigger
 					id={id}
@@ -432,7 +496,16 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					aria-label={label}
 					aria-invalid={invalid || undefined}
 				>
-					<SelectValue placeholder={placeholder} />
+					{/* Radix would otherwise clone the whole menu row into the trigger,
+					    dragging the selected checkmark and install status with it. */}
+					<SelectValue placeholder={placeholder}>
+						{selectedOption ? (
+							<span className="flex min-w-0 items-center gap-3">
+								<AgentAvatar provider={selectedOption.id} className="size-icon-lg" decorative />
+								<span className="min-w-0 truncate">{selectedOption.label}</span>
+							</span>
+						) : null}
+					</SelectValue>
 				</SelectTrigger>
 				<SelectContent
 					position="popper"

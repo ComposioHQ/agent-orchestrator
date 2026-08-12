@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -41,11 +42,37 @@ vi.mock("../lib/api-client", () => ({
 	},
 }));
 
-import { ProjectSettingsForm } from "./ProjectSettingsForm";
+import { ProjectSettingsForm, type ProjectSettingsSaveState, type ProjectSettingsSection } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
 
-function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[], section?: "general" | "agents" | "workflow" | "intake") {
+function TestProjectSettings({
+	projectId,
+	section,
+}: {
+	projectId: string;
+	section?: ProjectSettingsSection;
+}) {
+	const [saveState, setSaveState] = useState<ProjectSettingsSaveState>({
+		isPending: false,
+		showSaving: false,
+		validationError: null,
+		mutationError: null,
+		saved: false,
+		replacementError: null,
+	});
+	return (
+		<>
+			<ProjectSettingsForm projectId={projectId} section={section} onSaveState={setSaveState} />
+			{saveState.validationError && <span>{saveState.validationError}</span>}
+			{saveState.mutationError && <span>{saveState.mutationError}</span>}
+			{saveState.saved && <span>{"Saved"}</span>}
+			{saveState.replacementError && <span>{`Orchestrator restart failed: ${saveState.replacementError}`}</span>}
+		</>
+	);
+}
+
+function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[], section?: ProjectSettingsSection) {
 	const queryClient = new QueryClient({
 		defaultOptions: {
 			queries: { retry: false },
@@ -57,7 +84,7 @@ function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[], s
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<ProjectSettingsForm projectId={projectId} section={section} />
+			<TestProjectSettings projectId={projectId} section={section} />
 		</QueryClientProvider>,
 	);
 	return queryClient;
@@ -66,7 +93,11 @@ function renderSettings(projectId = "proj-1", workspaces?: WorkspaceSummary[], s
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
 	const escaped = optionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	await userEvent.click(await screen.findByRole("menuitem", { name: new RegExp(escaped, "i") }));
+	await userEvent.click(await screen.findByRole("menuitem", { name: new RegExp(`^${escaped}$`, "i") }));
+}
+
+function submitSettings() {
+	fireEvent.submit(document.getElementById("project-settings-form")!);
 }
 
 const agentCatalogResponse = {
@@ -74,22 +105,34 @@ const agentCatalogResponse = {
 		supported: [
 			{ id: "claude-code", label: "Claude Code" },
 			{ id: "codex", label: "Codex" },
+			{ id: "copilot", label: "GitHub Copilot" },
+			{ id: "cursor", label: "Cursor" },
 			{ id: "goose", label: "Goose" },
+			{ id: "kilocode", label: "Kilo Code" },
 			{ id: "kiro", label: "Kiro" },
 			{ id: "opencode", label: "OpenCode" },
+			{ id: "pi", label: "Pi" },
 		],
 		installed: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "copilot", label: "GitHub Copilot", authStatus: "authorized" },
+			{ id: "cursor", label: "Cursor", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+			{ id: "pi", label: "Pi", authStatus: "authorized" },
 		],
 		authorized: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
 			{ id: "codex", label: "Codex", authStatus: "authorized" },
+			{ id: "copilot", label: "GitHub Copilot", authStatus: "authorized" },
+			{ id: "cursor", label: "Cursor", authStatus: "authorized" },
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
+			{ id: "kilocode", label: "Kilo Code", authStatus: "authorized" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+			{ id: "pi", label: "Pi", authStatus: "authorized" },
 		],
 	},
 	error: undefined,
@@ -151,7 +194,7 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByText("Identity");
+		await screen.findByLabelText("Project name");
 
 		// Close button is now in SettingsDialog, not in the form itself
 		expect(screen.queryByRole("button", { name: "Close settings" })).not.toBeInTheDocument();
@@ -173,7 +216,7 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByText("Identity");
+		await screen.findByLabelText("Project name");
 
 		await userEvent.keyboard("{Escape}");
 
@@ -200,7 +243,7 @@ describe("ProjectSettingsForm", () => {
 		const projectName = await screen.findByLabelText("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "TG Content Factory");
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
@@ -208,6 +251,46 @@ describe("ProjectSettingsForm", () => {
 			body: expect.objectContaining({ displayName: "TG Content Factory" }),
 		});
 		expect(screen.getByText("tg_content_factory_5863f66be3")).toBeInTheDocument();
+	});
+
+	it("renders git scp-style remotes as clickable https links", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const repoLink = await screen.findByRole("link", { name: "git@github.com:acme/project-one.git" });
+		expect(repoLink).toHaveAttribute("href", "https://github.com/acme/project-one");
+	});
+
+	it("renders ssh remotes as clickable https links", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "ssh://git@github.com/acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const repoLink = await screen.findByRole("link", { name: "ssh://git@github.com/acme/project-one.git" });
+		expect(repoLink).toHaveAttribute("href", "https://github.com/acme/project-one");
 	});
 
 	it("loads agents fields and saves without dropping hidden workflow config", async () => {
@@ -257,7 +340,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(permissionMode);
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
 
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
@@ -286,7 +369,7 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+		expect(await screen.findByText("Saved")).toBeInTheDocument();
 	}, 20_000);
 
 	it("loads workflow fields correctly", async () => {
@@ -361,17 +444,13 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(workerModel);
 		expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
 			"Agent default",
-			"GPT-5.6 SolDefaultgpt-5.6-sol",
-			"GPT-5.5gpt-5.5",
-			"GPT-5.4gpt-5.4",
+			"GPT-5.6 SolDefault",
+			"GPT-5.5",
+			"GPT-5.4",
 			"Custom model…",
 		]);
-		const search = screen.getByRole("searchbox", { name: "Search worker model" });
-		await userEvent.type(search, "5.5");
-		expect(screen.getAllByRole("menuitem")).toHaveLength(1);
-		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /GPT-5\.4/ })).not.toBeInTheDocument();
-		await userEvent.clear(search);
+		// A compact catalog stays immediately scannable and does not spend a row on search.
+		expect(screen.queryByRole("searchbox", { name: "Search worker model" })).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: /GPT-5\.4/ }));
 		expect(workerModel).toHaveTextContent("GPT-5.4");
 
@@ -501,10 +580,10 @@ describe("ProjectSettingsForm", () => {
 		const projectName = await screen.findByLabelText("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "Updated Project");
-		await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
-		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+		expect(screen.queryByText("Saved")).not.toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
@@ -527,7 +606,7 @@ describe("ProjectSettingsForm", () => {
 		const projectName = await screen.findByLabelText("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "   ");
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		expect(await screen.findByText("Project name is required.")).toBeInTheDocument();
 		expect(putMock).not.toHaveBeenCalled();
@@ -552,7 +631,7 @@ describe("ProjectSettingsForm", () => {
 			"Select orchestrator agent",
 		);
 
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
@@ -612,6 +691,213 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Default orchestrator agent" })).toBeDisabled();
 	});
 
+	it("offers both interactive Kiro and Pi reviewers", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		const labels = (await screen.findAllByRole("menuitem")).map((option) => option.textContent);
+		expect(labels).toContain("KiroAuth unknown");
+		expect(labels).toContain("Pi");
+	});
+
+	it("offers Muse Code as a reviewer", async () => {
+		const muse = { id: "muse", label: "Muse Code", authStatus: "authorized" };
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "muse" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, muse],
+						installed: [...agentCatalogResponse.data.installed, muse],
+						authorized: [...agentCatalogResponse.data.authorized, muse],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "muse" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+
+		expect(await screen.findByRole("menuitem", { name: /Muse Code/ })).toBeInTheDocument();
+	});
+
+	it("orders reviewers using the default agent priority", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
+		const reviewerLabels = (await screen.findAllByRole("menuitem"))
+			.map((option) => option.textContent)
+			.filter((label) => label !== "Project default");
+
+		expect(reviewerLabels).toEqual([
+			"Claude Code",
+			"Codex",
+			"Cursor",
+			"OpenCode",
+			"GitHub Copilot",
+			"Goose",
+			"Kilo Code",
+			"Pi",
+			"KiroAuth unknown",
+		]);
+	});
+
+	it("offers the experimental host-trusted reviewer set", async () => {
+		const project = {
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "qwen" }, orchestrator: { agent: "claude-code" } },
+		};
+		const qwen = { id: "qwen", label: "Qwen Code", authStatus: "authorized" };
+		const devin = { id: "devin", label: "Devin", authStatus: "authorized" };
+		const droid = { id: "droid", label: "Droid", authStatus: "authorized" };
+		const kimi = { id: "kimi", label: "Kimi", authStatus: "authorized" };
+		const aider = { id: "aider", label: "Aider", authStatus: "authorized" };
+		const amp = { id: "amp", label: "Amp", authStatus: "authorized" };
+		const experimental = [
+			{ id: "agy", label: "Agy", authStatus: "authorized" },
+			{ id: "auggie", label: "Auggie", authStatus: "authorized" },
+			{ id: "autohand", label: "Autohand", authStatus: "authorized" },
+			{ id: "cline", label: "Cline", authStatus: "authorized" },
+			{ id: "continue", label: "Continue", authStatus: "authorized" },
+			{ id: "crush", label: "Crush", authStatus: "authorized" },
+			{ id: "grok", label: "Grok", authStatus: "authorized" },
+			{ id: "vibe", label: "Vibe", authStatus: "authorized" },
+		];
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, qwen, devin, droid, kimi, aider, amp, ...experimental],
+						installed: [...agentCatalogResponse.data.installed, qwen, devin, droid, kimi, aider, amp, ...experimental],
+						authorized: [...agentCatalogResponse.data.authorized, qwen, devin, droid, kimi, aider, amp, ...experimental],
+					},
+					error: undefined,
+				};
+			}
+			return { data: { status: "ok", project }, error: undefined };
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		const options = await screen.findAllByRole("menuitem");
+		const labels = options.map((option) => option.textContent);
+		expect(labels).toContain("Qwen Code");
+		expect(labels).toContain("Agy");
+		expect(labels).toContain("Continue");
+		expect(labels).toContain("Goose");
+		expect(labels).toContain("Vibe");
+		expect(labels).toContain("Devin");
+		expect(labels).toContain("Droid");
+		expect(labels).toContain("Kimi");
+		expect(labels).toContain("Aider");
+		expect(labels).toContain("Amp");
+		expect(labels).toContain("Auggie");
+		expect(labels).toContain("Autohand");
+		expect(labels).toContain("Cline");
+		expect(labels).toContain("Crush");
+		expect(labels).toContain("Grok");
+	});
+
+	it("warns when an experimental reviewer is selected", async () => {
+		const kimchi = { id: "kimchi", label: "Kimchi", authStatus: "authorized" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, kimchi],
+						installed: [...agentCatalogResponse.data.installed, kimchi],
+						authorized: [...agentCatalogResponse.data.authorized, kimchi],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+		await chooseOption(await screen.findByRole("button", { name: "Default reviewer agent" }), "Kimchi");
+		expect(screen.getByRole("status")).toHaveTextContent("Experimental host-trusted reviewer");
+	});
+
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
 		mockProject({
 			id: "proj-1",
@@ -634,11 +920,187 @@ describe("ProjectSettingsForm", () => {
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
 			"Codex",
+			"Cursor",
 			"OpenCode",
+			"GitHub Copilot",
 			"Goose",
+			"Kilo Code",
+			"Pi",
 			"KiroAuth unknown",
 		]);
-		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[8]).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("shows Copilot as a reviewer option and saves it in the reviewers payload", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		const copilot = await screen.findByRole("menuitem", { name: "GitHub Copilot" });
+		expect(copilot).not.toHaveAttribute("aria-disabled", "true");
+		await userEvent.click(copilot);
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: expect.objectContaining({
+					config: expect.objectContaining({ reviewers: [{ harness: "copilot" }] }),
+				}),
+			}),
+		);
+	});
+
+	it("disables the Copilot reviewer when its binary is missing", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [{ id: "copilot", label: "GitHub Copilot" }],
+						installed: [],
+						authorized: [],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
+		const copilot = (await screen.findAllByRole("menuitem")).find((option) =>
+			option.textContent?.includes("GitHub Copilot"),
+		);
+		expect(copilot).toHaveTextContent("Needs install");
+		expect(copilot).toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("shows the standard unknown-auth warning for an installed Copilot reviewer", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [{ id: "copilot", label: "GitHub Copilot" }],
+						installed: [{ id: "copilot", label: "GitHub Copilot", authStatus: "unknown" }],
+						authorized: [],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
+		const copilot = (await screen.findAllByRole("menuitem")).find((option) =>
+			option.textContent?.includes("GitHub Copilot"),
+		);
+		expect(copilot).toHaveTextContent("Auth unknown");
+		expect(copilot).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("offers Kilo Code as a configured reviewer", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+		expect(await screen.findByRole("menuitem", { name: "Kilo Code" })).toBeEnabled();
+	});
+
+	it("offers the experimental Agy reviewer", async () => {
+		const project = {
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "agy" }, orchestrator: { agent: "claude-code" } },
+		};
+		const agy = { id: "agy", label: "Agy", authStatus: "authorized" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, agy],
+						installed: [...agentCatalogResponse.data.installed, agy],
+						authorized: [...agentCatalogResponse.data.authorized, agy],
+					},
+					error: undefined,
+				};
+			}
+			return { data: { status: "ok", project }, error: undefined };
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const reviewerAgent = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewerAgent);
+		const options = await screen.findAllByRole("menuitem");
+		expect(options.map((option) => option.textContent)).toContain("Agy");
 	});
 
 	it("shows scratch identity and saves only scratch-supported settings", async () => {
@@ -669,14 +1131,14 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("scratch");
 
-		const kindRow = (await screen.findByText("kind")).closest(".settings-row-bar");
-		expect(kindRow).toHaveTextContent("scratch");
+		const kindRow = (await screen.findByText("Type")).closest(".settings-row-bar");
+		expect(kindRow).toHaveTextContent("Scratch project");
 		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Session prefix")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reviewers")).not.toBeInTheDocument();
 		expect(screen.queryByText("Tracker intake")).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
@@ -732,7 +1194,7 @@ describe("ProjectSettingsForm", () => {
 		);
 		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
 
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		const body = putMock.mock.calls[0]?.[1]?.body;
@@ -766,7 +1228,7 @@ describe("ProjectSettingsForm", () => {
 		renderSettings("proj-1", undefined, "intake");
 
 		await userEvent.click(await screen.findByLabelText("Enable issue intake"));
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		expect(await screen.findAllByText("Enabling intake requires an assignee.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
@@ -819,7 +1281,7 @@ describe("ProjectSettingsForm", () => {
 		const orchestratorAgent = await screen.findByRole("button", { name: "Default orchestrator agent" });
 		expect(orchestratorAgent).toHaveTextContent("goose");
 
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
@@ -858,11 +1320,11 @@ describe("ProjectSettingsForm", () => {
 
 		const orchestratorAgent = await screen.findByRole("button", { name: "Default orchestrator agent" });
 		await chooseOption(orchestratorAgent, "goose");
-		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+		expect(await screen.findByText("Saved")).toBeInTheDocument();
 		expect(await screen.findByText("Orchestrator restart failed: missing goose binary")).toBeInTheDocument();
 		expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });

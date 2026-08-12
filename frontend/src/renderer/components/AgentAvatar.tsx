@@ -18,10 +18,12 @@ import gooseLogo from "../assets/agents/goose.svg";
 import grokLogo from "../assets/agents/grok.png";
 import kilocodeLogo from "../assets/agents/kilocode.svg";
 import kimiLogo from "../assets/agents/kimi.png";
+import kimchiLogo from "../assets/agents/kimchi.svg";
 import kiroLogo from "../assets/agents/kiro.png";
 import museLogo from "../assets/agents/muse.png";
 import opencodeLogo from "../assets/agents/opencode.svg";
 import piLogo from "../assets/agents/pi.png";
+import primeAgentLogo from "../assets/agents/prime-agent.png";
 import qwenLogo from "../assets/agents/qwen.png";
 import vibeLogo from "../assets/agents/vibe.png";
 
@@ -48,6 +50,8 @@ const LOGOS: Record<string, string> = {
 	kilocode: kilocodeLogo,
 	vibe: vibeLogo,
 	pi: piLogo,
+	kimchi: kimchiLogo,
+	"prime-agent": primeAgentLogo,
 	amp: ampLogo,
 	cline: clineLogo,
 	agy: agyLogo,

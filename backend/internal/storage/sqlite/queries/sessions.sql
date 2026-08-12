@@ -7,10 +7,16 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    latest_user_prompt, latest_assistant_update, native_transcript_path,
+    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation,
-    created_at, updated_at, is_pinned, pinned_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    created_at, updated_at, is_pinned, pinned_at, auto_inject_review
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?
+);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
@@ -18,11 +24,20 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
+    latest_user_prompt = ?, latest_assistant_update = ?, native_transcript_path = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?,
+    cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, updated_at = ?,
-    is_pinned = ?, pinned_at = ?
+    is_pinned = ?, pinned_at = ?, auto_inject_review = ?
 WHERE id = ?;
+
+-- name: RecordSessionLatestUserPrompt :execrows
+UPDATE sessions SET
+    latest_user_prompt = sqlc.arg(latest_user_prompt),
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id)
+  AND is_terminated = 0
+  AND updated_at <= sqlc.arg(updated_at);
 
 -- name: ClaimChatControllerGeneration :execrows
 -- A Chat controller claims ownership before its event goroutine starts. Provider
@@ -57,7 +72,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -68,7 +84,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -79,7 +96,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review
 FROM sessions ORDER BY project_id, num;
 
 
@@ -94,6 +112,9 @@ UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, up
 
 -- name: SetSessionTerminateOnPRMerge :execrows
 UPDATE sessions SET terminate_on_pr_merge = ?, updated_at = ? WHERE id = ?;
+
+-- name: SetSessionAutoInjectReview :execrows
+UPDATE sessions SET auto_inject_review = ?, updated_at = ? WHERE id = ?;
 
 -- name: SetSessionPinned :execrows
 UPDATE sessions SET is_pinned = ?, pinned_at = ?, updated_at = ? WHERE id = ?;
@@ -115,6 +136,9 @@ SELECT EXISTS(
       AND runtime_handle_id = ''
       AND agent_session_id = ''
       AND prompt = ''
+      AND latest_user_prompt = ''
+      AND latest_assistant_update = ''
+      AND native_transcript_path = ''
 ) AS is_seed;
 
 -- NOTE: the `DELETE FROM sessions WHERE id = ? AND <seed-state predicates>`
