@@ -192,6 +192,7 @@ if (typeof window !== "undefined") {
 		},
 		workspaces: {
 			list: async () => ({ remotes: [] }),
+			sshHosts: async () => [],
 			add: async () => ({ remotes: [] }),
 			remove: async () => ({ remotes: [] }),
 			setActive: async () => ({ remotes: [] }),

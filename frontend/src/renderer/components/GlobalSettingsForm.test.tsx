@@ -64,6 +64,13 @@ vi.mock("../lib/bridge", () => ({
 		app: { getVersion, openExternal },
 		clipboard: { writeText },
 		daemon: { getStatus: getDaemonStatus },
+		workspaces: {
+			list: async () => ({ remotes: [] }),
+			sshHosts: async () => [],
+			add: async () => ({ remotes: [] }),
+			remove: async () => ({ remotes: [] }),
+			setActive: async () => ({ remotes: [] }),
+		},
 		updateSettings: { get: getUpdate, set: setUpdate },
 		uiSettings: { get: getUiSettings, set: setUiSettings },
 		keybindings: {

@@ -911,5 +911,6 @@
 	"workspaces.connecting": "接続中",
 	"workspaces.connected": "接続済み",
 	"workspaces.cancel": "キャンセル",
-	"workspaces.save": "追加"
+	"workspaces.save": "追加",
+	"workspaces.fromSshConfig": "~/.ssh/config から"
 }

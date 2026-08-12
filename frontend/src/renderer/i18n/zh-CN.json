@@ -893,5 +893,6 @@
 	"workspaces.connecting": "正在连接",
 	"workspaces.connected": "已连接",
 	"workspaces.cancel": "取消",
-	"workspaces.save": "添加"
+	"workspaces.save": "添加",
+	"workspaces.fromSshConfig": "来自 ~/.ssh/config"
 }

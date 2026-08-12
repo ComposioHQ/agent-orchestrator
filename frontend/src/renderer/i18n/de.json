@@ -911,5 +911,6 @@
 	"workspaces.connecting": "Verbinden",
 	"workspaces.connected": "Verbunden",
 	"workspaces.cancel": "Abbrechen",
-	"workspaces.save": "Hinzufugen"
+	"workspaces.save": "Hinzufugen",
+	"workspaces.fromSshConfig": "Aus deiner ~/.ssh/config"
 }

@@ -42,6 +42,8 @@ import {
 	type RemoteConnection,
 } from "./main/remote-workspace";
 import { sshFailureCode } from "./shared/ssh-failure";
+import { readSshConfigHosts } from "./main/ssh-config";
+import type { SshConfigHost } from "./shared/ssh-config";
 import { resolveWorkspace, type RemoteWorkspace, type WorkspaceRegistry } from "./shared/workspaces";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -1456,6 +1458,9 @@ async function withWorkspaceRegistry<T>(operation: (stateDir: string) => Promise
 ipcMain.handle("workspaces:list", async (): Promise<WorkspaceRegistry> =>
 	withWorkspaceRegistry((stateDir) => readWorkspaceRegistry(stateDir), { remotes: [] }),
 );
+// Read-only convenience for the picker. AO never writes ssh_config, the same
+// way it never writes known_hosts.
+ipcMain.handle("workspaces:sshHosts", async (): Promise<SshConfigHost[]> => readSshConfigHosts(os.homedir()));
 ipcMain.handle("workspaces:add", async (_event, workspace: RemoteWorkspace): Promise<WorkspaceRegistry> =>
 	withWorkspaceRegistry((stateDir) => addRemoteWorkspace(stateDir, workspace), { remotes: [] }),
 );

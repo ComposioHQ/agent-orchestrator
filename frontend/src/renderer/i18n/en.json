@@ -893,5 +893,6 @@
 	"workspaces.connecting": "Connecting",
 	"workspaces.connected": "Connected",
 	"workspaces.cancel": "Cancel",
-	"workspaces.save": "Add"
+	"workspaces.save": "Add",
+	"workspaces.fromSshConfig": "From your ~/.ssh/config"
 }

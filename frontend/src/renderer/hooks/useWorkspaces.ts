@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { aoBridge } from "../lib/bridge";
 import { LOCAL_WORKSPACE_ID, resolveWorkspace, type RemoteWorkspace, type WorkspaceRegistry } from "../../shared/workspaces";
+import type { SshConfigHost } from "../../shared/ssh-config";
 
 /**
  * The remote-workspace registry, as the settings UI sees it.
@@ -14,6 +15,7 @@ import { LOCAL_WORKSPACE_ID, resolveWorkspace, type RemoteWorkspace, type Worksp
  */
 export function useWorkspaces() {
 	const [registry, setRegistry] = useState<WorkspaceRegistry>({ remotes: [] });
+	const [sshHosts, setSshHosts] = useState<SshConfigHost[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 
@@ -32,6 +34,16 @@ export function useWorkspaces() {
 
 	useEffect(() => {
 		void load();
+		// Best-effort, and deliberately inside the promise chain: an absent or
+		// unreadable ssh_config just means an empty picker and a hand-typed
+		// target. The bridge section itself can also be missing (browser preview,
+		// or a renderer hot-reloaded against an older preload), and that must
+		// degrade the picker rather than throw out of the effect and blank the
+		// whole settings page.
+		void Promise.resolve()
+			.then(() => aoBridge.workspaces.sshHosts())
+			.then(setSshHosts)
+			.catch(() => setSshHosts([]));
 	}, [load]);
 
 	// Every mutation reports its own failure rather than throwing: these are
@@ -49,6 +61,7 @@ export function useWorkspaces() {
 
 	return {
 		registry,
+		sshHosts,
 		loading,
 		error,
 		/** The workspace the client is pointed at, resolved the same way the supervisor resolves it. */

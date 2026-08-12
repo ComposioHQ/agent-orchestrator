@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, Laptop, Loader2, Plus, Server, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { LOCAL_WORKSPACE_ID, validateRemoteWorkspace, workspaceLabel } from "../../../shared/workspaces";
+import { workspaceIdFromAlias, type SshConfigHost } from "../../../shared/ssh-config";
 import type { DaemonStatus } from "../../../shared/daemon-status";
 import { useWorkspaces } from "../../hooks/useWorkspaces";
 import { Button } from "../ui/button";
@@ -20,7 +21,7 @@ import { SettingsSection } from "./SettingsSection";
  */
 export function WorkspacesSection({ daemonStatus, titleHidden }: { daemonStatus: DaemonStatus; titleHidden?: boolean }) {
 	const { t } = useTranslation();
-	const { registry, activeId, error, add, remove, setActive, clearError } = useWorkspaces();
+	const { registry, sshHosts, activeId, error, add, remove, setActive, clearError } = useWorkspaces();
 	const [adding, setAdding] = useState(false);
 
 	const rows = [
@@ -50,6 +51,7 @@ export function WorkspacesSection({ daemonStatus, titleHidden }: { daemonStatus:
 
 			{adding ? (
 				<AddWorkspaceForm
+					sshHosts={sshHosts.filter((host) => !registry.remotes.some((remote) => remote.sshTarget === host.alias))}
 					onCancel={() => {
 						clearError();
 						setAdding(false);
@@ -161,15 +163,26 @@ function ConnectionState({ status }: { status?: DaemonStatus }) {
 }
 
 function AddWorkspaceForm({
+	sshHosts,
 	onCancel,
 	onSubmit,
 }: {
+	sshHosts: SshConfigHost[];
 	onCancel: () => void;
 	onSubmit: (workspace: { id: string; sshTarget: string }) => void;
 }) {
 	const { t } = useTranslation();
 	const [id, setId] = useState("");
 	const [sshTarget, setSshTarget] = useState("");
+	// Whether the user has named the workspace themselves. Until they do,
+	// picking a host also fills the id, so the common case is one click; once
+	// they type a name we stop overwriting it.
+	const [idTouched, setIdTouched] = useState(false);
+
+	const pickHost = (alias: string) => {
+		setSshTarget(alias);
+		if (!idTouched) setId(workspaceIdFromAlias(alias));
+	};
 	// Validated with the same function the supervisor uses, so the inline
 	// message and the persisted rejection can never disagree.
 	const invalid = validateRemoteWorkspace({ id, sshTarget });
@@ -183,10 +196,35 @@ function AddWorkspaceForm({
 				if (!invalid) onSubmit({ id: id.trim(), sshTarget: sshTarget.trim() });
 			}}
 		>
+			{sshHosts.length > 0 ? (
+				<div className="flex flex-col gap-1.5">
+					<span className="text-xs leading-4 text-settings-muted">{t("workspaces.fromSshConfig")}</span>
+					<div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+						{sshHosts.map((host) => (
+							<button
+								key={host.alias}
+								type="button"
+								onClick={() => pickHost(host.alias)}
+								title={host.hostName}
+								aria-pressed={sshTarget === host.alias}
+								className={cn(
+									"rounded-md border border-transparent bg-input/50 px-2 py-1 text-xs text-settings-label transition-colors hover:bg-settings-menu-selected",
+									sshTarget === host.alias && "border-ring bg-settings-menu-selected",
+								)}
+							>
+								{host.alias}
+							</button>
+						))}
+					</div>
+				</div>
+			) : null}
 			<div className="flex gap-2">
 				<Input
 					value={id}
-					onChange={(event) => setId(event.target.value)}
+					onChange={(event) => {
+						setIdTouched(true);
+						setId(event.target.value);
+					}}
 					placeholder={t("workspaces.idPlaceholder")}
 					aria-label={t("workspaces.id")}
 					autoFocus

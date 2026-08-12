@@ -14,6 +14,7 @@ const bridge = {
 	add: vi.fn<(workspace: unknown) => Promise<WorkspaceRegistry>>(),
 	remove: vi.fn<(id: string) => Promise<WorkspaceRegistry>>(),
 	setActive: vi.fn<(id: string) => Promise<WorkspaceRegistry>>(),
+	sshHosts: vi.fn<() => Promise<{ alias: string; hostName?: string }[]>>(),
 };
 
 vi.mock("../../lib/bridge", () => ({
@@ -24,8 +25,13 @@ vi.mock("../../lib/bridge", () => ({
 	},
 }));
 
-async function renderSection(registry: WorkspaceRegistry, daemonStatus = { state: "ready" as const, port: 51234 }) {
+async function renderSection(
+	registry: WorkspaceRegistry,
+	daemonStatus = { state: "ready" as const, port: 51234 },
+	hosts: { alias: string; hostName?: string }[] = [],
+) {
 	bridge.list.mockResolvedValue(registry);
+	bridge.sshHosts.mockResolvedValue(hosts);
 	await act(async () => {
 		render(<WorkspacesSection daemonStatus={daemonStatus} />);
 		await Promise.resolve();
@@ -136,6 +142,45 @@ describe("WorkspacesSection", () => {
 			fireEvent.click(screen.getByRole("button", { name: /remove build-vm/i }));
 		});
 		expect(bridge.remove).toHaveBeenCalledWith("build-vm");
+	});
+
+	// The point of the picker: a target you already have in ~/.ssh/config should
+	// be a click, not a retyped hostname.
+	it("offers ssh_config aliases and fills both fields from one click", async () => {
+		await renderSection({ remotes: [] }, undefined, [{ alias: "dev-training-vm", hostName: "10.0.0.8" }]);
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: /add a remote workspace/i }));
+		});
+
+		await act(async () => {
+			fireEvent.click(await screen.findByRole("button", { name: "dev-training-vm" }));
+		});
+		expect(screen.getByLabelText(/ssh target/i)).toHaveValue("dev-training-vm");
+		// The id is coerced to the registry's stricter rules, so the form is valid
+		// immediately rather than opening pre-filled with something rejected.
+		expect(screen.getByLabelText(/workspace name/i)).toHaveValue("dev-training-vm");
+		expect(screen.getByRole("button", { name: /^add$/i })).toBeEnabled();
+	});
+
+	it("stops overwriting the name once the user has typed one", async () => {
+		await renderSection({ remotes: [] }, undefined, [{ alias: "gpu" }]);
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: /add a remote workspace/i }));
+		});
+		fireEvent.change(screen.getByLabelText(/workspace name/i), { target: { value: "mine" } });
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "gpu" }));
+		});
+		expect(screen.getByLabelText(/workspace name/i)).toHaveValue("mine");
+	});
+
+	it("hides aliases that are already registered", async () => {
+		await renderSection({ remotes: [vm] }, undefined, [{ alias: "build-vm" }, { alias: "gpu" }]);
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: /add a remote workspace/i }));
+		});
+		expect(screen.queryByRole("button", { name: "build-vm" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "gpu" })).toBeInTheDocument();
 	});
 
 	it("offers no way to remove the local workspace", async () => {

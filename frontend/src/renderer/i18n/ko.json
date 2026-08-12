@@ -911,5 +911,6 @@
 	"workspaces.connecting": "연결 중",
 	"workspaces.connected": "연결됨",
 	"workspaces.cancel": "취소",
-	"workspaces.save": "추가"
+	"workspaces.save": "추가",
+	"workspaces.fromSshConfig": "~/.ssh/config에서"
 }

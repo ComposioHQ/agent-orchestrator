@@ -150,6 +150,7 @@ export const aoBridge: AoBridge =
 		// so the browser fallback is always the local workspace with none listed.
 		workspaces: {
 			list: async () => ({ remotes: [] }),
+			sshHosts: async () => [],
 			add: async () => ({ remotes: [] }),
 			remove: async () => ({ remotes: [] }),
 			setActive: async () => ({ remotes: [] }),

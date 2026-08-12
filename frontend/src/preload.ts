@@ -8,6 +8,7 @@ import type {
 } from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { RemoteWorkspace, WorkspaceRegistry } from "./shared/workspaces";
+import type { SshConfigHost } from "./shared/ssh-config";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
@@ -173,6 +174,7 @@ const api = {
 	// `daemon:status` event rather than from this call's return value.
 	workspaces: {
 		list: () => ipcRenderer.invoke("workspaces:list") as Promise<WorkspaceRegistry>,
+		sshHosts: () => ipcRenderer.invoke("workspaces:sshHosts") as Promise<SshConfigHost[]>,
 		add: (workspace: RemoteWorkspace) => ipcRenderer.invoke("workspaces:add", workspace) as Promise<WorkspaceRegistry>,
 		remove: (id: string) => ipcRenderer.invoke("workspaces:remove", id) as Promise<WorkspaceRegistry>,
 		setActive: (id: string) => ipcRenderer.invoke("workspaces:setActive", id) as Promise<WorkspaceRegistry>,
