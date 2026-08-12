@@ -27,6 +27,10 @@ func nodeOpsEnvironment(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
 	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+	// Hosted environments also require a provider secret key, so a complete
+	// nodeops environment has to carry one or every case here fails on that
+	// instead of on the setting under test.
+	setProviderSecretKey(t)
 }
 
 func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
