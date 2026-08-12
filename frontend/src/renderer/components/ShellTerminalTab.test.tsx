@@ -99,18 +99,20 @@ describe("ShellTerminalTab rename", () => {
 	it("uses a compact fixed width and shrinks its title around the sibling close affordance", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass(
-			"w-0",
-			"opacity-0",
-			"group-hover:w-control-sm",
-			"group-hover:opacity-100",
-		);
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
-		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass("w-full", "min-w-0", "text-left");
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
-			"grid",
-			"w-shell-tab-connected",
-		);
+		const closeButton = screen.getByRole("button", { name: "Close terminal ao" });
+		expect(closeButton.classList.contains("w-0")).toBe(true);
+		expect(closeButton.classList.contains("opacity-0")).toBe(true);
+		expect(closeButton.classList.contains("group-hover:w-control-sm")).toBe(true);
+		expect(closeButton.classList.contains("group-hover:opacity-100")).toBe(true);
+		expect(closeButton.classList.contains("mr-1")).toBe(true);
+		expect(closeButton.classList.contains("absolute")).toBe(false);
+		const tab = screen.getByRole("tab", { name: "ao" });
+		expect(tab.classList.contains("w-full")).toBe(true);
+		expect(tab.classList.contains("min-w-0")).toBe(true);
+		expect(tab.classList.contains("text-left")).toBe(true);
+		expect(tab.parentElement?.classList.contains("grid")).toBe(true);
+		expect(tab.parentElement?.classList.contains("shrink-0")).toBe(true);
+		expect(tab.parentElement?.classList.contains("w-shell-tab-connected")).toBe(true);
 	});
 
 	it("uses a neutral active surface with a strong foreground selection line", () => {
