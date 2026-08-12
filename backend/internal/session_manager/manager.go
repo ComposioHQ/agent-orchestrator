@@ -1334,7 +1334,7 @@ func (m *Manager) terminateNativeSession(ctx context.Context, rec domain.Session
 	}
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
-		return fmt.Errorf("%w: %s", ErrUnknownHarness, rec.Harness)
+		return nil
 	}
 	terminator, ok := agent.(ports.AgentNativeSessionTerminator)
 	if !ok {

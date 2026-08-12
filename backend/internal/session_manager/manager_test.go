@@ -1947,6 +1947,26 @@ func TestKill_TerminatesNativeSessionBeforeRuntime(t *testing.T) {
 	}
 }
 
+func TestKill_UnknownHarnessSkipsNativeTerminationAndTearsDown(t *testing.T) {
+	m, st, rt, ws := newManager()
+	m.agents = missingAgents{}
+	rec := mkLive("mer-1")
+	rec.Harness = "retired-agent"
+	rec.Metadata.AgentSessionID = "native-7"
+	st.sessions[rec.ID] = rec
+
+	freed, err := m.Kill(ctx, rec.ID)
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v, want successful teardown", freed, err)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("runtime=%d workspace=%d, want one each", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session must be terminated when only native adapter lookup is missing")
+	}
+}
+
 func TestKill_ReviewerTeardownFailureLeavesSessionActive(t *testing.T) {
 	m, st, rt, ws := newManager()
 	m.SetReviewerTerminator(&fakeReviewerTerminator{err: errors.New("reviewer still alive")})
@@ -4684,6 +4704,36 @@ func TestSaveAndTeardownOne_NativeTerminationFailurePreservesWorkspace(t *testin
 		if strings.HasPrefix(call, "ForceDestroy:") {
 			t.Fatalf("worktree must remain after native termination failure: calls=%v", ws.calls)
 		}
+	}
+}
+
+func TestSaveAndTeardownOne_UnknownHarnessSkipsNativeTerminationAndTearsDown(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	m.agents = missingAgents{}
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: "retired-agent",
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root",
+			RuntimeHandleID: "h1", AgentSessionID: "native-7",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+		t.Fatalf("saveAndTeardownOne err = %v", err)
+	}
+	if rt.destroyed != 1 || !st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("runtime=%d terminated=%v, want successful teardown", rt.destroyed, st.sessions[rec.ID].IsTerminated)
+	}
+	foundForceDestroy := false
+	for _, call := range ws.calls {
+		if call == "ForceDestroy:mer-1" {
+			foundForceDestroy = true
+		}
+	}
+	if !foundForceDestroy {
+		t.Fatalf("worktree must be force-destroyed when only native adapter lookup is missing: calls=%v", ws.calls)
 	}
 }
 
