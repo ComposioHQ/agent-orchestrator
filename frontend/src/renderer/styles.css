@@ -1341,7 +1341,7 @@ textarea,
 }
 
 .terminal-tabs-scrollbar::-webkit-scrollbar {
-	height: 3px;
+	height: 2px;
 }
 
 .terminal-tabs-scrollbar::-webkit-scrollbar-button {
@@ -1356,6 +1356,7 @@ textarea,
 }
 
 .terminal-tabs-scrollbar::-webkit-scrollbar-thumb {
+	min-width: 48px;
 	border-radius: 999px;
 	background-color: color-mix(in srgb, var(--color-scrollbar) 30%, transparent);
 }
