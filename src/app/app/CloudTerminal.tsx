@@ -112,8 +112,11 @@ export function CloudTerminal({
           if (!active) return;
           setConnection("disconnected");
           if (event.code === 1000) {
-            setNotice(kind === "agent" ? "Agent terminal exited." : "Terminal closed.");
-            return;
+            setNotice(
+              kind === "agent"
+                ? "Agent terminal stream closed. Reconnecting…"
+                : "Terminal stream closed. Reconnecting…",
+            );
           }
           reconnectTimer = window.setTimeout(() => void connect(), 1_000);
         });

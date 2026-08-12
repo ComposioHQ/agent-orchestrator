@@ -52,6 +52,11 @@ type CreateProject struct {
 	Config        json.RawMessage
 }
 
+type UpdateProject struct {
+	DisplayName   string
+	DefaultBranch string
+}
+
 type Session struct {
 	ID               string
 	OrgID            string

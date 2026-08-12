@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
@@ -37,8 +39,9 @@ type CommandBuilder interface {
 // HarnessBuilder owns Cloud's headless streaming flags and fail-closed policy
 // mapping; process lifecycle is shared with desktop AO through agentruntime.
 type HarnessBuilder struct {
-	Binaries map[string]string
-	DataDir  string
+	Binaries   map[string]string
+	DataDir    string
+	CodexLogin func(binary, home, credentialType, secret string) error
 }
 
 // BuildInteractive prepares the provider's native TUI command. Unlike Build,
@@ -76,17 +79,46 @@ func (b HarnessBuilder) BuildInteractive(
 	if launch.Kind == "orchestrator" {
 		systemPrompt = orchestratorSystemPrompt
 	}
-	argv, err := agentruntime.BuildLaunchCommand(agentruntime.LaunchConfig{
-		Harness:       agentruntime.Harness(launch.Harness),
-		Binary:        binary,
-		SessionID:     launch.SessionID,
-		WorkspacePath: workspace,
-		Prompt:        launch.Prompt,
-		SystemPrompt:  systemPrompt,
-		Permission: agentruntime.PermissionPolicyForMode(
-			agentruntime.SessionMode(launch.Mode),
-		),
-	})
+	var providerArgs []string
+	switch launch.Harness {
+	case "codex":
+		providerArgs = codexActivityHookArgs()
+	case "cursor":
+		providerArgs = []string{"--trust"}
+	}
+	harness := agentruntime.Harness(launch.Harness)
+	permission := agentruntime.PermissionPolicyForMode(
+		agentruntime.SessionMode(launch.Mode),
+	)
+	var argv []string
+	var err error
+	if identity := b.interactiveRestoreIdentity(launch); identity != "" {
+		var ok bool
+		argv, ok, err = agentruntime.BuildRestoreCommand(agentruntime.RestoreConfig{
+			Harness:       harness,
+			Binary:        binary,
+			SessionID:     launch.SessionID,
+			Metadata:      map[string]string{agentruntime.MetadataKeyAgentSessionID: identity},
+			WorkspacePath: workspace,
+			SystemPrompt:  systemPrompt,
+			ProviderArgs:  providerArgs,
+			Permission:    permission,
+		})
+		if err == nil && !ok {
+			err = errors.New("coding-agent conversation cannot be restored")
+		}
+	} else {
+		argv, err = agentruntime.BuildLaunchCommand(agentruntime.LaunchConfig{
+			Harness:       harness,
+			Binary:        binary,
+			SessionID:     launch.SessionID,
+			WorkspacePath: workspace,
+			Prompt:        launch.Prompt,
+			SystemPrompt:  systemPrompt,
+			ProviderArgs:  providerArgs,
+			Permission:    permission,
+		})
+	}
 	if err != nil {
 		return Command{}, err
 	}
@@ -102,7 +134,46 @@ func (b HarnessBuilder) BuildInteractive(
 		}
 		return Command{}, err
 	}
+	if launch.Harness == "claude-code" {
+		if err := b.prepareClaudeCloudExperience(&command, workspace); err != nil {
+			if command.Cleanup != nil {
+				command.Cleanup()
+			}
+			return Command{}, err
+		}
+	}
+	if launch.Harness == "cursor" {
+		if err := installCursorActivityHooks(workspace); err != nil {
+			if command.Cleanup != nil {
+				command.Cleanup()
+			}
+			return Command{}, err
+		}
+	}
 	return command, nil
+}
+
+func (b HarnessBuilder) interactiveRestoreIdentity(
+	launch worker.LaunchContext,
+) string {
+	if identity := strings.TrimSpace(launch.AgentSessionID); identity != "" {
+		return identity
+	}
+	if launch.Harness != "claude-code" {
+		return ""
+	}
+	identity := agentruntime.ClaudeSessionID(launch.SessionID)
+	configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	if configDir == "" {
+		configDir = filepath.Join(strings.TrimSpace(b.DataDir), "claude")
+	}
+	matches, _ := filepath.Glob(
+		filepath.Join(configDir, "projects", "*", identity+".jsonl"),
+	)
+	if len(matches) > 0 {
+		return identity
+	}
+	return ""
 }
 
 func (b HarnessBuilder) Build(
@@ -162,10 +233,8 @@ func (b HarnessBuilder) configureCredential(
 		}
 	case "codex":
 		switch credential.CredentialType {
-		case "api_key":
-			command.Env["OPENAI_API_KEY"] = credential.Secret
-		case "access_token":
-			return b.writeCodexAuth(command, credential.Secret)
+		case "api_key", "access_token":
+			return b.configureCodexCredential(command, credential)
 		default:
 			return errors.New("unsupported Codex credential type")
 		}
@@ -194,6 +263,99 @@ func (b HarnessBuilder) binary(harness string) string {
 	default:
 		return harness
 	}
+}
+
+func (b HarnessBuilder) prepareClaudeCloudExperience(command *Command, workspace string) error {
+	configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	if configDir == "" {
+		dataDir := strings.TrimSpace(b.DataDir)
+		if dataDir == "" {
+			return errors.New("worker data directory is required for Claude Code configuration")
+		}
+		configDir = filepath.Join(dataDir, "claude")
+	}
+	command.Env["CLAUDE_CONFIG_DIR"] = configDir
+	if err := updateJSONFile(filepath.Join(configDir, ".claude.json"), func(root map[string]any) {
+		root["hasCompletedOnboarding"] = true
+		root["theme"] = "dark"
+		projects, _ := root["projects"].(map[string]any)
+		if projects == nil {
+			projects = map[string]any{}
+			root["projects"] = projects
+		}
+		project, _ := projects[workspace].(map[string]any)
+		if project == nil {
+			project = map[string]any{}
+			projects[workspace] = project
+		}
+		project["hasTrustDialogAccepted"] = true
+	}); err != nil {
+		return fmt.Errorf("prepare Claude onboarding: %w", err)
+	}
+	if err := updateJSONFile(filepath.Join(configDir, "settings.json"), func(settings map[string]any) {
+		removeGlobalClaudeActivityHooks(settings)
+		settings["theme"] = "dark"
+		settings["skipDangerousModePermissionPrompt"] = true
+		permissions, _ := settings["permissions"].(map[string]any)
+		if permissions == nil {
+			permissions = map[string]any{}
+			settings["permissions"] = permissions
+		}
+		permissions["defaultMode"] = "bypassPermissions"
+	}); err != nil {
+		return fmt.Errorf("prepare Claude settings: %w", err)
+	}
+	if err := updateJSONFile(
+		filepath.Join(workspace, ".claude", "settings.local.json"),
+		installClaudeActivityHooks,
+	); err != nil {
+		return fmt.Errorf("install Claude activity hooks: %w", err)
+	}
+	return nil
+}
+
+func updateJSONFile(path string, update func(map[string]any)) error {
+	root := map[string]any{}
+	contents, err := os.ReadFile(path)
+	switch {
+	case err == nil && len(contents) > 0:
+		if err := json.Unmarshal(contents, &root); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+	case err == nil || errors.Is(err, os.ErrNotExist):
+	default:
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	update(root)
+	encoded, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", path, err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	temporary, err := os.CreateTemp(dir, ".ao-cloud-config-*")
+	if err != nil {
+		return fmt.Errorf("create temporary config: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("secure temporary config: %w", err)
+	}
+	if _, err := temporary.Write(encoded); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write temporary config: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary config: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
 }
 
 func claudeArgs(turn worker.Turn) ([]string, error) {
@@ -265,30 +427,46 @@ func cursorArgs(turn worker.Turn) ([]string, error) {
 	return append(args, turn.Prompt), nil
 }
 
-func (b HarnessBuilder) writeCodexAuth(command *Command, accessToken string) error {
+func (b HarnessBuilder) configureCodexCredential(
+	command *Command,
+	credential worker.CredentialResponse,
+) error {
 	parent := strings.TrimSpace(b.DataDir)
 	if parent == "" {
-		parent = os.TempDir()
+		return errors.New("worker data directory is required for Codex configuration")
 	}
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return fmt.Errorf("create worker data directory: %w", err)
-	}
-	home, err := os.MkdirTemp(parent, "codex-")
-	if err != nil {
+	home := filepath.Join(parent, "codex")
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return fmt.Errorf("create Codex home: %w", err)
 	}
-	command.Cleanup = func() { _ = os.RemoveAll(home) }
-	encoded, err := json.Marshal(map[string]any{
-		"tokens": map[string]string{"access_token": accessToken},
-	})
-	if err != nil {
-		command.Cleanup()
-		return err
+	login := b.CodexLogin
+	if login == nil {
+		login = loginCodex
 	}
-	if err := os.WriteFile(filepath.Join(home, "auth.json"), encoded, 0o600); err != nil {
-		command.Cleanup()
-		return fmt.Errorf("write Codex credential: %w", err)
+	if err := login(command.Path, home, credential.CredentialType, credential.Secret); err != nil {
+		return fmt.Errorf("configure Codex credential: %w", err)
 	}
 	command.Env["CODEX_HOME"] = home
+	return nil
+}
+
+func loginCodex(binary, home, credentialType, secret string) error {
+	option := ""
+	switch credentialType {
+	case "api_key":
+		option = "--with-api-key"
+	case "access_token":
+		option = "--with-access-token"
+	default:
+		return errors.New("unsupported Codex credential type")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, binary, "login", option)
+	command.Env = append(os.Environ(), "CODEX_HOME="+home)
+	command.Stdin = strings.NewReader(secret)
+	if err := command.Run(); err != nil {
+		return err
+	}
 	return nil
 }

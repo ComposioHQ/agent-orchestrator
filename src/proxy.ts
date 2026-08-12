@@ -23,6 +23,7 @@ export const config = {
   matcher: [
     "/",
     "/app/:path*",
+    "/api/cloud/github-auth-status",
     "/api/cloud/v1/:path*",
     "/sign-in",
     "/github-sign-in",

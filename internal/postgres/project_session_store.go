@@ -99,6 +99,106 @@ func (s *Store) CreateProject(
 	return project, err
 }
 
+func (s *Store) UpdateProject(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID, projectID string,
+	input domain.UpdateProject,
+) (domain.Project, error) {
+	var project domain.Project
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		err := scanProject(tx.QueryRow(ctx,
+			`UPDATE ao_projects
+			SET display_name = $1,
+				default_branch = $2,
+				updated_at = now()
+			WHERE org_id = $3 AND id = $4 AND archived_at IS NULL
+			RETURNING id, org_id, display_name, repository_url, default_branch,
+				github_repository_id, config, created_at, updated_at`,
+			input.DisplayName,
+			input.DefaultBranch,
+			orgID,
+			projectID,
+		), &project)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return normalizeConstraintError(err)
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO ao_audit_events (
+				org_id, actor_user_id, action, resource_type, resource_id
+			) VALUES ($1, $2, 'project.updated', 'project', $3)`,
+			orgID,
+			principal.UserID,
+			projectID,
+		)
+		return err
+	})
+	return project, err
+}
+
+func (s *Store) ArchiveProject(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID, projectID string,
+) error {
+	return s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		var archived bool
+		if err := tx.QueryRow(ctx,
+			`SELECT archived_at IS NOT NULL
+			FROM ao_projects
+			WHERE org_id = $1 AND id = $2
+			FOR UPDATE`,
+			orgID,
+			projectID,
+		).Scan(&archived); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if archived {
+			return nil
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE ao_projects
+			SET archived_at = now(), updated_at = now()
+			WHERE org_id = $1 AND id = $2`,
+			orgID,
+			projectID,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes sandbox
+			SET desired_state = $3,
+				reconcile_after = now(),
+				updated_at = now()
+			FROM ao_sessions session
+			WHERE session.org_id = $1
+			  AND session.project_id = $2
+			  AND sandbox.org_id = session.org_id
+			  AND sandbox.session_id = session.id
+			  AND sandbox.observed_state <> $3`,
+			orgID,
+			projectID,
+			domain.SandboxDesiredDeleted,
+		); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO ao_audit_events (
+				org_id, actor_user_id, action, resource_type, resource_id
+			) VALUES ($1, $2, 'project.deleted', 'project', $3)`,
+			orgID,
+			principal.UserID,
+			projectID,
+		)
+		return err
+	})
+}
+
 func loadIdempotentProject(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -151,6 +251,7 @@ func (s *Store) ListProjects(
 				github_repository_id, config, created_at, updated_at
 			FROM ao_projects
 			WHERE org_id = $1
+			  AND archived_at IS NULL
 			  AND ($2::timestamptz IS NULL OR (created_at, id) < ($2, $3::uuid))
 			ORDER BY created_at DESC, id DESC
 			LIMIT $4`,
@@ -271,7 +372,8 @@ func (s *Store) CreateGitHubScratchProject(
 				`SELECT id, org_id, display_name, repository_url,
 					default_branch, github_repository_id, config,
 					created_at, updated_at
-				FROM ao_projects WHERE org_id = $1 AND id = $2`,
+				FROM ao_projects
+				WHERE org_id = $1 AND id = $2 AND archived_at IS NULL`,
 				orgID,
 				projectID,
 			), &project); err != nil {
@@ -671,6 +773,12 @@ func (s *Store) ListSessions(
 			ctx,
 			sessionSelect+`
 			WHERE session.org_id = $1
+			  AND EXISTS (
+				SELECT 1 FROM ao_projects project
+				WHERE project.org_id = session.org_id
+				  AND project.id = session.project_id
+				  AND project.archived_at IS NULL
+			  )
 			  AND ($2 = '' OR session.project_id = $2::uuid)
 			  AND ($3::timestamptz IS NULL OR (session.updated_at, session.id) < ($3, $4::uuid))
 			ORDER BY session.updated_at DESC, session.id DESC

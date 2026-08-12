@@ -69,10 +69,15 @@ func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
 	}
 	request.Harness = strings.TrimSpace(request.Harness)
 	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	request.Prompt = strings.TrimSpace(request.Prompt)
 	request.Mode = strings.TrimSpace(request.Mode)
 	request.SandboxProviderConnectionID = strings.TrimSpace(request.SandboxProviderConnectionID)
 	if request.Mode == "" {
-		request.Mode = "standard"
+		request.Mode = "trusted"
+	}
+	if request.Prompt == "" {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Child prompt is required.")
+		return
 	}
 	validation := createSessionRequest{
 		ProjectID: claims.SessionID, Kind: "worker",

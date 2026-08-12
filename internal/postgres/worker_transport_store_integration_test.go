@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -259,6 +261,15 @@ func TestTerminalTicketAndFramesAreDurableAndEpochFenced(t *testing.T) {
 	if err != nil || !ok || inputRequest.Kind != "terminal.input" {
 		t.Fatalf("input request=%+v ok=%v err=%v", inputRequest, ok, err)
 	}
+	if err := fixture.store.QueueTerminalResize(ctx, terminal, 120, 40); err != nil {
+		t.Fatal(err)
+	}
+	resizeRequest, ok, err := fixture.store.ClaimWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, time.Minute,
+	)
+	if err != nil || !ok || resizeRequest.Kind != "terminal.resize" {
+		t.Fatalf("resize request=%+v ok=%v err=%v", resizeRequest, ok, err)
+	}
 	if _, err := fixture.store.AppendTerminalOutput(
 		ctx,
 		fixture.orgID,
@@ -294,6 +305,145 @@ func TestTerminalTicketAndFramesAreDurableAndEpochFenced(t *testing.T) {
 		[]byte("stale"),
 	); !errors.Is(err, ErrStaleWorker) {
 		t.Fatalf("stale terminal output error = %v", err)
+	}
+}
+
+func TestWorkerActivitySignalUpdatesSessionActivity(t *testing.T) {
+	fixture := newSandboxFixture(t, "worker-activity")
+	ctx := context.Background()
+	workerID, epoch := registerTestWorker(t, fixture)
+
+	if err := fixture.store.SetWorkerActivity(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		epoch,
+		worker.ActivityEvent{
+			Harness:        "claude-code",
+			Event:          "session-start",
+			AgentSessionID: "native-session-1",
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	launch, err := fixture.store.WorkerLaunchSpec(
+		ctx, fixture.orgID, fixture.sessionID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if launch.AgentSessionID != "native-session-1" {
+		t.Fatalf("launch agent session id = %q", launch.AgentSessionID)
+	}
+
+	err = fixture.store.SetWorkerActivity(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		epoch,
+		worker.ActivityEvent{
+			Harness: "claude-code",
+			Event:   "user-prompt-submit",
+			State:   contract.ActivityActive,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := fixture.store.GetSession(
+		ctx, fixture.principal, fixture.orgID, fixture.sessionID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ActivityState != contract.ActivityActive {
+		t.Fatalf("activity = %q, want %q", session.ActivityState, contract.ActivityActive)
+	}
+
+	err = fixture.store.SetWorkerActivity(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		epoch,
+		worker.ActivityEvent{
+			Harness:   "claude-code",
+			Event:     "permission-request",
+			State:     contract.ActivityBlocked,
+			ToolName:  "Bash",
+			ToolUseID: "tool-1",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fixture.store.SetWorkerActivity(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		epoch,
+		worker.ActivityEvent{
+			Harness:   "claude-code",
+			Event:     "post-tool-use",
+			State:     contract.ActivityActive,
+			ToolName:  "Read",
+			ToolUseID: "tool-2",
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err = fixture.store.GetSession(
+		ctx, fixture.principal, fixture.orgID, fixture.sessionID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ActivityState != contract.ActivityBlocked {
+		t.Fatalf("unrelated tool cleared blocked activity: %q", session.ActivityState)
+	}
+	if err := fixture.store.SetWorkerActivity(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		epoch,
+		worker.ActivityEvent{
+			Harness:   "claude-code",
+			Event:     "post-tool-use",
+			State:     contract.ActivityActive,
+			ToolName:  "Bash",
+			ToolUseID: "tool-1",
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fixture.store.SetWorkerActivity(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		epoch,
+		worker.ActivityEvent{
+			Harness: "claude-code",
+			Event:   "stop",
+			State:   contract.ActivityIdle,
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	session, err = fixture.store.GetSession(
+		ctx, fixture.principal, fixture.orgID, fixture.sessionID,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ActivityState != contract.ActivityIdle {
+		t.Fatalf("activity = %q, want %q", session.ActivityState, contract.ActivityIdle)
 	}
 }
 

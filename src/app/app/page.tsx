@@ -9,6 +9,7 @@ import {
   type PutAgentProviderConnectionInput,
   type RedactedProviderConnection,
   type Session,
+  type UpdateProjectInput,
 } from "@aoagents/cloud-client";
 import { Search, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,10 +22,11 @@ import {
   type ScratchProjectInput,
 } from "./CloudDialogs";
 import { CloudSettings } from "./CloudSettings";
+import { CloudProjectSettingsDialog } from "./CloudProjectSettingsDialog";
 import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
 import { CloudSessionWorkspace } from "./CloudSessionWorkspace";
-import { CloudSidebar } from "./CloudSidebar";
+import { CloudSidebar, isStandaloneProject } from "./CloudSidebar";
 import {
   initialGitHubCapability,
   initialGitHubUserCapability,
@@ -56,6 +58,8 @@ export function CloudWorkspace() {
   >("organization");
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [projectSettings, setProjectSettings] = useState<Project | null>(null);
+  const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
   const [shareProject, setShareProject] = useState<Project | null>(null);
   const [github, setGitHub] = useState<GitHubCapability>(
     initialGitHubCapability,
@@ -157,6 +161,56 @@ export function CloudWorkspace() {
     [client],
   );
 
+  const loadGitHubCapabilities = useCallback(
+    async (orgId: string) => {
+      setGitHub(initialGitHubCapability);
+      setGitHubUser(initialGitHubUserCapability);
+      try {
+        const response = await fetch("/api/cloud/github-auth-status", {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error("Could not check hosted GitHub authentication.");
+        }
+        const status = (await response.json()) as { authenticated?: boolean };
+        if (!status.authenticated) {
+          const message =
+            "Connect your hosted AO account to manage GitHub access.";
+          setGitHub({
+            status: "auth-required",
+            installations: [],
+            repositories: [],
+            message,
+          });
+          setGitHubUser({
+            status: "auth-required",
+            connection: { connected: false, installations: [] },
+            message,
+          });
+          return;
+        }
+        await Promise.all([loadGitHub(orgId), loadGitHubUser()]);
+      } catch (cause) {
+        const message =
+          cause instanceof Error
+            ? cause.message
+            : "Could not check GitHub authentication.";
+        setGitHub({
+          status: "error",
+          installations: [],
+          repositories: [],
+          message,
+        });
+        setGitHubUser({
+          status: "error",
+          connection: { connected: false, installations: [] },
+          message,
+        });
+      }
+    },
+    [loadGitHub, loadGitHubUser],
+  );
+
   const loadOrganization = useCallback(
     async (orgId: string) => {
       const request = organizationRequest.current + 1;
@@ -182,8 +236,7 @@ export function CloudWorkspace() {
             ? current
             : (projectPage.items[0]?.id ?? null),
         );
-        void loadGitHub(orgId);
-        void loadGitHubUser();
+        void loadGitHubCapabilities(orgId);
         const providerLoad = providerRequest.current + 1;
         providerRequest.current = providerLoad;
         setProviders(initialProviderCapability);
@@ -212,7 +265,7 @@ export function CloudWorkspace() {
         if (organizationRequest.current === request) setLoading(false);
       }
     },
-    [client, loadGitHub, loadGitHubUser],
+    [client, loadGitHubCapabilities],
   );
 
   useEffect(() => {
@@ -251,7 +304,15 @@ export function CloudWorkspace() {
       refreshing = true;
       try {
         const page = await client.listSessions(organizationId, { limit: 100 });
-        if (active) setSessions(page.items);
+        if (active) {
+          setSessions(
+            page.items.filter(
+              (session) =>
+                !session.isTerminated &&
+                !deletingSessionIds.current.has(session.id),
+            ),
+          );
+        }
       } catch (cause) {
         if (
           active &&
@@ -292,6 +353,7 @@ export function CloudWorkspace() {
       if (event.key === "Escape") {
         setCommandOpen(false);
         setNewProjectOpen(false);
+        setProjectSettings(null);
         setShareProject(null);
       }
     };
@@ -337,7 +399,7 @@ export function CloudWorkspace() {
         harness: input.harness,
         displayName:
           kind === "orchestrator"
-            ? `${input.displayName} orchestrator`
+            ? localAgentName(input.harness)
             : input.displayName,
         prompt: input.prompt,
         mode: "trusted",
@@ -374,6 +436,54 @@ export function CloudWorkspace() {
     setSelectedProjectId(response.project.id);
     setSelectedSessionId(response.session.id);
     void loadGitHub(organizationId);
+  };
+
+  const updateProject = async (
+    project: Project,
+    input: UpdateProjectInput,
+  ) => {
+    setProjectSettingsBusy(true);
+    try {
+      const response = await client.updateProject(
+        organizationId,
+        project.id,
+        input,
+      );
+      setProjects((current) =>
+        current.map((item) =>
+          item.id === response.project.id ? response.project : item,
+        ),
+      );
+      setProjectSettings(null);
+    } finally {
+      setProjectSettingsBusy(false);
+    }
+  };
+
+  const deleteProject = async (project: Project) => {
+    setProjectSettingsBusy(true);
+    try {
+      await client.deleteProject(organizationId, project.id);
+      setProjects((current) =>
+        current.filter(({ id }) => id !== project.id),
+      );
+      setSessions((current) =>
+        current.filter(({ projectId }) => projectId !== project.id),
+      );
+      if (selectedProjectId === project.id) setSelectedProjectId(null);
+      if (
+        selectedSessionId &&
+        sessions.some(
+          ({ id, projectId }) =>
+            id === selectedSessionId && projectId === project.id,
+        )
+      ) {
+        setSelectedSessionId(null);
+      }
+      setProjectSettings(null);
+    } finally {
+      setProjectSettingsBusy(false);
+    }
   };
 
   const connectGitHub = async () => {
@@ -623,6 +733,7 @@ export function CloudWorkspace() {
             if (session) setSelectedProjectId(session.projectId);
             setSelectedSessionId(id);
           }}
+          onProjectSettings={setProjectSettings}
           onShareProject={setShareProject}
           projects={projects}
           selectedOrganizationId={organizationId}
@@ -737,9 +848,15 @@ export function CloudWorkspace() {
         <CloudShareDialog
           onClose={() => setShareProject(null)}
           project={shareProject}
-          sessions={sessions.filter(
-            ({ projectId }) => projectId === shareProject.id,
-          )}
+        />
+      ) : null}
+      {projectSettings ? (
+        <CloudProjectSettingsDialog
+          busy={projectSettingsBusy}
+          onClose={() => setProjectSettings(null)}
+          onDelete={() => deleteProject(projectSettings)}
+          onSave={(input) => updateProject(projectSettings, input)}
+          project={projectSettings}
         />
       ) : null}
     </main>
@@ -789,8 +906,12 @@ function CloudSearch({
 }) {
   const [query, setQuery] = useState("");
   const normalized = query.trim().toLowerCase();
-  const filteredProjects = projects.filter(({ displayName, repositoryUrl }) =>
-    `${displayName} ${repositoryUrl}`.toLowerCase().includes(normalized),
+  const filteredProjects = projects.filter(
+    (project) =>
+      !isStandaloneProject(project) &&
+      `${project.displayName} ${project.repositoryUrl}`
+        .toLowerCase()
+        .includes(normalized),
   );
   const filteredSessions = sessions.filter(({ displayName, branch }) =>
     `${displayName} ${branch}`.toLowerCase().includes(normalized),
@@ -893,4 +1014,17 @@ function handleLoadError(
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function localAgentName(harness: string): string {
+  switch (harness) {
+    case "claude-code":
+      return "Claude agent";
+    case "codex":
+      return "Codex agent";
+    case "cursor":
+      return "Cursor agent";
+    default:
+      return "Agent";
+  }
 }

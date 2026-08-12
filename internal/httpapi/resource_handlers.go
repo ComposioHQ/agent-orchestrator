@@ -19,6 +19,11 @@ type createProjectRequest struct {
 	Config        map[string]any `json:"config,omitempty"`
 }
 
+type updateProjectRequest struct {
+	DisplayName   string `json:"displayName"`
+	DefaultBranch string `json:"defaultBranch"`
+}
+
 type projectResponse struct {
 	ID                 string         `json:"id"`
 	OrgID              string         `json:"orgId"`
@@ -156,6 +161,67 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "page": page})
 }
 
+func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	projectID := chi.URLParam(r, "projectId")
+	if requireUUID(orgID, "orgId") != nil ||
+		requireUUID(projectID, "projectId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and projectId must be UUIDs.")
+		return
+	}
+	var request updateProjectRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	request.DefaultBranch = strings.TrimSpace(request.DefaultBranch)
+	if !validProjectUpdate(request) {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Project name or default branch is invalid.")
+		return
+	}
+	project, err := s.store.UpdateProject(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		projectID,
+		domain.UpdateProject{
+			DisplayName:   request.DisplayName,
+			DefaultBranch: request.DefaultBranch,
+		},
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project": toProjectResponse(project)})
+}
+
+// deleteProject archives the project immediately and queues every associated
+// sandbox for reconciler-owned teardown. Durable session and audit history are
+// retained instead of being cascaded out of PostgreSQL.
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	projectID := chi.URLParam(r, "projectId")
+	if requireUUID(orgID, "orgId") != nil ||
+		requireUUID(projectID, "projectId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and projectId must be UUIDs.")
+		return
+	}
+	if err := s.store.ArchiveProject(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		projectID,
+	); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"project": map[string]any{"id": projectID, "deleted": true},
+	})
+}
+
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	if requireUUID(orgID, "orgId") != nil {
@@ -178,7 +244,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	request.Mode = strings.TrimSpace(request.Mode)
 	request.SandboxProviderConnectionID = strings.TrimSpace(request.SandboxProviderConnectionID)
 	if request.Mode == "" {
-		request.Mode = "standard"
+		request.Mode = "trusted"
 	}
 	if !validSessionInput(request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Session project, kind, harness, name, or prompt is invalid.")
@@ -347,6 +413,13 @@ func validProjectInput(request createProjectRequest) bool {
 	}
 	parsed, err := url.ParseRequestURI(request.RepositoryURL)
 	return err == nil && parsed.Scheme == "https" && parsed.Host != ""
+}
+
+func validProjectUpdate(request updateProjectRequest) bool {
+	return len(request.DisplayName) >= 1 &&
+		len(request.DisplayName) <= 120 &&
+		len(request.DefaultBranch) >= 1 &&
+		len(request.DefaultBranch) <= 255
 }
 
 func validSessionInput(request createSessionRequest) bool {

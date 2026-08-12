@@ -20,9 +20,14 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 )
 
-const maxResponseBody = 2 << 20
+const (
+	maxResponseBody = 2 << 20
+	maxHookPayload  = 64 << 10
+)
 
 type client struct {
 	baseURL   string
@@ -80,6 +85,8 @@ func run(args []string) error {
 	}
 	ctx := context.Background()
 	switch args[0] {
+	case "hooks":
+		return runHook(ctx, c, args[1:], os.Stdin)
 	case "spawn":
 		return runSpawn(ctx, c, args[1:])
 	case "list", "ls", "status":
@@ -93,6 +100,35 @@ func run(args []string) error {
 	}
 }
 
+func runHook(ctx context.Context, c *client, args []string, input io.Reader) error {
+	if len(args) != 2 {
+		return nil
+	}
+	payload, err := io.ReadAll(io.LimitReader(input, maxHookPayload+1))
+	if err != nil || len(payload) > maxHookPayload {
+		return nil
+	}
+	activity, ok := worker.ActivityEventFromHook(args[0], args[1], payload)
+	if !ok {
+		return nil
+	}
+	hookCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	_ = c.request(
+		hookCtx,
+		http.MethodPost,
+		"/worker/events",
+		worker.EventRequest{
+			Type:    "agent.activity",
+			Payload: activity,
+		},
+		false,
+		nil,
+	)
+	// Hook delivery is best-effort and must never break the coding agent.
+	return nil
+}
+
 func runSpawn(ctx context.Context, c *client, args []string) error {
 	flags := flag.NewFlagSet("spawn", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -101,7 +137,7 @@ func runSpawn(ctx context.Context, c *client, args []string) error {
 	flags.StringVar(&harness, "agent", "claude-code", "alias for --harness")
 	flags.StringVar(&name, "name", "", "child display name")
 	flags.StringVar(&prompt, "prompt", "", "initial child prompt")
-	flags.StringVar(&mode, "mode", "standard", "standard or trusted")
+	flags.StringVar(&mode, "mode", "trusted", "standard or trusted")
 	flags.StringVar(
 		&providerConnection, "sandbox-provider-connection", "",
 		"sandbox provider connection id",
@@ -112,6 +148,10 @@ func runSpawn(ctx context.Context, c *client, args []string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("spawn requires --name")
+	}
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return errors.New("spawn requires --prompt")
 	}
 	if mode != "standard" && mode != "trusted" {
 		return errors.New("--mode must be standard or trusted")

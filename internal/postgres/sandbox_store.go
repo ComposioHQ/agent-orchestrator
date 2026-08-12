@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
+	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -453,8 +454,8 @@ func (s *Store) WorkerLaunchSpec(
 		err := tx.QueryRow(
 			ctx,
 			`SELECT session.id, session.project_id, session.kind, session.harness,
-				session.display_name, session.branch, session.prompt, session.mode,
-				session.denied_commands,
+				session.display_name, session.branch, session.prompt,
+				session.agent_session_id, session.mode, session.denied_commands,
 				project.repository_url, project.default_branch
 			FROM ao_sessions session
 			JOIN ao_projects project ON project.id = session.project_id
@@ -469,6 +470,7 @@ func (s *Store) WorkerLaunchSpec(
 			&launch.DisplayName,
 			&launch.Branch,
 			&launch.Prompt,
+			&launch.AgentSessionID,
 			&launch.Mode,
 			&launch.DeniedCommands,
 			&launch.RepositoryURL,
@@ -501,7 +503,27 @@ func (s *Store) RegisterWorkerBootstrap(
 		return err
 	}
 	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
-		return upsertWorkerConnection(ctx, tx, orgID, sessionID, workerID, version, epoch, encoded, false)
+		if err := upsertWorkerConnection(
+			ctx, tx, orgID, sessionID, workerID, version, epoch, encoded, false,
+		); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE ao_sessions
+			SET activity_state = 'idle',
+				activity_blocked_tool_name = '',
+				activity_blocked_tool_use_id = '',
+				updated_at = now()
+			WHERE org_id = $1 AND id = $2 AND is_terminated = false`,
+			orgID, sessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("reset replacement worker activity: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
 	})
 }
 
@@ -571,6 +593,95 @@ func (s *Store) MarkWorkerSeen(
 		}
 		return upsertWorkerConnection(ctx, tx, orgID, sessionID, workerID, version, epoch, encoded, true)
 	})
+}
+
+// SetWorkerActivity records an explicit lifecycle signal from the current
+// fenced worker. Terminal byte traffic is deliberately not an activity source.
+func (s *Store) SetWorkerActivity(
+	ctx context.Context,
+	orgID, sessionID, workerID string,
+	epoch int64,
+	activity worker.ActivityEvent,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		current, err := workerConnectionCurrent(
+			ctx, tx, orgID, sessionID, workerID, epoch,
+		)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return ErrStaleWorker
+		}
+		var currentState, blockedToolName, blockedToolUseID string
+		if err := tx.QueryRow(ctx,
+			`SELECT activity_state, activity_blocked_tool_name,
+				activity_blocked_tool_use_id
+			FROM ao_sessions
+			WHERE org_id = $1 AND id = $2 AND is_terminated = false
+			FOR UPDATE`,
+			orgID, sessionID,
+		).Scan(&currentState, &blockedToolName, &blockedToolUseID); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("load worker activity: %w", err)
+		}
+		if activity.State == "" {
+			tag, err := tx.Exec(ctx,
+				`UPDATE ao_sessions
+				SET agent_session_id = $1, updated_at = now()
+				WHERE org_id = $2 AND id = $3 AND is_terminated = false`,
+				activity.AgentSessionID, orgID, sessionID,
+			)
+			if err != nil {
+				return fmt.Errorf("set worker agent session identity: %w", err)
+			}
+			if tag.RowsAffected() == 0 {
+				return ErrNotFound
+			}
+			return nil
+		}
+		if currentState == "blocked" && activity.State == "active" &&
+			!matchingBlockedTool(activity, blockedToolName, blockedToolUseID) {
+			return nil
+		}
+		if activity.State != "blocked" {
+			activity.ToolName = ""
+			activity.ToolUseID = ""
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE ao_sessions
+			SET activity_state = $1,
+				activity_blocked_tool_name = $2,
+				activity_blocked_tool_use_id = $3,
+				agent_session_id = CASE WHEN $4 <> '' THEN $4 ELSE agent_session_id END,
+				updated_at = now()
+			WHERE org_id = $5 AND id = $6 AND is_terminated = false`,
+			activity.State, activity.ToolName, activity.ToolUseID,
+			activity.AgentSessionID, orgID, sessionID,
+		)
+		if err != nil {
+			return fmt.Errorf("set worker activity: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+func matchingBlockedTool(
+	activity worker.ActivityEvent,
+	blockedToolName, blockedToolUseID string,
+) bool {
+	if activity.Event != "post-tool-use" &&
+		activity.Event != "post-tool-use-failure" {
+		return false
+	}
+	if blockedToolUseID != "" {
+		return activity.ToolUseID == blockedToolUseID
+	}
+	return blockedToolName != "" && activity.ToolName == blockedToolName
 }
 
 func upsertWorkerConnection(

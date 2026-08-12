@@ -47,6 +47,7 @@ const (
 var workerCapabilities = []string{
 	"worker.heartbeat",
 	"worker.events",
+	"agent.activity",
 	"worker.turns",
 	"worker.credentials",
 	"repository.checkout",

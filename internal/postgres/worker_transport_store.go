@@ -678,7 +678,22 @@ func (s *Store) MarkTerminalExited(
 		if tag.RowsAffected() == 0 {
 			return ErrTransportExpired
 		}
-		return nil
+		_, err = tx.Exec(ctx,
+			`UPDATE ao_sessions session
+			SET activity_state = 'exited',
+				activity_blocked_tool_name = '',
+				activity_blocked_tool_use_id = '',
+				updated_at = now()
+			WHERE session.org_id = $1 AND session.id = $2
+			  AND EXISTS (
+				SELECT 1 FROM ao_terminal_sessions terminal
+				WHERE terminal.org_id = session.org_id
+				  AND terminal.session_id = session.id
+				  AND terminal.id = $3 AND terminal.kind = 'agent'
+			  )`,
+			orgID, sessionID, terminalID,
+		)
+		return err
 	})
 }
 

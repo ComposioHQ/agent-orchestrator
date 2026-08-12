@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   listProjects: vi.fn(),
   listSessions: vi.fn(),
   createProject: vi.fn(),
+  updateProject: vi.fn(),
+  deleteProject: vi.fn(),
   createSession: vi.fn(),
   deleteSession: vi.fn(),
   createGitHubScratchProject: vi.fn(),
@@ -37,6 +39,8 @@ vi.mock("@/lib/cloud-client", () => ({
     listProjects: mocks.listProjects,
     listSessions: mocks.listSessions,
     createProject: mocks.createProject,
+    updateProject: mocks.updateProject,
+    deleteProject: mocks.deleteProject,
     createSession: mocks.createSession,
     deleteSession: mocks.deleteSession,
     createGitHubScratchProject: mocks.createGitHubScratchProject,
@@ -49,6 +53,16 @@ vi.mock("@/lib/cloud-client", () => ({
 }));
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      Response.json(
+        { authenticated: true },
+        { headers: { "Cache-Control": "no-store" } },
+      ),
+    ),
+  );
   mocks.getCurrentAccount.mockResolvedValue({
     user: {
       id: "user-1",
@@ -101,6 +115,21 @@ beforeEach(() => {
       },
     ],
     page: { hasMore: false },
+  });
+  mocks.updateProject.mockResolvedValue({
+    project: {
+      id: "project-1",
+      orgId: "org-1",
+      displayName: "Cloud API",
+      repositoryUrl: "https://github.com/acme/cloud",
+      defaultBranch: "develop",
+      config: {},
+      createdAt: "2026-08-12T00:00:00Z",
+      updatedAt: "2026-08-12T01:00:00Z",
+    },
+  });
+  mocks.deleteProject.mockResolvedValue({
+    project: { id: "project-1", deleted: true },
   });
   mocks.listGitHubInstallations.mockResolvedValue([]);
   mocks.listGitHubRepositories.mockResolvedValue({
@@ -214,6 +243,59 @@ it("loads real account, project, and session data into shared board views", asyn
   expect(mocks.listProjects).toHaveBeenCalledWith("org-1", { limit: 100 });
 });
 
+it("shows one search result per standalone agent", async () => {
+  mocks.listProjects.mockResolvedValue({
+    items: [
+      {
+        id: "standalone-project",
+        orgId: "org-1",
+        displayName: "Solo agent",
+        repositoryUrl: "https://scratch.ao.local/solo",
+        defaultBranch: "main",
+        config: {
+          source: "standalone-agent",
+          scratch: true,
+          standalone: true,
+        },
+        createdAt: "2026-08-12T00:00:00Z",
+        updatedAt: "2026-08-12T00:00:00Z",
+      },
+    ],
+    page: { hasMore: false },
+  });
+  mocks.listSessions.mockResolvedValue({
+    items: [
+      {
+        id: "standalone-session",
+        orgId: "org-1",
+        projectId: "standalone-project",
+        kind: "worker",
+        harness: "claude-code",
+        displayName: "Solo agent",
+        branch: "main",
+        mode: "trusted",
+        deniedCommands: [],
+        activityState: "idle",
+        status: "idle",
+        runtimeConnected: true,
+        isTerminated: false,
+        createdAt: "2026-08-12T00:00:00Z",
+        updatedAt: "2026-08-12T00:00:00Z",
+      },
+    ],
+    page: { hasMore: false },
+  });
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Standalone Agents");
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+  const dialog = screen.getByRole("dialog", { name: "Search workspace" });
+  expect(within(dialog).getAllByText("Solo agent")).toHaveLength(1);
+  expect(within(dialog).queryByText("Project")).not.toBeInTheDocument();
+  expect(within(dialog).getByText("Session")).toBeVisible();
+});
+
 it("does not expose the obsolete per-project worker button", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
@@ -221,6 +303,27 @@ it("does not expose the obsolete per-project worker button", async () => {
   expect(
     screen.queryByRole("button", { name: "New worker" }),
   ).not.toBeInTheDocument();
+});
+
+it("does not issue failing GitHub requests before hosted authentication", async () => {
+  vi.mocked(fetch).mockResolvedValue(
+    Response.json(
+      { authenticated: false },
+      { headers: { "Cache-Control": "no-store" } },
+    ),
+  );
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+  await waitFor(() =>
+    expect(fetch).toHaveBeenCalledWith("/api/cloud/github-auth-status", {
+      cache: "no-store",
+    }),
+  );
+
+  expect(mocks.listGitHubInstallations).not.toHaveBeenCalled();
+  expect(mocks.listGitHubRepositories).not.toHaveBeenCalled();
+  expect(mocks.getGitHubUserConnection).not.toHaveBeenCalled();
 });
 
 it("creates a standalone scratch project and worker session", async () => {
@@ -263,6 +366,31 @@ it("creates a standalone scratch project and worker session", async () => {
     { idempotencyKey: "test-key" },
   );
   expect(screen.getByText("Standalone Agents")).toBeVisible();
+});
+
+it("uses an agent name instead of an orchestrator name for local scratch projects", async () => {
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+
+  fireEvent.click(screen.getByRole("button", { name: "New project" }));
+  fireEvent.click(screen.getByRole("button", { name: /Create a Project/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Start from scratch/ }));
+  fireEvent.change(screen.getByLabelText("Project name"), {
+    target: { value: "Local scratch" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+  await waitFor(() =>
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      "org-1",
+      expect.objectContaining({
+        kind: "orchestrator",
+        harness: "claude-code",
+        displayName: "Claude agent",
+      }),
+      { idempotencyKey: "test-key" },
+    ),
+  );
 });
 
 it("searches the loaded workspace without demo commands", async () => {
@@ -317,9 +445,6 @@ it("opens project actions and presents sharing without a false create action", a
   fireEvent.click(
     screen.getByRole("button", { name: "Actions for Cloud platform" }),
   );
-  expect(
-    screen.getByRole("menuitem", { name: "Project settings" }),
-  ).toBeDisabled();
   fireEvent.click(screen.getByRole("menuitem", { name: "Share project" }));
 
   const dialog = screen.getByRole("dialog", {
@@ -328,6 +453,78 @@ it("opens project actions and presents sharing without a false create action", a
   expect(
     within(dialog).getByRole("button", { name: "Create link" }),
   ).toBeDisabled();
+});
+
+it("updates project settings from the project action menu", async () => {
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Actions for Cloud platform" }),
+  );
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "Project settings" }),
+  );
+
+  const dialog = screen.getByRole("dialog", {
+    name: "Project settings for Cloud platform",
+  });
+  fireEvent.change(within(dialog).getByLabelText("Project name"), {
+    target: { value: "Cloud API" },
+  });
+  fireEvent.change(within(dialog).getByLabelText("Default branch"), {
+    target: { value: "develop" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+  await waitFor(() =>
+    expect(mocks.updateProject).toHaveBeenCalledWith(
+      "org-1",
+      "project-1",
+      {
+        displayName: "Cloud API",
+        defaultBranch: "develop",
+      },
+    ),
+  );
+  expect(
+    await screen.findByRole("button", { name: "Actions for Cloud API" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("dialog", {
+      name: "Project settings for Cloud platform",
+    }),
+  ).not.toBeInTheDocument();
+});
+
+it("deletes a project and removes all of its sessions from the workspace", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Actions for Cloud platform" }),
+  );
+  fireEvent.click(
+    screen.getByRole("menuitem", { name: "Project settings" }),
+  );
+  fireEvent.click(
+    within(
+      screen.getByRole("dialog", {
+        name: "Project settings for Cloud platform",
+      }),
+    ).getByRole("button", { name: "Delete project" }),
+  );
+
+  await waitFor(() =>
+    expect(mocks.deleteProject).toHaveBeenCalledWith("org-1", "project-1"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Actions for Cloud platform" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("Build cloud authentication"),
+  ).not.toBeInTheDocument();
 });
 
 it("deletes a session from its hover action menu", async () => {
@@ -343,5 +540,10 @@ it("deletes a session from its hover action menu", async () => {
   await waitFor(() =>
     expect(mocks.deleteSession).toHaveBeenCalledWith("org-1", "session-1"),
   );
+  expect(screen.queryAllByText("Build cloud authentication")).toHaveLength(0);
+
+  mocks.listSessions.mockClear();
+  fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(mocks.listSessions).toHaveBeenCalled());
   expect(screen.queryAllByText("Build cloud authentication")).toHaveLength(0);
 });

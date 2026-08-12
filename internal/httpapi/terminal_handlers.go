@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	terminalTicketTTL  = 30 * time.Second
-	terminalSessionTTL = 30 * time.Minute
-	agentTerminalTTL   = 24 * time.Hour
+	terminalTicketTTL    = 30 * time.Second
+	terminalReadyTimeout = 5 * time.Second
+	terminalSessionTTL   = 30 * time.Minute
+	agentTerminalTTL     = 24 * time.Hour
 )
 
 func (s *Server) createTerminalTicket(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +98,6 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 		if terminal.Kind != "agent" {
 			s.closeTerminal(r, terminal)
 		}
-		_ = connection.Close(websocket.StatusNormalClosure, "terminal closed")
 	}()
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -120,8 +120,18 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 	cancel()
 	if err != nil && !errors.Is(err, context.Canceled) &&
 		websocket.CloseStatus(err) == -1 {
-		s.logger.Debug("terminal stream ended", "error", err, "terminal_id", terminal.ID)
+		s.logger.Warn("terminal stream ended unexpectedly", "error", err, "terminal_id", terminal.ID)
 	}
+	status, reason := terminalStreamClose(err)
+	_ = connection.Close(status, reason)
+}
+
+func terminalStreamClose(err error) (websocket.StatusCode, string) {
+	if err != nil && !errors.Is(err, context.Canceled) &&
+		websocket.CloseStatus(err) == -1 {
+		return websocket.StatusInternalError, "terminal stream interrupted"
+	}
+	return websocket.StatusNormalClosure, "terminal closed"
 }
 
 func (s *Server) readTerminalInput(
@@ -152,9 +162,11 @@ func (s *Server) readTerminalInput(
 				if message.Columns == 0 || message.Rows == 0 {
 					return connection.Close(websocket.StatusPolicyViolation, "invalid terminal size")
 				}
-				if err := s.store.QueueTerminalResize(
-					ctx, terminal, message.Columns, message.Rows,
-				); err != nil {
+				if err := retryTerminalRequest(ctx, func() error {
+					return s.store.QueueTerminalResize(
+						ctx, terminal, message.Columns, message.Rows,
+					)
+				}); err != nil {
 					return err
 				}
 				continue
@@ -166,31 +178,35 @@ func (s *Server) readTerminalInput(
 		if len(data) == 0 {
 			continue
 		}
-		deadline := time.NewTimer(2 * time.Second)
-		ticker := time.NewTicker(50 * time.Millisecond)
-		for {
-			err = s.store.QueueTerminalInput(ctx, terminal, data)
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, postgres.ErrWorkerUnavailable) {
-				deadline.Stop()
-				ticker.Stop()
-				return err
-			}
-			select {
-			case <-ctx.Done():
-				deadline.Stop()
-				ticker.Stop()
-				return ctx.Err()
-			case <-deadline.C:
-				ticker.Stop()
-				return errors.New("terminal did not become ready")
-			case <-ticker.C:
-			}
+		if err := retryTerminalRequest(ctx, func() error {
+			return s.store.QueueTerminalInput(ctx, terminal, data)
+		}); err != nil {
+			return err
 		}
-		deadline.Stop()
-		ticker.Stop()
+	}
+}
+
+func retryTerminalRequest(ctx context.Context, operation func() error) error {
+	deadline := time.NewTimer(terminalReadyTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, postgres.ErrWorkerUnavailable) &&
+			!errors.Is(err, postgres.ErrConflict) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return errors.New("terminal request queue did not become ready")
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -208,7 +224,10 @@ func (s *Server) writeTerminalOutput(
 			return err
 		}
 		for _, frame := range frames {
-			if err := connection.Write(ctx, websocket.MessageText, frame.Data); err != nil {
+			// PTY reads are arbitrary byte chunks and can split a multi-byte
+			// UTF-8 sequence. Sending them as text makes the WebSocket library
+			// reject otherwise valid terminal output and disconnect the viewer.
+			if err := connection.Write(ctx, websocket.MessageBinary, frame.Data); err != nil {
 				return err
 			}
 			after = frame.Sequence

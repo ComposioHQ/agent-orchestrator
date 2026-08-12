@@ -30,6 +30,7 @@ export function CloudSidebar({
   onSelectProject,
   onSelectSession,
   onDeleteSession,
+  onProjectSettings,
   onShareProject,
   projects,
   selectedOrganizationId,
@@ -45,6 +46,7 @@ export function CloudSidebar({
   onSelectProject: (projectId: string) => void;
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (session: Session) => void;
+  onProjectSettings: (project: Project) => void;
   onShareProject: (project: Project) => void;
   projects: Project[];
   selectedOrganizationId: string;
@@ -184,10 +186,12 @@ export function CloudSidebar({
                     role="menu"
                   >
                     <button
-                      className="flex h-8 w-full cursor-not-allowed items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--color-text-passive)] opacity-50"
-                      disabled
+                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+                      onClick={() => {
+                        setOpenProjectMenu(null);
+                        onProjectSettings(project);
+                      }}
                       role="menuitem"
-                      title="Project update routes are not implemented"
                       type="button"
                     >
                       <Settings className="size-3.5" aria-hidden="true" />
@@ -385,7 +389,7 @@ function SessionActions({
   );
 }
 
-function isStandaloneProject(project: Project): boolean {
+export function isStandaloneProject(project: Project): boolean {
   return (
     project.config?.standalone === true ||
     project.config?.source === "standalone-agent" ||

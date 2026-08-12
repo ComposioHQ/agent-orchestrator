@@ -37,6 +37,8 @@ type Store interface {
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
 	CreateProject(context.Context, domain.Principal, string, string, domain.CreateProject) (domain.Project, error)
 	ListProjects(context.Context, domain.Principal, string, *domain.Cursor, int) ([]domain.Project, bool, error)
+	UpdateProject(context.Context, domain.Principal, string, string, domain.UpdateProject) (domain.Project, error)
+	ArchiveProject(context.Context, domain.Principal, string, string) error
 	CreateSession(context.Context, domain.Principal, string, string, int, domain.CreateSession) (domain.Session, error)
 	ListSessions(context.Context, domain.Principal, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
 	GetSession(context.Context, domain.Principal, string, string) (domain.Session, error)
@@ -48,6 +50,7 @@ type Store interface {
 	RegisterWorkerBootstrap(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
 	WorkerConnectionCurrent(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (bool, error)
 	MarkWorkerSeen(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
+	SetWorkerActivity(ctx context.Context, orgID, sessionID, workerID string, epoch int64, activity worker.ActivityEvent) error
 	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
 	ClaimWorkerTurn(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerTurn, bool, error)
 	RequestTurnCancellation(ctx context.Context, principal domain.Principal, orgID, sessionID, turnID string) error
@@ -282,6 +285,8 @@ func New(options Options) *Server {
 			}
 			router.Get("/projects", server.listProjects)
 			router.Post("/projects", server.createProject)
+			router.Patch("/projects/{projectId}", server.updateProject)
+			router.Delete("/projects/{projectId}", server.deleteProject)
 			router.Get("/provider-connections", server.listProviderConnections)
 			router.Put("/provider-connections/agents/{agent}", server.putAgentConnection)
 			router.Delete("/provider-connections/agents/{agent}", server.deleteAgentConnection)

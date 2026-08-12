@@ -143,12 +143,47 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	if got := stringField(t, objectField(t, replayed, "project"), "id"); got != projectID {
 		t.Fatalf("replayed project id = %q, want %q", got, projectID)
 	}
+	updatedResponse := requestJSON(
+		t,
+		http.MethodPatch,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/projects/"+projectID,
+		first.Token,
+		"",
+		map[string]any{
+			"displayName":   "API service",
+			"defaultBranch": "develop",
+		},
+		http.StatusOK,
+	)
+	updatedProject := objectField(t, updatedResponse, "project")
+	if stringField(t, updatedProject, "displayName") != "API service" ||
+		stringField(t, updatedProject, "defaultBranch") != "develop" ||
+		stringField(t, updatedProject, "repositoryUrl") !=
+			"https://github.com/example/api" {
+		t.Fatalf("updated project = %#v", updatedProject)
+	}
+	config := objectField(t, updatedProject, "config")
+	if config["language"] != "go" {
+		t.Fatalf("project config changed during settings update: %#v", config)
+	}
+	requestJSON(
+		t,
+		http.MethodPatch,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/projects/"+projectID,
+		second.Token,
+		"",
+		map[string]any{
+			"displayName":   "Forbidden",
+			"defaultBranch": "main",
+		},
+		http.StatusForbidden,
+	)
 	secondProjectBody := map[string]any{
 		"displayName":   "Web",
 		"repositoryUrl": "https://github.com/example/web",
 		"defaultBranch": "main",
 	}
-	requestJSON(
+	secondProjectResponse := requestJSON(
 		t,
 		http.MethodPost,
 		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/projects",
@@ -156,6 +191,11 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 		"project-create-2",
 		secondProjectBody,
 		http.StatusCreated,
+	)
+	secondProjectID := stringField(
+		t,
+		objectField(t, secondProjectResponse, "project"),
+		"id",
 	)
 	firstPage := requestJSON(
 		t,
@@ -179,6 +219,30 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	)
 	if items, ok := secondPage["items"].([]any); !ok || len(items) != 1 {
 		t.Fatalf("second project page items = %#v", secondPage["items"])
+	}
+	deletedProject := requestJSON(
+		t,
+		http.MethodDelete,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/projects/"+secondProjectID,
+		first.Token,
+		"",
+		nil,
+		http.StatusAccepted,
+	)
+	if deleted, ok := objectField(t, deletedProject, "project")["deleted"].(bool); !ok || !deleted {
+		t.Fatalf("deleted project response = %#v", deletedProject)
+	}
+	projectsAfterDelete := requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+first.OrgID+"/projects",
+		first.Token,
+		"",
+		nil,
+		http.StatusOK,
+	)
+	if items, ok := projectsAfterDelete["items"].([]any); !ok || len(items) != 1 {
+		t.Fatalf("projects after delete = %#v", projectsAfterDelete["items"])
 	}
 
 	sessionResponse := requestJSON(

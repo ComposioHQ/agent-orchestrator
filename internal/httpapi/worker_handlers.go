@@ -18,6 +18,7 @@ import (
 // Worker events are namespaced so a compromised sandbox cannot forge a
 // control-plane or billing event onto its own session stream.
 var workerEventTypes = map[string]struct{}{
+	"agent.activity":       {},
 	"worker.ready":         {},
 	"chat.assistant_delta": {},
 }
@@ -123,6 +124,7 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 			DisplayName:    launch.DisplayName,
 			Branch:         launch.Branch,
 			Prompt:         launch.Prompt,
+			AgentSessionID: launch.AgentSessionID,
 			Mode:           launch.Mode,
 			DeniedCommands: launch.DeniedCommands,
 			RepositoryURL:  launch.RepositoryURL,
@@ -281,6 +283,36 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	switch input.Type {
+	case "agent.activity":
+		var activity worker.ActivityEvent
+		if err := json.Unmarshal(input.Payload, &activity); err != nil ||
+			!worker.ValidActivityEvent(activity) {
+			writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_PAYLOAD", "The agent activity payload is invalid.")
+			return
+		}
+		launch, err := s.store.WorkerLaunchSpec(
+			r.Context(), claims.OrgID, claims.SessionID,
+		)
+		if err != nil {
+			s.writeWorkerStoreError(w, r, err)
+			return
+		}
+		if activity.Harness != launch.Harness {
+			writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_PAYLOAD", "The activity harness does not match this session.")
+			return
+		}
+		err = s.store.SetWorkerActivity(
+			r.Context(),
+			claims.OrgID,
+			claims.SessionID,
+			claims.WorkerID,
+			claims.Epoch,
+			activity,
+		)
+		if err != nil {
+			s.writeWorkerStoreError(w, r, err)
+			return
+		}
 	case "worker.ready":
 		var ready worker.ReadyEvent
 		if err := json.Unmarshal(input.Payload, &ready); err != nil ||

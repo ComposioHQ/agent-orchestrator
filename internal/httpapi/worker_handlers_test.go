@@ -63,7 +63,7 @@ func (b *recordingCheckoutBroker) IssueCheckoutGrant(
 }
 
 func TestWorkerEventAllowlistIsExact(t *testing.T) {
-	for _, eventType := range []string{"worker.ready", "chat.assistant_delta"} {
+	for _, eventType := range []string{"agent.activity", "worker.ready", "chat.assistant_delta"} {
 		if !allowedWorkerEventType(eventType) {
 			t.Fatalf("%q should be allowed", eventType)
 		}

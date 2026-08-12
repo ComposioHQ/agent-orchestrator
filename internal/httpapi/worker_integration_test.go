@@ -179,6 +179,8 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 			"kind":        "worker",
 			"harness":     "claude-code",
 			"displayName": "Worker loop",
+			"prompt":      "start from the launch command",
+			"mode":        "trusted",
 		},
 		http.StatusCreated,
 	), "session")
@@ -236,6 +238,12 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 	launch := objectField(t, bootstrap, "launch")
 	if got := stringField(t, launch, "repositoryUrl"); got != "https://github.com/example/api" {
 		t.Errorf("launch repositoryUrl = %q, want the project's repository", got)
+	}
+	if got := stringField(t, launch, "prompt"); got != "start from the launch command" {
+		t.Errorf("launch prompt = %q, want the initial child task", got)
+	}
+	if got := stringField(t, launch, "mode"); got != "trusted" {
+		t.Errorf("launch mode = %q, want trusted", got)
 	}
 
 	// The ticket is single-use: a replay buys nothing.
@@ -362,6 +370,36 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 		},
 		http.StatusAccepted,
 	)
+	workerRequest(
+		t, server.URL+"/api/cloud/v1/worker/events", renewed,
+		map[string]any{
+			"type": "agent.activity",
+			"payload": map[string]any{
+				"harness": "claude-code",
+				"event":   "user-prompt-submit",
+				"state":   "active",
+			},
+		},
+		http.StatusAccepted,
+	)
+	sessionsResponse := requestJSON(
+		t,
+		http.MethodGet,
+		server.URL+"/api/cloud/v1/orgs/"+user.OrgID+"/sessions?limit=100",
+		user.Token,
+		"",
+		nil,
+		http.StatusOK,
+	)
+	items, ok := sessionsResponse["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("sessions after activity = %#v", sessionsResponse)
+	}
+	activeSession, ok := items[0].(map[string]any)
+	if !ok || activeSession["activityState"] != "active" ||
+		activeSession["status"] != "working" {
+		t.Fatalf("active session = %#v", items[0])
+	}
 	workerRequest(
 		t, server.URL+"/api/cloud/v1/worker/events", renewed,
 		map[string]any{"type": "billing.credit", "payload": map[string]any{}},

@@ -85,6 +85,7 @@ type WorkerLaunch struct {
 	DisplayName    string
 	Branch         string
 	Prompt         string
+	AgentSessionID string
 	Mode           string
 	DeniedCommands []string
 	RepositoryURL  string
