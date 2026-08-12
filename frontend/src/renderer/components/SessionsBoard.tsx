@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import {
 	AlertTriangle,
 	Check,
@@ -361,8 +361,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 /**
  * Archive lives in its own component so expand/collapse state does not re-render
- * the kanban columns. The sheet opens under the Archive row; card mount is deferred
- * via startTransition, and open/close uses a Motion height 0↔auto tween.
+ * the kanban columns. Card mount is deferred via startTransition on first open;
+ * after that the sheet stays mounted and open/close only tweens Motion height
+ * 0↔auto (collapsed: inert / non-interactive).
  */
 const BoardArchivePanel = memo(function BoardArchivePanel({
 	activeProjectIdRef,
@@ -489,41 +490,42 @@ const BoardArchivePanel = memo(function BoardArchivePanel({
 					<span className="text-2xs font-medium tracking-wide-sm">{t("shell.archive")}</span>
 					<span className="ml-1.5 font-mono text-micro text-passive">{sessions.length}</span>
 				</button>
-				{/* Disclosure sheet under the Archive row — Motion height 0↔auto. */}
-				<AnimatePresence initial={false}>
-					{expanded && cardsReady ? (
-						<motion.div
-							key="archive-sheet"
-							initial={prefersReducedMotion ? false : { height: 0 }}
-							animate={{ height: "auto" }}
-							exit={{ height: 0 }}
-							transition={
-								prefersReducedMotion
-									? { duration: 0 }
-									: { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }
-							}
-							style={{ overflow: "hidden" }}
+				{/* Keep the sheet mounted after first open; height tracks `expanded`. */}
+				{cardsReady ? (
+					<motion.div
+						initial={prefersReducedMotion ? false : { height: 0 }}
+						animate={{ height: expanded ? "auto" : 0 }}
+						transition={
+							prefersReducedMotion
+								? { duration: 0 }
+								: { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }
+						}
+						style={{ overflow: "hidden" }}
+					>
+						<div
+							aria-hidden={!expanded}
+							aria-label={expanded ? t("shell.archivedSessions") : undefined}
+							className={cn(
+								"scrollbar-none grid max-h-[28vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3",
+								!expanded && "pointer-events-none",
+							)}
+							inert={!expanded ? true : undefined}
+							role="list"
 						>
-							<div
-								aria-label={t("shell.archivedSessions")}
-								className="scrollbar-none grid max-h-[28vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
-								role="list"
-							>
-								{sessions.map((s) => (
-									<ArchiveSessionItem
-										key={s.id}
-										session={s}
-										restoreAction={(event) => void restoreArchivedSession(event, s)}
-										restoreError={restoreErrors[s.id]}
-										isRestoring={restoringSessionId === s.id}
-										isRestoreDisabled={restoringSessionId !== undefined}
-										usage={usageBySession.get(s.id)}
-									/>
-								))}
-							</div>
-						</motion.div>
-					) : null}
-				</AnimatePresence>
+							{sessions.map((s) => (
+								<ArchiveSessionItem
+									key={s.id}
+									session={s}
+									restoreAction={(event) => void restoreArchivedSession(event, s)}
+									restoreError={restoreErrors[s.id]}
+									isRestoring={restoringSessionId === s.id}
+									isRestoreDisabled={restoringSessionId !== undefined}
+									usage={usageBySession.get(s.id)}
+								/>
+							))}
+						</div>
+					</motion.div>
+				) : null}
 			</div>
 			{restoreUnavailableSession ? (
 				<RestoreUnavailableDialog

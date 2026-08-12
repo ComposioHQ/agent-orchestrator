@@ -5,8 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { appI18n } from "../i18n";
 
-// Disable motion animations so AnimatePresence unmounts children immediately
-// (no exit-animation timer keeps them alive after conditional removal).
+// Instant motion updates so height tweens do not leave tests waiting on timers.
 vi.mock("motion/react", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("motion/react")>();
 	return {
@@ -805,6 +804,35 @@ describe("SessionsBoard", () => {
 		expect(screen.getByRole("button", { name: "Restore dead worker" })).toBeInTheDocument();
 
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
+	});
+
+	it("keeps archive cards mounted after collapse so reopen does not remount them", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		const archiveButton = screen.getByRole("button", { name: /archive/i });
+		const archive = await expandArchive();
+		const card = within(archive).getByText("dead worker");
+
+		await userEvent.click(archiveButton);
+		expect(archiveButton).toHaveAttribute("aria-expanded", "false");
+		expect(archive).toBeInTheDocument();
+		expect(archive).toHaveAttribute("aria-hidden", "true");
+		expect(archive).toHaveAttribute("inert");
+		expect(archive).toHaveClass("pointer-events-none");
+		expect(screen.queryByRole("list", { name: "Archived sessions" })).not.toBeInTheDocument();
+
+		await userEvent.click(archiveButton);
+		expect(archiveButton).toHaveAttribute("aria-expanded", "true");
+		const reopened = screen.getByRole("list", { name: "Archived sessions" });
+		expect(reopened).toBe(archive);
+		expect(within(reopened).getByText("dead worker")).toBe(card);
+		expect(reopened).not.toHaveAttribute("inert");
+		expect(reopened).not.toHaveClass("pointer-events-none");
 	});
 
 	it("renders archived sessions as a grid even when rows were previously saved", async () => {
