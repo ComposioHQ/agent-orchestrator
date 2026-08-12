@@ -1283,6 +1283,23 @@ func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 	}
 }
 
+// TestSCMMergeabilityObservationUnstableBeatsCIFailing is the repro from
+// issue #2401: a PR whose provider mergeStateStatus is UNSTABLE (GitHub
+// still considers it mergeable despite a failing/pending non-required
+// check) must surface as MergeUnstable even though its CI rollup is
+// CIFailing. Per doc.go's documented priority order, rule (3) UNSTABLE
+// wins over rule (6) CI == failing — mirroring mergeabilityFromGraphQL,
+// which switches on state before ever consulting CI.
+func TestSCMMergeabilityObservationUnstableBeatsCIFailing(t *testing.T) {
+	got := mergeabilityObservation("MERGEABLE", "UNSTABLE", string(domain.CIFailing), string(domain.ReviewApproved), false)
+	if got.State != string(domain.MergeUnstable) {
+		t.Fatalf("mergeability = %+v, want unstable (UNSTABLE must win over ci_failing per doc.go priority order)", got)
+	}
+	if contains(got.Blockers, "ci_failing") {
+		t.Fatalf("blockers = %v, unstable PR should not carry a ci_failing blocker", got.Blockers)
+	}
+}
+
 func TestFetchPullRequestsDoesNotFallbackWhenContextPageComplete(t *testing.T) {
 	fake := newFakeGH(t)
 	fx := basePRFixture()
