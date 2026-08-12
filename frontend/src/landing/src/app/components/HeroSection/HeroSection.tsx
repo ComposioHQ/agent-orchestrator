@@ -2,12 +2,11 @@
 
 import {
   COMPANY,
-  GITHUB_STARS_URL,
   HERO_SUBHEADLINE,
   TAGLINE,
 } from "@ao/shared/constants";
 import { Star } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { FaGithub } from "react-icons/fa";
 import { track } from "@/lib/analytics";
 import { DownloadButton } from "../DownloadButton";
@@ -16,11 +15,6 @@ import { ProductDemo } from "./components/ProductDemo";
 const INSTALL_COMMAND = "brew install agentwrapper/tap/agent-orchestrator";
 // Wraps at the path separators instead of mid-word once the pill goes two-line.
 const INSTALL_COMMAND_PARTS = INSTALL_COMMAND.split("/");
-const LAST_KNOWN_STARS_KEY = "ao:github-stars";
-const STARS_CACHE_TTL_MS = 60 * 60 * 1000;
-// Keep the control populated for a first visit if the static build and the
-// browser request both fail. A successful request replaces this immediately.
-const FALLBACK_STARS = 9158;
 
 function formatStarCount(count: number) {
   if (count >= 1000) {
@@ -36,58 +30,7 @@ interface HeroSectionProps {
 
 export function HeroSection({ initialStars }: HeroSectionProps) {
   const [copiedCommand, setCopiedCommand] = useState(false);
-  const [stars, setStars] = useState(initialStars ?? FALLBACK_STARS);
-
-  useEffect(() => {
-    let lastFetchedAt = 0;
-
-    try {
-      const cached = JSON.parse(
-        localStorage.getItem(LAST_KNOWN_STARS_KEY) ?? "null",
-      ) as { count?: unknown; fetchedAt?: unknown } | null;
-      if (typeof cached?.count === "number" && cached.count >= 0) {
-        if (initialStars === null) setStars(cached.count);
-        if (typeof cached.fetchedAt === "number") {
-          lastFetchedAt = cached.fetchedAt;
-        }
-      }
-    } catch {
-      // Storage may be unavailable in private or restricted browser modes.
-    }
-
-    if (Date.now() - lastFetchedAt < STARS_CACHE_TTL_MS) {
-      return;
-    }
-
-    const controller = new AbortController();
-    fetch(GITHUB_STARS_URL, {
-      headers: { Accept: "application/vnd.github.v3+json" },
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: { stargazers_count?: unknown } | null) => {
-        if (typeof data?.stargazers_count === "number") {
-          setStars(data.stargazers_count);
-          try {
-            localStorage.setItem(
-              LAST_KNOWN_STARS_KEY,
-              JSON.stringify({
-                count: data.stargazers_count,
-                fetchedAt: Date.now(),
-              }),
-            );
-          } catch {
-            // Storage may be unavailable in private or restricted browser modes.
-          }
-        }
-      })
-      .catch(() => {
-        // Keep the build-time value when the browser request is unavailable.
-      });
-
-    return () => controller.abort();
-  }, []);
+  const stars = initialStars;
 
   const githubButtonLabel =
     stars === null
