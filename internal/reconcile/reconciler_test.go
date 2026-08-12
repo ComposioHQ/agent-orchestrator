@@ -191,6 +191,7 @@ type fakeStore struct {
 	pending      []domain.Sandbox
 	observations []observation
 	tickets      []string
+	ticketScopes [][]string
 	events       []string
 	completed    []string
 	renewals     int
@@ -235,7 +236,7 @@ func (s *fakeStore) ReleaseSandboxClaim(_ context.Context, _, _, _ string, _ tim
 func (s *fakeStore) IssueAccessTicket(
 	_ context.Context,
 	_, _, purpose string,
-	_ []string,
+	scopes []string,
 	_ time.Duration,
 ) (string, error) {
 	s.mu.Lock()
@@ -245,6 +246,7 @@ func (s *fakeStore) IssueAccessTicket(
 	}
 	token := "ticket-" + purpose + "-" + string(rune('a'+len(s.tickets)))
 	s.tickets = append(s.tickets, token)
+	s.ticketScopes = append(s.ticketScopes, append([]string(nil), scopes...))
 	return token, nil
 }
 
@@ -766,5 +768,24 @@ func TestWorkerSpecReadsShapeFromTheStoredProfile(t *testing.T) {
 	}
 	if spec.Shape != "s-4vcpu-8gb" || spec.RootFS != "devbox:1" {
 		t.Errorf("spec shape/rootfs = %q/%q, want the values stored on the row", spec.Shape, spec.RootFS)
+	}
+	gotScopes := make(map[string]bool)
+	for _, scope := range store.ticketScopes[0] {
+		gotScopes[scope] = true
+	}
+	for _, required := range []string{
+		"worker:connect",
+		"worker:event",
+		"worker:turn:claim",
+		"worker:turn:poll",
+		"worker:turn:complete",
+		"worker:credential:read",
+		"worker:git",
+		"worker:orchestrate",
+		"worker:transport",
+	} {
+		if !gotScopes[required] {
+			t.Errorf("worker bootstrap ticket lacks %q", required)
+		}
 	}
 }

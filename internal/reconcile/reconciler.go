@@ -530,6 +530,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 			"worker:turn:complete",
 			"worker:credential:read",
 			"worker:git",
+			"worker:orchestrate",
 			"worker:transport",
 		},
 		bootstrapTicketTTL,
