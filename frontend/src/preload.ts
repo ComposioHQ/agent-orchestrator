@@ -19,6 +19,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { CloudAccount } from "./shared/cloud-account";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -224,6 +225,8 @@ const api = {
 			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
 		closeTab: (input: { viewId: string; tabId: string }) =>
 			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
+		openTab: (input: { viewId: string; url?: string }) =>
+			ipcRenderer.invoke("browser:openTab", input) as Promise<BrowserTabsState>,
 		devtools: (input: BrowserDevToolsInput) =>
 			ipcRenderer.invoke("browser:devtools", input) as Promise<BrowserDevToolsState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
@@ -341,6 +344,18 @@ const api = {
 	featureBuilds: {
 		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
+	},
+	cloud: {
+		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
+		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
+		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
+		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, account: CloudAccount | null) => listener(account);
+			ipcRenderer.on("cloud:sessionChanged", wrapped);
+			return () => {
+				ipcRenderer.off("cloud:sessionChanged", wrapped);
+			};
+		},
 	},
 };
 

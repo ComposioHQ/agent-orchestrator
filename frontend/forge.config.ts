@@ -5,15 +5,24 @@ import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
 
-// Default GitHub release target (production). aoagents was the temporary rewrite
-// home; releases land on AgentWrapper (spec §1.1).
-const DEFAULT_RELEASE_REPO = "AgentWrapper/agent-orchestrator";
+// Default GitHub release target (production). Releases land on Untrivial-ai
+// (the org the repo was transferred to in July 2026; AgentWrapper and aoagents
+// are prior homes). Builds cut by CI must NOT rely on this fallback: the
+// workflows set AO_RELEASE_REPO to the repo they run in, and build-artifacts.yml
+// asserts the baked app-update.yml matches it, so a future org/repo rename
+// fails the build instead of stranding the fleet on a redirect (#3523).
+const DEFAULT_RELEASE_REPO = "Untrivial-ai/agent-orchestrator";
 
 // The packaged binary name (no extension). Single source of truth: the packager
 // names the exe/ELF from this, and the NSIS + deb makers must point their
 // shortcut/launcher at the SAME name. Drift here means a broken Start menu
 // shortcut on Windows (#2414) or "could not find the Electron app binary" on deb.
 const EXECUTABLE_NAME = "agent-orchestrator";
+const AUTH_PROTOCOL = {
+	name: "Agent Orchestrator authentication callback",
+	schemes: ["ao-app"],
+};
+const AUTH_PROTOCOL_MIME_TYPE = "x-scheme-handler/ao-app";
 
 // parseReleaseRepo turns an "owner/repo" string (from AO_RELEASE_REPO) into the
 // publisher-github { owner, name } shape, falling back to the production default
@@ -33,6 +42,7 @@ const config: ForgeConfig = {
 		appBundleId: "dev.agent-orchestrator.desktop",
 		name: "Agent Orchestrator",
 		executableName: EXECUTABLE_NAME,
+		protocols: [AUTH_PROTOCOL],
 		appCategoryType: "public.app-category.developer-tools",
 		// App icon. electron-packager appends the per-platform extension
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
@@ -156,6 +166,7 @@ const config: ForgeConfig = {
 				appId: "dev.agent-orchestrator.desktop",
 				productName: "Agent Orchestrator",
 				icon: "assets/icon.png",
+				protocols: [AUTH_PROTOCOL],
 			},
 			["linux"],
 		),
@@ -170,6 +181,7 @@ const config: ForgeConfig = {
 					icon: "assets/icon.png",
 					maintainer: "Agent Orchestrator",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
 				},
 			},
 		},
@@ -181,6 +193,7 @@ const config: ForgeConfig = {
 					// rpmbuild rejects a spec with an empty License field.
 					license: "MIT",
 					homepage: "https://github.com/aoagents/agent-orchestrator",
+					mimeType: [AUTH_PROTOCOL_MIME_TYPE],
 				},
 			},
 		},
@@ -192,8 +205,9 @@ const config: ForgeConfig = {
 			// fork without a source edit. AO_RELEASE_REPO is "owner/repo"; it defaults
 			// to the production target. The dev/test loop sets
 			// AO_RELEASE_REPO=harshitsinghbhandari/agent-orchestrator (spec §1.1, §8).
-			// Note: aoagents/agent-orchestrator was the temporary rewrite home and is
-			// intentionally NOT the default; releases land on AgentWrapper.
+			// Note: aoagents/agent-orchestrator and AgentWrapper/agent-orchestrator
+			// are prior homes and intentionally NOT the default; releases land on
+			// Untrivial-ai.
 			config: {
 				repository: parseReleaseRepo(process.env.AO_RELEASE_REPO),
 				prerelease: process.env.AO_RELEASE_PRERELEASE === "true",
