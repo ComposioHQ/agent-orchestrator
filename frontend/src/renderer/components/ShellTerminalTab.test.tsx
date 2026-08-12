@@ -129,6 +129,14 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-px");
 	});
 
+	it("places the active connected-terminal indicator along the top edge", () => {
+		renderTab({ appearance: "connected", isActive: true });
+
+		const classes = screen.getByRole("tab", { name: "ao" }).parentElement?.classList;
+		expect(classes?.contains("after:top-0")).toBe(true);
+		expect(classes?.contains("after:bottom-0")).toBe(false);
+	});
+
 	it("optically centers the auxiliary terminal glyph with its label", () => {
 		renderTab({ appearance: "connected" });
 

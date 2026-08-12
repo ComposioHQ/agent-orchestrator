@@ -247,6 +247,14 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("tab", { name: "review the change" })).not.toBeInTheDocument();
 	});
 
+	it("places the active session indicator along the top edge", () => {
+		renderCenterPane({ session: worker });
+
+		const classes = screen.getByRole("tab", { name: /^do the thing/ }).parentElement?.classList;
+		expect(classes?.contains("after:top-0")).toBe(true);
+		expect(classes?.contains("after:bottom-0")).toBe(false);
+	});
+
 	it("keeps the main agent tab permanent, prominent, and solely branded by the harness", () => {
 		const [shell] = makeShells(1);
 		renderCenterPane({
@@ -496,12 +504,13 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 	});
 
-	it("keeps fixed-width auxiliary tabs in a native scroll strip while the owner stays fixed", () => {
+	it("keeps fixed-width auxiliary tabs in a visible native scroll strip while the owner stays fixed", () => {
 		const shells = makeShells(8);
 		renderCenterPane({ session: worker, shellTerminals: shells });
 
 		const scrollRegion = document.querySelector(".overflow-x-auto");
-		expect(scrollRegion?.classList.contains("scrollbar-none")).toBe(true);
+		expect(scrollRegion?.classList.contains("terminal-tabs-scrollbar")).toBe(true);
+		expect(scrollRegion?.classList.contains("scrollbar-none")).toBe(false);
 		expect(scrollRegion?.classList.contains("min-w-flex-min")).toBe(true);
 		expect(scrollRegion?.classList.contains("flex-1")).toBe(true);
 		expect(scrollRegion?.contains(screen.getByRole("tab", { name: /^do the thing/ }).parentElement)).toBe(false);

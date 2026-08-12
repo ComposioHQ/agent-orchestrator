@@ -1335,6 +1335,37 @@ textarea,
 	height: 0;
 }
 
+.terminal-tabs-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: color-mix(in srgb, var(--color-scrollbar) 30%, transparent) transparent;
+}
+
+.terminal-tabs-scrollbar::-webkit-scrollbar {
+	height: 3px;
+}
+
+.terminal-tabs-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.terminal-tabs-scrollbar::-webkit-scrollbar-track,
+.terminal-tabs-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.terminal-tabs-scrollbar::-webkit-scrollbar-thumb {
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 30%, transparent);
+}
+
+.terminal-tabs-scrollbar:hover::-webkit-scrollbar-thumb,
+.terminal-tabs-scrollbar:focus-within::-webkit-scrollbar-thumb,
+.terminal-tabs-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 52%, transparent);
+}
+
 .board-scrollbar::-webkit-scrollbar {
 	width: 4px;
 	height: 4px;
