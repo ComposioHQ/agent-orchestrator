@@ -85,15 +85,6 @@ func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Child session input is invalid.")
 		return
 	}
-	active, err := s.store.CountOrchestratorSandboxes(r.Context(), claims.OrgID, claims.SessionID)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	if active >= s.maxSandboxes {
-		writeError(w, r, http.StatusConflict, "SANDBOX_QUOTA_EXCEEDED", "This organization has reached its limit of concurrent sessions.")
-		return
-	}
 	plan, err := s.provisioning.SessionPlan()
 	if err != nil {
 		s.logger.Error("resolve child sandbox provisioning plan", "error", err, "request_id", requestID(r))
@@ -101,13 +92,13 @@ func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	child, err := s.store.CreateOrchestratorChild(
-		r.Context(), claims.OrgID, claims.SessionID, key,
+		r.Context(), claims.OrgID, claims.SessionID, key, s.maxSandboxes,
 		domain.CreateSession{
 			Kind: "worker", Harness: request.Harness, DisplayName: request.DisplayName,
 			Prompt: request.Prompt, Mode: request.Mode, DeniedCommands: request.DeniedCommands,
 			Provider: plan.Provider, SandboxConnectionID: request.SandboxProviderConnectionID,
 			ResourceProfile: plan.ResourceProfile, BootstrapContext: plan.BootstrapContext,
-			AutoStopMinutes: plan.AutoStopMinutes, Release: s.release,
+			Release: s.release,
 		},
 	)
 	if err != nil {

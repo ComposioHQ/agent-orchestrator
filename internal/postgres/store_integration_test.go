@@ -162,6 +162,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"session-key",
+		100,
 		sessionInput,
 	)
 	if err != nil {
@@ -172,6 +173,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"session-key",
+		100,
 		sessionInput,
 	)
 	if err != nil {
@@ -193,7 +195,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	orchestratorInput.DisplayName = "Project orchestrator"
 	orchestratorInput.Prompt = ""
 	orchestrator, err := store.CreateSession(
-		ctx, first, firstOrg, "orchestrator-session-key", orchestratorInput,
+		ctx, first, firstOrg, "orchestrator-session-key", 100, orchestratorInput,
 	)
 	if err != nil {
 		t.Fatalf("create orchestrator: %v", err)
@@ -203,7 +205,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	childInput.DisplayName = "Delegated worker"
 	childInput.Prompt = ""
 	child, err := store.CreateOrchestratorChild(
-		ctx, firstOrg, orchestrator.ID, "orchestrator-child-key", childInput,
+		ctx, firstOrg, orchestrator.ID, "orchestrator-child-key", 10, childInput,
 	)
 	if err != nil {
 		t.Fatalf("create orchestrator child: %v", err)
@@ -226,7 +228,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		t.Fatalf("message to same-project peer error = %v, want forbidden", err)
 	}
 	if _, err := store.CreateOrchestratorChild(
-		ctx, firstOrg, session.ID, "worker-child-key", childInput,
+		ctx, firstOrg, session.ID, "worker-child-key", 10, childInput,
 	); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("ordinary worker child spawn error = %v, want forbidden", err)
 	}
@@ -285,6 +287,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"mismatched-provider-session",
+		100,
 		connectionInput,
 	); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("mismatched sandbox provider error = %v", err)
@@ -295,6 +298,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"matching-provider-session",
+		100,
 		connectionInput,
 	); err != nil {
 		t.Fatalf("create session with matching sandbox provider: %v", err)
@@ -308,6 +312,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"empty-session-key",
+		100,
 		emptySessionInput,
 	)
 	if err != nil {
@@ -367,6 +372,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"concurrent-session-key",
+		100,
 		concurrentInput,
 	)
 	if err != nil {
@@ -773,6 +779,7 @@ func exerciseGitHubStore(
 		owner,
 		orgID,
 		"github-project-session-"+attempt.ID,
+		100,
 		domain.CreateSession{
 			ProjectID: project.ID, Kind: "worker",
 			Harness: "claude-code", DisplayName: "GitHub checkout",

@@ -55,6 +55,7 @@ func (s *Store) ListOrchestratorChildren(
 func (s *Store) CreateOrchestratorChild(
 	ctx context.Context,
 	orgID, orchestratorSessionID, idempotencyKey string,
+	maxActiveSandboxes int,
 	input domain.CreateSession,
 ) (domain.Session, error) {
 	var child domain.Session
@@ -66,7 +67,8 @@ func (s *Store) CreateOrchestratorChild(
 		input.ProjectID = projectID
 		input.Kind = "worker"
 		child, err = createSessionTx(
-			ctx, tx, orgID, idempotencyKey, input, orchestratorSessionID, "",
+			ctx, tx, orgID, idempotencyKey, maxActiveSandboxes,
+			input, orchestratorSessionID, "",
 		)
 		return err
 	})
@@ -106,25 +108,6 @@ func (s *Store) SendOrchestratorChildMessage(
 		return err
 	})
 	return event, err
-}
-
-func (s *Store) CountOrchestratorSandboxes(
-	ctx context.Context,
-	orgID, orchestratorSessionID string,
-) (int, error) {
-	var count int
-	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
-		if _, err := requireActiveOrchestrator(ctx, tx, orgID, orchestratorSessionID); err != nil {
-			return err
-		}
-		return tx.QueryRow(
-			ctx,
-			`SELECT count(*) FROM ao_sandboxes
-			WHERE org_id = $1 AND desired_state <> 'deleted'`,
-			orgID,
-		).Scan(&count)
-	})
-	return count, err
 }
 
 func requireActiveOrchestrator(

@@ -22,7 +22,6 @@ func nodeOpsEnvironment(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-4vcpu-8gb")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
-	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
@@ -49,7 +48,6 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "")
 	t.Setenv("AO_CLOUD_NODEOPS_INGRESS", "")
 	t.Setenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH", "")
-	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "")
 	t.Setenv("AO_CLOUD_DOCKER_HOST", "unix:///var/run/docker.sock")
 	t.Setenv("AO_CLOUD_DOCKER_WORKER_IMAGE", "ao-cloud-worker:test")
@@ -137,7 +135,6 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
-	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com/")
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
@@ -170,7 +167,6 @@ func TestLoadRequiresHostedRelease(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
-	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_RELEASE", "")
 
@@ -202,7 +198,6 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
-	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
@@ -233,7 +228,6 @@ func TestLoadRejectsMismatchedWorkOSIssuer(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
-	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "30")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
 
@@ -253,7 +247,6 @@ func TestLoadRejectsLocalAuthOutsideDevelopment(t *testing.T) {
 	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "")
 	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "")
-	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", "")
 	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "")
 
 	if _, err := Load(); err == nil {
@@ -349,9 +342,6 @@ func TestLoadAcceptsCompleteNodeOpsConfiguration(t *testing.T) {
 	}
 	if cfg.NodeOpsWorkerTokenTTL != 15*time.Minute {
 		t.Errorf("NodeOpsWorkerTokenTTL = %v, want 15m", cfg.NodeOpsWorkerTokenTTL)
-	}
-	if cfg.NodeOpsAutoPauseMinutes != 30 {
-		t.Errorf("NodeOpsAutoPauseMinutes = %d, want 30", cfg.NodeOpsAutoPauseMinutes)
 	}
 	if cfg.MaxSandboxesPerOrg != 10 {
 		t.Errorf("MaxSandboxesPerOrg = %d, want the default 10", cfg.MaxSandboxesPerOrg)

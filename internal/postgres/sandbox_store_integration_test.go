@@ -12,6 +12,7 @@ import (
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -20,6 +21,7 @@ type sandboxFixture struct {
 	pool      *pgxpool.Pool
 	principal domain.Principal
 	orgID     string
+	projectID string
 	sessionID string
 	unique    string
 }
@@ -68,7 +70,7 @@ func newSandboxFixture(t *testing.T, label string) sandboxFixture {
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	session, err := store.CreateSession(ctx, principal, orgID, slug+"-session-key", domain.CreateSession{
+	session, err := store.CreateSession(ctx, principal, orgID, slug+"-session-key", 100, domain.CreateSession{
 		ProjectID:   project.ID,
 		Kind:        "worker",
 		Harness:     "claude-code",
@@ -78,29 +80,40 @@ func newSandboxFixture(t *testing.T, label string) sandboxFixture {
 			`{"provider":"nodeops","nodeOps":{"defaultShape":"s-4vcpu-8gb","defaultRootFs":"devbox:1"}}`,
 		),
 		BootstrapContext: json.RawMessage(`{"provider":"nodeops"}`),
-		AutoStopMinutes:  30,
 		Release:          "test-release",
 	})
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	// Park every other sandbox so this fixture's row is the only one due for
-	// reconciliation. The test database is disposable and shared across runs.
 	if _, err := pool.Exec(
 		ctx,
 		`UPDATE ao_sandboxes
 		SET reconcile_after = now() + interval '1 day'
-		WHERE session_id <> $1`,
+		WHERE session_id = $1`,
 		session.ID,
 	); err != nil {
-		t.Fatalf("quiesce other sandboxes: %v", err)
+		t.Fatalf("park fixture sandbox: %v", err)
 	}
+	// Park only this fixture at cleanup. Updating every other sandbox made
+	// lifecycle tests in concurrently running packages steal each other's work.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(
+			context.Background(),
+			`UPDATE ao_sandboxes
+			SET reconcile_after = now() + interval '1 day',
+				reconcile_lease_owner = '',
+				reconcile_lease_until = NULL
+			WHERE org_id = $1`,
+			orgID,
+		)
+	})
 
 	return sandboxFixture{
 		store:     store,
 		pool:      pool,
 		principal: principal,
 		orgID:     orgID,
+		projectID: project.ID,
 		sessionID: session.ID,
 		unique:    unique,
 	}
@@ -122,24 +135,57 @@ func (f sandboxFixture) makeDue(t *testing.T) {
 
 func (f sandboxFixture) claimOwn(t *testing.T, owner string) domain.Sandbox {
 	t.Helper()
-	claimed, err := f.store.ClaimSandboxes(context.Background(), owner, 20, 30*time.Second)
+	ctx := context.Background()
+	var record domain.Sandbox
+	err := f.store.withService(ctx, func(tx pgx.Tx) error {
+		var err error
+		record, err = scanSandbox(tx.QueryRow(
+			ctx,
+			`UPDATE ao_sandboxes sandbox
+			SET reconcile_lease_owner = $2,
+				reconcile_lease_until = now() + interval '30 seconds'
+			WHERE session_id = $1
+				AND (reconcile_lease_until IS NULL OR reconcile_lease_until < now())
+			RETURNING `+sandboxColumns,
+			f.sessionID,
+			owner,
+		))
+		return err
+	})
 	if err != nil {
-		t.Fatalf("ClaimSandboxes() error = %v", err)
+		t.Fatalf("claim fixture sandbox: %v", err)
 	}
-	for _, record := range claimed {
-		if record.SessionID == f.sessionID {
-			return record
-		}
-	}
-	t.Fatalf("the fixture sandbox was not claimed; got %d other rows", len(claimed))
-	return domain.Sandbox{}
+	return record
 }
 
 func TestClaimSandboxesLeasesExclusively(t *testing.T) {
 	fixture := newSandboxFixture(t, "claim")
 	ctx := context.Background()
+	fixture.makeDue(t)
 
-	record := fixture.claimOwn(t, "owner-a")
+	claimed, err := fixture.store.ClaimSandboxes(ctx, "owner-a", 100, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record domain.Sandbox
+	for _, candidate := range claimed {
+		if candidate.SessionID == fixture.sessionID {
+			record = candidate
+			continue
+		}
+		if err := fixture.store.ReleaseSandboxClaim(
+			ctx,
+			"owner-a",
+			candidate.OrgID,
+			candidate.SessionID,
+			time.Now(),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if record.SessionID == "" {
+		t.Fatal("fixture sandbox was not claimed")
+	}
 	if record.OrgID != fixture.orgID || record.Provider != "nodeops" {
 		t.Fatalf("claimed sandbox = %+v, want the fixture row", record)
 	}
@@ -148,7 +194,7 @@ func TestClaimSandboxesLeasesExclusively(t *testing.T) {
 	}
 
 	// A second reconciler must not see a row that is still leased.
-	second, err := fixture.store.ClaimSandboxes(ctx, "owner-b", 20, 30*time.Second)
+	second, err := fixture.store.ClaimSandboxes(ctx, "owner-b", 100, 30*time.Second)
 	if err != nil {
 		t.Fatalf("ClaimSandboxes() error = %v", err)
 	}
@@ -162,9 +208,15 @@ func TestClaimSandboxesLeasesExclusively(t *testing.T) {
 func TestConcurrentClaimsNeverOverlap(t *testing.T) {
 	fixture := newSandboxFixture(t, "concurrent")
 	ctx := context.Background()
+	fixture.makeDue(t)
 
 	var mu sync.Mutex
 	seen := map[string]int{}
+	type ownedClaim struct {
+		owner  string
+		record domain.Sandbox
+	}
+	var unrelated []ownedClaim
 	var wait sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wait.Add(1)
@@ -178,10 +230,24 @@ func TestConcurrentClaimsNeverOverlap(t *testing.T) {
 			defer mu.Unlock()
 			for _, record := range claimed {
 				seen[record.SessionID]++
+				if record.SessionID != fixture.sessionID {
+					unrelated = append(unrelated, ownedClaim{owner: owner, record: record})
+				}
 			}
 		}("owner-" + string(rune('a'+i)))
 	}
 	wait.Wait()
+	for _, claim := range unrelated {
+		if err := fixture.store.ReleaseSandboxClaim(
+			ctx,
+			claim.owner,
+			claim.record.OrgID,
+			claim.record.SessionID,
+			time.Now(),
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	for sessionID, count := range seen {
 		if count > 1 {
@@ -217,6 +283,60 @@ func TestUpdateSandboxObservationRequiresTheLease(t *testing.T) {
 	}
 }
 
+func TestExpiredLeaseCannotWriteAndLiveLeaseRenews(t *testing.T) {
+	fixture := newSandboxFixture(t, "fence")
+	ctx := context.Background()
+	fixture.claimOwn(t, "owner-a")
+	if _, err := fixture.pool.Exec(
+		ctx,
+		`UPDATE ao_sandboxes
+		SET reconcile_lease_until = now() - interval '1 second'
+		WHERE session_id = $1`,
+		fixture.sessionID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.UpdateSandboxObservation(
+		ctx,
+		"owner-a",
+		fixture.orgID,
+		fixture.sessionID,
+		fixture.environmentID("stale"),
+		domain.SandboxObservedProvisioning,
+		"",
+		time.Now(),
+	); !errors.Is(err, ErrSandboxLeaseLost) {
+		t.Fatalf("expired owner update error = %v, want ErrSandboxLeaseLost", err)
+	}
+
+	fixture.claimOwn(t, "owner-b")
+	if err := fixture.store.RenewSandboxClaim(
+		ctx,
+		"owner-b",
+		fixture.orgID,
+		fixture.sessionID,
+		time.Minute,
+	); err != nil {
+		t.Fatalf("RenewSandboxClaim() error = %v", err)
+	}
+	second, err := fixture.store.ClaimSandboxes(ctx, "owner-c", 100, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range second {
+		if record.SessionID == fixture.sessionID {
+			t.Fatal("another owner claimed a sandbox whose lease was renewed")
+		}
+		_ = fixture.store.ReleaseSandboxClaim(
+			ctx,
+			"owner-c",
+			record.OrgID,
+			record.SessionID,
+			time.Now(),
+		)
+	}
+}
+
 func TestObservationClearsTheHeartbeatWhenComputeIsReplaced(t *testing.T) {
 	fixture := newSandboxFixture(t, "replace")
 	ctx := context.Background()
@@ -234,7 +354,6 @@ func TestObservationClearsTheHeartbeatWhenComputeIsReplaced(t *testing.T) {
 		t.Fatalf("MarkWorkerSeen() error = %v", err)
 	}
 
-	fixture.makeDue(t)
 	fixture.claimOwn(t, "owner-a")
 	if err := fixture.store.UpdateSandboxObservation(
 		ctx, "owner-a", fixture.orgID, fixture.sessionID,
@@ -384,6 +503,85 @@ func TestANewEpochRetiresTheOldWorker(t *testing.T) {
 	}
 }
 
+func TestIssuingReplacementTicketRotatesEpochAndInvalidatesPreviousTicket(t *testing.T) {
+	fixture := newSandboxFixture(t, "ticket-rotation")
+	ctx := context.Background()
+
+	firstToken, err := fixture.store.IssueAccessTicket(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		"worker_bootstrap",
+		[]string{"worker:connect"},
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := fixture.store.RedeemWorkerBootstrapTicket(ctx, firstToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstWorker := "worker-first"
+	if err := fixture.store.RegisterWorkerBootstrap(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		firstWorker,
+		"0.1.0",
+		first.WorkerEpoch,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	staleToken, err := fixture.store.IssueAccessTicket(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		"worker_bootstrap",
+		[]string{"worker:connect"},
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshToken, err := fixture.store.IssueAccessTicket(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		"worker_bootstrap",
+		[]string{"worker:connect"},
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.RedeemWorkerBootstrapTicket(ctx, staleToken); !errors.Is(err, ErrInvalidTicket) {
+		t.Fatalf("superseded ticket error = %v, want ErrInvalidTicket", err)
+	}
+	current, err := fixture.store.WorkerConnectionCurrent(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		firstWorker,
+		first.WorkerEpoch,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current {
+		t.Fatal("issuing a replacement launch ticket did not fence the old worker")
+	}
+	fresh, err := fixture.store.RedeemWorkerBootstrapTicket(ctx, freshToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.WorkerEpoch <= first.WorkerEpoch {
+		t.Fatalf("replacement epoch = %d, first epoch = %d", fresh.WorkerEpoch, first.WorkerEpoch)
+	}
+}
+
 func TestWorkerLaunchSpecCarriesTheRepository(t *testing.T) {
 	fixture := newSandboxFixture(t, "launch")
 
@@ -398,9 +596,67 @@ func TestWorkerLaunchSpecCarriesTheRepository(t *testing.T) {
 	}
 }
 
-func TestCountActiveSandboxesAndSessionDeletion(t *testing.T) {
+func TestConcurrentSessionCreationCannotOversubscribeQuota(t *testing.T) {
+	fixture := newSandboxFixture(t, "quota-race")
+	ctx := context.Background()
+	const callers = 8
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		go func(index int) {
+			_, err := fixture.store.CreateSession(
+				ctx,
+				fixture.principal,
+				fixture.orgID,
+				"quota-race-"+string(rune('a'+index)),
+				2, // The fixture already consumes one slot.
+				domain.CreateSession{
+					ProjectID:   fixture.projectID,
+					Kind:        "worker",
+					Harness:     "claude-code",
+					DisplayName: "Concurrent quota allocation",
+					Provider:    "nodeops",
+				},
+			)
+			errs <- err
+		}(i)
+	}
+
+	succeeded := 0
+	exceeded := 0
+	for i := 0; i < callers; i++ {
+		switch err := <-errs; {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrSandboxQuotaExceeded):
+			exceeded++
+		default:
+			t.Fatalf("concurrent CreateSession() error = %v", err)
+		}
+	}
+	if succeeded != 1 || exceeded != callers-1 {
+		t.Fatalf("quota race results = %d succeeded, %d exceeded; want 1/%d", succeeded, exceeded, callers-1)
+	}
+	count, err := fixture.store.CountActiveSandboxes(ctx, fixture.principal, fixture.orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("active sandboxes = %d, want exactly quota 2", count)
+	}
+}
+
+func TestQuotaIsReleasedOnlyAfterDurableSessionTermination(t *testing.T) {
 	fixture := newSandboxFixture(t, "quota")
 	ctx := context.Background()
+	if _, err := fixture.store.AppendSessionEvent(
+		ctx,
+		fixture.orgID,
+		fixture.sessionID,
+		"sandbox.provisioning",
+		json.RawMessage(`{"provider":"nodeops"}`),
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	count, err := fixture.store.CountActiveSandboxes(ctx, fixture.principal, fixture.orgID)
 	if err != nil {
@@ -415,27 +671,48 @@ func TestCountActiveSandboxesAndSessionDeletion(t *testing.T) {
 	); err != nil {
 		t.Fatalf("SetSandboxDesiredState() error = %v", err)
 	}
-	// A sandbox marked for deletion no longer counts against the quota, but its
-	// row survives until the provider teardown actually completes.
+	// Delete intent still holds quota until provider absence is confirmed.
+	count, err = fixture.store.CountActiveSandboxes(ctx, fixture.principal, fixture.orgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("active sandboxes after delete intent = %d, want 1", count)
+	}
+
+	fixture.claimOwn(t, "delete-owner")
+	if err := fixture.store.CompleteSandboxDeletion(
+		ctx,
+		"delete-owner",
+		fixture.orgID,
+		fixture.sessionID,
+	); err != nil {
+		t.Fatalf("CompleteSandboxDeletion() error = %v", err)
+	}
 	count, err = fixture.store.CountActiveSandboxes(ctx, fixture.principal, fixture.orgID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if count != 0 {
-		t.Fatalf("active sandboxes after delete intent = %d, want 0", count)
+		t.Fatalf("active sandboxes after confirmed deletion = %d, want 0", count)
 	}
 
-	if err := fixture.store.DeleteSandboxSession(ctx, fixture.orgID, fixture.sessionID); err != nil {
-		t.Fatalf("DeleteSandboxSession() error = %v", err)
-	}
-	var remaining int
+	var observed string
+	var terminated bool
+	var events int
 	if err := fixture.pool.QueryRow(
-		ctx, `SELECT count(*) FROM ao_sandboxes WHERE session_id = $1`, fixture.sessionID,
-	).Scan(&remaining); err != nil {
+		ctx,
+		`SELECT sandbox.observed_state, session.is_terminated,
+			(SELECT count(*) FROM ao_events event WHERE event.session_id = session.id)
+		FROM ao_sessions session
+		JOIN ao_sandboxes sandbox ON sandbox.session_id = session.id
+		WHERE session.id = $1`,
+		fixture.sessionID,
+	).Scan(&observed, &terminated, &events); err != nil {
 		t.Fatal(err)
 	}
-	if remaining != 0 {
-		t.Fatalf("sandbox rows after session deletion = %d, want 0", remaining)
+	if observed != domain.SandboxObservedDeleted || !terminated || events != 1 {
+		t.Fatalf("retained history = observed %q, terminated %v, events %d", observed, terminated, events)
 	}
 }
 

@@ -53,15 +53,14 @@ type Config struct {
 	// WorkerHeartbeatTimeout is how long a silent worker is tolerated.
 	WorkerHeartbeatTimeout time.Duration
 
-	NodeOpsBaseURL          string
-	NodeOpsAPIKey           string
-	NodeOpsDefaultShape     string
-	NodeOpsDefaultRootFS    string
-	NodeOpsIngress          string
-	NodeOpsSSHKeyPath       string
-	NodeOpsRegion           string
-	NodeOpsAutoPauseMinutes int
-	NodeOpsWorkerTokenTTL   time.Duration
+	NodeOpsBaseURL        string
+	NodeOpsAPIKey         string
+	NodeOpsDefaultShape   string
+	NodeOpsDefaultRootFS  string
+	NodeOpsIngress        string
+	NodeOpsSSHKeyPath     string
+	NodeOpsRegion         string
+	NodeOpsWorkerTokenTTL time.Duration
 
 	DockerHost           string
 	DockerWorkerImage    string
@@ -134,9 +133,6 @@ func Load() (Config, error) {
 		NodeOpsIngress:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_INGRESS")),
 		NodeOpsSSHKeyPath:    strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH")),
 		NodeOpsRegion:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_REGION")),
-		NodeOpsAutoPauseMinutes: intEnvOrDefault(
-			"AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES", sandbox.DefaultAutoPauseMinutes,
-		),
 		NodeOpsWorkerTokenTTL: durationEnv(
 			"AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
 		),
@@ -264,14 +260,13 @@ func Load() (Config, error) {
 	}
 	if cfg.SandboxProvider == "nodeops" || cfg.Hosted() {
 		if err := (sandbox.NodeOpsConfig{
-			BaseURL:          cfg.NodeOpsBaseURL,
-			APIKey:           cfg.NodeOpsAPIKey,
-			DefaultShape:     cfg.NodeOpsDefaultShape,
-			DefaultRootFS:    cfg.NodeOpsDefaultRootFS,
-			Ingress:          cfg.NodeOpsIngress,
-			SSHKeyPath:       cfg.NodeOpsSSHKeyPath,
-			AutoPauseMinutes: cfg.NodeOpsAutoPauseMinutes,
-			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
+			BaseURL:        cfg.NodeOpsBaseURL,
+			APIKey:         cfg.NodeOpsAPIKey,
+			DefaultShape:   cfg.NodeOpsDefaultShape,
+			DefaultRootFS:  cfg.NodeOpsDefaultRootFS,
+			Ingress:        cfg.NodeOpsIngress,
+			SSHKeyPath:     cfg.NodeOpsSSHKeyPath,
+			WorkerTokenTTL: cfg.NodeOpsWorkerTokenTTL,
 		}).Validate(); err != nil {
 			return Config{}, err
 		}

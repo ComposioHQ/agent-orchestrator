@@ -37,12 +37,11 @@ type Store interface {
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
 	CreateProject(context.Context, domain.Principal, string, string, domain.CreateProject) (domain.Project, error)
 	ListProjects(context.Context, domain.Principal, string, *domain.Cursor, int) ([]domain.Project, bool, error)
-	CreateSession(context.Context, domain.Principal, string, string, domain.CreateSession) (domain.Session, error)
+	CreateSession(context.Context, domain.Principal, string, string, int, domain.CreateSession) (domain.Session, error)
 	ListSessions(context.Context, domain.Principal, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
 	GetSession(context.Context, domain.Principal, string, string) (domain.Session, error)
 	SendMessage(context.Context, domain.Principal, string, string, string, string) (domain.ClientEvent, error)
 	ListClientEvents(context.Context, domain.Principal, string, string, int64, int) ([]domain.ClientEvent, bool, error)
-	CountActiveSandboxes(context.Context, domain.Principal, string) (int, error)
 	SetSandboxDesiredState(ctx context.Context, principal domain.Principal, orgID, sessionID, desiredState string) error
 	RedeemWorkerBootstrapTicket(context.Context, string) (domain.AccessTicket, error)
 	WorkerLaunchSpec(context.Context, string, string) (domain.WorkerLaunch, error)
@@ -57,9 +56,8 @@ type Store interface {
 	FinishWorkerTurn(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, outcome, errorMessage string) (bool, error)
 	WorkerAgentCredential(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerCredential, error)
 	ListOrchestratorChildren(context.Context, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
-	CreateOrchestratorChild(context.Context, string, string, string, domain.CreateSession) (domain.Session, error)
+	CreateOrchestratorChild(context.Context, string, string, string, int, domain.CreateSession) (domain.Session, error)
 	SendOrchestratorChildMessage(context.Context, string, string, string, string, string) (domain.ClientEvent, error)
-	CountOrchestratorSandboxes(context.Context, string, string) (int, error)
 }
 
 // WorkerTokens issues and verifies the short-lived credentials sandbox workers

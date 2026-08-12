@@ -29,14 +29,22 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 
 func TestCreateSendsShapeRootfsAndEnvironment(t *testing.T) {
 	var received createSandboxRequest
+	var receivedRaw map[string]any
 	var apiKey string
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/sandboxes" {
 			t.Errorf("request = %s %s, want POST /v1/sandboxes", r.Method, r.URL.Path)
 		}
 		apiKey = r.Header.Get("X-Api-Key")
-		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if err := json.Unmarshal(body, &received); err != nil {
 			t.Fatalf("decode request: %v", err)
+		}
+		if err := json.Unmarshal(body, &receivedRaw); err != nil {
+			t.Fatalf("decode raw request: %v", err)
 		}
 		writeJSON(w, http.StatusCreated, sandboxView{
 			ID: "sbx-1", Status: "creating", Name: received.Name, VCPU: 4, MemMiB: 8192, DiskMiB: 10240,
@@ -44,10 +52,9 @@ func TestCreateSendsShapeRootfsAndEnvironment(t *testing.T) {
 	})
 
 	environment, err := client.Create(context.Background(), sandbox.Spec{
-		Name:            SandboxName("session-1"),
-		SessionID:       "session-1",
-		Environment:     map[string]string{"AO_WORKER_BOOTSTRAP_TOKEN": "ticket"},
-		AutoStopMinutes: 30,
+		Name:        SandboxName("session-1"),
+		SessionID:   "session-1",
+		Environment: map[string]string{"AO_WORKER_BOOTSTRAP_TOKEN": "ticket"},
 	})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -65,8 +72,8 @@ func TestCreateSendsShapeRootfsAndEnvironment(t *testing.T) {
 	if received.Envs["AO_WORKER_BOOTSTRAP_TOKEN"] != "ticket" {
 		t.Error("the bootstrap token was not passed as a sandbox env var")
 	}
-	if received.AutoPauseAfterSeconds != 1800 {
-		t.Errorf("auto_pause_after_seconds = %d, want 1800", received.AutoPauseAfterSeconds)
+	if _, ok := receivedRaw["auto_pause_after_seconds"]; ok {
+		t.Error("Create sent auto_pause_after_seconds; provider auto-pause must stay disabled")
 	}
 	if environment.ID != "sbx-1" || environment.State != sandbox.StateProvisioning {
 		t.Errorf("environment = %+v, want sbx-1 in provisioning", environment)
@@ -80,22 +87,6 @@ func TestCreateWithoutShapeFails(t *testing.T) {
 	client := New(Config{BaseURL: "https://example.invalid", APIKey: "k"})
 	if _, err := client.Create(context.Background(), sandbox.Spec{Name: "ao-1"}); err == nil {
 		t.Fatal("Create() without a shape succeeded, want an error")
-	}
-}
-
-func TestAutoPauseIsClampedToTheAPIRange(t *testing.T) {
-	for _, tc := range []struct {
-		minutes int
-		want    int
-	}{
-		{minutes: 0, want: 0},
-		{minutes: 1, want: 60},
-		{minutes: 30, want: 1800},
-		{minutes: 100000, want: 86400},
-	} {
-		if got := autoPauseSeconds(tc.minutes); got != tc.want {
-			t.Errorf("autoPauseSeconds(%d) = %d, want %d", tc.minutes, got, tc.want)
-		}
 	}
 }
 
@@ -387,6 +378,10 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 	err := client.BootstrapWorker(context.Background(), "sbx-1", sandbox.WorkerBootstrap{
 		Binary:      []byte("ELF-worker"),
 		Destination: "/usr/local/bin/ao-worker",
+		Environment: map[string]string{
+			"AO_CLOUD_SESSION_ID":       "session-1",
+			"AO_WORKER_BOOTSTRAP_TOKEN": "fresh-ticket",
+		},
 	})
 	if err != nil {
 		t.Fatalf("BootstrapWorker() error = %v", err)
@@ -417,7 +412,9 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 		t.Errorf("swap args = %q, want the staging path renamed over the destination", got)
 	}
 	launch := strings.Join(execCommands[4].Args, " ")
-	if execCommands[4].Cmd != "bash" || !strings.Contains(launch, "ao-worker") {
+	if execCommands[4].Cmd != "bash" ||
+		!strings.Contains(launch, "ao-worker") ||
+		!strings.Contains(launch, "AO_WORKER_BOOTSTRAP_TOKEN=fresh-ticket") {
 		t.Errorf("launch command = %s %v, want the worker started under bash", execCommands[4].Cmd, execCommands[4].Args)
 	}
 }

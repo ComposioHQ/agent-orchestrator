@@ -11,11 +11,12 @@ import (
 )
 
 var (
-	ErrNotFound            = errors.New("not found")
-	ErrForbidden           = errors.New("forbidden")
-	ErrConflict            = errors.New("conflict")
-	ErrInvalid             = errors.New("invalid")
-	ErrIdempotencyMismatch = errors.New("idempotency key belongs to a different operation")
+	ErrNotFound             = errors.New("not found")
+	ErrForbidden            = errors.New("forbidden")
+	ErrConflict             = errors.New("conflict")
+	ErrInvalid              = errors.New("invalid")
+	ErrIdempotencyMismatch  = errors.New("idempotency key belongs to a different operation")
+	ErrSandboxQuotaExceeded = errors.New("sandbox quota exceeded")
 )
 
 type Store struct {

@@ -74,6 +74,11 @@ func (s *Server) writeStoreError(w http.ResponseWriter, r *http.Request, err err
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The request violates a resource constraint.")
 	case errors.Is(err, postgres.ErrIdempotencyMismatch):
 		writeError(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used for another request.")
+	case errors.Is(err, postgres.ErrSandboxQuotaExceeded):
+		writeError(
+			w, r, http.StatusConflict, "SANDBOX_QUOTA_EXCEEDED",
+			"This organization has reached its limit of concurrent sessions. Delete a session and try again.",
+		)
 	default:
 		s.logger.Error("handle API request", "error", err, "request_id", requestID(r))
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "The request could not be completed.")

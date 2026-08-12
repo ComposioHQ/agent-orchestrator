@@ -23,6 +23,7 @@ type fakeProvider struct {
 	findResult   *sandbox.Environment
 	getErr       error
 	createErr    error
+	resumeErr    error
 
 	created   []sandbox.Spec
 	recreated []sandbox.ID
@@ -99,7 +100,7 @@ func (p *fakeProvider) Resume(_ context.Context, id sandbox.ID) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.resumed = append(p.resumed, id)
-	return nil
+	return p.resumeErr
 }
 
 func (p *fakeProvider) Delete(_ context.Context, id sandbox.ID) error {
@@ -129,6 +130,55 @@ func (p *recreatingProvider) Recreate(
 	return environment, nil
 }
 
+type bootstrappingProvider struct {
+	*fakeProvider
+	bootstraps []sandbox.WorkerBootstrap
+}
+
+func (p *bootstrappingProvider) BootstrapWorker(
+	_ context.Context,
+	_ sandbox.ID,
+	bootstrap sandbox.WorkerBootstrap,
+) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bootstraps = append(p.bootstraps, bootstrap)
+	return nil
+}
+
+type recreatingBootstrapProvider struct {
+	*recreatingProvider
+	bootstraps []sandbox.WorkerBootstrap
+}
+
+func (p *recreatingBootstrapProvider) BootstrapWorker(
+	_ context.Context,
+	_ sandbox.ID,
+	bootstrap sandbox.WorkerBootstrap,
+) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bootstraps = append(p.bootstraps, bootstrap)
+	return nil
+}
+
+type slowProvider struct {
+	*fakeProvider
+	delay time.Duration
+}
+
+func (p *slowProvider) Create(
+	ctx context.Context,
+	spec sandbox.Spec,
+) (sandbox.Environment, error) {
+	select {
+	case <-ctx.Done():
+		return sandbox.Environment{}, ctx.Err()
+	case <-time.After(p.delay):
+		return p.fakeProvider.Create(ctx, spec)
+	}
+}
+
 type observation struct {
 	providerID string
 	state      string
@@ -142,7 +192,9 @@ type fakeStore struct {
 	observations []observation
 	tickets      []string
 	events       []string
-	deleted      []string
+	completed    []string
+	renewals     int
+	renewErr     error
 	ticketErr    error
 }
 
@@ -152,6 +204,17 @@ func (s *fakeStore) ClaimSandboxes(_ context.Context, _ string, _ int, _ time.Du
 	claimed := s.pending
 	s.pending = nil
 	return claimed, nil
+}
+
+func (s *fakeStore) RenewSandboxClaim(
+	_ context.Context,
+	_, _, _ string,
+	_ time.Duration,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.renewals++
+	return s.renewErr
 }
 
 func (s *fakeStore) UpdateSandboxObservation(
@@ -196,10 +259,10 @@ func (s *fakeStore) AppendSessionEvent(
 	return domain.ClientEvent{}, nil
 }
 
-func (s *fakeStore) DeleteSandboxSession(_ context.Context, _, sessionID string) error {
+func (s *fakeStore) CompleteSandboxDeletion(_ context.Context, _, _, sessionID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.deleted = append(s.deleted, sessionID)
+	s.completed = append(s.completed, sessionID)
 	return nil
 }
 
@@ -305,7 +368,7 @@ func TestCreateFailureRecordsFailedWithoutLosingTheSession(t *testing.T) {
 	if got.lastError == "" {
 		t.Error("last_error is empty, want the provider error recorded")
 	}
-	if len(store.deleted) != 0 {
+	if len(store.completed) != 0 {
 		t.Error("session was deleted on a provider error; a failed call must never destroy intent")
 	}
 }
@@ -372,6 +435,37 @@ func TestStartupTimeoutRecreates(t *testing.T) {
 	}
 }
 
+func TestRecreateInstallsWorkerWithFreshBootstrapTicket(t *testing.T) {
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedStopped
+	store := &fakeStore{
+		pending: []domain.Sandbox{record},
+		tickets: []string{"consumed-ticket"},
+	}
+	provider := &recreatingBootstrapProvider{
+		recreatingProvider: &recreatingProvider{newFakeProvider()},
+	}
+	provider.resumeErr = errors.New("resume failed")
+	provider.setState("env-1", sandbox.StatePaused)
+	reconciler := newReconciler(store, provider)
+	reconciler.options.WorkerBinary = []byte("worker")
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.bootstraps) != 1 {
+		t.Fatalf("BootstrapWorker called %d times after Recreate, want 1", len(provider.bootstraps))
+	}
+	got := provider.bootstraps[0].Environment["AO_WORKER_BOOTSTRAP_TOKEN"]
+	if got == "" || got == "consumed-ticket" {
+		t.Fatalf("recreate launched with ticket %q, want a fresh ticket", got)
+	}
+	if got != provider.created[len(provider.created)-1].Environment["AO_WORKER_BOOTSTRAP_TOKEN"] {
+		t.Fatal("recreate and worker launch received different bootstrap tickets")
+	}
+}
+
 func TestStartupTimeoutNotReachedLeavesSandboxAlone(t *testing.T) {
 	record := runningSandbox()
 	record.ProviderEnvironmentID = "env-1"
@@ -408,6 +502,70 @@ func TestHeartbeatGapRecreates(t *testing.T) {
 
 	if len(provider.recreated) != 1 {
 		t.Fatalf("Recreate called %d times, want 1", len(provider.recreated))
+	}
+}
+
+func TestHeartbeatRepairLaunchReceivesFreshBootstrapTicket(t *testing.T) {
+	seen := time.Now().Add(-2 * time.Minute)
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedRunning
+	record.WorkerLastSeenAt = &seen
+	store := &fakeStore{
+		pending: []domain.Sandbox{record},
+		tickets: []string{"consumed-ticket"},
+	}
+	provider := &bootstrappingProvider{fakeProvider: newFakeProvider()}
+	provider.setState("env-1", sandbox.StateRunning)
+	reconciler := newReconciler(store, provider)
+	reconciler.options.WorkerBinary = []byte("worker")
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.bootstraps) != 1 {
+		t.Fatalf("BootstrapWorker called %d times, want 1", len(provider.bootstraps))
+	}
+	got := provider.bootstraps[0].Environment["AO_WORKER_BOOTSTRAP_TOKEN"]
+	if got == "" || got == "consumed-ticket" {
+		t.Fatalf("repair bootstrap ticket = %q, want a freshly issued ticket", got)
+	}
+	if got != store.tickets[len(store.tickets)-1] {
+		t.Fatalf("repair launched with %q, issued ticket was %q", got, store.tickets[len(store.tickets)-1])
+	}
+}
+
+func TestSlowProviderCallRenewsItsLease(t *testing.T) {
+	store := &fakeStore{pending: []domain.Sandbox{runningSandbox()}}
+	provider := &slowProvider{fakeProvider: newFakeProvider(), delay: 60 * time.Millisecond}
+	reconciler := newReconciler(store, provider)
+	reconciler.lease = 15 * time.Millisecond
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if store.renewals < 2 {
+		t.Fatalf("lease renewed %d times during slow Create, want at least 2", store.renewals)
+	}
+	if len(provider.created) != 1 {
+		t.Fatalf("Create called %d times, want 1", len(provider.created))
+	}
+}
+
+func TestLeaseLossCancelsSlowProviderCall(t *testing.T) {
+	store := &fakeStore{
+		pending:  []domain.Sandbox{runningSandbox()},
+		renewErr: errors.New("lease was claimed by another replica"),
+	}
+	provider := &slowProvider{fakeProvider: newFakeProvider(), delay: time.Second}
+	reconciler := newReconciler(store, provider)
+	reconciler.lease = 15 * time.Millisecond
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.created) != 0 {
+		t.Fatalf("Create completed after lease loss; calls = %d", len(provider.created))
 	}
 }
 
@@ -474,7 +632,7 @@ func TestDesiredPausedStopsSandbox(t *testing.T) {
 	}
 }
 
-func TestDesiredDeletedRemovesEnvironmentAndSession(t *testing.T) {
+func TestDesiredDeletedWaitsForProviderAbsenceBeforeTermination(t *testing.T) {
 	record := runningSandbox()
 	record.ProviderEnvironmentID = "env-1"
 	record.DesiredState = domain.SandboxDesiredDeleted
@@ -490,12 +648,25 @@ func TestDesiredDeletedRemovesEnvironmentAndSession(t *testing.T) {
 	if len(provider.deleted) != 1 {
 		t.Fatalf("Delete called %d times, want 1", len(provider.deleted))
 	}
-	if len(store.deleted) != 1 || store.deleted[0] != "session-1" {
-		t.Errorf("deleted sessions = %v, want [session-1]", store.deleted)
+	if len(store.completed) != 0 {
+		t.Fatalf("deletion completed immediately after provider acceptance: %v", store.completed)
+	}
+	if got := store.lastObservation(t); got.state != domain.SandboxObservedDeleting {
+		t.Fatalf("observed state = %q, want deleting", got.state)
+	}
+
+	// A later reconcile observes that the provider no longer has the sandbox.
+	record.ObservedState = domain.SandboxObservedDeleting
+	store.pending = []domain.Sandbox{record}
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("second ReconcileOnce() error = %v", err)
+	}
+	if len(store.completed) != 1 || store.completed[0] != "session-1" {
+		t.Errorf("completed sessions = %v, want [session-1]", store.completed)
 	}
 }
 
-func TestDesiredDeletedWithoutEnvironmentStillRemovesSession(t *testing.T) {
+func TestDesiredDeletedWithoutEnvironmentTerminatesSession(t *testing.T) {
 	record := runningSandbox()
 	record.DesiredState = domain.SandboxDesiredDeleted
 	store := &fakeStore{pending: []domain.Sandbox{record}}
@@ -509,8 +680,33 @@ func TestDesiredDeletedWithoutEnvironmentStillRemovesSession(t *testing.T) {
 	if len(provider.deleted) != 0 {
 		t.Error("Delete was called for a sandbox that never had an environment")
 	}
-	if len(store.deleted) != 1 {
-		t.Errorf("deleted sessions = %v, want the session row removed", store.deleted)
+	if len(store.completed) != 1 {
+		t.Errorf("completed sessions = %v, want the session terminated", store.completed)
+	}
+}
+
+func TestDesiredDeletedFindsAndRemovesOrphanedProviderEnvironment(t *testing.T) {
+	record := runningSandbox()
+	record.DesiredState = domain.SandboxDesiredDeleted
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := newFakeProvider()
+	orphan := sandbox.Environment{ID: "env-orphan", State: sandbox.StateRunning}
+	provider.findResult = &orphan
+	provider.setState(orphan.ID, orphan.State)
+	reconciler := newReconciler(store, provider)
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.deleted) != 1 || provider.deleted[0] != orphan.ID {
+		t.Fatalf("deleted provider environments = %v, want orphan %q", provider.deleted, orphan.ID)
+	}
+	if len(store.completed) != 0 {
+		t.Fatal("orphan deletion was treated as complete before provider absence was observed")
+	}
+	if got := store.lastObservation(t); got.providerID != string(orphan.ID) ||
+		got.state != domain.SandboxObservedDeleting {
+		t.Fatalf("orphan observation = %+v, want durable deleting state", got)
 	}
 }
 
@@ -549,7 +745,7 @@ func TestPausedSandboxResumesInsteadOfBeingReplaced(t *testing.T) {
 		t.Fatalf("Resume called %d times, want 1", len(provider.resumed))
 	}
 	if len(provider.recreated) != 0 {
-		t.Error("an idle auto-paused sandbox was replaced instead of resumed, discarding its workspace")
+		t.Error("a paused sandbox was replaced instead of resumed, discarding its workspace")
 	}
 	if got := store.lastObservation(t); got.state != domain.SandboxObservedBootstrapping {
 		t.Errorf("observed state = %q, want bootstrapping so the startup budget restarts", got.state)
@@ -558,7 +754,6 @@ func TestPausedSandboxResumesInsteadOfBeingReplaced(t *testing.T) {
 
 func TestWorkerSpecReadsShapeFromTheStoredProfile(t *testing.T) {
 	record := runningSandbox()
-	record.AutoStopMinutes = 45
 	record.ResourceProfile = json.RawMessage(
 		`{"nodeOps":{"defaultShape":"s-4vcpu-8gb","defaultRootFs":"devbox:1","ingress":"none"}}`,
 	)
@@ -571,8 +766,5 @@ func TestWorkerSpecReadsShapeFromTheStoredProfile(t *testing.T) {
 	}
 	if spec.Shape != "s-4vcpu-8gb" || spec.RootFS != "devbox:1" {
 		t.Errorf("spec shape/rootfs = %q/%q, want the values stored on the row", spec.Shape, spec.RootFS)
-	}
-	if spec.AutoStopMinutes != 45 {
-		t.Errorf("AutoStopMinutes = %d, want 45", spec.AutoStopMinutes)
 	}
 }

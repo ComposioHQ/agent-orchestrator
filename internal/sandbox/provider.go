@@ -26,7 +26,6 @@ type Spec struct {
 	Ingress           string
 	Environment       map[string]string
 	Labels            map[string]string
-	AutoStopMinutes   int
 	AutoDeleteMinutes int
 }
 

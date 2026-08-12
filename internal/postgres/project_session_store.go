@@ -187,13 +187,14 @@ func (s *Store) CreateSession(
 	principal domain.Principal,
 	orgID string,
 	idempotencyKey string,
+	maxActiveSandboxes int,
 	input domain.CreateSession,
 ) (domain.Session, error) {
 	var session domain.Session
 	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
 		var err error
 		session, err = createSessionTx(
-			ctx, tx, orgID, idempotencyKey, input, "", principal.UserID,
+			ctx, tx, orgID, idempotencyKey, maxActiveSandboxes, input, "", principal.UserID,
 		)
 		return err
 	})
@@ -204,6 +205,7 @@ func createSessionTx(
 	ctx context.Context,
 	tx pgx.Tx,
 	orgID, idempotencyKey string,
+	maxActiveSandboxes int,
 	input domain.CreateSession,
 	parentSessionID, actorUserID string,
 ) (domain.Session, error) {
@@ -214,6 +216,19 @@ func createSessionTx(
 		input.DeniedCommands = []string{}
 	}
 	var session domain.Session
+
+	// Serialize quota allocation before inserting any rows that reference the
+	// organization. Taking this lock later can deadlock concurrent creators
+	// through their foreign-key key-share locks.
+	var lockedOrgID string
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT id FROM ao_organizations WHERE id = $1 FOR UPDATE`,
+		orgID,
+	).Scan(&lockedOrgID); err != nil {
+		return domain.Session{}, err
+	}
+
 	payload, err := json.Marshal(input)
 	commandKind := "session.create"
 	if parentSessionID != "" {
@@ -253,6 +268,19 @@ func createSessionTx(
 	}
 	if err != nil {
 		return domain.Session{}, err
+	}
+
+	var activeSandboxes int
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT count(*) FROM ao_sandboxes
+		WHERE org_id = $1 AND observed_state <> 'deleted'`,
+		orgID,
+	).Scan(&activeSandboxes); err != nil {
+		return domain.Session{}, err
+	}
+	if maxActiveSandboxes < 1 || activeSandboxes >= maxActiveSandboxes {
+		return domain.Session{}, ErrSandboxQuotaExceeded
 	}
 
 	err = scanSession(tx.QueryRow(
@@ -317,18 +345,14 @@ func createSessionTx(
 	if err != nil {
 		return domain.Session{}, err
 	}
-	autoStopMinutes := input.AutoStopMinutes
-	if autoStopMinutes <= 0 {
-		autoStopMinutes = sandbox.DefaultAutoPauseMinutes
-	}
 	if _, err := tx.Exec(
 		ctx,
 		`INSERT INTO ao_sandboxes (
 			session_id, org_id, provider, provider_connection_id,
-			resource_profile, auto_stop_minutes, bootstrap_context
-		) VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7)`,
+			resource_profile, bootstrap_context
+		) VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6)`,
 		session.ID, orgID, provider, input.SandboxConnectionID,
-		resourceProfile, autoStopMinutes, bootstrapContext,
+		resourceProfile, bootstrapContext,
 	); err != nil {
 		return domain.Session{}, normalizeConstraintError(err)
 	}

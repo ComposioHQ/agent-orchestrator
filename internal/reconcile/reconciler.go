@@ -20,11 +20,12 @@ import (
 // Store is the durable state the reconciler converges.
 type Store interface {
 	ClaimSandboxes(ctx context.Context, owner string, limit int, lease time.Duration) ([]domain.Sandbox, error)
+	RenewSandboxClaim(ctx context.Context, owner, orgID, sessionID string, lease time.Duration) error
 	UpdateSandboxObservation(ctx context.Context, owner, orgID, sessionID, providerEnvironmentID, observedState, lastError string, reconcileAfter time.Time) error
 	ReleaseSandboxClaim(ctx context.Context, owner, orgID, sessionID string, reconcileAfter time.Time) error
 	IssueAccessTicket(ctx context.Context, orgID, sessionID, purpose string, scopes []string, ttl time.Duration) (string, error)
 	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
-	DeleteSandboxSession(ctx context.Context, orgID, sessionID string) error
+	CompleteSandboxDeletion(ctx context.Context, owner, orgID, sessionID string) error
 }
 
 // Resolver selects the provider that owns one sandbox's compute.
@@ -51,6 +52,9 @@ type Options struct {
 	HeartbeatTimeout time.Duration
 	// BatchSize is the maximum number of sandboxes claimed per tick.
 	BatchSize int
+	// LeaseDuration bounds exclusive ownership of one reconciliation. It is
+	// renewed while provider calls are in flight.
+	LeaseDuration time.Duration
 	// Logger receives lifecycle events.
 	Logger *slog.Logger
 }
@@ -73,6 +77,7 @@ type Reconciler struct {
 	providers Resolver
 	options   Options
 	owner     string
+	lease     time.Duration
 	log       *slog.Logger
 }
 
@@ -90,6 +95,9 @@ func New(store Store, providers Resolver, options Options) *Reconciler {
 	if options.BatchSize <= 0 {
 		options.BatchSize = DefaultBatchSize
 	}
+	if options.LeaseDuration <= 0 {
+		options.LeaseDuration = defaultLease
+	}
 	if strings.TrimSpace(options.WorkerDestination) == "" {
 		options.WorkerDestination = defaultWorkerDestination
 	}
@@ -102,6 +110,7 @@ func New(store Store, providers Resolver, options Options) *Reconciler {
 		providers: providers,
 		options:   options,
 		owner:     uuid.NewString(),
+		lease:     options.LeaseDuration,
 		log:       options.Logger,
 	}
 }
@@ -128,12 +137,12 @@ func (r *Reconciler) Run(ctx context.Context) error {
 // ReconcileOnce performs a single pass. Run calls it on a ticker; tests call it
 // directly so a lifecycle assertion never depends on wall-clock timing.
 func (r *Reconciler) ReconcileOnce(ctx context.Context) error {
-	sandboxes, err := r.store.ClaimSandboxes(ctx, r.owner, r.options.BatchSize, defaultLease)
+	sandboxes, err := r.store.ClaimSandboxes(ctx, r.owner, r.options.BatchSize, r.lease)
 	if err != nil {
 		return err
 	}
 	for _, record := range sandboxes {
-		if err := r.reconcileSandbox(ctx, record); err != nil {
+		if err := r.reconcileClaim(ctx, record); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
@@ -147,6 +156,66 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) error {
 	return nil
 }
 
+func (r *Reconciler) reconcileClaim(ctx context.Context, record domain.Sandbox) error {
+	// A row may have waited behind an earlier slow item in this batch. Renew it
+	// synchronously before touching the provider so an expired claim can never
+	// start a duplicate operation while another replica owns the row.
+	if err := r.store.RenewSandboxClaim(
+		ctx,
+		r.owner,
+		record.OrgID,
+		record.SessionID,
+		r.lease,
+	); err != nil {
+		return err
+	}
+
+	operationCtx, cancel := context.WithCancelCause(ctx)
+	renewed := make(chan error, 1)
+	go func() {
+		interval := r.lease / 3
+		if interval < time.Millisecond {
+			interval = time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-operationCtx.Done():
+				renewed <- nil
+				return
+			case <-ticker.C:
+				err := r.store.RenewSandboxClaim(
+					operationCtx,
+					r.owner,
+					record.OrgID,
+					record.SessionID,
+					r.lease,
+				)
+				if err != nil {
+					cancel(err)
+					renewed <- err
+					return
+				}
+			}
+		}
+	}()
+
+	err := r.reconcileSandbox(operationCtx, record)
+	cancel(nil)
+	renewErr := <-renewed
+	if err != nil {
+		if renewErr != nil && !errors.Is(err, context.Canceled) {
+			return errors.Join(err, renewErr)
+		}
+		if renewErr != nil {
+			return renewErr
+		}
+		return err
+	}
+	return nil
+}
+
 func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox) error {
 	provider, err := r.providers.Resolve(ctx, record)
 	if err != nil {
@@ -154,18 +223,7 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 	}
 
 	if record.DesiredState == domain.SandboxDesiredDeleted {
-		if record.ProviderEnvironmentID != "" {
-			r.log.Info("deleting sandbox",
-				"session_id", record.SessionID,
-				"provider", record.Provider,
-				"provider_id", record.ProviderEnvironmentID,
-			)
-			err := provider.Delete(ctx, sandbox.ID(record.ProviderEnvironmentID))
-			if err != nil && !errors.Is(err, sandbox.ErrNotFound) {
-				return r.fail(ctx, record, err)
-			}
-		}
-		return r.store.DeleteSandboxSession(ctx, record.OrgID, record.SessionID)
+		return r.reconcileDeletion(ctx, record, provider)
 	}
 
 	if record.ProviderEnvironmentID == "" {
@@ -227,6 +285,64 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		// deadline and strand the session in silence.
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 5*time.Second)
 	}
+}
+
+func (r *Reconciler) reconcileDeletion(
+	ctx context.Context,
+	record domain.Sandbox,
+	provider sandbox.Provider,
+) error {
+	if record.ProviderEnvironmentID == "" {
+		// Create may have succeeded just before a replica crashed, leaving no
+		// durable provider id. Prove absence by the session correlation key
+		// before releasing quota; otherwise that orphan would keep billing.
+		environment, found, err := provider.FindBySession(ctx, record.SessionID)
+		if err != nil {
+			return r.fail(ctx, record, err)
+		}
+		if !found {
+			return r.store.CompleteSandboxDeletion(ctx, r.owner, record.OrgID, record.SessionID)
+		}
+		record.ProviderEnvironmentID = string(environment.ID)
+	}
+
+	environment, err := provider.Get(ctx, sandbox.ID(record.ProviderEnvironmentID))
+	switch {
+	case errors.Is(err, sandbox.ErrNotFound):
+		return r.store.CompleteSandboxDeletion(ctx, r.owner, record.OrgID, record.SessionID)
+	case err != nil:
+		return r.fail(ctx, record, err)
+	case environment.State == sandbox.StateDeleted:
+		return r.store.CompleteSandboxDeletion(ctx, r.owner, record.OrgID, record.SessionID)
+	case environment.State == sandbox.StateDeleting:
+		return r.observe(
+			ctx,
+			record,
+			string(environment.ID),
+			domain.SandboxObservedDeleting,
+			"",
+			2*time.Second,
+		)
+	}
+
+	r.log.Info("requesting sandbox deletion",
+		"session_id", record.SessionID,
+		"provider", record.Provider,
+		"provider_id", record.ProviderEnvironmentID,
+	)
+	if err := provider.Delete(ctx, environment.ID); err != nil && !errors.Is(err, sandbox.ErrNotFound) {
+		return r.fail(ctx, record, err)
+	}
+	// DELETE acceptance is not deletion confirmation. Keep the provider id and
+	// quota allocation until a later Get observes deleted or not found.
+	return r.observe(
+		ctx,
+		record,
+		string(environment.ID),
+		domain.SandboxObservedDeleting,
+		"",
+		2*time.Second,
+	)
 }
 
 func (r *Reconciler) restore(
@@ -377,6 +493,15 @@ func (r *Reconciler) recreate(
 	if err != nil {
 		return r.fail(ctx, record, err)
 	}
+	if bootstrapper, ok := recreator.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
+		if err := bootstrapper.BootstrapWorker(ctx, recreated.ID, sandbox.WorkerBootstrap{
+			Binary:      r.options.WorkerBinary,
+			Destination: r.options.WorkerDestination,
+			Environment: spec.Environment,
+		}); err != nil {
+			return r.fail(ctx, record, err)
+		}
+	}
 	return r.observe(ctx, record, string(recreated.ID), domain.SandboxObservedBootstrapping, "", 2*time.Second)
 }
 
@@ -385,10 +510,9 @@ func (r *Reconciler) recreate(
 // means a config change never disturbs an in-flight session.
 type nodeOpsProfile struct {
 	NodeOps struct {
-		DefaultShape     string `json:"defaultShape"`
-		DefaultRootFS    string `json:"defaultRootFs"`
-		Ingress          string `json:"ingress"`
-		AutoPauseMinutes int    `json:"autoPauseMinutes"`
+		DefaultShape  string `json:"defaultShape"`
+		DefaultRootFS string `json:"defaultRootFs"`
+		Ingress       string `json:"ingress"`
 	} `json:"nodeOps"`
 }
 
@@ -416,11 +540,6 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 	if len(record.ResourceProfile) > 0 {
 		_ = json.Unmarshal(record.ResourceProfile, &profile)
 	}
-	autoStopMinutes := record.AutoStopMinutes
-	if autoStopMinutes <= 0 {
-		autoStopMinutes = profile.NodeOps.AutoPauseMinutes
-	}
-
 	return sandbox.Spec{
 		Name:            "ao-" + record.SessionID,
 		SessionID:       record.SessionID,
@@ -444,7 +563,6 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 			"ao.org_id":     record.OrgID,
 			"ao.managed":    "true",
 		},
-		AutoStopMinutes:   autoStopMinutes,
 		AutoDeleteMinutes: 7 * 24 * 60,
 	}, nil
 }

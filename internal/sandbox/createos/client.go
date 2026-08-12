@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,9 +30,6 @@ const (
 	maxResponseBody = 1 << 20
 	// maxErrorBody bounds the error text retained on a failed call.
 	maxErrorBody = 64 << 10
-	// autoPause bounds imposed by the CreateOS API.
-	minAutoPauseSeconds = 60
-	maxAutoPauseSeconds = 86400
 	// listPageLimit is the page size requested when scanning sandboxes.
 	listPageLimit = 100
 	// maxListPages bounds pagination so a broken cursor cannot loop forever.
@@ -122,14 +120,13 @@ type sandboxView struct {
 }
 
 type createSandboxRequest struct {
-	Shape                 string            `json:"shape"`
-	RootFS                string            `json:"rootfs,omitempty"`
-	Name                  string            `json:"name,omitempty"`
-	Envs                  map[string]string `json:"envs,omitempty"`
-	SSHPubKeys            []string          `json:"ssh_pubkeys,omitempty"`
-	Region                string            `json:"region,omitempty"`
-	IngressEnabled        bool              `json:"ingress_enabled,omitempty"`
-	AutoPauseAfterSeconds int               `json:"auto_pause_after_seconds,omitempty"`
+	Shape          string            `json:"shape"`
+	RootFS         string            `json:"rootfs,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	Envs           map[string]string `json:"envs,omitempty"`
+	SSHPubKeys     []string          `json:"ssh_pubkeys,omitempty"`
+	Region         string            `json:"region,omitempty"`
+	IngressEnabled bool              `json:"ingress_enabled,omitempty"`
 }
 
 // Create provisions one sandbox for a session.
@@ -139,14 +136,13 @@ func (c *Client) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Environ
 		return sandbox.Environment{}, errors.New("createos: no shape configured for this sandbox")
 	}
 	body := createSandboxRequest{
-		Shape:                 shape,
-		RootFS:                firstNonEmpty(spec.RootFS, c.defaultRoot),
-		Name:                  spec.Name,
-		Envs:                  spec.Environment,
-		SSHPubKeys:            c.sshPubKeys,
-		Region:                c.region,
-		IngressEnabled:        strings.EqualFold(strings.TrimSpace(spec.Ingress), "enabled"),
-		AutoPauseAfterSeconds: autoPauseSeconds(spec.AutoStopMinutes),
+		Shape:          shape,
+		RootFS:         firstNonEmpty(spec.RootFS, c.defaultRoot),
+		Name:           spec.Name,
+		Envs:           spec.Environment,
+		SSHPubKeys:     c.sshPubKeys,
+		Region:         c.region,
+		IngressEnabled: strings.EqualFold(strings.TrimSpace(spec.Ingress), "enabled"),
 	}
 	var view sandboxView
 	if err := c.do(ctx, http.MethodPost, "/v1/sandboxes", body, &view); err != nil {
@@ -337,9 +333,23 @@ func (c *Client) BootstrapWorker(
 		return err
 	}
 
-	// Environment variables set at create time are already present for every
-	// command, so the launch only needs to detach the process and keep a log.
-	launch := "nohup " + shellQuote(destination) + " >> /var/log/ao-worker.log 2>&1 &"
+	// Repair issues a new one-time bootstrap ticket. Pass the complete fresh
+	// environment to this process instead of relying on the environment stored
+	// at sandbox creation, which contains a consumed ticket.
+	keys := make([]string, 0, len(bootstrap.Environment))
+	for key := range bootstrap.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	assignments := make([]string, 0, len(keys))
+	for _, key := range keys {
+		assignments = append(assignments, shellQuote(key+"="+bootstrap.Environment[key]))
+	}
+	launch := "nohup env"
+	if len(assignments) > 0 {
+		launch += " " + strings.Join(assignments, " ")
+	}
+	launch += " " + shellQuote(destination) + " >> /var/log/ao-worker.log 2>&1 &"
 	return c.exec(ctx, id, "bash", []string{"-c", launch})
 }
 
@@ -467,10 +477,10 @@ func statusError(response *http.Response) error {
 // listResponse tolerates both a bare array and the common envelope shapes, so a
 // change in pagination style does not silently return an empty page.
 type listResponse struct {
-	bare      []sandboxView
-	Sandboxes []sandboxView `json:"sandboxes"`
-	Items     []sandboxView `json:"items"`
-	Data      []sandboxView `json:"data"`
+	bare       []sandboxView
+	Sandboxes  []sandboxView `json:"sandboxes"`
+	Items      []sandboxView `json:"items"`
+	Data       []sandboxView `json:"data"`
 	Pagination struct {
 		Total  int `json:"total"`
 		Limit  int `json:"limit"`
@@ -558,20 +568,6 @@ func toEnvironment(view sandboxView) sandbox.Environment {
 			Disk:   view.DiskMiB / 1024,
 		},
 	}
-}
-
-func autoPauseSeconds(minutes int) int {
-	if minutes <= 0 {
-		return 0
-	}
-	seconds := minutes * 60
-	if seconds < minAutoPauseSeconds {
-		return minAutoPauseSeconds
-	}
-	if seconds > maxAutoPauseSeconds {
-		return maxAutoPauseSeconds
-	}
-	return seconds
 }
 
 func firstNonEmpty(values ...string) string {

@@ -15,21 +15,18 @@ const (
 	ProviderECS     = "ecs"
 	ProviderNodeOps = "nodeops"
 
-	DefaultProvider         = ProviderDocker
-	DefaultAutoPauseMinutes = 30
-	DefaultWorkerTokenTTL   = 15 * time.Minute
-	minAutoPauseMinutes     = 1
+	DefaultProvider       = ProviderDocker
+	DefaultWorkerTokenTTL = 15 * time.Minute
 )
 
 type NodeOpsConfig struct {
-	BaseURL          string
-	APIKey           string
-	DefaultShape     string
-	DefaultRootFS    string
-	Ingress          string
-	SSHKeyPath       string
-	AutoPauseMinutes int
-	WorkerTokenTTL   time.Duration
+	BaseURL        string
+	APIKey         string
+	DefaultShape   string
+	DefaultRootFS  string
+	Ingress        string
+	SSHKeyPath     string
+	WorkerTokenTTL time.Duration
 }
 
 type DockerConfig struct {
@@ -72,9 +69,6 @@ func (c NodeOpsConfig) Validate() error {
 	if strings.TrimSpace(c.DefaultRootFS) == "" {
 		return errors.New("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS is required")
 	}
-	if c.AutoPauseMinutes < minAutoPauseMinutes {
-		return fmt.Errorf("AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES must be at least %d", minAutoPauseMinutes)
-	}
 	if c.WorkerTokenTTL <= 0 {
 		return errors.New("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL must be positive")
 	}
@@ -92,7 +86,6 @@ type Plan struct {
 	Provider         string
 	ResourceProfile  json.RawMessage
 	BootstrapContext json.RawMessage
-	AutoStopMinutes  int
 }
 
 func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
@@ -104,33 +97,24 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 	if release == "" {
 		release = "dev"
 	}
-	autoStopMinutes := 0
 	resourceProfile := map[string]any{
-		"provider":        provider,
-		"release":         release,
-		"autoStopMinutes": autoStopMinutes,
+		"provider": provider,
+		"release":  release,
 	}
 	bootstrapContext := map[string]any{
 		"provider": provider,
 		"release":  release,
 	}
 	if provider == ProviderNodeOps {
-		autoPauseMinutes := d.NodeOps.AutoPauseMinutes
-		if autoPauseMinutes < minAutoPauseMinutes {
-			autoPauseMinutes = DefaultAutoPauseMinutes
-		}
 		if err := d.NodeOps.Validate(); err != nil {
 			return Plan{}, err
 		}
-		autoStopMinutes = autoPauseMinutes
-		resourceProfile["autoStopMinutes"] = autoPauseMinutes
 		resourceProfile["nodeOps"] = map[string]any{
 			"baseUrl":               strings.TrimSpace(d.NodeOps.BaseURL),
 			"defaultShape":          strings.TrimSpace(d.NodeOps.DefaultShape),
 			"defaultRootFs":         strings.TrimSpace(d.NodeOps.DefaultRootFS),
 			"ingress":               strings.TrimSpace(d.NodeOps.Ingress),
 			"sshKeyPath":            strings.TrimSpace(d.NodeOps.SSHKeyPath),
-			"autoPauseMinutes":      autoPauseMinutes,
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),
 		}
 		bootstrapContext["nodeOps"] = map[string]any{
@@ -139,7 +123,6 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 			"defaultRootFs":         strings.TrimSpace(d.NodeOps.DefaultRootFS),
 			"ingress":               strings.TrimSpace(d.NodeOps.Ingress),
 			"sshKeyPath":            strings.TrimSpace(d.NodeOps.SSHKeyPath),
-			"autoPauseMinutes":      autoPauseMinutes,
 			"workerTokenTtlSeconds": int64(d.NodeOps.WorkerTokenTTL / time.Second),
 		}
 	} else if provider == ProviderDocker {
@@ -170,7 +153,6 @@ func (d ProvisioningDefaults) SessionPlan() (Plan, error) {
 		Provider:         provider,
 		ResourceProfile:  resourceJSON,
 		BootstrapContext: bootstrapJSON,
-		AutoStopMinutes:  autoStopMinutes,
 	}, nil
 }
 

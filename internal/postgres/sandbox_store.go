@@ -29,7 +29,7 @@ const sandboxColumns = `sandbox.session_id, sandbox.org_id, sandbox.provider,
 	COALESCE(sandbox.provider_connection_id::text, ''),
 	sandbox.desired_state, sandbox.observed_state,
 	sandbox.resource_profile, sandbox.bootstrap_context,
-	sandbox.auto_stop_minutes, sandbox.worker_last_seen_at,
+	sandbox.worker_last_seen_at,
 	sandbox.last_error, sandbox.updated_at`
 
 // ClaimSandboxes leases up to limit due sandboxes for reconciliation. The
@@ -90,6 +90,38 @@ func (s *Store) ClaimSandboxes(
 	return sandboxes, nil
 }
 
+// RenewSandboxClaim extends a live lease. Requiring the lease to still be
+// unexpired fences a reconciler that paused past its deadline even when no
+// replacement owner has claimed the row yet.
+func (s *Store) RenewSandboxClaim(
+	ctx context.Context,
+	owner, orgID, sessionID string,
+	lease time.Duration,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET reconcile_lease_until = now() + $3::interval
+			WHERE session_id = $1
+				AND org_id = $4
+				AND reconcile_lease_owner = $2
+				AND reconcile_lease_until > now()`,
+			sessionID,
+			owner,
+			intervalString(lease),
+			orgID,
+		)
+		if err != nil {
+			return fmt.Errorf("renew sandbox claim: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrSandboxLeaseLost
+		}
+		return nil
+	})
+}
+
 // UpdateSandboxObservation records what the provider reported and releases the
 // reconciliation lease. Clearing the provider environment ID also clears the
 // worker heartbeat, so a replaced sandbox starts its startup deadline afresh.
@@ -125,7 +157,10 @@ func (s *Store) UpdateSandboxObservation(
 						THEN now()
 					ELSE updated_at
 				END
-			WHERE session_id = $1 AND org_id = $7 AND reconcile_lease_owner = $2`,
+			WHERE session_id = $1
+				AND org_id = $7
+				AND reconcile_lease_owner = $2
+				AND reconcile_lease_until > now()`,
 			sessionID,
 			owner,
 			providerEnvironmentID,
@@ -151,19 +186,26 @@ func (s *Store) ReleaseSandboxClaim(
 	reconcileAfter time.Time,
 ) error {
 	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(
+		tag, err := tx.Exec(
 			ctx,
 			`UPDATE ao_sandboxes
 			SET reconcile_after = $3,
 				reconcile_lease_owner = '',
 				reconcile_lease_until = NULL
-			WHERE session_id = $1 AND org_id = $4 AND reconcile_lease_owner = $2`,
+			WHERE session_id = $1
+				AND org_id = $4
+				AND reconcile_lease_owner = $2
+				AND reconcile_lease_until > now()`,
 			sessionID,
 			owner,
 			reconcileAfter,
 			orgID,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("release sandbox claim: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrSandboxLeaseLost
 		}
 		return nil
 	})
@@ -195,9 +237,8 @@ func (s *Store) SetSandboxDesiredState(
 	})
 }
 
-// CountActiveSandboxes counts sandboxes that still hold provider capacity.
-// A stuck sandbox keeps counting until its deletion actually completes, which
-// is what stops an organization from leaking paid compute by abandoning sessions.
+// CountActiveSandboxes counts sandboxes whose provider deletion has not yet
+// been observed. Delete intent alone does not release paid capacity.
 func (s *Store) CountActiveSandboxes(
 	ctx context.Context,
 	principal domain.Principal,
@@ -208,23 +249,66 @@ func (s *Store) CountActiveSandboxes(
 		return tx.QueryRow(
 			ctx,
 			`SELECT count(*) FROM ao_sandboxes
-			WHERE org_id = $1 AND desired_state <> 'deleted'`,
+			WHERE org_id = $1 AND observed_state <> 'deleted'`,
 			orgID,
 		).Scan(&count)
 	})
 	return count, err
 }
 
-// DeleteSandboxSession removes a session whose sandbox has been torn down.
-func (s *Store) DeleteSandboxSession(ctx context.Context, orgID, sessionID string) error {
+// CompleteSandboxDeletion records confirmed provider absence, releases quota,
+// and terminates the session without deleting its history.
+func (s *Store) CompleteSandboxDeletion(
+	ctx context.Context,
+	owner, orgID, sessionID string,
+) error {
 	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET provider_environment_id = NULL,
+				observed_state = 'deleted',
+				worker_last_seen_at = NULL,
+				last_error = '',
+				reconcile_after = now() + interval '100 years',
+				reconcile_lease_owner = '',
+				reconcile_lease_until = NULL,
+				updated_at = now()
+			WHERE session_id = $1
+				AND org_id = $3
+				AND reconcile_lease_owner = $2
+				AND reconcile_lease_until > now()`,
+			sessionID,
+			owner,
+			orgID,
+		)
+		if err != nil {
+			return fmt.Errorf("complete sandbox deletion: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrSandboxLeaseLost
+		}
 		if _, err := tx.Exec(
 			ctx,
-			`DELETE FROM ao_sessions WHERE id = $1 AND org_id = $2`,
+			`UPDATE ao_worker_connections
+			SET disconnected_at = COALESCE(disconnected_at, now())
+			WHERE session_id = $1 AND org_id = $2`,
 			sessionID,
 			orgID,
 		); err != nil {
-			return fmt.Errorf("delete session: %w", err)
+			return fmt.Errorf("disconnect deleted sandbox workers: %w", err)
+		}
+		if _, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sessions
+			SET is_terminated = true,
+				activity_state = 'exited',
+				updated_at = now()
+			WHERE id = $1 AND org_id = $2`,
+			sessionID,
+			orgID,
+		); err != nil {
+			return fmt.Errorf("terminate deleted sandbox session: %w", err)
 		}
 		return nil
 	})
@@ -246,12 +330,50 @@ func (s *Store) IssueAccessTicket(
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256([]byte(token))
 	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var workerEpoch any
+		if purpose == "worker_bootstrap" {
+			var epoch int64
+			if err := tx.QueryRow(
+				ctx,
+				`SELECT nextval('ao_worker_epoch_sequence')`,
+			).Scan(&epoch); err != nil {
+				return fmt.Errorf("reserve worker epoch: %w", err)
+			}
+			workerEpoch = epoch
+			// Only the newest bootstrap ticket may launch. Reserving its epoch
+			// also fences the previous worker before a repair starts.
+			if _, err := tx.Exec(
+				ctx,
+				`UPDATE ao_access_tickets
+				SET consumed_at = now()
+				WHERE org_id = $1
+					AND session_id = $2
+					AND purpose = 'worker_bootstrap'
+					AND consumed_at IS NULL`,
+				orgID,
+				sessionID,
+			); err != nil {
+				return fmt.Errorf("invalidate previous bootstrap tickets: %w", err)
+			}
+			if _, err := tx.Exec(
+				ctx,
+				`UPDATE ao_worker_connections
+				SET disconnected_at = now()
+				WHERE org_id = $1
+					AND session_id = $2
+					AND disconnected_at IS NULL`,
+				orgID,
+				sessionID,
+			); err != nil {
+				return fmt.Errorf("fence previous worker epoch: %w", err)
+			}
+		}
 		tag, err := tx.Exec(
 			ctx,
 			`INSERT INTO ao_access_tickets (
-				org_id, session_id, purpose, scopes, token_hash, expires_at
+				org_id, session_id, purpose, scopes, token_hash, worker_epoch, expires_at
 			)
-			SELECT $1, $2, $3, $4, $5, now() + $6::interval
+			SELECT $1, $2, $3, $4, $5, $6, now() + $7::interval
 			FROM ao_sessions
 			WHERE id = $2 AND org_id = $1`,
 			orgID,
@@ -259,6 +381,7 @@ func (s *Store) IssueAccessTicket(
 			purpose,
 			scopes,
 			hash[:],
+			workerEpoch,
 			intervalString(ttl),
 		)
 		if err != nil {
@@ -275,9 +398,9 @@ func (s *Store) IssueAccessTicket(
 	return token, nil
 }
 
-// RedeemWorkerBootstrapTicket atomically consumes a bootstrap ticket and
-// assigns the worker connection epoch it authorizes. A second redemption of the
-// same token fails: the ticket is the session's single-use bootstrap secret.
+// RedeemWorkerBootstrapTicket atomically consumes a bootstrap ticket. Its
+// worker epoch was reserved when the ticket was issued, which fences the prior
+// worker before a repair or recreate begins.
 func (s *Store) RedeemWorkerBootstrapTicket(
 	ctx context.Context,
 	token string,
@@ -522,7 +645,6 @@ func scanSandbox(row rowScanner) (domain.Sandbox, error) {
 		&record.ObservedState,
 		&resourceProfile,
 		&bootstrapContext,
-		&record.AutoStopMinutes,
 		&record.WorkerLastSeenAt,
 		&record.LastError,
 		&record.UpdatedAt,

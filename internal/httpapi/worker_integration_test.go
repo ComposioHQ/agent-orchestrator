@@ -138,12 +138,11 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 		Provisioning: sandbox.ProvisioningDefaults{
 			Release: "test-release",
 			NodeOps: sandbox.NodeOpsConfig{
-				BaseURL:          "https://api.sb.createos.sh",
-				APIKey:           "test-key",
-				DefaultShape:     "s-4vcpu-8gb",
-				DefaultRootFS:    "devbox:1",
-				AutoPauseMinutes: 30,
-				WorkerTokenTTL:   15 * time.Minute,
+				BaseURL:        "https://api.sb.createos.sh",
+				APIKey:         "test-key",
+				DefaultShape:   "s-4vcpu-8gb",
+				DefaultRootFS:  "devbox:1",
+				WorkerTokenTTL: 15 * time.Minute,
 			},
 		},
 	})

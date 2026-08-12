@@ -98,7 +98,6 @@ type CreateSession struct {
 	// configuration change cannot disturb an in-flight session.
 	ResourceProfile  json.RawMessage
 	BootstrapContext json.RawMessage
-	AutoStopMinutes  int
 	Release          string
 }
 

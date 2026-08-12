@@ -184,21 +184,6 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Session project, kind, harness, name, or prompt is invalid.")
 		return
 	}
-	// Quota is enforced at intent time and counted from durable state, so a
-	// sandbox stuck mid-teardown still occupies a slot until its deletion
-	// actually completes.
-	active, err := s.store.CountActiveSandboxes(r.Context(), principalFrom(r), orgID)
-	if err != nil {
-		s.writeStoreError(w, r, err)
-		return
-	}
-	if active >= s.maxSandboxes {
-		writeError(
-			w, r, http.StatusConflict, "SANDBOX_QUOTA_EXCEEDED",
-			"This organization has reached its limit of concurrent sessions. Delete a session and try again.",
-		)
-		return
-	}
 	// The plan is resolved once, here, and stamped onto the sandbox row. The
 	// reconciler reads it back from the row rather than from configuration, so
 	// a later config change cannot disturb a session already in flight.
@@ -216,6 +201,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		principalFrom(r),
 		orgID,
 		key,
+		s.maxSandboxes,
 		domain.CreateSession{
 			ProjectID:           request.ProjectID,
 			Kind:                request.Kind,
@@ -228,7 +214,6 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			SandboxConnectionID: request.SandboxProviderConnectionID,
 			ResourceProfile:     plan.ResourceProfile,
 			BootstrapContext:    plan.BootstrapContext,
-			AutoStopMinutes:     plan.AutoStopMinutes,
 			Release:             s.release,
 		},
 	)
@@ -306,9 +291,9 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 
 // deleteSession records the intent to tear a session's sandbox down. It does
 // not call the provider: the reconciler owns every slow provider call, so a
-// degraded provider cannot stall this request. The session row survives until
-// the reconciler confirms the compute is actually gone, which is also when the
-// organization's quota slot is released.
+// degraded provider cannot stall this request. The reconciler releases quota
+// only after it confirms the compute is gone, then marks the retained session
+// terminated so its event history remains available.
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	sessionID := chi.URLParam(r, "sessionId")
