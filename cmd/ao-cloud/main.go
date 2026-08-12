@@ -43,6 +43,71 @@ func readSSHPubKeys(path string) ([]string, error) {
 	return keys, nil
 }
 
+// provisioningDefaults is the plan every new session in this deployment is
+// stamped with. It is resolved once at startup so a request never reads
+// configuration, and so a misconfigured deployment fails at boot rather than on
+// a user's first session.
+func provisioningDefaults(cfg config.Config) sandbox.ProvisioningDefaults {
+	return sandbox.ProvisioningDefaults{
+		Provider: cfg.SandboxProvider,
+		Release:  cfg.Release,
+		NodeOps: sandbox.NodeOpsConfig{
+			BaseURL:          cfg.NodeOpsBaseURL,
+			APIKey:           cfg.NodeOpsAPIKey,
+			DefaultShape:     cfg.NodeOpsDefaultShape,
+			DefaultRootFS:    cfg.NodeOpsDefaultRootFS,
+			Ingress:          cfg.NodeOpsIngress,
+			SSHKeyPath:       cfg.NodeOpsSSHKeyPath,
+			AutoPauseMinutes: cfg.NodeOpsAutoPauseMinutes,
+			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
+		},
+	}
+}
+
+// newSandboxReconciler builds the reconciler for a deployment that provisions
+// sandboxes. It returns nil when this deployment does not: a control plane with
+// no sandbox provider still serves the API, and the worker routes report 404
+// rather than failing open.
+func newSandboxReconciler(
+	cfg config.Config,
+	store *postgres.Store,
+	logger *slog.Logger,
+) (*reconcile.Reconciler, error) {
+	if cfg.SandboxProvider != sandbox.ProviderNodeOps {
+		return nil, nil
+	}
+	// The worker binary is read once, at startup. Reading it per provision
+	// would let a mid-flight deploy hand two sandboxes different builds, and a
+	// missing file would surface as a stuck session instead of a failed boot.
+	workerBinary, err := os.ReadFile(cfg.WorkerBinaryPath)
+	if err != nil {
+		return nil, fmt.Errorf("read worker binary %s: %w", cfg.WorkerBinaryPath, err)
+	}
+	if len(workerBinary) == 0 {
+		return nil, fmt.Errorf("worker binary %s is empty", cfg.WorkerBinaryPath)
+	}
+	sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	provider := createos.New(createos.Config{
+		BaseURL:      cfg.NodeOpsBaseURL,
+		APIKey:       cfg.NodeOpsAPIKey,
+		DefaultShape: cfg.NodeOpsDefaultShape,
+		DefaultRoot:  cfg.NodeOpsDefaultRootFS,
+		Region:       cfg.NodeOpsRegion,
+		SSHPubKeys:   sshPubKeys,
+	})
+	return reconcile.New(store, sandboxresolve.New(provider), reconcile.Options{
+		PublicURL:        cfg.PublicURL,
+		WorkerBinary:     workerBinary,
+		Interval:         cfg.ReconcileInterval,
+		StartupTimeout:   cfg.SandboxStartupTimeout,
+		HeartbeatTimeout: cfg.WorkerHeartbeatTimeout,
+		Logger:           logger,
+	}), nil
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
@@ -135,12 +200,28 @@ func run(logger *slog.Logger) error {
 		}
 		go githubService.Run(ctx)
 	}
+	reconciler, err := newSandboxReconciler(cfg, store, logger)
+	if err != nil {
+		return err
+	}
+	// Worker tokens are only issued where sandboxes are provisioned. Leaving
+	// this nil elsewhere is what makes the worker routes 404 instead of
+	// accepting credentials no sandbox could have been given.
+	var workerTokens httpapi.WorkerTokens
+	if reconciler != nil {
+		workerTokens = worker.NewTokenManager([]byte(cfg.WorkerSigningKey))
+	}
+
 	api := httpapi.New(httpapi.Options{
 		Store:            store,
 		WorkOS:           workosVerifier,
 		LocalAuthEnabled: cfg.LocalAuthEnabled,
 		LocalSessionTTL:  cfg.LocalSessionTTL,
 		SandboxProvider:  cfg.SandboxProvider,
+		Provisioning:     provisioningDefaults(cfg),
+		WorkerTokens:     workerTokens,
+		WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
+		MaxSandboxes:     cfg.MaxSandboxesPerOrg,
 		Environment:      cfg.Environment,
 		Release:          cfg.Release,
 		Logger:           logger,
