@@ -1,30 +1,22 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
-import { CloudSessionPanel } from "./CloudSessionPanel";
+import { CloudSessionWorkspace } from "./CloudSessionWorkspace";
 
 const mocks = vi.hoisted(() => ({
+  getWorkspaceDiff: vi.fn(),
   listWorkspaceFiles: vi.fn(),
   readWorkspaceFile: vi.fn(),
-  replayEvents: vi.fn(),
-  sendMessage: vi.fn(),
-  streamEvents: vi.fn(),
   writeWorkspaceFile: vi.fn(),
 }));
 
 vi.mock("@/lib/cloud-client", () => ({
-  browserCloudClient: () => ({
-    listWorkspaceFiles: mocks.listWorkspaceFiles,
-    readWorkspaceFile: mocks.readWorkspaceFile,
-    replayEvents: mocks.replayEvents,
-    sendMessage: mocks.sendMessage,
-    streamEvents: mocks.streamEvents,
-    writeWorkspaceFile: mocks.writeWorkspaceFile,
-  }),
-  newIdempotencyKey: () => "message-key",
+  browserCloudClient: () => mocks,
 }));
 vi.mock("./CloudTerminal", () => ({
-  CloudTerminal: () => <div>Live terminal</div>,
+  CloudTerminal: ({ kind }: { kind: string }) => (
+    <div>Interactive {kind} terminal</div>
+  ),
 }));
 
 const session = {
@@ -46,13 +38,24 @@ const session = {
 };
 
 beforeEach(() => {
-  mocks.replayEvents.mockResolvedValue({
-    events: [],
-    hasMore: false,
-    nextAfter: 0,
+  mocks.getWorkspaceDiff.mockResolvedValue({
+    status: " M README.md",
+    unstaged: "diff --git a/README.md b/README.md",
+    staged: "",
+    combined: "diff --git a/README.md b/README.md",
+    diffBaseRef: "main",
+    files: [
+      {
+        path: "README.md",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        binary: false,
+      },
+    ],
+    untrackedFiles: [],
+    truncated: { combined: false, stats: false },
   });
-  mocks.streamEvents.mockImplementation(async function* () {});
-  mocks.sendMessage.mockResolvedValue({ event: {} });
   mocks.listWorkspaceFiles.mockResolvedValue({
     path: "",
     items: [
@@ -65,7 +68,7 @@ beforeEach(() => {
         modTime: "2026-08-12T00:00:00Z",
       },
     ],
-    page: { hasMore: false },
+    hasMore: false,
   });
   mocks.readWorkspaceFile.mockResolvedValue({
     path: "README.md",
@@ -79,42 +82,36 @@ beforeEach(() => {
   });
 });
 
-it("sends turns only through a connected worker session", async () => {
+it("uses the interactive agent terminal as the primary session surface", async () => {
   render(
-    <CloudSessionPanel
+    <CloudSessionWorkspace
       onClose={vi.fn()}
       organizationId="org-1"
       session={session}
     />,
   );
-  const message = screen.getByLabelText("Message");
-  fireEvent.change(message, { target: { value: "Continue the task" } });
-  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-  await waitFor(() =>
-    expect(mocks.sendMessage).toHaveBeenCalledWith(
-      "org-1",
-      "session-1",
-      "Continue the task",
-      { idempotencyKey: "message-key" },
-    ),
-  );
+
+  expect(screen.getByText("Interactive agent terminal")).toBeVisible();
+  expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+  expect(await screen.findByText("README.md")).toBeVisible();
+  expect(screen.getByText("diff --git a/README.md b/README.md")).toBeVisible();
 });
 
-it("lists, reads, and writes files while standard-mode terminal stays disabled", async () => {
+it("opens and edits repository files in the right inspector", async () => {
   render(
-    <CloudSessionPanel
+    <CloudSessionWorkspace
       onClose={vi.fn()}
       organizationId="org-1"
       session={session}
     />,
   );
-  expect(screen.getByRole("button", { name: "Terminal" })).toBeDisabled();
+
   fireEvent.click(screen.getByRole("button", { name: "Files" }));
-  expect(await screen.findByText("README.md")).toBeVisible();
-  fireEvent.click(screen.getByText("README.md"));
+  fireEvent.click(await screen.findByText("README.md"));
   const editor = await screen.findByLabelText("Edit README.md");
   fireEvent.change(editor, { target: { value: "updated\n" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
   await waitFor(() =>
     expect(mocks.writeWorkspaceFile).toHaveBeenCalledWith(
       "org-1",
@@ -124,26 +121,31 @@ it("lists, reads, and writes files while standard-mode terminal stays disabled",
   );
 });
 
-it("opens the live terminal for a connected trusted session", () => {
+it("opens a separate trusted workspace shell in the right inspector", () => {
   render(
-    <CloudSessionPanel
+    <CloudSessionWorkspace
       onClose={vi.fn()}
       organizationId="org-1"
       session={{ ...session, mode: "trusted" }}
     />,
   );
+
   fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
-  expect(screen.getByText("Live terminal")).toBeVisible();
+  expect(screen.getByText("Interactive agent terminal")).toBeVisible();
+  expect(screen.getByText("Interactive workspace terminal")).toBeVisible();
 });
 
-it("keeps execution actions disabled while the worker is disconnected", () => {
+it("waits for the worker before mounting the terminal", () => {
   render(
-    <CloudSessionPanel
+    <CloudSessionWorkspace
       onClose={vi.fn()}
       organizationId="org-1"
       session={{ ...session, runtimeConnected: false }}
     />,
   );
-  expect(screen.getByLabelText("Message")).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Files" })).toBeDisabled();
+
+  expect(
+    screen.getByText("Waiting for the isolated worker and agent terminal…"),
+  ).toBeVisible();
+  expect(screen.queryByText("Interactive agent terminal")).not.toBeInTheDocument();
 });

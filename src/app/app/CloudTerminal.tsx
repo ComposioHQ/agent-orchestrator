@@ -11,9 +11,11 @@ type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 export function CloudTerminal({
   organizationId,
   sessionId,
+  kind = "agent",
 }: {
   organizationId: string;
   sessionId: string;
+  kind?: "agent" | "workspace";
 }) {
   const client = useMemo(browserCloudClient, []);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -70,7 +72,7 @@ export function CloudTerminal({
       setNotice("");
       try {
         const [ticket, configResponse] = await Promise.all([
-          client.createTerminalTicket(organizationId, sessionId),
+          client.createTerminalTicket(organizationId, sessionId, kind),
           fetch("/api/cloud/terminal-origin", { cache: "no-store" }),
         ]);
         if (!configResponse.ok) {
@@ -81,13 +83,20 @@ export function CloudTerminal({
         url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
         url.searchParams.set("ticket", ticket.ticket);
         url.searchParams.set("after", "0");
-        url.searchParams.set("kind", "workspace");
+        url.searchParams.set("kind", kind);
         if (!active) return;
 
         socket = new WebSocket(url);
         socket.binaryType = "arraybuffer";
         socket.addEventListener("open", () => {
           setConnection("connected");
+          socket?.send(
+            JSON.stringify({
+              type: "resize",
+              columns: terminal.cols,
+              rows: terminal.rows,
+            }),
+          );
           terminal.focus();
         });
         socket.addEventListener("message", async (event) => {
@@ -99,9 +108,13 @@ export function CloudTerminal({
             terminal.write(new Uint8Array(await event.data.arrayBuffer()));
           }
         });
-        socket.addEventListener("close", () => {
+        socket.addEventListener("close", (event) => {
           if (!active) return;
           setConnection("disconnected");
+          if (event.code === 1000) {
+            setNotice(kind === "agent" ? "Agent terminal exited." : "Terminal closed.");
+            return;
+          }
           reconnectTimer = window.setTimeout(() => void connect(), 1_000);
         });
         socket.addEventListener("error", () => {
@@ -117,7 +130,16 @@ export function CloudTerminal({
     };
 
     const input = terminal.onData((data) => {
-      if (socket?.readyState === WebSocket.OPEN) socket.send(data);
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "input", data }));
+      }
+    });
+    const resize = terminal.onResize(({ cols, rows }) => {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(
+          JSON.stringify({ type: "resize", columns: cols, rows }),
+        );
+      }
     });
     const observer = new ResizeObserver(() => fit.fit());
     observer.observe(host);
@@ -128,10 +150,11 @@ export function CloudTerminal({
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       observer.disconnect();
       input.dispose();
+      resize.dispose();
       socket?.close();
       terminal.dispose();
     };
-  }, [client, organizationId, sessionId]);
+  }, [client, kind, organizationId, sessionId]);
 
   useEffect(() => {
     if (!notice) return;

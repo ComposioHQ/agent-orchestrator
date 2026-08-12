@@ -1,14 +1,18 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.26.5-bookworm AS build
+ARG BUILDPLATFORM
+ARG TARGETOS=linux
+ARG TARGETARCH
+
+FROM --platform=${BUILDPLATFORM} golang:1.26.5-bookworm AS build
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src
 
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY . .
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
@@ -18,7 +22,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/ao-cloud-healthcheck ./cmd/ao-cloud-healthcheck && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/ao-worker ./cmd/ao-worker
+    go build -trimpath -ldflags="-s -w" -o /out/ao-worker ./cmd/ao-worker && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/ao ./cmd/ao-cloud-agent
 
 FROM node:22-bookworm-slim AS worker
 ARG TARGETARCH
@@ -56,6 +62,7 @@ RUN case "${TARGETARCH}" in \
     ln -s "/opt/cursor-agent/${CURSOR_AGENT_VERSION}/cursor-agent" /usr/local/bin/cursor-agent && \
     cursor-agent --version
 COPY --from=build --chown=ao-worker:ao-worker /out/ao-worker /ao-worker
+COPY --from=build --chown=ao-worker:ao-worker /out/ao /usr/local/bin/ao
 USER ao-worker
 WORKDIR /workspace/repository
 ENTRYPOINT ["/ao-worker"]

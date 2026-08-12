@@ -1,0 +1,429 @@
+"use client";
+
+import type {
+  Session,
+  WorkspaceDiff,
+  WorkspaceEntry,
+  WorkspaceFile,
+} from "@aoagents/cloud-client";
+import {
+  ChevronLeft,
+  FileCode2,
+  Files,
+  GitCompareArrows,
+  RefreshCw,
+  Terminal,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+
+import { browserCloudClient } from "@/lib/cloud-client";
+import { CloudTerminal } from "./CloudTerminal";
+
+type InspectorTab = "changes" | "files" | "terminal";
+
+export function CloudSessionWorkspace({
+  onClose,
+  organizationId,
+  session,
+}: {
+  onClose: () => void;
+  organizationId: string;
+  session: Session;
+}) {
+  const client = useMemo(browserCloudClient, []);
+  const [tab, setTab] = useState<InspectorTab>("changes");
+  const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
+  const [directory, setDirectory] = useState("");
+  const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
+  const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
+  const [fileContent, setFileContent] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadDiff = async () => {
+    if (!session.runtimeConnected) return;
+    try {
+      const next = await client.getWorkspaceDiff(organizationId, session.id);
+      setDiff(next);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load changes.");
+    }
+  };
+
+  const loadDirectory = async (path: string) => {
+    setBusy(true);
+    try {
+      const page = await client.listWorkspaceFiles(
+        organizationId,
+        session.id,
+        path,
+        { limit: 100 },
+      );
+      setDirectory(page.path);
+      setEntries(page.items);
+      setSelectedFile(null);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load files.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openFile = async (path: string) => {
+    setBusy(true);
+    try {
+      const file = await client.readWorkspaceFile(
+        organizationId,
+        session.id,
+        path,
+      );
+      setSelectedFile(file);
+      setFileContent(file.content);
+      setTab("files");
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not read file.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveFile = async () => {
+    if (!selectedFile || session.mode === "read-only") return;
+    setBusy(true);
+    try {
+      const file = await client.writeWorkspaceFile(
+        organizationId,
+        session.id,
+        { path: selectedFile.path, content: fileContent },
+      );
+      setSelectedFile(file);
+      setFileContent(file.content);
+      await loadDiff();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save file.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadDiff();
+    const timer = window.setInterval(() => void loadDiff(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [organizationId, session.id, session.runtimeConnected]);
+
+  useEffect(() => {
+    if (tab === "files" && entries.length === 0) void loadDirectory("");
+  }, [tab]);
+
+  return (
+    <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(320px,38%)]">
+      <section className="flex min-h-0 min-w-0 flex-col bg-[#101317]">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] px-4">
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold tracking-[-0.02em]">
+              {session.displayName}
+            </h1>
+            <p className="mt-0.5 truncate font-mono text-[9px] text-[var(--color-text-passive)]">
+              {session.branch} · {session.harness} · {session.mode}
+            </p>
+          </div>
+          <span
+            className={`size-1.5 rounded-full ${
+              session.runtimeConnected ? "bg-[#60a5fa]" : "bg-[#646a73]"
+            }`}
+          />
+          <span className="text-[10px] text-[var(--color-text-passive)]">
+            {session.runtimeConnected ? "Connected" : "Connecting"}
+          </span>
+          <button
+            aria-label="Close session"
+            className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="size-4" />
+          </button>
+        </header>
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3">
+          <Terminal className="size-3.5 text-[var(--color-accent)]" />
+          <span className="text-[11px] text-[var(--foreground)]">
+            {session.harness}
+          </span>
+          <span className="font-mono text-[9px] text-[var(--color-text-passive)]">
+            /workspace/repository
+          </span>
+        </div>
+        {session.runtimeConnected ? (
+          <CloudTerminal
+            kind="agent"
+            organizationId={organizationId}
+            sessionId={session.id}
+          />
+        ) : (
+          <div className="grid min-h-0 flex-1 place-items-center text-xs text-[var(--color-text-passive)]">
+            Waiting for the isolated worker and agent terminal…
+          </div>
+        )}
+      </section>
+
+      <aside className="flex min-h-0 min-w-0 flex-col border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)]">
+        <div className="flex h-12 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
+          <InspectorButton
+            active={tab === "changes"}
+            label={`Changes ${diff?.files.length ?? 0}`}
+            onClick={() => setTab("changes")}
+          >
+            <GitCompareArrows className="size-3.5" />
+          </InspectorButton>
+          <InspectorButton
+            active={tab === "files"}
+            label="Files"
+            onClick={() => setTab("files")}
+          >
+            <Files className="size-3.5" />
+          </InspectorButton>
+          <InspectorButton
+            active={tab === "terminal"}
+            label="Terminal"
+            onClick={() => setTab("terminal")}
+          >
+            <Terminal className="size-3.5" />
+          </InspectorButton>
+          {tab !== "terminal" ? (
+            <button
+              aria-label="Refresh inspector"
+              className="ml-auto grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={() =>
+                tab === "changes"
+                  ? void loadDiff()
+                  : void loadDirectory(directory)
+              }
+              type="button"
+            >
+              <RefreshCw className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+        {error ? (
+          <p className="border-b border-[var(--color-error)]/20 bg-[var(--color-error)]/8 px-3 py-2 text-[10px] text-[var(--color-error)]">
+            {error}
+          </p>
+        ) : null}
+        {tab === "changes" ? (
+          <ChangesView diff={diff} onOpenFile={(path) => void openFile(path)} />
+        ) : tab === "files" ? (
+          <FileBrowser
+            busy={busy}
+            content={fileContent}
+            directory={directory}
+            entries={entries}
+            file={selectedFile}
+            onBack={() => {
+              if (selectedFile) {
+                setSelectedFile(null);
+                return;
+              }
+              void loadDirectory(directory.split("/").slice(0, -1).join("/"));
+            }}
+            onChange={setFileContent}
+            onOpen={(entry) =>
+              entry.isDir ? void loadDirectory(entry.path) : void openFile(entry.path)
+            }
+            onSave={() => void saveFile()}
+            readOnly={session.mode === "read-only"}
+          />
+        ) : session.mode === "trusted" && session.runtimeConnected ? (
+          <CloudTerminal
+            kind="workspace"
+            organizationId={organizationId}
+            sessionId={session.id}
+          />
+        ) : (
+          <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
+            Workspace shell access requires a connected trusted session.
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function InspectorButton({
+  active,
+  children,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] ${
+        active
+          ? "bg-[var(--color-interactive-hover)] text-[var(--foreground)]"
+          : "text-[var(--color-text-passive)]"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+      {label}
+    </button>
+  );
+}
+
+function ChangesView({
+  diff,
+  onOpenFile,
+}: {
+  diff: WorkspaceDiff | null;
+  onOpenFile: (path: string) => void;
+}) {
+  if (!diff) {
+    return (
+      <div className="grid min-h-0 flex-1 place-items-center text-xs text-[var(--color-text-passive)]">
+        Loading changes…
+      </div>
+    );
+  }
+  if (diff.files.length === 0 && diff.untrackedFiles.length === 0) {
+    return (
+      <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
+        No workspace changes yet.
+      </div>
+    );
+  }
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="max-h-44 shrink-0 overflow-y-auto border-b border-[var(--color-border-strong)] p-2">
+        {diff.files.map((file) => (
+          <button
+            className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
+            key={file.path}
+            onClick={() => onOpenFile(file.path)}
+            type="button"
+          >
+            <FileCode2 className="size-3.5 text-[var(--color-text-passive)]" />
+            <span className="min-w-0 flex-1 truncate text-xs">{file.path}</span>
+            <span className="font-mono text-[9px] text-[#4ade80]">
+              +{file.additions}
+            </span>
+            <span className="font-mono text-[9px] text-[#f87171]">
+              -{file.deletions}
+            </span>
+          </button>
+        ))}
+        {diff.untrackedFiles.map((path) => (
+          <button
+            className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
+            key={path}
+            onClick={() => onOpenFile(path)}
+            type="button"
+          >
+            <FileCode2 className="size-3.5 text-[var(--color-text-passive)]" />
+            <span className="min-w-0 flex-1 truncate text-xs">{path}</span>
+            <span className="font-mono text-[9px] text-[#4ade80]">new</span>
+          </button>
+        ))}
+      </div>
+      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre p-3 font-mono text-[10px] leading-4 text-[#c8ccd2]">
+        {diff.combined || "Untracked files have no diff yet."}
+      </pre>
+    </div>
+  );
+}
+
+function FileBrowser({
+  busy,
+  content,
+  directory,
+  entries,
+  file,
+  onBack,
+  onChange,
+  onOpen,
+  onSave,
+  readOnly,
+}: {
+  busy: boolean;
+  content: string;
+  directory: string;
+  entries: WorkspaceEntry[];
+  file: WorkspaceFile | null;
+  onBack: () => void;
+  onChange: (content: string) => void;
+  onOpen: (entry: WorkspaceEntry) => void;
+  onSave: () => void;
+  readOnly: boolean;
+}) {
+  if (file) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex h-9 items-center gap-2 border-b border-[var(--color-border-strong)] px-3">
+          <button aria-label="Back to files" onClick={onBack} type="button">
+            <ChevronLeft className="size-4 text-[var(--color-text-passive)]" />
+          </button>
+          <span className="min-w-0 flex-1 truncate font-mono text-[10px]">
+            {file.path}
+          </span>
+          <button
+            className="rounded bg-[var(--color-accent-strong)] px-2 py-1 text-[10px] text-[var(--color-accent-foreground)] disabled:opacity-40"
+            disabled={busy || readOnly || content === file.content}
+            onClick={onSave}
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+        <textarea
+          aria-label={`Edit ${file.path}`}
+          className="min-h-0 flex-1 resize-none bg-[var(--color-bg-secondary)] p-3 font-mono text-xs leading-5 outline-none"
+          onChange={(event) => onChange(event.target.value)}
+          readOnly={readOnly}
+          value={content}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      {directory ? (
+        <button
+          className="mb-1 flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)]"
+          onClick={onBack}
+          type="button"
+        >
+          <ChevronLeft className="size-3.5" /> ..
+        </button>
+      ) : null}
+      {busy ? (
+        <p className="p-3 text-xs text-[var(--color-text-passive)]">Loading files…</p>
+      ) : null}
+      {!busy && entries.length === 0 ? (
+        <p className="p-3 text-xs text-[var(--color-text-passive)]">No files found.</p>
+      ) : null}
+      {entries.map((entry) => (
+        <button
+          className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
+          key={entry.path}
+          onClick={() => onOpen(entry)}
+          type="button"
+        >
+          <FileCode2 className="size-3.5 text-[var(--color-text-passive)]" />
+          <span className="min-w-0 flex-1 truncate text-xs">{entry.name}</span>
+          <span className="font-mono text-[9px] text-[var(--color-text-passive)]">
+            {entry.isDir ? "dir" : entry.size}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}

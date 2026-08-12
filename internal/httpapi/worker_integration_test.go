@@ -256,6 +256,12 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 		t.Fatal("heartbeat did not renew the worker token")
 	}
 	assertSandboxState(t, pool, sessionID, domain.SandboxObservedRunning)
+	workerGET(
+		t,
+		server.URL+"/api/cloud/v1/worker/children",
+		renewed,
+		http.StatusForbidden,
+	)
 
 	requestJSON(
 		t,

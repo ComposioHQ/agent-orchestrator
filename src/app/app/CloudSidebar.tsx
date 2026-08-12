@@ -15,6 +15,7 @@ import {
   Search,
   Settings,
   Share2,
+  Trash2,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -28,6 +29,7 @@ export function CloudSidebar({
   onSelectOrganization,
   onSelectProject,
   onSelectSession,
+  onDeleteSession,
   onShareProject,
   projects,
   selectedOrganizationId,
@@ -42,6 +44,7 @@ export function CloudSidebar({
   onSelectOrganization: (organizationId: string) => void;
   onSelectProject: (projectId: string) => void;
   onSelectSession: (sessionId: string) => void;
+  onDeleteSession: (session: Session) => void;
   onShareProject: (project: Project) => void;
   projects: Project[];
   selectedOrganizationId: string;
@@ -51,6 +54,7 @@ export function CloudSidebar({
 }) {
   const [closedProjects, setClosedProjects] = useState<Set<string>>(new Set());
   const [openProjectMenu, setOpenProjectMenu] = useState<string | null>(null);
+  const [openSessionMenu, setOpenSessionMenu] = useState<string | null>(null);
   const projectItems = projects.filter((project) => !isStandaloneProject(project));
   const standaloneRows = projects
     .filter(isStandaloneProject)
@@ -207,24 +211,41 @@ export function CloudSidebar({
               {open ? (
                 <div className="ml-3.5 py-1">
                   {projectSessions.map((session) => (
-                    <button
+                    <div
+                      className="group relative flex items-center"
                       key={session.id}
-                      type="button"
-                      className={`flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
-                        selectedSessionId === session.id
-                          ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                          : "text-[var(--muted-foreground)]"
-                      }`}
-                      onClick={() => onSelectSession(session.id)}
                     >
-                      <span
-                        className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                        aria-hidden="true"
+                      <button
+                        type="button"
+                        className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 pr-8 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                          selectedSessionId === session.id
+                            ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
+                            : "text-[var(--muted-foreground)]"
+                        }`}
+                        onClick={() => onSelectSession(session.id)}
+                      >
+                        <span
+                          className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                          aria-hidden="true"
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {session.displayName}
+                        </span>
+                      </button>
+                      <SessionActions
+                        onDelete={() => {
+                          setOpenSessionMenu(null);
+                          onDeleteSession(session);
+                        }}
+                        onToggle={() =>
+                          setOpenSessionMenu((current) =>
+                            current === session.id ? null : session.id,
+                          )
+                        }
+                        open={openSessionMenu === session.id}
+                        session={session}
                       />
-                      <span className="min-w-0 flex-1 truncate">
-                        {session.displayName}
-                      </span>
-                    </button>
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -238,26 +259,43 @@ export function CloudSidebar({
             </div>
             <div className="space-y-1">
               {standaloneRows.map(({ project, session }) => (
-                <button
-                  className={`flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
-                    selectedSessionId === session.id
-                      ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                      : "text-[var(--muted-foreground)]"
-                  }`}
+                <div
+                  className="group relative flex items-center"
                   key={session.id}
-                  onClick={() => onSelectSession(session.id)}
                   title={project.displayName}
-                  type="button"
                 >
-                  <Bot className="size-4 shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {session.displayName}
-                  </span>
-                  <span
-                    className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                    aria-hidden="true"
+                  <button
+                    className={`flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 pr-8 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                      selectedSessionId === session.id
+                        ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
+                        : "text-[var(--muted-foreground)]"
+                    }`}
+                    onClick={() => onSelectSession(session.id)}
+                    type="button"
+                  >
+                    <Bot className="size-4 shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {session.displayName}
+                    </span>
+                    <span
+                      className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <SessionActions
+                    onDelete={() => {
+                      setOpenSessionMenu(null);
+                      onDeleteSession(session);
+                    }}
+                    onToggle={() =>
+                      setOpenSessionMenu((current) =>
+                        current === session.id ? null : session.id,
+                      )
+                    }
+                    open={openSessionMenu === session.id}
+                    session={session}
                   />
-                </button>
+                </div>
               ))}
             </div>
           </div>
@@ -290,6 +328,60 @@ export function CloudSidebar({
         </a>
       </div>
     </aside>
+  );
+}
+
+function SessionActions({
+  onDelete,
+  onToggle,
+  open,
+  session,
+}: {
+  onDelete: () => void;
+  onToggle: () => void;
+  open: boolean;
+  session: Session;
+}) {
+  return (
+    <>
+      <button
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={`Actions for ${session.displayName}`}
+        className="absolute right-1 grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] opacity-0 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] focus-visible:opacity-100 group-hover:opacity-100"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
+        type="button"
+      >
+        <MoreHorizontal className="size-3.5" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div
+          className="absolute right-1 top-8 z-40 w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] p-1 shadow-xl"
+          role="menu"
+        >
+          <button
+            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
+            onClick={() => {
+              if (
+                window.confirm(
+                  `Delete ${session.displayName}? Its sandbox will be stopped, while durable audit history is retained.`,
+                )
+              ) {
+                onDelete();
+              }
+            }}
+            role="menuitem"
+            type="button"
+          >
+            <Trash2 className="size-3.5" aria-hidden="true" />
+            Delete session
+          </button>
+        </div>
+      ) : null}
+    </>
   );
 }
 

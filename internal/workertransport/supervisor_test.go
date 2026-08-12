@@ -2,11 +2,13 @@ package workertransport
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/Untrivial-ai/ao-cloud/internal/workerexec"
 )
 
 func TestSupervisorRunsWorkspaceTerminalAndStopsOnCancellation(t *testing.T) {
@@ -35,7 +37,7 @@ func TestSupervisorRunsWorkspaceTerminalAndStopsOnCancellation(t *testing.T) {
 		},
 	}
 	waitString(t, control.completed, "input")
-	waitString(t, control.output, "terminal-ready\n")
+	waitOutputContaining(t, control.output, "terminal-ready")
 
 	cancel()
 	select {
@@ -48,12 +50,79 @@ func TestSupervisorRunsWorkspaceTerminalAndStopsOnCancellation(t *testing.T) {
 	}
 }
 
+func TestSupervisorForwardsDurableMessagesIntoAgentPTY(t *testing.T) {
+	control := &recordingControl{
+		requests: make(chan *worker.TransportRequest),
+		turns:    make(chan *worker.Turn, 1),
+		turnDone: make(chan string, 1),
+		output:   make(chan string, 4),
+	}
+	started := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	supervisor := &Supervisor{
+		Control: control, Workspace: t.TempDir(), PollInterval: time.Millisecond,
+		AgentTerminalID: "agent-1",
+		AgentCommand: workerexec.Command{
+			Path: "/bin/sh",
+		},
+		Started: started,
+	}
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Run(ctx) }()
+	if err := <-started; err != nil {
+		t.Fatal(err)
+	}
+	control.turns <- &worker.Turn{
+		ID: "turn-1", Attempt: 1, Prompt: "printf 'message-forwarded\\n'",
+	}
+	waitString(t, control.turnDone, "turn-1")
+	waitOutputContaining(t, control.output, "message-forwarded")
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type recordingControl struct {
 	requests  chan *worker.TransportRequest
+	turns     chan *worker.Turn
 	completed chan string
+	turnDone  chan string
 	output    chan string
 	mu        sync.Mutex
 	failed    []string
+}
+
+func (c *recordingControl) ClaimTurn(ctx context.Context) (*worker.Turn, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case turn := <-c.turns:
+		return turn, nil
+	default:
+		return nil, nil
+	}
+}
+
+func (c *recordingControl) CompleteTurn(
+	_ context.Context,
+	id string,
+	_ int,
+	_ bool,
+) error {
+	if c.turnDone != nil {
+		c.turnDone <- id
+	}
+	return nil
+}
+
+func (c *recordingControl) FailTurn(
+	_ context.Context,
+	_ string,
+	_ int,
+	_ string,
+) error {
+	return nil
 }
 
 func (c *recordingControl) ClaimTransport(ctx context.Context) (*worker.TransportRequest, error) {
@@ -98,6 +167,14 @@ func (c *recordingControl) PublishTerminalOutput(
 	return nil
 }
 
+func (c *recordingControl) PublishTerminalExit(
+	_ context.Context,
+	_ string,
+	_ int,
+) error {
+	return nil
+}
+
 func waitString(t *testing.T, values <-chan string, expected string) {
 	t.Helper()
 	select {
@@ -107,5 +184,20 @@ func waitString(t *testing.T, values <-chan string, expected string) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for %q", expected)
+	}
+}
+
+func waitOutputContaining(t *testing.T, values <-chan string, expected string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case value := <-values:
+			if strings.Contains(value, expected) {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for output containing %q", expected)
+		}
 	}
 }

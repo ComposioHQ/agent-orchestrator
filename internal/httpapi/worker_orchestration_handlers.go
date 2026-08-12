@@ -85,6 +85,36 @@ func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Child session input is invalid.")
 		return
 	}
+	if !supportedInteractivePolicy(validation) {
+		writeError(
+			w, r, http.StatusUnprocessableEntity, "unsupported_policy",
+			"Interactive child agents support standard or trusted mode without command deny rules.",
+		)
+		return
+	}
+	credentialStore, ok := s.store.(workerCredentialAvailabilityStore)
+	if !ok {
+		writeError(
+			w, r, http.StatusNotImplemented, "not_implemented",
+			"Agent provider checks are unavailable.",
+		)
+		return
+	}
+	available, err := credentialStore.AgentCredentialAvailable(
+		r.Context(), claims.OrgID, request.Harness,
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if !available {
+		writeError(
+			w, r, http.StatusUnprocessableEntity,
+			"agent_provider_required",
+			"Connect and validate the selected coding-agent provider before spawning a child.",
+		)
+		return
+	}
 	plan, err := s.provisioning.SessionPlan()
 	if err != nil {
 		s.logger.Error("resolve child sandbox provisioning plan", "error", err, "request_id", requestID(r))
@@ -140,6 +170,29 @@ func (s *Server) sendWorkerChildMessage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": toClientEventResponse(event)})
+}
+
+func (s *Server) deleteWorkerChild(w http.ResponseWriter, r *http.Request) {
+	claims, ok := requireOrchestratorScope(w, r)
+	if !ok {
+		return
+	}
+	childID := chi.URLParam(r, "sessionId")
+	if requireUUID(childID, "sessionId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "sessionId must be a UUID.")
+		return
+	}
+	if err := s.store.DeleteOrchestratorChild(
+		r.Context(), claims.OrgID, claims.SessionID, childID,
+	); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"session": map[string]any{
+			"id": childID, "desiredState": domain.SandboxDesiredDeleted,
+		},
+	})
 }
 
 func requireOrchestratorScope(w http.ResponseWriter, r *http.Request) (worker.Claims, bool) {

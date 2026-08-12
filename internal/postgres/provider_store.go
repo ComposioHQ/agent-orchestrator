@@ -51,6 +51,28 @@ func (s *Store) ListProviderConnections(
 	return connections, err
 }
 
+func (s *Store) AgentCredentialAvailable(
+	ctx context.Context,
+	orgID, provider string,
+) (bool, error) {
+	var available bool
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`SELECT EXISTS (
+				SELECT 1
+				FROM ao_provider_connections
+				WHERE org_id = $1
+				  AND provider = $2
+				  AND label = 'default'
+				  AND validation_state = 'valid'
+			)`,
+			orgID, provider,
+		).Scan(&available)
+	})
+	return available, err
+}
+
 func (s *Store) UpsertProviderConnection(
 	ctx context.Context,
 	principal domain.Principal,

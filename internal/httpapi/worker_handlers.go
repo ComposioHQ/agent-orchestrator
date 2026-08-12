@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -82,12 +83,18 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scopes := ticket.Scopes
+	if launch.Kind != "orchestrator" {
+		scopes = slices.DeleteFunc(slices.Clone(scopes), func(scope string) bool {
+			return scope == "worker:orchestrate"
+		})
+	}
 	token, err := s.workerTokens.Issue(worker.Claims{
 		OrgID:     ticket.OrgID,
 		SessionID: ticket.SessionID,
 		WorkerID:  workerID,
 		Epoch:     ticket.WorkerEpoch,
-		Scopes:    ticket.Scopes,
+		Scopes:    scopes,
 	}, s.workerTokenTTL())
 	if err != nil {
 		s.logger.Error("issue worker token", "error", err, "request_id", requestID(r))
@@ -109,14 +116,17 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		ExpiresIn:   int(s.workerTokenTTL().Seconds()),
 		SessionID:   ticket.SessionID,
 		Launch: worker.LaunchContext{
-			SessionID:     launch.SessionID,
-			ProjectID:     launch.ProjectID,
-			Kind:          launch.Kind,
-			Harness:       launch.Harness,
-			DisplayName:   launch.DisplayName,
-			Branch:        launch.Branch,
-			RepositoryURL: launch.RepositoryURL,
-			DefaultBranch: launch.DefaultBranch,
+			SessionID:      launch.SessionID,
+			ProjectID:      launch.ProjectID,
+			Kind:           launch.Kind,
+			Harness:        launch.Harness,
+			DisplayName:    launch.DisplayName,
+			Branch:         launch.Branch,
+			Prompt:         launch.Prompt,
+			Mode:           launch.Mode,
+			DeniedCommands: launch.DeniedCommands,
+			RepositoryURL:  launch.RepositoryURL,
+			DefaultBranch:  launch.DefaultBranch,
 		},
 	})
 }

@@ -1,10 +1,10 @@
-// Command ao-worker is the headless process that runs inside one sandbox. It
+// Command ao-worker is the supervisor process that runs inside one sandbox. It
 // receives no permanent credential and opens no inbound port: it reads a
 // one-time bootstrap ticket from its environment, dials the control plane
 // outward to exchange it for a short-lived token, and then heartbeats.
 //
-// It prepares the repository checkout and supervises durable coding-agent
-// turns while a separate heartbeat loop keeps its epoch-scoped token current.
+// It prepares the repository checkout and supervises the interactive coding
+// agent PTY while a separate heartbeat loop keeps its epoch-scoped token current.
 package main
 
 import (
@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +52,7 @@ var workerCapabilities = []string{
 	"repository.checkout",
 	"workspace.files",
 	"terminal.workspace",
+	"terminal.agent",
 }
 
 func main() {
@@ -78,13 +80,21 @@ func run(logger *slog.Logger) error {
 	if workspace == "" {
 		return errors.New("AO_WORKSPACE_DIR is required")
 	}
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir == "" {
+		dataDir = os.TempDir()
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return fmt.Errorf("create worker data directory: %w", err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	client := &client{
-		baseURL: publicURL + "/api/cloud/v1",
-		http:    &http.Client{Timeout: requestTimeout},
+		baseURL:   publicURL + "/api/cloud/v1",
+		http:      &http.Client{Timeout: requestTimeout},
+		tokenFile: filepath.Join(dataDir, "worker-token"),
 	}
 
 	bootstrap, err := client.bootstrap(ctx, bootstrapToken)
@@ -98,7 +108,9 @@ func run(logger *slog.Logger) error {
 	// the rotating worker token.
 	_ = os.Unsetenv("AO_WORKER_BOOTSTRAP_TOKEN")
 	bootstrapToken = ""
-	client.setToken(bootstrap.WorkerToken)
+	if err := client.setToken(bootstrap.WorkerToken); err != nil {
+		return err
+	}
 	logger.Info("worker bootstrapped",
 		"session_id", bootstrap.SessionID,
 		"worker_id", bootstrap.WorkerID,
@@ -140,6 +152,52 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	// Heartbeat before waiting out the first interval. Bootstrap registration is
+	// not a check-in, so a repaired worker can otherwise be replaced again
+	// before the control plane ever observes it.
+	if renewed, err := client.heartbeat(ctx); err != nil {
+		logger.Warn("first heartbeat failed", "error", err)
+	} else if err := client.setToken(renewed); err != nil {
+		return err
+	}
+	credential, err := client.Credential(ctx)
+	if err != nil {
+		return fmt.Errorf("load coding-agent credential: %w", err)
+	}
+	agentCommand, err := (workerexec.HarnessBuilder{
+		DataDir: dataDir,
+	}).BuildInteractive(bootstrap.Launch, credential, workspace)
+	if err != nil {
+		return fmt.Errorf("build interactive coding-agent command: %w", err)
+	}
+	agentCommand.Env["AO_CLOUD_WORKER_API_URL"] = client.baseURL
+	agentCommand.Env["AO_CLOUD_WORKER_TOKEN_FILE"] = client.tokenFile
+	agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
+	agentCommand.Env["AO_PROJECT_ID"] = bootstrap.Launch.ProjectID
+	agentCommand.Env["AO_SESSION_KIND"] = bootstrap.Launch.Kind
+	agentTerminal, err := client.ensureAgentTerminal(ctx)
+	if err != nil {
+		agentCommand.Cleanup()
+		return fmt.Errorf("initialize agent terminal: %w", err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	started := make(chan error, 1)
+	transportSupervisor := workertransport.Supervisor{
+		Control: client, Workspace: workspace, Logger: logger,
+		AgentCommand: agentCommand, AgentTerminalID: agentTerminal.TerminalID,
+		Started: started,
+	}
+	results := make(chan error, 2)
+	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
+	go func() { results <- transportSupervisor.Run(runCtx) }()
+	if err := <-started; err != nil {
+		cancel()
+		<-results
+		<-results
+		return fmt.Errorf("start interactive coding-agent terminal: %w", err)
+	}
 	if err := client.publishEvent(ctx, "worker.ready", map[string]any{
 		"workerId":     bootstrap.WorkerID,
 		"epoch":        bootstrap.Epoch,
@@ -148,38 +206,8 @@ func run(logger *slog.Logger) error {
 	}); err != nil {
 		logger.Warn("publish worker.ready failed", "error", err)
 	}
-
-	// Heartbeat before waiting out the first interval. Bootstrap registration is
-	// not a check-in, so a repaired worker can otherwise be replaced again
-	// before the control plane ever observes it.
-	if renewed, err := client.heartbeat(ctx); err != nil {
-		logger.Warn("first heartbeat failed", "error", err)
-	} else {
-		client.setToken(renewed)
-	}
-	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
-	if dataDir == "" {
-		dataDir = os.TempDir()
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	supervisor := workerexec.Supervisor{
-		Control:   client,
-		Builder:   workerexec.HarnessBuilder{DataDir: dataDir},
-		Runner:    workerexec.OSRunner{},
-		Workspace: workspace,
-		Logger:    logger,
-	}
-	transportSupervisor := workertransport.Supervisor{
-		Control: client, Workspace: workspace, Logger: logger,
-	}
-	results := make(chan error, 3)
-	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
-	go func() { results <- supervisor.Run(runCtx) }()
-	go func() { results <- transportSupervisor.Run(runCtx) }()
 	first := <-results
 	cancel()
-	<-results
 	<-results
 	if ctx.Err() != nil {
 		logger.Info("worker shutting down")
@@ -191,10 +219,11 @@ func run(logger *slog.Logger) error {
 var errStaleWorker = errors.New("worker credential replaced")
 
 type client struct {
-	baseURL string
-	http    *http.Client
-	mu      sync.RWMutex
-	token   string
+	baseURL   string
+	http      *http.Client
+	tokenFile string
+	mu        sync.RWMutex
+	token     string
 }
 
 func (c *client) bootstrap(ctx context.Context, bootstrapToken string) (worker.BootstrapResponse, error) {
@@ -250,7 +279,9 @@ func (c *client) heartbeatLoop(ctx context.Context, logger *slog.Logger) error {
 				continue
 			}
 			failures = 0
-			c.setToken(renewed)
+			if err := c.setToken(renewed); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -365,6 +396,33 @@ func (c *client) PublishTerminalOutput(
 	)
 }
 
+func (c *client) ensureAgentTerminal(
+	ctx context.Context,
+) (worker.AgentTerminalResponse, error) {
+	var response worker.AgentTerminalResponse
+	err := c.do(ctx, "/worker/terminals/agent", struct{}{}, &response)
+	if err != nil {
+		return worker.AgentTerminalResponse{}, err
+	}
+	if response.TerminalID == "" {
+		return worker.AgentTerminalResponse{}, errors.New("control plane returned no agent terminal")
+	}
+	return response, nil
+}
+
+func (c *client) PublishTerminalExit(
+	ctx context.Context,
+	terminalID string,
+	exitCode int,
+) error {
+	return c.do(
+		ctx,
+		"/worker/terminals/"+url.PathEscape(terminalID)+"/exit",
+		worker.TerminalExitRequest{ExitCode: exitCode},
+		nil,
+	)
+}
+
 func (c *client) CancellationRequested(
 	ctx context.Context,
 	turnID string,
@@ -462,10 +520,25 @@ func (c *client) doMethod(
 	return nil
 }
 
-func (c *client) setToken(token string) {
+func (c *client) setToken(token string) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("control plane returned an empty worker token")
+	}
+	if c.tokenFile != "" {
+		temporary := c.tokenFile + ".tmp"
+		if err := os.WriteFile(temporary, []byte(token), 0o600); err != nil {
+			return fmt.Errorf("write rotating worker credential: %w", err)
+		}
+		if err := os.Rename(temporary, c.tokenFile); err != nil {
+			_ = os.Remove(temporary)
+			return fmt.Errorf("replace rotating worker credential: %w", err)
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.token = token
+	return nil
 }
 
 func (c *client) currentToken() string {

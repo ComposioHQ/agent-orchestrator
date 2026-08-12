@@ -453,7 +453,8 @@ func (s *Store) WorkerLaunchSpec(
 		err := tx.QueryRow(
 			ctx,
 			`SELECT session.id, session.project_id, session.kind, session.harness,
-				session.display_name, session.branch,
+				session.display_name, session.branch, session.prompt, session.mode,
+				session.denied_commands,
 				project.repository_url, project.default_branch
 			FROM ao_sessions session
 			JOIN ao_projects project ON project.id = session.project_id
@@ -467,6 +468,9 @@ func (s *Store) WorkerLaunchSpec(
 			&launch.Harness,
 			&launch.DisplayName,
 			&launch.Branch,
+			&launch.Prompt,
+			&launch.Mode,
+			&launch.DeniedCommands,
 			&launch.RepositoryURL,
 			&launch.DefaultBranch,
 		)

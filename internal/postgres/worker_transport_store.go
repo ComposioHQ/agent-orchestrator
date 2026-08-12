@@ -329,10 +329,12 @@ func (s *Store) IssueTerminalTicket(
 		if err != nil {
 			return err
 		}
-		// A shell is an unrestricted command surface. It cannot faithfully
-		// enforce prefix-style denied-command policy, so fail closed unless the
-		// session is explicitly trusted and has no command deny rules.
-		if mode != "trusted" || len(deniedCommands) != 0 {
+		// A workspace shell is unrestricted. Agent TUIs can enforce their
+		// native standard/trusted approval mode, but neither surface can
+		// faithfully enforce AO's command-prefix deny rules.
+		if len(deniedCommands) != 0 ||
+			(kind == "workspace" && mode != "trusted") ||
+			(kind == "agent" && mode == "read-only") {
 			return ErrForbidden
 		}
 		scopes = []string{"terminal:read", "terminal:operate"}
@@ -348,6 +350,57 @@ func (s *Store) IssueTerminalTicket(
 		return "", nil, err
 	}
 	return token, scopes, nil
+}
+
+func (s *Store) EnsureWorkerAgentTerminal(
+	ctx context.Context,
+	orgID, sessionID, workerID string,
+	epoch int64,
+	ttl time.Duration,
+) (domain.TerminalSession, error) {
+	terminal := domain.TerminalSession{
+		OrgID: orgID, SessionID: sessionID, WorkerEpoch: epoch, Kind: "agent",
+		Scopes: []string{"terminal:read", "terminal:operate"},
+	}
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		current, err := workerConnectionCurrent(
+			ctx, tx, orgID, sessionID, workerID, epoch,
+		)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return ErrStaleWorker
+		}
+		err = tx.QueryRow(ctx,
+			`UPDATE ao_terminal_sessions
+			SET expires_at = now() + $1::interval, updated_at = now()
+			WHERE id = (
+				SELECT id FROM ao_terminal_sessions
+				WHERE org_id = $2 AND session_id = $3 AND worker_epoch = $4
+				  AND kind = 'agent' AND state IN ('opening', 'open')
+				  AND expires_at > now()
+				ORDER BY created_at DESC
+				LIMIT 1
+			)
+			RETURNING id, state, expires_at`,
+			intervalString(ttl), orgID, sessionID, epoch,
+		).Scan(&terminal.ID, &terminal.State, &terminal.ExpiresAt)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return tx.QueryRow(ctx,
+			`INSERT INTO ao_terminal_sessions (
+				org_id, session_id, worker_epoch, kind, state, expires_at
+			) VALUES ($1, $2, $3, 'agent', 'open', now() + $4::interval)
+			RETURNING id, state, expires_at`,
+			orgID, sessionID, epoch, intervalString(ttl),
+		).Scan(&terminal.ID, &terminal.State, &terminal.ExpiresAt)
+	})
+	return terminal, err
 }
 
 func (s *Store) OpenTerminal(
@@ -393,6 +446,28 @@ func (s *Store) OpenTerminal(
 		if !current {
 			return ErrStaleWorker
 		}
+		if kind == "agent" {
+			err := tx.QueryRow(ctx,
+				`UPDATE ao_terminal_sessions
+				SET expires_at = now() + $1::interval, updated_at = now()
+				WHERE id = (
+					SELECT id FROM ao_terminal_sessions
+					WHERE org_id = $2 AND session_id = $3
+					  AND worker_epoch = $4 AND kind = 'agent'
+					  AND state IN ('opening', 'open') AND expires_at > now()
+					ORDER BY created_at DESC
+					LIMIT 1
+				)
+				RETURNING id, state, expires_at`,
+				intervalString(ttl), ticket.OrgID, ticket.SessionID, ticket.WorkerEpoch,
+			).Scan(&terminal.ID, &terminal.State, &terminal.ExpiresAt)
+			if err == nil {
+				return nil
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
 		var active int
 		if err := tx.QueryRow(ctx,
 			`SELECT count(*) FROM ao_terminal_sessions
@@ -435,6 +510,28 @@ func (s *Store) QueueTerminalInput(
 		"terminalId": terminal.ID,
 		"data":       data,
 	})
+	return s.queueTerminalRequest(ctx, terminal, "terminal.input", payload)
+}
+
+func (s *Store) QueueTerminalResize(
+	ctx context.Context,
+	terminal domain.TerminalSession,
+	columns, rows uint16,
+) error {
+	payload, _ := json.Marshal(map[string]any{
+		"terminalId": terminal.ID,
+		"columns":    columns,
+		"rows":       rows,
+	})
+	return s.queueTerminalRequest(ctx, terminal, "terminal.resize", payload)
+}
+
+func (s *Store) queueTerminalRequest(
+	ctx context.Context,
+	terminal domain.TerminalSession,
+	kind string,
+	payload []byte,
+) error {
 	return s.withOrg(ctx, terminal.OrgID, func(tx pgx.Tx) error {
 		var current bool
 		if err := tx.QueryRow(ctx,
@@ -457,7 +554,7 @@ func (s *Store) QueueTerminalInput(
 			return ErrWorkerUnavailable
 		}
 		_, err := createWorkerRequest(
-			ctx, tx, terminal.OrgID, terminal.SessionID, "terminal.input", payload, 15*time.Second,
+			ctx, tx, terminal.OrgID, terminal.SessionID, kind, payload, 15*time.Second,
 		)
 		return err
 	})
@@ -544,6 +641,45 @@ func (s *Store) AppendTerminalOutput(
 		return err
 	})
 	return sequence, err
+}
+
+func (s *Store) MarkTerminalExited(
+	ctx context.Context,
+	orgID, sessionID, workerID, terminalID string,
+	epoch int64,
+	exitCode int,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		current, err := workerConnectionCurrent(
+			ctx, tx, orgID, sessionID, workerID, epoch,
+		)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return ErrStaleWorker
+		}
+		state := "closed"
+		message := ""
+		if exitCode != 0 {
+			state = "failed"
+			message = fmt.Sprintf("Terminal process exited with status %d.", exitCode)
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE ao_terminal_sessions
+			SET state = $1, error_message = $2, closed_at = now(), updated_at = now()
+			WHERE org_id = $3 AND session_id = $4 AND id = $5
+			  AND worker_epoch = $6 AND state IN ('opening', 'open')`,
+			state, message, orgID, sessionID, terminalID, epoch,
+		)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrTransportExpired
+		}
+		return nil
+	})
 }
 
 func (s *Store) ListTerminalOutput(

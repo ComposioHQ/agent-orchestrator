@@ -118,6 +118,98 @@ func TestHarnessBuilderWritesCodexAccessTokenConfig(t *testing.T) {
 	}
 }
 
+func TestHarnessBuilderBuildsInteractiveAgentWithoutHeadlessFlags(t *testing.T) {
+	command, err := (HarnessBuilder{
+		Binaries: map[string]string{"claude-code": "fake-claude"},
+	}).BuildInteractive(
+		worker.LaunchContext{
+			SessionID: "session-1",
+			Harness:   "claude-code",
+			Prompt:    "fix it",
+			Mode:      "trusted",
+		},
+		worker.CredentialResponse{
+			Provider:       "claude-code",
+			CredentialType: "oauth_token",
+			Secret:         "top-secret",
+		},
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(command.Args, " ")
+	if strings.Contains(joined, "--print") ||
+		strings.Contains(joined, "--output-format") {
+		t.Fatalf("interactive args contain headless flags: %q", command.Args)
+	}
+	if !strings.Contains(joined, "--permission-mode bypassPermissions") ||
+		command.Args[len(command.Args)-1] != "fix it" {
+		t.Fatalf("interactive args = %q", command.Args)
+	}
+	if command.Env["CLAUDE_CODE_OAUTH_TOKEN"] != "top-secret" ||
+		strings.Contains(joined, "top-secret") {
+		t.Fatal("interactive credential was not isolated to the environment")
+	}
+}
+
+func TestHarnessBuilderRejectsInteractiveCommandDenyRules(t *testing.T) {
+	for _, launch := range []worker.LaunchContext{
+		{
+			SessionID: "session-1",
+			Harness:   "claude-code",
+			Mode:      "read-only",
+		},
+		{
+			SessionID:      "session-1",
+			Harness:        "claude-code",
+			Mode:           "trusted",
+			DeniedCommands: []string{"git push:*"},
+		},
+	} {
+		_, err := (HarnessBuilder{}).BuildInteractive(
+			launch,
+			worker.CredentialResponse{
+				Provider:       "claude-code",
+				CredentialType: "api_key",
+				Secret:         "secret",
+			},
+			t.TempDir(),
+		)
+		if !errors.Is(err, ErrUnsupportedPolicy) {
+			t.Fatalf("interactive policy error = %v", err)
+		}
+	}
+}
+
+func TestHarnessBuilderTeachesOrchestratorsControlPlaneCommands(t *testing.T) {
+	command, err := (HarnessBuilder{
+		Binaries: map[string]string{"claude-code": "fake-claude"},
+	}).BuildInteractive(
+		worker.LaunchContext{
+			SessionID: "session-1",
+			Kind:      "orchestrator",
+			Harness:   "claude-code",
+			Mode:      "standard",
+		},
+		worker.CredentialResponse{
+			Provider:       "claude-code",
+			CredentialType: "api_key",
+			Secret:         "secret",
+		},
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(command.Args, " ")
+	if !strings.Contains(joined, "--append-system-prompt") ||
+		!strings.Contains(joined, "ao spawn") ||
+		!strings.Contains(joined, "control plane") {
+		t.Fatalf("orchestrator args do not contain AO guidance: %q", command.Args)
+	}
+}
+
 func TestHarnessBuilderFailsClosedForUnsupportedPolicy(t *testing.T) {
 	tests := []worker.Turn{
 		{Harness: "codex", Mode: "standard", Prompt: "fix", DeniedCommands: []string{"rm:*"}},

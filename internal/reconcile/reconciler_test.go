@@ -730,6 +730,33 @@ func TestStoppedSandboxStartsWhenProviderCannotRecreate(t *testing.T) {
 	}
 }
 
+func TestStoppedDockerWorkerIsRecreatedWithFreshBootstrapTicket(t *testing.T) {
+	record := runningSandbox()
+	record.Provider = sandbox.ProviderDocker
+	record.ProviderEnvironmentID = "container-1"
+	record.ObservedState = domain.SandboxObservedStopped
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := &recreatingProvider{newFakeProvider()}
+	provider.setState("container-1", sandbox.StateStopped)
+	reconciler := newReconciler(store, provider)
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.recreated) != 1 {
+		t.Fatalf("Recreate called %d times, want 1", len(provider.recreated))
+	}
+	if len(provider.started) != 0 || len(provider.resumed) != 0 {
+		t.Fatalf(
+			"spent-ticket container was restored: started=%v resumed=%v",
+			provider.started, provider.resumed,
+		)
+	}
+	if len(store.tickets) != 1 {
+		t.Fatalf("issued %d tickets, want one fresh ticket", len(store.tickets))
+	}
+}
+
 func TestPausedSandboxResumesInsteadOfBeingReplaced(t *testing.T) {
 	record := runningSandbox()
 	record.ProviderEnvironmentID = "env-1"

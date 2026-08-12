@@ -188,15 +188,13 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 		first.Token,
 		"session-create",
 		map[string]any{
-			"projectId":   projectID,
-			"kind":        "worker",
-			"harness":     "claude-code",
-			"displayName": "Implement API",
-			"prompt":      "Build the API",
-			"mode":        "read-only",
-			"deniedCommands": []string{
-				"git push --force:*",
-			},
+			"projectId":      projectID,
+			"kind":           "worker",
+			"harness":        "claude-code",
+			"displayName":    "Implement API",
+			"prompt":         "Build the API",
+			"mode":           "standard",
+			"deniedCommands": []string{},
 		},
 		http.StatusCreated,
 	)
@@ -208,10 +206,10 @@ func TestLocalAuthProjectAndSessionFlow(t *testing.T) {
 	if state := stringField(t, session, "runtimeState"); state != "requested" {
 		t.Fatalf("new session runtime state = %q, want requested", state)
 	}
-	if mode := stringField(t, session, "mode"); mode != "read-only" {
-		t.Fatalf("new session mode = %q, want read-only", mode)
+	if mode := stringField(t, session, "mode"); mode != "standard" {
+		t.Fatalf("new session mode = %q, want standard", mode)
 	}
-	if denied, ok := session["deniedCommands"].([]any); !ok || len(denied) != 1 {
+	if denied, ok := session["deniedCommands"].([]any); !ok || len(denied) != 0 {
 		t.Fatalf("new session denied commands = %#v", session["deniedCommands"])
 	}
 	initialEvents := requestJSON(

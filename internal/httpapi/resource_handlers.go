@@ -184,6 +184,30 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Session project, kind, harness, name, or prompt is invalid.")
 		return
 	}
+	if !supportedInteractivePolicy(request) {
+		writeError(
+			w, r, http.StatusUnprocessableEntity, "unsupported_policy",
+			"Interactive Cloud agents currently support standard or trusted mode without command deny rules.",
+		)
+		return
+	}
+	if store, ok := s.store.(providerConnectionStore); ok {
+		connections, err := store.ListProviderConnections(
+			r.Context(), principalFrom(r), orgID,
+		)
+		if err != nil {
+			s.writeStoreError(w, r, err)
+			return
+		}
+		if !agentConnectionAvailable(connections, request.Harness) {
+			writeError(
+				w, r, http.StatusUnprocessableEntity,
+				"agent_provider_required",
+				"Connect and validate the selected coding-agent provider before creating a session.",
+			)
+			return
+		}
+	}
 	// The plan is resolved once, here, and stamped onto the sandbox row. The
 	// reconciler reads it back from the row rather than from configuration, so
 	// a later config change cannot disturb a session already in flight.
@@ -342,6 +366,10 @@ func validSessionInput(request createSessionRequest) bool {
 	}
 	return request.SandboxProviderConnectionID == "" ||
 		requireUUID(request.SandboxProviderConnectionID, "sandboxProviderConnectionId") == nil
+}
+
+func supportedInteractivePolicy(request createSessionRequest) bool {
+	return request.Mode != "read-only" && len(request.DeniedCommands) == 0
 }
 
 func toProjectResponse(project domain.Project) projectResponse {

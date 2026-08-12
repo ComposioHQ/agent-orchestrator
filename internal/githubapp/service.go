@@ -565,7 +565,10 @@ func (s *Service) CompletionHTML(success bool) []byte {
 		message = "Repository access is ready. Return to AO to continue."
 		statusClass = "success"
 		statusIcon = "✓"
-		autoClose = "window.setTimeout(function(){window.close()},1800);"
+		// Keep the popup alive long enough for the opener to advance the
+		// account-authorization step into GitHub App installation. The final
+		// step closes it immediately once the installation is visible.
+		autoClose = "window.setTimeout(function(){window.close()},10000);"
 	}
 	return []byte(fmt.Sprintf(
 		`<!doctype html>

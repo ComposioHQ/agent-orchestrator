@@ -264,6 +264,20 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 	case sandbox.StateDeleting:
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedDeleting, "", 2*time.Second)
 	case sandbox.StateStopped, sandbox.StatePaused:
+		if record.Provider == sandbox.ProviderDocker {
+			recreator, ok := provider.(sandbox.Recreator)
+			if !ok {
+				return r.fail(
+					ctx, record,
+					errors.New("docker provider cannot recreate a stopped worker"),
+				)
+			}
+			// A Docker worker receives a single-use bootstrap ticket in its
+			// container environment. Starting the same container would replay
+			// that spent ticket, so repair must create a fresh container while
+			// retaining the separately managed workspace volume.
+			return r.recreate(ctx, record, environment, recreator)
+		}
 		// Restoring in place is always preferable to replacing compute: a
 		// resumed sandbox keeps its filesystem, and on providers that snapshot
 		// memory it keeps the running worker too. Recreate is repair, not the

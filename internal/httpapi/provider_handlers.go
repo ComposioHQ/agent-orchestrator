@@ -39,6 +39,24 @@ type providerConnectionStore interface {
 	) error
 }
 
+type workerCredentialAvailabilityStore interface {
+	AgentCredentialAvailable(context.Context, string, string) (bool, error)
+}
+
+func agentConnectionAvailable(
+	connections []domain.ProviderConnection,
+	provider string,
+) bool {
+	for _, connection := range connections {
+		if connection.Provider == provider &&
+			connection.Label == defaultAgentConnectionLabel &&
+			connection.ValidationState == "valid" {
+			return true
+		}
+	}
+	return false
+}
+
 type secretEncrypter interface {
 	Encrypt([]byte, string) ([]byte, []byte, error)
 }

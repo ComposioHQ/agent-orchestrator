@@ -16,7 +16,27 @@ const (
 	workerRequestLease       = 10 * time.Second
 	maxWorkerTransportResult = 2 << 20
 	maxTerminalFrame         = 16 << 10
+	workerAgentTerminalTTL   = 24 * time.Hour
 )
+
+func (s *Server) workerEnsureAgentTerminal(w http.ResponseWriter, r *http.Request) {
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:transport") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:transport scope is required.")
+		return
+	}
+	terminal, err := s.store.EnsureWorkerAgentTerminal(
+		r.Context(), claims.OrgID, claims.SessionID, claims.WorkerID,
+		claims.Epoch, workerAgentTerminalTTL,
+	)
+	if err != nil {
+		s.writeWorkerTransportError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.AgentTerminalResponse{
+		TerminalID: terminal.ID,
+	})
+}
 
 func (s *Server) workerClaimTransport(w http.ResponseWriter, r *http.Request) {
 	claims := workerFrom(r)
@@ -142,6 +162,32 @@ func (s *Server) workerTerminalOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"sequence": sequence})
+}
+
+func (s *Server) workerTerminalExit(w http.ResponseWriter, r *http.Request) {
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:transport") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:transport scope is required.")
+		return
+	}
+	terminalID := chi.URLParam(r, "terminalId")
+	if requireUUID(terminalID, "terminalId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "terminalId must be a UUID.")
+		return
+	}
+	var input worker.TerminalExitRequest
+	if err := decodeJSONLimit(w, r, &input, maxWorkerControlBody); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := s.store.MarkTerminalExited(
+		r.Context(), claims.OrgID, claims.SessionID, claims.WorkerID,
+		terminalID, claims.Epoch, input.ExitCode,
+	); err != nil {
+		s.writeWorkerTransportError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (s *Server) writeWorkerTransportError(w http.ResponseWriter, r *http.Request, err error) {

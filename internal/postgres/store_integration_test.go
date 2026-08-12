@@ -227,6 +227,16 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("message to same-project peer error = %v, want forbidden", err)
 	}
+	if err := store.DeleteOrchestratorChild(
+		ctx, firstOrg, orchestrator.ID, child.ID,
+	); err != nil {
+		t.Fatalf("delete orchestrator child: %v", err)
+	}
+	if err := store.DeleteOrchestratorChild(
+		ctx, firstOrg, orchestrator.ID, session.ID,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("delete same-project peer error = %v, want forbidden", err)
+	}
 	if _, err := store.CreateOrchestratorChild(
 		ctx, firstOrg, session.ID, "worker-child-key", 10, childInput,
 	); !errors.Is(err, ErrForbidden) {

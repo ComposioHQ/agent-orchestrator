@@ -12,29 +12,39 @@ import (
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/Untrivial-ai/ao-cloud/internal/workerexec"
+	"github.com/creack/pty"
 )
 
 type Control interface {
 	ClaimTransport(context.Context) (*worker.TransportRequest, error)
+	ClaimTurn(context.Context) (*worker.Turn, error)
+	CompleteTurn(context.Context, string, int, bool) error
+	FailTurn(context.Context, string, int, string) error
 	CompleteTransport(context.Context, string, int, any) error
 	FailTransport(context.Context, string, int, string, string) error
 	PublishTerminalOutput(context.Context, string, []byte) error
+	PublishTerminalExit(context.Context, string, int) error
 }
 
 type Supervisor struct {
-	Control      Control
-	Workspace    string
-	Shell        string
-	PollInterval time.Duration
-	Logger       *slog.Logger
+	Control         Control
+	Workspace       string
+	Shell           string
+	AgentCommand    workerexec.Command
+	AgentTerminalID string
+	Started         chan<- error
+	PollInterval    time.Duration
+	Logger          *slog.Logger
 
 	mu        sync.Mutex
 	terminals map[string]*terminalProcess
 }
 
 type terminalProcess struct {
-	cancel context.CancelFunc
-	input  io.WriteCloser
+	cancel  context.CancelFunc
+	pty     *os.File
+	cleanup func()
 }
 
 func (s *Supervisor) Run(ctx context.Context) error {
@@ -60,6 +70,20 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	defer workspace.Close()
 	defer s.closeAllTerminals()
+	if s.AgentTerminalID != "" {
+		err := s.openTerminal(ctx, worker.TerminalCommand{
+			TerminalID: s.AgentTerminalID,
+			Kind:       "agent",
+		})
+		if s.Started != nil {
+			s.Started <- err
+		}
+		if err != nil {
+			return err
+		}
+	} else if s.Started != nil {
+		s.Started <- nil
+	}
 
 	ticker := time.NewTicker(s.PollInterval)
 	defer ticker.Stop()
@@ -74,12 +98,48 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			s.handle(ctx, workspace, request)
 			continue
 		}
+		handled, err := s.forwardTurn(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			s.Logger.Warn("forward agent message", "error", err)
+		} else if handled {
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *Supervisor) forwardTurn(ctx context.Context) (bool, error) {
+	turn, err := s.Control.ClaimTurn(ctx)
+	if err != nil || turn == nil {
+		return false, err
+	}
+	if turn.CancelRequested {
+		return true, s.Control.CompleteTurn(ctx, turn.ID, turn.Attempt, true)
+	}
+	if s.AgentTerminalID == "" {
+		return true, s.Control.FailTurn(
+			ctx, turn.ID, turn.Attempt, "interactive agent terminal is unavailable",
+		)
+	}
+	if err := s.writeTerminal(worker.TerminalCommand{
+		TerminalID: s.AgentTerminalID,
+		Data:       []byte(turn.Prompt + "\r"),
+	}); err != nil {
+		if failErr := s.Control.FailTurn(
+			ctx, turn.ID, turn.Attempt, err.Error(),
+		); failErr != nil {
+			return true, errors.Join(err, failErr)
+		}
+		return true, err
+	}
+	return true, s.Control.CompleteTurn(ctx, turn.ID, turn.Attempt, false)
 }
 
 func (s *Supervisor) handle(
@@ -124,6 +184,13 @@ func (s *Supervisor) handle(
 			err = s.writeTerminal(input)
 			response = map[string]bool{"accepted": err == nil}
 		}
+	case "terminal.resize":
+		var input worker.TerminalCommand
+		err = decodePayload(request.Payload, &input)
+		if err == nil {
+			err = s.resizeTerminal(input)
+			response = map[string]bool{"resized": err == nil}
+		}
 	case "terminal.close":
 		var input worker.TerminalCommand
 		err = decodePayload(request.Payload, &input)
@@ -151,7 +218,8 @@ func (s *Supervisor) handle(
 }
 
 func (s *Supervisor) openTerminal(ctx context.Context, input worker.TerminalCommand) error {
-	if input.TerminalID == "" || input.Kind != "workspace" {
+	if input.TerminalID == "" ||
+		(input.Kind != "workspace" && input.Kind != "agent") {
 		return errors.New("invalid terminal open request")
 	}
 	s.mu.Lock()
@@ -160,40 +228,37 @@ func (s *Supervisor) openTerminal(ctx context.Context, input worker.TerminalComm
 		return nil
 	}
 	processCtx, cancel := context.WithCancel(ctx)
-	command := exec.CommandContext(processCtx, s.Shell)
-	command.Dir = s.Workspace
-	command.Env = append(os.Environ(), "TERM=dumb")
-	stdin, err := command.StdinPipe()
+	command, cleanup, err := s.terminalCommand(processCtx, input.Kind)
 	if err != nil {
 		cancel()
 		s.mu.Unlock()
 		return err
 	}
-	stdout, err := command.StdoutPipe()
+	columns, rows := input.Columns, input.Rows
+	if columns == 0 {
+		columns = 120
+	}
+	if rows == 0 {
+		rows = 40
+	}
+	terminalPTY, err := pty.StartWithSize(command, &pty.Winsize{
+		Cols: columns,
+		Rows: rows,
+	})
 	if err != nil {
 		cancel()
-		_ = stdin.Close()
+		cleanup()
 		s.mu.Unlock()
 		return err
 	}
-	stderr, err := command.StderrPipe()
-	if err != nil {
-		cancel()
-		_ = stdin.Close()
-		s.mu.Unlock()
-		return err
+	s.terminals[input.TerminalID] = &terminalProcess{
+		cancel:  cancel,
+		pty:     terminalPTY,
+		cleanup: cleanup,
 	}
-	if err := command.Start(); err != nil {
-		cancel()
-		_ = stdin.Close()
-		s.mu.Unlock()
-		return err
-	}
-	s.terminals[input.TerminalID] = &terminalProcess{cancel: cancel, input: stdin}
 	s.mu.Unlock()
 
-	go s.copyTerminalOutput(processCtx, input.TerminalID, stdout)
-	go s.copyTerminalOutput(processCtx, input.TerminalID, stderr)
+	go s.copyTerminalOutput(processCtx, input.TerminalID, terminalPTY)
 	go func() {
 		_ = command.Wait()
 		s.mu.Lock()
@@ -201,11 +266,53 @@ func (s *Supervisor) openTerminal(ctx context.Context, input worker.TerminalComm
 		delete(s.terminals, input.TerminalID)
 		s.mu.Unlock()
 		if current != nil {
-			_ = current.input.Close()
+			_ = current.pty.Close()
 			current.cancel()
+			current.cleanup()
+		}
+		exitCtx, exitCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer exitCancel()
+		if err := s.Control.PublishTerminalExit(
+			exitCtx,
+			input.TerminalID,
+			command.ProcessState.ExitCode(),
+		); err != nil && exitCtx.Err() == nil {
+			s.Logger.Warn("publish terminal exit", "error", err, "terminal_id", input.TerminalID)
 		}
 	}()
 	return nil
+}
+
+func (s *Supervisor) terminalCommand(
+	ctx context.Context,
+	kind string,
+) (*exec.Cmd, func(), error) {
+	if kind == "agent" {
+		if s.AgentCommand.Path == "" {
+			return nil, func() {}, errors.New("interactive agent command is unavailable")
+		}
+		command := exec.CommandContext(ctx, s.AgentCommand.Path, s.AgentCommand.Args...)
+		command.Dir = s.AgentCommand.Dir
+		command.Env = terminalEnvironment(s.AgentCommand.Env)
+		cleanup := s.AgentCommand.Cleanup
+		if cleanup == nil {
+			cleanup = func() {}
+		}
+		return command, cleanup, nil
+	}
+	command := exec.CommandContext(ctx, s.Shell)
+	command.Dir = s.Workspace
+	command.Env = terminalEnvironment(nil)
+	return command, func() {}, nil
+}
+
+func terminalEnvironment(extra map[string]string) []string {
+	environment := append([]string{}, os.Environ()...)
+	environment = append(environment, "TERM=xterm-256color", "COLORTERM=truecolor")
+	for key, value := range extra {
+		environment = append(environment, key+"="+value)
+	}
+	return environment
 }
 
 func (s *Supervisor) copyTerminalOutput(
@@ -239,8 +346,24 @@ func (s *Supervisor) writeTerminal(input worker.TerminalCommand) error {
 	if terminal == nil {
 		return errors.New("terminal is not open")
 	}
-	_, err := terminal.input.Write(input.Data)
+	_, err := terminal.pty.Write(input.Data)
 	return err
+}
+
+func (s *Supervisor) resizeTerminal(input worker.TerminalCommand) error {
+	if input.TerminalID == "" || input.Columns == 0 || input.Rows == 0 {
+		return errors.New("invalid terminal resize request")
+	}
+	s.mu.Lock()
+	terminal := s.terminals[input.TerminalID]
+	s.mu.Unlock()
+	if terminal == nil {
+		return errors.New("terminal is not open")
+	}
+	return pty.Setsize(terminal.pty, &pty.Winsize{
+		Cols: input.Columns,
+		Rows: input.Rows,
+	})
 }
 
 func (s *Supervisor) closeTerminal(id string) {
@@ -249,8 +372,9 @@ func (s *Supervisor) closeTerminal(id string) {
 	delete(s.terminals, id)
 	s.mu.Unlock()
 	if terminal != nil {
-		_ = terminal.input.Close()
+		_ = terminal.pty.Close()
 		terminal.cancel()
+		terminal.cleanup()
 	}
 }
 
@@ -260,8 +384,9 @@ func (s *Supervisor) closeAllTerminals() {
 	s.terminals = make(map[string]*terminalProcess)
 	s.mu.Unlock()
 	for _, terminal := range terminals {
-		_ = terminal.input.Close()
+		_ = terminal.pty.Close()
 		terminal.cancel()
+		terminal.cleanup()
 	}
 }
 

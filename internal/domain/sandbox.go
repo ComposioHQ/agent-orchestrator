@@ -77,13 +77,16 @@ type AccessTicket struct {
 // WorkerLaunch is the durable session context a bootstrapped worker needs in
 // order to clone the repository and start a harness.
 type WorkerLaunch struct {
-	OrgID         string
-	SessionID     string
-	ProjectID     string
-	Kind          string
-	Harness       string
-	DisplayName   string
-	Branch        string
-	RepositoryURL string
-	DefaultBranch string
+	OrgID          string
+	SessionID      string
+	ProjectID      string
+	Kind           string
+	Harness        string
+	DisplayName    string
+	Branch         string
+	Prompt         string
+	Mode           string
+	DeniedCommands []string
+	RepositoryURL  string
+	DefaultBranch  string
 }

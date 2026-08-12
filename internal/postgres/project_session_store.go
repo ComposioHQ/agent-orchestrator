@@ -587,7 +587,9 @@ func createSessionTx(
 		return domain.Session{}, normalizeConstraintError(err)
 	}
 	if input.Prompt != "" {
-		if _, err := appendUserMessage(ctx, tx, orgID, session.ID, input.Prompt); err != nil {
+		if _, err := appendUserMessageEvent(
+			ctx, tx, orgID, session.ID, input.Prompt,
+		); err != nil {
 			return domain.Session{}, err
 		}
 	}

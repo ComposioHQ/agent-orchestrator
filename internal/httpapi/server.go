@@ -58,6 +58,7 @@ type Store interface {
 	ListOrchestratorChildren(context.Context, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
 	CreateOrchestratorChild(context.Context, string, string, string, int, domain.CreateSession) (domain.Session, error)
 	SendOrchestratorChildMessage(context.Context, string, string, string, string, string) (domain.ClientEvent, error)
+	DeleteOrchestratorChild(context.Context, string, string, string) error
 	CreateWorkspaceRequest(context.Context, domain.Principal, string, string, string, json.RawMessage, time.Duration) (domain.WorkerRequest, error)
 	GetWorkspaceRequest(context.Context, domain.Principal, string, string, string) (domain.WorkerRequest, error)
 	CancelWorkspaceRequest(context.Context, domain.Principal, string, string, string) error
@@ -67,8 +68,11 @@ type Store interface {
 	IssueTerminalTicket(context.Context, domain.Principal, string, string, string, time.Duration) (string, []string, error)
 	OpenTerminal(context.Context, string, string, time.Duration) (domain.TerminalSession, error)
 	QueueTerminalInput(context.Context, domain.TerminalSession, []byte) error
+	QueueTerminalResize(context.Context, domain.TerminalSession, uint16, uint16) error
 	CloseTerminal(context.Context, domain.TerminalSession) error
 	AppendTerminalOutput(context.Context, string, string, string, string, int64, []byte) (int64, error)
+	MarkTerminalExited(context.Context, string, string, string, string, int64, int) error
+	EnsureWorkerAgentTerminal(context.Context, string, string, string, int64, time.Duration) (domain.TerminalSession, error)
 	ListTerminalOutput(context.Context, domain.TerminalSession, int64, int) ([]domain.TerminalOutput, string, error)
 }
 
@@ -256,10 +260,13 @@ func New(options Options) *Server {
 			router.Get("/worker/children", server.listWorkerChildren)
 			router.Post("/worker/children", server.createWorkerChild)
 			router.Post("/worker/children/{sessionId}/messages", server.sendWorkerChildMessage)
+			router.Delete("/worker/children/{sessionId}", server.deleteWorkerChild)
 			router.Post("/worker/transport/claim", server.workerClaimTransport)
 			router.Post("/worker/transport/{requestId}/complete", server.workerCompleteTransport)
 			router.Post("/worker/transport/{requestId}/fail", server.workerFailTransport)
 			router.Post("/worker/terminals/{terminalId}/output", server.workerTerminalOutput)
+			router.Post("/worker/terminals/{terminalId}/exit", server.workerTerminalExit)
+			router.Post("/worker/terminals/agent", server.workerEnsureAgentTerminal)
 		})
 		router.Get("/terminal", server.connectTerminal)
 		router.Route("/orgs/{orgId}", func(router chi.Router) {

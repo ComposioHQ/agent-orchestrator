@@ -23,7 +23,7 @@ import {
 import { CloudSettings } from "./CloudSettings";
 import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
-import { CloudSessionPanel } from "./CloudSessionPanel";
+import { CloudSessionWorkspace } from "./CloudSessionWorkspace";
 import { CloudSidebar } from "./CloudSidebar";
 import {
   initialGitHubCapability,
@@ -71,6 +71,7 @@ export function CloudWorkspace() {
   const organizationRequest = useRef(0);
   const githubRequest = useRef(0);
   const providerRequest = useRef(0);
+  const deletingSessionIds = useRef(new Set<string>());
 
   const loadGitHubUser = useCallback(async () => {
     setGitHubUser(initialGitHubUserCapability);
@@ -169,7 +170,13 @@ export function CloudWorkspace() {
         ]);
         if (organizationRequest.current !== request) return;
         setProjects(projectPage.items);
-        setSessions(sessionPage.items);
+        setSessions(
+          sessionPage.items.filter(
+            (session) =>
+              !session.isTerminated &&
+              !deletingSessionIds.current.has(session.id),
+          ),
+        );
         setSelectedProjectId((current) =>
           current && projectPage.items.some(({ id }) => id === current)
             ? current
@@ -369,54 +376,89 @@ export function CloudWorkspace() {
     void loadGitHub(organizationId);
   };
 
-  const startGitHubInstallation = async () => {
-    setGitHubBusy(true);
-    setError("");
-    try {
-      const attempt = await client.startGitHubInstallation(organizationId);
-      const popup = window.open(
-        attempt.installationUrl,
-        "ao-github-install",
-        "popup,width=900,height=760",
-      );
-      if (!popup) {
-        window.location.assign(attempt.installationUrl);
-        return;
-      }
-      setGitHubBusy(false);
-      const refresh = window.setInterval(() => {
-        if (!popup.closed) return;
-        window.clearInterval(refresh);
-        void loadGitHub(organizationId);
-      }, 500);
-    } catch (cause) {
-      handleLoadError(cause, setError);
-      setGitHubBusy(false);
+  const connectGitHub = async () => {
+    if (
+      github.status === "auth-required" ||
+      githubUser.status === "auth-required"
+    ) {
+      window.location.assign("/github-sign-in");
+      return;
     }
-  };
-
-  const startGitHubUserAuthorization = async () => {
     setGitHubBusy(true);
     setError("");
+    let popup: Window | null = null;
     try {
-      const attempt = await client.startGitHubUserAuthorization();
-      const popup = window.open(
-        attempt.authorizeUrl,
-        "ao-github-user",
-        "popup,width=900,height=760",
-      );
-      if (!popup) {
-        window.location.assign(attempt.authorizeUrl);
-        return;
+      if (!githubUser.connection.connected) {
+        const attempt = await client.startGitHubUserAuthorization();
+        popup = window.open(
+          attempt.authorizeUrl,
+          "ao-github-connect",
+          "popup,width=900,height=760",
+        );
+        if (!popup) {
+          throw new Error(
+            "Allow popups for this site to connect GitHub in one flow.",
+          );
+        }
+        const deadline = Date.now() + 2 * 60 * 1000;
+        let authorized = false;
+        while (Date.now() < deadline) {
+          const connection = await client.getGitHubUserConnection();
+          if (connection.connected) {
+            authorized = true;
+            setGitHubUser({ status: "available", connection });
+            break;
+          }
+          await delay(300);
+        }
+        if (!authorized) {
+          throw new Error("GitHub account authorization did not complete.");
+        }
       }
-      setGitHubBusy(false);
-      const refresh = window.setInterval(() => {
-        if (!popup.closed) return;
-        window.clearInterval(refresh);
-        void loadGitHubUser();
-      }, 500);
+
+      const before = new Set(
+        github.status === "available"
+          ? github.installations.map(({ githubInstallationId }) => githubInstallationId)
+          : [],
+      );
+      const attempt = await client.startGitHubInstallation(organizationId);
+      if (popup && !popup.closed) {
+        popup.location.assign(attempt.installationUrl);
+      } else {
+        popup = window.open(
+          attempt.installationUrl,
+          "ao-github-connect",
+          "popup,width=900,height=760",
+        );
+      }
+      if (!popup) {
+        throw new Error(
+          "Allow popups for this site to finish connecting the GitHub App.",
+        );
+      }
+
+      const deadline = Date.now() + 2 * 60 * 1000;
+      let installationConnected = false;
+      while (Date.now() < deadline) {
+        const installations = await client.listGitHubInstallations(organizationId);
+        if (
+          installations.some(
+            ({ githubInstallationId }) => !before.has(githubInstallationId),
+          )
+        ) {
+          installationConnected = true;
+          break;
+        }
+        await delay(500);
+      }
+      if (!installationConnected) {
+        throw new Error("The AO GitHub App installation did not complete.");
+      }
+      popup.close();
+      await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
     } catch (cause) {
       handleLoadError(cause, setError);
+    } finally {
       setGitHubBusy(false);
     }
   };
@@ -524,6 +566,18 @@ export function CloudWorkspace() {
     }
   };
 
+  const deleteSession = async (session: Session) => {
+    setError("");
+    try {
+      await client.deleteSession(organizationId, session.id);
+      deletingSessionIds.current.add(session.id);
+      setSessions((current) => current.filter(({ id }) => id !== session.id));
+      if (selectedSessionId === session.id) setSelectedSessionId(null);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    }
+  };
+
   if (!account) {
     return <LoadingState error={error} loading={loading} />;
   }
@@ -544,6 +598,7 @@ export function CloudWorkspace() {
       <div className="grid h-full grid-cols-[240px_minmax(0,1fr)]">
         <CloudSidebar
           account={account}
+          onDeleteSession={(session) => void deleteSession(session)}
           onNewProject={() => setNewProjectOpen(true)}
           onOpenCommand={() => setCommandOpen(true)}
           onOpenSettings={() => {
@@ -592,6 +647,7 @@ export function CloudWorkspace() {
                 github={github}
                 githubUser={githubUser}
                 initialPanel={settingsTarget}
+                onConnectGitHub={connectGitHub}
                 onConnectAgent={connectAgentProvider}
                 onDisconnectAgent={disconnectAgentProvider}
                 onBack={() => setView("board")}
@@ -603,8 +659,6 @@ export function CloudWorkspace() {
                   setSelectedSessionId(null);
                   void loadOrganization(id);
                 }}
-                onStartGitHub={startGitHubInstallation}
-                onStartGitHubUser={startGitHubUserAuthorization}
                 onSyncGitHub={syncGitHubInstallation}
                 providerBusy={providerBusy}
                 providers={providers}
@@ -612,36 +666,37 @@ export function CloudWorkspace() {
               />
             </div>
           ) : (
-            <>
-              <CloudTopbar title={selectedProject?.displayName ?? "All projects"} />
-              <div className="relative min-h-0 flex-1">
-                {error ? (
-                  <div
-                    className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
-                    role="alert"
-                  >
-                    {error}
-                  </div>
-                ) : null}
-                {loading ? (
-                  <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
-                    Loading workspace…
-                  </div>
-                ) : (
-                  <CloudBoard
-                    onSelectSession={setSelectedSessionId}
-                    sessions={visibleSessions}
-                  />
-                )}
-                {selectedSession ? (
-                  <CloudSessionPanel
-                    onClose={() => setSelectedSessionId(null)}
-                    organizationId={organizationId}
-                    session={selectedSession}
-                  />
-                ) : null}
-              </div>
-            </>
+            selectedSession ? (
+              <CloudSessionWorkspace
+                onClose={() => setSelectedSessionId(null)}
+                organizationId={organizationId}
+                session={selectedSession}
+              />
+            ) : (
+              <>
+                <CloudTopbar title={selectedProject?.displayName ?? "All projects"} />
+                <div className="relative min-h-0 flex-1">
+                  {error ? (
+                    <div
+                      className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
+                      role="alert"
+                    >
+                      {error}
+                    </div>
+                  ) : null}
+                  {loading ? (
+                    <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
+                      Loading workspace…
+                    </div>
+                  ) : (
+                    <CloudBoard
+                      onSelectSession={setSelectedSessionId}
+                      sessions={visibleSessions}
+                    />
+                  )}
+                </div>
+              </>
+            )
           )}
         </CloudMainShell>
       </div>
@@ -834,4 +889,8 @@ function handleLoadError(
     return;
   }
   setError(cause instanceof Error ? cause.message : "Could not load workspace.");
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }

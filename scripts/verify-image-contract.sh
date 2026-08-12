@@ -59,8 +59,9 @@ fi
 if ! docker run --rm --entrypoint /bin/sh "$worker_image" -c \
 	'command -v claude >/dev/null &&
 	 command -v codex >/dev/null &&
-	 command -v cursor-agent >/dev/null'; then
-	echo "Worker image must contain Claude Code, Codex, and Cursor Agent." >&2
+	 command -v cursor-agent >/dev/null &&
+	 command -v ao >/dev/null'; then
+	echo "Worker image must contain Claude Code, Codex, Cursor Agent, and the AO orchestration CLI." >&2
 	exit 1
 fi
 

@@ -273,8 +273,11 @@ func (c *Client) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Environ
 				Source: workspace,
 				Target: "/workspace",
 			}},
-			NetworkMode:   c.network,
-			RestartPolicy: restartPolicy{Name: "unless-stopped"},
+			NetworkMode: c.network,
+			// Bootstrap tickets are single-use. Docker must not restart the
+			// same container with a spent ticket; the reconciler recreates it
+			// with a fresh epoch-scoped ticket instead.
+			RestartPolicy: restartPolicy{Name: "no"},
 			SecurityOpt:   []string{"no-new-privileges:true"},
 		},
 	}

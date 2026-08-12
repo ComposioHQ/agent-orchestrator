@@ -38,13 +38,12 @@ export function CloudSettings({
   githubUser,
   initialPanel,
   onBack,
+  onConnectGitHub,
   onConnectAgent,
   onDisconnectAgent,
   onDisconnectGitHub,
   onDisconnectGitHubUser,
   onSelectOrganization,
-  onStartGitHub,
-  onStartGitHubUser,
   onSyncGitHub,
   providerBusy,
   providers,
@@ -56,6 +55,7 @@ export function CloudSettings({
   githubUser: GitHubUserCapability;
   initialPanel: "organization" | "providers";
   onBack: () => void;
+  onConnectGitHub: () => Promise<void>;
   onConnectAgent: (
     provider: AgentProvider,
     input: PutAgentProviderConnectionInput,
@@ -66,8 +66,6 @@ export function CloudSettings({
   onDisconnectGitHub: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectGitHubUser: () => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
-  onStartGitHub: () => Promise<void>;
-  onStartGitHubUser: () => Promise<void>;
   onSyncGitHub: (installation: GitHubInstallation) => Promise<void>;
   providerBusy: boolean;
   providers: ProviderCapability;
@@ -253,10 +251,9 @@ export function CloudSettings({
                 busy={busy}
                 github={github}
                 githubUser={githubUser}
+                onConnect={onConnectGitHub}
                 onDisconnect={onDisconnectGitHub}
                 onDisconnectUser={onDisconnectGitHubUser}
-                onStart={onStartGitHub}
-                onStartUser={onStartGitHubUser}
                 onSync={onSyncGitHub}
               />
               <CodingAgentSettings
@@ -449,45 +446,49 @@ function GitHubSettings({
   busy,
   github,
   githubUser,
+  onConnect,
   onDisconnect,
   onDisconnectUser,
-  onStart,
-  onStartUser,
   onSync,
 }: {
   busy: boolean;
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
+  onConnect: () => Promise<void>;
   onDisconnect: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectUser: () => Promise<void>;
-  onStart: () => Promise<void>;
-  onStartUser: () => Promise<void>;
   onSync: (installation: GitHubInstallation) => Promise<void>;
 }) {
+  const hostedAuthRequired =
+    github.status === "auth-required" || githubUser.status === "auth-required";
+  const connected =
+    githubUser.connection.connected &&
+    github.status === "available" &&
+    github.installations.length > 0;
   return (
     <SettingsSection
       description="Controls which repositories this organization can use for Cloud projects."
       title="GitHub"
     >
       <div className="mb-5 flex items-start gap-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3">
-        <User className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
+        <GitFork className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
         <div className="min-w-0 flex-1">
           <p className="text-sm text-[var(--foreground)]">
-            {githubUser.connection.connected
-              ? `Authorized as ${githubUser.connection.login}`
-              : "GitHub account authorization"}
+            {connected
+              ? `Connected as ${githubUser.connection.login}`
+              : "Connect GitHub"}
           </p>
           <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
-            {githubUser.connection.connected
-              ? `${githubUser.connection.installations.length} eligible or configurable repository owners.`
-              : "Authorize AO to create initialized scratch repositories for your personal account or organizations."}
+            {connected
+              ? `${github.installations.length} App installation${github.installations.length === 1 ? "" : "s"} available to this organization.`
+              : "One connection flow authorizes your GitHub account, then installs the AO GitHub App for repository access."}
           </p>
         </div>
-        {githubUser.status === "auth-required" ? (
+        {hostedAuthRequired ? (
           <a className={primaryButtonClass} href="/github-sign-in">
             Continue
           </a>
-        ) : githubUser.connection.connected ? (
+        ) : connected ? (
           <button
             className={buttonClass}
             disabled={busy}
@@ -503,11 +504,15 @@ function GitHubSettings({
         ) : (
           <button
             className={primaryButtonClass}
-            disabled={busy || githubUser.status === "loading"}
-            onClick={() => void onStartUser()}
+            disabled={
+              busy ||
+              githubUser.status === "loading" ||
+              github.status === "loading"
+            }
+            onClick={() => void onConnect()}
             type="button"
           >
-            Authorize GitHub
+            Connect GitHub
           </button>
         )}
       </div>
@@ -515,23 +520,8 @@ function GitHubSettings({
         <p className="text-sm text-[var(--color-text-passive)]">
           Loading GitHub connection…
         </p>
-      ) : github.status === "auth-required" ? (
-        <div className="flex items-start gap-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3">
-          <GitFork className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm text-[var(--foreground)]">
-              Connect your hosted AO account
-            </p>
-            <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
-              Local projects use the production GitHub App without copying its
-              credentials or webhook state.
-            </p>
-          </div>
-          <a className={primaryButtonClass} href="/github-sign-in">
-            Continue
-          </a>
-        </div>
-      ) : github.status === "unavailable" ? (
+      ) : github.status === "auth-required" ? null : github.status ===
+        "unavailable" ? (
         <UnavailableRow
           description={
             github.message ??
@@ -556,14 +546,6 @@ function GitHubSettings({
                   Install the AO GitHub App to grant repository access.
                 </p>
               </div>
-              <button
-                className={primaryButtonClass}
-                disabled={busy}
-                onClick={() => void onStart()}
-                type="button"
-              >
-                Connect GitHub
-              </button>
             </div>
           ) : (
             github.installations.map((installation) => (
@@ -616,7 +598,7 @@ function GitHubSettings({
             <button
               className={buttonClass}
               disabled={busy}
-              onClick={() => void onStart()}
+              onClick={() => void onConnect()}
               type="button"
             >
               Add GitHub installation

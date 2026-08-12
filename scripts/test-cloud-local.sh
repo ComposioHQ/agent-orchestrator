@@ -35,6 +35,7 @@ AO_CLOUD_WORKER_SIGNING_KEY="$(openssl rand -hex 32)"
 export AO_CLOUD_DOCKER_GID
 AO_CLOUD_DOCKER_GID="$(ao_docker_socket_gid)"
 export AO_CLOUD_DOCKER_WORKER_IMAGE="${project_name}-worker:smoke"
+export AO_CLOUD_DEVELOPMENT_SKIP_CREDENTIAL_VALIDATION="true"
 export COMPOSE_PROJECT_NAME="$project_name"
 
 compose() {
@@ -199,6 +200,15 @@ if mode == "create":
     )
     token = auth["token"]
     org_id = auth["organizations"][0]["id"]
+    request(
+        "PUT",
+        f"/api/cloud/v1/orgs/{org_id}/provider-connections/agents/claude-code",
+        body={
+            "credentialType": "api_key",
+            "secret": "ao-cloud-smoke-development-only",
+        },
+        token=token,
+    )
     project = request(
         "POST",
         f"/api/cloud/v1/orgs/{org_id}/projects",
@@ -217,10 +227,11 @@ if mode == "create":
         f"/api/cloud/v1/orgs/{org_id}/sessions",
         body={
             "projectId": project["id"],
-            "kind": "worker",
+            "kind": "orchestrator",
             "harness": "claude-code",
             "displayName": "Persistence Test",
             "prompt": "",
+            "mode": "trusted",
         },
         token=token,
         idempotency_key=f"session-{suffix}",
@@ -251,21 +262,13 @@ if mode == "create":
     )
     if ".ao-cloud-smoke-api" not in {item.get("path") for item in listing["items"]}:
         raise RuntimeError(f"workspace listing omitted the written file: {listing!r}")
-    terminal_turns = 0
-    for index, text in enumerate(
-        ("First turn persisted before restart", "Follow-up turn persisted before restart")
-    ):
-        request(
-            "POST",
-            f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/messages",
-            body={"text": text},
-            token=token,
-            idempotency_key=f"message-{suffix}-{index}",
-            expected=202,
-        )
-        terminal_turns = wait_for_terminal_turn(
-            org_id, session["id"], token, terminal_turns
-        )
+    request(
+        "POST",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/terminal-ticket",
+        body={"kind": "agent"},
+        token=token,
+        expected=201,
+    )
     state_file.write_text(
         json.dumps(
             {
@@ -281,18 +284,13 @@ elif mode == "verify":
     org_id = state["orgId"]
     session_id = state["sessionId"]
     wait_for_running(org_id, session_id, token)
-    session_events = events(org_id, session_id, token)
-    messages = [
-        event.get("payload", {}).get("text")
-        for event in session_events
-        if event.get("type") == "chat.user_message"
-    ]
-    expected = {
-        "First turn persisted before restart",
-        "Follow-up turn persisted before restart",
-    }
-    if not expected.issubset(messages):
-        raise RuntimeError(f"durable messages missing after restart: {messages!r}")
+    request(
+        "POST",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}/terminal-ticket",
+        body={"kind": "agent"},
+        token=token,
+        expected=201,
+    )
 else:
     raise RuntimeError(f"unknown smoke-test mode: {mode}")
 PY
@@ -305,6 +303,16 @@ import pathlib
 import sys
 
 print(json.loads(pathlib.Path(sys.argv[1]).read_text())["sessionId"])
+PY
+}
+
+org_id() {
+	python3 - "$state_file" <<'PY'
+import json
+import pathlib
+import sys
+
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["orgId"])
 PY
 }
 
@@ -344,6 +352,11 @@ assert_workspace_marker() {
 }
 
 compose --profile worker-image build worker-image
+docker build \
+	--build-arg "BASE_IMAGE=${AO_CLOUD_DOCKER_WORKER_IMAGE}" \
+	--file "$repository_root/test/Dockerfile.worker-smoke" \
+	--tag "$AO_CLOUD_DOCKER_WORKER_IMAGE" \
+	"$repository_root"
 compose up --build -d
 wait_for_ready
 assert_loopback_port control-plane 8080 "$AO_CLOUD_PORT"
@@ -379,7 +392,40 @@ fi
 
 exercise_api create
 session="$(session_id)"
+org="$(org_id)"
 first_worker="$(wait_for_worker "$session")"
+docker exec "$first_worker" ao list >/dev/null
+spawn_output="$(
+	docker exec "$first_worker" ao spawn \
+		--name "Delegated smoke" \
+		--agent claude-code \
+		--prompt "Wait for a control-plane message"
+)"
+child_session="$(printf '%s\n' "$spawn_output" | awk '/^spawned / { print $2 }')"
+if [[ -z "$child_session" ]]; then
+	echo "AO orchestration CLI did not return a child session id: ${spawn_output}" >&2
+	exit 1
+fi
+wait_for_worker "$child_session" >/dev/null
+docker exec "$first_worker" ao send "$child_session" "Report smoke status" >/dev/null
+attempts=30
+while ((attempts > 0)); do
+	message_forwarded="$(
+		compose exec -e "PGOPTIONS=-c ao.org_id=${org}" -T postgres \
+			psql -U ao_cloud_owner -d ao_cloud -Atc \
+			"SELECT EXISTS (SELECT 1 FROM ao_turns WHERE session_id = '${child_session}' AND state = 'completed') OR EXISTS (SELECT 1 FROM ao_worker_requests WHERE session_id = '${child_session}' AND kind = 'terminal.input' AND status = 'succeeded')"
+	)"
+	if [[ "$message_forwarded" == "t" ]]; then
+		break
+	fi
+	attempts=$((attempts - 1))
+	sleep 1
+done
+if [[ "$message_forwarded" != "t" ]]; then
+	echo "Orchestrator message was not forwarded into the child agent PTY." >&2
+	exit 1
+fi
+docker exec "$first_worker" ao kill "$child_session" >/dev/null
 docker exec "$first_worker" bash -c \
 	'printf "%s\n" persistent-workspace > /workspace/repository/.ao-cloud-smoke'
 docker rm --force "$first_worker" >/dev/null

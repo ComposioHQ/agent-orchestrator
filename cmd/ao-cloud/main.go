@@ -265,7 +265,7 @@ func run(logger *slog.Logger) error {
 		workerTokens = worker.NewTokenManager([]byte(cfg.WorkerSigningKey))
 	}
 
-	api := httpapi.New(httpapi.Options{
+	apiOptions := httpapi.Options{
 		Store:                   store,
 		WorkOS:                  workosVerifier,
 		LocalAuthEnabled:        cfg.LocalAuthEnabled,
@@ -284,7 +284,13 @@ func run(logger *slog.Logger) error {
 		EnvironmentControlToken: cfg.EnvironmentControlToken,
 		SecretCipher:            providerCipher,
 		WebhookMaxBody:          cfg.GitHub.WebhookMaxBody,
-	})
+	}
+	if cfg.Environment == "development" &&
+		os.Getenv("AO_CLOUD_DEVELOPMENT_SKIP_CREDENTIAL_VALIDATION") == "true" {
+		logger.Warn("coding-agent credential validation is disabled for development")
+		apiOptions.CredentialValidator = developmentCredentialValidator{}
+	}
+	api := httpapi.New(apiOptions)
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
 		Handler:           api.Handler(),
@@ -328,4 +334,15 @@ func run(logger *slog.Logger) error {
 		}
 		return err
 	}
+}
+
+type developmentCredentialValidator struct{}
+
+func (developmentCredentialValidator) Validate(
+	context.Context,
+	string,
+	string,
+	[]byte,
+) error {
+	return nil
 }

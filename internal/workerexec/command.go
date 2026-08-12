@@ -10,9 +10,17 @@ import (
 	"strings"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
 )
 
 var ErrUnsupportedPolicy = errors.New("coding-agent policy cannot be enforced safely")
+
+const orchestratorSystemPrompt = `You are an AO orchestrator running in an isolated Cloud worker. Delegate independent work through the control plane with:
+- ao spawn --name NAME --agent HARNESS --prompt TEXT
+- ao list
+- ao send SESSION_ID MESSAGE
+- ao kill SESSION_ID
+Workers run in separate sandboxes. Never try to contact a child sandbox directly; use only these ao commands.`
 
 type Command struct {
 	Path    string
@@ -31,6 +39,70 @@ type CommandBuilder interface {
 type HarnessBuilder struct {
 	Binaries map[string]string
 	DataDir  string
+}
+
+// BuildInteractive prepares the provider's native TUI command. Unlike Build,
+// it deliberately omits headless print/JSON flags so the browser terminal is
+// the conversation surface.
+func (b HarnessBuilder) BuildInteractive(
+	launch worker.LaunchContext,
+	credential worker.CredentialResponse,
+	workspace string,
+) (Command, error) {
+	if credential.Provider != launch.Harness ||
+		strings.TrimSpace(credential.Secret) == "" {
+		return Command{}, errors.New("credential does not match the selected harness")
+	}
+	switch launch.Mode {
+	case "standard", "trusted":
+	case "read-only":
+		return Command{}, fmt.Errorf(
+			"%w: interactive read-only mode requires OS filesystem confinement",
+			ErrUnsupportedPolicy,
+		)
+	default:
+		return Command{}, fmt.Errorf(
+			"%w: unknown session mode %q", ErrUnsupportedPolicy, launch.Mode,
+		)
+	}
+	if len(launch.DeniedCommands) > 0 {
+		return Command{}, fmt.Errorf(
+			"%w: interactive terminals cannot enforce command-prefix deny rules",
+			ErrUnsupportedPolicy,
+		)
+	}
+	binary := b.binary(launch.Harness)
+	systemPrompt := ""
+	if launch.Kind == "orchestrator" {
+		systemPrompt = orchestratorSystemPrompt
+	}
+	argv, err := agentruntime.BuildLaunchCommand(agentruntime.LaunchConfig{
+		Harness:       agentruntime.Harness(launch.Harness),
+		Binary:        binary,
+		SessionID:     launch.SessionID,
+		WorkspacePath: workspace,
+		Prompt:        launch.Prompt,
+		SystemPrompt:  systemPrompt,
+		Permission: agentruntime.PermissionPolicyForMode(
+			agentruntime.SessionMode(launch.Mode),
+		),
+	})
+	if err != nil {
+		return Command{}, err
+	}
+	command := Command{
+		Path: argv[0],
+		Args: argv[1:],
+		Dir:  workspace,
+		Env:  map[string]string{},
+	}
+	if err := b.configureCredential(&command, launch.Harness, credential); err != nil {
+		if command.Cleanup != nil {
+			command.Cleanup()
+		}
+		return Command{}, err
+	}
+	return command, nil
 }
 
 func (b HarnessBuilder) Build(
@@ -54,34 +126,15 @@ func (b HarnessBuilder) Build(
 	switch turn.Harness {
 	case "claude-code":
 		command.Args, err = claudeArgs(turn)
-		if credential.CredentialType == "api_key" {
-			command.Env["ANTHROPIC_API_KEY"] = credential.Secret
-		} else if credential.CredentialType == "oauth_token" {
-			command.Env["CLAUDE_CODE_OAUTH_TOKEN"] = credential.Secret
-		} else {
-			err = errors.New("unsupported Claude Code credential type")
-		}
 	case "codex":
 		command.Args, err = codexArgs(turn)
-		if err == nil {
-			switch credential.CredentialType {
-			case "api_key":
-				command.Env["OPENAI_API_KEY"] = credential.Secret
-			case "access_token":
-				err = b.writeCodexAuth(&command, credential.Secret)
-			default:
-				err = errors.New("unsupported Codex credential type")
-			}
-		}
 	case "cursor":
 		command.Args, err = cursorArgs(turn)
-		if credential.CredentialType == "api_key" {
-			command.Env["CURSOR_API_KEY"] = credential.Secret
-		} else {
-			err = errors.New("unsupported Cursor credential type")
-		}
 	default:
 		err = fmt.Errorf("unsupported coding-agent harness %q", turn.Harness)
+	}
+	if err == nil {
+		err = b.configureCredential(&command, turn.Harness, credential)
 	}
 	if err != nil {
 		if command.Cleanup != nil {
@@ -90,6 +143,41 @@ func (b HarnessBuilder) Build(
 		return Command{}, err
 	}
 	return command, nil
+}
+
+func (b HarnessBuilder) configureCredential(
+	command *Command,
+	harness string,
+	credential worker.CredentialResponse,
+) error {
+	switch harness {
+	case "claude-code":
+		switch credential.CredentialType {
+		case "api_key":
+			command.Env["ANTHROPIC_API_KEY"] = credential.Secret
+		case "oauth_token":
+			command.Env["CLAUDE_CODE_OAUTH_TOKEN"] = credential.Secret
+		default:
+			return errors.New("unsupported Claude Code credential type")
+		}
+	case "codex":
+		switch credential.CredentialType {
+		case "api_key":
+			command.Env["OPENAI_API_KEY"] = credential.Secret
+		case "access_token":
+			return b.writeCodexAuth(command, credential.Secret)
+		default:
+			return errors.New("unsupported Codex credential type")
+		}
+	case "cursor":
+		if credential.CredentialType != "api_key" {
+			return errors.New("unsupported Cursor credential type")
+		}
+		command.Env["CURSOR_API_KEY"] = credential.Secret
+	default:
+		return fmt.Errorf("unsupported coding-agent harness %q", harness)
+	}
+	return nil
 }
 
 func (b HarnessBuilder) binary(harness string) string {

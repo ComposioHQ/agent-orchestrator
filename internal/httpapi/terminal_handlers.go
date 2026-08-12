@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 const (
 	terminalTicketTTL  = 30 * time.Second
 	terminalSessionTTL = 30 * time.Minute
+	agentTerminalTTL   = 24 * time.Hour
 )
 
 func (s *Server) createTerminalTicket(w http.ResponseWriter, r *http.Request) {
@@ -33,8 +35,8 @@ func (s *Server) createTerminalTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
-	if input.Kind != "workspace" {
-		writeError(w, r, http.StatusUnprocessableEntity, "TERMINAL_KIND_UNSUPPORTED", "Only workspace terminals are currently supported.")
+	if input.Kind != "workspace" && input.Kind != "agent" {
+		writeError(w, r, http.StatusUnprocessableEntity, "TERMINAL_KIND_UNSUPPORTED", "Terminal kind must be agent or workspace.")
 		return
 	}
 	token, scopes, err := s.store.IssueTerminalTicket(
@@ -61,11 +63,15 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 		kind = "workspace"
 	}
 	after, err := strconv.ParseInt(defaultString(r.URL.Query().Get("after"), "0"), 10, 64)
-	if token == "" || kind != "workspace" || err != nil || after < 0 {
+	if token == "" || (kind != "workspace" && kind != "agent") || err != nil || after < 0 {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", "A valid ticket, kind, and after cursor are required.")
 		return
 	}
-	terminal, err := s.store.OpenTerminal(r.Context(), token, kind, terminalSessionTTL)
+	ttl := terminalSessionTTL
+	if kind == "agent" {
+		ttl = agentTerminalTTL
+	}
+	terminal, err := s.store.OpenTerminal(r.Context(), token, kind, ttl)
 	if errors.Is(err, postgres.ErrInvalidTicket) {
 		writeError(w, r, http.StatusUnauthorized, "INVALID_TERMINAL_TICKET", "The terminal ticket is invalid, expired, or already used.")
 		return
@@ -88,7 +94,9 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	connection.SetReadLimit(maxTerminalFrame)
 	defer func() {
-		s.closeTerminal(r, terminal)
+		if terminal.Kind != "agent" {
+			s.closeTerminal(r, terminal)
+		}
 		_ = connection.Close(websocket.StatusNormalClosure, "terminal closed")
 	}()
 
@@ -132,6 +140,31 @@ func (s *Server) readTerminalInput(
 		}
 		if len(data) == 0 || len(data) > maxTerminalFrame {
 			return connection.Close(websocket.StatusMessageTooBig, "terminal input is too large")
+		}
+		var message struct {
+			Type    string `json:"type"`
+			Data    string `json:"data,omitempty"`
+			Columns uint16 `json:"columns,omitempty"`
+			Rows    uint16 `json:"rows,omitempty"`
+		}
+		if json.Unmarshal(data, &message) == nil {
+			if message.Type == "resize" {
+				if message.Columns == 0 || message.Rows == 0 {
+					return connection.Close(websocket.StatusPolicyViolation, "invalid terminal size")
+				}
+				if err := s.store.QueueTerminalResize(
+					ctx, terminal, message.Columns, message.Rows,
+				); err != nil {
+					return err
+				}
+				continue
+			}
+			if message.Type == "input" {
+				data = []byte(message.Data)
+			}
+		}
+		if len(data) == 0 {
+			continue
 		}
 		deadline := time.NewTimer(2 * time.Second)
 		ticker := time.NewTicker(50 * time.Millisecond)

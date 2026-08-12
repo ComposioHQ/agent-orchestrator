@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   createProject: vi.fn(),
   createSession: vi.fn(),
+  deleteSession: vi.fn(),
   createGitHubScratchProject: vi.fn(),
   startGitHubUserAuthorization: vi.fn(),
   disconnectGitHubUser: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock("@/lib/cloud-client", () => ({
     listSessions: mocks.listSessions,
     createProject: mocks.createProject,
     createSession: mocks.createSession,
+    deleteSession: mocks.deleteSession,
     createGitHubScratchProject: mocks.createGitHubScratchProject,
     startGitHubUserAuthorization: mocks.startGitHubUserAuthorization,
     disconnectGitHubUser: mocks.disconnectGitHubUser,
@@ -108,6 +110,9 @@ beforeEach(() => {
   mocks.getGitHubUserConnection.mockResolvedValue({
     connected: false,
     installations: [],
+  });
+  mocks.deleteSession.mockResolvedValue({
+    session: { id: "session-1", desiredState: "deleted" },
   });
   mocks.listProviderConnections.mockResolvedValue([]);
   mocks.createProject.mockResolvedValue({
@@ -323,4 +328,20 @@ it("opens project actions and presents sharing without a false create action", a
   expect(
     within(dialog).getByRole("button", { name: "Create link" }),
   ).toBeDisabled();
+});
+
+it("deletes a session from its hover action menu", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  render(<CloudWorkspace />);
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Actions for Build cloud authentication",
+    }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Delete session" }));
+
+  await waitFor(() =>
+    expect(mocks.deleteSession).toHaveBeenCalledWith("org-1", "session-1"),
+  );
+  expect(screen.queryAllByText("Build cloud authentication")).toHaveLength(0);
 });

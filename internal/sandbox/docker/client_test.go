@@ -100,6 +100,12 @@ func TestCreateUsesLabeledVolumeAndStartsWorkerWithoutAutoPause(t *testing.T) {
 	if createRequest.HostConfig.NetworkMode != "ao-cloud-test_default" {
 		t.Errorf("network = %q", createRequest.HostConfig.NetworkMode)
 	}
+	if createRequest.HostConfig.RestartPolicy.Name != "no" {
+		t.Errorf(
+			"restart policy = %q, want reconciler-managed restarts",
+			createRequest.HostConfig.RestartPolicy.Name,
+		)
+	}
 	if got := createRequest.HostConfig.Mounts; len(got) != 1 ||
 		got[0].Source != workspace || got[0].Target != "/workspace" {
 		t.Errorf("mounts = %+v", got)

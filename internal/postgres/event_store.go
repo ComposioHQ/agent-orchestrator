@@ -203,6 +203,62 @@ func appendUserMessage(
 	sessionID string,
 	text string,
 ) (domain.ClientEvent, error) {
+	event, err := appendUserMessageEvent(ctx, tx, orgID, sessionID, text)
+	if err != nil {
+		return domain.ClientEvent{}, err
+	}
+	var terminalID string
+	var workerEpoch int64
+	err = tx.QueryRow(ctx,
+		`SELECT id, worker_epoch FROM ao_terminal_sessions
+		WHERE org_id = $1 AND session_id = $2 AND kind = 'agent'
+		  AND state = 'open' AND expires_at > now()
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		orgID, sessionID,
+	).Scan(&terminalID, &workerEpoch)
+	if err == nil {
+		payload, marshalErr := json.Marshal(map[string]any{
+			"terminalId": terminalID,
+			"data":       []byte(text + "\r"),
+		})
+		if marshalErr != nil {
+			return domain.ClientEvent{}, marshalErr
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO ao_worker_requests (
+				org_id, session_id, worker_epoch, kind, payload, expires_at
+			) VALUES ($1, $2, $3, 'terminal.input', $4, now() + interval '15 seconds')`,
+			orgID, sessionID, workerEpoch, payload,
+		); err != nil {
+			return domain.ClientEvent{}, err
+		}
+		return event, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return domain.ClientEvent{}, err
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO ao_turns (
+			org_id, session_id, user_message_sequence
+		) VALUES ($1, $2, $3)`,
+		orgID,
+		sessionID,
+		event.Sequence,
+	); err != nil {
+		return domain.ClientEvent{}, normalizeConstraintError(err)
+	}
+	return event, nil
+}
+
+func appendUserMessageEvent(
+	ctx context.Context,
+	tx pgx.Tx,
+	orgID string,
+	sessionID string,
+	text string,
+) (domain.ClientEvent, error) {
 	var sequence int64
 	err := tx.QueryRow(
 		ctx,
@@ -253,17 +309,6 @@ func appendUserMessage(
 	), &event)
 	if err != nil {
 		return domain.ClientEvent{}, err
-	}
-	if _, err := tx.Exec(
-		ctx,
-		`INSERT INTO ao_turns (
-			org_id, session_id, user_message_sequence
-		) VALUES ($1, $2, $3)`,
-		orgID,
-		sessionID,
-		sequence,
-	); err != nil {
-		return domain.ClientEvent{}, normalizeConstraintError(err)
 	}
 	return event, nil
 }

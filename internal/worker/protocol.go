@@ -11,14 +11,17 @@ type BootstrapRequest struct {
 
 // LaunchContext is the durable session context handed to a bootstrapped worker.
 type LaunchContext struct {
-	SessionID     string `json:"sessionId"`
-	ProjectID     string `json:"projectId"`
-	Kind          string `json:"kind"`
-	Harness       string `json:"harness"`
-	DisplayName   string `json:"displayName"`
-	Branch        string `json:"branch"`
-	RepositoryURL string `json:"repositoryUrl"`
-	DefaultBranch string `json:"defaultBranch"`
+	SessionID      string   `json:"sessionId"`
+	ProjectID      string   `json:"projectId"`
+	Kind           string   `json:"kind"`
+	Harness        string   `json:"harness"`
+	DisplayName    string   `json:"displayName"`
+	Branch         string   `json:"branch"`
+	Prompt         string   `json:"prompt,omitempty"`
+	Mode           string   `json:"mode"`
+	DeniedCommands []string `json:"deniedCommands"`
+	RepositoryURL  string   `json:"repositoryUrl"`
+	DefaultBranch  string   `json:"defaultBranch"`
 }
 
 // BootstrapResponse is the control plane's answer to a valid bootstrap ticket.
@@ -178,8 +181,18 @@ type TerminalCommand struct {
 	TerminalID string `json:"terminalId"`
 	Kind       string `json:"kind,omitempty"`
 	Data       []byte `json:"data,omitempty"`
+	Columns    uint16 `json:"columns,omitempty"`
+	Rows       uint16 `json:"rows,omitempty"`
 }
 
 type TerminalOutputRequest struct {
 	Data []byte `json:"data"`
+}
+
+type TerminalExitRequest struct {
+	ExitCode int `json:"exitCode"`
+}
+
+type AgentTerminalResponse struct {
+	TerminalID string `json:"terminalId"`
 }

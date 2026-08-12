@@ -110,6 +110,40 @@ func (s *Store) SendOrchestratorChildMessage(
 	return event, err
 }
 
+func (s *Store) DeleteOrchestratorChild(
+	ctx context.Context,
+	orgID, orchestratorSessionID, childSessionID string,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		projectID, err := requireActiveOrchestrator(
+			ctx, tx, orgID, orchestratorSessionID,
+		)
+		if err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes AS sandbox
+			SET desired_state = $1, reconcile_after = now(), updated_at = now()
+			FROM ao_sessions AS session
+			WHERE sandbox.org_id = $2
+			  AND sandbox.session_id = $3
+			  AND session.org_id = sandbox.org_id
+			  AND session.id = sandbox.session_id
+			  AND session.project_id = $4
+			  AND session.parent_session_id = $5`,
+			domain.SandboxDesiredDeleted, orgID, childSessionID,
+			projectID, orchestratorSessionID,
+		)
+		if err != nil {
+			return normalizeConstraintError(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrForbidden
+		}
+		return nil
+	})
+}
+
 func requireActiveOrchestrator(
 	ctx context.Context,
 	tx pgx.Tx,
