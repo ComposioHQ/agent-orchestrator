@@ -859,12 +859,20 @@ async function startRemoteWorkspaceDaemon(): Promise<boolean> {
 			probe: readDaemonProbe,
 		});
 		remoteConnection = connection;
+		console.log(
+			`AO: workspace ${workspace.id} connected on 127.0.0.1:${connection.localPort} ` +
+				`-> ${workspace.sshTarget}:${connection.remotePort} (${connection.started ? "started" : "attached to"} remote daemon)`,
+		);
 		// No identity check here, unlike the local attach path: the remote daemon
 		// is a different installation with a different executable path, and
 		// comparing it against this bundle would reject every healthy VM.
 		setDaemonStatus({ state: "ready", port: connection.localPort, workspaceId: workspace.id });
 	} catch (error) {
 		const failure = error instanceof RemoteWorkspaceError ? error.failure : null;
+		// Logged as well as surfaced: the UI shows the remedy, but a transport
+		// failure is the kind of thing users paste into a bug report, and the
+		// local daemon path logs its failures the same way.
+		console.error(`AO: workspace ${workspace.id} (${workspace.sshTarget}) failed: ${failure?.kind ?? "unknown"}`);
 		setDaemonStatus({
 			state: "error",
 			workspaceId: workspace.id,
