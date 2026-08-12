@@ -31,6 +31,62 @@ beforeEach(() => {
   });
 });
 
+it("accepts the browser origin that matches the request Host header", async () => {
+  mocks.mode.mockReturnValue("local");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    Response.json({
+      user: { id: "user-1", email: "user@example.com" },
+      organizations: [],
+      token: "local-token",
+      expiresAt: "2026-09-12T00:00:00Z",
+    }),
+  );
+  const request = new NextRequest(
+    "http://localhost:3000/api/cloud/v1/auth/local/login",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        host: "127.0.0.1:3000",
+        origin: "http://127.0.0.1:3000",
+      },
+      body: JSON.stringify({
+        email: "user@example.com",
+        password: "password",
+      }),
+    },
+  );
+
+  const response = await POST(request, {
+    params: Promise.resolve({ path: ["auth", "local", "login"] }),
+  });
+
+  expect(response.status).toBe(200);
+  expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+it("rejects a browser origin that does not match the request host", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  const request = new NextRequest(
+    "http://localhost:3000/api/cloud/v1/auth/local/login",
+    {
+      method: "POST",
+      headers: {
+        host: "localhost:3000",
+        origin: "https://attacker.example",
+      },
+      body: "{}",
+    },
+  );
+
+  const response = await POST(request, {
+    params: Promise.resolve({ path: ["auth", "local", "login"] }),
+  });
+
+  expect(response.status).toBe(403);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 it("forwards workspace writes through the authenticated gateway", async () => {
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
     Response.json({ path: "README.md", content: "updated\n", size: 8 }),

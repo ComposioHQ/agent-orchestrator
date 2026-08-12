@@ -42,7 +42,7 @@ async function forward(request: NextRequest, context: RouteContext) {
     request.method !== "GET" &&
     request.method !== "HEAD" &&
     origin &&
-    origin !== request.nextUrl.origin
+    !isSameOrigin(request, origin)
   ) {
     return NextResponse.json(
       { code: "INVALID_ORIGIN", message: "Cross-origin requests are rejected." },
@@ -222,6 +222,26 @@ async function forward(request: NextRequest, context: RouteContext) {
     response.cookies.delete(localAuthCookie);
   }
   return response;
+}
+
+function isSameOrigin(request: NextRequest, origin: string): boolean {
+  let actual: URL;
+  try {
+    actual = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const host = request.headers.get("host")?.trim();
+  const forwardedProtocol = request.headers
+    .get("x-forwarded-proto")
+    ?.split(",", 1)[0]
+    ?.trim();
+  const protocol = forwardedProtocol || request.nextUrl.protocol.slice(0, -1);
+  if (host && (protocol === "http" || protocol === "https")) {
+    return actual.origin === `${protocol}://${host}`;
+  }
+  return actual.origin === request.nextUrl.origin;
 }
 
 async function forwardGitHubUser(
