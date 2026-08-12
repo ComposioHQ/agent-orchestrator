@@ -287,6 +287,43 @@ describe("XtermTerminal", () => {
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("copied selection");
 	});
 
+	it.each([
+		["Command", "MacIntel", false, true],
+		["Ctrl", "Linux x86_64", true, false],
+	])("uses %s plus/minus for terminal font size on %s", (_label, platform, ctrlKey, metaKey) => {
+		setNavigatorPlatform(platform);
+		const onChangeFontSize = vi.fn();
+		render(<XtermTerminal onChangeFontSize={onChangeFontSize} theme="dark" />);
+
+		const increase = {
+			altKey: false,
+			code: "Equal",
+			ctrlKey,
+			key: "=",
+			metaKey,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+		const decrease = {
+			...increase,
+			code: "Minus",
+			key: "-",
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const otherPlatformModifier = { ...increase, ctrlKey: !ctrlKey, metaKey: !metaKey };
+
+		expect(state.lastTerminal!.keyHandler!(increase)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(decrease)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(otherPlatformModifier)).toBe(true);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(1, 1);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(2, -1);
+		expect(increase.preventDefault).toHaveBeenCalledOnce();
+		expect(decrease.preventDefault).toHaveBeenCalledOnce();
+	});
+
 	it("handles native copy events from inside the terminal", () => {
 		const { container } = render(<XtermTerminal theme="dark" />);
 		state.lastTerminal!.selection = "native copied selection";

@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, TriangleAlert } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
@@ -350,27 +350,6 @@ export function CenterPane({
 						role="toolbar"
 					>
 						<TerminalControl
-							disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-							label={t("terminal.decreaseFontSize")}
-							onClick={() => updateFontSize(-1)}
-						>
-							<Minus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-						<span
-							aria-label={t("terminal.fontSizeAria", { size: fontSize })}
-							className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
-						>
-							{fontSize}px
-						</span>
-						<TerminalControl
-							disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-							label={t("terminal.increaseFontSize")}
-							onClick={() => updateFontSize(1)}
-						>
-							<Plus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-						<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-						<TerminalControl
 							isPressed={isFullscreen}
 							label={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
 							onClick={() => void toggleFullscreen()}
@@ -417,6 +396,7 @@ export function CenterPane({
 						fontSize={fontSize}
 						focusRequested={switchPermissionRequired && target.kind === "worker"}
 						inputDisabled={agentInputDisabled && target.kind === "worker"}
+						onChangeFontSize={updateFontSize}
 						session={session}
 						terminalTarget={target}
 						theme={theme}

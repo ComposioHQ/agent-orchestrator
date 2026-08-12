@@ -44,6 +44,8 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/** Resize this terminal without changing application zoom. */
+	onChangeFontSize?: (delta: number) => void;
 	/** Refuse agent PTY input while a controller transition owns the source. */
 	inputDisabled?: boolean;
 	/** Focus the terminal when an in-flight controller asks for human input. */
@@ -106,6 +108,7 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.theme === right.theme &&
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
+		left.onChangeFontSize === right.onChangeFontSize &&
 		left.inputDisabled === right.inputDisabled &&
 		left.focusRequested === right.focusRequested &&
 		left.createMux === right.createMux &&
@@ -641,6 +644,7 @@ export function TerminalPane({
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
+	onChangeFontSize,
 	inputDisabled,
 	focusRequested,
 }: TerminalPaneProps) {
@@ -706,7 +710,16 @@ export function TerminalPane({
 		);
 	}
 
-	const props = { session, theme, daemonReady, terminalTarget, fontSize, inputDisabled, focusRequested };
+	const props = {
+		session,
+		theme,
+		daemonReady,
+		terminalTarget,
+		fontSize,
+		onChangeFontSize,
+		inputDisabled,
+		focusRequested,
+	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
 		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
@@ -720,6 +733,7 @@ export function TerminalPane({
 			daemonReady={daemonReady}
 			fontSize={fontSize}
 			inputDisabled={inputDisabled}
+			onChangeFontSize={onChangeFontSize}
 			focusRequested={focusRequested}
 			terminalTarget={terminalTarget}
 		/>
@@ -863,6 +877,7 @@ function AttachedTerminal({
 	daemonReady,
 	terminalTarget,
 	fontSize,
+	onChangeFontSize,
 	inputDisabled,
 	focusRequested,
 	createMux,
@@ -1040,6 +1055,7 @@ function AttachedTerminal({
 					fontSize={fontSize}
 					focusRequested={focusRequested}
 					isVisible={isVisible}
+					onChangeFontSize={onChangeFontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}

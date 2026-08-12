@@ -35,6 +35,7 @@ import type {
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
+import { isMacPlatform } from "../lib/platform";
 import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import { useUiStore, type Theme } from "../stores/ui-store";
@@ -51,6 +52,8 @@ export type XtermTerminalProps = {
 	className?: string;
 	fontSize?: number;
 	theme: Theme;
+	/** Resize this terminal without changing application zoom. */
+	onChangeFontSize?: (delta: number) => void;
 	/**
 	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
 	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
@@ -139,6 +142,17 @@ function isTerminalPasteShortcut(event: KeyboardEvent): boolean {
 function consumeTerminalShortcut(event: KeyboardEvent): void {
 	event.preventDefault();
 	event.stopPropagation();
+}
+
+function terminalFontSizeDelta(event: KeyboardEvent): -1 | 0 | 1 {
+	const usesMacShortcut = isMacPlatform();
+	const hasPrimaryModifier = usesMacShortcut
+		? event.metaKey && !event.ctrlKey
+		: event.ctrlKey && !event.metaKey;
+	if (!hasPrimaryModifier || event.altKey) return 0;
+	if (event.key === "+" || event.key === "=" || event.code === "NumpadAdd") return 1;
+	if (event.key === "-" || event.code === "NumpadSubtract") return -1;
+	return 0;
 }
 
 function normalizedTerminalShortcut(event: KeyboardEvent): string | null {
@@ -519,6 +533,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
 				consumeTerminalShortcut(event);
 				emitUserInput("\x1b\r", "keyboard");
+				return false;
+			}
+			const fontSizeDelta = terminalFontSizeDelta(event);
+			if (fontSizeDelta !== 0 && callbacksRef.current.onChangeFontSize) {
+				consumeTerminalShortcut(event);
+				callbacksRef.current.onChangeFontSize(fontSizeDelta);
 				return false;
 			}
 			if (isTerminalCopyShortcut(event)) {

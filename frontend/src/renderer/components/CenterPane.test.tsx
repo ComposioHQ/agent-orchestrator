@@ -434,6 +434,14 @@ describe("CenterPane toolbar session label", () => {
 		);
 	});
 
+	it("keeps terminal font-size controls out of the top bar", () => {
+		renderCenterPane({ session: worker });
+
+		expect(screen.queryByRole("button", { name: "Decrease terminal font size" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Increase terminal font size" })).toBeNull();
+		expect(screen.queryByRole("button", { name: "Fullscreen terminal" })).not.toBeNull();
+	});
+
 	it("hides session-level actions while the terminal is fullscreen", () => {
 		const view = renderCenterPane({
 			session: worker,
