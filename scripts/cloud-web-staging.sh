@@ -24,10 +24,10 @@ fi
 export AO_CLOUD_WEB_MODE=staging
 export AO_CLOUD_WEB_API_BASE_URL="${api_url%/}"
 source "$root/scripts/lib/workos-web-env.sh"
-configure_workos_web "$web_port"
+configure_workos_web "$web_port" "127.0.0.1"
 
 printf 'Cloud API: %s\n' "$AO_CLOUD_WEB_API_BASE_URL"
-printf 'Cloud web: http://localhost:%s\n' "$web_port"
+printf 'Cloud web: http://127.0.0.1:%s\n' "$web_port"
 printf 'WorkOS credentials: %s via AWS profile %s\n' "$AO_CLOUD_WORKOS_SECRET_ID" "$AO_CLOUD_WORKOS_AWS_PROFILE"
 printf 'WorkOS redirect: %s (%s)\n' "$WORKOS_REDIRECT_URI" "$WORKOS_REDIRECT_STATUS"
 cd "$root"
