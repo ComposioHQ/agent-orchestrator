@@ -14,5 +14,5 @@ func FreeBytes(path string) (uint64, error) {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0, fmt.Errorf("androidsdk: statfs %s: %w", path, err)
 	}
-	return uint64(stat.Bavail) * uint64(stat.Bsize), nil //nolint:gosec // G115: block size/count from the kernel's own statfs result, never negative in practice
+	return stat.Bavail * uint64(stat.Bsize), nil //nolint:gosec // G115: block size/count from the kernel's own statfs result, never negative in practice
 }

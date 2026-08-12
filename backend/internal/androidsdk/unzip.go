@@ -2,6 +2,7 @@ package androidsdk
 
 import (
 	"archive/zip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -78,7 +79,7 @@ func extractZipFile(entry *zip.File, target string) error {
 	// breaker against a decompression bomb, not a realistic limit for a
 	// legitimate package (see the constant's doc comment).
 	written, err := io.CopyN(dst, src, maxExtractedFileBytes+1)
-	if err != nil && err != io.EOF {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("androidsdk: extract %s: %w", target, err)
 	}
 	if written > maxExtractedFileBytes {
