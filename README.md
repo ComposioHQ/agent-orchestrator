@@ -170,8 +170,9 @@ credential for `AO_CLOUD_MIGRATION_DATABASE_URL`.
 ## Database changes and production promotion
 
 Database migrations in `internal/postgres/migrations` are embedded in the same
-immutable control-plane image as the API and migration binary. The release flow
-is:
+immutable control-plane image as the API and migration binary. That image also
+packages `/ao-worker` for sandbox upload; a separate worker runtime image
+contains the identical binary. The release flow is:
 
 1. Add a forward, backward-compatible Goose migration to the repository.
 2. Run the migration and integration tests locally.
@@ -179,17 +180,21 @@ is:
    migrations before updating its API replicas.
 4. Verify the release in staging.
 5. Promote it with `scripts/promote-production.sh`. Production uses the exact
-   scanned image digest currently running in staging and runs that image's
-   migrations before updating any production API replica.
+   scanned control-plane and worker image digests recorded by staging and runs
+   the control-plane image's migrations before updating any production API
+   replica.
 
 If a production migration fails, promotion stops and the existing production
 API keeps running. Application rollback does not reverse an applied migration,
 so migrations must remain compatible with the previous API release.
 
-Only migration code and the tested application image are promoted. Staging
-database rows are never copied to production: users, organizations, projects,
-sessions, events, credentials, and all other data remain isolated in their
-respective databases. The AWS instances are named
+Only migration code and the tested application artifacts are promoted. NodeOps
+and worker settings come from the target environment's `nodeops` and `worker`
+Secrets Manager JSON entries; deployment validates every required field before
+registering ECS tasks. No provider auto-pause value is set by deployment.
+Staging database rows are never copied to production: users, organizations,
+projects, sessions, events, credentials, and all other data remain isolated in
+their respective databases. The AWS instances are named
 `ao-cloud-staging-storage` and `ao-cloud-production-storage` so the environment
 boundary is explicit. See [`docs/deployment.md`](docs/deployment.md) for the full
 deployment and rollback procedure.
@@ -337,5 +342,6 @@ exercises local and WorkOS-backed principals, checks idempotent project,
 session, and message creation, verifies concurrent message retries, durable
 cross-replica event delivery/replay and workspace intent, and proves
 cross-organization reads are denied. Private CI runs those PostgreSQL tests,
-Go vet, deployment fixtures, shell checks, an image build, and the isolated
-Compose lifecycle.
+Go vet, deployment fixtures, shell checks, separate control-plane and worker
+image builds, an offline image-contract check, and the isolated Compose
+lifecycle.

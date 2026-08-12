@@ -53,8 +53,11 @@ jobs:
           sudo apt-get install --yes shellcheck
           bash -n scripts/*.sh
           shellcheck scripts/*.sh
-      - name: Build container image
-        run: docker build --tag ao-cloud:test .
+      - name: Build and verify deployment images
+        run: |
+          docker build --target control-plane --tag ao-cloud:test .
+          docker build --target worker --tag ao-worker:test .
+          ./scripts/verify-image-contract.sh ao-cloud:test ao-worker:test
       - name: Exercise isolated local lifecycle
         run: ./scripts/test-cloud-local.sh
 

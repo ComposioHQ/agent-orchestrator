@@ -16,11 +16,18 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/ao-cloud-migrate ./cmd/ao-cloud-migrate && \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags="-s -w" -o /out/ao-cloud-healthcheck ./cmd/ao-cloud-healthcheck
+    go build -trimpath -ldflags="-s -w" -o /out/ao-cloud-healthcheck ./cmd/ao-cloud-healthcheck && \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/ao-worker ./cmd/ao-worker
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot AS worker
+COPY --from=build --chown=nonroot:nonroot /out/ao-worker /ao-worker
+ENTRYPOINT ["/ao-worker"]
+
+FROM gcr.io/distroless/static-debian12:nonroot AS control-plane
 COPY --from=build --chown=nonroot:nonroot /out/ao-cloud /ao-cloud
 COPY --from=build --chown=nonroot:nonroot /out/ao-cloud-migrate /ao-cloud-migrate
 COPY --from=build --chown=nonroot:nonroot /out/ao-cloud-healthcheck /ao-cloud-healthcheck
+COPY --from=build --chown=nonroot:nonroot /out/ao-worker /ao-worker
 EXPOSE 8080
 ENTRYPOINT ["/ao-cloud"]

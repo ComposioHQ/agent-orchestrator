@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 
-from lib.deployment import validate_service
+from lib.deployment import validate_service, validate_task_artifacts
 
 
 def aws(region: str, *arguments: str):
@@ -26,7 +26,13 @@ def main() -> None:
     parser.add_argument("--service", required=True)
     parser.add_argument("--alarm", required=True)
     parser.add_argument("--expected-task-definition")
+    parser.add_argument("--expected-control-image")
+    parser.add_argument("--expected-worker-image")
     args = parser.parse_args()
+    if bool(args.expected_control_image) != bool(args.expected_worker_image):
+        parser.error(
+            "--expected-control-image and --expected-worker-image must be used together"
+        )
 
     services = aws(
         args.region,
@@ -90,6 +96,22 @@ def main() -> None:
             alarm_state=alarms[0].get("StateValue", ""),
             expected_task_definition=args.expected_task_definition,
         )
+        if args.expected_control_image:
+            task_definition = aws(
+                args.region,
+                "ecs",
+                "describe-task-definition",
+                "--task-definition",
+                args.expected_task_definition or service["taskDefinition"],
+                "--include",
+                "TAGS",
+            )
+            validate_task_artifacts(
+                task_definition,
+                container_name="control-plane",
+                control_image=args.expected_control_image,
+                worker_image=args.expected_worker_image,
+            )
     except ValueError as error:
         raise SystemExit(str(error)) from error
     print(
@@ -101,6 +123,8 @@ def main() -> None:
                 "runningCount": service["runningCount"],
                 "targets": len(targets),
                 "alarm": args.alarm,
+                "controlPlaneImage": args.expected_control_image,
+                "workerImage": args.expected_worker_image,
             }
         )
     )
