@@ -858,6 +858,7 @@ func TestModelsFingerprintsTheSameInputsDiscoveryReads(t *testing.T) {
 	fingerprintedPtr := discoverer.lastFingerprintRequest.Load()
 	if fingerprintedPtr == nil {
 		t.Fatal("catalog fingerprint was never requested")
+		return
 	}
 	fingerprinted := *fingerprintedPtr
 	if !reflect.DeepEqual(fingerprinted, discoverer.lastRequest) {

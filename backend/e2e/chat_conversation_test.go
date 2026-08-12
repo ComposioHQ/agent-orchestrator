@@ -284,6 +284,7 @@ func TestChatRelayThroughTheSendEndpointIsAttributedToAutomation(t *testing.T) {
 	}
 	if relayedPtr == nil {
 		t.Fatalf("the relayed message is not in the timeline:\n%s", describe(snap))
+		return
 	}
 	relayed := *relayedPtr
 	// AO carried this on someone else's behalf; the timeline must say so rather
