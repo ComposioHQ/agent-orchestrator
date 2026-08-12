@@ -1,0 +1,527 @@
+/* ==========================================================================
+   Agent Orchestrator Docs — Custom Styles
+   Exactly matches aoagents.dev landing site design system
+   Tokens from frontend/src/site-theme/tokens.css
+   ========================================================================== */
+
+/* ── 1. Design tokens (mirroring landing site) ──────────────────────────── */
+:root {
+  /* Backgrounds */
+  --ao-bg:           #1c1c17;   /* oklch(0.153 0.006 107.1) */
+  --ao-bg-raised:    #2e2e27;   /* oklch(0.228 0.013 107.4) — cards, sidebar */
+  --ao-bg-subtle:    #3a3a31;   /* oklch(0.286 0.016 107.4) — hover, muted */
+
+  /* Foreground */
+  --ao-fg:           #fafaf8;   /* oklch(0.988 0.003 106.5) */
+  --ao-fg-muted:     #b6b6aa;   /* oklch(0.737 0.021 106.9) */
+  --ao-fg-faint:     #72726a;   /* oklch(0.58  0.031 107.3) */
+
+  /* Brand (burnt orange) */
+  --ao-brand:        #d25611;
+  --ao-brand-light:  #e8804a;
+  --ao-brand-dark:   #9e400a;
+
+  /* Border */
+  --ao-border:       rgba(255, 255, 255, 0.10);
+  --ao-border-hover: rgba(255, 255, 255, 0.18);
+
+  /* Code */
+  --ao-code-bg:      #252520;
+  --ao-code-inline:  #302f28;
+}
+
+/* ── 2. Global: force background & font to match landing ──────────────────── */
+html,
+body,
+#__next,
+[data-theme="dark"],
+.dark {
+  background-color: var(--ao-bg) !important;
+  color:            var(--ao-fg) !important;
+  font-family: "Geist Sans", ui-sans-serif, system-ui, -apple-system, sans-serif !important;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11" !important;
+  letter-spacing: -0.3px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 3. Sidebar ────────────────────────────────────────────────────────────── */
+/* Left sidebar background */
+nav[class*="sidebar"],
+aside[class*="sidebar"],
+div[class*="sidebar"],
+[class*="SidebarContainer"],
+[class*="sidebar-container"],
+[data-sidebar] {
+  background-color: var(--ao-bg) !important;
+  border-right: 1px solid var(--ao-border) !important;
+}
+
+/* Sidebar nav items */
+[class*="sidebar"] a,
+[class*="sidebar"] button,
+nav a {
+  color: var(--ao-fg-muted) !important;
+  font-size: 0.875rem !important;
+  font-weight: 400 !important;
+  border-radius: 6px !important;
+  transition: color 0.15s ease, background 0.15s ease !important;
+}
+
+[class*="sidebar"] a:hover,
+nav a:hover {
+  color: var(--ao-fg) !important;
+  background-color: var(--ao-bg-subtle) !important;
+}
+
+/* Active sidebar item — brand orange accent */
+[class*="sidebar"] a[class*="active"],
+[class*="sidebar"] a[aria-current="page"],
+[class*="sidebar"] a[data-active="true"],
+nav a[aria-current="page"] {
+  color: var(--ao-brand-light) !important;
+  background-color: rgba(210, 86, 17, 0.12) !important;
+  font-weight: 500 !important;
+}
+
+/* Sidebar group headers */
+[class*="sidebar"] [class*="group-label"],
+[class*="sidebar"] p[class*="label"],
+nav [class*="group"] > span {
+  color: var(--ao-fg-faint) !important;
+  font-size: 0.70rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+}
+
+/* ── 4. Top tab bar (Get started / Learn / Plugins…) ───────────────────── */
+[class*="topbar"],
+[class*="TopBar"],
+header[class*="header"],
+[class*="navbar"]:not(nav) {
+  background-color: var(--ao-bg) !important;
+  border-bottom: 1px solid var(--ao-border) !important;
+  backdrop-filter: none !important;
+}
+
+/* Hide duplicate logo/home link in iframe header since we have parent landing header */
+header#navbar [class*="logo"],
+header#navbar [class*="Logo"],
+header#navbar a[href="/"],
+header#navbar a[href*="aoagents.dev"] {
+  display: none !important;
+}
+
+/* Suppress the left logo slot flex-grow to allow the nav container to align to the left */
+header#navbar div:has(a[href="/"]),
+header#navbar div:has(a[href*="aoagents.dev"]),
+header#navbar div:has(a[class*="logo"]),
+header#navbar div:has([class*="logo"]),
+header#navbar [class*="logo-container"],
+header#navbar [class*="LogoContainer"],
+header#navbar div[class*="flex-1"]:first-of-type {
+  flex: none !important;
+  width: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  display: none !important;
+}
+
+/* Align navigation tabs to the left side (aligns with sidebar) */
+header#navbar nav[aria-label="Main"],
+nav[aria-label="Main"] {
+  justify-content: flex-start !important;
+  padding-left: 0.75rem !important;
+  flex: 1 1 0% !important;
+}
+
+header#navbar nav[aria-label="Main"] ul,
+nav[aria-label="Main"] ul {
+  justify-content: flex-start !important;
+}
+
+/* Tab items */
+[class*="topbar"] a,
+[class*="TopBar"] a,
+header a,
+[class*="tab"] {
+  color: var(--ao-fg-muted) !important;
+  font-size: 0.875rem !important;
+  transition: color 0.15s ease !important;
+}
+
+[class*="topbar"] a:hover,
+[class*="TopBar"] a:hover,
+header a:hover {
+  color: var(--ao-fg) !important;
+}
+
+[class*="topbar"] a[aria-selected="true"],
+[class*="topbar"] a[class*="active"],
+[class*="tab"][aria-selected="true"],
+[class*="tab"][class*="active"] {
+  color: var(--ao-fg) !important;
+  border-bottom-color: var(--ao-brand) !important;
+}
+
+/* ── 5. Main content area ───────────────────────────────────────────────── */
+main,
+article,
+[class*="content-area"],
+[class*="ContentArea"],
+[class*="main-content"] {
+  background-color: var(--ao-bg) !important;
+}
+
+/* Page title (h1) */
+h1 {
+  font-size: 2.25rem !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.03em !important;
+  line-height: 1.15 !important;
+  color: var(--ao-fg) !important;
+  margin-bottom: 0.75rem !important;
+}
+
+/* Subtitle / description below h1 */
+[class*="description"],
+[class*="subtitle"] {
+  color: var(--ao-fg-muted) !important;
+  font-size: 1.05rem !important;
+  line-height: 1.6 !important;
+  margin-bottom: 2rem !important;
+}
+
+h2 {
+  font-size: 1.6rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.025em !important;
+  line-height: 1.25 !important;
+  color: var(--ao-fg) !important;
+  margin-top: 2.5rem !important;
+  margin-bottom: 1rem !important;
+  padding-bottom: 0.5rem !important;
+  border-bottom: 1px solid var(--ao-border) !important;
+}
+
+h3 {
+  font-size: 1.2rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em !important;
+  color: var(--ao-fg) !important;
+  margin-top: 1.75rem !important;
+  margin-bottom: 0.75rem !important;
+}
+
+h4, h5, h6 {
+  font-weight: 600 !important;
+  color: var(--ao-fg) !important;
+  letter-spacing: -0.01em !important;
+}
+
+p {
+  color: var(--ao-fg-muted) !important;
+  line-height: 1.7 !important;
+  margin-bottom: 1.1em !important;
+}
+
+/* ── 6. Links ───────────────────────────────────────────────────────────── */
+/* Don't override sidebar/nav links already handled above */
+main a,
+article a {
+  color: var(--ao-brand-light) !important;
+  text-decoration: none !important;
+  border-bottom: 1px solid rgba(232, 128, 74, 0.35) !important;
+  transition: color 0.15s ease, border-color 0.15s ease !important;
+}
+
+main a:hover,
+article a:hover {
+  color: var(--ao-brand) !important;
+  border-bottom-color: var(--ao-brand) !important;
+}
+
+/* ── 7. Code ────────────────────────────────────────────────────────────── */
+code:not(pre code) {
+  font-family: "IBM Plex Mono", "Fira Code", ui-monospace, monospace !important;
+  font-size: 0.82em !important;
+  font-weight: 400 !important;
+  padding: 0.15em 0.45em !important;
+  border-radius: 4px !important;
+  background: var(--ao-code-inline) !important;
+  color: var(--ao-brand-light) !important;
+  border: 1px solid var(--ao-border) !important;
+}
+
+pre,
+[class*="codeblock"],
+[class*="CodeBlock"],
+[class*="code-block"] {
+  background: var(--ao-code-bg) !important;
+  border: 1px solid var(--ao-border) !important;
+  border-radius: 10px !important;
+  margin: 1.5rem 0 !important;
+  overflow: hidden !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25) !important;
+}
+
+pre code {
+  font-family: "IBM Plex Mono", "Fira Code", ui-monospace, monospace !important;
+  font-size: 0.875rem !important;
+  line-height: 1.65 !important;
+  color: var(--ao-fg) !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+/* Code block header / filename bar */
+[class*="code-header"],
+[class*="CodeHeader"],
+[class*="filename"],
+[class*="FileName"] {
+  background: var(--ao-bg-raised) !important;
+  border-bottom: 1px solid var(--ao-border) !important;
+  color: var(--ao-fg-muted) !important;
+  font-family: "IBM Plex Mono", ui-monospace, monospace !important;
+  font-size: 0.78rem !important;
+  padding: 0.5rem 1rem !important;
+}
+
+/* Copy button */
+[class*="copy"],
+button[aria-label*="Copy"],
+button[aria-label*="copy"] {
+  background: var(--ao-bg-subtle) !important;
+  border: 1px solid var(--ao-border) !important;
+  border-radius: 5px !important;
+  color: var(--ao-fg-muted) !important;
+  transition: all 0.15s ease !important;
+}
+
+[class*="copy"]:hover,
+button[aria-label*="Copy"]:hover {
+  background: var(--ao-border-hover) !important;
+  color: var(--ao-fg) !important;
+}
+
+/* ── 8. Cards ───────────────────────────────────────────────────────────── */
+[class*="card"],
+[class*="Card"] {
+  background: var(--ao-bg-raised) !important;
+  border: 1px solid var(--ao-border) !important;
+  border-radius: 10px !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease !important;
+}
+
+[class*="card"]:hover,
+[class*="Card"]:hover {
+  border-color: var(--ao-brand) !important;
+  box-shadow: 0 6px 20px rgba(210, 86, 17, 0.15) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* ── 9. Tables ──────────────────────────────────────────────────────────── */
+table {
+  border-collapse: collapse !important;
+  width: 100% !important;
+  margin: 1.5rem 0 !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  border: 1px solid var(--ao-border) !important;
+}
+
+th {
+  background: var(--ao-bg-raised) !important;
+  color: var(--ao-fg) !important;
+  font-weight: 600 !important;
+  font-size: 0.8rem !important;
+  letter-spacing: 0.03em !important;
+  text-transform: uppercase !important;
+  padding: 0.65rem 1rem !important;
+  border-bottom: 1px solid var(--ao-border) !important;
+  text-align: left !important;
+}
+
+td {
+  padding: 0.7rem 1rem !important;
+  color: var(--ao-fg-muted) !important;
+  border-bottom: 1px solid var(--ao-border) !important;
+  font-size: 0.9rem !important;
+  vertical-align: top !important;
+}
+
+tr:last-child td {
+  border-bottom: none !important;
+}
+
+tr:hover td {
+  background: var(--ao-bg-raised) !important;
+}
+
+/* ── 10. Callouts / Alerts ──────────────────────────────────────────────── */
+[class*="callout"],
+[class*="Callout"],
+[class*="alert"],
+[class*="Alert"] {
+  border-radius: 8px !important;
+  padding: 1rem 1.25rem !important;
+  margin: 1.5rem 0 !important;
+  border-left-width: 3px !important;
+  border-left-style: solid !important;
+  background: var(--ao-bg-raised) !important;
+}
+
+[class*="callout"][class*="info"],
+[class*="callout"][class*="note"] {
+  border-left-color: var(--ao-brand-light) !important;
+  background: rgba(232, 128, 74, 0.07) !important;
+}
+
+[class*="callout"][class*="warning"],
+[class*="callout"][class*="warn"] {
+  border-left-color: #d4a017 !important;
+  background: rgba(212, 160, 23, 0.07) !important;
+}
+
+[class*="callout"][class*="error"],
+[class*="callout"][class*="danger"] {
+  border-left-color: #d25f52 !important;
+  background: rgba(210, 95, 82, 0.07) !important;
+}
+
+[class*="callout"][class*="success"],
+[class*="callout"][class*="tip"] {
+  border-left-color: #4caf80 !important;
+  background: rgba(76, 175, 128, 0.07) !important;
+}
+
+/* ── 11. "On this page" (ToC) ───────────────────────────────────────────── */
+[class*="toc"],
+[class*="TableOfContents"],
+[class*="on-this-page"],
+aside:not([class*="sidebar"]) {
+  border-left: 1px solid var(--ao-border) !important;
+}
+
+[class*="toc"] a {
+  color: var(--ao-fg-faint) !important;
+  font-size: 0.8rem !important;
+  transition: color 0.15s ease !important;
+}
+
+[class*="toc"] a:hover,
+[class*="toc"] a[class*="active"] {
+  color: var(--ao-brand-light) !important;
+}
+
+/* ── 12. Search ─────────────────────────────────────────────────────────── */
+[class*="search"],
+[class*="Search"] {
+  background: var(--ao-bg-raised) !important;
+  border: 1px solid var(--ao-border) !important;
+  border-radius: 8px !important;
+  color: var(--ao-fg-muted) !important;
+}
+
+[class*="search"]:focus,
+[class*="Search"]:focus-within {
+  border-color: var(--ao-brand) !important;
+  box-shadow: 0 0 0 3px rgba(210, 86, 17, 0.15) !important;
+}
+
+/* ── 13. Scrollbar ──────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ao-brand);
+}
+
+* {
+  scrollbar-color: rgba(255,255,255,0.12) transparent;
+  scrollbar-width: thin;
+}
+
+/* ── 14. Badges / Chips / Tabs ──────────────────────────────────────────── */
+[class*="badge"],
+[class*="Badge"],
+[class*="chip"],
+[class*="tag"],
+[class*="Tag"] {
+  background: var(--ao-bg-subtle) !important;
+  border: 1px solid var(--ao-border) !important;
+  color: var(--ao-fg-muted) !important;
+  border-radius: 4px !important;
+  font-size: 0.75rem !important;
+  font-weight: 500 !important;
+}
+
+/* ── 15. Separator / HR ─────────────────────────────────────────────────── */
+hr {
+  border: none !important;
+  border-top: 1px solid var(--ao-border) !important;
+  margin: 2rem 0 !important;
+}
+
+/* ── 16. Accordion / Expandable ─────────────────────────────────────────── */
+details,
+[class*="accordion"],
+[class*="Accordion"] {
+  border: 1px solid var(--ao-border) !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  margin: 0.75rem 0 !important;
+}
+
+summary,
+[class*="accordion"] [class*="trigger"] {
+  background: var(--ao-bg-raised) !important;
+  color: var(--ao-fg) !important;
+  font-weight: 500 !important;
+  padding: 0.875rem 1.25rem !important;
+  cursor: pointer !important;
+  transition: background 0.15s ease !important;
+}
+
+summary:hover,
+[class*="accordion"] [class*="trigger"]:hover {
+  background: var(--ao-bg-subtle) !important;
+}
+
+/* ── 17. Steps ──────────────────────────────────────────────────────────── */
+[class*="step"],
+[class*="Step"] {
+  border-left: 2px solid var(--ao-border) !important;
+  padding-left: 1.5rem !important;
+  margin-bottom: 1.5rem !important;
+  position: relative !important;
+}
+
+/* Step number circle */
+[class*="step-number"],
+[class*="StepNumber"] {
+  background: var(--ao-brand) !important;
+  color: #fff !important;
+  border-radius: 50% !important;
+  font-weight: 700 !important;
+  font-size: 0.8rem !important;
+}
+
+/* ── 18. Smooth transitions site-wide ──────────────────────────────────── */
+a, button, [class*="tab"], [class*="item"] {
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
