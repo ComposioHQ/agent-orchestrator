@@ -56,6 +56,10 @@ type Store interface {
 	AppendWorkerTurnOutput(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, stream, text string) error
 	FinishWorkerTurn(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, outcome, errorMessage string) (bool, error)
 	WorkerAgentCredential(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerCredential, error)
+	ListOrchestratorChildren(context.Context, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
+	CreateOrchestratorChild(context.Context, string, string, string, domain.CreateSession) (domain.Session, error)
+	SendOrchestratorChildMessage(context.Context, string, string, string, string, string) (domain.ClientEvent, error)
+	CountOrchestratorSandboxes(context.Context, string, string) (int, error)
 }
 
 // WorkerTokens issues and verifies the short-lived credentials sandbox workers
@@ -201,6 +205,9 @@ func New(options Options) *Server {
 			router.Post("/worker/turns/{turnId}/fail", server.workerFailTurn)
 			router.Get("/worker/credential", server.workerCredential)
 			router.Post("/worker/checkout-grant", server.workerCheckoutGrant)
+			router.Get("/worker/children", server.listWorkerChildren)
+			router.Post("/worker/children", server.createWorkerChild)
+			router.Post("/worker/children/{sessionId}/messages", server.sendWorkerChildMessage)
 		})
 		router.Route("/orgs/{orgId}", func(router chi.Router) {
 			router.Use(server.authenticate)

@@ -183,3 +183,16 @@ func TestWorkerCheckoutGrantRequiresGitScope(t *testing.T) {
 			response.Code, broker.calls, response.Header().Get("Cache-Control"))
 	}
 }
+
+func TestWorkerOrchestrationRequiresOrchestrateScope(t *testing.T) {
+	server := &Server{logger: slog.Default()}
+	request := httptest.NewRequest(http.MethodGet, "/api/cloud/v1/worker/children", nil)
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker.Claims{
+		Scopes: []string{"worker:git"},
+	}))
+	response := httptest.NewRecorder()
+	server.listWorkerChildren(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want forbidden", response.Code)
+	}
+}

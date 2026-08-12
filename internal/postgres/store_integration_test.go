@@ -188,6 +188,48 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		session.DeniedCommands[0] != "git push --force:*" {
 		t.Fatalf("new session policy = mode %q, denied %#v", session.Mode, session.DeniedCommands)
 	}
+	orchestratorInput := sessionInput
+	orchestratorInput.Kind = "orchestrator"
+	orchestratorInput.DisplayName = "Project orchestrator"
+	orchestratorInput.Prompt = ""
+	orchestrator, err := store.CreateSession(
+		ctx, first, firstOrg, "orchestrator-session-key", orchestratorInput,
+	)
+	if err != nil {
+		t.Fatalf("create orchestrator: %v", err)
+	}
+	childInput := sessionInput
+	childInput.ProjectID = ""
+	childInput.DisplayName = "Delegated worker"
+	childInput.Prompt = ""
+	child, err := store.CreateOrchestratorChild(
+		ctx, firstOrg, orchestrator.ID, "orchestrator-child-key", childInput,
+	)
+	if err != nil {
+		t.Fatalf("create orchestrator child: %v", err)
+	}
+	children, childHasMore, err := store.ListOrchestratorChildren(
+		ctx, firstOrg, orchestrator.ID, nil, 50,
+	)
+	if err != nil || childHasMore || len(children) != 1 || children[0].ID != child.ID {
+		t.Fatalf("orchestrator children = %#v, hasMore=%v, err=%v", children, childHasMore, err)
+	}
+	childMessage, err := store.SendOrchestratorChildMessage(
+		ctx, firstOrg, orchestrator.ID, child.ID, "orchestrator-message-key", "Report status",
+	)
+	if err != nil || childMessage.Type != "chat.user_message" {
+		t.Fatalf("send orchestrator child message = %#v, err=%v", childMessage, err)
+	}
+	if _, err := store.SendOrchestratorChildMessage(
+		ctx, firstOrg, orchestrator.ID, session.ID, "orchestrator-peer-message", "Not a child",
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("message to same-project peer error = %v, want forbidden", err)
+	}
+	if _, err := store.CreateOrchestratorChild(
+		ctx, firstOrg, session.ID, "worker-child-key", childInput,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ordinary worker child spawn error = %v, want forbidden", err)
+	}
 	events, hasMore, err := store.ListClientEvents(ctx, first, firstOrg, session.ID, 0, 10)
 	if err != nil {
 		t.Fatalf("list initial session events: %v", err)
