@@ -99,6 +99,11 @@ type RepositoryOwner struct {
 	ID int64 `json:"id"`
 }
 
+type installationAccessToken struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 func InstallationSupportsAuthorityProof(installation Installation) bool {
 	switch installation.Account.Type {
 	case "User":
@@ -305,17 +310,49 @@ func (c *Client) ListRepositories(ctx context.Context, installationID int64) ([]
 }
 
 func (c *Client) installationToken(ctx context.Context, installationID int64) (string, error) {
-	var response struct {
-		Token string `json:"token"`
-	}
-	path := fmt.Sprintf("/app/installations/%d/access_tokens", installationID)
-	if err := c.appJSON(ctx, http.MethodPost, path, map[string]any{}, &response); err != nil {
+	response, err := c.createInstallationToken(ctx, installationID, map[string]any{})
+	if err != nil {
 		return "", err
 	}
-	if response.Token == "" {
-		return "", errors.New("GitHub returned an empty installation token")
-	}
 	return response.Token, nil
+}
+
+func (c *Client) repositoryToken(
+	ctx context.Context,
+	installationID, repositoryID int64,
+) (installationAccessToken, error) {
+	if installationID <= 0 || repositoryID <= 0 {
+		return installationAccessToken{}, errors.New("GitHub installation token scope is invalid")
+	}
+	response, err := c.createInstallationToken(ctx, installationID, map[string]any{
+		"repository_ids": []int64{repositoryID},
+		"permissions": map[string]string{
+			"contents": "read",
+		},
+	})
+	if err != nil {
+		return installationAccessToken{}, err
+	}
+	if response.ExpiresAt.IsZero() || !response.ExpiresAt.After(c.now()) {
+		return installationAccessToken{}, errors.New("GitHub returned an expired installation token")
+	}
+	return response, nil
+}
+
+func (c *Client) createInstallationToken(
+	ctx context.Context,
+	installationID int64,
+	body map[string]any,
+) (installationAccessToken, error) {
+	var response installationAccessToken
+	path := fmt.Sprintf("/app/installations/%d/access_tokens", installationID)
+	if err := c.appJSON(ctx, http.MethodPost, path, body, &response); err != nil {
+		return installationAccessToken{}, err
+	}
+	if response.Token == "" {
+		return installationAccessToken{}, errors.New("GitHub returned an empty installation token")
+	}
+	return response, nil
 }
 
 func (c *Client) appJSON(ctx context.Context, method, path string, body, destination any) error {

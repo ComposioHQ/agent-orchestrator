@@ -1,5 +1,7 @@
 package worker
 
+import "time"
+
 // BootstrapRequest is what a worker sends to redeem its one-time ticket.
 type BootstrapRequest struct {
 	BootstrapToken string   `json:"bootstrapToken"`
@@ -40,6 +42,14 @@ type HeartbeatResponse struct {
 	OK          bool   `json:"ok"`
 	WorkerToken string `json:"workerToken"`
 	ExpiresIn   int    `json:"expiresIn"`
+}
+
+// CheckoutGrantResponse carries a repository-scoped, short-lived GitHub App
+// credential. Callers must never persist or log Token.
+type CheckoutGrantResponse struct {
+	CloneURL  string    `json:"cloneUrl"`
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
 }
 
 // EventRequest publishes one worker-originated event onto the session stream.

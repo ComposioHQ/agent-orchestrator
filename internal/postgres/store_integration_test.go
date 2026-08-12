@@ -726,6 +726,34 @@ func exerciseGitHubStore(
 	if err != nil || project.RepositoryURL != "https://github.com/test-org/api" {
 		t.Fatalf("create GitHub project = %#v, err=%v", project, err)
 	}
+	checkoutSession, err := store.CreateSession(
+		ctx,
+		owner,
+		orgID,
+		"github-project-session-"+attempt.ID,
+		domain.CreateSession{
+			ProjectID: project.ID, Kind: "worker",
+			Harness: "claude-code", DisplayName: "GitHub checkout",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create GitHub checkout session: %v", err)
+	}
+	checkout, err := store.WorkerGitHubCheckoutContext(ctx, orgID, checkoutSession.ID)
+	if err != nil {
+		t.Fatalf("resolve worker GitHub checkout: %v", err)
+	}
+	if checkout.ProjectID != project.ID ||
+		checkout.GitHubInstallationID != githubInstallationID ||
+		checkout.GitHubRepositoryID != repositoryID ||
+		checkout.CloneURL != repository.CloneURL {
+		t.Fatalf("worker GitHub checkout = %#v", checkout)
+	}
+	if _, err := store.WorkerGitHubCheckoutContext(
+		ctx, uuid.NewString(), checkoutSession.ID,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-org worker GitHub checkout error = %v", err)
+	}
 	delivery := domain.GitHubWebhookDelivery{
 		DeliveryID:           "delivery-" + attempt.ID,
 		Event:                "installation_repositories",
@@ -800,6 +828,11 @@ func exerciseGitHubStore(
 		[]domain.GitHubRepository{repository},
 	); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("sync after GitHub disconnect error = %v", err)
+	}
+	if _, err := store.WorkerGitHubCheckoutContext(
+		ctx, orgID, checkoutSession.ID,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("worker checkout after GitHub disconnect error = %v", err)
 	}
 	if _, err := store.CreateGitHubProject(
 		ctx,

@@ -203,6 +203,40 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// workerCheckoutGrant brokers a fresh repository-scoped installation token.
+// The worker identity supplies the org and session; no repository or
+// installation identifier is accepted from the sandbox.
+func (s *Server) workerCheckoutGrant(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:git scope is required.")
+		return
+	}
+	if s.checkoutBroker == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "SCM_BROKER_UNAVAILABLE", "Repository checkout is not available.")
+		return
+	}
+	grant, err := s.checkoutBroker.IssueCheckoutGrant(r.Context(), claims.OrgID, claims.SessionID)
+	if errors.Is(err, postgres.ErrForbidden) || errors.Is(err, postgres.ErrNotFound) {
+		writeError(w, r, http.StatusForbidden, "CHECKOUT_NOT_AUTHORIZED", "This session does not have an active repository grant.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("issue worker checkout grant", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A repository checkout grant could not be issued.")
+		return
+	}
+	if grant.Token == "" || grant.CloneURL == "" || !grant.ExpiresAt.After(time.Now()) {
+		s.logger.Error("worker checkout broker returned an invalid grant", "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A repository checkout grant could not be issued.")
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.CheckoutGrantResponse{
+		CloneURL: grant.CloneURL, Token: grant.Token, ExpiresAt: grant.ExpiresAt,
+	})
+}
+
 // workerEvent publishes one worker-originated event onto the session stream.
 func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 	claims := workerFrom(r)

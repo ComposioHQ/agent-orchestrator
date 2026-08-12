@@ -66,6 +66,10 @@ type WorkerTokens interface {
 	Verify(string) (worker.Claims, error)
 }
 
+type checkoutBroker interface {
+	IssueCheckoutGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
+}
+
 type Server struct {
 	store            Store
 	workos           auth.WorkOSVerifier
@@ -86,6 +90,7 @@ type Server struct {
 	drain               chan struct{}
 	logger              *slog.Logger
 	github              *githubapp.Service
+	checkoutBroker      checkoutBroker
 	secretCipher        *secrets.Cipher
 	credentialValidator credentialValidator
 	webhookMaxBody      int64
@@ -154,6 +159,7 @@ func New(options Options) *Server {
 		drain:               make(chan struct{}),
 		logger:              logger,
 		github:              options.GitHub,
+		checkoutBroker:      options.GitHub,
 		secretCipher:        options.SecretCipher,
 		credentialValidator: options.CredentialValidator,
 		webhookMaxBody:      webhookMaxBody,
@@ -194,6 +200,7 @@ func New(options Options) *Server {
 			router.Post("/worker/turns/{turnId}/complete", server.workerCompleteTurn)
 			router.Post("/worker/turns/{turnId}/fail", server.workerFailTurn)
 			router.Get("/worker/credential", server.workerCredential)
+			router.Post("/worker/checkout-grant", server.workerCheckoutGrant)
 		})
 		router.Route("/orgs/{orgId}", func(router chi.Router) {
 			router.Use(server.authenticate)

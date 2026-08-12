@@ -3,8 +3,8 @@
 // one-time bootstrap ticket from its environment, dials the control plane
 // outward to exchange it for a short-lived token, and then heartbeats.
 //
-// This build establishes and holds the connection. Cloning the repository and
-// launching a coding-agent harness are not implemented yet.
+// It prepares the repository checkout and supervises durable coding-agent
+// turns while a separate heartbeat loop keeps its epoch-scoped token current.
 package main
 
 import (
@@ -45,6 +45,7 @@ var workerCapabilities = []string{
 	"worker.events",
 	"worker.turns",
 	"worker.credentials",
+	"repository.checkout",
 }
 
 func main() {
@@ -59,6 +60,7 @@ func run(logger *slog.Logger) error {
 	publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_PUBLIC_URL")), "/")
 	sessionID := strings.TrimSpace(os.Getenv("AO_CLOUD_SESSION_ID"))
 	bootstrapToken := strings.TrimSpace(os.Getenv("AO_WORKER_BOOTSTRAP_TOKEN"))
+	workspace := strings.TrimSpace(os.Getenv("AO_WORKSPACE_DIR"))
 	if publicURL == "" {
 		return errors.New("AO_CLOUD_PUBLIC_URL is required")
 	}
@@ -67,6 +69,9 @@ func run(logger *slog.Logger) error {
 	}
 	if bootstrapToken == "" {
 		return errors.New("AO_WORKER_BOOTSTRAP_TOKEN is required")
+	}
+	if workspace == "" {
+		return errors.New("AO_WORKSPACE_DIR is required")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -83,6 +88,8 @@ func run(logger *slog.Logger) error {
 	}
 	// The ticket is single-use and now spent; from here the only credential is
 	// the rotating worker token.
+	_ = os.Unsetenv("AO_WORKER_BOOTSTRAP_TOKEN")
+	bootstrapToken = ""
 	client.setToken(bootstrap.WorkerToken)
 	logger.Info("worker bootstrapped",
 		"session_id", bootstrap.SessionID,
@@ -91,6 +98,19 @@ func run(logger *slog.Logger) error {
 		"harness", bootstrap.Launch.Harness,
 		"repository_url", bootstrap.Launch.RepositoryURL,
 	)
+
+	checkoutGrant, err := client.checkoutGrant(ctx)
+	if err != nil {
+		return fmt.Errorf("request checkout grant: %w", err)
+	}
+	if err := worker.PrepareCheckout(
+		ctx,
+		worker.ExecGitRunner{},
+		workspace,
+		checkoutGrant,
+	); err != nil {
+		return fmt.Errorf("prepare repository checkout: %w", err)
+	}
 
 	if err := client.publishEvent(ctx, "worker.ready", map[string]any{
 		"workerId":     bootstrap.WorkerID,
@@ -103,10 +123,6 @@ func run(logger *slog.Logger) error {
 
 	if bootstrap.SessionID != sessionID {
 		return errors.New("bootstrap session does not match AO_CLOUD_SESSION_ID")
-	}
-	workspace := strings.TrimSpace(os.Getenv("AO_WORKSPACE_DIR"))
-	if workspace == "" {
-		return errors.New("AO_WORKSPACE_DIR is required")
 	}
 	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
 	if dataDir == "" {
@@ -217,6 +233,17 @@ func (c *client) Credential(ctx context.Context) (worker.CredentialResponse, err
 	}
 	if response.Provider == "" || response.CredentialType == "" || response.Secret == "" {
 		return worker.CredentialResponse{}, errors.New("control plane returned an incomplete coding-agent credential")
+	}
+	return response, nil
+}
+
+func (c *client) checkoutGrant(ctx context.Context) (worker.CheckoutGrantResponse, error) {
+	var response worker.CheckoutGrantResponse
+	if err := c.do(ctx, "/worker/checkout-grant", struct{}{}, &response); err != nil {
+		return worker.CheckoutGrantResponse{}, err
+	}
+	if response.Token == "" || response.CloneURL == "" || !response.ExpiresAt.After(time.Now()) {
+		return worker.CheckoutGrantResponse{}, errors.New("control plane returned an invalid checkout grant")
 	}
 	return response, nil
 }
