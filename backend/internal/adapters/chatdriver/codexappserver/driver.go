@@ -388,6 +388,7 @@ func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 // spawnAppServer is the real launcher.
 func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*process, error) {
 	cmd := exec.Command(bin, "app-server")
+	configureAppServerProcess(cmd)
 	cmd.Dir = workdir
 	if len(env) > 0 {
 		cmd.Env = env
