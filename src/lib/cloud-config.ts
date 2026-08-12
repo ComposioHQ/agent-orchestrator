@@ -49,7 +49,7 @@ export function githubApiBaseUrl(): string {
 export function workosRedirectUri(): string {
   const value = process.env.WORKOS_REDIRECT_URI?.trim();
   if (!value) {
-    throw new Error("WORKOS_REDIRECT_URI is required in staging mode.");
+    throw new Error("WORKOS_REDIRECT_URI is required for WorkOS sign-in.");
   }
   const url = new URL(value);
   if (

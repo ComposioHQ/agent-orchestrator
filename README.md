@@ -134,7 +134,7 @@ npm run cloud:web:staging
 ```
 
 This command requires the `ao-cloud` AWS login profile (override with
-`AWS_PROFILE`) and uses `http://localhost:3000/callback` for WorkOS. That exact
+`AWS_PROFILE`) and uses `http://127.0.0.1:3000/callback` for WorkOS. That exact
 redirect URI is verified and created through the WorkOS API before launch.
 AuthKit's encrypted cookie key is generated once under `~/.ao/cloud-web`; app
 state and credentials never use an OS-default application-data directory.
