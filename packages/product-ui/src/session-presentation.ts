@@ -40,6 +40,7 @@ const englishLabels: Record<SessionPresentationMessageKey, string> = {
 	"status.unknown": "Unknown status",
 	"zone.merge": "Ready to merge",
 	"zone.action": "Needs you",
+	"zone.technical": "Technical attention",
 	"zone.pending": "In review",
 	"zone.working": "Working",
 	"zone.done": "Terminated",
@@ -164,7 +165,7 @@ export function getSessionStatusView(
 	};
 }
 
-export type AttentionZone = "merge" | "action" | "pending" | "working" | "done";
+export type AttentionZone = "merge" | "action" | "technical" | "pending" | "working" | "done";
 
 export type AttentionZoneView = {
 	zone: AttentionZone;
@@ -199,6 +200,15 @@ const attentionZoneBases: Record<AttentionZone, AttentionZoneBase> = {
 		titleClassName: "text-status-needs-you",
 		dotClassName: "bg-status-needs-you",
 	},
+	technical: {
+		zone: "technical",
+		labelKey: "zone.technical",
+		glow: "color-mix(in srgb, var(--color-status-exited) 6%, transparent)",
+		dot: "var(--color-status-exited)",
+		dotGlow: true,
+		titleClassName: "text-status-exited",
+		dotClassName: "bg-status-exited",
+	},
 	pending: {
 		zone: "pending",
 		labelKey: "zone.pending",
@@ -228,8 +238,8 @@ const attentionZoneBases: Record<AttentionZone, AttentionZoneBase> = {
 	},
 };
 
-export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "pending", "working", "done"];
-export const boardAttentionZoneOrder: AttentionZone[] = ["working", "action", "pending", "merge"];
+export const attentionZoneOrder: AttentionZone[] = ["merge", "action", "technical", "pending", "working", "done"];
+export const boardAttentionZoneOrder: AttentionZone[] = ["working", "action", "technical", "pending", "merge"];
 
 export function attentionZone(input: SessionStatus | SessionStatusModel): AttentionZone {
 	const status = typeof input === "string" ? input : input.status;
@@ -241,12 +251,13 @@ export function attentionZone(input: SessionStatus | SessionStatusModel): Attent
 		case "terminated":
 			return "done";
 		case "needs_input":
+			return "action";
 		case "exited":
 		case "no_signal":
 		case "ci_failed":
 		case "changes_requested":
 		case "unknown":
-			return "action";
+			return "technical";
 		case "review_pending":
 		case "pr_open":
 		case "draft":

@@ -52,6 +52,7 @@ function workspaces(): WorkspaceSummary[] {
 				session({ id: "w-working", title: "refactor loader", status: "working" }),
 				session({ id: "w-merge", title: "ship banner", status: "mergeable" }),
 				session({ id: "w-action", title: "fix flake", status: "needs_input" }),
+				session({ id: "w-technical", title: "repair hook", status: "no_signal" }),
 				session({ id: "w-pr", title: "add cache", status: "pr_open", prs: [pr(42)] }),
 				session({ id: "w-synthetic", title: "scratch", branch: "session/w-synthetic" }),
 				session({ id: "orch", title: "orchestrate", kind: "orchestrator" }),
@@ -131,14 +132,18 @@ describe("buildCommands grouping", () => {
 });
 
 describe("buildCommands attention", () => {
-	it("includes ready-to-merge AND attention-needing sessions, ordered merge-first", () => {
+	it("includes merge-ready, human-input, and technical sessions in zone priority order", () => {
 		const items = buildCommands({ workspaces: workspaces() });
 		const attention = items.filter((item) => item.group === "attention");
 		const ids = attention.map((item) => item.id);
 		expect(ids).toContain("attention:w-merge");
 		expect(ids).toContain("attention:w-action");
+		expect(ids).toContain("attention:w-technical");
 		expect(ids).not.toContain("attention:w-working");
 		expect(ids.indexOf("attention:w-merge")).toBeLessThan(ids.indexOf("attention:w-action"));
+		expect(ids.indexOf("attention:w-action")).toBeLessThan(ids.indexOf("attention:w-technical"));
+		expect(byId(items).get("attention:w-action")?.zone).toBe("action");
+		expect(byId(items).get("attention:w-technical")?.zone).toBe("technical");
 	});
 
 	it("omits the current session from Needs attention (already in view)", () => {
@@ -146,6 +151,7 @@ describe("buildCommands attention", () => {
 		const ids = new Set(items.map((item) => item.id));
 		expect(ids.has("attention:w-merge")).toBe(false);
 		expect(ids.has("attention:w-action")).toBe(true);
+		expect(ids.has("attention:w-technical")).toBe(true);
 	});
 });
 
@@ -157,6 +163,8 @@ describe("buildCommands sessions", () => {
 		expect(ids.has("session:w-merge")).toBe(false);
 		expect(ids.has("attention:w-action")).toBe(true);
 		expect(ids.has("session:w-action")).toBe(false);
+		expect(ids.has("attention:w-technical")).toBe(true);
+		expect(ids.has("session:w-technical")).toBe(false);
 		expect(ids.has("session:w-working")).toBe(false);
 		expect(ids.has("session:w-synthetic")).toBe(true);
 	});
@@ -386,7 +394,7 @@ describe("result caps", () => {
 });
 
 function isAttentionInZone(item: CommandItem): boolean {
-	return item.zone === "action" || item.zone === "merge";
+	return item.zone === "action" || item.zone === "technical" || item.zone === "merge";
 }
 
 describe("filterCommands / matchScore", () => {

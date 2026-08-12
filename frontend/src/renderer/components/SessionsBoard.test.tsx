@@ -427,10 +427,15 @@ describe("SessionsBoard", () => {
 		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
 	});
 
-	it("places an exited live session in Needs you with an Exited badge", () => {
+	it("separates human input from technical attention and preserves status badges", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
+					boardSession({ id: "s-input", title: "answer-agent", status: "needs_input" }),
+					boardSession({ id: "s-no-signal", title: "missing-hook", status: "no_signal" }),
+					boardSession({ id: "s-ci", title: "failing-ci", status: "ci_failed" }),
+					boardSession({ id: "s-changes", title: "review-fixes", status: "changes_requested" }),
+					boardSession({ id: "s-unknown", title: "unknown-state", status: "unknown" }),
 					{
 						id: "s-exited",
 						workspaceId: "p1",
@@ -452,9 +457,20 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
+		const technicalColumn = screen.getByText("Technical attention").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
-		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).getByLabelText("1 Needs you session")).toHaveTextContent("1");
+		expect(within(needsYouColumn).getByText("answer-agent")).toBeInTheDocument();
+		for (const title of ["agent-exited-task", "missing-hook", "failing-ci", "review-fixes", "unknown-state"]) {
+			expect(within(needsYouColumn).queryByText(title)).not.toBeInTheDocument();
+			expect(within(technicalColumn).getByText(title)).toBeInTheDocument();
+		}
+		expect(within(technicalColumn).getByLabelText("5 Technical attention sessions")).toHaveTextContent("5");
+		expect(within(technicalColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(technicalColumn).getByText("No signal")).toBeInTheDocument();
+		expect(within(technicalColumn).getByText("CI failed")).toBeInTheDocument();
+		expect(within(technicalColumn).getByText("Changes requested")).toBeInTheDocument();
+		expect(within(technicalColumn).getByText("Unknown status")).toBeInTheDocument();
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -1095,6 +1111,7 @@ describe("SessionsBoard", () => {
 					boardSession({ id: "s-idle", title: "idle worker", status: "idle" }),
 					boardSession({ id: "s-working", title: "working worker", status: "working" }),
 					boardSession({ id: "s-action", title: "action worker", status: "needs_input" }),
+					boardSession({ id: "s-technical", title: "technical worker", status: "no_signal" }),
 					boardSession({ id: "s-review", title: "review worker", status: "review_pending" }),
 					boardSession({ id: "s-ready", title: "ready worker", status: "mergeable" }),
 					boardSession({ id: "s-merged", title: "merged worker", status: "merged" }),
@@ -1109,7 +1126,7 @@ describe("SessionsBoard", () => {
 		const laneScrollers = screen
 			.getAllByTestId("board-column")
 			.flatMap((column) => Array.from(column.querySelectorAll<HTMLElement>(".overflow-y-auto")));
-		expect(laneScrollers).toHaveLength(4);
+		expect(laneScrollers).toHaveLength(5);
 		for (const scroller of laneScrollers) {
 			expect(scroller).toHaveClass("board-scrollbar", "overflow-y-auto");
 		}

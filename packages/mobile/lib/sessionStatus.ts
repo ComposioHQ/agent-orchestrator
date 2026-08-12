@@ -7,6 +7,13 @@ import type { DashboardSession } from "./api";
 import type { AttentionLevel } from "./theme";
 
 const TERMINAL_STATUSES = new Set(["killed", "terminated", "done", "cleanup", "errored", "merged"]);
+const TECHNICAL_ATTENTION_STATUSES = new Set([
+	"no_signal",
+	"exited",
+	"ci_failed",
+	"changes_requested",
+	"unknown",
+]);
 
 export function isTerminalStatus(status?: string | null): boolean {
 	return !!status && TERMINAL_STATUSES.has(status);
@@ -14,6 +21,9 @@ export function isTerminalStatus(status?: string | null): boolean {
 
 // Fallback attention bucket when the server didn't compute attentionLevel.
 export function attentionOf(s: DashboardSession): AttentionLevel {
+	// Older daemons may still report these as a generic action/review bucket.
+	// The client owns the presentation distinction: none is a human question.
+	if (s.status && TECHNICAL_ATTENTION_STATUSES.has(s.status)) return "technical";
 	if (s.attentionLevel) return s.attentionLevel as AttentionLevel;
 	const pr = s.pr ?? s.prs?.[0];
 	if (s.status === "merged" || s.status === "done" || isTerminalStatus(s.status)) return "done";

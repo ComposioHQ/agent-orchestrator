@@ -14,7 +14,7 @@ import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
 import { Button, cardShell, Dot, EmptyState, IconButton, ScreenHeader } from "../../lib/ui";
 
-const ZONE_ORDER: AttentionLevel[] = ["merge", "respond", "review", "pending", "working", "done"];
+const ZONE_ORDER: AttentionLevel[] = ["merge", "respond", "technical", "review", "pending", "working", "done"];
 
 export default function OrchestratorScreen() {
 	const t = useTheme();

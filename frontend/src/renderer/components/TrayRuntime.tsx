@@ -15,7 +15,7 @@ export function TrayRuntime() {
 			for (const session of workerSessions(workspace.sessions)) {
 				const zone = attentionZone(session);
 				if (zone === "merge" && session.status === "merged") continue;
-				if (zone !== "action" && zone !== "merge") continue;
+				if (zone !== "action" && zone !== "technical" && zone !== "merge") continue;
 				entries.push({
 					projectId: workspace.id,
 					projectName: workspace.name,

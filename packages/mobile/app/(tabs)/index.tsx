@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { attentionOf, type DashboardSession } from "../../lib/api";
+import type { DashboardSession } from "../../lib/api";
 import { classifyConnectionFailure, describeConnectionFailure } from "../../lib/connectionError";
 import { haptics } from "../../lib/haptics";
 import { groupSessions, type BoardSection, type BoardZone } from "../../lib/agentsView";
@@ -60,17 +60,14 @@ export default function FleetScreen() {
 	);
 
 	const counts = useMemo(() => {
-		let working = 0;
-		let needsYou = 0;
-		let mergeable = 0;
-		for (const s of sessions) {
-			const a = attentionOf(s);
-			if (a === "working") working++;
-			else if (a === "respond" || a === "action") needsYou++;
-			else if (a === "merge") mergeable++;
-		}
-		return { working, needsYou, mergeable };
-	}, [sessions]);
+		const count = (zone: BoardZone) => sections.find((section) => section.zone === zone)?.data.length ?? 0;
+		return {
+			working: count("working"),
+			needsYou: count("action"),
+			technical: count("technical"),
+			mergeable: count("merge"),
+		};
+	}, [sections]);
 
 	// A stat scrolls to its section. Guarded: scrollToLocation on a section that
 	// isn't rendered warns and does nothing, so a zero-count stat is inert rather
@@ -131,6 +128,7 @@ export default function FleetScreen() {
 			<View style={styles.stats}>
 				<Stat n={counts.working} label="working" color={t.orange} onPress={() => jumpTo("working")} />
 				<Stat n={counts.needsYou} label="need you" color={t.amber} onPress={() => jumpTo("action")} />
+				<Stat n={counts.technical} label="technical" color={t.red} onPress={() => jumpTo("technical")} />
 				<Stat n={counts.mergeable} label="mergeable" color={t.green} onPress={() => jumpTo("merge")} />
 			</View>
 
@@ -255,13 +253,15 @@ const makeStyles = (t: Theme) =>
 		errorActions: { flexDirection: "row", gap: 10, alignItems: "center" },
 		stats: {
 			flexDirection: "row",
+			flexWrap: "wrap",
 			gap: 10,
 			paddingHorizontal: 16,
 			paddingTop: 4,
 			paddingBottom: 10,
 		},
 		stat: {
-			flex: 1,
+			flexBasis: "40%",
+			flexGrow: 1,
 			backgroundColor: t.bgElevated,
 			borderRadius: 12,
 			borderWidth: 1,

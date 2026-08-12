@@ -68,6 +68,9 @@ export const attentionZoneLabel: Record<AttentionZone, string> = {
 	get action() {
 		return getAttentionZoneViewForZone("action").label;
 	},
+	get technical() {
+		return getAttentionZoneViewForZone("technical").label;
+	},
 	get pending() {
 		return getAttentionZoneViewForZone("pending").label;
 	},

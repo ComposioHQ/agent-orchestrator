@@ -91,7 +91,7 @@ export function SessionsBoardGridView<TSession extends BoardSessionPresentation>
 
 	return (
 		<div className="h-full overflow-x-auto overflow-y-hidden">
-			<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border-strong xl:min-w-0">
+			<div className="relative grid h-full min-w-[80rem] grid-cols-5 divide-x divide-border-strong 2xl:min-w-0">
 				<div
 					aria-hidden="true"
 					className="pointer-events-none absolute inset-x-0 top-12 z-10 border-t border-border-strong"
@@ -179,7 +179,9 @@ function BoardColumnView<TSession extends BoardSessionPresentation>({
 				<span className={cn("font-mono text-2xs font-medium uppercase tracking-wide-sm", column.titleClassName)}>
 					{column.label}
 				</span>
-				<span className="ml-auto font-mono text-2xs leading-none text-passive">{sessions.length}</span>
+				<span className="ml-auto font-mono text-2xs leading-none text-passive">
+					<SessionCount count={sessions.length} label={column.label} format={labels.countSessions} />
+				</span>
 			</div>
 			<div className="board-scrollbar min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-3">
 				<div className="flex min-h-full flex-col gap-2.5">

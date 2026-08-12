@@ -159,6 +159,12 @@ describe("theme-aware helpers", () => {
 			const meta = attentionMetaFor(t);
 			expect(meta.merge.color).toBe(t.green);
 			expect(meta.working.color).toBe(t.orange);
+			expect(meta.technical).toMatchObject({
+				label: "Technical attention",
+				color: t.red,
+				tint: t.tintRed,
+				order: 2,
+			});
 		}
 	});
 

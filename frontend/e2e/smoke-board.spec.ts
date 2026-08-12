@@ -27,6 +27,12 @@ test("renderer: card moves columns when its status changes @T0 @BRD", async ({ p
 	await expect(page.locator(columnCard("action", "mover"))).toBeVisible();
 	await expect(page.locator(columnCard("working", "mover"))).toHaveCount(0);
 	await expect(page.locator(columnCard("action", "mover"))).toContainText("Input needed");
+
+	// A technical status remains prominent but leaves the human-input column.
+	await page.evaluate(() => window.__aoFakeAgent!.setStatus("mover", "no_signal", "idle"));
+	await expect(page.locator(columnCard("technical", "mover"))).toBeVisible();
+	await expect(page.locator(columnCard("technical", "mover"))).toContainText("No signal");
+	await expect(page.locator(columnCard("action", "mover"))).toHaveCount(0);
 });
 
 // #2483 BRD-006.

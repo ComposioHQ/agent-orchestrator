@@ -114,9 +114,11 @@ describe("zoneCounts", () => {
 			session({ status: "working" }),
 			session({ status: "working" }),
 			session({ status: "needs_input" }),
+			session({ status: "no_signal" }),
 		]);
 		expect(counts.working).toBe(2);
 		expect(counts.respond).toBe(1);
+		expect(counts.technical).toBe(1);
 	});
 
 	it("is empty for no sessions", () => {
