@@ -54,13 +54,26 @@ var greptileBinarySpec = binaryutil.BinarySpec{
 	},
 }
 
-// ReviewCommand builds the non-interactive Greptile review command.
+// ReviewCommand builds the machine-readable Greptile review command used by
+// non-terminal callers. Terminal reviews use nativeReviewCommand below so the
+// CLI can render its own progress UI in the attached AO terminal.
 func (Adapter) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
-	argv := []string{"greptile", "review", "--json"}
+	return reviewCommand(inv, true), nil
+}
+
+func (Adapter) nativeReviewCommand(_ context.Context, inv ports.ReviewInvocation) ports.ReviewCommandSpec {
+	return reviewCommand(inv, false)
+}
+
+func reviewCommand(inv ports.ReviewInvocation, jsonOutput bool) ports.ReviewCommandSpec {
+	argv := []string{"greptile", "review"}
+	if jsonOutput {
+		argv = append(argv, "--json")
+	}
 	if branch := targetBranch(inv); branch != "" {
 		argv = append(argv, "--branch", branch)
 	}
-	return ports.ReviewCommandSpec{Argv: argv}, nil
+	return ports.ReviewCommandSpec{Argv: argv}
 }
 
 // ReviewMessage rejects follow-up messages because Greptile runs once per review.
@@ -85,6 +98,17 @@ type cliReview struct {
 	Comments            []cliComment `json:"comments"`
 }
 
+// cliReviewStatus is the small completion record returned by
+// `greptile review status --json`. The full findings are fetched separately
+// with `review show <runId> --json` after the native review UI exits.
+type cliReviewStatus struct {
+	Commit       string `json:"commit"`
+	Status       string `json:"status"`
+	RunID        string `json:"runId"`
+	CommentCount *int   `json:"commentCount"`
+	Confidence   *int   `json:"confidence"`
+}
+
 type cliComment struct {
 	Path          string  `json:"path"`
 	StartLine     int     `json:"startLine"`
@@ -107,15 +131,23 @@ func (Adapter) ParseReviewResult(output []byte) (ports.ReviewResult, error) {
 		return ports.ReviewResult{}, err
 	}
 
-	verdict := domain.VerdictApproved
-	if len(review.Comments) > 0 {
-		verdict = domain.VerdictChangesRequested
-	}
+	verdict := reviewVerdict(review)
 	return ports.ReviewResult{
 		Verdict:  verdict,
 		Body:     formatReview(review),
 		Comments: normalizeComments(review.Comments),
 	}, nil
+}
+
+// reviewVerdict follows Greptile's own clean-review criterion: a review is
+// approved only when it has no comments and reports confidence 5/5. A clean
+// result with a lower or missing confidence remains actionable rather than
+// being presented as an approval.
+func reviewVerdict(review cliReview) domain.ReviewVerdict {
+	if len(review.Comments) == 0 && review.Confidence != nil && *review.Confidence == 5 {
+		return domain.VerdictApproved
+	}
+	return domain.VerdictChangesRequested
 }
 
 func targetBranch(inv ports.ReviewInvocation) string {
@@ -144,7 +176,7 @@ func normalizeComments(comments []cliComment) []ports.ReviewComment {
 
 func commentSide(side string) string {
 	switch strings.ToUpper(strings.TrimSpace(side)) {
-	case "LEFT":
+	case "LEFT", "OLD":
 		return "LEFT"
 	default:
 		return "RIGHT"
@@ -190,6 +222,13 @@ func formatReview(review cliReview) string {
 
 	if len(review.Comments) == 0 {
 		body.WriteString("\nNo actionable findings.\n")
+		if review.Confidence == nil {
+			body.WriteString("\nGreptile did not report a 5/5 confidence score; AO marked this review as changes requested.\n")
+		} else if *review.Confidence != 5 {
+			body.WriteString("\nGreptile reported confidence ")
+			body.WriteString(strconv.Itoa(*review.Confidence))
+			body.WriteString("/5; AO marked this review as changes requested.\n")
+		}
 		return strings.TrimSpace(body.String())
 	}
 

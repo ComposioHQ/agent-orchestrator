@@ -1642,7 +1642,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("labels Greptile as a non-interactive one-shot reviewer and offers output", async () => {
+	it("labels a running Greptile review without showing the output button", async () => {
 		mockCommonGets([], "reviewer-job", [
 			{
 				...reviewState(3, "running"),
@@ -1655,8 +1655,23 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByText("Greptile CLI")).toBeInTheDocument();
 		expect(screen.getByText("Non-interactive")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "View output" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "View output" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
+	});
+
+	it("offers Greptile output after the review finishes", async () => {
+		mockCommonGets([], "reviewer-job", [
+			{
+				...reviewState(3, "up_to_date"),
+				latestRun: { ...approvedReview, harness: "greptile" },
+			},
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Greptile CLI")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "View output" })).toBeInTheDocument();
 	});
 	it("shows failed latest runs as failed and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [

@@ -23,6 +23,8 @@ const terminalRequestVersion = 1
 const terminalStdoutLimit = 4 * 1024 * 1024
 const terminalStderrLimit = 16 * 1024
 const terminalRequestWaitLimit = 30 * time.Minute
+const terminalStatusWaitLimit = 30 * time.Second
+const terminalStatusPollInterval = 500 * time.Millisecond
 
 // terminalRequest is intentionally private: it is an AO-owned handoff file,
 // not a public CLI contract. Keeping the schema here means the daemon and the
@@ -325,9 +327,9 @@ func (Adapter) ParseTerminalResult(output []byte) (ports.TerminalReviewResult, e
 	return result, nil
 }
 
-// RunTerminal executes the queued Greptile commands and prints a readable,
-// non-interactive transcript. It writes the sidecar after every task so the
-// daemon can recover completed items even while the terminal is still running.
+// RunTerminal executes the queued Greptile commands in the CLI's native
+// terminal UI. It writes the sidecar after every task so the daemon can recover
+// completed items even while the terminal is still running.
 func RunTerminal(ctx context.Context, requestPath string, out io.Writer) error {
 	raw, err := os.ReadFile(requestPath)
 	if err != nil {
@@ -360,7 +362,6 @@ func RunTerminal(ctx context.Context, requestPath string, out io.Writer) error {
 		}
 	}
 
-	_, _ = fmt.Fprintln(out, "Greptile review (display-only)")
 	results := make([]terminalResultItem, 0, len(request.Tasks))
 	succeeded := 0
 	failed := 0
@@ -380,42 +381,52 @@ func RunTerminal(ctx context.Context, requestPath string, out io.Writer) error {
 			ReviewQueue:   []ports.ReviewTask{{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, TargetBranch: task.TargetBranch, WorkspacePath: task.WorkspacePath}},
 			ReviewIndex:   0,
 		}
-		command, commandErr := adapter.ReviewCommand(ctx, inv)
+		command := adapter.nativeReviewCommand(ctx, inv)
 		item := terminalResultItem{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA}
-		var stdout []byte
+		var parsed ports.ReviewResult
+		var parseErr error
+		var commandErr error
+		var nativeStderr []byte
+		if binary, resolveErr := adapter.ResolveBinary(ctx); resolveErr == nil && len(command.Argv) > 0 {
+			command.Argv[0] = binary
+		} else if resolveErr != nil {
+			commandErr = resolveErr
+		}
 		if commandErr == nil {
-			if binary, resolveErr := adapter.ResolveBinary(ctx); resolveErr == nil && len(command.Argv) > 0 {
-				command.Argv[0] = binary
+			// Keep the review command attached to the AO PTY so Greptile can render
+			// its native progress/findings UI. The structured result is recovered
+			// afterwards through status/show commands, never by scraping ANSI output.
+			nativeStderr, commandErr = runNativeCommand(ctx, task.WorkspacePath, command, out)
+			if commandErr == nil {
+				parsed, parseErr = adapter.fetchTerminalReviewResult(ctx, task.WorkspacePath, command.Argv[0], ports.ReviewTask{
+					RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, TargetBranch: task.TargetBranch, WorkspacePath: task.WorkspacePath,
+				})
 			}
-			var stderr []byte
-			stdout, stderr, commandErr = runCommand(ctx, task.WorkspacePath, command)
-			if commandErr != nil {
-				if ctx.Err() != nil {
-					_, _ = fmt.Fprintln(out, "\nGreptile review cancelled.")
-					return ctx.Err()
-				}
-				// Greptile normally writes failures to stderr, but a few CLI
-				// versions print auth diagnostics on stdout. Classify the combined
-				// bounded streams while retaining the same redaction/limit.
-				commandErr = commandFailure(commandErr, string(stderr)+"\n"+string(stdout))
+		}
+		if commandErr != nil {
+			if ctx.Err() != nil {
+				_, _ = fmt.Fprintln(out, "\nGreptile review cancelled.")
+				return ctx.Err()
 			}
+			commandErr = nativeCommandFailure(ctx, adapter, commandErr, nativeStderr)
 		}
 		if commandErr != nil {
 			item.Error = redactGreptileText(commandErr.Error())
 			failed++
 			_, _ = fmt.Fprintf(out, "  Greptile could not complete this review: %s\n", item.Error)
 		} else {
-			parsed, parseErr := adapter.ParseReviewResult(stdout)
 			if parseErr != nil {
 				item.Error = redactGreptileText(parseErr.Error())
 				failed++
-				_, _ = fmt.Fprintf(out, "  Greptile returned an unreadable result: %s\n", item.Error)
+				_, _ = fmt.Fprintf(out, "  Greptile could not recover a structured result: %s\n", item.Error)
 			} else {
 				item.Verdict = string(parsed.Verdict)
 				item.Body = redactGreptileText(parsed.Body)
 				item.Comments = reviewComments(parsed.Comments)
 				succeeded++
-				_, _ = fmt.Fprintln(out, item.Body)
+				// Greptile's native UI already rendered the findings. Keep AO's
+				// normalized body only in the sidecar for persistence and GitHub
+				// delivery instead of printing a duplicate transcript here.
 			}
 		}
 		results = append(results, item)
@@ -428,6 +439,87 @@ func RunTerminal(ctx context.Context, requestPath string, out io.Writer) error {
 	}
 	_, _ = fmt.Fprintln(out, "\n"+terminalSummary(succeeded, failed, len(request.Tasks)))
 	return nil
+}
+
+// fetchTerminalReviewResult obtains the structured findings after the native
+// review UI exits. `review status` identifies the completed run, while
+// `review show` returns the same JSON shape as `review --json` without running
+// the review a second time.
+func (Adapter) fetchTerminalReviewResult(ctx context.Context, workspacePath, binary string, task ports.ReviewTask) (ports.ReviewResult, error) {
+	commit := strings.TrimSpace(task.TargetSHA)
+	if commit == "" {
+		commit = "HEAD"
+	}
+	statusCommand := ports.ReviewCommandSpec{Argv: []string{binary, "review", "status", "--commit", commit, "--json"}}
+	statusDeadline := time.Now().Add(terminalStatusWaitLimit)
+	for {
+		statusOutput, statusErrorOutput, statusErr := runCommand(ctx, workspacePath, statusCommand)
+		status, parseErr := parseReviewStatus(statusOutput)
+		if parseErr != nil {
+			if statusErr != nil {
+				return ports.ReviewResult{}, commandFailure(statusErr, string(statusErrorOutput))
+			}
+			return ports.ReviewResult{}, fmt.Errorf("decode greptile review status: %w", parseErr)
+		}
+		state := strings.ToUpper(strings.TrimSpace(status.Status))
+		if state == "IN_FLIGHT" {
+			if time.Now().Before(statusDeadline) {
+				timer := time.NewTimer(terminalStatusPollInterval)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ports.ReviewResult{}, ctx.Err()
+				case <-timer.C:
+				}
+				continue
+			}
+			return ports.ReviewResult{}, fmt.Errorf("greptile review status is still in flight for commit %s", commit)
+		}
+		if statusErr != nil || state != "COMPLETED" || strings.TrimSpace(status.RunID) == "" {
+			if statusErr != nil && state == "" {
+				return ports.ReviewResult{}, commandFailure(statusErr, string(statusErrorOutput))
+			}
+			if state == "" {
+				state = "UNKNOWN"
+			}
+			return ports.ReviewResult{}, fmt.Errorf("greptile review status is %s for commit %s", state, commit)
+		}
+		if commit != "HEAD" && strings.TrimSpace(status.Commit) != "" && !reviewStatusCommitMatches(commit, status.Commit) {
+			return ports.ReviewResult{}, fmt.Errorf("greptile review status commit %q does not match requested commit %q", status.Commit, commit)
+		}
+
+		showCommand := ports.ReviewCommandSpec{Argv: []string{binary, "review", "show", status.RunID, "--json"}}
+		showOutput, showErrorOutput, showErr := runCommand(ctx, workspacePath, showCommand)
+		if showErr != nil {
+			return ports.ReviewResult{}, commandFailure(showErr, string(showErrorOutput))
+		}
+		result, err := (Adapter{}).ParseReviewResult(showOutput)
+		if err != nil {
+			return ports.ReviewResult{}, fmt.Errorf("decode greptile review findings: %w", err)
+		}
+		return result, nil
+	}
+}
+
+func reviewStatusCommitMatches(requested, returned string) bool {
+	requested = strings.ToLower(strings.TrimSpace(requested))
+	returned = strings.ToLower(strings.TrimSpace(returned))
+	if requested == "" || returned == "" {
+		return false
+	}
+	return requested == returned || (len(requested) < len(returned) && strings.HasPrefix(returned, requested))
+}
+
+func parseReviewStatus(output []byte) (cliReviewStatus, error) {
+	var status cliReviewStatus
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	if err := decoder.Decode(&status); err != nil {
+		return cliReviewStatus{}, err
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return cliReviewStatus{}, err
+	}
+	return status, nil
 }
 
 func reviewComments(comments []ports.ReviewComment) []terminalComment {
@@ -461,6 +553,53 @@ func runCommand(ctx context.Context, workspacePath string, command ports.ReviewC
 	return stdout.Bytes(), stderr.Bytes(), err
 }
 
+// runNativeCommand leaves stdout attached to the parent PTY. Passing the
+// stdout writer directly (rather than wrapping it in a pipe) preserves TTY
+// detection, colors, and the Greptile CLI's native interface. Stderr is
+// retained separately so AO can redact it before displaying diagnostics.
+func runNativeCommand(ctx context.Context, workspacePath string, command ports.ReviewCommandSpec, out io.Writer) ([]byte, error) {
+	if len(command.Argv) == 0 {
+		return nil, fmt.Errorf("greptile produced empty command")
+	}
+	stderr := &boundedBuffer{limit: terminalStderrLimit}
+	cmd := aoprocess.AttachedCommandContext(ctx, command.Argv[0], command.Argv[1:]...)
+	cmd.Dir = workspacePath
+	cmd.Env = append(os.Environ(), envAssignments(command.Env)...)
+	// The AO terminal is deliberately output-only. Greptile's renderer keys off
+	// stdout's TTY state, so leaving stdin disconnected still preserves the rich
+	// UI while preventing auth prompts or keystrokes from blocking the one-shot.
+	cmd.Stdin = nil
+	cmd.Stdout = out
+	// Keep diagnostics off the live stream until AO can redact them. Stdout
+	// remains the real PTY handle, so Greptile still detects and renders its
+	// native interface. Failed diagnostics are included in RunTerminal's
+	// classified error; successful warnings are displayed here after redaction.
+	cmd.Stderr = stderr
+	err := cmd.Run()
+	if err == nil && stderr.Len() > 0 {
+		_, _ = io.WriteString(out, redactGreptileText(string(stderr.Bytes())))
+	}
+	return stderr.Bytes(), err
+}
+
+// nativeCommandFailure handles Greptile versions that print authentication
+// failures to stdout. Capturing stdout would turn it into a pipe and disable
+// the native UI, so an otherwise-unclassified failure gets one authoritative
+// non-interactive auth probe instead.
+func nativeCommandFailure(ctx context.Context, adapter Adapter, err error, stderr []byte) error {
+	classified := commandFailure(err, string(stderr))
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		return classified
+	}
+	if _, known := greptileAuthStatusFromOutput(stderr); known {
+		return classified
+	}
+	if status, probeErr := adapter.AuthStatus(ctx); probeErr == nil && status == ports.AgentAuthStatusUnauthorized {
+		return errors.New("greptile CLI is not authenticated. Run greptile login and retry")
+	}
+	return classified
+}
+
 func envAssignments(extra map[string]string) []string {
 	values := make([]string, 0, len(extra))
 	for key, value := range extra {
@@ -470,7 +609,7 @@ func envAssignments(extra map[string]string) []string {
 }
 
 func commandFailure(err error, stderr string) error {
-	if errors.Is(err, exec.ErrNotFound) {
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		return fmt.Errorf("greptile CLI is not installed. Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
 	}
 	if status, ok := greptileAuthStatusFromOutput([]byte(stderr)); ok && status == ports.AgentAuthStatusUnauthorized {

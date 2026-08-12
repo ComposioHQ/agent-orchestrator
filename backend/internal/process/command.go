@@ -19,3 +19,11 @@ func CommandContext(ctx context.Context, name string, args ...string) *exec.Cmd 
 	configureHidden(cmd)
 	return cmd
 }
+
+// AttachedCommandContext creates a child that remains attached to its parent's
+// terminal. It retains the platform command handling from CommandContext (for
+// example, Windows .cmd/.bat shims) but deliberately skips hidden-console flags
+// that make nested TUI processes report stdout as non-TTY.
+func AttachedCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return newCommandContext(ctx, name, args...)
+}

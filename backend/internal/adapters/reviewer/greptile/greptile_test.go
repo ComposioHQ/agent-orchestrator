@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -25,6 +26,16 @@ func TestReviewCommandUsesJSONAndPRBaseBranch(t *testing.T) {
 	got := strings.Join(command.Argv, " ")
 	if got != "greptile review --json --branch develop" {
 		t.Fatalf("command = %q", got)
+	}
+}
+
+func TestNativeReviewCommandLeavesOutputForTheCLIUI(t *testing.T) {
+	command := New().nativeReviewCommand(context.Background(), ports.ReviewInvocation{
+		ReviewQueue: []ports.ReviewTask{{TargetBranch: "develop"}},
+		ReviewIndex: 0,
+	})
+	if got, want := strings.Join(command.Argv, " "), "greptile review --branch develop"; got != want {
+		t.Fatalf("native command = %q, want %q", got, want)
 	}
 }
 
@@ -120,7 +131,7 @@ func TestParseReviewResultWithFindings(t *testing.T) {
 }
 
 func TestParseReviewResultWithoutFindingsApproves(t *testing.T) {
-	result, err := New().ParseReviewResult([]byte(`{"summary":"Looks good.","comments":[]}`))
+	result, err := New().ParseReviewResult([]byte(`{"summary":"Looks good.","confidence":5,"comments":[]}`))
 	if err != nil {
 		t.Fatalf("ParseReviewResult: %v", err)
 	}
@@ -129,6 +140,72 @@ func TestParseReviewResultWithoutFindingsApproves(t *testing.T) {
 	}
 	if !strings.Contains(result.Body, "No actionable findings.") {
 		t.Fatalf("body = %q", result.Body)
+	}
+}
+
+func TestParseReviewResultDoesNotApproveWithoutFiveConfidence(t *testing.T) {
+	for _, input := range []string{
+		`{"summary":"Looks good.","confidence":4,"comments":[]}`,
+		`{"summary":"Looks good.","comments":[]}`,
+	} {
+		result, err := New().ParseReviewResult([]byte(input))
+		if err != nil {
+			t.Fatalf("ParseReviewResult(%s): %v", input, err)
+		}
+		if result.Verdict != domain.VerdictChangesRequested {
+			t.Errorf("ParseReviewResult(%s) verdict = %q, want changes_requested", input, result.Verdict)
+		}
+		if !strings.Contains(result.Body, "marked this review as changes requested") {
+			t.Errorf("ParseReviewResult(%s) body missing explanation: %q", input, result.Body)
+		}
+	}
+}
+
+func TestParseReviewResultMapsGreptileSides(t *testing.T) {
+	result, err := New().ParseReviewResult([]byte(`{"confidence":5,"comments":[{"path":"old.go","side":"old","startLine":2,"body":"old finding"},{"path":"new.go","side":"new","startLine":3,"body":"new finding"}]}`))
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	if len(result.Comments) != 2 || result.Comments[0].Side != "LEFT" || result.Comments[1].Side != "RIGHT" {
+		t.Fatalf("comments = %+v, want old=LEFT and new=RIGHT", result.Comments)
+	}
+}
+
+func TestParseReviewStatus(t *testing.T) {
+	status, err := parseReviewStatus([]byte(`{"commit":"sha-1","status":"COMPLETED","runId":"run-1","commentCount":0,"confidence":5}`))
+	if err != nil {
+		t.Fatalf("parseReviewStatus: %v", err)
+	}
+	if status.Commit != "sha-1" || status.Status != "COMPLETED" || status.RunID != "run-1" || status.Confidence == nil || *status.Confidence != 5 {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestReviewStatusCommitMatchesFullOrAbbreviatedSHA(t *testing.T) {
+	for _, tc := range []struct {
+		requested string
+		returned  string
+		want      bool
+	}{
+		{requested: "ABC123", returned: "abc123", want: true},
+		{requested: "abc123", returned: "abc123456", want: true},
+		{requested: "abc124", returned: "abc123456", want: false},
+	} {
+		if got := reviewStatusCommitMatches(tc.requested, tc.returned); got != tc.want {
+			t.Errorf("reviewStatusCommitMatches(%q, %q) = %v, want %v", tc.requested, tc.returned, got, tc.want)
+		}
+	}
+}
+
+func TestFetchTerminalReviewResultUsesStatusAndShow(t *testing.T) {
+	binary := writeFakeGreptile(t, `{"commit":"abc123456","status":"COMPLETED","runId":"run-1","commentCount":0,"confidence":5}`, `{"summary":"Looks good.","confidence":5,"comments":[]}`, "")
+	workspace := t.TempDir()
+	result, err := New().fetchTerminalReviewResult(context.Background(), workspace, binary, ports.ReviewTask{TargetSHA: "abc123"})
+	if err != nil {
+		t.Fatalf("fetchTerminalReviewResult: %v", err)
+	}
+	if result.Verdict != domain.VerdictApproved || !strings.Contains(result.Body, "Looks good.") {
+		t.Fatalf("result = %+v", result)
 	}
 }
 
@@ -221,6 +298,71 @@ func TestCommandFailureBoundsAndRedactsDiagnostic(t *testing.T) {
 	if len(err.Error()) > terminalStderrLimit+256 {
 		t.Fatalf("error length = %d, want bounded", len(err.Error()))
 	}
+}
+
+func TestRunNativeCommandDoesNotStreamUnredactedStderr(t *testing.T) {
+	binary := writeFakeGreptile(t, `{}`, "", "GREPTILE_API_KEY=super-secret")
+	var output strings.Builder
+	stderr, err := runNativeCommand(context.Background(), t.TempDir(), ports.ReviewCommandSpec{Argv: []string{binary, "review", "status"}}, &output)
+	if err != nil {
+		t.Fatalf("runNativeCommand: %v", err)
+	}
+	if !strings.Contains(string(stderr), "super-secret") {
+		t.Fatalf("captured stderr = %q, want diagnostic retained for classification", stderr)
+	}
+	if strings.Contains(output.String(), "super-secret") {
+		t.Fatalf("native output leaked credential: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "[REDACTED]") {
+		t.Fatalf("native output missing redacted diagnostic: %q", output.String())
+	}
+}
+
+func TestNativeCommandFailureRechecksAuthentication(t *testing.T) {
+	binary := writeFakeGreptile(t, "", "", "Not signed in. Run greptile login.")
+	t.Setenv("PATH", filepath.Dir(binary))
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	t.Setenv("GREPTILE_API_KEY", "")
+	err := nativeCommandFailure(context.Background(), New(), errors.New("exit status 1"), nil)
+	if got, want := err.Error(), "greptile CLI is not authenticated. Run greptile login and retry"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func writeFakeGreptile(t *testing.T, statusJSON, showJSON, diagnostic string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, "greptile.cmd")
+		script := "@echo off\r\n"
+		if diagnostic != "" {
+			script += "echo " + diagnostic + " 1>&2\r\n"
+		}
+		script += "if \"%~2\"==\"status\" goto status\r\n" +
+			"if \"%~2\"==\"show\" goto show\r\n"
+		script += "exit /b 1\r\n"
+		script += ":status\r\necho " + statusJSON + "\r\nexit /b 0\r\n" +
+			":show\r\necho " + showJSON + "\r\nexit /b 0\r\n"
+		if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	path := filepath.Join(dir, "greptile")
+	script := "#!/bin/sh\n"
+	if diagnostic != "" {
+		script += "printf '%s\\n' '" + diagnostic + "' >&2\n"
+	}
+	script += "if [ \"$1\" = review ] && [ \"$2\" = status ]; then printf '%s\\n' '" + statusJSON + "'; exit 0; fi\n" +
+		"if [ \"$1\" = review ] && [ \"$2\" = show ]; then printf '%s\\n' '" + showJSON + "'; exit 0; fi\n"
+	script += "exit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestTerminalSummaryTruthfullyReportsOutcomes(t *testing.T) {

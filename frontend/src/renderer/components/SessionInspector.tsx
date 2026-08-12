@@ -1572,7 +1572,7 @@ function ReviewPanel({
 									<Trash2 aria-hidden="true" />
 								</Button>
 							) : null}
-							{reviewHasRun && harness === "greptile" ? (
+							{!reviewRunning && reviewHasRun && harness === "greptile" ? (
 								<Button
 									aria-label={openTerminalLabel}
 									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
