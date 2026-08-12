@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import config, { extraResourcesForPlatform } from "./forge.config";
+import config, { extraResourcesForPlatform, macSignOptionsForFile } from "./forge.config";
 
 describe("native runtime resources", () => {
 	it.each(["darwin", "linux"] as const)("bundles tmux on %s", (platform) => {
@@ -8,6 +8,29 @@ describe("native runtime resources", () => {
 
 	it("does not bundle tmux on Windows", () => {
 		expect(extraResourcesForPlatform("win32")).not.toContain("tmux");
+	});
+});
+
+describe("macOS signing", () => {
+	it("allows the bundled Node runtime to execute V8 JIT code on Intel Macs", () => {
+		expect(
+			macSignOptionsForFile(
+				"/tmp/Agent Orchestrator.app/Contents/Resources/acp-runtime/node/bin/node",
+			),
+		).toEqual({
+			entitlements: [
+				"com.apple.security.cs.allow-jit",
+				"com.apple.security.cs.allow-unsigned-executable-memory",
+			],
+		});
+	});
+
+	it("keeps electron-osx-sign defaults for every other bundle file", () => {
+		expect(
+			macSignOptionsForFile(
+				"/tmp/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator",
+			),
+		).toEqual({});
 	});
 });
 
