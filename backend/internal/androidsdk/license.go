@@ -19,13 +19,13 @@ import (
 // available here). Per the plan, that verification is still owed before this
 // is trusted in production — see Phase A1's stated manual verification step.
 func WriteLicenseHash(licensesDir, licenseID, licenseText string) error {
-	if err := os.MkdirAll(licensesDir, 0o755); err != nil {
+	if err := os.MkdirAll(licensesDir, 0o750); err != nil {
 		return fmt.Errorf("androidsdk: mkdir %s: %w", licensesDir, err)
 	}
 	sum := sha256.Sum256([]byte(licenseText))
 	hash := hex.EncodeToString(sum[:])
 	path := filepath.Join(licensesDir, licenseID)
-	if err := os.WriteFile(path, []byte(hash), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(hash), 0o600); err != nil {
 		return fmt.Errorf("androidsdk: write license hash %s: %w", path, err)
 	}
 	return nil

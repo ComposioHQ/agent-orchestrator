@@ -282,7 +282,7 @@ func (c *commandContext) emulatorScreenshot(ctx context.Context, outPath string)
 		}
 		outPath = f.Name()
 		if _, err := f.Write(data); err != nil {
-			f.Close()
+			_ = f.Close()
 			return "", err
 		}
 		if err := f.Close(); err != nil {
@@ -290,7 +290,7 @@ func (c *commandContext) emulatorScreenshot(ctx context.Context, outPath string)
 		}
 		return outPath, nil
 	}
-	if err := os.WriteFile(outPath, data, 0o644); err != nil {
+	if err := os.WriteFile(outPath, data, 0o600); err != nil {
 		return "", err
 	}
 	return outPath, nil
@@ -302,14 +302,24 @@ func writeEmulatorStatus(w io.Writer, status androidEmulatorStatusDTO, asJSON bo
 		enc.SetIndent("", "  ")
 		return enc.Encode(status)
 	}
-	fmt.Fprintf(w, "state: %s\n", status.State)
-	fmt.Fprintf(w, "hardware acceleration: %v", status.AccelAvailable)
-	if status.AccelDetail != "" {
-		fmt.Fprintf(w, " (%s)", status.AccelDetail)
+	if _, err := fmt.Fprintf(w, "state: %s\n", status.State); err != nil {
+		return err
 	}
-	fmt.Fprintln(w)
+	if _, err := fmt.Fprintf(w, "hardware acceleration: %v", status.AccelAvailable); err != nil {
+		return err
+	}
+	if status.AccelDetail != "" {
+		if _, err := fmt.Fprintf(w, " (%s)", status.AccelDetail); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(w); err != nil {
+		return err
+	}
 	if status.Error != "" {
-		fmt.Fprintf(w, "error: %s\n", status.Error)
+		if _, err := fmt.Fprintf(w, "error: %s\n", status.Error); err != nil {
+			return err
+		}
 	}
 	return nil
 }

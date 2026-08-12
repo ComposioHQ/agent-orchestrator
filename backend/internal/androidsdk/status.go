@@ -15,6 +15,8 @@ const installTimeout = 30 * time.Minute
 // State is the lifecycle state of an Android SDK install managed by Manager.
 type State string
 
+// Manager's SDK install lifecycle states, in the order a normal
+// install/failure cycle visits them.
 const (
 	StateNotInstalled State = "not_installed"
 	StateDownloading  State = "downloading"

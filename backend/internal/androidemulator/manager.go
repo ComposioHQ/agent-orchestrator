@@ -11,6 +11,8 @@ import (
 // Manager supervises.
 type State string
 
+// Manager's lifecycle states, in the order a normal boot/crash/stop cycle
+// visits them.
 const (
 	StateUninitialized State = "uninitialized"
 	StateBooting       State = "booting"
@@ -154,6 +156,7 @@ func (m *Manager) bootOnce(ctx context.Context) error {
 	m.lastErr = ""
 	m.mu.Unlock()
 
+	//nolint:gosec // G118: deliberately not ctx-bound -- this watches the process for its whole lifetime, which outlives whatever request called Start
 	go m.watchExit(proc)
 	return nil
 }

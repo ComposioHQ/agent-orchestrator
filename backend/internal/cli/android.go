@@ -105,12 +105,18 @@ func writeAndroidSDKStatus(w io.Writer, status androidSDKStatusDTO, asJSON bool)
 		enc.SetIndent("", "  ")
 		return enc.Encode(status)
 	}
-	fmt.Fprintf(w, "state: %s\n", status.State)
+	if _, err := fmt.Fprintf(w, "state: %s\n", status.State); err != nil {
+		return err
+	}
 	for _, c := range status.Components {
-		fmt.Fprintf(w, "  %s: %d/%d bytes\n", c.Component, c.BytesDone, c.BytesTotal)
+		if _, err := fmt.Fprintf(w, "  %s: %d/%d bytes\n", c.Component, c.BytesDone, c.BytesTotal); err != nil {
+			return err
+		}
 	}
 	if status.Error != "" {
-		fmt.Fprintf(w, "error: %s\n", status.Error)
+		if _, err := fmt.Fprintf(w, "error: %s\n", status.Error); err != nil {
+			return err
+		}
 	}
 	return nil
 }

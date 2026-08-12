@@ -72,10 +72,10 @@ func writeSnapshotVersion(avdDir string, v SnapshotVersion) error {
 	if err != nil {
 		return fmt.Errorf("androidemulator: marshal snapshot version: %w", err)
 	}
-	if err := os.MkdirAll(avdDir, 0o755); err != nil {
+	if err := os.MkdirAll(avdDir, 0o750); err != nil {
 		return fmt.Errorf("androidemulator: mkdir %s: %w", avdDir, err)
 	}
-	if err := os.WriteFile(versionMarkerPath(avdDir), data, 0o644); err != nil {
+	if err := os.WriteFile(versionMarkerPath(avdDir), data, 0o600); err != nil {
 		return fmt.Errorf("androidemulator: write snapshot version marker: %w", err)
 	}
 	return nil

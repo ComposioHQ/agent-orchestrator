@@ -47,13 +47,13 @@ func DefaultProfile(apiLevel int, tag, abi string) DeviceProfile {
 // field below, which needs a native-OS-format absolute path).
 func WriteAVDConfig(avdHome, avdName string, profile DeviceProfile, sysImageRelPath string) error {
 	avdDir := filepath.Join(avdHome, avdName+".avd")
-	if err := os.MkdirAll(avdDir, 0o755); err != nil {
+	if err := os.MkdirAll(avdDir, 0o750); err != nil {
 		return fmt.Errorf("androidemulator: mkdir %s: %w", avdDir, err)
 	}
 
 	pointer := fmt.Sprintf("avd.ini.encoding=UTF-8\npath=%s\ntarget=android-%d\n", avdDir, profile.APILevel)
 	pointerPath := filepath.Join(avdHome, avdName+".ini")
-	if err := os.WriteFile(pointerPath, []byte(pointer), 0o644); err != nil {
+	if err := os.WriteFile(pointerPath, []byte(pointer), 0o600); err != nil {
 		return fmt.Errorf("androidemulator: write %s: %w", pointerPath, err)
 	}
 
@@ -98,7 +98,7 @@ vm.heapSize=256
 		sysImageRelPath, profile.Width, profile.Height, profile.Tag, profile.Tag)
 
 	configPath := filepath.Join(avdDir, "config.ini")
-	if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		return fmt.Errorf("androidemulator: write %s: %w", configPath, err)
 	}
 	return nil

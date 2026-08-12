@@ -2,8 +2,6 @@ package androidsdk
 
 import "fmt"
 
-// CheckDiskSpace returns an error if fewer than requiredBytes are free on the
-// filesystem containing path.
 // RequiredDiskSpace estimates the free space Install needs to download and
 // unpack archives: each archive's compressed zip and its extracted contents
 // briefly coexist on disk before the zip is deleted, so budgeting the raw sum
@@ -17,6 +15,8 @@ func RequiredDiskSpace(archives ...Archive) uint64 {
 	return uint64(sum) * 2
 }
 
+// CheckDiskSpace returns an error if fewer than requiredBytes are free on the
+// filesystem containing path.
 func CheckDiskSpace(path string, requiredBytes uint64) error {
 	free, err := FreeBytes(path)
 	if err != nil {

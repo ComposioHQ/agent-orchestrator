@@ -86,7 +86,7 @@ func Install(ctx context.Context, cfg InstallConfig) error {
 		return nil
 	}
 
-	if err := os.MkdirAll(Dir(cfg.ToolsDir), 0o755); err != nil {
+	if err := os.MkdirAll(Dir(cfg.ToolsDir), 0o750); err != nil {
 		return fmt.Errorf("androidsdk: mkdir %s: %w", Dir(cfg.ToolsDir), err)
 	}
 	if err := CheckDiskSpace(Dir(cfg.ToolsDir), RequiredDiskSpace(ptArchive, emuArchive, sysArchive)); err != nil {
@@ -125,7 +125,7 @@ func Install(ctx context.Context, cfg InstallConfig) error {
 
 func downloadAndExtract(ctx context.Context, cfg InstallConfig, component string, archive Archive, baseURL, destDir string) error {
 	zipPath := filepath.Join(Dir(cfg.ToolsDir), ".downloads", component+".zip")
-	if err := os.MkdirAll(filepath.Dir(zipPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(zipPath), 0o750); err != nil {
 		return fmt.Errorf("androidsdk: mkdir %s: %w", filepath.Dir(zipPath), err)
 	}
 
@@ -172,7 +172,7 @@ func uniqueLicenseIDs(archives ...Archive) []string {
 }
 
 func fetchManifest(ctx context.Context, client *http.Client, url string) (Manifest, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("androidsdk: build manifest request for %s: %w", url, err)
 	}
@@ -180,7 +180,7 @@ func fetchManifest(ctx context.Context, client *http.Client, url string) (Manife
 	if err != nil {
 		return Manifest{}, fmt.Errorf("androidsdk: fetch %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Manifest{}, fmt.Errorf("androidsdk: fetch %s: unexpected status %s", url, resp.Status)
 	}
@@ -208,10 +208,10 @@ func writeInstalledManifest(toolsDir string, m installedManifest) error {
 	if err != nil {
 		return fmt.Errorf("androidsdk: marshal install manifest: %w", err)
 	}
-	if err := os.MkdirAll(Dir(toolsDir), 0o755); err != nil {
+	if err := os.MkdirAll(Dir(toolsDir), 0o750); err != nil {
 		return fmt.Errorf("androidsdk: mkdir %s: %w", Dir(toolsDir), err)
 	}
-	if err := os.WriteFile(ManifestPath(toolsDir), data, 0o644); err != nil {
+	if err := os.WriteFile(ManifestPath(toolsDir), data, 0o600); err != nil {
 		return fmt.Errorf("androidsdk: write install manifest: %w", err)
 	}
 	return nil

@@ -150,7 +150,7 @@ func (s *androidDeviceService) DeviceStatus() controllers.AndroidEmulatorStatusR
 // out, surfacing as a generic "crashed" state.
 func ensureAndroidPrefsRoot(toolsDir string) (string, error) {
 	dir := filepath.Join(toolsDir, "android-prefs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("create android-prefs dir: %w", err)
 	}
 	return dir, nil
@@ -328,7 +328,7 @@ func adbBootCompleted(ctx context.Context, adbPath string) (bool, error) {
 	cmd := exec.CommandContext(ctx, adbPath, "-s", androidDeviceSerial, "shell", "getprop", "sys.boot_completed")
 	out, err := cmd.Output()
 	if err != nil {
-		return false, nil // device likely not connected yet; not a hard error
+		return false, nil //nolint:nilerr // device likely not connected yet; not a hard error
 	}
 	return strings.TrimSpace(string(out)) == "1", nil
 }

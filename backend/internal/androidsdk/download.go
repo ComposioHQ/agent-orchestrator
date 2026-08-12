@@ -2,7 +2,7 @@ package androidsdk
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // checksum algorithm is Google's own repository manifest format, not our choice
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -49,7 +49,7 @@ func DownloadArchive(ctx context.Context, client *http.Client, baseURL string, a
 		return fmt.Errorf("androidsdk: stat %s: %w", partPath, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+archive.URL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+archive.URL, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("androidsdk: build request for %s: %w", archive.URL, err)
 	}
@@ -61,7 +61,7 @@ func DownloadArchive(ctx context.Context, client *http.Client, baseURL string, a
 	if err != nil {
 		return fmt.Errorf("androidsdk: download %s: %w", archive.URL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	openFlag := os.O_CREATE | os.O_WRONLY
 	switch resp.StatusCode {
@@ -77,26 +77,26 @@ func DownloadArchive(ctx context.Context, client *http.Client, baseURL string, a
 		return fmt.Errorf("androidsdk: download %s: unexpected status %s", archive.URL, resp.Status)
 	}
 
-	f, err := os.OpenFile(partPath, openFlag, 0o644)
+	f, err := os.OpenFile(partPath, openFlag, 0o600)
 	if err != nil {
 		return fmt.Errorf("androidsdk: open %s: %w", partPath, err)
 	}
 
-	hasher := sha1.New()
+	hasher := sha1.New() //nolint:gosec // checksum algorithm is Google's own repository manifest format, not our choice
 	if startOffset > 0 {
 		// Re-hash the bytes already on disk so the final checksum covers the
 		// whole file, not just what this call downloaded.
 		existing, err := os.Open(partPath)
 		if err != nil {
-			f.Close()
+			_ = f.Close()
 			return fmt.Errorf("androidsdk: reopen %s for hashing: %w", partPath, err)
 		}
 		if _, err := io.CopyN(hasher, existing, startOffset); err != nil {
-			existing.Close()
-			f.Close()
+			_ = existing.Close()
+			_ = f.Close()
 			return fmt.Errorf("androidsdk: hash existing partial %s: %w", partPath, err)
 		}
-		existing.Close()
+		_ = existing.Close()
 	}
 
 	done := startOffset
@@ -106,7 +106,7 @@ func DownloadArchive(ctx context.Context, client *http.Client, baseURL string, a
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, err := f.Write(buf[:n]); err != nil {
-				f.Close()
+				_ = f.Close()
 				return fmt.Errorf("androidsdk: write %s: %w", partPath, err)
 			}
 			hasher.Write(buf[:n])
@@ -119,7 +119,7 @@ func DownloadArchive(ctx context.Context, client *http.Client, baseURL string, a
 			break
 		}
 		if readErr != nil {
-			f.Close()
+			_ = f.Close()
 			return fmt.Errorf("androidsdk: read body for %s: %w", archive.URL, readErr)
 		}
 	}

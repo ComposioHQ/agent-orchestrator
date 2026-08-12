@@ -155,7 +155,7 @@ func (c *AndroidDeviceController) stream(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		return
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "stream closed")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "stream closed") }()
 
 	// This connection is write-only from the server's side (frames out, no
 	// client messages expected), so r.Context() alone won't observe the

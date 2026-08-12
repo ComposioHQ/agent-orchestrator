@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/androidemulator/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidemulator/pb"
 )
 
 // EmulatorClient is a thin, Go-native wrapper over the emulator's real

@@ -6,9 +6,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/androidemulator/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidemulator/pb"
 )
 
 func TestInputActionJSONRoundTripsXAndYIndependently(t *testing.T) {

@@ -59,7 +59,7 @@ func FindSource(ctx context.Context, worktreeRoot, identifier string) ([]SourceM
 	var matches []SourceMatch
 	err := filepath.WalkDir(worktreeRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // unreadable entry; skip rather than abort the whole search
+			return nil //nolint:nilerr // unreadable entry; skip rather than abort the whole search
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -78,7 +78,7 @@ func FindSource(ctx context.Context, worktreeRoot, identifier string) ([]SourceM
 		}
 		fileMatches, err := searchFile(path, needle)
 		if err != nil {
-			return nil // unreadable file; skip
+			return nil //nolint:nilerr // unreadable file; skip
 		}
 		matches = append(matches, fileMatches...)
 		return nil
@@ -108,7 +108,7 @@ func searchFile(path, needle string) ([]SourceMatch, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var matches []SourceMatch
 	scanner := bufio.NewScanner(f)
