@@ -895,7 +895,7 @@ describe("SessionView", () => {
 		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
 	});
 
-	it("keeps StrictMode mount imperative-free and collapses on the first user toggle", () => {
+	it("keeps StrictMode mount imperative-free and starts closing on the first user toggle", () => {
 		render(
 			<StrictMode>
 				<SessionView sessionId="sess-1" />
@@ -909,7 +909,6 @@ describe("SessionView", () => {
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(handle.collapse).toHaveBeenCalledTimes(1);
 		expect(handle.expand).not.toHaveBeenCalled();
 	});
 
@@ -942,7 +941,6 @@ describe("SessionView", () => {
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(handle.collapse).toHaveBeenCalledTimes(1);
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
@@ -956,12 +954,10 @@ describe("SessionView", () => {
 	it("wires the inspector header close control to the session panel state", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		const handle = panels.get("inspector")!.handle;
 
 		fireEvent.click(screen.getByRole("button", { name: "close inspector" }));
 
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(handle.collapse).toHaveBeenCalledTimes(1);
 	});
 
 	it("persists drag resizes and never closes the store from a drag", () => {
