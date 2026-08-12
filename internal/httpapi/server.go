@@ -43,6 +43,7 @@ type Store interface {
 	SendMessage(context.Context, domain.Principal, string, string, string, string) (domain.ClientEvent, error)
 	ListClientEvents(context.Context, domain.Principal, string, string, int64, int) ([]domain.ClientEvent, bool, error)
 	CountActiveSandboxes(context.Context, domain.Principal, string) (int, error)
+	SetSandboxDesiredState(ctx context.Context, principal domain.Principal, orgID, sessionID, desiredState string) error
 	RedeemWorkerBootstrapTicket(context.Context, string) (domain.AccessTicket, error)
 	WorkerLaunchSpec(context.Context, string, string) (domain.WorkerLaunch, error)
 	RegisterWorkerBootstrap(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
@@ -60,14 +61,17 @@ type WorkerTokens interface {
 }
 
 type Server struct {
-	store               Store
-	workos              auth.WorkOSVerifier
-	localAuthEnabled    bool
-	localSessionTTL     time.Duration
-	localAuthLimiter    *fixedWindowLimiter
-	sandboxProvider     string
-	provisioning        sandbox.ProvisioningDefaults
-	workerTokens        WorkerTokens
+	store            Store
+	workos           auth.WorkOSVerifier
+	localAuthEnabled bool
+	localSessionTTL  time.Duration
+	localAuthLimiter *fixedWindowLimiter
+	sandboxProvider  string
+	provisioning     sandbox.ProvisioningDefaults
+	workerTokens     WorkerTokens
+	// workerTokenLifetime is zero when the deployment does not override the
+	// protocol default; workerTokenTTL() resolves that.
+	workerTokenLifetime time.Duration
 	maxSandboxes        int
 	environment         string
 	release             string
@@ -90,6 +94,7 @@ type Options struct {
 	SandboxProvider     string
 	Provisioning        sandbox.ProvisioningDefaults
 	WorkerTokens        WorkerTokens
+	WorkerTokenTTL      time.Duration
 	MaxSandboxes        int
 	Environment         string
 	Release             string
@@ -121,8 +126,8 @@ func New(options Options) *Server {
 	if webhookMaxBody == 0 {
 		webhookMaxBody = 2 << 20
 	}
-	// An unset quota must not read as "no capacity at all", which would reject
-	// every session with a 409 the caller cannot act on.
+	// An unset quota must not read as a quota of zero: that would reject every
+	// session with SANDBOX_QUOTA_EXCEEDED rather than allow the default.
 	maxSandboxes := options.MaxSandboxes
 	if maxSandboxes <= 0 {
 		maxSandboxes = DefaultMaxSandboxesPerOrg
@@ -136,6 +141,7 @@ func New(options Options) *Server {
 		sandboxProvider:     sandboxProvider,
 		provisioning:        options.Provisioning,
 		workerTokens:        options.WorkerTokens,
+		workerTokenLifetime: options.WorkerTokenTTL,
 		maxSandboxes:        maxSandboxes,
 		environment:         environment,
 		release:             release,
@@ -196,6 +202,7 @@ func New(options Options) *Server {
 			router.Get("/sessions", server.listSessions)
 			router.Post("/sessions", server.createSession)
 			router.Get("/sessions/{sessionId}", server.getSession)
+			router.Delete("/sessions/{sessionId}", server.deleteSession)
 			router.Post("/sessions/{sessionId}/messages", server.sendMessage)
 			router.Get("/sessions/{sessionId}/chat-events", server.replayClientEvents)
 			router.Get("/sessions/{sessionId}/events", server.streamClientEvents)
