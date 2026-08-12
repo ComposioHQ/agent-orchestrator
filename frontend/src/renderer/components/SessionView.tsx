@@ -42,10 +42,9 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
 const INSPECTOR_DEFAULT_PX = 360;
-const INSPECTOR_DEFAULT_SIZE = `${INSPECTOR_DEFAULT_PX}px`;
 const INSPECTOR_MIN_PX = 360;
-const INSPECTOR_MIN_SIZE = `${INSPECTOR_MIN_PX}px`;
 const INSPECTOR_MAX_PERCENT = 50;
+const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
 const INSPECTOR_MOTION_MS = 240;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
@@ -54,11 +53,24 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
 
-function initialInspectorSize(): string {
+function inspectorMaxWidthPx(availableWidth?: number): number | undefined {
+	if (!Number.isFinite(availableWidth) || !availableWidth || availableWidth <= 0) return undefined;
+	return Math.floor((availableWidth * INSPECTOR_MAX_PERCENT) / 100);
+}
+
+function inspectorMinSizeForWidth(availableWidth?: number): string {
+	const maxWidth = inspectorMaxWidthPx(availableWidth);
+	return maxWidth === undefined ? "0%" : `${Math.min(INSPECTOR_MIN_PX, maxWidth)}px`;
+}
+
+function initialInspectorSize(availableWidth?: number): string {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorWidthStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return INSPECTOR_DEFAULT_SIZE;
-	return `${Math.max(INSPECTOR_MIN_PX, Math.round(parsed))}px`;
+	const requestedWidth = Number.isFinite(parsed)
+		? Math.max(INSPECTOR_MIN_PX, Math.round(parsed))
+		: INSPECTOR_DEFAULT_PX;
+	const maxWidth = inspectorMaxWidthPx(availableWidth);
+	return maxWidth === undefined ? `${requestedWidth}px` : `${Math.min(requestedWidth, maxWidth)}px`;
 }
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
@@ -95,11 +107,14 @@ type SessionViewProps = {
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector driven to 0% via the imperative API from the ui-store
-// (topbar button / ⌘⇧B), animated by the flex-grow transition in styles.css.
+// (topbar button / ⌘⇧B). Panel sizing stays atomic to avoid continuously
+// retargeting the live xterm surface; only inspector chrome is animated.
 // The panel is `collapsible` only while closed: rrp snaps a collapsible panel
 // to 0% when a drag crosses minSize, so an always-collapsible inspector let a
 // drag vanish the rail. While open the panel is non-collapsible and a drag
-// hard-stops at INSPECTOR_MIN_SIZE; only the explicit controls collapse it.
+// hard-stops at the responsive inspector minimum; only the explicit controls
+// collapse it. The preferred 360px floor is clamped to the 50% maximum on
+// narrow session splits, where the inspector tabs compact to icons.
 // Content keeps a stable min-width inside the clipped panel so nothing reflows
 // mid-animation; the persisted pixel width is clamped by the panel constraints.
 export function SessionView({ sessionId }: SessionViewProps) {
@@ -118,7 +133,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
+	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
 	const initializedInspectorSessionIdRef = useRef<string | null>(null);
+	const [inspectorMinimumSize, setInspectorMinimumSize] = useState("0%");
 	const [inspectorMotionState, setInspectorMotionState] = useState<"closed" | "closing" | "open" | "opening">(
 		isInspectorOpen ? "open" : "closed",
 	);
@@ -129,6 +146,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
+
+	useLayoutEffect(() => {
+		const element = sessionSplitRef.current;
+		if (!element) return;
+		const updateAvailableWidth = () => {
+			const groupWidth = element.clientWidth || window.innerWidth;
+			const nextWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
+			const nextMinimumSize = inspectorMinSizeForWidth(nextWidth);
+			setInspectorMinimumSize((currentSize) => (currentSize === nextMinimumSize ? currentSize : nextMinimumSize));
+		};
+		updateAvailableWidth();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(updateAvailableWidth);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, []);
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
@@ -608,7 +641,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (!panel) return;
 		if (isInspectorOpen) {
 			setInspectorMotionState("opening");
-			panel.resize(initialInspectorSize());
+			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
+			panel.resize(initialInspectorSize(Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX)));
 			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
 			return () => window.cancelAnimationFrame(frame);
 		}
@@ -642,16 +676,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// open inspector can never collapse it — the panel is non-collapsible while
 	// open, so rrp clamps the drag at minSize instead of snapping to 0%.
 	// Read the store imperatively to avoid a stale closure.
-	// Gated on an actively dragged separator: rrp v4 derives sizes from the
-	// observed DOM layout, so the flex-grow transition that animates
-	// resize()/collapse() (styles.css) fires onResize with transient
-	// mid-animation sizes too. Writing those back turned the imperative
-	// collapse into a feedback loop — a mid-collapse size read as "dragged
-	// back open", re-toggled the store, and the panel bounced back (the
-	// topbar button looked dead). rrp marks the separator
+	// Gated on an actively dragged separator: rrp v4 also reports observed DOM
+	// layout changes. Persisting those frames would overwrite the user's last
+	// explicit split. rrp marks the separator
 	// data-separator="active" only during a pointer drag — the same hook the
-	// transition-suppressing CSS keys on, so drag writes are never transition
-	// frames.
+	// resize handle exposes for direct manipulation.
 	// Also wrapped in useCallback: rrp v4's panel registration useLayoutEffect
 	// includes onResize in its dep array, so an unstable reference would
 	// de-register/re-register the inspector panel on every render and race
@@ -678,6 +707,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
 			<ResizablePanelGroup
 				className="session-split min-h-0 flex-1"
+				elementRef={sessionSplitRef}
 				id="session-workspace"
 				orientation="horizontal"
 				style={{ "--session-inspector-max-width": `${INSPECTOR_MAX_PERCENT}%` } as CSSProperties}
@@ -759,7 +789,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							id="inspector"
 							inert={!isInspectorOpen}
 							maxSize={`${INSPECTOR_MAX_PERCENT}%`}
-							minSize={INSPECTOR_MIN_SIZE}
+							minSize={inspectorMinimumSize}
 							onResize={handleInspectorResize}
 							panelRef={inspectorRef}
 							style={{ overflow: "hidden" }}

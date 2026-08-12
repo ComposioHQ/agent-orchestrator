@@ -323,7 +323,18 @@ vi.mock("../hooks/useShellTerminals", () => ({
 // produce meaningful sizes — record the props SessionView passes and expose a
 // fake imperative handle per panel instead.
 vi.mock("./ui/resizable", () => ({
-	ResizablePanelGroup: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+	ResizablePanelGroup: ({ children, elementRef }: { children?: ReactNode; elementRef?: Ref<HTMLDivElement | null> }) => (
+		<div
+			data-testid="panel-group"
+			ref={(element) => {
+				if (elementRef && typeof elementRef === "object") {
+					(elementRef as { current: HTMLDivElement | null }).current = element;
+				}
+			}}
+		>
+			{children}
+		</div>
+	),
 	ResizableHandle: ({
 		"aria-hidden": ariaHidden,
 		className,
@@ -817,6 +828,22 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
 	});
 
+	it("clamps the inspector minimum to half of a narrow session split", () => {
+		const clientWidth = vi
+			.spyOn(HTMLElement.prototype, "clientWidth", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				return this.dataset.testid === "resize-handle" ? 8 : 640;
+			});
+		try {
+			render(<SessionView sessionId="sess-1" />);
+
+			expect(panelSizes("inspector")[1]).toBe("316px");
+			expect(panelSizes("inspector")[2]).toBe("50%");
+		} finally {
+			clientWidth.mockRestore();
+		}
+	});
+
 	it("opens the Summary inspector alongside the terminal by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
@@ -957,12 +984,10 @@ describe("SessionView", () => {
 		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("400");
 	});
 
-	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
-	// transition animating an imperative collapse fires onResize with transient
-	// non-zero sizes. Mirroring those into the store re-opened the panel
-	// mid-animation — the topbar toggle looked dead and a mount-time 0-size
-	// event flipped a fresh profile to collapsed. Only drag events (separator
-	// active) may write back.
+	// Regression: rrp v4 reports observed DOM sizes as well as direct drags.
+	// Persisting those layout frames can overwrite the user's last explicit
+	// split, and a mount-time 0-size event must not flip a fresh profile to
+	// collapsed. Only drag events (separator active) may write back.
 	it("ignores onResize churn while the separator is not being dragged", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
