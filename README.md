@@ -94,27 +94,27 @@ AO stays local and supervisory: your coding agents keep doing the implementation
 **26 coding agents supported** through one supervised workflow.
 
 <table>
-  <tr>
+  <tr valign="middle">
     <td width="33%" nowrap><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="Claude Code" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Claude Code</b></td>
     <td width="33%" nowrap><img src="frontend/src/renderer/assets/agents/codex.svg" alt="Codex" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Codex</b></td>
     <td width="33%" nowrap><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="Cursor" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Cursor</b></td>
   </tr>
-  <tr>
+  <tr valign="middle">
     <td nowrap><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="opencode" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>opencode</b></td>
     <td nowrap><img src="frontend/src/renderer/assets/agents/aider.png" alt="Aider" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Aider</b></td>
     <td nowrap><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="GitHub Copilot" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>GitHub Copilot</b></td>
   </tr>
-  <tr>
+  <tr valign="middle">
     <td nowrap><img src="frontend/src/renderer/assets/agents/grok.png" alt="Grok" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Grok</b></td>
     <td nowrap><img src="frontend/src/renderer/assets/agents/kimi.png" alt="Kimi" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Kimi</b></td>
     <td nowrap><img src="docs/assets/readme/agents/pi-coding-agent.svg" alt="Pi" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Pi</b></td>
   </tr>
-  <tr>
+  <tr valign="middle">
     <td nowrap><img src="frontend/src/renderer/assets/agents/amp.svg" alt="Amp" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Amp</b></td>
     <td nowrap><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="Auggie" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Auggie</b></td>
     <td nowrap><img src="frontend/src/renderer/assets/agents/droid.png" alt="Droid" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Droid</b></td>
   </tr>
-  <tr>
+  <tr valign="middle">
     <td nowrap><img src="frontend/src/renderer/assets/agents/crush.png" alt="Crush" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Crush</b></td>
     <td nowrap><img src="frontend/src/renderer/assets/agents/cline.svg" alt="Cline" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Cline</b></td>
     <td nowrap><img src="frontend/src/renderer/assets/agents/goose.svg" alt="Goose" width="24" height="24" style="vertical-align: middle; object-fit: contain;" /> <b>Goose</b></td>
