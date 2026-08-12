@@ -8,10 +8,10 @@ import (
 )
 
 type kimiWireRecord struct {
-	ID    string `json:"id"`
-	Time  string `json:"time"`
-	Type  string `json:"type"`
-	Model string `json:"model"`
+	ID    string          `json:"id"`
+	Time  json.RawMessage `json:"time"`
+	Type  string          `json:"type"`
+	Model string          `json:"model"`
 	Usage *struct {
 		InputOther         int64 `json:"inputOther"`
 		InputCacheRead     int64 `json:"inputCacheRead"`
@@ -52,7 +52,7 @@ func parseKimi(source domain.UsageSourceContext, records []jsonlRecord, result *
 			recordMalformed(result)
 			continue
 		}
-		identity := firstNonEmpty(native.ID, native.Time, strconv.FormatInt(record.Offset, 10))
+		identity := firstNonEmpty(native.ID, kimiRecordTimeIdentity(native.Time), strconv.FormatInt(record.Offset, 10))
 		result.Events = append(result.Events, domain.ModelUsageEvent{
 			ModelID: model,
 			Tokens:  tokens,
@@ -65,4 +65,19 @@ func parseKimi(source domain.UsageSourceContext, records []jsonlRecord, result *
 			),
 		})
 	}
+}
+
+func kimiRecordTimeIdentity(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return number.String()
+	}
+	return ""
 }

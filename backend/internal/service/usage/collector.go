@@ -1810,8 +1810,7 @@ func validateSourceAttribution(
 		}
 		if binding.Harness != domain.HarnessKimi || nativeSessionID != binding.NativeRootID ||
 			filepath.Base(resolved) != "wire.jsonl" || filepath.Base(agentsDir) != "agents" ||
-			filepath.Base(sessionDir) != binding.NativeRootID ||
-			filepath.Base(filepath.Dir(sessionDir)) != "sessions" || subagentID != wantSubagent {
+			filepath.Base(sessionDir) != binding.NativeRootID || subagentID != wantSubagent {
 			return rejected()
 		}
 	case domain.UsageSourcePiSession:
@@ -1847,14 +1846,13 @@ func (c *Collector) validateSourceAttribution(
 	if kind != domain.UsageSourceKimiWire {
 		return nil
 	}
-	expectedSessionDir, err := filepath.EvalSymlinks(filepath.Join(
-		c.roots.KimiHome, "sessions", binding.NativeRootID,
-	))
+	expectedRoot, err := filepath.EvalSymlinks(filepath.Join(c.roots.KimiHome, "sessions"))
 	if err != nil {
 		return errors.New(domain.UsageErrorArtifactPathRejected)
 	}
 	actualSessionDir := filepath.Dir(filepath.Dir(filepath.Dir(resolved)))
-	if filepath.Clean(actualSessionDir) != filepath.Clean(expectedSessionDir) {
+	rel, err := filepath.Rel(expectedRoot, actualSessionDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return errors.New(domain.UsageErrorArtifactPathRejected)
 	}
 	return nil

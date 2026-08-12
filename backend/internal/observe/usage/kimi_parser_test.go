@@ -33,6 +33,25 @@ func TestParseKimiUsageRecord(t *testing.T) {
 	}
 }
 
+func TestParseKimiUsageRecordWithNumericTime(t *testing.T) {
+	source := usageSource(domain.UsageSourceKimiWire)
+	record := jsonlRecord{Offset: 100, Data: []byte(`{"time":1797038183476.96,"type":"usage.record","model":"kimi-code/k3","usage":{"inputOther":6697,"output":39,"inputCacheRead":19200,"inputCacheCreation":0},"usageScope":"turn"}`)}
+	result := parseRecords(source, []jsonlRecord{record}, 300, time.Unix(1700000000, 0).UTC())
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %+v, want one usage record", result.Events)
+	}
+	if got := result.Events[0].Tokens; got.InputTokens != 25897 || got.UncachedInputTokens != 6697 ||
+		got.CacheReadTokens != 19200 || got.CacheWriteTokens != 0 || got.OutputTokens != 39 {
+		t.Fatalf("tokens = %+v", got)
+	}
+	if result.Events[0].SourceEventKey == "" {
+		t.Fatalf("event key is empty")
+	}
+}
+
 func TestParseKimiUsageRecordHasReplayStableKey(t *testing.T) {
 	source := usageSource(domain.UsageSourceKimiWire)
 	record := jsonlRecord{Offset: 100, Data: []byte(`{"id":"usage-1","time":"2026-08-09T10:00:00Z","type":"usage.record","model":"kimi-for-coding","usage":{"inputOther":1,"inputCacheRead":2,"inputCacheCreation":3,"output":4}}`)}

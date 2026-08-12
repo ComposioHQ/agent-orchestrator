@@ -63,6 +63,30 @@ func TestParseCopilotTracksModelsIndependently(t *testing.T) {
 	}
 }
 
+func TestParseCopilotAssistantMessageOutputTokens(t *testing.T) {
+	source := usageSource(domain.UsageSourceCopilotShutdown)
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"assistant.message","id":"message-1","data":{"model":"gpt-5-mini","outputTokens":944}}`)},
+		{Data: []byte(`{"type":"assistant.message","id":"message-2","data":{"model":"gpt-5-mini","outputTokens":17}}`)},
+	}
+	result := parseRecords(source, records, 200, time.Unix(1700000000, 0).UTC())
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	if len(result.Events) != 2 {
+		t.Fatalf("events = %+v, want one usage event per assistant message", result.Events)
+	}
+	if got := result.Events[0].Tokens; got.InputTokens != 0 || got.OutputTokens != 944 || got.ReasoningTokens != nil {
+		t.Fatalf("first tokens = %+v", got)
+	}
+	if got := result.Events[1].Tokens; got.InputTokens != 0 || got.OutputTokens != 17 || got.ReasoningTokens != nil {
+		t.Fatalf("second tokens = %+v", got)
+	}
+	if result.Events[0].SourceEventKey == "" || result.Events[0].SourceEventKey == result.Events[1].SourceEventKey {
+		t.Fatalf("event keys = %q/%q", result.Events[0].SourceEventKey, result.Events[1].SourceEventKey)
+	}
+}
+
 // TestParseCopilotCounterRegressionResetsBaseline catches negative usage deltas
 // after Copilot starts a new cumulative epoch.
 func TestParseCopilotCounterRegressionResetsBaseline(t *testing.T) {

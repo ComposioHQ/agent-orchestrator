@@ -1762,7 +1762,7 @@ func TestCollectorDiscoversKimiWireSourcesFromSessionIndex(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessKimi, nativeID, false)
 	home := t.TempDir()
-	sessionDir := filepath.Join(home, "sessions", nativeID)
+	sessionDir := filepath.Join(home, "sessions", "wd_agent-orchestrator-379_1f71c05c08c2", nativeID)
 	mainPath := filepath.Join(sessionDir, "agents", "main", "wire.jsonl")
 	childPath := filepath.Join(sessionDir, "agents", "researcher", "wire.jsonl")
 	writeUsageFixture(t, mainPath, "{}\n")
