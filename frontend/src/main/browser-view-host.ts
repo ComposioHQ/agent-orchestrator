@@ -348,6 +348,16 @@ export function normalizeBrowserURL(input: string): URL {
 	if (raw === "") {
 		throw new Error("URL is required");
 	}
+	
+	// Reject file://, Windows absolute paths (C:\ or C:/), and POSIX absolute paths (/tmp/...)
+	if (
+		raw.startsWith("file://") ||
+		/^[a-zA-Z]:[/\\]/.test(raw) ||
+		raw.startsWith("/")
+	) {
+		throw new Error("Unsupported browser URL scheme");
+	}
+
 	const candidate = withDefaultScheme(raw);
 	const url = new URL(candidate);
 	if (!ALLOWED_PROTOCOLS.has(url.protocol)) {
@@ -904,6 +914,27 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return navigateEntry(activeEntry(session), url);
 	};
 
+    async function resolveLocalPreviewTarget(
+	sessionId: string,
+	path: string
+): Promise<string> {
+	try {
+		const res = await fetch(`http://127.0.0.1:3000/api/v1/sessions/${sessionId}/preview`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ url: path }),
+		});
+		if (!res.ok) {
+			const errData = await res.json().catch(() => ({}));
+			throw new Error(errData.message || "Preview file not found");
+		}
+		const data = await res.json();
+		return data.session.previewUrl;
+	} catch (err: any) {
+		throw new Error(err.message || "Preview file not found");
+	}
+}
+
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		await entry.ready;
 		cancelAnnotation(options, entry, "navigation");
@@ -1412,6 +1443,19 @@ export function withDefaultScheme(raw: string): string {
 // path/query/fragment) is an IPv6 literal, carries an explicit :port, or has a
 // dot (a domain). Bare words like "hi" and bare filenames with common
 // extensions fail this and become a search instead.
+
+const BARE_FILE_EXTENSIONS = new Set([
+  "html",
+  "htm",
+  "pdf",
+  "svg",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+]);
+
 export function looksLikeHost(raw: string): boolean {
 	const host = raw.split(/[/?#]/, 1)[0];
 	if (host === "") return false;

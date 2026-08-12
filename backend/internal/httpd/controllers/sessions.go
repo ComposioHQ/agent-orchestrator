@@ -1601,12 +1601,26 @@ func looksLikePreviewPath(raw string) bool {
 
 func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, workingDirectory, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
+
+	// 1. Check if raw is a file:// URL
+	if fileURLPath, isFileURL, err := previewFileURLPath(raw); isFileURL {
+		if err != nil {
+			return "",  errPreviewFileNotFound
+		}
+		return workspaceAbsolutePreviewURL(r, id, workspacePath, fileURLPath)
+	}
+
+	// 2. Check if raw is an absolute file path (/tmp/foo.html)
 	if isAbsolutePreviewPath(raw) {
 		return workspaceAbsolutePreviewURL(r, id, workspacePath, raw)
 	}
+
+	// 3. Resolve relative local preview paths
 	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, workingDirectory, raw); ok || err != nil {
 		return resolved, err
 	}
+
+	// 4. If path looks like a file but was not found in workspace
 	if looksLikePreviewPath(raw) {
 		return "", errPreviewFileNotFound
 	}
