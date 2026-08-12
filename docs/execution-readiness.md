@@ -49,7 +49,7 @@ alone is not sufficient.
 
 - [ ] Public OpenAPI and `@aoagents/cloud-client` artifacts describe the worker,
   cancellation, SCM, terminal, and workspace operations used by Cloud.
-- [ ] Execution controls are enabled only when the API advertises a working
+- [x] Execution controls are enabled only when the API advertises a working
   execution capability.
 - [ ] CI runs non-superuser PostgreSQL lifecycle tests, Docker lifecycle E2E,
   fake harness tests, policy/security tests, image builds, and contract drift

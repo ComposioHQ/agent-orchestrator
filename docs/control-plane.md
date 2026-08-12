@@ -55,6 +55,38 @@ The shared Cloud client tracks the highest consumed sequence and reconnects
 retryable stream failures with a fresh access token. Duplicate sequences are
 suppressed. Cancellation and non-retryable client errors stop the stream.
 
+## Worker workspace and terminal transport
+
+Workspace file operations and workspace-terminal traffic never touch a
+control-plane filesystem. An authenticated tenant request is committed to
+`ao_worker_requests` with the session's current worker epoch. The session
+worker polls and leases that command using its JWT identity, executes it under
+`AO_WORKSPACE_DIR`, and commits the bounded result. The originating request
+polls PostgreSQL, so submission, worker claim, and result delivery can pass
+through different control-plane replicas.
+
+Requests expire, leases can be reclaimed, and each session has a durable
+concurrency cap. Disconnecting or timing out a workspace request marks its
+command cancelled. Worker replacement fences claims, completions, terminal
+input, and terminal output from every older epoch.
+
+Workspace paths are opened through Go's rooted filesystem API. Absolute paths,
+traversal, and symlinks escaping the workspace are rejected. Files must be
+regular UTF-8 files and are limited to 1 MiB; listings, diffs, response bodies,
+terminal frames, terminal output history, operation duration, and concurrent
+requests are also bounded.
+
+Terminal tickets are random, hashed at rest, short-lived, single-use, and bound
+to a session epoch. The WebSocket itself is a stateless bridge: input becomes a
+durable worker request and output is replayed from PostgreSQL by sequence.
+Workspace shells are supported. Attaching to the coding agent's native TUI is
+deliberately not implemented, so `kind=agent` is rejected instead of being
+silently mapped to a different process. Because arbitrary shell input cannot
+faithfully enforce prefix-style denied-command rules, terminal tickets fail
+closed unless the session is trusted and has no denied commands. The current
+Next.js gateway cannot proxy a WebSocket upgrade; the web UI therefore leaves
+Terminal disabled while direct API clients can use workspace terminals.
+
 ## Replica lifecycle
 
 - `/healthz` reports process liveness.
@@ -93,9 +125,6 @@ belong to deployment infrastructure rather than application branching.
 
 ## Deliberate exclusions
 
-This slice does not provision or reconcile sandboxes, connect workers, execute
-turns, ingest worker events, reap idle resources, proxy terminals/files, or
-synchronize GitHub issues and pull requests. GitHub App installation,
-repository grants, project import, and durable webhook intake are implemented.
-The remaining execution components consume the durable rows above and are
-separate from this non-provisioning control-plane boundary.
+GitHub issue and pull-request synchronization remains outside this slice.
+Native agent-TUI attachment and terminal WebSocket proxying through the
+Next.js gateway are also deliberate exclusions described above.

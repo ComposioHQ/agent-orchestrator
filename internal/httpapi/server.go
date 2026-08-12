@@ -58,6 +58,18 @@ type Store interface {
 	ListOrchestratorChildren(context.Context, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
 	CreateOrchestratorChild(context.Context, string, string, string, int, domain.CreateSession) (domain.Session, error)
 	SendOrchestratorChildMessage(context.Context, string, string, string, string, string) (domain.ClientEvent, error)
+	CreateWorkspaceRequest(context.Context, domain.Principal, string, string, string, json.RawMessage, time.Duration) (domain.WorkerRequest, error)
+	GetWorkspaceRequest(context.Context, domain.Principal, string, string, string) (domain.WorkerRequest, error)
+	CancelWorkspaceRequest(context.Context, domain.Principal, string, string, string) error
+	ClaimWorkerRequest(context.Context, string, string, string, int64, time.Duration) (domain.WorkerRequest, bool, error)
+	CompleteWorkerRequest(context.Context, string, string, string, string, int64, json.RawMessage) error
+	FailWorkerRequest(context.Context, string, string, string, string, int64, string, string) error
+	IssueTerminalTicket(context.Context, domain.Principal, string, string, string, time.Duration) (string, []string, error)
+	OpenTerminal(context.Context, string, string, time.Duration) (domain.TerminalSession, error)
+	QueueTerminalInput(context.Context, domain.TerminalSession, []byte) error
+	CloseTerminal(context.Context, domain.TerminalSession) error
+	AppendTerminalOutput(context.Context, string, string, string, string, int64, []byte) (int64, error)
+	ListTerminalOutput(context.Context, domain.TerminalSession, int64, int) ([]domain.TerminalOutput, string, error)
 }
 
 // WorkerTokens issues and verifies the short-lived credentials sandbox workers
@@ -83,39 +95,41 @@ type Server struct {
 	workerTokens     WorkerTokens
 	// workerTokenLifetime is zero when the deployment does not override the
 	// protocol default; workerTokenTTL() resolves that.
-	workerTokenLifetime time.Duration
-	maxSandboxes        int
-	environment         string
-	release             string
-	draining            atomic.Bool
-	drainOnce           sync.Once
-	drain               chan struct{}
-	logger              *slog.Logger
-	github              *githubapp.Service
-	checkoutBroker      checkoutBroker
-	secretCipher        *secrets.Cipher
-	credentialValidator credentialValidator
-	webhookMaxBody      int64
-	handler             http.Handler
+	workerTokenLifetime  time.Duration
+	workerRequestTimeout time.Duration
+	maxSandboxes         int
+	environment          string
+	release              string
+	draining             atomic.Bool
+	drainOnce            sync.Once
+	drain                chan struct{}
+	logger               *slog.Logger
+	github               *githubapp.Service
+	checkoutBroker       checkoutBroker
+	secretCipher         *secrets.Cipher
+	credentialValidator  credentialValidator
+	webhookMaxBody       int64
+	handler              http.Handler
 }
 
 type Options struct {
-	Store               Store
-	WorkOS              auth.WorkOSVerifier
-	LocalAuthEnabled    bool
-	LocalSessionTTL     time.Duration
-	SandboxProvider     string
-	Provisioning        sandbox.ProvisioningDefaults
-	WorkerTokens        WorkerTokens
-	WorkerTokenTTL      time.Duration
-	MaxSandboxes        int
-	Environment         string
-	Release             string
-	Logger              *slog.Logger
-	GitHub              *githubapp.Service
-	SecretCipher        *secrets.Cipher
-	CredentialValidator credentialValidator
-	WebhookMaxBody      int64
+	Store                Store
+	WorkOS               auth.WorkOSVerifier
+	LocalAuthEnabled     bool
+	LocalSessionTTL      time.Duration
+	SandboxProvider      string
+	Provisioning         sandbox.ProvisioningDefaults
+	WorkerTokens         WorkerTokens
+	WorkerTokenTTL       time.Duration
+	WorkerRequestTimeout time.Duration
+	MaxSandboxes         int
+	Environment          string
+	Release              string
+	Logger               *slog.Logger
+	GitHub               *githubapp.Service
+	SecretCipher         *secrets.Cipher
+	CredentialValidator  credentialValidator
+	WebhookMaxBody       int64
 }
 
 func New(options Options) *Server {
@@ -139,6 +153,10 @@ func New(options Options) *Server {
 	if webhookMaxBody == 0 {
 		webhookMaxBody = 2 << 20
 	}
+	workerRequestTimeout := options.WorkerRequestTimeout
+	if workerRequestTimeout <= 0 {
+		workerRequestTimeout = 12 * time.Second
+	}
 	// An unset quota must not read as a quota of zero: that would reject every
 	// session with SANDBOX_QUOTA_EXCEEDED rather than allow the default.
 	maxSandboxes := options.MaxSandboxes
@@ -146,25 +164,26 @@ func New(options Options) *Server {
 		maxSandboxes = DefaultMaxSandboxesPerOrg
 	}
 	server := &Server{
-		store:               options.Store,
-		workos:              options.WorkOS,
-		localAuthEnabled:    options.LocalAuthEnabled,
-		localSessionTTL:     options.LocalSessionTTL,
-		localAuthLimiter:    newFixedWindowLimiter(10, time.Minute, 4096),
-		sandboxProvider:     sandboxProvider,
-		provisioning:        options.Provisioning,
-		workerTokens:        options.WorkerTokens,
-		workerTokenLifetime: options.WorkerTokenTTL,
-		maxSandboxes:        maxSandboxes,
-		environment:         environment,
-		release:             release,
-		drain:               make(chan struct{}),
-		logger:              logger,
-		github:              options.GitHub,
-		checkoutBroker:      options.GitHub,
-		secretCipher:        options.SecretCipher,
-		credentialValidator: options.CredentialValidator,
-		webhookMaxBody:      webhookMaxBody,
+		store:                options.Store,
+		workos:               options.WorkOS,
+		localAuthEnabled:     options.LocalAuthEnabled,
+		localSessionTTL:      options.LocalSessionTTL,
+		localAuthLimiter:     newFixedWindowLimiter(10, time.Minute, 4096),
+		sandboxProvider:      sandboxProvider,
+		provisioning:         options.Provisioning,
+		workerTokens:         options.WorkerTokens,
+		workerTokenLifetime:  options.WorkerTokenTTL,
+		workerRequestTimeout: workerRequestTimeout,
+		maxSandboxes:         maxSandboxes,
+		environment:          environment,
+		release:              release,
+		drain:                make(chan struct{}),
+		logger:               logger,
+		github:               options.GitHub,
+		checkoutBroker:       options.GitHub,
+		secretCipher:         options.SecretCipher,
+		credentialValidator:  options.CredentialValidator,
+		webhookMaxBody:       webhookMaxBody,
 	}
 	if server.credentialValidator == nil {
 		server.credentialValidator = newAgentCredentialValidator(nil)
@@ -206,7 +225,12 @@ func New(options Options) *Server {
 			router.Get("/worker/children", server.listWorkerChildren)
 			router.Post("/worker/children", server.createWorkerChild)
 			router.Post("/worker/children/{sessionId}/messages", server.sendWorkerChildMessage)
+			router.Post("/worker/transport/claim", server.workerClaimTransport)
+			router.Post("/worker/transport/{requestId}/complete", server.workerCompleteTransport)
+			router.Post("/worker/transport/{requestId}/fail", server.workerFailTransport)
+			router.Post("/worker/terminals/{terminalId}/output", server.workerTerminalOutput)
 		})
+		router.Get("/terminal", server.connectTerminal)
 		router.Route("/orgs/{orgId}", func(router chi.Router) {
 			router.Use(server.authenticate)
 			if server.github != nil {
@@ -230,6 +254,11 @@ func New(options Options) *Server {
 			router.Post("/sessions/{sessionId}/turns/{turnId}/cancel", server.cancelTurn)
 			router.Get("/sessions/{sessionId}/chat-events", server.replayClientEvents)
 			router.Get("/sessions/{sessionId}/events", server.streamClientEvents)
+			router.Post("/sessions/{sessionId}/terminal-ticket", server.createTerminalTicket)
+			router.Get("/sessions/{sessionId}/workspace/files", server.listWorkspaceFiles)
+			router.Get("/sessions/{sessionId}/workspace/file", server.readWorkspaceFile)
+			router.Put("/sessions/{sessionId}/workspace/file", server.writeWorkspaceFile)
+			router.Get("/sessions/{sessionId}/workspace/diff", server.getWorkspaceDiff)
 		})
 	})
 	server.handler = router

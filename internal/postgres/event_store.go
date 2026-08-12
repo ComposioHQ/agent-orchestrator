@@ -96,7 +96,7 @@ func sendMessageTx(
 			$1, 'session.message_queued', 'session', $2,
 			jsonb_build_object(
 				'sequence', $3::bigint,
-				'actorSessionId', $4
+				'actorSessionId', $4::text
 			)
 		)`
 		auditArgs = []any{orgID, sessionID, event.Sequence, actorSessionID}

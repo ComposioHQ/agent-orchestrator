@@ -19,8 +19,9 @@ The repository root also contains the authenticated Next.js Cloud UI. It uses
 the public `@aoagents/cloud-client` and `@aoagents/product-ui` sources for
 contracts, transport, status mapping, board layout, cards, and agent identity.
 It supports organization switching, projects, durable sessions, search, chat
-history, and live event streams. Worker/orchestrator execution, personal GitHub
-OAuth, PR/issue synchronization, and sharing behavior remain in development. See
+history, live event streams, worker turns, and replica-safe workspace files.
+Personal GitHub OAuth, PR/issue synchronization, and sharing behavior remain in
+development. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
 behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
 production deployments.
@@ -236,6 +237,11 @@ All resource routes use `/api/cloud/v1`. Project and session creation require an
 | `POST` | `/orgs/{orgId}/sessions/{sessionId}/messages` | Durably queue a message |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}/chat-events` | Replay committed client events |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}/events` | Replay and stream client events over SSE |
+| `GET` | `/orgs/{orgId}/sessions/{sessionId}/workspace/files` | List worker-workspace entries |
+| `GET/PUT` | `/orgs/{orgId}/sessions/{sessionId}/workspace/file` | Read or write a bounded UTF-8 workspace file |
+| `GET` | `/orgs/{orgId}/sessions/{sessionId}/workspace/diff` | Read a bounded worker-workspace git diff |
+| `POST` | `/orgs/{orgId}/sessions/{sessionId}/terminal-ticket` | Create a short-lived workspace-terminal ticket |
+| `GET` | `/terminal` | Upgrade a single-use ticket to the durable terminal WebSocket |
 
 WorkOS access tokens and local development tokens both use
 `Authorization: Bearer <token>`.

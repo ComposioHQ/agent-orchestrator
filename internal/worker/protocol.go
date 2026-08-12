@@ -113,3 +113,70 @@ type OutputEvent struct {
 	Stream  string `json:"stream"`
 	Text    string `json:"text"`
 }
+
+// TransportRequest is a fenced, durably routed workspace or terminal command.
+type TransportRequest struct {
+	ID      string `json:"id"`
+	Kind    string `json:"kind"`
+	Payload any    `json:"payload"`
+}
+
+type ClaimTransportResponse struct {
+	Request *TransportRequest `json:"request"`
+}
+
+type CompleteTransportRequest struct {
+	Response any `json:"response"`
+}
+
+type FailTransportRequest struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type WorkspaceListRequest struct {
+	Path   string `json:"path"`
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit"`
+}
+
+type WorkspaceReadRequest struct {
+	Path string `json:"path"`
+}
+
+type WorkspaceWriteRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+type WorkspaceEntry struct {
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	IsDir   bool      `json:"isDir"`
+	Size    int64     `json:"size"`
+	Mode    string    `json:"mode"`
+	ModTime time.Time `json:"modTime"`
+}
+
+type WorkspaceEntryPage struct {
+	Path       string           `json:"path"`
+	Items      []WorkspaceEntry `json:"items"`
+	HasMore    bool             `json:"hasMore"`
+	NextCursor string           `json:"nextCursor,omitempty"`
+}
+
+type WorkspaceFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	Size    int64  `json:"size"`
+}
+
+type TerminalCommand struct {
+	TerminalID string `json:"terminalId"`
+	Kind       string `json:"kind,omitempty"`
+	Data       []byte `json:"data,omitempty"`
+}
+
+type TerminalOutputRequest struct {
+	Data []byte `json:"data"`
+}

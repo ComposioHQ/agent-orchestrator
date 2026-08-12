@@ -17,6 +17,9 @@ var (
 	ErrInvalid              = errors.New("invalid")
 	ErrIdempotencyMismatch  = errors.New("idempotency key belongs to a different operation")
 	ErrSandboxQuotaExceeded = errors.New("sandbox quota exceeded")
+	ErrWorkerUnavailable    = errors.New("worker unavailable")
+	ErrTransportExpired     = errors.New("worker request expired")
+	ErrWorkspaceReadOnly    = errors.New("workspace is read-only")
 )
 
 type Store struct {

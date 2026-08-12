@@ -135,6 +135,41 @@ type WorkerCredential struct {
 	Nonce           []byte
 }
 
+// WorkerRequest is a short-lived durable command for the current worker epoch.
+// The database owns routing and leasing so any control-plane replica can submit
+// or await it without process affinity.
+type WorkerRequest struct {
+	ID           string
+	OrgID        string
+	SessionID    string
+	WorkerEpoch  int64
+	Kind         string
+	Payload      json.RawMessage
+	Status       string
+	Response     json.RawMessage
+	ErrorCode    string
+	ErrorMessage string
+	Attempt      int
+	ExpiresAt    time.Time
+}
+
+type TerminalSession struct {
+	ID           string
+	OrgID        string
+	SessionID    string
+	WorkerEpoch  int64
+	Kind         string
+	State        string
+	Scopes       []string
+	ErrorMessage string
+	ExpiresAt    time.Time
+}
+
+type TerminalOutput struct {
+	Sequence int64
+	Data     []byte
+}
+
 type Cursor struct {
 	Time time.Time
 	ID   string

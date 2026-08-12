@@ -26,6 +26,7 @@ import (
 
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/Untrivial-ai/ao-cloud/internal/workerexec"
+	"github.com/Untrivial-ai/ao-cloud/internal/workertransport"
 )
 
 const (
@@ -46,6 +47,8 @@ var workerCapabilities = []string{
 	"worker.turns",
 	"worker.credentials",
 	"repository.checkout",
+	"workspace.files",
+	"terminal.workspace",
 }
 
 func main() {
@@ -137,11 +140,16 @@ func run(logger *slog.Logger) error {
 		Workspace: workspace,
 		Logger:    logger,
 	}
-	results := make(chan error, 2)
+	transportSupervisor := workertransport.Supervisor{
+		Control: client, Workspace: workspace, Logger: logger,
+	}
+	results := make(chan error, 3)
 	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
 	go func() { results <- supervisor.Run(runCtx) }()
+	go func() { results <- transportSupervisor.Run(runCtx) }()
 	first := <-results
 	cancel()
+	<-results
 	<-results
 	if ctx.Err() != nil {
 		logger.Info("worker shutting down")
@@ -250,6 +258,48 @@ func (c *client) checkoutGrant(ctx context.Context) (worker.CheckoutGrantRespons
 
 func (c *client) PublishOutput(ctx context.Context, output worker.OutputEvent) error {
 	return c.publishEvent(ctx, "chat.assistant_delta", output)
+}
+
+func (c *client) ClaimTransport(ctx context.Context) (*worker.TransportRequest, error) {
+	var response worker.ClaimTransportResponse
+	if err := c.do(ctx, "/worker/transport/claim", struct{}{}, &response); err != nil {
+		return nil, err
+	}
+	return response.Request, nil
+}
+
+func (c *client) CompleteTransport(ctx context.Context, requestID string, result any) error {
+	return c.do(
+		ctx,
+		"/worker/transport/"+url.PathEscape(requestID)+"/complete",
+		worker.CompleteTransportRequest{Response: result},
+		nil,
+	)
+}
+
+func (c *client) FailTransport(
+	ctx context.Context,
+	requestID, code, message string,
+) error {
+	return c.do(
+		ctx,
+		"/worker/transport/"+url.PathEscape(requestID)+"/fail",
+		worker.FailTransportRequest{Code: code, Message: message},
+		nil,
+	)
+}
+
+func (c *client) PublishTerminalOutput(
+	ctx context.Context,
+	terminalID string,
+	data []byte,
+) error {
+	return c.do(
+		ctx,
+		"/worker/terminals/"+url.PathEscape(terminalID)+"/output",
+		worker.TerminalOutputRequest{Data: data},
+		nil,
+	)
 }
 
 func (c *client) CancellationRequested(
