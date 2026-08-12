@@ -91,6 +91,9 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
+	if bootstrap.SessionID != sessionID {
+		return errors.New("bootstrap session does not match AO_CLOUD_SESSION_ID")
+	}
 	// The ticket is single-use and now spent; from here the only credential is
 	// the rotating worker token.
 	_ = os.Unsetenv("AO_WORKER_BOOTSTRAP_TOKEN")
@@ -135,8 +138,13 @@ func run(logger *slog.Logger) error {
 		logger.Warn("publish worker.ready failed", "error", err)
 	}
 
-	if bootstrap.SessionID != sessionID {
-		return errors.New("bootstrap session does not match AO_CLOUD_SESSION_ID")
+	// Heartbeat before waiting out the first interval. Bootstrap registration is
+	// not a check-in, so a repaired worker can otherwise be replaced again
+	// before the control plane ever observes it.
+	if renewed, err := client.heartbeat(ctx); err != nil {
+		logger.Warn("first heartbeat failed", "error", err)
+	} else {
+		client.setToken(renewed)
 	}
 	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
 	if dataDir == "" {
