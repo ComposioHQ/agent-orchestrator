@@ -207,10 +207,12 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation: rows.Conversation,
-				Turns:        rows.Turns,
-				Messages:     rows.Messages,
-				Activities:   rows.Activities,
+				Conversation:               rows.Conversation,
+				Turns:                      rows.Turns,
+				Messages:                   rows.Messages,
+				Activities:                 rows.Activities,
+				BranchPoints:               rows.BranchPoints,
+				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
 			}, nil
 		}),
 		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
@@ -219,12 +221,14 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation:   rows.Conversation,
-				Turns:          rows.Turns,
-				Messages:       rows.Messages,
-				Activities:     rows.Activities,
-				OldestSequence: rows.OldestSequence,
-				HasMoreBefore:  rows.HasMoreBefore,
+				Conversation:               rows.Conversation,
+				Turns:                      rows.Turns,
+				Messages:                   rows.Messages,
+				Activities:                 rows.Activities,
+				BranchPoints:               rows.BranchPoints,
+				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+				OldestSequence:             rows.OldestSequence,
+				HasMoreBefore:              rows.HasMoreBefore,
 			}, nil
 		}),
 		Drivers: chatDrivers,
@@ -455,9 +459,12 @@ func Run() error {
 
 	// Restore Connect Mobile across a daemon restart: if the bridge was left
 	// enabled, re-arm the listener on its last port with the same password
-	// hash so an already-paired phone keeps working with no new password.
+	// hash so an already-paired phone keeps working with no new password, and
+	// (via bs.RestoreOnBoot) re-apply the secure-pairing proxy against the
+	// port Start actually bound. Routed through bs, not lan directly, so the
+	// proxy never gets pinned to a dead port after an ephemeral fallback.
 	// Best-effort: never blocks boot.
-	if err := restoreMobileOnBoot(mobilebridge.Path(cfg.DataDir), lan); err != nil {
+	if err := restoreMobileOnBoot(mobilebridge.Path(cfg.DataDir), bs); err != nil {
 		log.Warn("restore mobile bridge on boot failed", "err", err)
 	}
 
@@ -511,6 +518,12 @@ func Run() error {
 		<-usageDone
 	}
 	lcStack.Stop()
+	// Tear the tailnet proxy down before the listener it fronts. `tailscale
+	// serve --bg` state lives in tailscaled and outlives this process, so
+	// leaving it would keep publishing a local port that no longer has the
+	// authenticated LAN listener behind it. Best-effort and never blocking:
+	// boot restore re-applies it against the next bound port.
+	bs.ShutdownServe()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {

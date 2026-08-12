@@ -574,6 +574,77 @@ func TestWorkspaceFilesRecomputesRecordedRefAfterBaseMoves(t *testing.T) {
 	}
 }
 
+// TestWorkspaceFilesExcludeMainChangesMergedInAfterStaleOriginRef reproduces a
+// file-count inflation bug: AO never runs `git fetch` against a session
+// worktree, so its refs/remotes/origin/main tracking ref can go stale relative
+// to the real upstream. When the branch later merges a newer main in (e.g. to
+// resolve a merge conflict), recomputing the compare base from that stale ref
+// still "succeeds" but lands on an earlier commit than the branch's true
+// merge point, so unrelated commits that landed on main afterward leak into
+// the diff as if they were part of the PR.
+func TestWorkspaceFilesExcludeMainChangesMergedInAfterStaleOriginRef(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	// M1: a commit lands on main before the session spawns. AO records this
+	// as the session's origin/main tracking ref at spawn time.
+	writeWorkspaceFile(t, repo, "unrelated-1.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-1.go")
+	runGit(t, repo, "commit", "-m", "unrelated change 1")
+	m1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", m1)
+
+	// The session's feature branch forks from here and makes its own change.
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	// M2: an unrelated PR merges into main after the session spawned. Nothing
+	// in AO refreshes refs/remotes/origin/main, so it still points at M1.
+	runGit(t, repo, "switch", "main")
+	writeWorkspaceFile(t, repo, "unrelated-2.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-2.go")
+	runGit(t, repo, "commit", "-m", "unrelated change 2")
+	m2 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// The developer resolves a conflict by merging current main into their
+	// branch. HEAD gains M2 as an ancestor, but the stale tracking ref doesn't move.
+	runGit(t, repo, "switch", "ao/work")
+	runGit(t, repo, "merge", "main", "-m", "merge main to resolve conflict")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: repo,
+			DiffBaseRef:   "origin/main",
+		},
+	}
+	// AO's own PR sync has observed GitHub's current base tip (M2) even though
+	// the local origin/main tracking ref hasn't moved.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: m2},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	if got, ok := byPath["unrelated-2.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-2.go leaked into the diff via a stale origin/main tracking ref: %#v (compare base %q)", got, files.CompareBaseSHA)
+	}
+}
+
 func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	runGit(t, repo, "branch", "-M", "main")

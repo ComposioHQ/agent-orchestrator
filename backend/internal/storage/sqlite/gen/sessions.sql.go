@@ -13,6 +13,32 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const activateConversationBranchSession = `-- name: ActivateConversationBranchSession :execrows
+UPDATE sessions
+SET provider_conversation_id = ?, controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat' AND is_terminated = 0
+`
+
+type ActivateConversationBranchSessionParams struct {
+	ProviderConversationID string
+	ControllerGeneration   string
+	UpdatedAt              time.Time
+	ID                     domain.SessionID
+}
+
+func (q *Queries) ActivateConversationBranchSession(ctx context.Context, arg ActivateConversationBranchSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, activateConversationBranchSession,
+		arg.ProviderConversationID,
+		arg.ControllerGeneration,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const claimChatControllerGeneration = `-- name: ClaimChatControllerGeneration :execrows
 UPDATE sessions
 SET controller_generation = ?, updated_at = ?
