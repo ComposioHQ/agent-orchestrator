@@ -36,6 +36,11 @@ const (
 	listPageLimit = 100
 	// maxListPages bounds pagination so a broken cursor cannot loop forever.
 	maxListPages = 50
+	// deletePollInterval paces the wait for an accepted delete to finish.
+	deletePollInterval = 2 * time.Second
+	// deletePollTimeout bounds that wait. Giving up is not fatal on its own:
+	// the reconciler retries the whole recreate on a later tick.
+	deletePollTimeout = 2 * time.Minute
 )
 
 // HTTPError is a non-2xx response from the CreateOS API. The body is truncated
@@ -61,6 +66,10 @@ type Client struct {
 	region       string
 	sshPubKeys   []string
 	http         *http.Client
+	// deletePoll is how long Recreate waits between checks that a deleted
+	// sandbox has actually gone away. A field rather than a constant so tests
+	// can drive the poll loop without sleeping.
+	deletePoll time.Duration
 }
 
 var (
@@ -94,6 +103,7 @@ func New(config Config) *Client {
 		region:       strings.TrimSpace(config.Region),
 		sshPubKeys:   append([]string(nil), config.SSHPubKeys...),
 		http:         httpClient,
+		deletePoll:   deletePollInterval,
 	}
 }
 
@@ -229,7 +239,43 @@ func (c *Client) Recreate(
 	if err := c.Delete(ctx, id); err != nil {
 		return sandbox.Environment{}, err
 	}
+	if err := c.awaitDeleted(ctx, id); err != nil {
+		return sandbox.Environment{}, err
+	}
 	return c.Create(ctx, spec)
+}
+
+// awaitDeleted blocks until a deleted sandbox is really gone. CreateOS accepts
+// a DELETE and returns immediately, leaving the VM in destroying until it
+// reaches destroyed; creating the replacement before then collides with a name
+// the API still considers taken, which fails the recreate and leaves the next
+// tick to repeat the same collision.
+func (c *Client) awaitDeleted(ctx context.Context, id sandbox.ID) error {
+	deadline := time.Now().Add(deletePollTimeout)
+	for {
+		environment, err := c.Get(ctx, id)
+		switch {
+		case errors.Is(err, sandbox.ErrNotFound):
+			return nil
+		case err != nil:
+			return err
+		case environment.State == sandbox.StateDeleted:
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf(
+				"createos: sandbox %s was still %s %s after its delete was accepted",
+				id,
+				environment.State,
+				deletePollTimeout,
+			)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(c.deletePoll):
+		}
+	}
 }
 
 type execRequest struct {
@@ -268,10 +314,27 @@ func (c *Client) BootstrapWorker(
 			return err
 		}
 	}
-	if err := c.uploadFile(ctx, id, destination, bootstrap.Binary); err != nil {
+
+	// On the repair path the previous worker is usually still running — a
+	// partitioned worker only exits after its heartbeats fail — and Linux
+	// refuses to write a running executable with ETXTBSY. Staging the upload
+	// beside the destination and renaming over it swaps the directory entry
+	// instead, which the kernel allows while the old inode is still mapped.
+	staging := destination + ".new"
+	if err := c.uploadFile(ctx, id, staging, bootstrap.Binary); err != nil {
 		return err
 	}
-	if err := c.exec(ctx, id, "chmod", []string{"0755", destination}); err != nil {
+	if err := c.exec(ctx, id, "chmod", []string{"0755", staging}); err != nil {
+		return err
+	}
+	// Stop the old worker before the swap so a repaired sandbox does not end up
+	// with two processes heartbeating under the same identity. pkill exits 1
+	// when nothing matches, which is the normal first-bootstrap case.
+	stop := "pkill -f " + shellQuote(destination) + " || true"
+	if err := c.exec(ctx, id, "bash", []string{"-c", stop}); err != nil {
+		return err
+	}
+	if err := c.exec(ctx, id, "mv", []string{"-f", staging, destination}); err != nil {
 		return err
 	}
 
