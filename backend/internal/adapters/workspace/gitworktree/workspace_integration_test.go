@@ -533,6 +533,7 @@ func TestFetchDefaultBranchRefreshesRemoteTrackingRef(t *testing.T) {
 	run(t, git, "clone", originURL, updater)
 	runGit(t, git, updater, "config", "user.email", "ao@example.com")
 	runGit(t, git, updater, "config", "user.name", "Ao Agents")
+	runGit(t, git, updater, "checkout", "-B", "main", "origin/main")
 	if err := os.WriteFile(filepath.Join(updater, "fresh.txt"), []byte("fresh\n"), 0o644); err != nil {
 		t.Fatalf("write fresh file: %v", err)
 	}
