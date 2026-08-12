@@ -73,6 +73,9 @@ func TestPrepareCheckoutClonesWithoutPersistingCredential(t *testing.T) {
 
 func TestPrepareCheckoutAllowsAnonymousPublicGitHubClone(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "repository")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	runner := &recordingGitRunner{origin: "https://github.com/aoagents/cloud-smoke.git"}
 	err := PrepareCheckout(context.Background(), runner, workspace, CheckoutGrantResponse{
 		CloneURL: "https://github.com/aoagents/cloud-smoke",

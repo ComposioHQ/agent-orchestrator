@@ -42,10 +42,25 @@ compose() {
 }
 
 cleanup() {
+	local status=$?
+	if ((status != 0)); then
+		compose logs >&2 || true
+		local worker
+		while IFS= read -r worker; do
+			if [[ -n "$worker" ]]; then
+				docker logs "$worker" >&2 || true
+			fi
+		done < <(
+			docker ps --all --quiet \
+				--filter "label=ao.managed=true" \
+				--filter "label=ao.docker.namespace=${project_name}"
+		)
+	fi
 	ao_docker_remove_workers "$project_name" >/dev/null 2>&1 || true
 	compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 	ao_docker_remove_workspaces "$project_name" >/dev/null 2>&1 || true
 	rm -rf "$state_directory"
+	return "$status"
 }
 trap cleanup EXIT
 
@@ -165,7 +180,7 @@ if mode == "create":
         f"/api/cloud/v1/orgs/{org_id}/projects",
         body={
             "displayName": "Persistence Test",
-            "repositoryUrl": "https://github.com/Untrivial-ai/agent-orchestrator",
+            "repositoryUrl": "https://github.com/octocat/Hello-World",
             "defaultBranch": "main",
             "config": {},
         },

@@ -62,13 +62,20 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 		if !info.IsDir() {
 			return errors.New("workspace path is not a directory")
 		}
-		if err := validateOrigin(ctx, runner, workspace, expected); err != nil {
-			return err
+		entries, err := os.ReadDir(workspace)
+		if err != nil {
+			return fmt.Errorf("inspect workspace contents: %w", err)
 		}
-		return withGitCredential(grant.Token, func(env map[string]string) error {
-			_, err := runner.Run(ctx, workspace, env, "fetch", "--prune", "--", "origin")
+		if len(entries) == 0 {
+			statErr = os.ErrNotExist
+		} else if err := validateOrigin(ctx, runner, workspace, expected); err != nil {
 			return err
-		})
+		} else {
+			return withGitCredential(grant.Token, func(env map[string]string) error {
+				_, err := runner.Run(ctx, workspace, env, "fetch", "--prune", "--", "origin")
+				return err
+			})
+		}
 	}
 	if !errors.Is(statErr, os.ErrNotExist) {
 		return fmt.Errorf("inspect workspace: %w", statErr)

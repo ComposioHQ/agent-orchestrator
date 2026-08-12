@@ -180,13 +180,15 @@ func New(options Options) *Server {
 		drain:                make(chan struct{}),
 		logger:               logger,
 		github:               options.GitHub,
-		checkoutBroker:       options.GitHub,
 		secretCipher:         options.SecretCipher,
 		credentialValidator:  options.CredentialValidator,
 		webhookMaxBody:       webhookMaxBody,
 	}
 	if server.credentialValidator == nil {
 		server.credentialValidator = newAgentCredentialValidator(nil)
+	}
+	if options.GitHub != nil {
+		server.checkoutBroker = options.GitHub
 	}
 	server.provisioning.Provider = sandboxProvider
 	if server.provisioning.Release == "" {

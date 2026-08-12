@@ -48,6 +48,13 @@ type recordingCheckoutBroker struct {
 	grant githubapp.CheckoutGrant
 }
 
+func TestNewDoesNotInstallTypedNilCheckoutBroker(t *testing.T) {
+	server := New(Options{})
+	if server.checkoutBroker != nil {
+		t.Fatal("nil GitHub service became a non-nil checkout broker interface")
+	}
+}
+
 func (b *recordingCheckoutBroker) IssueCheckoutGrant(
 	context.Context, string, string,
 ) (githubapp.CheckoutGrant, error) {
