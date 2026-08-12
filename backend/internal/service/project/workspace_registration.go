@@ -41,6 +41,20 @@ func prepareWorkspaceProject(ctx context.Context, parent string, projectID domai
 			"suggestedFix": "Create or move child repositories directly under the workspace folder, then retry.",
 		})
 	}
+	// Require at least one fully resolved repo; a workspace with only
+	// needs_init children has nothing to build worktrees from.
+	hasReady := false
+	for _, c := range children {
+		if c.GitStatus == domain.GitStatusReady {
+			hasReady = true
+			break
+		}
+	}
+	if !hasReady {
+		return nil, apierr.Invalid("WORKSPACE_NO_READY_REPOS", "Workspace project must contain at least one fully resolved git repository with an origin remote", map[string]any{
+			"suggestedFix": "Initialize at least one child repository with a remote origin, then retry.",
+		})
+	}
 	if isGitRepo(parent) {
 		if err := adoptWorkspaceParent(ctx, parent, children); err != nil {
 			return nil, err

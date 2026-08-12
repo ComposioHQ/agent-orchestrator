@@ -1161,16 +1161,29 @@ func TestManager_AddWorkspaceAcceptsUnbornChildAsNeedsInit(t *testing.T) {
 	if out, err := exec.Command("git", "init", "-b", "main", child).CombinedOutput(); err != nil {
 		t.Fatalf("git init child: %v (%s)", err, out)
 	}
+	gitRepoWithCommit(t, filepath.Join(parent, "ready"))
 
 	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
 	if err != nil {
 		t.Fatalf("Add workspace with unborn child: %v", err)
 	}
-	if len(proj.WorkspaceRepos) != 1 {
-		t.Fatalf("expected 1 child repo, got %d", len(proj.WorkspaceRepos))
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
 	}
-	if proj.WorkspaceRepos[0].GitStatus != string(domain.GitStatusNeedsInit) {
-		t.Fatalf("GitStatus = %q, want %q", proj.WorkspaceRepos[0].GitStatus, domain.GitStatusNeedsInit)
+	var foundNeedsInit, foundReady bool
+	for _, r := range proj.WorkspaceRepos {
+		switch r.GitStatus {
+		case string(domain.GitStatusNeedsInit):
+			foundNeedsInit = true
+		case string(domain.GitStatusReady):
+			foundReady = true
+		}
+	}
+	if !foundNeedsInit {
+		t.Fatalf("expected a needs_init child")
+	}
+	if !foundReady {
+		t.Fatalf("expected a ready child")
 	}
 }
 
@@ -1180,19 +1193,27 @@ func TestManager_AddWorkspaceAcceptsChildWithoutOriginAsNeedsInit(t *testing.T) 
 	m := newManager(t)
 	parent := t.TempDir()
 	gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
+	gitRepoWithCommit(t, filepath.Join(parent, "ready"))
 
 	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
 	if err != nil {
 		t.Fatalf("Add workspace with originless child: %v", err)
 	}
-	if len(proj.WorkspaceRepos) != 1 {
-		t.Fatalf("expected 1 child repo, got %d", len(proj.WorkspaceRepos))
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
 	}
-	if proj.WorkspaceRepos[0].GitStatus != string(domain.GitStatusNeedsInit) {
-		t.Fatalf("GitStatus = %q, want %q", proj.WorkspaceRepos[0].GitStatus, domain.GitStatusNeedsInit)
+	var needsInitRepo *project.WorkspaceRepo
+	for i := range proj.WorkspaceRepos {
+		if proj.WorkspaceRepos[i].GitStatus == string(domain.GitStatusNeedsInit) {
+			needsInitRepo = &proj.WorkspaceRepos[i]
+			break
+		}
 	}
-	if proj.WorkspaceRepos[0].Repo != "" {
-		t.Fatalf("Repo = %q, want empty", proj.WorkspaceRepos[0].Repo)
+	if needsInitRepo == nil {
+		t.Fatalf("expected a needs_init child")
+	}
+	if needsInitRepo.Repo != "" {
+		t.Fatalf("Repo = %q, want empty", needsInitRepo.Repo)
 	}
 }
 
@@ -1357,16 +1378,24 @@ func TestManager_AddWorkspaceAcceptsWorktreeChildAsNeedsInit(t *testing.T) {
 	if out, err := exec.Command("git", "-C", extRepo, "worktree", "add", child).CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add child: %v (%s)", err, out)
 	}
+	gitRepoWithCommit(t, filepath.Join(parent, "ready"))
 
 	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
 	if err != nil {
 		t.Fatalf("Add workspace with worktree child: %v", err)
 	}
-	if len(proj.WorkspaceRepos) != 1 {
-		t.Fatalf("expected 1 child repo, got %d", len(proj.WorkspaceRepos))
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
 	}
-	if proj.WorkspaceRepos[0].GitStatus != string(domain.GitStatusNeedsInit) {
-		t.Fatalf("GitStatus = %q, want %q", proj.WorkspaceRepos[0].GitStatus, domain.GitStatusNeedsInit)
+	var foundNeedsInit bool
+	for _, r := range proj.WorkspaceRepos {
+		if r.GitStatus == string(domain.GitStatusNeedsInit) {
+			foundNeedsInit = true
+			break
+		}
+	}
+	if !foundNeedsInit {
+		t.Fatalf("expected a needs_init child")
 	}
 }
 
