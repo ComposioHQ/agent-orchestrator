@@ -398,7 +398,14 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		record.OrgID,
 		record.SessionID,
 		"worker_bootstrap",
-		[]string{"worker:connect", "worker:event", "worker:terminal", "worker:git", "worker:orchestrate"},
+		[]string{
+			"worker:connect",
+			"worker:event",
+			"worker:turn:claim",
+			"worker:turn:poll",
+			"worker:turn:complete",
+			"worker:credential:read",
+		},
 		bootstrapTicketTTL,
 	)
 	if err != nil {

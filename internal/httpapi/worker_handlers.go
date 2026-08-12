@@ -5,24 +5,28 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/go-chi/chi/v5"
 )
 
 // Worker events are namespaced so a compromised sandbox cannot forge a
 // control-plane or billing event onto its own session stream.
-var workerEventPrefixes = []string{
-	"worker.",
-	"agent.",
-	"terminal.",
-	"repository.",
-	"chat.",
+var workerEventTypes = map[string]struct{}{
+	"worker.ready":         {},
+	"chat.assistant_delta": {},
 }
 
-const maxWorkerEventType = 100
+const (
+	maxWorkerEventType   = 100
+	maxWorkerControlBody = 8 << 10
+	maxWorkerOutput      = 16 << 10
+	maxWorkerError       = 4 << 10
+)
 
 // workerBootstrap redeems a one-time ticket for a live worker credential. It is
 // the only unauthenticated worker route: the ticket itself is the proof, and it
@@ -210,7 +214,7 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 		Type    string          `json:"type"`
 		Payload json.RawMessage `json:"payload"`
 	}
-	if err := decodeJSON(w, r, &input); err != nil {
+	if err := decodeJSONLimit(w, r, &input, maxWorkerOutput+maxWorkerControlBody); err != nil {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -230,11 +234,49 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if _, err := s.store.AppendSessionEvent(
-		r.Context(), claims.OrgID, claims.SessionID, input.Type, input.Payload,
-	); err != nil {
-		s.writeStoreError(w, r, err)
-		return
+	switch input.Type {
+	case "worker.ready":
+		var ready worker.ReadyEvent
+		if err := json.Unmarshal(input.Payload, &ready); err != nil ||
+			ready.WorkerID != claims.WorkerID ||
+			ready.Epoch != claims.Epoch ||
+			strings.TrimSpace(ready.Version) == "" ||
+			len(ready.Version) > 100 ||
+			len(ready.Capabilities) > 64 {
+			writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_PAYLOAD", "The worker.ready payload is invalid.")
+			return
+		}
+		if _, err := s.store.AppendSessionEvent(
+			r.Context(), claims.OrgID, claims.SessionID, input.Type, input.Payload,
+		); err != nil {
+			s.writeWorkerStoreError(w, r, err)
+			return
+		}
+	case "chat.assistant_delta":
+		var output worker.OutputEvent
+		if err := json.Unmarshal(input.Payload, &output); err != nil ||
+			requireUUID(output.TurnID, "turnId") != nil ||
+			output.Attempt <= 0 ||
+			(output.Stream != "stdout" && output.Stream != "stderr") ||
+			output.Text == "" ||
+			len(output.Text) > maxWorkerOutput {
+			writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_PAYLOAD", "The assistant output payload is invalid.")
+			return
+		}
+		if err := s.store.AppendWorkerTurnOutput(
+			r.Context(),
+			claims.OrgID,
+			claims.SessionID,
+			claims.WorkerID,
+			output.TurnID,
+			claims.Epoch,
+			output.Attempt,
+			output.Stream,
+			output.Text,
+		); err != nil {
+			s.writeWorkerStoreError(w, r, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
@@ -243,12 +285,188 @@ func allowedWorkerEventType(eventType string) bool {
 	if eventType == "" || len(eventType) > maxWorkerEventType {
 		return false
 	}
-	for _, prefix := range workerEventPrefixes {
-		if strings.HasPrefix(eventType, prefix) {
-			return true
+	_, allowed := workerEventTypes[eventType]
+	return allowed
+}
+
+func (s *Server) workerClaimTurn(w http.ResponseWriter, r *http.Request) {
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:turn:claim") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:turn:claim scope is required.")
+		return
+	}
+	var input worker.ClaimTurnRequest
+	if err := decodeJSONLimit(w, r, &input, maxWorkerControlBody); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	turn, ok, err := s.store.ClaimWorkerTurn(
+		r.Context(), claims.OrgID, claims.SessionID, claims.WorkerID, claims.Epoch,
+	)
+	if err != nil {
+		s.writeWorkerStoreError(w, r, err)
+		return
+	}
+	response := worker.ClaimTurnResponse{}
+	if ok {
+		response.Turn = &worker.Turn{
+			ID:              turn.ID,
+			Prompt:          turn.Prompt,
+			Mode:            turn.Mode,
+			DeniedCommands:  turn.DeniedCommands,
+			Harness:         turn.Harness,
+			Attempt:         turn.Attempt,
+			CancelRequested: turn.CancelRequested,
+			AgentSessionID:  turn.AgentSessionID,
 		}
 	}
-	return false
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) workerTurnCancellation(w http.ResponseWriter, r *http.Request) {
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:turn:poll") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:turn:poll scope is required.")
+		return
+	}
+	turnID := chi.URLParam(r, "turnId")
+	attempt, err := strconv.Atoi(r.URL.Query().Get("attempt"))
+	if requireUUID(turnID, "turnId") != nil || err != nil || attempt <= 0 {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "A valid turnId and attempt are required.")
+		return
+	}
+	requested, err := s.store.WorkerTurnCancellationRequested(
+		r.Context(),
+		claims.OrgID,
+		claims.SessionID,
+		claims.WorkerID,
+		turnID,
+		claims.Epoch,
+		attempt,
+	)
+	if err != nil {
+		s.writeWorkerStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.CancellationResponse{Requested: requested})
+}
+
+func (s *Server) workerCompleteTurn(w http.ResponseWriter, r *http.Request) {
+	s.workerFinishTurn(w, r, "completed")
+}
+
+func (s *Server) workerFailTurn(w http.ResponseWriter, r *http.Request) {
+	s.workerFinishTurn(w, r, "failed")
+}
+
+func (s *Server) workerFinishTurn(w http.ResponseWriter, r *http.Request, outcome string) {
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:turn:complete") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:turn:complete scope is required.")
+		return
+	}
+	turnID := chi.URLParam(r, "turnId")
+	if requireUUID(turnID, "turnId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "turnId must be a UUID.")
+		return
+	}
+	attempt := 0
+	errorMessage := ""
+	if outcome == "failed" {
+		var input worker.FailTurnRequest
+		if err := decodeJSONLimit(w, r, &input, maxWorkerError+maxWorkerControlBody); err != nil {
+			writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+			return
+		}
+		attempt = input.Attempt
+		errorMessage = strings.TrimSpace(input.Error)
+		if errorMessage == "" || len(errorMessage) > maxWorkerError {
+			writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The failure message is invalid.")
+			return
+		}
+	} else {
+		var input worker.FinishTurnRequest
+		if err := decodeJSONLimit(w, r, &input, maxWorkerControlBody); err != nil {
+			writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+			return
+		}
+		attempt = input.Attempt
+		if input.Cancelled {
+			outcome = "cancelled"
+		}
+	}
+	if attempt <= 0 {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "attempt must be positive.")
+		return
+	}
+	alreadyFinished, err := s.store.FinishWorkerTurn(
+		r.Context(),
+		claims.OrgID,
+		claims.SessionID,
+		claims.WorkerID,
+		turnID,
+		claims.Epoch,
+		attempt,
+		outcome,
+		errorMessage,
+	)
+	if err != nil {
+		s.writeWorkerStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.FinishTurnResponse{
+		OK:              true,
+		AlreadyFinished: alreadyFinished,
+	})
+}
+
+func (s *Server) workerCredential(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:credential:read") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:credential:read scope is required.")
+		return
+	}
+	if s.secretCipher == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "CREDENTIALS_UNAVAILABLE", "Coding-agent credentials are unavailable.")
+		return
+	}
+	credential, err := s.store.WorkerAgentCredential(
+		r.Context(), claims.OrgID, claims.SessionID, claims.WorkerID, claims.Epoch,
+	)
+	if err != nil {
+		s.writeWorkerStoreError(w, r, err)
+		return
+	}
+	if !validAgentProvider(credential.Provider) ||
+		!validAgentCredentialType(credential.Provider, credential.CredentialType) {
+		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_CREDENTIAL", "The selected coding-agent credential is invalid.")
+		return
+	}
+	plaintext, err := s.secretCipher.Decrypt(
+		credential.EncryptedSecret,
+		credential.Nonce,
+		providerSecretAssociatedData(claims.OrgID, credential.Provider),
+	)
+	if err != nil {
+		s.logger.Error("decrypt worker credential", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusInternalServerError, "CREDENTIAL_DECRYPTION_FAILED", "The coding-agent credential could not be decrypted.")
+		return
+	}
+	defer clear(plaintext)
+	writeJSON(w, http.StatusOK, worker.CredentialResponse{
+		Provider:       credential.Provider,
+		CredentialType: credential.CredentialType,
+		Secret:         string(plaintext),
+	})
+}
+
+func (s *Server) writeWorkerStoreError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, postgres.ErrStaleWorker) {
+		writeError(w, r, http.StatusUnauthorized, "STALE_WORKER_TOKEN", "The worker credential has been replaced.")
+		return
+	}
+	s.writeStoreError(w, r, err)
 }
 
 // workerTokenTTL is how long an issued worker credential stays valid. An

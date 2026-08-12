@@ -27,7 +27,11 @@ type errorEnvelope struct {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	return decodeJSONLimit(w, r, target, maxRequestBody)
+}
+
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
@@ -62,6 +66,10 @@ func (s *Server) writeStoreError(w http.ResponseWriter, r *http.Request, err err
 		writeError(w, r, http.StatusNotFound, "not_found", "The requested resource was not found.")
 	case errors.Is(err, postgres.ErrConflict):
 		writeError(w, r, http.StatusConflict, "conflict", "The resource conflicts with an existing record.")
+	case errors.Is(err, postgres.ErrTurnFinished):
+		writeError(w, r, http.StatusConflict, "TURN_FINISHED", "The turn is already finished.")
+	case errors.Is(err, postgres.ErrStaleTurn):
+		writeError(w, r, http.StatusConflict, "STALE_TURN", "The turn is owned by another worker attempt.")
 	case errors.Is(err, postgres.ErrInvalid):
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "The request violates a resource constraint.")
 	case errors.Is(err, postgres.ErrIdempotencyMismatch):

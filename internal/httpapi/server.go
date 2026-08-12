@@ -50,6 +50,12 @@ type Store interface {
 	WorkerConnectionCurrent(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (bool, error)
 	MarkWorkerSeen(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
 	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
+	ClaimWorkerTurn(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerTurn, bool, error)
+	RequestTurnCancellation(ctx context.Context, principal domain.Principal, orgID, sessionID, turnID string) error
+	WorkerTurnCancellationRequested(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int) (bool, error)
+	AppendWorkerTurnOutput(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, stream, text string) error
+	FinishWorkerTurn(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, outcome, errorMessage string) (bool, error)
+	WorkerAgentCredential(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerCredential, error)
 }
 
 // WorkerTokens issues and verifies the short-lived credentials sandbox workers
@@ -183,6 +189,11 @@ func New(options Options) *Server {
 			router.Use(server.workerAuth)
 			router.Post("/worker/heartbeat", server.workerHeartbeat)
 			router.Post("/worker/events", server.workerEvent)
+			router.Post("/worker/turns/claim", server.workerClaimTurn)
+			router.Get("/worker/turns/{turnId}/cancellation", server.workerTurnCancellation)
+			router.Post("/worker/turns/{turnId}/complete", server.workerCompleteTurn)
+			router.Post("/worker/turns/{turnId}/fail", server.workerFailTurn)
+			router.Get("/worker/credential", server.workerCredential)
 		})
 		router.Route("/orgs/{orgId}", func(router chi.Router) {
 			router.Use(server.authenticate)
@@ -204,6 +215,7 @@ func New(options Options) *Server {
 			router.Get("/sessions/{sessionId}", server.getSession)
 			router.Delete("/sessions/{sessionId}", server.deleteSession)
 			router.Post("/sessions/{sessionId}/messages", server.sendMessage)
+			router.Post("/sessions/{sessionId}/turns/{turnId}/cancel", server.cancelTurn)
 			router.Get("/sessions/{sessionId}/chat-events", server.replayClientEvents)
 			router.Get("/sessions/{sessionId}/events", server.streamClientEvents)
 		})

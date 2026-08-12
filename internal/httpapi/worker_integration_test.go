@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/reconcile"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandboxresolve"
+	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -121,12 +123,18 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 	defer pool.Close()
 
 	tokens := worker.NewTokenManager([]byte("0123456789abcdef0123456789abcdef"))
+	cipher, err := secrets.New(bytes.Repeat([]byte{7}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	api := New(Options{
-		Store:            store,
-		LocalAuthEnabled: true,
-		LocalSessionTTL:  time.Hour,
-		SandboxProvider:  sandbox.ProviderNodeOps,
-		WorkerTokens:     tokens,
+		Store:               store,
+		LocalAuthEnabled:    true,
+		LocalSessionTTL:     time.Hour,
+		SandboxProvider:     sandbox.ProviderNodeOps,
+		WorkerTokens:        tokens,
+		SecretCipher:        cipher,
+		CredentialValidator: acceptingCredentialValidator{},
 		Provisioning: sandbox.ProvisioningDefaults{
 			Release: "test-release",
 			NodeOps: sandbox.NodeOpsConfig{
@@ -143,6 +151,16 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 	defer server.Close()
 
 	user := registerUser(t, server.URL, "worker-loop")
+	requestJSON(
+		t,
+		http.MethodPut,
+		server.URL+"/api/cloud/v1/orgs/"+user.OrgID+
+			"/provider-connections/agents/claude-code",
+		user.Token,
+		"worker-loop-credential",
+		map[string]any{"credentialType": "api_key", "secret": "test-agent-secret"},
+		http.StatusOK,
+	)
 	project := objectField(t, requestJSON(
 		t, http.MethodPost, server.URL+"/api/cloud/v1/orgs/"+user.OrgID+"/projects",
 		user.Token, "worker-loop-project",
@@ -169,8 +187,9 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 
 	// Only this session's sandbox should be due, so the assertions below are
 	// about it and not about rows left over from another test.
-	if _, err := pool.Exec(
+	if _, err := execWorkerService(
 		ctx,
+		pool,
 		`UPDATE ao_sandboxes SET reconcile_after = now() + interval '1 day' WHERE session_id <> $1`,
 		sessionID,
 	); err != nil {
@@ -239,10 +258,103 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 	}
 	assertSandboxState(t, pool, sessionID, domain.SandboxObservedRunning)
 
+	requestJSON(
+		t,
+		http.MethodPost,
+		server.URL+"/api/cloud/v1/orgs/"+user.OrgID+"/sessions/"+sessionID+"/messages",
+		user.Token,
+		"worker-loop-message",
+		map[string]any{"text": "run the fake harness"},
+		http.StatusAccepted,
+	)
+	claim := workerRequest(
+		t,
+		server.URL+"/api/cloud/v1/worker/turns/claim",
+		renewed,
+		map[string]any{},
+		http.StatusOK,
+	)
+	turn := objectField(t, claim, "turn")
+	turnID := stringField(t, turn, "id")
+	attempt := int(turn["attempt"].(float64))
+	if stringField(t, turn, "prompt") != "run the fake harness" {
+		t.Fatalf("claimed turn = %#v", turn)
+	}
+	credentialResponse, credentialHeaders := workerGET(
+		t,
+		server.URL+"/api/cloud/v1/worker/credential",
+		renewed,
+		http.StatusOK,
+	)
+	if stringField(t, credentialResponse, "secret") != "test-agent-secret" {
+		t.Fatalf("worker credential = %#v", credentialResponse)
+	}
+	if credentialHeaders.Get("Cache-Control") != "no-store" {
+		t.Fatalf("credential Cache-Control = %q", credentialHeaders.Get("Cache-Control"))
+	}
+	workerRequest(
+		t,
+		server.URL+"/api/cloud/v1/worker/events",
+		renewed,
+		map[string]any{
+			"type": "chat.assistant_delta",
+			"payload": map[string]any{
+				"turnId": turnID, "attempt": attempt,
+				"stream": "stdout", "text": "bounded output",
+			},
+		},
+		http.StatusAccepted,
+	)
+	requestJSON(
+		t,
+		http.MethodPost,
+		server.URL+"/api/cloud/v1/orgs/"+user.OrgID+"/sessions/"+sessionID+
+			"/turns/"+turnID+"/cancel",
+		user.Token,
+		"worker-loop-cancel",
+		map[string]any{},
+		http.StatusAccepted,
+	)
+	cancellation, _ := workerGET(
+		t,
+		server.URL+"/api/cloud/v1/worker/turns/"+turnID+
+			"/cancellation?attempt="+strconv.Itoa(attempt),
+		renewed,
+		http.StatusOK,
+	)
+	if cancellation["requested"] != true {
+		t.Fatalf("cancellation response = %#v", cancellation)
+	}
+	workerRequest(
+		t,
+		server.URL+"/api/cloud/v1/worker/turns/"+turnID+"/complete",
+		renewed,
+		map[string]any{"attempt": attempt, "cancelled": true},
+		http.StatusOK,
+	)
+	duplicate := workerRequest(
+		t,
+		server.URL+"/api/cloud/v1/worker/turns/"+turnID+"/complete",
+		renewed,
+		map[string]any{"attempt": attempt, "cancelled": true},
+		http.StatusOK,
+	)
+	if duplicate["alreadyFinished"] != true {
+		t.Fatalf("duplicate completion = %#v", duplicate)
+	}
+
 	// Worker events land on the session stream; forged namespaces do not.
 	workerRequest(
 		t, server.URL+"/api/cloud/v1/worker/events", renewed,
-		map[string]any{"type": "worker.ready", "payload": map[string]any{"version": "0.1.0"}},
+		map[string]any{
+			"type": "worker.ready",
+			"payload": map[string]any{
+				"workerId":     stringField(t, bootstrap, "workerId"),
+				"epoch":        bootstrap["epoch"],
+				"version":      "0.1.0",
+				"capabilities": []string{"worker.turns"},
+			},
+		},
 		http.StatusAccepted,
 	)
 	workerRequest(
@@ -259,8 +371,9 @@ func TestWorkerBootstrapAndHeartbeatLoop(t *testing.T) {
 
 	// Replacing the sandbox mints a new epoch, which must retire the old
 	// worker even though its token has not expired.
-	if _, err := pool.Exec(
+	if _, err := execWorkerService(
 		ctx,
+		pool,
 		`UPDATE ao_sandboxes SET reconcile_after = now(), worker_last_seen_at = now() - interval '10 minutes'
 		WHERE session_id = $1`,
 		sessionID,
@@ -348,17 +461,58 @@ func TestSessionQuotaIsEnforcedAtIntentTime(t *testing.T) {
 
 func assertSandboxState(t *testing.T, pool *pgxpool.Pool, sessionID, want string) {
 	t.Helper()
+	tx, err := pool.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err := tx.Exec(
+		context.Background(),
+		`SELECT set_config('ao.service', 'control-plane', true)`,
+	); err != nil {
+		t.Fatal(err)
+	}
 	var observed string
-	if err := pool.QueryRow(
+	if err := tx.QueryRow(
 		context.Background(),
 		`SELECT observed_state FROM ao_sandboxes WHERE session_id = $1`,
 		sessionID,
 	).Scan(&observed); err != nil {
 		t.Fatal(err)
 	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if observed != want {
 		t.Fatalf("observed_state = %q, want %q", observed, want)
 	}
+}
+
+func execWorkerService(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	sql string,
+	args ...any,
+) (int64, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT set_config('ao.service', 'control-plane', true)`,
+	); err != nil {
+		return 0, err
+	}
+	tag, err := tx.Exec(ctx, sql, args...)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func workerRequest(
@@ -391,4 +545,28 @@ func workerRequest(
 		t.Fatalf("status = %d, want %d; body = %#v", response.StatusCode, wantStatus, result)
 	}
 	return result
+}
+
+func workerGET(
+	t *testing.T,
+	url, token string,
+	wantStatus int,
+) (map[string]any, http.Header) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Worker "+token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var result map[string]any
+	_ = json.NewDecoder(response.Body).Decode(&result)
+	if response.StatusCode != wantStatus {
+		t.Fatalf("status = %d, want %d; body = %#v", response.StatusCode, wantStatus, result)
+	}
+	return result, response.Header.Clone()
 }

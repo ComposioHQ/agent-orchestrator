@@ -110,6 +110,32 @@ type ClientEvent struct {
 	CreatedAt time.Time
 }
 
+// WorkerTurn is the durable unit of coding-agent work leased to one worker
+// epoch. Attempt fences callbacks from an earlier claim even if a request is
+// delayed and delivered after the turn has moved on.
+type WorkerTurn struct {
+	ID                string
+	SessionID         string
+	Prompt            string
+	Mode              string
+	DeniedCommands    []string
+	Harness           string
+	Attempt           int
+	WorkerEpoch       int64
+	CancelRequested   bool
+	AgentSessionID    string
+	UserEventSequence int64
+}
+
+// WorkerCredential is the encrypted coding-agent credential selected by the
+// session harness. Plaintext is produced only at the authenticated HTTP edge.
+type WorkerCredential struct {
+	Provider        string
+	CredentialType  string
+	EncryptedSecret []byte
+	Nonce           []byte
+}
+
 type Cursor struct {
 	Time time.Time
 	ID   string

@@ -69,6 +69,29 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) cancelTurn(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	sessionID := chi.URLParam(r, "sessionId")
+	turnID := chi.URLParam(r, "turnId")
+	if requireUUID(orgID, "orgId") != nil ||
+		requireUUID(sessionID, "sessionId") != nil ||
+		requireUUID(turnID, "turnId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId, sessionId, and turnId must be UUIDs.")
+		return
+	}
+	if err := s.store.RequestTurnCancellation(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		sessionID,
+		turnID,
+	); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+}
+
 func (s *Server) replayClientEvents(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	sessionID := chi.URLParam(r, "sessionId")

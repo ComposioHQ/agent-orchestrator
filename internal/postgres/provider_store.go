@@ -103,7 +103,7 @@ func (s *Store) UpsertProviderConnection(
 				org_id, actor_user_id, action, resource_type, resource_id, metadata
 			) VALUES (
 				$1, $2, 'provider_connection.updated', 'provider_connection', $3,
-				jsonb_build_object('provider', $4, 'label', $5)
+				jsonb_build_object('provider', $4::text, 'label', $5::text)
 			)`,
 			orgID,
 			principal.UserID,

@@ -47,3 +47,59 @@ type EventRequest struct {
 	Type    string `json:"type"`
 	Payload any    `json:"payload,omitempty"`
 }
+
+type ClaimTurnRequest struct{}
+
+type Turn struct {
+	ID              string   `json:"id"`
+	Prompt          string   `json:"prompt"`
+	Mode            string   `json:"mode"`
+	DeniedCommands  []string `json:"deniedCommands"`
+	Harness         string   `json:"harness"`
+	Attempt         int      `json:"attempt"`
+	CancelRequested bool     `json:"cancelRequested"`
+	AgentSessionID  string   `json:"agentSessionId,omitempty"`
+}
+
+type ClaimTurnResponse struct {
+	Turn *Turn `json:"turn"`
+}
+
+type CancellationResponse struct {
+	Requested bool `json:"requested"`
+}
+
+type FinishTurnRequest struct {
+	Attempt   int  `json:"attempt"`
+	Cancelled bool `json:"cancelled,omitempty"`
+}
+
+type FailTurnRequest struct {
+	Attempt int    `json:"attempt"`
+	Error   string `json:"error"`
+}
+
+type FinishTurnResponse struct {
+	OK              bool `json:"ok"`
+	AlreadyFinished bool `json:"alreadyFinished"`
+}
+
+type CredentialResponse struct {
+	Provider       string `json:"provider"`
+	CredentialType string `json:"credentialType"`
+	Secret         string `json:"secret"`
+}
+
+type ReadyEvent struct {
+	WorkerID     string   `json:"workerId"`
+	Epoch        int64    `json:"epoch"`
+	Version      string   `json:"version"`
+	Capabilities []string `json:"capabilities"`
+}
+
+type OutputEvent struct {
+	TurnID  string `json:"turnId"`
+	Attempt int    `json:"attempt"`
+	Stream  string `json:"stream"`
+	Text    string `json:"text"`
+}
