@@ -28,6 +28,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { terminalFontSizeDelta as shortcutFontSizeDelta } from "../../shared/shortcuts";
 import type {
 	AttachableTerminal,
 	TerminalUserInputSource,
@@ -145,14 +146,17 @@ function consumeTerminalShortcut(event: KeyboardEvent): void {
 }
 
 function terminalFontSizeDelta(event: KeyboardEvent): -1 | 0 | 1 {
-	const usesMacShortcut = isMacPlatform();
-	const hasPrimaryModifier = usesMacShortcut
-		? event.metaKey && !event.ctrlKey
-		: event.ctrlKey && !event.metaKey;
-	if (!hasPrimaryModifier || event.altKey) return 0;
-	if (event.key === "+" || event.key === "=" || event.code === "NumpadAdd") return 1;
-	if (event.key === "-" || event.code === "NumpadSubtract") return -1;
-	return 0;
+	return shortcutFontSizeDelta(
+		{
+			key: event.key,
+			code: event.code,
+			ctrl: event.ctrlKey,
+			meta: event.metaKey,
+			shift: event.shiftKey,
+			alt: event.altKey,
+		},
+		isMacPlatform(),
+	);
 }
 
 function normalizedTerminalShortcut(event: KeyboardEvent): string | null {
@@ -327,6 +331,25 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
+		let reportedFocused = false;
+		const reportFocused = (focused: boolean) => {
+			const next = focused && Boolean(callbacksRef.current.onChangeFontSize);
+			if (next === reportedFocused) return;
+			reportedFocused = next;
+			aoBridge.terminal.setFocused(next);
+		};
+		const handleFocusIn = () => reportFocused(true);
+		const handleFocusOut = (event: FocusEvent) => {
+			const next = event.relatedTarget;
+			if (next instanceof Node && host.contains(next)) return;
+			reportFocused(false);
+		};
+		host.addEventListener("focusin", handleFocusIn);
+		host.addEventListener("focusout", handleFocusOut);
+		const disposeFontSizeShortcut = aoBridge.terminal.onFontSizeShortcut((delta) => {
+			if (!terminalHasFocus(host)) return;
+			callbacksRef.current.onChangeFontSize?.(delta);
+		});
 		const activateLink = (event: MouseEvent, uri: string) => {
 			// Left-click on a web link opens it inside the AO Browser panel (the
 			// parent decides how). Non-web schemes (mailto:, etc.) still go to the OS
@@ -898,6 +921,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 
 		return () => {
 			disposed = true;
+			if (reportedFocused) aoBridge.terminal.setFocused(false);
+			disposeFontSizeShortcut();
+			host.removeEventListener("focusin", handleFocusIn);
+			host.removeEventListener("focusout", handleFocusOut);
 			delete (host as DevXtermHost).__aoXtermForTest;
 			termRef.current = null;
 			fitRef.current = null;

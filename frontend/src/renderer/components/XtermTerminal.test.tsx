@@ -158,6 +158,8 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+		window.ao!.terminal.setFocused = vi.fn();
+		window.ao!.terminal.onFontSizeShortcut = () => () => undefined;
 	});
 
 	it("finishes retained activation when xterm emits no render event", async () => {
@@ -322,6 +324,30 @@ describe("XtermTerminal", () => {
 		expect(onChangeFontSize).toHaveBeenNthCalledWith(2, -1);
 		expect(increase.preventDefault).toHaveBeenCalledOnce();
 		expect(decrease.preventDefault).toHaveBeenCalledOnce();
+	});
+
+	it("reports terminal focus and applies main-process font-size shortcuts only there", () => {
+		let fontSizeShortcut: ((delta: -1 | 1) => void) | undefined;
+		window.ao!.terminal.onFontSizeShortcut = (listener) => {
+			fontSizeShortcut = listener;
+			return () => undefined;
+		};
+		const onChangeFontSize = vi.fn();
+		const { container } = render(<XtermTerminal onChangeFontSize={onChangeFontSize} theme="dark" />);
+		const textarea = container.querySelector("textarea")!;
+
+		textarea.focus();
+		expect(window.ao!.terminal.setFocused).toHaveBeenLastCalledWith(true);
+		fontSizeShortcut?.(1);
+		expect(onChangeFontSize).toHaveBeenCalledWith(1);
+
+		const outside = document.createElement("button");
+		document.body.appendChild(outside);
+		outside.focus();
+		expect(window.ao!.terminal.setFocused).toHaveBeenLastCalledWith(false);
+		fontSizeShortcut?.(-1);
+		expect(onChangeFontSize).toHaveBeenCalledTimes(1);
+		outside.remove();
 	});
 
 	it("handles native copy events from inside the terminal", () => {
