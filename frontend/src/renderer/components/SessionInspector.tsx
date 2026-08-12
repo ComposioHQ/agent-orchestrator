@@ -17,6 +17,7 @@ import {
 	GitMerge,
 	Info,
 	MessageSquare,
+	PanelRightClose,
 	Play,
 	Trash2,
 	Loader2,
@@ -54,6 +55,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
+import { TopbarButton } from "./TopbarButton";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -63,7 +65,11 @@ type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => v
 
 export type InspectorView = "summary" | "browser" | "files";
 
-const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
+const VIEW_DEFS: {
+	id: InspectorView;
+	labelKey: "inspector.summary" | "inspector.browser" | "inspector.files";
+	icon: ReactNode;
+}[] = [
 	{
 		id: "summary",
 		labelKey: "inspector.summary",
@@ -148,7 +154,9 @@ export function SessionInspector({
 	browserPoppedOut = false,
 	browserAnnotationQueue,
 	isInspectorVisible = true,
+	notificationAction,
 	onToggleBrowserPopOut,
+	onToggleVisibility,
 	onOpenFiles,
 	filesView,
 	browserView,
@@ -160,7 +168,9 @@ export function SessionInspector({
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
+	notificationAction?: ReactNode;
 	onToggleBrowserPopOut?: (next: boolean) => void;
+	onToggleVisibility?: () => void;
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
@@ -196,47 +206,66 @@ export function SessionInspector({
 
 	return (
 		<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{views.map((entry) => (
-					<button
-						aria-label={entry.label}
-						key={entry.id}
-						type="button"
-						role="tab"
-						aria-selected={view === entry.id}
-						className={cn(
-							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-							view === entry.id && "bg-interactive-active text-foreground",
-						)}
-						onClick={() => setView(entry.id)}
-						title={entry.label}
-					>
-						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
-							{entry.icon}
-							{entry.id === "browser" && browserUnseen ? (
-								<span
-									aria-hidden="true"
-									className="absolute -right-1 -top-1 inline-flex size-dot-sm"
-									data-testid="browser-unseen-indicator"
-								>
-									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+			<div className="session-inspector__topbar flex h-inspector-tabs shrink-0 items-center border-b border-border pl-2.5">
+				{isInspectorVisible ? (
+					<div className="flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
+						{views.map((entry) => (
+							<button
+								aria-label={entry.label}
+								key={entry.id}
+								type="button"
+								role="tab"
+								aria-selected={view === entry.id}
+								className={cn(
+									"session-inspector__tab-button relative inline-flex h-control-md shrink-0 items-center justify-center rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+									view === entry.id && "bg-interactive-active text-foreground",
+								)}
+								onClick={() => setView(entry.id)}
+								title={entry.label}
+							>
+								<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
+									{entry.icon}
+									{entry.id === "browser" && browserUnseen ? (
+										<span
+											aria-hidden="true"
+											className="absolute right-0 top-0 inline-flex size-dot-sm"
+											data-testid="browser-unseen-indicator"
+										>
+											<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+											<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+										</span>
+									) : null}
 								</span>
-							) : null}
-						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">
-							{entry.id === "files" && filesChangedCount !== undefined
-								? t("files.tabCount", { count: filesChangedCount })
-								: entry.label}
-						</span>
-					</button>
-				))}
+								<span className="session-inspector__responsive-label whitespace-nowrap text-2xs">
+									{entry.id === "files" && filesChangedCount !== undefined
+										? t("files.tabCount", { count: filesChangedCount })
+										: entry.label}
+								</span>
+							</button>
+						))}
+					</div>
+				) : null}
+				{isInspectorVisible ? notificationAction : null}
+				{isInspectorVisible ? (
+					<TopbarButton
+						aria-expanded="true"
+						aria-label={t("shell.closeInspector")}
+						className="session-inspector__toggle ml-1.5 shrink-0"
+						onClick={onToggleVisibility}
+						title={t("shell.closeInspectorTitle")}
+						variant="icon"
+					>
+						<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+					</TopbarButton>
+				) : null}
 			</div>
 
 			<div
+				aria-hidden={!isInspectorVisible}
 				className={cn(
 					inspectorBodyBaseClass,
 					view !== "browser" && view !== "files" && inspectorScrollableBodyClass,
+					!isInspectorVisible && "invisible pointer-events-none",
 					// Browser and Files own their viewport spacing. Keep their body
 					// padding out of the class list entirely so a shorthand `p-3`
 					// cannot win over `p-0` through generated utility ordering.
@@ -245,8 +274,11 @@ export function SessionInspector({
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
+				inert={!isInspectorVisible}
 			>
-				{view === "summary" ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
+				{view === "summary" ? (
+					<SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+				) : null}
 				{view === "browser" ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}

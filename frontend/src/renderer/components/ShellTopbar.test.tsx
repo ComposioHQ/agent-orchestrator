@@ -49,7 +49,9 @@ vi.mock("../lib/telemetry", () => ({
 	captureRendererException: vi.fn(),
 }));
 vi.mock("./NewTaskDialog", () => ({ NewTaskDialog: () => null }));
-vi.mock("./NotificationCenter", () => ({ NotificationCenter: () => null }));
+vi.mock("./NotificationCenter", () => ({
+	NotificationCenter: () => <button aria-label="Notifications" type="button" />,
+}));
 
 const worker: WorkspaceSession = {
 	id: "sess-1",
@@ -310,18 +312,14 @@ describe("ShellTopbar orchestrator actions", () => {
 });
 
 describe("ShellTopbar inspector state", () => {
-	it("treats missing worker inspector state as open", async () => {
+	it("keeps the expanded worker inspector controls out of the center topbar", () => {
 		renderTopbarSessions([worker], "sess-1");
 
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
-		expect(toggle).toHaveAttribute("aria-pressed", "true");
-
-		await userEvent.click(toggle);
-
-		expect(useUiStore.getState().inspectorSessions["sess-1"]).toEqual({ isOpen: false, view: "summary" });
+		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
 	});
 
-	it("routes aria-pressed to the current worker session", () => {
+	it("shows the reopen control only for the current collapsed worker", () => {
 		useUiStore.setState({
 			inspectorSessions: {
 				"sess-1": { isOpen: true, view: "summary" },
@@ -330,12 +328,25 @@ describe("ShellTopbar inspector state", () => {
 		});
 		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
 
-		expect(screen.getByRole("button", { name: "Close inspector panel" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
 
 		paramsMock.sessionId = "sess-2";
 		view.rerenderTopbar();
 
 		expect(screen.getByRole("button", { name: "Open inspector panel" })).toHaveAttribute("aria-pressed", "false");
+	});
+
+	it("keeps the collapsed inspector toggle at the far right after notifications", () => {
+		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: false, view: "summary" } } });
+		renderTopbarSessions([worker], "sess-1");
+
+		const toggle = screen.getByRole("button", { name: "Open inspector panel" });
+		const notification = screen.getByRole("button", { name: "Notifications" });
+		const controls = within(toggle.closest("header") as HTMLElement).getAllByRole("button");
+
+		expect(controls.indexOf(notification)).toBeLessThan(controls.indexOf(toggle));
+		expect(controls.at(-1)).toBe(toggle);
 	});
 
 	it("toggles only the current worker session", async () => {

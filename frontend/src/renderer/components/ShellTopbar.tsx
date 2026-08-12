@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { GitBranch, LayoutDashboard, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -327,27 +327,26 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 										: t("shell.orchestrator")}
 							</TopbarButton>
 						)}
-						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
-						{!isOrchestrator && (
-							<TopbarButton
-								aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
-								aria-pressed={isInspectorOpen}
-								onClick={handleToggleInspector}
-								style={noDragStyle}
-								title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
-								variant="icon"
-							>
-								{isInspectorOpen ? (
-									<PanelRightClose className="size-5" aria-hidden="true" />
-								) : (
-									<PanelRightOpen className="size-5" aria-hidden="true" />
-								)}
-							</TopbarButton>
-						)}
 					</>
 				) : null}
-				{/* The bell always trails the actions row, on every platform. */}
-				<NotificationCenter style={noDragStyle} />
+				{/* The expanded inspector owns the notification action beside its close toggle. */}
+				{!(isSessionRoute && !isOrchestrator && isInspectorOpen) ? (
+					<NotificationCenter style={noDragStyle} />
+				) : null}
+				{/* The inspector header owns closing; the shell only restores a fully
+				    collapsed worker rail. Keep this final so it remains at the far right. */}
+				{isSessionRoute && !isOrchestrator && !isInspectorOpen ? (
+					<TopbarButton
+						aria-label={t("shell.openInspector")}
+						aria-pressed="false"
+						onClick={handleToggleInspector}
+						style={noDragStyle}
+						title={t("shell.openInspectorTitle")}
+						variant="icon"
+					>
+						<PanelRightOpen className="size-icon-lg" aria-hidden="true" />
+					</TopbarButton>
+				) : null}
 			</div>
 		</motion.header>
 	</LayoutGroup>
