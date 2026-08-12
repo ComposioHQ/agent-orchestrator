@@ -9,8 +9,11 @@ import {
   Folder,
   FolderOpen,
   LogOut,
+  MoreHorizontal,
   Plus,
   Search,
+  Settings,
+  Share2,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -20,9 +23,11 @@ export function CloudSidebar({
   account,
   onNewProject,
   onOpenCommand,
+  onOpenSettings,
   onSelectOrganization,
   onSelectProject,
   onSelectSession,
+  onShareProject,
   projects,
   selectedOrganizationId,
   selectedProjectId,
@@ -32,9 +37,11 @@ export function CloudSidebar({
   account: CurrentAccount;
   onNewProject: () => void;
   onOpenCommand: () => void;
+  onOpenSettings: () => void;
   onSelectOrganization: (organizationId: string) => void;
   onSelectProject: (projectId: string) => void;
   onSelectSession: (sessionId: string) => void;
+  onShareProject: (project: Project) => void;
   projects: Project[];
   selectedOrganizationId: string;
   selectedProjectId: string | null;
@@ -42,6 +49,7 @@ export function CloudSidebar({
   sessions: Session[];
 }) {
   const [closedProjects, setClosedProjects] = useState<Set<string>>(new Set());
+  const [openProjectMenu, setOpenProjectMenu] = useState<string | null>(null);
 
   return (
     <aside className="flex min-h-0 flex-col bg-[var(--color-bg-sidebar)]">
@@ -107,35 +115,86 @@ export function CloudSidebar({
           );
           return (
             <div className="mb-1" key={project.id}>
-              <button
-                type="button"
-                aria-expanded={open}
-                className={`flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium transition-colors hover:bg-[var(--color-interactive-hover)] ${
+              <div
+                className={`group relative flex items-center rounded-lg ${
                   selectedProjectId === project.id
-                    ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                    : "text-[var(--muted-foreground)]"
+                    ? "bg-[var(--color-interactive-active)]"
+                    : ""
                 }`}
-                onClick={() => {
-                  onSelectProject(project.id);
-                  setClosedProjects((current) => {
-                    const next = new Set(current);
-                    if (next.has(project.id)) next.delete(project.id);
-                    else next.add(project.id);
-                    return next;
-                  });
-                }}
               >
-                <span className="relative grid size-4 shrink-0 place-items-center">
-                  {open ? (
-                    <FolderOpen className="size-4" aria-hidden="true" />
-                  ) : (
-                    <Folder className="size-4" aria-hidden="true" />
-                  )}
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                  {project.displayName}
-                </span>
-              </button>
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  className={`flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                    selectedProjectId === project.id
+                      ? "text-[var(--foreground)]"
+                      : "text-[var(--muted-foreground)]"
+                  }`}
+                  onClick={() => {
+                    onSelectProject(project.id);
+                    setClosedProjects((current) => {
+                      const next = new Set(current);
+                      if (next.has(project.id)) next.delete(project.id);
+                      else next.add(project.id);
+                      return next;
+                    });
+                  }}
+                >
+                  <span className="relative grid size-4 shrink-0 place-items-center">
+                    {open ? (
+                      <FolderOpen className="size-4" aria-hidden="true" />
+                    ) : (
+                      <Folder className="size-4" aria-hidden="true" />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {project.displayName}
+                  </span>
+                </button>
+                <button
+                  aria-expanded={openProjectMenu === project.id}
+                  aria-haspopup="menu"
+                  aria-label={`Actions for ${project.displayName}`}
+                  className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] opacity-0 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] focus-visible:opacity-100 group-hover:opacity-100"
+                  onClick={() =>
+                    setOpenProjectMenu((current) =>
+                      current === project.id ? null : project.id,
+                    )
+                  }
+                  type="button"
+                >
+                  <MoreHorizontal className="size-3.5" aria-hidden="true" />
+                </button>
+                {openProjectMenu === project.id ? (
+                  <div
+                    className="absolute left-8 top-8 z-30 w-44 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] p-1 shadow-xl"
+                    role="menu"
+                  >
+                    <button
+                      className="flex h-8 w-full cursor-not-allowed items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--color-text-passive)] opacity-50"
+                      disabled
+                      role="menuitem"
+                      title="Project update routes are not implemented"
+                      type="button"
+                    >
+                      <Settings className="size-3.5" aria-hidden="true" />
+                      Project settings
+                    </button>
+                    <button
+                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+                      onClick={() => {
+                        setOpenProjectMenu(null);
+                        onShareProject(project);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Share2 className="size-3.5" aria-hidden="true" />
+                      Share project
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               {open ? (
                 <div className="ml-3.5 py-1">
                   {projectSessions.map((session) => (
@@ -166,6 +225,14 @@ export function CloudSidebar({
       </div>
 
       <div className="mt-auto border-t border-[var(--color-border-strong)] p-2">
+        <button
+          className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+          onClick={onOpenSettings}
+          type="button"
+        >
+          <Settings className="size-3.5" aria-hidden="true" />
+          Settings
+        </button>
         <div className="px-2.5 py-2">
           <div className="truncate text-xs text-[var(--foreground)]">
             {account.user.displayName}

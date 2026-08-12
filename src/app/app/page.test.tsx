@@ -5,6 +5,8 @@ import { CloudWorkspace } from "./page";
 
 const mocks = vi.hoisted(() => ({
   getCurrentAccount: vi.fn(),
+  listGitHubInstallations: vi.fn(),
+  listGitHubRepositories: vi.fn(),
   listProjects: vi.fn(),
   listSessions: vi.fn(),
 }));
@@ -12,6 +14,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/cloud-client", () => ({
   browserCloudClient: () => ({
     getCurrentAccount: mocks.getCurrentAccount,
+    listGitHubInstallations: mocks.listGitHubInstallations,
+    listGitHubRepositories: mocks.listGitHubRepositories,
     listProjects: mocks.listProjects,
     listSessions: mocks.listSessions,
   }),
@@ -72,6 +76,11 @@ beforeEach(() => {
     ],
     page: { hasMore: false },
   });
+  mocks.listGitHubInstallations.mockResolvedValue([]);
+  mocks.listGitHubRepositories.mockResolvedValue({
+    items: [],
+    page: { hasMore: false },
+  });
 });
 
 it("loads real account, project, and session data into shared board views", async () => {
@@ -114,4 +123,46 @@ it("searches the loaded workspace without demo commands", async () => {
     }),
   ).toBeVisible();
   expect(within(dialog).queryByText("Open Settings")).not.toBeInTheDocument();
+});
+
+it("opens capability-aware settings without exposing unsupported mutations", async () => {
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+  expect(
+    screen.getByRole("heading", { name: "Organization" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Add organization" }),
+  ).toBeDisabled();
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Provider connections" }),
+  );
+  expect(screen.getByText("No GitHub installation")).toBeVisible();
+  expect(
+    screen.getAllByRole("button", { name: "Connect" })[0],
+  ).toBeDisabled();
+});
+
+it("opens project actions and presents sharing without a false create action", async () => {
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+
+  fireEvent.click(
+    screen.getByRole("button", { name: "Actions for Cloud platform" }),
+  );
+  expect(
+    screen.getByRole("menuitem", { name: "Project settings" }),
+  ).toBeDisabled();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Share project" }));
+
+  const dialog = screen.getByRole("dialog", {
+    name: "Share Cloud platform",
+  });
+  expect(
+    within(dialog).getByRole("button", { name: "Create link" }),
+  ).toBeDisabled();
 });
