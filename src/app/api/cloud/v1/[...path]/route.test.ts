@@ -17,7 +17,7 @@ vi.mock("@/lib/cloud-config", () => ({
   localAuthCookie: "ao_cloud_local_session",
 }));
 
-import { GET, POST } from "./route";
+import { GET, POST, PUT } from "./route";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -26,6 +26,46 @@ beforeEach(() => {
     user: { id: "user-1" },
     accessToken: "workos-token",
   });
+});
+
+it("forwards workspace writes through the authenticated gateway", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    Response.json({ path: "README.md", content: "updated\n", size: 8 }),
+  );
+  const request = new NextRequest(
+    "http://localhost:3000/api/cloud/v1/orgs/org-1/sessions/session-1/workspace/file",
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://localhost:3000",
+      },
+      body: JSON.stringify({ path: "README.md", content: "updated\n" }),
+    },
+  );
+  const response = await PUT(request, {
+    params: Promise.resolve({
+      path: [
+        "orgs",
+        "org-1",
+        "sessions",
+        "session-1",
+        "workspace",
+        "file",
+      ],
+    }),
+  });
+
+  expect(response.status).toBe(200);
+  expect(fetchMock).toHaveBeenCalledOnce();
+  const [input, init] = fetchMock.mock.calls[0];
+  expect(String(input)).toBe(
+    "https://staging-api.example.com/api/cloud/v1/orgs/org-1/sessions/session-1/workspace/file",
+  );
+  expect(init?.method).toBe("PUT");
+  expect(new Headers(init?.headers).get("authorization")).toBe(
+    "Bearer workos-token",
+  );
 });
 
 it("brokers GitHub repository imports through production", async () => {

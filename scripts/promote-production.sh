@@ -14,6 +14,8 @@ PRODUCTION_TARGET_GROUP="${AO_CLOUD_PRODUCTION_TARGET_GROUP:-ao-cloud-production
 PRODUCTION_TASK_SECURITY_GROUP="${AO_CLOUD_PRODUCTION_TASK_SECURITY_GROUP:-ao-cloud-production-task-sg}"
 ROLLBACK_ALARM="${AO_CLOUD_PRODUCTION_ROLLBACK_ALARM:-ao-cloud-production-target-5xx}"
 RUNTIME_DATABASE_USER="${AO_CLOUD_RUNTIME_DATABASE_USER:-ao_cloud_app}"
+NODEOPS_SECRET_ID="${AO_CLOUD_NODEOPS_SECRET_ID:-ao-cloud/production/nodeops}"
+WORKER_SECRET_ID="${AO_CLOUD_WORKER_SECRET_ID:-ao-cloud/production/worker}"
 
 AWS_OPTIONS=(--region "$REGION")
 if [[ -n "${AWS_PROFILE:-}" ]]; then
@@ -73,7 +75,7 @@ fi
 	--service "$PRODUCTION_SERVICE" \
 	--alarm "$ROLLBACK_ALARM" >/dev/null
 
-image="$(
+control_image="$(
 	SOURCE="$staging_source" python3 - <<'PY'
 import json
 import os
@@ -87,20 +89,42 @@ container = next(
 print(container["image"])
 PY
 )"
-if [[ "$image" != *@sha256:* ]]; then
-	echo "Staging is not pinned to an immutable image digest." >&2
+worker_image="$(
+	SOURCE="$staging_source" python3 - <<'PY'
+import json
+import os
+
+source = json.loads(os.environ["SOURCE"])
+tags = {item["key"]: item["value"] for item in source.get("tags", [])}
+print(tags.get("WorkerImage", ""))
+PY
+)"
+if [[ "$control_image" != *@sha256:* || "$worker_image" != *@sha256:* ]]; then
+	echo "Staging artifacts are not pinned to immutable image digests." >&2
 	exit 1
 fi
-repository_uri="${image%@sha256:*}"
-repository="${repository_uri##*/}"
-image_digest="sha256:${image##*@sha256:}"
 
-scan="$(
-	aws_cli ecr describe-image-scan-findings \
-		--repository-name "$repository" \
-		--image-id "imageDigest=${image_digest}"
-)"
-if ! SCAN="$scan" python3 - <<'PY'
+./scripts/verify-ecs-service.py \
+	--region "$REGION" \
+	--cluster "$STAGING_CLUSTER" \
+	--service "$STAGING_SERVICE" \
+	--alarm "$STAGING_ROLLBACK_ALARM" \
+	--expected-task-definition "$staging_task" \
+	--expected-control-image "$control_image" \
+	--expected-worker-image "$worker_image" >/dev/null
+
+verify_scan() {
+	local image="$1"
+	local repository_uri="${image%@sha256:*}"
+	local repository="${repository_uri##*/}"
+	local digest="sha256:${image##*@sha256:}"
+	local scan
+	scan="$(
+		aws_cli ecr describe-image-scan-findings \
+			--repository-name "$repository" \
+			--image-id "imageDigest=${digest}"
+	)"
+	if ! SCAN="$scan" python3 - <<'PY'
 import json
 import os
 import sys
@@ -111,10 +135,43 @@ if scan["imageScanStatus"]["status"] != "COMPLETE":
 counts = scan["imageScanFindings"].get("findingSeverityCounts", {})
 sys.exit(1 if counts.get("CRITICAL", 0) or counts.get("HIGH", 0) else 0)
 PY
-then
-	echo "The staging image does not have a clean completed ECR scan." >&2
-	exit 1
-fi
+	then
+		echo "The staging artifact ${repository} does not have a clean completed ECR scan." >&2
+		exit 1
+	fi
+}
+
+verify_scan "$control_image"
+verify_scan "$worker_image"
+control_image_digest="sha256:${control_image##*@sha256:}"
+worker_image_digest="sha256:${worker_image##*@sha256:}"
+
+secret_arn() {
+	aws_cli secretsmanager describe-secret \
+		--secret-id "$1" \
+		--query ARN \
+		--output text
+}
+
+nodeops_secret_arn="$(secret_arn "$NODEOPS_SECRET_ID")"
+worker_secret_arn="$(secret_arn "$WORKER_SECRET_ID")"
+provider_secret_arn="$(secret_arn ao-cloud/production/provider-secret-key)"
+nodeops_settings="$(
+	aws_cli secretsmanager get-secret-value \
+		--secret-id "$NODEOPS_SECRET_ID" \
+		--query SecretString \
+		--output text
+)"
+worker_settings="$(
+	aws_cli secretsmanager get-secret-value \
+		--secret-id "$WORKER_SECRET_ID" \
+		--query SecretString \
+		--output text
+)"
+./scripts/validate-hosted-settings.py \
+	--nodeops <(printf '%s' "$nodeops_settings") \
+	--worker <(printf '%s' "$worker_settings")
+unset nodeops_settings worker_settings
 
 aws_cli iam get-role --role-name ao-cloud-production-execution-role >/dev/null
 aws_cli iam get-role --role-name ao-cloud-production-task-role >/dev/null
@@ -124,12 +181,7 @@ aws_cli secretsmanager describe-secret \
 	--secret-id ao-cloud/production/migration-database-url >/dev/null
 aws_cli secretsmanager describe-secret \
 	--secret-id ao-cloud/production/workos >/dev/null
-github_secret_arn="$(
-	aws_cli secretsmanager describe-secret \
-		--secret-id ao-cloud/production/github \
-		--query ARN \
-		--output text
-)"
+github_secret_arn="$(secret_arn ao-cloud/production/github)"
 
 register_api_task() {
 	local source payload
@@ -138,18 +190,13 @@ register_api_task() {
 			--task-definition "$PRODUCTION_API_FAMILY" \
 			--include TAGS
 	)"
-provider_secret_arn="$(
-	aws_cli secretsmanager describe-secret \
-		--secret-id ao-cloud/production/provider-secret-key \
-		--query ARN \
-		--output text
-)"
 	payload="$(
 		printf '%s' "$source" |
 			./scripts/render-task-definition.py \
 				--family "$PRODUCTION_API_FAMILY" \
 				--container control-plane \
-				--image "$image" \
+				--image "$control_image" \
+				--worker-image "$worker_image" \
 				--release "$release" \
 				--environment production \
 				--log-group /ao-cloud/production/control-plane \
@@ -162,7 +209,20 @@ provider_secret_arn="$(
 				--set-secret "AO_CLOUD_GITHUB_PRIVATE_KEY=${github_secret_arn}:private_key::" \
 				--set-secret "AO_CLOUD_GITHUB_WEBHOOK_SECRET=${github_secret_arn}:webhook_secret::" \
 				--set-secret "AO_CLOUD_GITHUB_STATE_KEY=${github_secret_arn}:state_key::" \
-				--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}"
+				--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}" \
+				--set-secret "AO_CLOUD_NODEOPS_BASE_URL=${nodeops_secret_arn}:base_url::" \
+				--set-secret "AO_CLOUD_NODEOPS_API_KEY=${nodeops_secret_arn}:api_key::" \
+				--set-secret "AO_CLOUD_NODEOPS_DEFAULT_SHAPE=${nodeops_secret_arn}:default_shape::" \
+				--set-secret "AO_CLOUD_NODEOPS_DEFAULT_ROOTFS=${nodeops_secret_arn}:default_rootfs::" \
+				--set-secret "AO_CLOUD_NODEOPS_INGRESS=${nodeops_secret_arn}:ingress::" \
+				--set-secret "AO_CLOUD_NODEOPS_SSH_KEY_PATH=${nodeops_secret_arn}:ssh_key_path::" \
+				--set-secret "AO_CLOUD_NODEOPS_REGION=${nodeops_secret_arn}:region::" \
+				--set-secret "AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL=${nodeops_secret_arn}:worker_token_ttl::" \
+				--set-secret "AO_CLOUD_WORKER_SIGNING_KEY=${worker_secret_arn}:signing_key::" \
+				--set-secret "AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG=${worker_secret_arn}:max_active_sandboxes_per_org::" \
+				--set-secret "AO_CLOUD_SANDBOX_RECONCILE_INTERVAL=${worker_secret_arn}:sandbox_reconcile_interval::" \
+				--set-secret "AO_CLOUD_SANDBOX_STARTUP_TIMEOUT=${worker_secret_arn}:sandbox_startup_timeout::" \
+				--set-secret "AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT=${worker_secret_arn}:worker_heartbeat_timeout::"
 	)"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \
@@ -182,7 +242,7 @@ register_migration_task() {
 			./scripts/render-task-definition.py \
 				--family "$PRODUCTION_MIGRATION_FAMILY" \
 				--container migration \
-				--image "$image" \
+				--image "$control_image" \
 				--release "$release" \
 				--environment production \
 				--log-group /ao-cloud/production/control-plane \
@@ -365,7 +425,7 @@ production_source="$(
 	aws_cli ecs describe-task-definition \
 		--task-definition "$deployed_task"
 )"
-if ! STAGING_IMAGE="$image" RELEASE="$release" SOURCE="$production_source" python3 - <<'PY'
+if ! STAGING_IMAGE="$control_image" RELEASE="$release" SOURCE="$production_source" python3 - <<'PY'
 import json
 import os
 
@@ -393,7 +453,9 @@ for _ in $(seq 1 18); do
 			--cluster "$PRODUCTION_CLUSTER" \
 			--service "$PRODUCTION_SERVICE" \
 			--alarm "$ROLLBACK_ALARM" \
-			--expected-task-definition "$api_task" 2>&1
+			--expected-task-definition "$api_task" \
+			--expected-control-image "$control_image" \
+			--expected-worker-image "$worker_image" 2>&1
 	)"; then
 		verification_error=""
 		break
@@ -406,7 +468,8 @@ if [[ -n "$verification_error" ]]; then
 fi
 trap - EXIT
 
-printf 'Promoted release %s\nImage digest: %s\nTask definition: %s\n' \
+printf 'Promoted release %s\nControl-plane digest: %s\nWorker digest: %s\nTask definition: %s\n' \
 	"$release" \
-	"$image_digest" \
+	"$control_image_digest" \
+	"$worker_image_digest" \
 	"$api_task"

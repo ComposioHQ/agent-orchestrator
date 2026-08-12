@@ -4,11 +4,14 @@ set -euo pipefail
 REGION="${AWS_REGION:-eu-north-1}"
 CLUSTER="${AO_CLOUD_ECS_CLUSTER:-ao-cloud-staging}"
 SERVICE="${AO_CLOUD_ECS_SERVICE:-ao-cloud-staging-api}"
-REPOSITORY="${AO_CLOUD_ECR_REPOSITORY:-ao-cloud-control-plane}"
+CONTROL_REPOSITORY="${AO_CLOUD_ECR_REPOSITORY:-ao-cloud-control-plane}"
+WORKER_REPOSITORY="${AO_CLOUD_WORKER_ECR_REPOSITORY:-ao-cloud-worker}"
 API_FAMILY="${AO_CLOUD_API_TASK_FAMILY:-ao-cloud-staging-api}"
 MIGRATION_FAMILY="${AO_CLOUD_MIGRATION_TASK_FAMILY:-ao-cloud-staging-migrate}"
 ROLLBACK_ALARM="${AO_CLOUD_ROLLBACK_ALARM:-ao-cloud-staging-target-5xx}"
 RUNTIME_DATABASE_USER="${AO_CLOUD_RUNTIME_DATABASE_USER:-ao_cloud_app}"
+NODEOPS_SECRET_ID="${AO_CLOUD_NODEOPS_SECRET_ID:-ao-cloud/staging/nodeops}"
+WORKER_SECRET_ID="${AO_CLOUD_WORKER_SECRET_ID:-ao-cloud/staging/worker}"
 HEAD_SHA="$(git rev-parse HEAD)"
 RELEASE="${1:-$HEAD_SHA}"
 IMAGE_TAG="${RELEASE//+/-}-linux-amd64"
@@ -42,73 +45,101 @@ fi
 	--service "$SERVICE" \
 	--alarm "$ROLLBACK_ALARM" >/dev/null
 
-repository_uri="$(
-	aws_cli ecr describe-repositories \
-		--repository-names "$REPOSITORY" \
-		--query 'repositories[0].repositoryUri' \
-		--output text
-)"
-registry="${repository_uri%%/*}"
-
-aws_cli ecr get-login-password |
-	docker login --username AWS --password-stdin "$registry" >/dev/null
-if ! aws_cli ecr describe-images \
-	--repository-name "$REPOSITORY" \
-	--image-ids "imageTag=${IMAGE_TAG}" >/dev/null 2>&1; then
-	docker build \
-		--platform linux/amd64 \
-		--provenance=false \
-		--tag "${repository_uri}:${IMAGE_TAG}" \
-		.
-	docker push "${repository_uri}:${IMAGE_TAG}"
-fi
-
-image_digest="$(
-	aws_cli ecr describe-images \
-		--repository-name "$REPOSITORY" \
-		--image-ids "imageTag=${IMAGE_TAG}" \
-		--query 'imageDetails[0].imageDigest' \
-		--output text
-)"
-image="${repository_uri}@${image_digest}"
-provider_secret_arn="$(
+secret_arn() {
 	aws_cli secretsmanager describe-secret \
-		--secret-id ao-cloud/staging/provider-secret-key \
+		--secret-id "$1" \
 		--query ARN \
 		--output text
-)"
+}
 
-aws_cli ecr start-image-scan \
-	--repository-name "$REPOSITORY" \
-	--image-id "imageDigest=${image_digest}" >/dev/null 2>&1 || true
-scan_status=""
-for _ in $(seq 1 60); do
-	scan_status="$(
-		aws_cli ecr describe-image-scan-findings \
-			--repository-name "$REPOSITORY" \
-			--image-id "imageDigest=${image_digest}" \
-			--query 'imageScanStatus.status' \
-			--output text 2>/dev/null || true
+provider_secret_arn="$(secret_arn ao-cloud/staging/provider-secret-key)"
+nodeops_secret_arn="$(secret_arn "$NODEOPS_SECRET_ID")"
+worker_secret_arn="$(secret_arn "$WORKER_SECRET_ID")"
+nodeops_settings="$(
+	aws_cli secretsmanager get-secret-value \
+		--secret-id "$NODEOPS_SECRET_ID" \
+		--query SecretString \
+		--output text
+)"
+worker_settings="$(
+	aws_cli secretsmanager get-secret-value \
+		--secret-id "$WORKER_SECRET_ID" \
+		--query SecretString \
+		--output text
+)"
+./scripts/validate-hosted-settings.py \
+	--nodeops <(printf '%s' "$nodeops_settings") \
+	--worker <(printf '%s' "$worker_settings")
+unset nodeops_settings worker_settings
+
+publish_image() {
+	local repository="$1"
+	local target="$2"
+	PUBLISHED_URI="$(
+		aws_cli ecr describe-repositories \
+			--repository-names "$repository" \
+			--query 'repositories[0].repositoryUri' \
+			--output text
 	)"
-	case "$scan_status" in
-	COMPLETE) break ;;
-	FAILED) echo "ECR image scan failed." >&2; exit 1 ;;
-	esac
-	sleep 2
-done
-if [[ "$scan_status" != "COMPLETE" ]]; then
-	echo "ECR image scan did not complete." >&2
-	exit 1
-fi
+	local registry="${PUBLISHED_URI%%/*}"
+	aws_cli ecr get-login-password |
+		docker login --username AWS --password-stdin "$registry" >/dev/null
+	if ! aws_cli ecr describe-images \
+		--repository-name "$repository" \
+		--image-ids "imageTag=${IMAGE_TAG}" >/dev/null 2>&1; then
+		docker build \
+			--platform linux/amd64 \
+			--provenance=false \
+			--target "$target" \
+			--tag "${PUBLISHED_URI}:${IMAGE_TAG}" \
+			.
+		docker push "${PUBLISHED_URI}:${IMAGE_TAG}"
+	fi
+	PUBLISHED_DIGEST="$(
+		aws_cli ecr describe-images \
+			--repository-name "$repository" \
+			--image-ids "imageTag=${IMAGE_TAG}" \
+			--query 'imageDetails[0].imageDigest' \
+			--output text
+	)"
+	PUBLISHED_IMAGE="${PUBLISHED_URI}@${PUBLISHED_DIGEST}"
+}
 
-severity_counts="$(
-	aws_cli ecr describe-image-scan-findings \
-		--repository-name "$REPOSITORY" \
-		--image-id "imageDigest=${image_digest}" \
-		--query 'imageScanFindings.findingSeverityCounts' \
-		--output json
-)"
-if ! SEVERITY_COUNTS="$severity_counts" python3 - <<'PY'
+scan_image() {
+	local repository="$1"
+	local digest="$2"
+	local scan_status=""
+	aws_cli ecr start-image-scan \
+		--repository-name "$repository" \
+		--image-id "imageDigest=${digest}" >/dev/null 2>&1 || true
+	for _ in $(seq 1 60); do
+		scan_status="$(
+			aws_cli ecr describe-image-scan-findings \
+				--repository-name "$repository" \
+				--image-id "imageDigest=${digest}" \
+				--query 'imageScanStatus.status' \
+				--output text 2>/dev/null || true
+		)"
+		case "$scan_status" in
+		COMPLETE) break ;;
+		FAILED) echo "ECR image scan failed for ${repository}." >&2; exit 1 ;;
+		esac
+		sleep 2
+	done
+	if [[ "$scan_status" != "COMPLETE" ]]; then
+		echo "ECR image scan did not complete for ${repository}." >&2
+		exit 1
+	fi
+
+	local severity_counts
+	severity_counts="$(
+		aws_cli ecr describe-image-scan-findings \
+			--repository-name "$repository" \
+			--image-id "imageDigest=${digest}" \
+			--query 'imageScanFindings.findingSeverityCounts' \
+			--output json
+	)"
+	if ! SEVERITY_COUNTS="$severity_counts" python3 - <<'PY'
 import json
 import os
 import sys
@@ -116,83 +147,61 @@ import sys
 counts = json.loads(os.environ["SEVERITY_COUNTS"] or "{}")
 sys.exit(1 if counts.get("CRITICAL", 0) or counts.get("HIGH", 0) else 0)
 PY
-then
-	echo "ECR scan found critical or high vulnerabilities." >&2
-	exit 1
-fi
+	then
+		echo "ECR scan found critical or high vulnerabilities in ${repository}." >&2
+		exit 1
+	fi
+}
+
+publish_image "$CONTROL_REPOSITORY" control-plane
+control_image="$PUBLISHED_IMAGE"
+control_image_digest="$PUBLISHED_DIGEST"
+publish_image "$WORKER_REPOSITORY" worker
+worker_image="$PUBLISHED_IMAGE"
+worker_image_digest="$PUBLISHED_DIGEST"
+docker pull "$control_image" >/dev/null
+docker pull "$worker_image" >/dev/null
+./scripts/verify-image-contract.sh "$control_image" "$worker_image"
+scan_image "$CONTROL_REPOSITORY" "$control_image_digest"
+scan_image "$WORKER_REPOSITORY" "$worker_image_digest"
 
 register_task_definition() {
 	local family="$1"
 	local container_name="$2"
 	local source payload
 	source="$(aws_cli ecs describe-task-definition --task-definition "$family" --include TAGS)"
-	payload="$(
-		SOURCE="$source" \
-			IMAGE="$image" \
-			RELEASE="$RELEASE" \
-			CONTAINER_NAME="$container_name" \
-			RUNTIME_DATABASE_USER="$RUNTIME_DATABASE_USER" \
-			PROVIDER_SECRET_ARN="$provider_secret_arn" \
-			python3 - <<'PY'
-import json
-import os
-
-source = json.loads(os.environ["SOURCE"])
-task = source["taskDefinition"]
-allowed = {
-    "family",
-    "taskRoleArn",
-    "executionRoleArn",
-    "networkMode",
-    "containerDefinitions",
-    "volumes",
-    "placementConstraints",
-    "requiresCompatibilities",
-    "cpu",
-    "memory",
-    "pidMode",
-    "ipcMode",
-    "proxyConfiguration",
-    "inferenceAccelerators",
-    "ephemeralStorage",
-    "runtimePlatform",
-}
-payload = {key: value for key, value in task.items() if key in allowed}
-for container in payload["containerDefinitions"]:
-    if container["name"] != os.environ["CONTAINER_NAME"]:
-        continue
-    container["image"] = os.environ["IMAGE"]
-    environment = container.setdefault("environment", [])
-    for variable in environment:
-        if variable["name"] == "AO_CLOUD_RELEASE":
-            variable["value"] = os.environ["RELEASE"]
-    if container["name"] == "migration":
-        environment[:] = [
-            variable
-            for variable in environment
-            if variable["name"] != "AO_CLOUD_RUNTIME_DATABASE_USER"
-        ]
-        environment.append({
-            "name": "AO_CLOUD_RUNTIME_DATABASE_USER",
-            "value": os.environ["RUNTIME_DATABASE_USER"],
-        })
-    else:
-        secrets = container.setdefault("secrets", [])
-        secrets[:] = [
-            secret
-            for secret in secrets
-            if secret["name"] != "AO_CLOUD_PROVIDER_SECRET_KEY"
-        ]
-        secrets.append({
-            "name": "AO_CLOUD_PROVIDER_SECRET_KEY",
-            "valueFrom": os.environ["PROVIDER_SECRET_ARN"],
-        })
-payload["tags"] = [
-    tag for tag in source.get("tags", []) if tag["key"] != "Release"
-] + [{"key": "Release", "value": os.environ["RELEASE"]}]
-print(json.dumps(payload))
-PY
-	)"
+	local render_args=(
+		--family "$family"
+		--container "$container_name"
+		--image "$control_image"
+		--release "$RELEASE"
+		--environment staging
+		--log-group /ao-cloud/staging/control-plane
+		--region "$REGION"
+	)
+	if [[ "$container_name" == "control-plane" ]]; then
+		render_args+=(
+			--worker-image "$worker_image"
+			--set-environment AO_CLOUD_PUBLIC_URL=https://staging-api.aoagents.dev
+			--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}"
+			--set-secret "AO_CLOUD_NODEOPS_BASE_URL=${nodeops_secret_arn}:base_url::"
+			--set-secret "AO_CLOUD_NODEOPS_API_KEY=${nodeops_secret_arn}:api_key::"
+			--set-secret "AO_CLOUD_NODEOPS_DEFAULT_SHAPE=${nodeops_secret_arn}:default_shape::"
+			--set-secret "AO_CLOUD_NODEOPS_DEFAULT_ROOTFS=${nodeops_secret_arn}:default_rootfs::"
+			--set-secret "AO_CLOUD_NODEOPS_INGRESS=${nodeops_secret_arn}:ingress::"
+			--set-secret "AO_CLOUD_NODEOPS_SSH_KEY_PATH=${nodeops_secret_arn}:ssh_key_path::"
+			--set-secret "AO_CLOUD_NODEOPS_REGION=${nodeops_secret_arn}:region::"
+			--set-secret "AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL=${nodeops_secret_arn}:worker_token_ttl::"
+			--set-secret "AO_CLOUD_WORKER_SIGNING_KEY=${worker_secret_arn}:signing_key::"
+			--set-secret "AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG=${worker_secret_arn}:max_active_sandboxes_per_org::"
+			--set-secret "AO_CLOUD_SANDBOX_RECONCILE_INTERVAL=${worker_secret_arn}:sandbox_reconcile_interval::"
+			--set-secret "AO_CLOUD_SANDBOX_STARTUP_TIMEOUT=${worker_secret_arn}:sandbox_startup_timeout::"
+			--set-secret "AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT=${worker_secret_arn}:worker_heartbeat_timeout::"
+		)
+	else
+		render_args+=(--runtime-database-user "$RUNTIME_DATABASE_USER")
+	fi
+	payload="$(printf '%s' "$source" | ./scripts/render-task-definition.py "${render_args[@]}")"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \
 		--query 'taskDefinition.taskDefinitionArn' \
@@ -291,7 +300,9 @@ for _ in $(seq 1 18); do
 			--cluster "$CLUSTER" \
 			--service "$SERVICE" \
 			--alarm "$ROLLBACK_ALARM" \
-			--expected-task-definition "$api_task" 2>&1
+			--expected-task-definition "$api_task" \
+			--expected-control-image "$control_image" \
+			--expected-worker-image "$worker_image" 2>&1
 	)"; then
 		verification_error=""
 		break
@@ -304,7 +315,8 @@ if [[ -n "$verification_error" ]]; then
 fi
 trap - EXIT
 
-printf 'Deployed release %s\nImage digest: %s\nTask definition: %s\n' \
+printf 'Deployed release %s\nControl-plane digest: %s\nWorker digest: %s\nTask definition: %s\n' \
 	"$RELEASE" \
-	"$image_digest" \
+	"$control_image_digest" \
+	"$worker_image_digest" \
 	"$api_task"

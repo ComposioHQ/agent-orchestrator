@@ -43,7 +43,10 @@ jobs:
         env:
           AO_CLOUD_TEST_DATABASE_URL: postgres://ao_cloud_test_owner:ao_cloud_test_owner@127.0.0.1:5432/ao_cloud_test?sslmode=disable
         run: |
-          go test ./... -count=1
+          # Integration packages intentionally share this disposable database.
+          # Keep package processes serial so one fixture cannot reschedule
+          # another package's sandbox while it is being reconciled.
+          go test -p 1 ./... -count=1
           go vet ./...
       - name: Test deployment helpers
         run: python3 -m unittest discover -s scripts/tests -v
@@ -52,9 +55,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes shellcheck
           bash -n scripts/*.sh
-          shellcheck scripts/*.sh
-      - name: Build container image
-        run: docker build --tag ao-cloud:test .
+          shellcheck -x scripts/*.sh
+      - name: Build and verify deployment images
+        run: |
+          docker build --target control-plane --tag ao-cloud:test .
+          docker build --target worker --tag ao-worker:test .
+          ./scripts/verify-image-contract.sh ao-cloud:test ao-worker:test
       - name: Exercise isolated local lifecycle
         run: ./scripts/test-cloud-local.sh
 
@@ -65,7 +71,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: Untrivial-ai/agent-orchestrator
-          ref: 9b2a8522aec738b157ceaa80efc74a93b846901f
+          ref: 000e8f269827525b7d5ce62a2acfe4f26fa12cba
           path: public
       - name: Check out private Cloud change
         uses: actions/checkout@v5

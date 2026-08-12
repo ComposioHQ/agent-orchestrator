@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/jackc/pgx/v5"
 )
@@ -185,7 +187,27 @@ func (s *Store) CreateSession(
 	principal domain.Principal,
 	orgID string,
 	idempotencyKey string,
+	maxActiveSandboxes int,
 	input domain.CreateSession,
+) (domain.Session, error) {
+	var session domain.Session
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		var err error
+		session, err = createSessionTx(
+			ctx, tx, orgID, idempotencyKey, maxActiveSandboxes, input, "", principal.UserID,
+		)
+		return err
+	})
+	return session, err
+}
+
+func createSessionTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	orgID, idempotencyKey string,
+	maxActiveSandboxes int,
+	input domain.CreateSession,
+	parentSessionID, actorUserID string,
 ) (domain.Session, error) {
 	if input.Mode == "" {
 		input.Mode = "standard"
@@ -194,136 +216,183 @@ func (s *Store) CreateSession(
 		input.DeniedCommands = []string{}
 	}
 	var session domain.Session
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
-		payload, err := json.Marshal(input)
-		if err != nil {
-			return err
-		}
-		var commandID string
-		err = tx.QueryRow(
+
+	// Serialize quota allocation before inserting any rows that reference the
+	// organization. Taking this lock later can deadlock concurrent creators
+	// through their foreign-key key-share locks.
+	var lockedOrgID string
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT id FROM ao_organizations WHERE id = $1 FOR UPDATE`,
+		orgID,
+	).Scan(&lockedOrgID); err != nil {
+		return domain.Session{}, err
+	}
+
+	payload, err := json.Marshal(input)
+	commandKind := "session.create"
+	if parentSessionID != "" {
+		commandKind = "session.child.create"
+		payload, err = json.Marshal(struct {
+			Input           domain.CreateSession `json:"input"`
+			ParentSessionID string               `json:"parentSessionId"`
+		}{Input: input, ParentSessionID: parentSessionID})
+	}
+	if err != nil {
+		return domain.Session{}, err
+	}
+	var commandID string
+	err = tx.QueryRow(
+		ctx,
+		`INSERT INTO ao_commands (
+			org_id, idempotency_key, kind, payload
+		) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (org_id, idempotency_key) DO NOTHING
+		RETURNING id`,
+		orgID,
+		idempotencyKey,
+		commandKind,
+		payload,
+	).Scan(&commandID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = loadIdempotentSession(
 			ctx,
-			`INSERT INTO ao_commands (
-				org_id, idempotency_key, kind, payload
-			) VALUES ($1, $2, 'session.create', $3)
-			ON CONFLICT (org_id, idempotency_key) DO NOTHING
-			RETURNING id`,
+			tx,
 			orgID,
 			idempotencyKey,
 			payload,
-		).Scan(&commandID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return loadIdempotentSession(
-				ctx,
-				tx,
-				orgID,
-				idempotencyKey,
-				payload,
-				&session,
-			)
-		}
-		if err != nil {
-			return err
-		}
+			commandKind,
+			&session,
+		)
+		return session, err
+	}
+	if err != nil {
+		return domain.Session{}, err
+	}
 
-		err = scanSession(tx.QueryRow(
-			ctx,
-			`WITH generated AS (SELECT gen_random_uuid() AS id)
-			INSERT INTO ao_sessions (
-				id, org_id, project_id, kind, harness, display_name, branch,
-				prompt, mode, denied_commands
-			)
-			SELECT id, $1, $2, $3, $4, $5, 'ao/' || left(id::text, 8),
-				$6, $7, $8
-			FROM generated
-			RETURNING id, org_id, project_id, kind, harness, display_name, branch,
-				mode, denied_commands, activity_state, is_terminated,
-				false, '', '', created_at, updated_at`,
-			orgID,
-			input.ProjectID,
-			input.Kind,
-			input.Harness,
-			input.DisplayName,
-			input.Prompt,
-			input.Mode,
-			input.DeniedCommands,
-		), &session)
-		if err != nil {
-			return normalizeConstraintError(err)
-		}
+	var activeSandboxes int
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT count(*) FROM ao_sandboxes
+		WHERE org_id = $1 AND observed_state <> 'deleted'`,
+		orgID,
+	).Scan(&activeSandboxes); err != nil {
+		return domain.Session{}, err
+	}
+	if maxActiveSandboxes < 1 || activeSandboxes >= maxActiveSandboxes {
+		return domain.Session{}, ErrSandboxQuotaExceeded
+	}
 
-		provider := input.Provider
-		if provider == "" {
-			provider = "ecs"
-		}
-		if input.SandboxConnectionID != "" {
-			var connectionProvider string
-			if err := tx.QueryRow(
-				ctx,
-				`SELECT provider FROM ao_provider_connections
-				WHERE org_id = $1 AND id = $2`,
-				orgID,
-				input.SandboxConnectionID,
-			).Scan(&connectionProvider); errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			} else if err != nil {
-				return err
-			}
-			if connectionProvider != provider {
-				return ErrInvalid
-			}
-		}
-		if _, err := tx.Exec(
+	err = scanSession(tx.QueryRow(
+		ctx,
+		`WITH generated AS (SELECT gen_random_uuid() AS id)
+		INSERT INTO ao_sessions (
+			id, org_id, project_id, kind, harness, display_name, branch,
+			prompt, mode, denied_commands, parent_session_id
+		)
+		SELECT id, $1, $2, $3, $4, $5, 'ao/' || left(id::text, 8),
+			$6, $7, $8, NULLIF($9, '')::uuid
+		FROM generated
+		RETURNING id, org_id, project_id, kind, harness, display_name, branch,
+			mode, denied_commands, activity_state, is_terminated,
+			false, '', '', created_at, updated_at`,
+		orgID,
+		input.ProjectID,
+		input.Kind,
+		input.Harness,
+		input.DisplayName,
+		input.Prompt,
+		input.Mode,
+		input.DeniedCommands,
+		parentSessionID,
+	), &session)
+	if err != nil {
+		return domain.Session{}, normalizeConstraintError(err)
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(input.Provider))
+	if provider == "" {
+		provider = sandbox.DefaultProvider
+	}
+	if input.SandboxConnectionID != "" {
+		var connectionProvider string
+		if err := tx.QueryRow(
 			ctx,
-			`INSERT INTO ao_sandboxes (
-				session_id, org_id, provider, provider_connection_id
-			) VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`,
-			session.ID,
+			`SELECT provider FROM ao_provider_connections
+			WHERE org_id = $1 AND id = $2`,
 			orgID,
-			provider,
 			input.SandboxConnectionID,
-		); err != nil {
-			return normalizeConstraintError(err)
+		).Scan(&connectionProvider); errors.Is(err, pgx.ErrNoRows) {
+			return domain.Session{}, ErrNotFound
+		} else if err != nil {
+			return domain.Session{}, err
 		}
-		if input.Prompt != "" {
-			if _, err := appendUserMessage(
-				ctx,
-				tx,
-				orgID,
-				session.ID,
-				input.Prompt,
-			); err != nil {
-				return err
-			}
+		if connectionProvider != provider {
+			return domain.Session{}, ErrInvalid
 		}
+	}
+	resourceProfile, err := patchSandboxJSON(
+		input.ResourceProfile, provider, orgID, session.ID,
+		input.Release, input.SandboxConnectionID, false,
+	)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	bootstrapContext, err := patchSandboxJSON(
+		input.BootstrapContext, provider, orgID, session.ID,
+		input.Release, input.SandboxConnectionID, true,
+	)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO ao_sandboxes (
+			session_id, org_id, provider, provider_connection_id,
+			resource_profile, bootstrap_context
+		) VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6)`,
+		session.ID, orgID, provider, input.SandboxConnectionID,
+		resourceProfile, bootstrapContext,
+	); err != nil {
+		return domain.Session{}, normalizeConstraintError(err)
+	}
+	if input.Prompt != "" {
+		if _, err := appendUserMessage(ctx, tx, orgID, session.ID, input.Prompt); err != nil {
+			return domain.Session{}, err
+		}
+	}
 
-		if _, err := tx.Exec(
-			ctx,
-			`UPDATE ao_commands
-			SET session_id = $1,
-				status = 'succeeded',
-				result = jsonb_build_object('sessionId', $2::text),
-				updated_at = now()
-			WHERE id = $3`,
-			session.ID,
-			session.ID,
-			commandID,
-		); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(
-			ctx,
-			`INSERT INTO ao_audit_events (
-				org_id, actor_user_id, action, resource_type, resource_id
-			) VALUES ($1, $2, 'session.created', 'session', $3)`,
-			orgID,
-			principal.UserID,
-			session.ID,
-		); err != nil {
-			return err
-		}
-		return getSession(ctx, tx, orgID, session.ID, &session)
-	})
-	return session, err
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE ao_commands
+		SET session_id = $1, status = 'succeeded',
+			result = jsonb_build_object('sessionId', $2::text),
+			updated_at = now()
+		WHERE id = $3`,
+		session.ID, session.ID, commandID,
+	); err != nil {
+		return domain.Session{}, err
+	}
+	auditSQL := `INSERT INTO ao_audit_events (
+		org_id, actor_user_id, action, resource_type, resource_id
+	) VALUES ($1, $2, 'session.created', 'session', $3)`
+	auditArgs := []any{orgID, actorUserID, session.ID}
+	if parentSessionID != "" {
+		auditSQL = `INSERT INTO ao_audit_events (
+			org_id, action, resource_type, resource_id, metadata
+		) VALUES (
+			$1, 'session.created', 'session', $2,
+			jsonb_build_object('parentSessionId', $3::text)
+		)`
+		auditArgs = []any{orgID, session.ID, parentSessionID}
+	}
+	if _, err = tx.Exec(ctx, auditSQL, auditArgs...); err != nil {
+		return domain.Session{}, err
+	}
+	if err := getSession(ctx, tx, orgID, session.ID, &session); err != nil {
+		return domain.Session{}, err
+	}
+	return session, nil
 }
 
 func loadIdempotentSession(
@@ -332,6 +401,7 @@ func loadIdempotentSession(
 	orgID string,
 	idempotencyKey string,
 	payload []byte,
+	expectedKind string,
 	session *domain.Session,
 ) error {
 	var storedPayload []byte
@@ -348,7 +418,7 @@ func loadIdempotentSession(
 	if err != nil {
 		return err
 	}
-	if kind != "session.create" || status != "succeeded" ||
+	if kind != expectedKind || status != "succeeded" ||
 		!jsonEqual(storedPayload, payload) || sessionID == "" {
 		return ErrIdempotencyMismatch
 	}
@@ -501,6 +571,43 @@ func jsonEqual(left, right []byte) bool {
 	leftJSON, _ := json.Marshal(leftValue)
 	rightJSON, _ := json.Marshal(rightValue)
 	return bytes.Equal(leftJSON, rightJSON)
+}
+
+func patchSandboxJSON(
+	raw json.RawMessage,
+	provider, orgID, sessionID, release, providerConnectionID string,
+	isBootstrap bool,
+) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, ErrInvalid
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, ErrInvalid
+	}
+	object["provider"] = provider
+	object["orgId"] = orgID
+	object["sessionId"] = sessionID
+	if release != "" {
+		object["release"] = release
+	}
+	if providerConnectionID != "" {
+		object["providerConnectionId"] = providerConnectionID
+	}
+	if isBootstrap {
+		object["kind"] = "bootstrap"
+	} else {
+		object["kind"] = "resource-profile"
+	}
+	patched, err := json.Marshal(object)
+	if err != nil {
+		return nil, err
+	}
+	return patched, nil
 }
 
 func cursorTime(cursor *domain.Cursor) any {

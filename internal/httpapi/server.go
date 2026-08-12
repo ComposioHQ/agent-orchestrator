@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,10 +15,16 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
+	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// DefaultMaxSandboxesPerOrg caps how much provider capacity one organization
+// can hold at once.
+const DefaultMaxSandboxesPerOrg = 10
 
 type Store interface {
 	Ping(context.Context) error
@@ -30,46 +37,99 @@ type Store interface {
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
 	CreateProject(context.Context, domain.Principal, string, string, domain.CreateProject) (domain.Project, error)
 	ListProjects(context.Context, domain.Principal, string, *domain.Cursor, int) ([]domain.Project, bool, error)
-	CreateSession(context.Context, domain.Principal, string, string, domain.CreateSession) (domain.Session, error)
+	CreateSession(context.Context, domain.Principal, string, string, int, domain.CreateSession) (domain.Session, error)
 	ListSessions(context.Context, domain.Principal, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
 	GetSession(context.Context, domain.Principal, string, string) (domain.Session, error)
 	SendMessage(context.Context, domain.Principal, string, string, string, string) (domain.ClientEvent, error)
 	ListClientEvents(context.Context, domain.Principal, string, string, int64, int) ([]domain.ClientEvent, bool, error)
+	SetSandboxDesiredState(ctx context.Context, principal domain.Principal, orgID, sessionID, desiredState string) error
+	RedeemWorkerBootstrapTicket(context.Context, string) (domain.AccessTicket, error)
+	WorkerLaunchSpec(context.Context, string, string) (domain.WorkerLaunch, error)
+	RegisterWorkerBootstrap(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
+	WorkerConnectionCurrent(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (bool, error)
+	MarkWorkerSeen(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
+	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
+	ClaimWorkerTurn(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerTurn, bool, error)
+	RequestTurnCancellation(ctx context.Context, principal domain.Principal, orgID, sessionID, turnID string) error
+	WorkerTurnCancellationRequested(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int) (bool, error)
+	AppendWorkerTurnOutput(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, stream, text string) error
+	FinishWorkerTurn(ctx context.Context, orgID, sessionID, workerID, turnID string, epoch int64, attempt int, outcome, errorMessage string) (bool, error)
+	WorkerAgentCredential(ctx context.Context, orgID, sessionID, workerID string, epoch int64) (domain.WorkerCredential, error)
+	ListOrchestratorChildren(context.Context, string, string, *domain.Cursor, int) ([]domain.Session, bool, error)
+	CreateOrchestratorChild(context.Context, string, string, string, int, domain.CreateSession) (domain.Session, error)
+	SendOrchestratorChildMessage(context.Context, string, string, string, string, string) (domain.ClientEvent, error)
+	CreateWorkspaceRequest(context.Context, domain.Principal, string, string, string, json.RawMessage, time.Duration) (domain.WorkerRequest, error)
+	GetWorkspaceRequest(context.Context, domain.Principal, string, string, string) (domain.WorkerRequest, error)
+	CancelWorkspaceRequest(context.Context, domain.Principal, string, string, string) error
+	ClaimWorkerRequest(context.Context, string, string, string, int64, time.Duration) (domain.WorkerRequest, bool, error)
+	CompleteWorkerRequest(context.Context, string, string, string, string, int64, int, json.RawMessage) error
+	FailWorkerRequest(context.Context, string, string, string, string, int64, int, string, string) error
+	IssueTerminalTicket(context.Context, domain.Principal, string, string, string, time.Duration) (string, []string, error)
+	OpenTerminal(context.Context, string, string, time.Duration) (domain.TerminalSession, error)
+	QueueTerminalInput(context.Context, domain.TerminalSession, []byte) error
+	CloseTerminal(context.Context, domain.TerminalSession) error
+	AppendTerminalOutput(context.Context, string, string, string, string, int64, []byte) (int64, error)
+	ListTerminalOutput(context.Context, domain.TerminalSession, int64, int) ([]domain.TerminalOutput, string, error)
+}
+
+// WorkerTokens issues and verifies the short-lived credentials sandbox workers
+// present. It is nil when the deployment runs without sandbox provisioning, in
+// which case the worker routes report 404 rather than failing open.
+type WorkerTokens interface {
+	Issue(worker.Claims, time.Duration) (string, error)
+	Verify(string) (worker.Claims, error)
+}
+
+type checkoutBroker interface {
+	IssueCheckoutGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
 }
 
 type Server struct {
-	store               Store
-	workos              auth.WorkOSVerifier
-	localAuthEnabled    bool
-	localSessionTTL     time.Duration
-	localAuthLimiter    *fixedWindowLimiter
-	sandboxProvider     string
-	environment         string
-	release             string
-	draining            atomic.Bool
-	drainOnce           sync.Once
-	drain               chan struct{}
-	logger              *slog.Logger
-	github              *githubapp.Service
-	secretCipher        *secrets.Cipher
-	credentialValidator credentialValidator
-	webhookMaxBody      int64
-	handler             http.Handler
+	store            Store
+	workos           auth.WorkOSVerifier
+	localAuthEnabled bool
+	localSessionTTL  time.Duration
+	localAuthLimiter *fixedWindowLimiter
+	sandboxProvider  string
+	provisioning     sandbox.ProvisioningDefaults
+	workerTokens     WorkerTokens
+	// workerTokenLifetime is zero when the deployment does not override the
+	// protocol default; workerTokenTTL() resolves that.
+	workerTokenLifetime  time.Duration
+	workerRequestTimeout time.Duration
+	maxSandboxes         int
+	environment          string
+	release              string
+	draining             atomic.Bool
+	drainOnce            sync.Once
+	drain                chan struct{}
+	logger               *slog.Logger
+	github               *githubapp.Service
+	checkoutBroker       checkoutBroker
+	secretCipher         *secrets.Cipher
+	credentialValidator  credentialValidator
+	webhookMaxBody       int64
+	handler              http.Handler
 }
 
 type Options struct {
-	Store               Store
-	WorkOS              auth.WorkOSVerifier
-	LocalAuthEnabled    bool
-	LocalSessionTTL     time.Duration
-	SandboxProvider     string
-	Environment         string
-	Release             string
-	Logger              *slog.Logger
-	GitHub              *githubapp.Service
-	SecretCipher        *secrets.Cipher
-	CredentialValidator credentialValidator
-	WebhookMaxBody      int64
+	Store                Store
+	WorkOS               auth.WorkOSVerifier
+	LocalAuthEnabled     bool
+	LocalSessionTTL      time.Duration
+	SandboxProvider      string
+	Provisioning         sandbox.ProvisioningDefaults
+	WorkerTokens         WorkerTokens
+	WorkerTokenTTL       time.Duration
+	WorkerRequestTimeout time.Duration
+	MaxSandboxes         int
+	Environment          string
+	Release              string
+	Logger               *slog.Logger
+	GitHub               *githubapp.Service
+	SecretCipher         *secrets.Cipher
+	CredentialValidator  credentialValidator
+	WebhookMaxBody       int64
 }
 
 func New(options Options) *Server {
@@ -79,7 +139,7 @@ func New(options Options) *Server {
 	}
 	sandboxProvider := options.SandboxProvider
 	if sandboxProvider == "" {
-		sandboxProvider = "ecs"
+		sandboxProvider = sandbox.DefaultProvider
 	}
 	environment := options.Environment
 	if environment == "" {
@@ -93,24 +153,46 @@ func New(options Options) *Server {
 	if webhookMaxBody == 0 {
 		webhookMaxBody = 2 << 20
 	}
+	workerRequestTimeout := options.WorkerRequestTimeout
+	if workerRequestTimeout <= 0 {
+		workerRequestTimeout = 12 * time.Second
+	}
+	// An unset quota must not read as a quota of zero: that would reject every
+	// session with SANDBOX_QUOTA_EXCEEDED rather than allow the default.
+	maxSandboxes := options.MaxSandboxes
+	if maxSandboxes <= 0 {
+		maxSandboxes = DefaultMaxSandboxesPerOrg
+	}
 	server := &Server{
-		store:               options.Store,
-		workos:              options.WorkOS,
-		localAuthEnabled:    options.LocalAuthEnabled,
-		localSessionTTL:     options.LocalSessionTTL,
-		localAuthLimiter:    newFixedWindowLimiter(10, time.Minute, 4096),
-		sandboxProvider:     sandboxProvider,
-		environment:         environment,
-		release:             release,
-		drain:               make(chan struct{}),
-		logger:              logger,
-		github:              options.GitHub,
-		secretCipher:        options.SecretCipher,
-		credentialValidator: options.CredentialValidator,
-		webhookMaxBody:      webhookMaxBody,
+		store:                options.Store,
+		workos:               options.WorkOS,
+		localAuthEnabled:     options.LocalAuthEnabled,
+		localSessionTTL:      options.LocalSessionTTL,
+		localAuthLimiter:     newFixedWindowLimiter(10, time.Minute, 4096),
+		sandboxProvider:      sandboxProvider,
+		provisioning:         options.Provisioning,
+		workerTokens:         options.WorkerTokens,
+		workerTokenLifetime:  options.WorkerTokenTTL,
+		workerRequestTimeout: workerRequestTimeout,
+		maxSandboxes:         maxSandboxes,
+		environment:          environment,
+		release:              release,
+		drain:                make(chan struct{}),
+		logger:               logger,
+		github:               options.GitHub,
+		secretCipher:         options.SecretCipher,
+		credentialValidator:  options.CredentialValidator,
+		webhookMaxBody:       webhookMaxBody,
 	}
 	if server.credentialValidator == nil {
 		server.credentialValidator = newAgentCredentialValidator(nil)
+	}
+	if options.GitHub != nil {
+		server.checkoutBroker = options.GitHub
+	}
+	server.provisioning.Provider = sandboxProvider
+	if server.provisioning.Release == "" {
+		server.provisioning.Release = release
 	}
 	router := chi.NewRouter()
 	router.Use(server.requestID)
@@ -128,6 +210,29 @@ func New(options Options) *Server {
 		router.Post("/auth/local/login", server.loginLocal)
 		router.With(server.authenticate).Post("/auth/local/logout", server.logoutLocal)
 		router.With(server.authenticate).Get("/me", server.me)
+		// Workers hold no user identity, so they never pass through
+		// server.authenticate. Bootstrap is gated by a one-time ticket;
+		// everything after it by a short-lived worker token.
+		router.Post("/worker/bootstrap", server.workerBootstrap)
+		router.Group(func(router chi.Router) {
+			router.Use(server.workerAuth)
+			router.Post("/worker/heartbeat", server.workerHeartbeat)
+			router.Post("/worker/events", server.workerEvent)
+			router.Post("/worker/turns/claim", server.workerClaimTurn)
+			router.Get("/worker/turns/{turnId}/cancellation", server.workerTurnCancellation)
+			router.Post("/worker/turns/{turnId}/complete", server.workerCompleteTurn)
+			router.Post("/worker/turns/{turnId}/fail", server.workerFailTurn)
+			router.Get("/worker/credential", server.workerCredential)
+			router.Post("/worker/checkout-grant", server.workerCheckoutGrant)
+			router.Get("/worker/children", server.listWorkerChildren)
+			router.Post("/worker/children", server.createWorkerChild)
+			router.Post("/worker/children/{sessionId}/messages", server.sendWorkerChildMessage)
+			router.Post("/worker/transport/claim", server.workerClaimTransport)
+			router.Post("/worker/transport/{requestId}/complete", server.workerCompleteTransport)
+			router.Post("/worker/transport/{requestId}/fail", server.workerFailTransport)
+			router.Post("/worker/terminals/{terminalId}/output", server.workerTerminalOutput)
+		})
+		router.Get("/terminal", server.connectTerminal)
 		router.Route("/orgs/{orgId}", func(router chi.Router) {
 			router.Use(server.authenticate)
 			if server.github != nil {
@@ -146,9 +251,16 @@ func New(options Options) *Server {
 			router.Get("/sessions", server.listSessions)
 			router.Post("/sessions", server.createSession)
 			router.Get("/sessions/{sessionId}", server.getSession)
+			router.Delete("/sessions/{sessionId}", server.deleteSession)
 			router.Post("/sessions/{sessionId}/messages", server.sendMessage)
+			router.Post("/sessions/{sessionId}/turns/{turnId}/cancel", server.cancelTurn)
 			router.Get("/sessions/{sessionId}/chat-events", server.replayClientEvents)
 			router.Get("/sessions/{sessionId}/events", server.streamClientEvents)
+			router.Post("/sessions/{sessionId}/terminal-ticket", server.createTerminalTicket)
+			router.Get("/sessions/{sessionId}/workspace/files", server.listWorkspaceFiles)
+			router.Get("/sessions/{sessionId}/workspace/file", server.readWorkspaceFile)
+			router.Put("/sessions/{sessionId}/workspace/file", server.writeWorkspaceFile)
+			router.Get("/sessions/{sessionId}/workspace/diff", server.getWorkspaceDiff)
 		})
 	})
 	server.handler = router

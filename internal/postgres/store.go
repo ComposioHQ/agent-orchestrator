@@ -11,11 +11,15 @@ import (
 )
 
 var (
-	ErrNotFound            = errors.New("not found")
-	ErrForbidden           = errors.New("forbidden")
-	ErrConflict            = errors.New("conflict")
-	ErrInvalid             = errors.New("invalid")
-	ErrIdempotencyMismatch = errors.New("idempotency key belongs to a different operation")
+	ErrNotFound             = errors.New("not found")
+	ErrForbidden            = errors.New("forbidden")
+	ErrConflict             = errors.New("conflict")
+	ErrInvalid              = errors.New("invalid")
+	ErrIdempotencyMismatch  = errors.New("idempotency key belongs to a different operation")
+	ErrSandboxQuotaExceeded = errors.New("sandbox quota exceeded")
+	ErrWorkerUnavailable    = errors.New("worker unavailable")
+	ErrTransportExpired     = errors.New("worker request expired")
+	ErrWorkspaceReadOnly    = errors.New("workspace is read-only")
 )
 
 type Store struct {
@@ -60,6 +64,61 @@ func (s *Store) ValidateRuntimeRole(ctx context.Context) error {
 }
 
 type tenantFn func(pgx.Tx) error
+
+// withService runs fn in a transaction that carries the control-plane service
+// context. Only ao_sandboxes grants this context, and only so the reconciler
+// can scan due sandboxes across organizations. Every write that follows a claim
+// must run through withOrg instead, so row-level security still confines it to
+// a single tenant.
+func (s *Store) withService(ctx context.Context, fn tenantFn) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT set_config('ao.service', 'control-plane', true)`,
+	); err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit service transaction: %w", err)
+	}
+	return nil
+}
+
+// withOrg runs fn scoped to one organization without a user principal. It is
+// for control-plane background work — reconciliation, ticket issuance, worker
+// registration — where there is no request to authorize but tenant isolation
+// must still hold. Request-driven paths use withTenant, which additionally
+// verifies the caller's membership.
+func (s *Store) withOrg(ctx context.Context, orgID string, fn tenantFn) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(
+		ctx,
+		`SELECT set_config('ao.org_id', $1, true)`,
+		orgID,
+	); err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit organization transaction: %w", err)
+	}
+	return nil
+}
 
 func (s *Store) withTenant(
 	ctx context.Context,

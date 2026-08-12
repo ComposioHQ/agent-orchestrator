@@ -184,11 +184,24 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Session project, kind, harness, name, or prompt is invalid.")
 		return
 	}
+	// The plan is resolved once, here, and stamped onto the sandbox row. The
+	// reconciler reads it back from the row rather than from configuration, so
+	// a later config change cannot disturb a session already in flight.
+	plan, err := s.provisioning.SessionPlan()
+	if err != nil {
+		s.logger.Error("resolve sandbox provisioning plan", "error", err, "request_id", requestID(r))
+		writeError(
+			w, r, http.StatusInternalServerError, "internal_error",
+			"Sandbox provisioning is misconfigured on this deployment.",
+		)
+		return
+	}
 	session, err := s.store.CreateSession(
 		r.Context(),
 		principalFrom(r),
 		orgID,
 		key,
+		s.maxSandboxes,
 		domain.CreateSession{
 			ProjectID:           request.ProjectID,
 			Kind:                request.Kind,
@@ -197,8 +210,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			Prompt:              request.Prompt,
 			Mode:                request.Mode,
 			DeniedCommands:      request.DeniedCommands,
-			Provider:            s.sandboxProvider,
+			Provider:            plan.Provider,
 			SandboxConnectionID: request.SandboxProviderConnectionID,
+			ResourceProfile:     plan.ResourceProfile,
+			BootstrapContext:    plan.BootstrapContext,
+			Release:             s.release,
 		},
 	)
 	if err != nil {
@@ -271,6 +287,33 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": toSessionResponse(session)})
+}
+
+// deleteSession records the intent to tear a session's sandbox down. It does
+// not call the provider: the reconciler owns every slow provider call, so a
+// degraded provider cannot stall this request. The reconciler releases quota
+// only after it confirms the compute is gone, then marks the retained session
+// terminated so its event history remains available.
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	sessionID := chi.URLParam(r, "sessionId")
+	if requireUUID(orgID, "orgId") != nil || requireUUID(sessionID, "sessionId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and sessionId must be UUIDs.")
+		return
+	}
+	if err := s.store.SetSandboxDesiredState(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		sessionID,
+		domain.SandboxDesiredDeleted,
+	); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"session": map[string]any{"id": sessionID, "desiredState": domain.SandboxDesiredDeleted},
+	})
 }
 
 func validProjectInput(request createProjectRequest) bool {

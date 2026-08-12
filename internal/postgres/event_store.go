@@ -29,70 +29,79 @@ func (s *Store) SendMessage(
 ) (domain.ClientEvent, error) {
 	var event domain.ClientEvent
 	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
-		payload, err := json.Marshal(map[string]string{"text": text})
-		if err != nil {
-			return err
-		}
-		var commandID string
-		err = tx.QueryRow(
-			ctx,
-			`INSERT INTO ao_commands (
-				org_id, session_id, idempotency_key, kind, payload
-			) VALUES ($1, $2, $3, 'message.send', $4)
-			ON CONFLICT (org_id, idempotency_key) DO NOTHING
-			RETURNING id`,
-			orgID,
-			sessionID,
-			idempotencyKey,
-			payload,
-		).Scan(&commandID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return loadIdempotentMessage(
-				ctx,
-				tx,
-				orgID,
-				sessionID,
-				idempotencyKey,
-				payload,
-				&event,
-			)
-		}
-		if err != nil {
-			return normalizeConstraintError(err)
-		}
-
-		event, err = appendUserMessage(ctx, tx, orgID, sessionID, text)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(
-			ctx,
-			`UPDATE ao_commands
-			SET status = 'succeeded',
-				result = jsonb_build_object('eventSequence', $1::bigint),
-				updated_at = now()
-			WHERE id = $2`,
-			event.Sequence,
-			commandID,
-		); err != nil {
-			return err
-		}
-		_, err = tx.Exec(
-			ctx,
-			`INSERT INTO ao_audit_events (
-				org_id, actor_user_id, action, resource_type, resource_id,
-				metadata
-			) VALUES (
-				$1, $2, 'session.message_queued', 'session', $3,
-				jsonb_build_object('sequence', $4::bigint)
-			)`,
-			orgID,
-			principal.UserID,
-			sessionID,
-			event.Sequence,
+		var err error
+		event, err = sendMessageTx(
+			ctx, tx, orgID, sessionID, idempotencyKey, text, principal.UserID, "",
 		)
 		return err
 	})
+	return event, err
+}
+
+func sendMessageTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	orgID, sessionID, idempotencyKey, text, actorUserID, actorSessionID string,
+) (domain.ClientEvent, error) {
+	payload, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return domain.ClientEvent{}, err
+	}
+	var commandID string
+	err = tx.QueryRow(
+		ctx,
+		`INSERT INTO ao_commands (
+			org_id, session_id, idempotency_key, kind, payload
+		) VALUES ($1, $2, $3, 'message.send', $4)
+		ON CONFLICT (org_id, idempotency_key) DO NOTHING
+		RETURNING id`,
+		orgID, sessionID, idempotencyKey, payload,
+	).Scan(&commandID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var event domain.ClientEvent
+		err := loadIdempotentMessage(
+			ctx, tx, orgID, sessionID, idempotencyKey, payload, &event,
+		)
+		return event, err
+	}
+	if err != nil {
+		return domain.ClientEvent{}, normalizeConstraintError(err)
+	}
+	event, err := appendUserMessage(ctx, tx, orgID, sessionID, text)
+	if err != nil {
+		return domain.ClientEvent{}, err
+	}
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE ao_commands
+		SET status = 'succeeded',
+			result = jsonb_build_object('eventSequence', $1::bigint),
+			updated_at = now()
+		WHERE id = $2`,
+		event.Sequence, commandID,
+	); err != nil {
+		return domain.ClientEvent{}, err
+	}
+	auditSQL := `INSERT INTO ao_audit_events (
+		org_id, actor_user_id, action, resource_type, resource_id, metadata
+	) VALUES (
+		$1, $2, 'session.message_queued', 'session', $3,
+		jsonb_build_object('sequence', $4::bigint)
+	)`
+	auditArgs := []any{orgID, actorUserID, sessionID, event.Sequence}
+	if actorSessionID != "" {
+		auditSQL = `INSERT INTO ao_audit_events (
+			org_id, action, resource_type, resource_id, metadata
+		) VALUES (
+			$1, 'session.message_queued', 'session', $2,
+			jsonb_build_object(
+				'sequence', $3::bigint,
+				'actorSessionId', $4::text
+			)
+		)`
+		auditArgs = []any{orgID, sessionID, event.Sequence, actorSessionID}
+	}
+	_, err = tx.Exec(ctx, auditSQL, auditArgs...)
 	return event, err
 }
 
@@ -135,6 +144,56 @@ func loadIdempotentMessage(
 		sessionID,
 		sequence,
 	), event)
+}
+
+// AppendSessionEvent records a control-plane or worker event on a session
+// stream. Unlike a user message it does not open a turn, and it is allowed on a
+// terminated session so lifecycle history stays complete.
+func (s *Store) AppendSessionEvent(
+	ctx context.Context,
+	orgID string,
+	sessionID string,
+	eventType string,
+	payload json.RawMessage,
+) (domain.ClientEvent, error) {
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+	var event domain.ClientEvent
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var sequence int64
+		err := tx.QueryRow(
+			ctx,
+			`UPDATE ao_sessions
+			SET next_sequence = next_sequence + 1
+			WHERE org_id = $1 AND id = $2
+			RETURNING next_sequence - 1`,
+			orgID,
+			sessionID,
+		).Scan(&sequence)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		return scanClientEvent(tx.QueryRow(
+			ctx,
+			`INSERT INTO ao_events (
+				org_id, session_id, sequence, type, payload
+			) VALUES ($1, $2, $3, $4, $5)
+			RETURNING session_id, sequence, type, payload, created_at`,
+			orgID,
+			sessionID,
+			sequence,
+			eventType,
+			payload,
+		), &event)
+	})
+	if err != nil {
+		return domain.ClientEvent{}, err
+	}
+	return event, nil
 }
 
 func appendUserMessage(

@@ -18,10 +18,14 @@ AWS_PROFILE=ao-cloud ./scripts/deploy-staging.sh
 The script requires `AO_CLOUD_RELEASE` to resolve to the clean checkout's
 current full Git SHA and:
 
-1. Builds one non-root, read-only `linux/amd64` image.
-2. Pushes an immutable release tag to `ao-cloud-control-plane`.
-3. requires the ECR basic scan to finish with no critical or high findings.
-4. Registers digest-pinned API and migration task definitions.
+1. Builds separate non-root, read-only `linux/amd64` control-plane and worker
+   images.
+2. Pushes immutable release tags to `ao-cloud-control-plane` and
+   `ao-cloud-worker`.
+3. Requires both ECR scans to finish with no critical or high findings.
+4. Verifies that both images contain the same executable `ao-worker`, then
+   registers a digest-pinned API task with `/ao-worker` as its packaged worker
+   path and records the worker image digest on the task definition.
 5. Runs `/ao-cloud-migrate` as a one-off Fargate task and stops on failure.
 6. Rolls both API replicas only after migrations succeed.
 7. Waits for ECS and both ALB targets to become healthy.
@@ -45,7 +49,8 @@ creates new task-definition revisions; it never mutates an older image tag.
 - hostname: `staging-api.aoagents.dev`
 - target group: `ao-cloud-staging-public-cp`
 - CloudWatch log group: `/ao-cloud/staging/control-plane` (30-day retention)
-- ECR repository: `ao-cloud-control-plane` (immutable tags, 30-image retention)
+- ECR repositories: `ao-cloud-control-plane` and `ao-cloud-worker` (immutable
+  tags, 30-image retention)
 
 The ALB probes `/readyz`, which checks both draining state and database
 connectivity. ECS keeps at least 100% of the desired replicas healthy during a
@@ -76,10 +81,29 @@ role:
 - `ao-cloud/staging/workos`
 - `ao-cloud/staging/database-url`
 - `ao-cloud/staging/migration-database-url`
+- `ao-cloud/staging/provider-secret-key`
+- `ao-cloud/staging/nodeops`
+- `ao-cloud/staging/worker`
 
 The API task gets only the runtime database credential. The elevated migration
 credential is available only to the one-off migration task. Secrets are not
 baked into the image or task-definition environment.
+
+`nodeops` is a JSON secret with `base_url`, `api_key`, `default_shape`,
+`default_rootfs`, `ingress`, `ssh_key_path`, `region`, and
+`worker_token_ttl`. `worker` contains `signing_key`,
+`max_active_sandboxes_per_org`, `sandbox_reconcile_interval`,
+`sandbox_startup_timeout`, and `worker_heartbeat_timeout`. Deployment validates
+every field before building or registering a task, and ECS injects each value
+directly from its environment-scoped secret. Provider auto-pause is
+intentionally absent from this deployment configuration.
+
+The configured NodeOps `default_rootfs` must provide `bash`, `git`, `claude`,
+`codex`, and `cursor-agent`. The reconciler copies the release's fenced
+`ao-worker` binary into that rootfs; the worker refuses to publish
+`worker.ready` when the selected harness binary is absent. The separately
+scanned worker image is the canonical local/reference runtime, but CreateOS
+does not consume that OCI image directly.
 
 Database password rotation must update the corresponding URL secret before the
 next rollout. For an immediate WorkOS or runtime database secret rotation,
@@ -119,8 +143,8 @@ revision so that rolling deploys and application rollback are safe.
 
 Production is deliberately a separate environment. It has its own PostgreSQL
 instance, ECS cluster, service, ALB, IAM roles, logs, alarms, and Secrets Manager
-entries. Staging and production share only the immutable ECR image selected for
-promotion.
+entries. Staging and production share only the immutable control-plane and
+worker image digests selected for promotion.
 
 Run this only after the release is healthy in staging:
 
@@ -130,25 +154,26 @@ AO_CLOUD_APPROVE_PRODUCTION=1 \
   ./scripts/promote-production.sh
 ```
 
-The production script does not build an image. It reads the release and
-digest-pinned image from the healthy staging service, requires the ECR scan to
-be complete with no high or critical findings, and refuses a requested release
-that is not currently running in staging. It verifies both services before
-changing production. New production task revisions are derived from the
+The production script does not build images. It reads the release and both
+digest-pinned artifacts from the healthy staging service, requires each ECR
+scan to be complete with no high or critical findings, and refuses a requested
+release that is not currently running in staging. It verifies both services
+before changing production. New production task revisions are derived from the
 existing production definitions—not staging—so production-only secrets survive
 and staging variables, URLs, log groups, or secret ARNs cannot cross the
 environment boundary. It then:
 
-1. Registers production API and migration task definitions using that exact
-   digest.
-2. Runs `/ao-cloud-migrate` against production as a one-off task.
-3. Refreshes the restricted runtime role's grants, including default privileges
+1. Validates the production-scoped NodeOps and worker secret documents.
+2. Registers production API and migration task definitions using the exact
+   control-plane digest and records the exact worker digest.
+3. Runs `/ao-cloud-migrate` against production as a one-off task.
+4. Refreshes the restricted runtime role's grants, including default privileges
    for objects created by future migrations.
-4. Leaves the existing API service untouched if migration or grant application
+5. Leaves the existing API service untouched if migration or grant application
    fails.
-5. Rolls two production replicas, waits for ECS stability, and requires every
+6. Rolls two production replicas, waits for ECS stability, and requires every
    ALB target to be healthy.
-6. Verifies that production is running the same image digest and release as
+7. Verifies that production is running the same image digests and release as
    staging.
 
 This promotes migration code, not staging data. Each environment retains its
@@ -175,6 +200,14 @@ The service reads only these production-scoped secrets:
 - `ao-cloud/production/workos`
 - `ao-cloud/production/database-url`
 - `ao-cloud/production/migration-database-url`
+- `ao-cloud/production/provider-secret-key`
+- `ao-cloud/production/github`
+- `ao-cloud/production/nodeops`
+- `ao-cloud/production/worker`
+
+The production `nodeops` and `worker` documents use the same schema as staging.
+Promotion reads and validates production values; it never copies secret values
+or ARNs from staging.
 
 Staging and production intentionally use the same WorkOS environment. This
 shares users and provider configuration across both AO environments; split them

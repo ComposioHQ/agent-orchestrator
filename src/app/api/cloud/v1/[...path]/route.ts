@@ -25,6 +25,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   return forward(request, context);
 }
 
+export async function PUT(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
 async function forward(request: NextRequest, context: RouteContext) {
   const origin = request.headers.get("origin");
   if (

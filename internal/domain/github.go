@@ -55,6 +55,19 @@ type GitHubRepository struct {
 	RevokedAt          *time.Time
 }
 
+// GitHubCheckoutContext is the non-secret authorization result for a worker
+// checkout. The store only returns it when the worker's session, project,
+// repository grant, installation, and recorded repository identity still agree.
+type GitHubCheckoutContext struct {
+	OrgID                string
+	SessionID            string
+	ProjectID            string
+	GitHubInstallationID int64
+	GitHubRepositoryID   int64
+	FullName             string
+	CloneURL             string
+}
+
 type CreateGitHubProject struct {
 	GitHubRepositoryID int64
 	DisplayName        string

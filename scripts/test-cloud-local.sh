@@ -2,6 +2,12 @@
 set -euo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$repository_root/scripts/lib/docker-local.sh"
+if ! ao_docker_available; then
+	printf 'SKIP: Docker Engine with Compose is unavailable; local lifecycle smoke test not run.\n'
+	exit 0
+fi
+
 project_name="ao-cloud-smoke-${PPID}-$$"
 state_root="${AO_DATA_DIR:-$HOME/.ao}"
 mkdir -p "$state_root"
@@ -24,6 +30,11 @@ export AO_CLOUD_POSTGRES_PORT="${AO_CLOUD_SMOKE_POSTGRES_PORT:-$(free_port)}"
 export AO_CLOUD_LOCAL_POSTGRES_DATA_DIR="$state_directory/postgres"
 export AO_CLOUD_PROVIDER_SECRET_KEY
 AO_CLOUD_PROVIDER_SECRET_KEY="$(openssl rand -base64 32)"
+export AO_CLOUD_WORKER_SIGNING_KEY
+AO_CLOUD_WORKER_SIGNING_KEY="$(openssl rand -hex 32)"
+export AO_CLOUD_DOCKER_GID
+AO_CLOUD_DOCKER_GID="$(ao_docker_socket_gid)"
+export AO_CLOUD_DOCKER_WORKER_IMAGE="${project_name}-worker:smoke"
 export COMPOSE_PROJECT_NAME="$project_name"
 
 compose() {
@@ -31,8 +42,25 @@ compose() {
 }
 
 cleanup() {
+	local status=$?
+	if ((status != 0)); then
+		compose logs >&2 || true
+		local worker
+		while IFS= read -r worker; do
+			if [[ -n "$worker" ]]; then
+				docker logs "$worker" >&2 || true
+			fi
+		done < <(
+			docker ps --all --quiet \
+				--filter "label=ao.managed=true" \
+				--filter "label=ao.docker.namespace=${project_name}"
+		)
+	fi
+	ao_docker_remove_workers "$project_name" >/dev/null 2>&1 || true
 	compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+	ao_docker_remove_workspaces "$project_name" >/dev/null 2>&1 || true
 	rm -rf "$state_directory"
+	return "$status"
 }
 trap cleanup EXIT
 
@@ -113,6 +141,48 @@ def request(method, path, *, body=None, token=None, idempotency_key=None, expect
         return json.load(response)
 
 
+def wait_for_running(org_id, session_id, token):
+    deadline = time.monotonic() + 90
+    last_state = None
+    while time.monotonic() < deadline:
+        session = request(
+            "GET",
+            f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}",
+            token=token,
+        )["session"]
+        last_state = session["runtimeState"]
+        if last_state == "running":
+            return session
+        if last_state == "failed":
+            raise RuntimeError(f"worker provisioning failed: {session!r}")
+        time.sleep(1)
+    raise RuntimeError(f"worker did not become running; last state was {last_state!r}")
+
+
+def events(org_id, session_id, token):
+    return request(
+        "GET",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}/chat-events?after=0&limit=100",
+        token=token,
+    )["events"]
+
+
+def wait_for_terminal_turn(org_id, session_id, token, previous):
+    terminal_types = {
+        "chat.turn_completed",
+        "chat.turn_interrupted",
+        "chat.turn_aborted",
+    }
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        current = events(org_id, session_id, token)
+        terminal = [event for event in current if event.get("type") in terminal_types]
+        if len(terminal) > previous:
+            return len(terminal)
+        time.sleep(0.5)
+    raise RuntimeError("worker did not durably finish the queued turn")
+
+
 if mode == "create":
     suffix = str(time.time_ns())
     auth = request(
@@ -134,7 +204,7 @@ if mode == "create":
         f"/api/cloud/v1/orgs/{org_id}/projects",
         body={
             "displayName": "Persistence Test",
-            "repositoryUrl": "https://github.com/aoagents/cloud-smoke",
+            "repositoryUrl": "https://github.com/octocat/Hello-World",
             "defaultBranch": "main",
             "config": {},
         },
@@ -156,18 +226,46 @@ if mode == "create":
         idempotency_key=f"session-{suffix}",
         expected=201,
     )["session"]
-    if session["runtimeState"] != "requested":
-        raise RuntimeError(
-            f"session runtime state is {session['runtimeState']!r}, expected 'requested'"
-        )
-    request(
-        "POST",
-        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/messages",
-        body={"text": "Message persisted before restart"},
+    wait_for_running(org_id, session["id"], token)
+    workspace_file = request(
+        "PUT",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/workspace/file",
+        body={"path": ".ao-cloud-smoke-api", "content": "durable-worker-transport\n"},
         token=token,
-        idempotency_key=f"message-{suffix}",
-        expected=202,
     )
+    if workspace_file.get("content") != "durable-worker-transport\n":
+        raise RuntimeError(f"workspace write returned unexpected content: {workspace_file!r}")
+    read_back = request(
+        "GET",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/workspace/file?path=.ao-cloud-smoke-api",
+        token=token,
+    )
+    if read_back != workspace_file:
+        raise RuntimeError(
+            f"workspace read did not match the durable write: {read_back!r}"
+        )
+    listing = request(
+        "GET",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/workspace/files?limit=100",
+        token=token,
+    )
+    if ".ao-cloud-smoke-api" not in {item.get("path") for item in listing["items"]}:
+        raise RuntimeError(f"workspace listing omitted the written file: {listing!r}")
+    terminal_turns = 0
+    for index, text in enumerate(
+        ("First turn persisted before restart", "Follow-up turn persisted before restart")
+    ):
+        request(
+            "POST",
+            f"/api/cloud/v1/orgs/{org_id}/sessions/{session['id']}/messages",
+            body={"text": text},
+            token=token,
+            idempotency_key=f"message-{suffix}-{index}",
+            expected=202,
+        )
+        terminal_turns = wait_for_terminal_turn(
+            org_id, session["id"], token, terminal_turns
+        )
     state_file.write_text(
         json.dumps(
             {
@@ -182,24 +280,17 @@ elif mode == "verify":
     token = state["token"]
     org_id = state["orgId"]
     session_id = state["sessionId"]
-    session = request(
-        "GET",
-        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}",
-        token=token,
-    )["session"]
-    if session["runtimeState"] != "requested":
-        raise RuntimeError("session provisioning state changed without a worker")
-    events = request(
-        "GET",
-        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}/chat-events?after=0&limit=100",
-        token=token,
-    )["events"]
+    wait_for_running(org_id, session_id, token)
+    session_events = events(org_id, session_id, token)
     messages = [
         event.get("payload", {}).get("text")
-        for event in events
+        for event in session_events
         if event.get("type") == "chat.user_message"
     ]
-    expected = {"Message persisted before restart"}
+    expected = {
+        "First turn persisted before restart",
+        "Follow-up turn persisted before restart",
+    }
     if not expected.issubset(messages):
         raise RuntimeError(f"durable messages missing after restart: {messages!r}")
 else:
@@ -207,6 +298,52 @@ else:
 PY
 }
 
+session_id() {
+	python3 - "$state_file" <<'PY'
+import json
+import pathlib
+import sys
+
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["sessionId"])
+PY
+}
+
+wait_for_worker() {
+	local session="$1"
+	local previous="${2:-}"
+	local attempts=90
+	local container_id
+	while ((attempts > 0)); do
+		container_id="$(
+			docker ps --quiet \
+				--filter "label=ao.managed=true" \
+				--filter "label=ao.provider=docker" \
+				--filter "label=ao.docker.namespace=${project_name}" \
+				--filter "label=ao.session_id=${session}"
+		)"
+		if [[ -n "$container_id" && "$container_id" != "$previous" ]]; then
+			printf '%s\n' "$container_id"
+			return 0
+		fi
+		attempts=$((attempts - 1))
+		sleep 1
+	done
+	echo "Worker container for session ${session} did not appear." >&2
+	compose logs control-plane >&2
+	return 1
+}
+
+assert_workspace_marker() {
+	local container_id="$1"
+	local marker
+	marker="$(docker exec "$container_id" bash -c 'cat /workspace/repository/.ao-cloud-smoke')"
+	if [[ "$marker" != "persistent-workspace" ]]; then
+		echo "Worker workspace marker did not survive container replacement." >&2
+		return 1
+	fi
+}
+
+compose --profile worker-image build worker-image
 compose up --build -d
 wait_for_ready
 assert_loopback_port control-plane 8080 "$AO_CLOUD_PORT"
@@ -241,16 +378,30 @@ if [[ "$role_state" != "$expected_role_state" ]]; then
 fi
 
 exercise_api create
+session="$(session_id)"
+first_worker="$(wait_for_worker "$session")"
+docker exec "$first_worker" bash -c \
+	'printf "%s\n" persistent-workspace > /workspace/repository/.ao-cloud-smoke'
+docker rm --force "$first_worker" >/dev/null
+replacement_worker="$(wait_for_worker "$session" "$first_worker")"
+assert_workspace_marker "$replacement_worker"
+exercise_api verify
+
 compose restart control-plane >/dev/null
 wait_for_ready
 exercise_api verify
 
+ao_docker_remove_workers "$project_name"
 compose down --remove-orphans >/dev/null
 compose up -d
 wait_for_ready
+restarted_worker="$(wait_for_worker "$session")"
+assert_workspace_marker "$restarted_worker"
 exercise_api verify
 
+ao_docker_remove_workers "$project_name"
 compose down --volumes --remove-orphans >/dev/null
+ao_docker_remove_workspaces "$project_name"
 if docker volume inspect "${project_name}_ao-cloud-postgres" >/dev/null 2>&1; then
 	echo "cloud:local:reset semantics left the PostgreSQL volume behind." >&2
 	exit 1

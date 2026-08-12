@@ -39,8 +39,8 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	).Scan(&tableCount); err != nil {
 		t.Fatal(err)
 	}
-	if tableCount != 30 {
-		t.Fatalf("found %d AO tables, want 30", tableCount)
+	if tableCount != 33 {
+		t.Fatalf("found %d AO tables, want 33", tableCount)
 	}
 	var forcedRLSTableCount int
 	if err := pool.QueryRow(
@@ -54,8 +54,8 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	).Scan(&forcedRLSTableCount); err != nil {
 		t.Fatal(err)
 	}
-	if forcedRLSTableCount != 24 {
-		t.Fatalf("found %d forced-RLS AO tables, want 24", forcedRLSTableCount)
+	if forcedRLSTableCount != 27 {
+		t.Fatalf("found %d forced-RLS AO tables, want 27", forcedRLSTableCount)
 	}
 
 	store, err := Open(ctx, databaseURL)
@@ -162,6 +162,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"session-key",
+		100,
 		sessionInput,
 	)
 	if err != nil {
@@ -172,6 +173,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"session-key",
+		100,
 		sessionInput,
 	)
 	if err != nil {
@@ -187,6 +189,48 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		len(session.DeniedCommands) != 1 ||
 		session.DeniedCommands[0] != "git push --force:*" {
 		t.Fatalf("new session policy = mode %q, denied %#v", session.Mode, session.DeniedCommands)
+	}
+	orchestratorInput := sessionInput
+	orchestratorInput.Kind = "orchestrator"
+	orchestratorInput.DisplayName = "Project orchestrator"
+	orchestratorInput.Prompt = ""
+	orchestrator, err := store.CreateSession(
+		ctx, first, firstOrg, "orchestrator-session-key", 100, orchestratorInput,
+	)
+	if err != nil {
+		t.Fatalf("create orchestrator: %v", err)
+	}
+	childInput := sessionInput
+	childInput.ProjectID = ""
+	childInput.DisplayName = "Delegated worker"
+	childInput.Prompt = ""
+	child, err := store.CreateOrchestratorChild(
+		ctx, firstOrg, orchestrator.ID, "orchestrator-child-key", 10, childInput,
+	)
+	if err != nil {
+		t.Fatalf("create orchestrator child: %v", err)
+	}
+	children, childHasMore, err := store.ListOrchestratorChildren(
+		ctx, firstOrg, orchestrator.ID, nil, 50,
+	)
+	if err != nil || childHasMore || len(children) != 1 || children[0].ID != child.ID {
+		t.Fatalf("orchestrator children = %#v, hasMore=%v, err=%v", children, childHasMore, err)
+	}
+	childMessage, err := store.SendOrchestratorChildMessage(
+		ctx, firstOrg, orchestrator.ID, child.ID, "orchestrator-message-key", "Report status",
+	)
+	if err != nil || childMessage.Type != "chat.user_message" {
+		t.Fatalf("send orchestrator child message = %#v, err=%v", childMessage, err)
+	}
+	if _, err := store.SendOrchestratorChildMessage(
+		ctx, firstOrg, orchestrator.ID, session.ID, "orchestrator-peer-message", "Not a child",
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("message to same-project peer error = %v, want forbidden", err)
+	}
+	if _, err := store.CreateOrchestratorChild(
+		ctx, firstOrg, session.ID, "worker-child-key", 10, childInput,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ordinary worker child spawn error = %v, want forbidden", err)
 	}
 	events, hasMore, err := store.ListClientEvents(ctx, first, firstOrg, session.ID, 0, 10)
 	if err != nil {
@@ -243,6 +287,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"mismatched-provider-session",
+		100,
 		connectionInput,
 	); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("mismatched sandbox provider error = %v", err)
@@ -253,6 +298,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"matching-provider-session",
+		100,
 		connectionInput,
 	); err != nil {
 		t.Fatalf("create session with matching sandbox provider: %v", err)
@@ -266,6 +312,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"empty-session-key",
+		100,
 		emptySessionInput,
 	)
 	if err != nil {
@@ -325,6 +372,7 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 		first,
 		firstOrg,
 		"concurrent-session-key",
+		100,
 		concurrentInput,
 	)
 	if err != nil {
@@ -726,6 +774,35 @@ func exerciseGitHubStore(
 	if err != nil || project.RepositoryURL != "https://github.com/test-org/api" {
 		t.Fatalf("create GitHub project = %#v, err=%v", project, err)
 	}
+	checkoutSession, err := store.CreateSession(
+		ctx,
+		owner,
+		orgID,
+		"github-project-session-"+attempt.ID,
+		100,
+		domain.CreateSession{
+			ProjectID: project.ID, Kind: "worker",
+			Harness: "claude-code", DisplayName: "GitHub checkout",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create GitHub checkout session: %v", err)
+	}
+	checkout, err := store.WorkerGitHubCheckoutContext(ctx, orgID, checkoutSession.ID)
+	if err != nil {
+		t.Fatalf("resolve worker GitHub checkout: %v", err)
+	}
+	if checkout.ProjectID != project.ID ||
+		checkout.GitHubInstallationID != githubInstallationID ||
+		checkout.GitHubRepositoryID != repositoryID ||
+		checkout.CloneURL != repository.CloneURL {
+		t.Fatalf("worker GitHub checkout = %#v", checkout)
+	}
+	if _, err := store.WorkerGitHubCheckoutContext(
+		ctx, uuid.NewString(), checkoutSession.ID,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("cross-org worker GitHub checkout error = %v", err)
+	}
 	delivery := domain.GitHubWebhookDelivery{
 		DeliveryID:           "delivery-" + attempt.ID,
 		Event:                "installation_repositories",
@@ -800,6 +877,11 @@ func exerciseGitHubStore(
 		[]domain.GitHubRepository{repository},
 	); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("sync after GitHub disconnect error = %v", err)
+	}
+	if _, err := store.WorkerGitHubCheckoutContext(
+		ctx, orgID, checkoutSession.ID,
+	); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("worker checkout after GitHub disconnect error = %v", err)
 	}
 	if _, err := store.CreateGitHubProject(
 		ctx,

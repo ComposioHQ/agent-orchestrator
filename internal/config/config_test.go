@@ -2,9 +2,32 @@ package config
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 )
+
+// nodeOpsEnvironment sets every variable a nodeops deployment requires, so a
+// test can then remove exactly the one it is asserting on.
+func nodeOpsEnvironment(t *testing.T) {
+	t.Helper()
+	setProviderSecretKey(t)
+	t.Setenv("AO_CLOUD_ENV", "staging")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
+	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
+	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://api.sb.createos.sh")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-4vcpu-8gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
+	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
+	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+}
 
 func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_ENV", "development")
@@ -19,6 +42,20 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "")
 	t.Setenv("AO_CLOUD_WORKOS_JWKS_URL", "")
 	t.Setenv("AO_CLOUD_SANDBOX_PROVIDER", "")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "")
+	t.Setenv("AO_CLOUD_NODEOPS_INGRESS", "")
+	t.Setenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH", "")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "")
+	t.Setenv("AO_CLOUD_DOCKER_HOST", "unix:///var/run/docker.sock")
+	t.Setenv("AO_CLOUD_DOCKER_WORKER_IMAGE", "ao-cloud-worker:test")
+	t.Setenv("AO_CLOUD_DOCKER_NETWORK", "ao-cloud-test_default")
+	t.Setenv("AO_CLOUD_DOCKER_NAMESPACE", "ao-cloud-test")
+	t.Setenv("AO_CLOUD_DOCKER_WORKER_TOKEN_TTL", "10m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "http://control-plane:8080")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("d", 64))
 	t.Setenv("AO_CLOUD_RELEASE", "")
 
 	cfg, err := Load()
@@ -30,7 +67,9 @@ func TestLoadLocalDevelopmentConfiguration(t *testing.T) {
 		cfg.LocalSessionTTL != 2*time.Hour ||
 		cfg.MigrationTimeout != 15*time.Minute ||
 		cfg.HTTPAddress != "127.0.0.1:8080" ||
-		cfg.SandboxProvider != "ecs" ||
+		cfg.SandboxProvider != "docker" ||
+		cfg.DockerWorkerImage != "ao-cloud-worker:test" ||
+		cfg.WorkerTokenTTL() != 10*time.Minute ||
 		cfg.Release != "dev" ||
 		cfg.MigrationDatabaseURL != cfg.DatabaseURL {
 		t.Fatalf("config = %#v", cfg)
@@ -92,6 +131,14 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com/")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
+	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-staging")
 	setProviderSecretKey(t)
 
@@ -101,8 +148,10 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	}
 	if !cfg.Hosted() ||
 		cfg.MigrateOnStartup ||
+		cfg.SandboxProvider != "nodeops" ||
 		cfg.Release != "sha-staging" ||
-		cfg.HTTPAddress != ":8080" {
+		cfg.HTTPAddress != ":8080" ||
+		cfg.NodeOpsBaseURL != "https://nodeops.example.com" {
 		t.Fatalf("config = %#v", cfg)
 	}
 }
@@ -114,6 +163,11 @@ func TestLoadRequiresHostedRelease(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_RELEASE", "")
 
 	if _, err := Load(); err == nil {
@@ -140,6 +194,14 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
 	t.Setenv("AO_CLOUD_WORKOS_JWKS_URL", "")
 	t.Setenv("AO_CLOUD_LOCAL_AUTH", "false")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
+	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
+	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
+	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
 	setProviderSecretKey(t)
 
@@ -162,6 +224,11 @@ func TestLoadRejectsMismatchedWorkOSIssuer(t *testing.T) {
 	)
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "client_123")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "secret")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "https://nodeops.example.com")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "nodeops-secret")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "s-1vcpu-1gb")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "devbox:1")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "15m")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
 
 	if _, err := Load(); err == nil {
@@ -176,6 +243,11 @@ func TestLoadRejectsLocalAuthOutsideDevelopment(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "")
 	t.Setenv("AO_CLOUD_WORKOS_CLIENT_ID", "")
 	t.Setenv("AO_CLOUD_WORKOS_API_KEY", "")
+	t.Setenv("AO_CLOUD_NODEOPS_BASE_URL", "")
+	t.Setenv("AO_CLOUD_NODEOPS_API_KEY", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_SHAPE", "")
+	t.Setenv("AO_CLOUD_NODEOPS_DEFAULT_ROOTFS", "")
+	t.Setenv("AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", "")
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with production local auth")
@@ -251,6 +323,82 @@ func TestLoadRequiresHTTPSGitHubCallbackInHostedEnvironment(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with a plaintext hosted GitHub callback URL")
+	}
+}
+
+// The tests below all start from a complete nodeops environment and remove
+// exactly the one variable under test, so a failure names the missing guard
+// rather than whichever check happened to run first.
+
+func TestLoadAcceptsCompleteNodeOpsConfiguration(t *testing.T) {
+	nodeOpsEnvironment(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SandboxProvider != "nodeops" {
+		t.Errorf("SandboxProvider = %q, want nodeops", cfg.SandboxProvider)
+	}
+	if cfg.NodeOpsWorkerTokenTTL != 15*time.Minute {
+		t.Errorf("NodeOpsWorkerTokenTTL = %v, want 15m", cfg.NodeOpsWorkerTokenTTL)
+	}
+	if cfg.MaxSandboxesPerOrg != 10 {
+		t.Errorf("MaxSandboxesPerOrg = %d, want the default 10", cfg.MaxSandboxesPerOrg)
+	}
+	if cfg.ReconcileInterval <= 0 || cfg.SandboxStartupTimeout < 30*time.Second {
+		t.Errorf("reconcile defaults = %v/%v, want positive and >= 30s",
+			cfg.ReconcileInterval, cfg.SandboxStartupTimeout)
+	}
+}
+
+func TestLoadRejectsIncompleteNodeOpsConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "missing base url", key: "AO_CLOUD_NODEOPS_BASE_URL"},
+		{name: "missing api key", key: "AO_CLOUD_NODEOPS_API_KEY"},
+		{name: "missing shape", key: "AO_CLOUD_NODEOPS_DEFAULT_SHAPE"},
+		{name: "missing rootfs", key: "AO_CLOUD_NODEOPS_DEFAULT_ROOTFS"},
+		{name: "missing public url", key: "AO_CLOUD_PUBLIC_URL"},
+		{name: "missing worker binary", key: "AO_CLOUD_WORKER_BINARY_PATH"},
+		{name: "missing signing key", key: "AO_CLOUD_WORKER_SIGNING_KEY"},
+		{
+			name:  "signing key too short to resist forgery",
+			key:   "AO_CLOUD_WORKER_SIGNING_KEY",
+			value: strings.Repeat("a", minWorkerSigningKeyLength-1),
+		},
+		{
+			name:  "plaintext worker callback origin",
+			key:   "AO_CLOUD_PUBLIC_URL",
+			value: "http://cloud.example.com",
+		},
+		{
+			name:  "startup budget shorter than a cold boot",
+			key:   "AO_CLOUD_SANDBOX_STARTUP_TIMEOUT",
+			value: "5s",
+		},
+		{name: "zero sandbox quota", key: "AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG", value: "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nodeOpsEnvironment(t)
+			t.Setenv(tc.key, tc.value)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load succeeded with %s=%q", tc.key, tc.value)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNonNodeOpsProviderInHostedEnvironments(t *testing.T) {
+	nodeOpsEnvironment(t)
+	t.Setenv("AO_CLOUD_SANDBOX_PROVIDER", "docker")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with a docker sandbox provider in staging")
 	}
 }
 

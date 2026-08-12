@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,8 +17,124 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/httpapi"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/reconcile"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandbox/createos"
+	dockerprovider "github.com/Untrivial-ai/ao-cloud/internal/sandbox/docker"
+	"github.com/Untrivial-ai/ao-cloud/internal/sandboxresolve"
 	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
+	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 )
+
+// readSSHPubKeys loads the operator SSH keys authorized on every sandbox. They
+// are a debugging affordance, not part of the worker's trust path.
+func readSSHPubKeys(path string) ([]string, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read sandbox SSH public keys %s: %w", path, err)
+	}
+	var keys []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			keys = append(keys, trimmed)
+		}
+	}
+	return keys, nil
+}
+
+// provisioningDefaults is the plan every new session in this deployment is
+// stamped with. It is resolved once at startup so a request never reads
+// configuration, and so a misconfigured deployment fails at boot rather than on
+// a user's first session.
+func provisioningDefaults(cfg config.Config) sandbox.ProvisioningDefaults {
+	return sandbox.ProvisioningDefaults{
+		Provider: cfg.SandboxProvider,
+		Release:  cfg.Release,
+		NodeOps: sandbox.NodeOpsConfig{
+			BaseURL:        cfg.NodeOpsBaseURL,
+			APIKey:         cfg.NodeOpsAPIKey,
+			DefaultShape:   cfg.NodeOpsDefaultShape,
+			DefaultRootFS:  cfg.NodeOpsDefaultRootFS,
+			Ingress:        cfg.NodeOpsIngress,
+			SSHKeyPath:     cfg.NodeOpsSSHKeyPath,
+			WorkerTokenTTL: cfg.NodeOpsWorkerTokenTTL,
+		},
+		Docker: sandbox.DockerConfig{
+			Host:           cfg.DockerHost,
+			WorkerImage:    cfg.DockerWorkerImage,
+			Network:        cfg.DockerNetwork,
+			Namespace:      cfg.DockerNamespace,
+			WorkerTokenTTL: cfg.DockerWorkerTokenTTL,
+		},
+	}
+}
+
+// newSandboxReconciler builds the reconciler for a deployment that provisions
+// sandboxes. It returns nil when this deployment does not: a control plane with
+// no sandbox provider still serves the API, and the worker routes report 404
+// rather than failing open.
+func newSandboxReconciler(
+	cfg config.Config,
+	store *postgres.Store,
+	logger *slog.Logger,
+) (*reconcile.Reconciler, error) {
+	if cfg.SandboxProvider != sandbox.ProviderNodeOps &&
+		cfg.SandboxProvider != sandbox.ProviderDocker {
+		return nil, nil
+	}
+	var (
+		nodeOpsProvider sandbox.Provider
+		dockerProvider  sandbox.Provider
+		workerBinary    []byte
+	)
+	switch cfg.SandboxProvider {
+	case sandbox.ProviderNodeOps:
+		// The worker binary is read once, at startup. Reading it per provision
+		// would let a mid-flight deploy hand two sandboxes different builds.
+		var err error
+		workerBinary, err = os.ReadFile(cfg.WorkerBinaryPath)
+		if err != nil {
+			return nil, fmt.Errorf("read worker binary %s: %w", cfg.WorkerBinaryPath, err)
+		}
+		if len(workerBinary) == 0 {
+			return nil, fmt.Errorf("worker binary %s is empty", cfg.WorkerBinaryPath)
+		}
+		sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
+		if err != nil {
+			return nil, err
+		}
+		nodeOpsProvider = createos.New(createos.Config{
+			BaseURL:      cfg.NodeOpsBaseURL,
+			APIKey:       cfg.NodeOpsAPIKey,
+			DefaultShape: cfg.NodeOpsDefaultShape,
+			DefaultRoot:  cfg.NodeOpsDefaultRootFS,
+			Region:       cfg.NodeOpsRegion,
+			SSHPubKeys:   sshPubKeys,
+		})
+	case sandbox.ProviderDocker:
+		provider, err := dockerprovider.New(dockerprovider.Config{
+			Host:        cfg.DockerHost,
+			WorkerImage: cfg.DockerWorkerImage,
+			Network:     cfg.DockerNetwork,
+			Namespace:   cfg.DockerNamespace,
+		})
+		if err != nil {
+			return nil, err
+		}
+		dockerProvider = provider
+	}
+	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, dockerProvider), reconcile.Options{
+		PublicURL:        cfg.PublicURL,
+		WorkerBinary:     workerBinary,
+		Interval:         cfg.ReconcileInterval,
+		StartupTimeout:   cfg.SandboxStartupTimeout,
+		HeartbeatTimeout: cfg.WorkerHeartbeatTimeout,
+		Logger:           logger,
+	}), nil
+}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -110,6 +228,18 @@ func run(logger *slog.Logger) error {
 		}
 		go githubService.Run(ctx)
 	}
+	reconciler, err := newSandboxReconciler(cfg, store, logger)
+	if err != nil {
+		return err
+	}
+	// Worker tokens are only issued where sandboxes are provisioned. Leaving
+	// this nil elsewhere is what makes the worker routes 404 instead of
+	// accepting credentials no sandbox could have been given.
+	var workerTokens httpapi.WorkerTokens
+	if reconciler != nil {
+		workerTokens = worker.NewTokenManager([]byte(cfg.WorkerSigningKey))
+	}
+
 	var providerCipher *secrets.Cipher
 	if len(cfg.ProviderSecretKey) > 0 {
 		providerCipher, err = secrets.New(cfg.ProviderSecretKey)
@@ -123,6 +253,10 @@ func run(logger *slog.Logger) error {
 		LocalAuthEnabled: cfg.LocalAuthEnabled,
 		LocalSessionTTL:  cfg.LocalSessionTTL,
 		SandboxProvider:  cfg.SandboxProvider,
+		Provisioning:     provisioningDefaults(cfg),
+		WorkerTokens:     workerTokens,
+		WorkerTokenTTL:   cfg.WorkerTokenTTL(),
+		MaxSandboxes:     cfg.MaxSandboxesPerOrg,
 		Environment:      cfg.Environment,
 		Release:          cfg.Release,
 		Logger:           logger,
@@ -143,6 +277,20 @@ func run(logger *slog.Logger) error {
 		logger.Info("ao-cloud listening", "config", cfg.String())
 		result <- server.ListenAndServe()
 	}()
+
+	if reconciler != nil {
+		go func() {
+			logger.Info("sandbox reconciler started",
+				"provider", cfg.SandboxProvider,
+				"interval", cfg.ReconcileInterval,
+				"startup_timeout", cfg.SandboxStartupTimeout,
+				"heartbeat_timeout", cfg.WorkerHeartbeatTimeout,
+			)
+			if err := reconciler.Run(ctx); err != nil {
+				logger.Error("sandbox reconciler stopped", "error", err)
+			}
+		}()
+	}
 
 	select {
 	case <-ctx.Done():

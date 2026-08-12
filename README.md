@@ -19,8 +19,9 @@ The repository root also contains the authenticated Next.js Cloud UI. It uses
 the public `@aoagents/cloud-client` and `@aoagents/product-ui` sources for
 contracts, transport, status mapping, board layout, cards, and agent identity.
 It supports organization switching, projects, durable sessions, search, chat
-history, and live event streams. Worker/orchestrator execution, personal GitHub
-OAuth, PR/issue synchronization, and sharing behavior remain in development. See
+history, live event streams, worker turns, and replica-safe workspace files.
+Personal GitHub OAuth, PR/issue synchronization, and sharing behavior remain in
+development. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
 behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
 production deployments.
@@ -31,8 +32,8 @@ production deployments.
   PostgreSQL, and the local control-plane container. WorkOS is used only for an
   optional hosted-account session when the user opens GitHub settings; the app
   itself remains on local auth. GitHub App credentials never leave production.
-  Docker workers are the intended execution backend, but no worker is started
-  until the worker protocol is implemented.
+  Each requested session is provisioned as a labeled sibling Docker container
+  with a persistent, per-session workspace volume.
 - **Staging desktop (`npm run cloud:staging`)** runs the desktop locally against
   `https://staging-api.aoagents.dev`. The hosted staging control plane uses the
   shared WorkOS environment and its own staging database. Future workers run in
@@ -51,8 +52,9 @@ production database. The web BFF sends only GitHub integration requests to the
 production API using the user's hosted WorkOS token. Before creating a local or
 staging project it rechecks that the production repository grant is active,
 then writes the project to the current environment. Worker execution remains
-disabled; future worker checkout must obtain a fresh production-broker grant
-rather than treating the local project row as repository authority.
+isolated to that environment, and each checkout obtains a fresh
+production-broker grant rather than treating the local project row as
+repository authority.
 
 ## Hosted ingress
 
@@ -88,16 +90,17 @@ npm run cloud:local
 ```
 
 This builds the same distroless control-plane image used in hosted
-environments, starts PostgreSQL on `127.0.0.1:54329`, runs migrations with an
-isolated non-superuser schema-owner role, grants only runtime DML privileges to
-the separate non-superuser `ao_cloud_app` role, disables login for the
-image-bootstrap superuser, and exposes the API on
+environments plus the local worker image, starts PostgreSQL on
+`127.0.0.1:54329`, runs migrations with an isolated non-superuser schema-owner
+role, grants only runtime DML privileges to the separate non-superuser
+`ao_cloud_app` role, disables login for the image-bootstrap superuser, and
+exposes the API on
 `http://127.0.0.1:8081` (avoiding the desktop daemon's usual port). Local auth
 is enabled. The command then starts the Cloud UI on `http://127.0.0.1:3000`;
 create a development account with email/password on its sign-in screen. The
-browser receives only an HttpOnly session cookie. No worker is started:
-sessions store durable execution intent, but provisioning remains a separate
-feature.
+browser receives only an HttpOnly session cookie. The Docker socket is mounted
+only into the control-plane container so it can create sibling workers; worker
+containers never receive the socket. Local Docker workers do not auto-pause.
 
 Use `npm run cloud:local:down` to stop containers while retaining data and
 `npm run cloud:local:reset` to stop them and delete the local database
@@ -107,7 +110,9 @@ application state out of OS-default app-data locations. Ports can be changed
 with `AO_CLOUD_PORT` and `AO_CLOUD_POSTGRES_PORT`.
 `npm run cloud:local:smoke` uses an isolated Compose project and random
 loopback ports to verify the complete create/restart/persist/down/reset
-lifecycle without touching normal local Cloud data.
+lifecycle, including worker replacement with workspace persistence, without
+touching normal local Cloud data. It reports a clean skip when Docker is not
+available.
 
 To launch the desktop's currently implemented auth-only flow against a hosted
 staging deployment:
@@ -170,8 +175,9 @@ credential for `AO_CLOUD_MIGRATION_DATABASE_URL`.
 ## Database changes and production promotion
 
 Database migrations in `internal/postgres/migrations` are embedded in the same
-immutable control-plane image as the API and migration binary. The release flow
-is:
+immutable control-plane image as the API and migration binary. That image also
+packages `/ao-worker` for sandbox upload; a separate worker runtime image
+contains the identical binary. The release flow is:
 
 1. Add a forward, backward-compatible Goose migration to the repository.
 2. Run the migration and integration tests locally.
@@ -179,17 +185,21 @@ is:
    migrations before updating its API replicas.
 4. Verify the release in staging.
 5. Promote it with `scripts/promote-production.sh`. Production uses the exact
-   scanned image digest currently running in staging and runs that image's
-   migrations before updating any production API replica.
+   scanned control-plane and worker image digests recorded by staging and runs
+   the control-plane image's migrations before updating any production API
+   replica.
 
 If a production migration fails, promotion stops and the existing production
 API keeps running. Application rollback does not reverse an applied migration,
 so migrations must remain compatible with the previous API release.
 
-Only migration code and the tested application image are promoted. Staging
-database rows are never copied to production: users, organizations, projects,
-sessions, events, credentials, and all other data remain isolated in their
-respective databases. The AWS instances are named
+Only migration code and the tested application artifacts are promoted. NodeOps
+and worker settings come from the target environment's `nodeops` and `worker`
+Secrets Manager JSON entries; deployment validates every required field before
+registering ECS tasks. No provider auto-pause value is set by deployment.
+Staging database rows are never copied to production: users, organizations,
+projects, sessions, events, credentials, and all other data remain isolated in
+their respective databases. The AWS instances are named
 `ao-cloud-staging-storage` and `ao-cloud-production-storage` so the environment
 boundary is explicit. See [`docs/deployment.md`](docs/deployment.md) for the full
 deployment and rollback procedure.
@@ -228,6 +238,11 @@ All resource routes use `/api/cloud/v1`. Project and session creation require an
 | `POST` | `/orgs/{orgId}/sessions/{sessionId}/messages` | Durably queue a message |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}/chat-events` | Replay committed client events |
 | `GET` | `/orgs/{orgId}/sessions/{sessionId}/events` | Replay and stream client events over SSE |
+| `GET` | `/orgs/{orgId}/sessions/{sessionId}/workspace/files` | List worker-workspace entries |
+| `GET/PUT` | `/orgs/{orgId}/sessions/{sessionId}/workspace/file` | Read or write a bounded UTF-8 workspace file |
+| `GET` | `/orgs/{orgId}/sessions/{sessionId}/workspace/diff` | Read a bounded worker-workspace git diff |
+| `POST` | `/orgs/{orgId}/sessions/{sessionId}/terminal-ticket` | Create a short-lived workspace-terminal ticket |
+| `GET` | `/terminal` | Upgrade a single-use ticket to the durable terminal WebSocket |
 
 WorkOS access tokens and local development tokens both use
 `Authorization: Bearer <token>`.
@@ -337,5 +352,6 @@ exercises local and WorkOS-backed principals, checks idempotent project,
 session, and message creation, verifies concurrent message retries, durable
 cross-replica event delivery/replay and workspace intent, and proves
 cross-organization reads are denied. Private CI runs those PostgreSQL tests,
-Go vet, deployment fixtures, shell checks, an image build, and the isolated
-Compose lifecycle.
+Go vet, deployment fixtures, shell checks, separate control-plane and worker
+image builds, an offline image-contract check, and the isolated Compose
+lifecycle.

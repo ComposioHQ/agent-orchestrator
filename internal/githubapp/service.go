@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +38,13 @@ type Store interface {
 	GitHubInstallationRoute(context.Context, int64) (string, string, error)
 	GitHubInstallationByRoute(context.Context, string, string) (domain.GitHubInstallation, error)
 	ApplyGitHubInstallationEvent(context.Context, string, string, string) error
+	WorkerGitHubCheckoutContext(context.Context, string, string) (domain.GitHubCheckoutContext, error)
+}
+
+type CheckoutGrant struct {
+	CloneURL  string
+	Token     string
+	ExpiresAt time.Time
 }
 
 type Service struct {
@@ -284,6 +293,63 @@ func (s *Service) ListRepositories(
 	limit int,
 ) ([]domain.GitHubRepository, bool, error) {
 	return s.store.ListGitHubRepositories(ctx, principal, orgID, cursor, limit)
+}
+
+// IssueCheckoutGrant first resolves the worker's durable session-to-repository
+// authorization, then asks GitHub for a token restricted to that one repository
+// with read-only contents permission. Installation-token issuance is kept
+// private to this service so callers cannot bypass the PostgreSQL grant check.
+func (s *Service) IssueCheckoutGrant(
+	ctx context.Context,
+	orgID, sessionID string,
+) (CheckoutGrant, error) {
+	authorization, err := s.store.WorkerGitHubCheckoutContext(ctx, orgID, sessionID)
+	if err != nil {
+		return CheckoutGrant{}, err
+	}
+	if authorization.OrgID != orgID ||
+		authorization.SessionID != sessionID ||
+		authorization.ProjectID == "" ||
+		authorization.GitHubInstallationID <= 0 ||
+		authorization.GitHubRepositoryID <= 0 ||
+		!validGitHubCloneIdentity(authorization.CloneURL, authorization.FullName) {
+		return CheckoutGrant{}, postgres.ErrForbidden
+	}
+	access, err := s.client.repositoryToken(
+		ctx,
+		authorization.GitHubInstallationID,
+		authorization.GitHubRepositoryID,
+	)
+	if err != nil {
+		return CheckoutGrant{}, err
+	}
+	if access.ExpiresAt.After(time.Now().UTC().Add(2 * time.Hour)) {
+		return CheckoutGrant{}, errors.New("GitHub returned an unexpectedly long-lived installation token")
+	}
+	return CheckoutGrant{
+		CloneURL:  authorization.CloneURL,
+		Token:     access.Token,
+		ExpiresAt: access.ExpiresAt,
+	}, nil
+}
+
+func validGitHubCloneIdentity(cloneURL, fullName string) bool {
+	parsed, err := url.Parse(cloneURL)
+	if err != nil ||
+		parsed.Scheme != "https" ||
+		!strings.EqualFold(parsed.Hostname(), "github.com") ||
+		parsed.Port() != "" ||
+		parsed.User != nil ||
+		parsed.RawQuery != "" ||
+		parsed.Fragment != "" {
+		return false
+	}
+	path, err := url.PathUnescape(parsed.EscapedPath())
+	if err != nil {
+		return false
+	}
+	expected := "/" + strings.Trim(fullName, "/") + ".git"
+	return strings.EqualFold(path, expected)
 }
 
 func (s *Service) EnqueueVerifiedWebhook(

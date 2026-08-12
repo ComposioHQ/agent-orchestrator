@@ -4,6 +4,7 @@ go 1.26.5
 
 require (
 	github.com/aoagents/agent-orchestrator/backend v0.0.0
+	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-jose/go-jose/v4 v4.1.4
@@ -25,4 +26,4 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 )
 
-replace github.com/aoagents/agent-orchestrator/backend => github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260811164213-0b1b6ad5aa88
+replace github.com/aoagents/agent-orchestrator/backend => github.com/Untrivial-ai/agent-orchestrator/backend v0.0.0-20260812094327-5da0ce157982

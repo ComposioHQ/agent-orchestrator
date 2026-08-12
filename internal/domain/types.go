@@ -82,15 +82,23 @@ func (s Session) Status(now time.Time) contract.SessionStatus {
 }
 
 type CreateSession struct {
-	ProjectID           string
-	Kind                string
-	Harness             string
-	DisplayName         string
-	Prompt              string
-	Mode                string
-	DeniedCommands      []string
-	Provider            string
+	ProjectID      string
+	Kind           string
+	Harness        string
+	DisplayName    string
+	Prompt         string
+	Mode           string
+	DeniedCommands []string
+	Provider       string
+	// SandboxConnectionID names a bring-your-own provider credential. It is
+	// empty for sandboxes that run on the platform's own account.
 	SandboxConnectionID string
+	// ResourceProfile and BootstrapContext are the provisioning plan the
+	// sandbox row is created with. They are stamped at intent time so a later
+	// configuration change cannot disturb an in-flight session.
+	ResourceProfile  json.RawMessage
+	BootstrapContext json.RawMessage
+	Release          string
 }
 
 type ClientEvent struct {
@@ -99,6 +107,67 @@ type ClientEvent struct {
 	Type      string
 	Payload   json.RawMessage
 	CreatedAt time.Time
+}
+
+// WorkerTurn is the durable unit of coding-agent work leased to one worker
+// epoch. Attempt fences callbacks from an earlier claim even if a request is
+// delayed and delivered after the turn has moved on.
+type WorkerTurn struct {
+	ID                string
+	SessionID         string
+	Prompt            string
+	Mode              string
+	DeniedCommands    []string
+	Harness           string
+	Attempt           int
+	WorkerEpoch       int64
+	CancelRequested   bool
+	AgentSessionID    string
+	UserEventSequence int64
+}
+
+// WorkerCredential is the encrypted coding-agent credential selected by the
+// session harness. Plaintext is produced only at the authenticated HTTP edge.
+type WorkerCredential struct {
+	Provider        string
+	CredentialType  string
+	EncryptedSecret []byte
+	Nonce           []byte
+}
+
+// WorkerRequest is a short-lived durable command for the current worker epoch.
+// The database owns routing and leasing so any control-plane replica can submit
+// or await it without process affinity.
+type WorkerRequest struct {
+	ID           string
+	OrgID        string
+	SessionID    string
+	WorkerEpoch  int64
+	Kind         string
+	Payload      json.RawMessage
+	Status       string
+	Response     json.RawMessage
+	ErrorCode    string
+	ErrorMessage string
+	Attempt      int
+	ExpiresAt    time.Time
+}
+
+type TerminalSession struct {
+	ID           string
+	OrgID        string
+	SessionID    string
+	WorkerEpoch  int64
+	Kind         string
+	State        string
+	Scopes       []string
+	ErrorMessage string
+	ExpiresAt    time.Time
+}
+
+type TerminalOutput struct {
+	Sequence int64
+	Data     []byte
 }
 
 type Cursor struct {
