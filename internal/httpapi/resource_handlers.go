@@ -199,9 +199,16 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
+	// The plan is resolved once, here, and stamped onto the sandbox row. The
+	// reconciler reads it back from the row rather than from configuration, so
+	// a later config change cannot disturb a session already in flight.
 	plan, err := s.provisioning.SessionPlan()
 	if err != nil {
-		s.writeStoreError(w, r, err)
+		s.logger.Error("resolve sandbox provisioning plan", "error", err, "request_id", requestID(r))
+		writeError(
+			w, r, http.StatusInternalServerError, "internal_error",
+			"Sandbox provisioning is misconfigured on this deployment.",
+		)
 		return
 	}
 	session, err := s.store.CreateSession(
@@ -217,8 +224,12 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			Prompt:              request.Prompt,
 			Mode:                request.Mode,
 			DeniedCommands:      request.DeniedCommands,
-			Provider:            s.sandboxProvider,
+			Provider:            plan.Provider,
 			SandboxConnectionID: request.SandboxProviderConnectionID,
+			ResourceProfile:     plan.ResourceProfile,
+			BootstrapContext:    plan.BootstrapContext,
+			AutoStopMinutes:     plan.AutoStopMinutes,
+			Release:             s.release,
 		},
 	)
 	if err != nil {
@@ -291,6 +302,33 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": toSessionResponse(session)})
+}
+
+// deleteSession records the intent to tear a session's sandbox down. It does
+// not call the provider: the reconciler owns every slow provider call, so a
+// degraded provider cannot stall this request. The session row survives until
+// the reconciler confirms the compute is actually gone, which is also when the
+// organization's quota slot is released.
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	sessionID := chi.URLParam(r, "sessionId")
+	if requireUUID(orgID, "orgId") != nil || requireUUID(sessionID, "sessionId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and sessionId must be UUIDs.")
+		return
+	}
+	if err := s.store.SetSandboxDesiredState(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		sessionID,
+		domain.SandboxDesiredDeleted,
+	); err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"session": map[string]any{"id": sessionID, "desiredState": domain.SandboxDesiredDeleted},
+	})
 }
 
 func validProjectInput(request createProjectRequest) bool {

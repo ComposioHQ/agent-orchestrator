@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
@@ -82,7 +83,7 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		WorkerID:  workerID,
 		Epoch:     ticket.WorkerEpoch,
 		Scopes:    ticket.Scopes,
-	}, worker.DefaultTokenTTL)
+	}, s.workerTokenTTL())
 	if err != nil {
 		s.logger.Error("issue worker token", "error", err, "request_id", requestID(r))
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "The worker credential could not be issued.")
@@ -100,7 +101,7 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		WorkerToken: token,
 		WorkerID:    workerID,
 		Epoch:       ticket.WorkerEpoch,
-		ExpiresIn:   int(worker.DefaultTokenTTL.Seconds()),
+		ExpiresIn:   int(s.workerTokenTTL().Seconds()),
 		SessionID:   ticket.SessionID,
 		Launch: worker.LaunchContext{
 			SessionID:     launch.SessionID,
@@ -185,7 +186,7 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	renewed, err := s.workerTokens.Issue(claims, worker.DefaultTokenTTL)
+	renewed, err := s.workerTokens.Issue(claims, s.workerTokenTTL())
 	if err != nil {
 		s.logger.Error("renew worker token", "error", err, "request_id", requestID(r))
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "The worker credential could not be renewed.")
@@ -194,7 +195,7 @@ func (s *Server) workerHeartbeat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, worker.HeartbeatResponse{
 		OK:          true,
 		WorkerToken: renewed,
-		ExpiresIn:   int(worker.DefaultTokenTTL.Seconds()),
+		ExpiresIn:   int(s.workerTokenTTL().Seconds()),
 	})
 }
 
@@ -218,9 +219,13 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_TYPE", "The worker event type is not allowed.")
 		return
 	}
-	if len(input.Payload) > 0 && json.Valid(input.Payload) {
+	// ao_events.payload is constrained to a JSON object. Unmarshalling into a
+	// map is not enough of a check on its own: JSON null unmarshals into a nil
+	// map without error, so it would pass here and then fail the constraint as
+	// a 500 rather than being refused as the bad request it is.
+	if len(input.Payload) > 0 {
 		var object map[string]any
-		if err := json.Unmarshal(input.Payload, &object); err != nil {
+		if err := json.Unmarshal(input.Payload, &object); err != nil || object == nil {
 			writeError(w, r, http.StatusBadRequest, "INVALID_EVENT_PAYLOAD", "The worker event payload must be a JSON object.")
 			return
 		}
@@ -244,4 +249,15 @@ func allowedWorkerEventType(eventType string) bool {
 		}
 	}
 	return false
+}
+
+// workerTokenTTL is how long an issued worker credential stays valid. An
+// operator who shortens it gets a shorter blast radius on a leaked token at the
+// cost of more renewals; an unset value falls back to the protocol default
+// rather than to zero, which Issue would treat as "no lifetime at all".
+func (s *Server) workerTokenTTL() time.Duration {
+	if s.workerTokenLifetime > 0 {
+		return s.workerTokenLifetime
+	}
+	return worker.DefaultTokenTTL
 }
