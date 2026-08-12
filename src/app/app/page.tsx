@@ -5,6 +5,8 @@ import {
   type CreateProjectInput,
   type CreateSessionInput,
   type CurrentAccount,
+  type GitHubInstallation,
+  type GitHubRepository,
   type Project,
   type Session,
 } from "@aoagents/cloud-client";
@@ -14,9 +16,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
 import { CloudBoard } from "./CloudBoard";
 import { NewProjectDialog, NewSessionDialog } from "./CloudDialogs";
+import { CloudSettings } from "./CloudSettings";
+import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
 import { CloudSessionPanel } from "./CloudSessionPanel";
 import { CloudSidebar } from "./CloudSidebar";
+import {
+  initialGitHubCapability,
+  type GitHubCapability,
+} from "./cloud-ui-types";
+
+type CloudView = "board" | "settings";
 
 export function CloudWorkspace() {
   const client = useMemo(browserCloudClient, []);
@@ -32,10 +42,59 @@ export function CloudWorkspace() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [view, setView] = useState<CloudView>("board");
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [shareProject, setShareProject] = useState<Project | null>(null);
+  const [github, setGitHub] = useState<GitHubCapability>(
+    initialGitHubCapability,
+  );
+  const [githubBusy, setGitHubBusy] = useState(false);
   const organizationRequest = useRef(0);
+  const githubRequest = useRef(0);
+
+  const loadGitHub = useCallback(
+    async (orgId: string) => {
+      const request = githubRequest.current + 1;
+      githubRequest.current = request;
+      setGitHub(initialGitHubCapability);
+      try {
+        const [installations, repositories] = await Promise.all([
+          client.listGitHubInstallations(orgId),
+          client.listGitHubRepositories(orgId, { limit: 100 }),
+        ]);
+        if (githubRequest.current !== request) return;
+        setGitHub({
+          status: "available",
+          installations,
+          repositories: repositories.items,
+        });
+      } catch (cause) {
+        if (githubRequest.current !== request) return;
+        if (cause instanceof CloudApiError && cause.status === 404) {
+          setGitHub({
+            status: "unavailable",
+            installations: [],
+            repositories: [],
+            message:
+              "GitHub is intentionally disabled for local and staging environments.",
+          });
+          return;
+        }
+        setGitHub({
+          status: "error",
+          installations: [],
+          repositories: [],
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "Could not load GitHub connection.",
+        });
+      }
+    },
+    [client],
+  );
 
   const loadOrganization = useCallback(
     async (orgId: string) => {
@@ -56,6 +115,7 @@ export function CloudWorkspace() {
             ? current
             : (projectPage.items[0]?.id ?? null),
         );
+        void loadGitHub(orgId);
       } catch (cause) {
         if (organizationRequest.current === request) {
           handleLoadError(cause, setError);
@@ -64,7 +124,7 @@ export function CloudWorkspace() {
         if (organizationRequest.current === request) setLoading(false);
       }
     },
-    [client],
+    [client, loadGitHub],
   );
 
   useEffect(() => {
@@ -104,6 +164,7 @@ export function CloudWorkspace() {
         setCommandOpen(false);
         setNewProjectOpen(false);
         setNewSessionOpen(false);
+        setShareProject(null);
       }
     };
 
@@ -117,6 +178,61 @@ export function CloudWorkspace() {
     });
     setProjects((current) => [...current, response.project]);
     setSelectedProjectId(response.project.id);
+  };
+
+  const createProjectFromGitHub = async (repository: GitHubRepository) => {
+    const response = await client.createProjectFromGitHub(
+      organizationId,
+      { githubRepositoryId: repository.githubRepositoryId },
+      { idempotencyKey: newIdempotencyKey("github-project") },
+    );
+    setProjects((current) => [...current, response.project]);
+    setSelectedProjectId(response.project.id);
+  };
+
+  const startGitHubInstallation = async () => {
+    setGitHubBusy(true);
+    setError("");
+    try {
+      const attempt = await client.startGitHubInstallation(organizationId);
+      window.location.assign(attempt.installationUrl);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+      setGitHubBusy(false);
+    }
+  };
+
+  const syncGitHubInstallation = async (
+    installation: GitHubInstallation,
+  ) => {
+    setGitHubBusy(true);
+    setError("");
+    try {
+      await client.syncGitHubInstallation(organizationId, installation.id);
+      await loadGitHub(organizationId);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setGitHubBusy(false);
+    }
+  };
+
+  const disconnectGitHubInstallation = async (
+    installation: GitHubInstallation,
+  ) => {
+    setGitHubBusy(true);
+    setError("");
+    try {
+      await client.disconnectGitHubInstallation(
+        organizationId,
+        installation.id,
+      );
+      await loadGitHub(organizationId);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setGitHubBusy(false);
+    }
   };
 
   const createSession = async (input: CreateSessionInput) => {
@@ -150,6 +266,10 @@ export function CloudWorkspace() {
           account={account}
           onNewProject={() => setNewProjectOpen(true)}
           onOpenCommand={() => setCommandOpen(true)}
+          onOpenSettings={() => {
+            setView("settings");
+            setSelectedSessionId(null);
+          }}
           onSelectOrganization={(id) => {
             setOrganizationId(id);
             setSelectedProjectId(null);
@@ -157,14 +277,17 @@ export function CloudWorkspace() {
             void loadOrganization(id);
           }}
           onSelectProject={(id) => {
+            setView("board");
             setSelectedProjectId(id);
             setSelectedSessionId(null);
           }}
           onSelectSession={(id) => {
+            setView("board");
             const session = sessions.find((item) => item.id === id);
             if (session) setSelectedProjectId(session.projectId);
             setSelectedSessionId(id);
           }}
+          onShareProject={setShareProject}
           projects={projects}
           selectedOrganizationId={organizationId}
           selectedProjectId={selectedProjectId}
@@ -172,39 +295,70 @@ export function CloudWorkspace() {
           sessions={sessions}
         />
         <CloudMainShell>
-          <CloudTopbar
-            canCreateSession={projects.length > 0}
-            onNewSession={() => setNewSessionOpen(true)}
-            title={selectedProject?.displayName ?? "All projects"}
-          />
-          <div className="relative min-h-0 flex-1">
-            {error ? (
-              <div
-                className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
-                role="alert"
-              >
-                {error}
-              </div>
-            ) : null}
-            {loading ? (
-              <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
-                Loading workspace…
-              </div>
-            ) : (
-              <CloudBoard
+          {view === "settings" ? (
+            <div className="relative min-h-0 flex-1">
+              {error ? (
+                <div
+                  className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
+                  role="alert"
+                >
+                  {error}
+                </div>
+              ) : null}
+              <CloudSettings
+                account={account}
+                busy={githubBusy}
+                github={github}
+                onBack={() => setView("board")}
+                onDisconnectGitHub={disconnectGitHubInstallation}
+                onSelectOrganization={(id) => {
+                  setOrganizationId(id);
+                  setSelectedProjectId(null);
+                  setSelectedSessionId(null);
+                  void loadOrganization(id);
+                }}
+                onStartGitHub={startGitHubInstallation}
+                onSyncGitHub={syncGitHubInstallation}
+                selectedOrganizationId={organizationId}
+              />
+            </div>
+          ) : (
+            <>
+              <CloudTopbar
+                canCreateSession={projects.length > 0}
                 onNewSession={() => setNewSessionOpen(true)}
-                onSelectSession={setSelectedSessionId}
-                sessions={visibleSessions}
+                title={selectedProject?.displayName ?? "All projects"}
               />
-            )}
-            {selectedSession ? (
-              <CloudSessionPanel
-                onClose={() => setSelectedSessionId(null)}
-                organizationId={organizationId}
-                session={selectedSession}
-              />
-            ) : null}
-          </div>
+              <div className="relative min-h-0 flex-1">
+                {error ? (
+                  <div
+                    className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
+                    role="alert"
+                  >
+                    {error}
+                  </div>
+                ) : null}
+                {loading ? (
+                  <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
+                    Loading workspace…
+                  </div>
+                ) : (
+                  <CloudBoard
+                    onNewSession={() => setNewSessionOpen(true)}
+                    onSelectSession={setSelectedSessionId}
+                    sessions={visibleSessions}
+                  />
+                )}
+                {selectedSession ? (
+                  <CloudSessionPanel
+                    onClose={() => setSelectedSessionId(null)}
+                    organizationId={organizationId}
+                    session={selectedSession}
+                  />
+                ) : null}
+              </div>
+            </>
+          )}
         </CloudMainShell>
       </div>
       {commandOpen ? (
@@ -227,8 +381,14 @@ export function CloudWorkspace() {
       ) : null}
       {newProjectOpen ? (
         <NewProjectDialog
+          github={github}
           onClose={() => setNewProjectOpen(false)}
           onCreate={createProject}
+          onCreateFromGitHub={createProjectFromGitHub}
+          onOpenProviderSettings={() => {
+            setNewProjectOpen(false);
+            setView("settings");
+          }}
         />
       ) : null}
       {newSessionOpen ? (
@@ -237,6 +397,15 @@ export function CloudWorkspace() {
           onCreate={createSession}
           projects={projects}
           selectedProjectId={selectedProjectId}
+        />
+      ) : null}
+      {shareProject ? (
+        <CloudShareDialog
+          onClose={() => setShareProject(null)}
+          project={shareProject}
+          sessions={sessions.filter(
+            ({ projectId }) => projectId === shareProject.id,
+          )}
         />
       ) : null}
     </main>

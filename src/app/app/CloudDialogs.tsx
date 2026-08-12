@@ -3,31 +3,63 @@
 import type {
   CreateProjectInput,
   CreateSessionInput,
+  GitHubRepository,
   Project,
 } from "@aoagents/cloud-client";
 import { AgentAvatar } from "@aoagents/product-ui";
-import { Bot, FolderGit2, X, type LucideIcon } from "lucide-react";
+import {
+  Bot,
+  FolderGit2,
+  GitFork,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import type {
   InputHTMLAttributes,
   ReactNode,
 } from "react";
 import { useState } from "react";
 
+import type { GitHubCapability } from "./cloud-ui-types";
+
 export function NewProjectDialog({
+  github,
   onClose,
   onCreate,
+  onCreateFromGitHub,
+  onOpenProviderSettings,
 }: {
+  github: GitHubCapability;
   onClose: () => void;
   onCreate: (input: CreateProjectInput) => Promise<void>;
+  onCreateFromGitHub: (repository: GitHubRepository) => Promise<void>;
+  onOpenProviderSettings: () => void;
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"choose" | "project">("choose");
+  const [mode, setMode] = useState<
+    "choose" | "project" | "github" | "manual"
+  >("choose");
+  const activeRepositories = github.repositories.filter(
+    ({ access, isArchived }) => access === "active" && !isArchived,
+  );
+  const [repositoryId, setRepositoryId] = useState(
+    activeRepositories[0]?.githubRepositoryId ?? "",
+  );
+  const selectedRepository = activeRepositories.find(
+    ({ githubRepositoryId }) => githubRepositoryId === repositoryId,
+  ) ?? activeRepositories[0];
 
   return (
     <Dialog
       onClose={onClose}
-      title={mode === "choose" ? "Create cloud work" : "Create project"}
+      title={
+        mode === "choose"
+          ? "Create cloud work"
+          : mode === "github"
+            ? "Add GitHub project"
+            : "Create project"
+      }
     >
       {mode === "choose" ? (
         <div className="p-4">
@@ -56,6 +88,129 @@ export function NewProjectDialog({
             </button>
           </div>
         </div>
+      ) : mode === "project" ? (
+        <div className="p-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <CreationOption
+              description={
+                github.status === "available"
+                  ? "Choose a repository granted to this AO organization."
+                  : "GitHub import is available only when the production integration is connected."
+              }
+              disabled={github.status !== "available"}
+              icon={GitFork}
+              label="From GitHub"
+              onClick={() => setMode("github")}
+              status={
+                github.status === "loading"
+                  ? "Loading"
+                  : github.status === "available"
+                    ? undefined
+                    : "Unavailable here"
+              }
+            />
+            <CreationOption
+              description="Start an empty Cloud project, optionally backed by a new GitHub repository."
+              disabled
+              icon={FolderGit2}
+              label="Start from scratch"
+              status="Backend unavailable"
+            />
+          </div>
+          <div className="-mx-4 -mb-4 mt-4 flex items-center justify-between border-t border-[var(--color-border-strong)] px-4 py-3">
+            <button
+              className={secondaryButtonClass}
+              onClick={() => setMode("choose")}
+              type="button"
+            >
+              Back
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className={secondaryButtonClass}
+                onClick={() => setMode("manual")}
+                type="button"
+              >
+                Use repository URL
+              </button>
+              <button
+                className={secondaryButtonClass}
+                onClick={onClose}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : mode === "github" ? (
+        <form
+          className="space-y-4 p-5"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!selectedRepository) return;
+            setBusy(true);
+            setError("");
+            try {
+              await onCreateFromGitHub(selectedRepository);
+              onClose();
+            } catch (cause) {
+              setError(
+                cause instanceof Error
+                  ? cause.message
+                  : "Could not import the GitHub repository.",
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {activeRepositories.length > 0 ? (
+            <label className="block">
+              <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+                GitHub repository
+              </span>
+              <select
+                className={controlClass}
+                onChange={(event) => setRepositoryId(event.target.value)}
+                value={
+                  repositoryId ||
+                  activeRepositories[0]?.githubRepositoryId ||
+                  ""
+                }
+              >
+                {activeRepositories.map((repository) => (
+                  <option
+                    key={repository.githubRepositoryId}
+                    value={repository.githubRepositoryId}
+                  >
+                    {repository.fullName}
+                    {repository.isPrivate ? " · private" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-4 text-sm text-[var(--color-text-passive)]">
+              No active repositories are granted to this organization.
+            </div>
+          )}
+          <button
+            className="text-left text-xs text-[#8eb6ff] hover:underline"
+            onClick={onOpenProviderSettings}
+            type="button"
+          >
+            Manage GitHub access in Settings
+          </button>
+          <DialogFooter
+            busy={busy}
+            error={error}
+            onBack={() => setMode("project")}
+            onCancel={onClose}
+            submitDisabled={!selectedRepository}
+            submitLabel="Add project"
+          />
+        </form>
       ) : (
         <form
           className="space-y-4 p-5"
@@ -102,7 +257,7 @@ export function NewProjectDialog({
           <DialogFooter
             busy={busy}
             error={error}
-            onBack={() => setMode("choose")}
+            onBack={() => setMode("project")}
             onCancel={onClose}
             submitLabel="Create project"
           />
