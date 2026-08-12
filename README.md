@@ -1,9 +1,9 @@
 <div align="center">
   <img src="assets/ao-logo.svg" alt="Agent Orchestrator" width="144" height="144" />
 
-# Agent Orchestrator
+### Agent Orchestrator
 
-### The orchestration layer for parallel AI coding agents
+#### The orchestration layer for parallel AI coding agents
 
 [![GitHub stars](https://img.shields.io/github/stars/Untrivial-ai/agent-orchestrator?style=flat&logo=github)](https://github.com/Untrivial-ai/agent-orchestrator/stargazers)
 [![GitHub rank](https://img.shields.io/badge/GitHub%20rank-Top%206k%20by%20stars-181717?style=flat&logo=github)](https://github.com/search?q=stars%3A%3E9365&type=repositories)
