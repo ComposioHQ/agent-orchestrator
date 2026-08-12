@@ -28,9 +28,11 @@ production deployments.
 ## Environment model
 
 - **Local (`npm run cloud:local`)** uses local email/password auth, local
-  PostgreSQL, and the local control-plane container. It does not load WorkOS or
-  GitHub App credentials. Docker workers are the intended execution backend,
-  but no worker is started until the worker protocol is implemented.
+  PostgreSQL, and the local control-plane container. WorkOS is used only for an
+  optional hosted-account session when the user opens GitHub settings; the app
+  itself remains on local auth. GitHub App credentials never leave production.
+  Docker workers are the intended execution backend, but no worker is started
+  until the worker protocol is implemented.
 - **Staging desktop (`npm run cloud:staging`)** runs the desktop locally against
   `https://staging-api.aoagents.dev`. The hosted staging control plane uses the
   shared WorkOS environment and its own staging database. Future workers run in
@@ -44,10 +46,13 @@ production deployments.
   supported local-desktop-against-production development command.
 
 GitHub App credentials are rejected outside production because setup, OAuth,
-and webhook callback state is durable in the production database. Local and
-staging GitHub UI must remain disabled until a production broker protocol can
-return signed, environment-scoped repository grants. Sharing credentials alone
-would send callbacks to the wrong database and is not supported.
+webhook state, installations, and repository grants are durable in the
+production database. The web BFF sends only GitHub integration requests to the
+production API using the user's hosted WorkOS token. Before creating a local or
+staging project it rechecks that the production repository grant is active,
+then writes the project to the current environment. Worker execution remains
+disabled; future worker checkout must obtain a fresh production-broker grant
+rather than treating the local project row as repository authority.
 
 ## Hosted ingress
 
@@ -129,7 +134,7 @@ npm run cloud:web:staging
 ```
 
 This command requires the `ao-cloud` AWS login profile (override with
-`AWS_PROFILE`) and uses `http://localhost:3000/callback` for WorkOS. That exact
+`AWS_PROFILE`) and uses `http://127.0.0.1:3000/callback` for WorkOS. That exact
 redirect URI is verified and created through the WorkOS API before launch.
 AuthKit's encrypted cookie key is generated once under `~/.ao/cloud-web`; app
 state and credentials never use an OS-default application-data directory.
@@ -251,8 +256,9 @@ The one GitHub App is a production-owned integration. Its global setup,
 OAuth-callback, and webhook URLs must point to `https://api.aoagents.dev`.
 Staging and local configurations reject GitHub App credentials. Production
 loads the App credentials from Secrets Manager through the ECS task definition.
-A future broker must explicitly return environment-scoped grants before staging
-or local UI enables GitHub.
+The private web BFF brokers installation and repository requests to production,
+so local and staging can manage the one App without copying secrets or callback
+state into either environment.
 
 Staging and production intentionally share one WorkOS environment while keeping
 their AO databases separate. Desktop login continues to use the

@@ -138,6 +138,12 @@ register_api_task() {
 			--task-definition "$PRODUCTION_API_FAMILY" \
 			--include TAGS
 	)"
+provider_secret_arn="$(
+	aws_cli secretsmanager describe-secret \
+		--secret-id ao-cloud/production/provider-secret-key \
+		--query ARN \
+		--output text
+)"
 	payload="$(
 		printf '%s' "$source" |
 			./scripts/render-task-definition.py \
@@ -155,7 +161,8 @@ register_api_task() {
 				--set-secret "AO_CLOUD_GITHUB_CLIENT_SECRET=${github_secret_arn}:client_secret::" \
 				--set-secret "AO_CLOUD_GITHUB_PRIVATE_KEY=${github_secret_arn}:private_key::" \
 				--set-secret "AO_CLOUD_GITHUB_WEBHOOK_SECRET=${github_secret_arn}:webhook_secret::" \
-				--set-secret "AO_CLOUD_GITHUB_STATE_KEY=${github_secret_arn}:state_key::"
+				--set-secret "AO_CLOUD_GITHUB_STATE_KEY=${github_secret_arn}:state_key::" \
+				--set-secret "AO_CLOUD_PROVIDER_SECRET_KEY=${provider_secret_arn}"
 	)"
 	aws_cli ecs register-task-definition \
 		--cli-input-json "$payload" \

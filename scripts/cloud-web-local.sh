@@ -8,6 +8,7 @@ readonly public_root
 readonly api_url="http://127.0.0.1:${AO_CLOUD_PORT:-8081}"
 readonly web_port="${AO_CLOUD_WEB_PORT:-3000}"
 export AO_CLOUD_LOCAL_POSTGRES_DATA_DIR="${AO_CLOUD_LOCAL_POSTGRES_DATA_DIR:-${AO_DATA_DIR:-$HOME/.ao}/cloud/postgres}"
+readonly provider_key_file="${AO_DATA_DIR:-$HOME/.ao}/cloud/provider-secret-key"
 
 if [[ ! -f "$public_root/packages/product-ui/src/index.ts" || ! -f "$public_root/packages/cloud-client/src/index.ts" ]]; then
 	echo "The Cloud web UI must run from private/ao-cloud inside an Agent Orchestrator checkout." >&2
@@ -16,6 +17,13 @@ fi
 
 cd "$root"
 mkdir -p "$AO_CLOUD_LOCAL_POSTGRES_DATA_DIR"
+mkdir -p "$(dirname "$provider_key_file")"
+if [[ ! -s "$provider_key_file" ]]; then
+	umask 077
+	openssl rand -base64 32 >"$provider_key_file"
+fi
+export AO_CLOUD_PROVIDER_SECRET_KEY
+AO_CLOUD_PROVIDER_SECRET_KEY="$(<"$provider_key_file")"
 docker compose up --build --detach --remove-orphans
 
 ready=false
@@ -33,7 +41,11 @@ fi
 
 export AO_CLOUD_WEB_MODE=local
 export AO_CLOUD_WEB_API_BASE_URL="$api_url"
+source "$root/scripts/lib/workos-web-env.sh"
+configure_workos_web "$web_port" "127.0.0.1"
 
 printf 'Cloud API: %s\n' "$api_url"
 printf 'Cloud web: http://127.0.0.1:%s\n' "$web_port"
+printf 'GitHub broker auth: %s via AWS profile %s\n' "$AO_CLOUD_WORKOS_SECRET_ID" "$AO_CLOUD_WORKOS_AWS_PROFILE"
+printf 'WorkOS redirect: %s (%s)\n' "$WORKOS_REDIRECT_URI" "$WORKOS_REDIRECT_STATUS"
 exec npm run dev -- --hostname 127.0.0.1 --port "$web_port"

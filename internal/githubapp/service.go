@@ -470,16 +470,67 @@ func toDomainInstallation(value Installation) domain.GitHubInstallation {
 }
 
 func (s *Service) CompletionHTML(success bool) []byte {
-	title := "GitHub connection failed"
-	message := "Return to AO and try again."
+	title := "Connection failed"
+	message := "Return to AO and try connecting GitHub again."
+	statusClass := "error"
+	statusIcon := "!"
+	buttonLabel := "Close window"
+	autoClose := ""
 	if success {
 		title = "GitHub connected"
-		message = "You can close this window and return to AO."
+		message = "Repository access is ready. Return to AO to continue."
+		statusClass = "success"
+		statusIcon = "✓"
+		autoClose = "window.setTimeout(function(){window.close()},1800);"
 	}
 	return []byte(fmt.Sprintf(
-		"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>%s</title><main><h1>%s</h1><p>%s</p></main>",
+		`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>%s · AO</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0a0b0d;color:#f4f5f7}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:#0a0b0d}
+main{min-height:100vh;display:grid;place-items:center;padding:32px}
+.content{width:min(100%%,420px)}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:44px;color:#9ba1aa;font-size:13px}
+.brand img{width:30px;height:30px;border-radius:7px}
+.status{display:grid;place-items:center;width:42px;height:42px;margin-bottom:20px;border:1px solid;font-size:20px;font-weight:600}
+.status.success{border-color:rgba(74,222,128,.38);background:rgba(74,222,128,.08);color:#4ade80}
+.status.error{border-color:rgba(212,84,79,.42);background:rgba(212,84,79,.09);color:#e16a65}
+h1{margin:0;font-size:25px;line-height:1.2;letter-spacing:-.025em;font-weight:600}
+p{margin:10px 0 0;color:#9ba1aa;font-size:14px;line-height:1.6}
+.action{margin-top:30px;display:inline-flex;height:36px;align-items:center;justify-content:center;border:1px solid #3a3d44;border-radius:6px;background:#191b20;color:#f4f5f7;padding:0 14px;font:inherit;font-size:13px;cursor:pointer}
+.action:hover{background:#22252b;border-color:#4a4e58}
+.action:focus-visible{outline:2px solid #4d8dff;outline-offset:2px}
+.hint{margin-top:14px;color:#646a73;font-size:12px}
+@media(max-width:520px){main{place-items:start;padding:28px 22px}.brand{margin-bottom:64px}}
+</style>
+</head>
+<body>
+<main>
+<section class="content" aria-labelledby="title">
+<div class="brand"><img src="https://aoagents.dev/ao-logo.svg" alt=""><span>Agent Orchestrator</span></div>
+<div class="status %s" aria-hidden="true">%s</div>
+<h1 id="title">%s</h1>
+<p>%s</p>
+<button class="action" type="button" onclick="window.close()">%s</button>
+<div class="hint">This window may close automatically.</div>
+</section>
+</main>
+<script>%s</script>
+</body>
+</html>`,
 		title,
+		statusClass,
+		statusIcon,
 		title,
 		message,
+		buttonLabel,
+		autoClose,
 	))
 }

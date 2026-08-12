@@ -42,6 +42,7 @@ services:
       AO_CLOUD_MIGRATE_ON_STARTUP: "false"
       AO_CLOUD_LOCAL_AUTH: "true"
       AO_CLOUD_SANDBOX_PROVIDER: docker
+      AO_CLOUD_PROVIDER_SECRET_KEY: "${AO_CLOUD_PROVIDER_SECRET_KEY:?AO_CLOUD_PROVIDER_SECRET_KEY is required}"
     ports:
       - "127.0.0.1:${AO_CLOUD_PORT:-8081}:8080"
     depends_on:

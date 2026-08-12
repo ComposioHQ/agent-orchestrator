@@ -16,6 +16,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
+	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -79,25 +80,29 @@ type Server struct {
 	drain               chan struct{}
 	logger              *slog.Logger
 	github              *githubapp.Service
+	secretCipher        *secrets.Cipher
+	credentialValidator credentialValidator
 	webhookMaxBody      int64
 	handler             http.Handler
 }
 
 type Options struct {
-	Store            Store
-	WorkOS           auth.WorkOSVerifier
-	LocalAuthEnabled bool
-	LocalSessionTTL  time.Duration
-	SandboxProvider  string
-	Provisioning     sandbox.ProvisioningDefaults
-	WorkerTokens     WorkerTokens
-	WorkerTokenTTL   time.Duration
-	MaxSandboxes     int
-	Environment      string
-	Release          string
-	Logger           *slog.Logger
-	GitHub           *githubapp.Service
-	WebhookMaxBody   int64
+	Store               Store
+	WorkOS              auth.WorkOSVerifier
+	LocalAuthEnabled    bool
+	LocalSessionTTL     time.Duration
+	SandboxProvider     string
+	Provisioning        sandbox.ProvisioningDefaults
+	WorkerTokens        WorkerTokens
+	WorkerTokenTTL      time.Duration
+	MaxSandboxes        int
+	Environment         string
+	Release             string
+	Logger              *slog.Logger
+	GitHub              *githubapp.Service
+	SecretCipher        *secrets.Cipher
+	CredentialValidator credentialValidator
+	WebhookMaxBody      int64
 }
 
 func New(options Options) *Server {
@@ -143,7 +148,12 @@ func New(options Options) *Server {
 		drain:               make(chan struct{}),
 		logger:              logger,
 		github:              options.GitHub,
+		secretCipher:        options.SecretCipher,
+		credentialValidator: options.CredentialValidator,
 		webhookMaxBody:      webhookMaxBody,
+	}
+	if server.credentialValidator == nil {
+		server.credentialValidator = newAgentCredentialValidator(nil)
 	}
 	server.provisioning.Provider = sandboxProvider
 	if server.provisioning.Release == "" {
@@ -186,6 +196,9 @@ func New(options Options) *Server {
 			}
 			router.Get("/projects", server.listProjects)
 			router.Post("/projects", server.createProject)
+			router.Get("/provider-connections", server.listProviderConnections)
+			router.Put("/provider-connections/agents/{agent}", server.putAgentConnection)
+			router.Delete("/provider-connections/agents/{agent}", server.deleteAgentConnection)
 			router.Get("/sessions", server.listSessions)
 			router.Post("/sessions", server.createSession)
 			router.Get("/sessions/{sessionId}", server.getSession)

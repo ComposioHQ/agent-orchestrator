@@ -11,6 +11,7 @@ import (
 // test can then remove exactly the one it is asserting on.
 func nodeOpsEnvironment(t *testing.T) {
 	t.Helper()
+	setProviderSecretKey(t)
 	t.Setenv("AO_CLOUD_ENV", "staging")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
 	t.Setenv("AO_CLOUD_WORKOS_ISSUER", "https://api.workos.com/")
@@ -79,6 +80,17 @@ func TestLoadRejectsInvalidMigrationTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidProviderSecretKey(t *testing.T) {
+	t.Setenv("AO_CLOUD_ENV", "development")
+	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
+	t.Setenv("AO_CLOUD_LOCAL_AUTH", "true")
+	t.Setenv("AO_CLOUD_PROVIDER_SECRET_KEY", "not-base64")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load succeeded with an invalid provider secret key")
+	}
+}
+
 func TestLoadRejectsUnknownSandboxProvider(t *testing.T) {
 	t.Setenv("AO_CLOUD_ENV", "development")
 	t.Setenv("AO_CLOUD_DATABASE_URL", "postgres://localhost/ao")
@@ -122,6 +134,7 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
 	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-staging")
+	setProviderSecretKey(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -186,6 +199,7 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
 	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
+	setProviderSecretKey(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -280,6 +294,7 @@ func TestLoadRejectsGitHubAppCredentialsOutsideProduction(t *testing.T) {
 		base64.StdEncoding.EncodeToString(make([]byte, 32)),
 	)
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://staging-api.aoagents.dev")
+	setProviderSecretKey(t)
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with staging GitHub App credentials")
@@ -302,6 +317,7 @@ func TestLoadRequiresHTTPSGitHubCallbackInHostedEnvironment(t *testing.T) {
 		base64.StdEncoding.EncodeToString(make([]byte, 32)),
 	)
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "http://api.aoagents.dev")
+	setProviderSecretKey(t)
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with a plaintext hosted GitHub callback URL")
@@ -385,4 +401,12 @@ func TestLoadRejectsNonNodeOpsProviderInHostedEnvironments(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Fatal("Load succeeded with a docker sandbox provider in staging")
 	}
+}
+
+func setProviderSecretKey(t *testing.T) {
+	t.Helper()
+	t.Setenv(
+		"AO_CLOUD_PROVIDER_SECRET_KEY",
+		base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	)
 }

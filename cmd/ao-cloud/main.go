@@ -21,6 +21,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox/createos"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandboxresolve"
+	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 )
 
@@ -212,6 +213,13 @@ func run(logger *slog.Logger) error {
 		workerTokens = worker.NewTokenManager([]byte(cfg.WorkerSigningKey))
 	}
 
+	var providerCipher *secrets.Cipher
+	if len(cfg.ProviderSecretKey) > 0 {
+		providerCipher, err = secrets.New(cfg.ProviderSecretKey)
+		if err != nil {
+			return err
+		}
+	}
 	api := httpapi.New(httpapi.Options{
 		Store:            store,
 		WorkOS:           workosVerifier,
@@ -226,6 +234,7 @@ func run(logger *slog.Logger) error {
 		Release:          cfg.Release,
 		Logger:           logger,
 		GitHub:           githubService,
+		SecretCipher:     providerCipher,
 		WebhookMaxBody:   cfg.GitHub.WebhookMaxBody,
 	})
 	server := &http.Server{

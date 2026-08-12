@@ -24,7 +24,7 @@ it("requires a WorkOS callback URL", () => {
   delete process.env.WORKOS_REDIRECT_URI;
 
   expect(() => workosRedirectUri()).toThrow(
-    "WORKOS_REDIRECT_URI is required in staging mode.",
+    "WORKOS_REDIRECT_URI is required for WorkOS sign-in.",
   );
 });
 

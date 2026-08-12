@@ -1,6 +1,5 @@
 import { authkitProxy } from "@workos-inc/authkit-nextjs";
 import type { NextFetchEvent, NextRequest } from "next/server";
-import { NextResponse } from "next/server";
 
 const stagingProxy = authkitProxy({
   redirectUri: process.env.WORKOS_REDIRECT_URI?.trim(),
@@ -9,10 +8,13 @@ const stagingProxy = authkitProxy({
     unauthenticatedPaths: ["/", "/sign-in", "/callback"],
   },
 });
+const optionalAuthProxy = authkitProxy({
+  redirectUri: process.env.WORKOS_REDIRECT_URI?.trim(),
+});
 
 export default function proxy(request: NextRequest, event: NextFetchEvent) {
   if ((process.env.AO_CLOUD_WEB_MODE?.trim() || "local") === "local") {
-    return NextResponse.next();
+    return optionalAuthProxy(request, event);
   }
   return stagingProxy(request, event);
 }
@@ -23,6 +25,7 @@ export const config = {
     "/app/:path*",
     "/api/cloud/v1/:path*",
     "/sign-in",
+    "/github-sign-in",
     "/sign-out",
     "/callback",
   ],

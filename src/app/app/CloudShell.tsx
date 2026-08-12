@@ -1,9 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
 import type { ReactNode } from "react";
-
-import { OrchestratorIcon } from "./OrchestratorIcon";
 
 export function CloudMainShell({ children }: { children: ReactNode }) {
   return (
@@ -19,15 +16,7 @@ export function CloudMainShell({ children }: { children: ReactNode }) {
   );
 }
 
-export function CloudTopbar({
-  canCreateSession,
-  onNewSession,
-  title,
-}: {
-  canCreateSession: boolean;
-  onNewSession: () => void;
-  title: string;
-}) {
+export function CloudTopbar({ title }: { title: string }) {
   return (
     <header
       aria-label="Project toolbar"
@@ -38,34 +27,6 @@ export function CloudTopbar({
       </h1>
 
       <div className="min-w-0 flex-1" />
-
-      <div className="flex shrink-0 items-center gap-1.5">
-        <button
-          type="button"
-          aria-label="New session"
-          className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--color-bg-tertiary)] px-3.5 py-2.5 text-sm font-semibold leading-none text-[var(--muted-foreground)] transition-[filter,background-color,color,border-color,transform] duration-150 hover:bg-[var(--color-bg-secondary)] hover:text-[var(--foreground)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transform-none motion-reduce:transition-none"
-          disabled={!canCreateSession}
-          onClick={onNewSession}
-        >
-          <Plus className="size-[15px]" aria-hidden="true" />
-          <span className="max-[760px]:hidden">New session</span>
-        </button>
-
-        <button
-          type="button"
-          aria-label="Orchestrator execution unavailable"
-          title="Worker and orchestrator execution is not implemented yet"
-          className="inline-flex h-9 cursor-not-allowed items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--color-bg-tertiary)] px-3.5 py-2.5 text-sm font-semibold leading-none text-[var(--color-text-passive)] opacity-60"
-          disabled
-        >
-          <OrchestratorIcon
-            className="size-[15px]"
-            strokeWidth={2}
-            aria-hidden="true"
-          />
-          <span className="max-[760px]:hidden">Execution disabled</span>
-        </button>
-      </div>
     </header>
   );
 }
