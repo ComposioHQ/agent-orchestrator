@@ -154,6 +154,7 @@ async function refreshPresence(): Promise<void> {
 	}
 	try {
 		await client.request("SET_ACTIVITY", {
+			pid: process.pid,
 			activity: {
 				details: payload.details,
 				state: payload.state,
@@ -174,7 +175,7 @@ async function refreshPresence(): Promise<void> {
 async function clearActivity(): Promise<void> {
 	if (!client || connectionState !== "connected") return;
 	try {
-		await client.request("SET_ACTIVITY", { activity: null });
+		await client.request("SET_ACTIVITY", { pid: process.pid, activity: null });
 	} catch {
 		connectionState = "disconnected";
 		broadcastStatus();
