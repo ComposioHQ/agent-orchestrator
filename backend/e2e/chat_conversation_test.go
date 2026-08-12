@@ -276,15 +276,16 @@ func TestChatRelayThroughTheSendEndpointIsAttributedToAutomation(t *testing.T) {
 			return contains(s.assistantText(), "RELAYED")
 		})
 
-	var relayed *message
+	var relayedPtr *message
 	for i := range snap.Messages {
 		if snap.Messages[i].Role == "user" && strings.Contains(snap.Messages[i].Text, "RELAYED") {
-			relayed = &snap.Messages[i]
+			relayedPtr = &snap.Messages[i]
 		}
 	}
-	if relayed == nil {
+	if relayedPtr == nil {
 		t.Fatalf("the relayed message is not in the timeline:\n%s", describe(snap))
 	}
+	relayed := *relayedPtr
 	// AO carried this on someone else's behalf; the timeline must say so rather
 	// than passing it off as something the user typed here.
 	if relayed.Origin != "automation" {
