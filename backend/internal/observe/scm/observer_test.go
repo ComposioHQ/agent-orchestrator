@@ -2911,3 +2911,69 @@ func TestPoll_AllFail_ScopedPerProviderError(t *testing.T) {
 		}
 	}
 }
+
+// TestPoll_RepoRefreshMonotonicity_ListingFailsButPRSucceeds (finding #1)
+// verifies that when ListPRsByRepo fails for a repo but a tracked PR in that
+// repo is still fetched and persisted successfully (via the commit-check ETag
+// path), the repo ETag and LastSyncCursor do NOT advance. Without the
+// repoListFailed monotonicity guard, markRepoRefreshOK (called after the
+// successful PR persistence) would flip the repo back to OK. The per-ref
+// monotonicity check would then see an empty repoCandidateKeys (because the
+// listing failed, the PR never entered candidateKeys through the listing path)
+// and allRefsOK would be vacuously true, advancing the ETag/cursor and making
+// the failed listing unrecoverable on the next poll.
+func TestPoll_RepoRefreshMonotonicity_ListingFailsButPRSucceeds(t *testing.T) {
+	store := testStoreWithSession()
+	// A tracked PR with durable hashes.
+	local := knownPR(1)
+	local.MetadataHash = "durable-meta"
+	local.CIHash = "durable-ci"
+	local.ReviewHash = "durable-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	// The PR observation has a metadata change so it persists.
+	successObs := testObs(1)
+	successObs.PR.Title = "PR 1 updated"
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		// Listing fails — the PR is not discovered through the listing path.
+		listErr: errors.New("gitlab 502"),
+		// A changed commit-check ETag promotes the PR to a refresh candidate
+		// even though the listing failed.
+		checkGuards: map[string]ports.SCMGuardResult{commitKey(testRepo, local.HeadSHA): {ETag: "checks2"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): successObs},
+	}
+	lc := &fakeLifecycle{}
+	now := time.Unix(1800, 0).UTC()
+	obs := newTestObserver(store, provider, lc, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = now.Add(-time.Hour)
+	cursorBefore := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]
+	// Seed the commit-check ETag so the guard reports a change.
+	obs.Cache.CommitChecksETag[commitKey(testRepo, local.HeadSHA)] = "checks1"
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The PR must have been persisted (metadata changed).
+	foundWrite := false
+	for _, w := range store.writes {
+		if w.pr.Number == 1 {
+			foundWrite = true
+			break
+		}
+	}
+	if !foundWrite {
+		t.Fatalf("PR 1 (successful fetch via commit-check ETag) must be persisted; writes=%#v", store.writes)
+	}
+
+	// The repo ETag must NOT advance — the listing failed.
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got == "repo2" {
+		t.Fatalf("repo ETag advanced to %q when listing failed; durable state must not advance", got)
+	}
+	// The sync cursor must NOT advance.
+	if got := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; got != cursorBefore {
+		t.Fatalf("sync cursor advanced when listing failed: got %v, want %v (unchanged)", got, cursorBefore)
+	}
+}

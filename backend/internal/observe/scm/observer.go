@@ -356,11 +356,26 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 	repoGuards := o.guardRepos(ctx, sessionRepos)
 	repoRefreshOK := pendingRepoRefreshes(repoGuards)
+	// repoListFailed records repos whose PR listing (ListPRsByRepo) failed
+	// during this poll. markRepoRefreshOK checks this set and refuses to
+	// flip a repo back to OK when the listing itself failed — without this,
+	// a successful PR write for a different PR in the same repo would clear
+	// the listing failure and advance the ETag/cursor, making the failed
+	// listing unrecoverable on the next poll.
+	repoListFailed := map[string]bool{}
 	markRepoRefreshFailed := func(repo ports.SCMRepo) {
 		key := prKey(repo, 0)
 		if _, ok := repoRefreshOK[key]; ok {
 			repoRefreshOK[key] = false
 		}
+	}
+	// markRepoListFailed is called only when the PR listing itself fails
+	// (ListPRsByRepo error in discoverNewPRs). It sets repoListFailed so
+	// markRepoRefreshOK cannot clear it within the same poll, and also
+	// marks the repo refresh-incomplete via markRepoRefreshFailed.
+	markRepoListFailed := func(repo ports.SCMRepo) {
+		repoListFailed[prKey(repo, 0)] = true
+		markRepoRefreshFailed(repo)
 	}
 	// markRepoRefreshOK un-marks a repo as refresh-incomplete. It is used by
 	// the terminal-reconciliation path: a reconciled PR that turns out to be
@@ -368,8 +383,15 @@ func (o *Observer) Poll(ctx context.Context) error {
 	// repo ETag/cursor may advance. A "still open" no-op result does NOT
 	// call this, so the ETag/cursor stay pinned (cross-cutting durable-state
 	// preservation rule).
+	//
+	// Monotonicity guard: if the repo's listing failed this poll
+	// (repoListFailed), do NOT flip it back to OK. A successful PR write for
+	// a different PR must not clear a listing-level failure.
 	markRepoRefreshOK := func(repo ports.SCMRepo) {
 		key := prKey(repo, 0)
+		if repoListFailed[key] {
+			return
+		}
 		if g, ok := repoGuards[key]; ok && g.err == nil && g.result.ETag != "" {
 			repoRefreshOK[key] = true
 		}
@@ -377,7 +399,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	listedPRs, listedRepos := o.discoverNewPRs(ctx, sessionRepos, subjects, repoGuards, now, markRepoRefreshFailed)
+	listedPRs, listedRepos := o.discoverNewPRs(ctx, sessionRepos, subjects, repoGuards, now, markRepoListFailed)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
