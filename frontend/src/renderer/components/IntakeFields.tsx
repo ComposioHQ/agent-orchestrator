@@ -1,9 +1,9 @@
-import { FolderGit2, Inbox, Info, TriangleAlert, UserRound } from "lucide-react";
+import { Info, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { cn } from "../lib/utils";
 import { Label } from "./ui/label";
-import { SettingsRow } from "./settings/SettingsRow";
+import { SettingsInlineInput, SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
@@ -105,7 +105,7 @@ export function IntakeFields({
 	if (variant === "settings") {
 		return (
 			<div className="flex flex-col gap-1.5">
-				<SettingsRow icon={Inbox} label={t("settings.project.enableIssueIntake")}>
+				<SettingsRow label={t("settings.project.enableIssueIntake")}>
 					<Switch
 						aria-label={t("settings.project.enableIssueIntake")}
 						checked={form.enabled}
@@ -115,7 +115,7 @@ export function IntakeFields({
 				{form.enabled && (
 					<>
 						{repoPreview && (
-							<SettingsRow icon={FolderGit2} label={t("settings.project.repository")}>
+							<SettingsRow label={t("settings.project.repository")}>
 								{repoPreview.value ? (
 									<a
 										href={`https://github.com/${repoPreview.value}`}
@@ -132,13 +132,12 @@ export function IntakeFields({
 								)}
 							</SettingsRow>
 						)}
-						<SettingsRow icon={UserRound} label={t("settings.project.assignee")}>
-							<input
+						<SettingsRow label={t("settings.project.assignee")}>
+							<SettingsInlineInput
 								id="intakeAssignee"
-								aria-label={t("settings.project.assignee")}
-								className="settings-inline-input"
+								label={t("settings.project.assignee")}
 								value={form.assignee}
-								onChange={(e) => onChange({ assignee: e.target.value })}
+								onChange={(assignee) => onChange({ assignee })}
 								placeholder={t("settings.project.intakeAssigneePlaceholder")}
 							/>
 						</SettingsRow>

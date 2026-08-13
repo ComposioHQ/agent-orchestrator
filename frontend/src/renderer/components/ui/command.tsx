@@ -41,14 +41,14 @@ function CommandDialog({
 			<Dialog.Portal>
 				<Dialog.Overlay
 					data-slot="command-dialog-overlay"
-					className="dialog-overlay data-[state=open]:animate-overlay-in"
+					className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out motion-reduce:animate-none"
 				/>
 				<Dialog.Content
 					data-slot="command-dialog-content"
 					aria-label={title}
 					{...contentProps}
 					className={cn(
-						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none data-[state=open]:animate-modal-in",
+						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none",
 						className,
 					)}
 				>

@@ -15,15 +15,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/project"
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
-// newManager builds a Manager over a real, throwaway sqlite store (pure-Go
-// driver, migrations run on Open) — no in-memory store.
+// newManager builds a Manager over a real, isolated sqlite store cloned from a
+// current migrated template — no in-memory store.
 func newManager(t *testing.T) project.Manager {
 	t.Helper()
 	t.Setenv("GIT_CEILING_DIRECTORIES", os.TempDir())
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestManager_AddListGetRemove(t *testing.T) {
 
 func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {
 
 func TestManager_AddDoesNotRepeatFirstProjectTelemetry(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestManager_AddDoesNotRepeatFirstProjectTelemetry(t *testing.T) {
 
 func TestManager_EnsureDefaultScratchProjectSeedsFreshRegistry(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestManager_EnsureDefaultScratchProjectSeedsFreshRegistry(t *testing.T) {
 
 func TestManager_EnsureDefaultScratchProjectDoesNotReseedWithActiveProject(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestManager_EnsureDefaultScratchProjectDoesNotReseedWithActiveProject(t *te
 
 func TestManager_EnsureDefaultScratchProjectReseedsAfterArchivedScratchLeavesNoActiveProjects(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestManager_EnsureDefaultScratchProjectReseedsAfterArchivedScratchLeavesNoA
 
 func TestManager_SetConfigRejectsScratchGitOnlyFields(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestManager_SetConfigRejectsScratchGitOnlyFields(t *testing.T) {
 
 func TestManager_RemoveTeardownsBeforeArchive(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestManager_RemoveTeardownsBeforeArchive(t *testing.T) {
 
 func TestManager_RemoveDoesNotArchiveWhenTeardownFails(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 
 func TestManager_GetUsesConfiguredDefaultHarness(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -1084,13 +1084,21 @@ func TestManager_AddWorkspaceInsideAncestorRepo(t *testing.T) {
 func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
-	m := newManager(t)
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.New(store)
 	parent := t.TempDir()
 	if err := os.WriteFile(filepath.Join(parent, "package.json"), []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gitRepoWithCommit(t, filepath.Join(parent, "cli"))
-	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	apiRepo := gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	if out, err := exec.Command("git", "-C", apiRepo, "branch", "-m", "main", "dev").CombinedOutput(); err != nil {
+		t.Fatalf("rename api branch: %v (%s)", err, out)
+	}
 
 	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
 	if err != nil {
@@ -1101,6 +1109,19 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	}
 	if len(proj.WorkspaceRepos) != 2 || proj.WorkspaceRepos[0].Name != "api" || proj.WorkspaceRepos[1].Name != "cli" {
 		t.Fatalf("WorkspaceRepos = %#v", proj.WorkspaceRepos)
+	}
+	registeredRepos, err := store.ListWorkspaceRepos(ctx, "ws")
+	if err != nil {
+		t.Fatalf("list workspace repos: %v", err)
+	}
+	if len(registeredRepos) != 2 {
+		t.Fatalf("registered workspace repos = %#v, want 2", registeredRepos)
+	}
+	if registeredRepos[0].Name != "api" || registeredRepos[0].DefaultBranch != "dev" {
+		t.Fatalf("registered api repo = %#v, want persisted default branch dev", registeredRepos[0])
+	}
+	if registeredRepos[1].Name != "cli" || registeredRepos[1].DefaultBranch != "main" {
+		t.Fatalf("registered cli repo = %#v, want persisted default branch main", registeredRepos[1])
 	}
 	ignored, err := os.ReadFile(filepath.Join(parent, ".gitignore"))
 	if err != nil {

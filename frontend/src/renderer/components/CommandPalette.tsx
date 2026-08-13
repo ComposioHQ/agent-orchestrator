@@ -238,13 +238,14 @@ export function CommandPalette() {
 		(target: NavigateTarget) => {
 			switch (target.to) {
 				case "/settings":
-					void navigate({ to: "/settings" });
+					// Modal — do not route to /settings (that legacy path redirects home).
+					useUiStore.getState().openGlobalSettings();
 					break;
 				case "/projects/$projectId":
 					void navigate({ to: target.to, params: target.params });
 					break;
 				case "/projects/$projectId/settings":
-					void navigate({ to: target.to, params: target.params });
+					useUiStore.getState().openProjectSettings(target.params.projectId);
 					break;
 				case "/projects/$projectId/sessions/$sessionId":
 					void navigate({ to: target.to, params: target.params });
@@ -506,7 +507,6 @@ export function CommandPalette() {
 							onDirtyChange={onComposerDirtyChange}
 							onSubmittingChange={onComposerSubmittingChange}
 							onCreated={(sessionId) => void handleTaskCreated(view.projectId, sessionId)}
-							onCancel={() => requestDismiss("pop")}
 						/>
 					</div>
 				) : (

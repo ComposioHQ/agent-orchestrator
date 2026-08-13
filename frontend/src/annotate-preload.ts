@@ -26,6 +26,8 @@ const PROMPT_MAX_HEIGHT = 360;
 const PROMPT_COMPACT_CHROME_HEIGHT = 48;
 const PROMPT_EXPANDED_CHROME_HEIGHT = 48;
 const TEXTAREA_MIN_HEIGHT = 32;
+const MARKDOWN_ANNOTATION_TARGETS =
+	"h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, pre, table, th, td, figure, figcaption, img, hr, details, summary";
 
 ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean }) => {
 	setEnabled(Boolean(input?.enabled), "disabled");
@@ -190,10 +192,19 @@ function annotationTarget(target: EventTarget | null): Element | null {
 	if (!(target instanceof Element)) return null;
 	const element =
 		target.closest("button, a, input, textarea, select, [role]") ??
+		markdownAnnotationTarget(target) ??
 		target.closest("[data-testid], [id], [class]") ??
 		target;
 	if (element === document.documentElement || element === document.body) return null;
 	return element;
+}
+
+function markdownAnnotationTarget(target: Element): Element | null {
+	// Goldmark emits semantic nodes without classes inside one classed layout
+	// wrapper. Prefer the content block before the generic component heuristic
+	// promotes every Markdown annotation to the full document wrapper.
+	if (!target.closest(".markdown-body")) return null;
+	return target.closest(MARKDOWN_ANNOTATION_TARGETS);
 }
 
 // Registered as FontFace objects from decoded bytes rather than an @font-face
@@ -347,39 +358,6 @@ function ensureOverlay(): ShadowRoot {
 			}
 			.prompt textarea::placeholder {
 				color: var(--ao-passive);
-			}
-			.prompt__shortcuts {
-				position: absolute;
-				left: 13px;
-				bottom: 10px;
-				display: flex;
-				align-items: center;
-				gap: 13px;
-				color: var(--ao-passive);
-				font-size: 10px;
-				line-height: 1;
-				pointer-events: none;
-			}
-			.prompt__shortcut {
-				display: inline-flex;
-				align-items: center;
-				gap: 4px;
-				white-space: nowrap;
-			}
-			.prompt__shortcut kbd {
-				display: inline-flex;
-				min-width: 18px;
-				height: 18px;
-				box-sizing: border-box;
-				align-items: center;
-				justify-content: center;
-				border: 1px solid color-mix(in oklch, var(--ao-border) 85%, transparent);
-				border-radius: 5px;
-				background: var(--ao-input);
-				color: color-mix(in oklch, var(--ao-foreground) 72%, transparent);
-				padding: 0 5px;
-				font: 9px/1 var(--ao-font-mono);
-				box-shadow: inset 0 -1px 0 color-mix(in oklch, var(--ao-border) 80%, transparent);
 			}
 			.prompt button[type="submit"] {
 				position: absolute;
@@ -554,10 +532,6 @@ function openPrompt(
 	mount.innerHTML = `
 		<form class="prompt" aria-label="Annotate selection">
 			<textarea rows="1" aria-label="Annotation request" placeholder="Describe the change…"></textarea>
-			<div class="prompt__shortcuts" aria-hidden="true">
-				<span class="prompt__shortcut"><kbd>⌘/Ctrl</kbd><span>+</span><kbd>Enter</kbd><span>Send</span></span>
-				<span class="prompt__shortcut"><kbd>Esc</kbd><span>Cancel</span></span>
-			</div>
 			<button disabled type="submit" aria-label="Send annotation" title="Send (⌘/Ctrl + Enter)">
 				<svg viewBox="0 0 24 24" aria-hidden="true">
 					<path d="M12 19V5"></path>
@@ -575,15 +549,24 @@ function openPrompt(
 		const current = currentPromptRect();
 		if (current) repositionPrompt(current);
 	};
-	const submitAnnotation = (): boolean => {
+	let submitting = false;
+	const submitAnnotation = (): void => {
+		if (submitting) return;
 		const instruction = textarea.value.trim();
 		if (!instruction) {
 			textarea.focus();
-			return false;
+			return;
 		}
-		ipcRenderer.send("browser:annotation:submit", buildPayload(instruction));
-		setEnabled(false, "disabled");
-		return true;
+		submitting = true;
+		// Hide the input chrome but leave the highlight/selection boxes up, then
+		// wait a paint before invoking so the main process captures a clean
+		// snapshot of the picked element(s) — not the annotation popup itself.
+		// invoke (not send) so the overlay teardown below cannot race the
+		// snapshot capture in the main process.
+		mount.innerHTML = "";
+		void waitForPaint()
+			.then(() => ipcRenderer.invoke("browser:annotation:submit", buildPayload(instruction)))
+			.then(() => setEnabled(false, "disabled"));
 	};
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
@@ -667,6 +650,14 @@ function promptPosition(
 		promptHeight,
 		gutter: PROMPT_GUTTER,
 		gap: PROMPT_GAP,
+	});
+}
+
+// Resolves after the DOM mutation made just before calling this has been
+// painted, so a capture taken right after is guaranteed to reflect it.
+function waitForPaint(): Promise<void> {
+	return new Promise((resolve) => {
+		requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 	});
 }
 

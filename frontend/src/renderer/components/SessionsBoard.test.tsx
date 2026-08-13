@@ -5,11 +5,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { appI18n } from "../i18n";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
+const {
+	navigateMock,
+	notificationShowMock,
+	postMock,
+	workspaceQueryMock,
+	usageQueryMock,
+	boardActionsInPanelMock,
+} = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
+	usageQueryMock: vi.fn(),
 	boardActionsInPanelMock: vi.fn(() => false),
 }));
 
@@ -20,6 +28,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+}));
+
+vi.mock("../hooks/useSessionUsageSummaries", () => ({
+	useSessionUsageSummaries: usageQueryMock,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -71,6 +83,7 @@ beforeEach(() => {
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	usageQueryMock.mockReset().mockReturnValue({ data: new Map() });
 	window.localStorage.removeItem("ao.board.archive.layout");
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
 });
@@ -250,8 +263,64 @@ describe("SessionsBoard", () => {
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
+		expect(within(idleCard).getByText("Idle").parentElement?.parentElement).toHaveClass("flex");
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
+	});
+
+	it("shows compact token usage on active and archived cards and hides empty totals", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-active", title: "active worker", status: "idle" }),
+					boardSession({ id: "s-empty", title: "empty worker", status: "idle" }),
+					terminatedSession(),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		usageQueryMock.mockReturnValue({
+			data: new Map([
+				[
+					"s-active",
+					{
+						sessionId: "s-active",
+						totalTokens: 12_400,
+						incomplete: false,
+					},
+				],
+				[
+					"s-empty",
+					{
+						sessionId: "s-empty",
+						totalTokens: 0,
+						incomplete: false,
+					},
+				],
+				[
+					"s-dead",
+					{
+						sessionId: "s-dead",
+						totalTokens: 2_000,
+						incomplete: true,
+					},
+				],
+			]),
+		});
+
+		renderBoard("p1");
+
+		const activeUsage = screen.getByText("12.4K tok");
+		expect(activeUsage).toHaveAttribute("aria-label", "12,400 tokens");
+		expect(screen.queryByText("0 tok")).not.toBeInTheDocument();
+		expect(usageQueryMock).toHaveBeenCalledWith("p1");
+		await userEvent.hover(activeUsage);
+		expect((await screen.findAllByText("12,400 tokens")).length).toBeGreaterThan(0);
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		const archivedUsage = within(archive).getByText("2K tok");
+		expect(archivedUsage).toHaveAttribute("aria-label", "2,000 tokens");
 	});
 
 	it("pulses the shared activity indicator on an actively working session card", () => {
@@ -272,8 +341,8 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const working = within(card).getByText("Working").closest("span") as HTMLElement;
-		expect(working.querySelector("span")).toHaveClass("bg-status-working", "animate-status-pulse");
+		const working = within(card).getByText("Working").parentElement as HTMLElement;
+		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
 	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
@@ -353,9 +422,9 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
+		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("text-status-idle");
+		expect(within(noSignalCard).getByText("No signal").parentElement).toHaveClass("text-status-unknown");
+		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveClass("text-status-in-review");
 	});
 
 	it("places an exited live session in Needs you with an Exited badge", () => {
@@ -385,7 +454,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).getByText("Exited").parentElement).toHaveClass("text-status-exited");
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -462,7 +531,7 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const badge = within(idleCard).getByText("Idle").closest("span");
+		const badge = within(idleCard).getByText("Idle").parentElement;
 		expect(badge).toHaveClass("text-status-idle");
 		expect(badge).not.toHaveClass("text-status-working");
 	});
@@ -680,7 +749,9 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		const archiveButton = screen.getByRole("button", { name: /archive/i });
+		expect(archiveButton).toHaveClass("h-[46px]", "py-0");
+		await userEvent.click(archiveButton);
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
@@ -1074,7 +1145,7 @@ describe("SessionsBoard", () => {
 		expect(
 			within(archivedMergedCard!).queryByRole("button", { name: "Terminate archived merged worker" }),
 		).not.toBeInTheDocument();
-		expect(within(archivedMergedCard!).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
+		expect(within(archivedMergedCard!).getByText("Merged").parentElement).toHaveClass("text-status-merged");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
 

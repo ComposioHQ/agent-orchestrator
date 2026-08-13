@@ -19,6 +19,7 @@ import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -45,6 +46,7 @@ import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
+import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -87,6 +89,8 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 // the old single <App>, with selection now owned by the router (route params)
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
+	// Reports how many agents this install has available, once per launch.
+	useAgentInventoryTelemetry();
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
@@ -149,6 +153,32 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
+	// Warms the New Task composer's model-catalog cache while the user is just
+	// looking at the project, so the picker never shows a loading flash the
+	// first time they actually open the dialog.
+	useEffect(() => {
+		if (!scopedProjectId) return;
+		const projectQueryKey = ["project", scopedProjectId];
+		void queryClient
+			.prefetchQuery({
+				queryKey: projectQueryKey,
+				queryFn: async () => {
+					const { data, error: apiError } = await apiClient.GET("/api/v1/projects/{id}", {
+						params: { path: { id: scopedProjectId } },
+					});
+					if (apiError) throw new Error(apiErrorMessage(apiError));
+					if (data?.status !== "ok") throw new Error("Project config unavailable");
+					return data.project as components["schemas"]["Project"];
+				},
+			})
+			.then(() => {
+				const project = queryClient.getQueryData<components["schemas"]["Project"]>(projectQueryKey);
+				const defaultWorkerAgent = project?.config?.worker?.agent || project?.agent || "";
+				if (defaultWorkerAgent) {
+					void queryClient.prefetchQuery(agentModelsQueryOptions(defaultWorkerAgent, scopedProjectId));
+				}
+			});
+	}, [queryClient, scopedProjectId]);
 	// First-launch root board only (no projects in scope).
 	const isWelcomeBoard =
 		Boolean(matchRoute({ to: "/" })) &&
@@ -333,6 +363,8 @@ function ShellLayout() {
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
+			const isLastWorkspace =
+              workspaces.length === 1 && workspaces[0]?.id === projectId;
 			void addRendererExceptionStep("Project removal requested", {
 				source: "project-remove",
 				operation: "project_remove",
@@ -355,18 +387,22 @@ function ShellLayout() {
 			}
 			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
+			if (isLastWorkspace) {
+              void navigate({ to: "/" });
+}
 		},
-		[updateWorkspaces],
+		[navigate, updateWorkspaces, workspaces],
 	);
 
 	const restartOrchestrator = useCallback(
-		async (projectId: string) => {
+		async (projectId: string, mode?: "chat" | "tui") => {
 			await restartProjectOrchestrator({
 				projectId,
 				queryClient,
 				navigate,
 				setProjectRestarting,
 				setOrchestratorReplacementError,
+				mode,
 				onError: (error) => {
 					captureOrchestratorReplacementFailure(error, projectId);
 				},
@@ -587,7 +623,10 @@ function ShellLayout() {
 		setActiveShellTerminal,
 	]);
 
-	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
+	useEffect(
+		() => aoBridge.app.onOpenSettingsShortcut(() => useUiStore.getState().openGlobalSettings()),
+		[],
+	);
 
 	useEffect(() => {
 		const disposePrevious = aoBridge.app.onPreviousSessionShortcut(() => navigateSession(-1));
@@ -774,6 +813,7 @@ function ShellLayout() {
 						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
 					}}
 					onRetry={(projectId) => void restartOrchestrator(projectId)}
+					onRetryAsTui={(projectId) => void restartOrchestrator(projectId, "tui")}
 					projectId={replacementErrorProjectId}
 					workspaces={workspaces}
 				/>
