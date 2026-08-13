@@ -408,13 +408,12 @@ it("creates a standalone scratch project and worker session", async () => {
   expect(screen.getByText("Standalone Agents")).toBeVisible();
 });
 
-it("treats a repo-less local scratch project as standalone, not orchestrator/worker", async () => {
-  // A scratch project created without a GitHub repo has nothing for an
-  // orchestrator to check workers out of, so it must not get the
-  // orchestrator/worker-VM treatment — it should behave exactly like the
-  // "Create a Standalone Agent" flow (config.standalone: true, kind:
-  // "worker"), which is also what lets more agents be added into the same
-  // project afterward without implying a fleet under one orchestrator.
+it("uses an agent name instead of an orchestrator name for local scratch projects", async () => {
+  // Leaving GitHub unchecked in "Create scratch project" still gets a real,
+  // persistent AO-managed local Git workspace (per the dialog's own copy),
+  // not "no repo" — so it gets the same orchestrator treatment as a
+  // GitHub-backed scratch project, unlike "Create a Standalone Agent"
+  // (which is genuinely repo-less and uses kind: "worker").
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
@@ -427,23 +426,15 @@ it("treats a repo-less local scratch project as standalone, not orchestrator/wor
   fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
   await waitFor(() =>
-    expect(mocks.createProject).toHaveBeenCalledWith(
+    expect(mocks.createSession).toHaveBeenCalledWith(
       "org-1",
       expect.objectContaining({
-        displayName: "Local scratch",
-        config: expect.objectContaining({ standalone: true }),
+        kind: "orchestrator",
+        harness: "claude-code",
+        displayName: "Claude agent",
       }),
       { idempotencyKey: "test-key" },
     ),
-  );
-  expect(mocks.createSession).toHaveBeenCalledWith(
-    "org-1",
-    expect.objectContaining({
-      kind: "worker",
-      harness: "claude-code",
-      displayName: "Local scratch",
-    }),
-    { idempotencyKey: "test-key" },
   );
 });
 

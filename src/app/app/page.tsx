@@ -503,12 +503,14 @@ export function CloudWorkspace() {
 
   const createScratchProject = async (input: ScratchProjectInput) => {
     if (!input.githubInstallationId) {
-      // No repo means there's nothing for an orchestrator to check workers
-      // out of, so the orchestrator/worker-VM model doesn't apply here —
-      // treat it the same as a standalone agent (config.standalone: true),
-      // which is exactly what lets more agents be added into the same
-      // project afterward without implying a fleet under one orchestrator.
-      await createScratchWork(input, "worker");
+      // Leaving GitHub unchecked doesn't mean "no repo" — AO still
+      // initializes a real, persistent AO-managed local Git workspace for
+      // it (see the "Create scratch project" dialog copy), so the
+      // orchestrator/worker-VM model applies here exactly as it does for a
+      // GitHub-backed scratch project below. Only "Create a Standalone
+      // Agent" (a genuinely repo-less, single-agent workspace) should skip
+      // orchestrator treatment.
+      await createScratchWork(input, "orchestrator");
       return;
     }
     const response = await client.createGitHubScratchProject(
