@@ -402,6 +402,33 @@ func (s *Store) CountActiveSandboxes(
 	return count, err
 }
 
+// DisconnectSessionWorkers marks every still-connected worker connection for
+// a session as disconnected without touching the sandbox's own observed
+// state. A session's runtimeConnected flag (what the frontend uses to decide
+// whether the terminal and workspace are usable) is read straight off these
+// rows, so a worker process that exits on its own — as opposed to being
+// superseded by a fresh bootstrap ticket, which already fences the old
+// connection — leaves a stale "connected" row behind unless something calls
+// this. The reconciler uses it when it backs off a Docker worker that keeps
+// crashing before becoming ready, so the UI stops claiming a connection that
+// no longer exists for the length of the backoff.
+func (s *Store) DisconnectSessionWorkers(
+	ctx context.Context,
+	orgID, sessionID string,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			ctx,
+			`UPDATE ao_worker_connections
+			SET disconnected_at = now()
+			WHERE org_id = $1 AND session_id = $2 AND disconnected_at IS NULL`,
+			orgID,
+			sessionID,
+		)
+		return err
+	})
+}
+
 // CompleteSandboxDeletion records confirmed provider absence, releases quota,
 // and terminates the session without deleting its history.
 func (s *Store) CompleteSandboxDeletion(
@@ -849,6 +876,29 @@ func upsertWorkerConnection(
 		orgID,
 	); err != nil {
 		return fmt.Errorf("retire superseded worker connections: %w", err)
+	}
+	// A request created against a prior epoch can never be claimed or
+	// completed once that worker is retired — the new worker only ever
+	// claims rows stamped with its own epoch. Left alone, an orphaned row
+	// sits "pending"/"claimed" until its TTL passes, and every request the
+	// client keeps polling with in the meantime (e.g. the diff panel's
+	// 2s refresh) piles up a fresh row on top of it, which can trip the
+	// per-session outstanding-request cap right after a restart. Failing
+	// them immediately here, in the same transaction as the epoch bump,
+	// frees that headroom right away instead of waiting out the TTL.
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE ao_worker_requests
+		SET status = 'failed', error_code = 'TRANSPORT_TIMEOUT',
+			error_message = 'The worker restarted before this request completed.',
+			completed_at = now(), updated_at = now()
+		WHERE org_id = $1 AND session_id = $2 AND worker_epoch < $3
+		  AND status IN ('pending', 'claimed')`,
+		orgID,
+		sessionID,
+		epoch,
+	); err != nil {
+		return fmt.Errorf("fail worker requests from superseded epochs: %w", err)
 	}
 	tag, err := tx.Exec(
 		ctx,

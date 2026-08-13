@@ -109,7 +109,13 @@ func (s *Store) GetWorkspaceRequest(
 	orgID, sessionID, requestID string,
 ) (domain.WorkerRequest, error) {
 	var request domain.WorkerRequest
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	// A workspace request created via CreateWorkspaceRequest (which grants
+	// access to share-grant holders, not just org members) must remain
+	// pollable by that same caller — withTenant would 403 a non-member
+	// recipient here even though they were the one who created the
+	// request, leaving it stuck "pending" forever and eventually tripping
+	// the outstanding-request cap below.
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		err := scanWorkerRequest(tx.QueryRow(ctx,
 			`SELECT id, org_id, session_id, worker_epoch, kind, payload, status,
 				response, error_code, error_message, attempt_count, expires_at
@@ -130,7 +136,7 @@ func (s *Store) CancelWorkspaceRequest(
 	principal domain.Principal,
 	orgID, sessionID, requestID string,
 ) error {
-	return s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	return s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		_, err := tx.Exec(ctx,
 			`UPDATE ao_worker_requests
 			SET status = 'cancelled', completed_at = now(), updated_at = now()
