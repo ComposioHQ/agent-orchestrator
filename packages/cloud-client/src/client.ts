@@ -231,6 +231,18 @@ export class CloudClient {
     );
   }
 
+  async listProjectShareGrants(
+    orgId: string,
+    projectId: string,
+    options: RequestOptions = {},
+  ): Promise<SharedProject[]> {
+    const response = await this.request<{ grants: SharedProject[] }>(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares/grants`),
+      options,
+    );
+    return response.grants;
+  }
+
   revokeProjectShareLink(
     orgId: string,
     projectId: string,

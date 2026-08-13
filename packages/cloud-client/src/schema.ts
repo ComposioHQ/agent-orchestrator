@@ -142,6 +142,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud/v1/orgs/{orgId}/projects/{projectId}/shares/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        /** @description Every active collaborator on the project — everyone who has redeemed a share link for it. */
+        get: operations["listProjectShareGrants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud/v1/orgs/{orgId}/projects/{projectId}/shares/{linkId}/revoke": {
         parameters: {
             query?: never;
@@ -1283,6 +1303,11 @@ export interface components {
             role: components["schemas"]["ProjectShareRole"];
             /** @enum {string} */
             status: "active" | "revoked";
+            /** Format: email */
+            userEmail?: string;
+            userDisplayName?: string;
+            modeCap?: components["schemas"]["ProjectShareModeCap"];
+            deniedCommands: string[];
             /** Format: date-time */
             redeemedAt: string;
         };
@@ -2624,6 +2649,32 @@ export interface operations {
                 content: {
                     "application/json": {
                         link: components["schemas"]["ProjectShareLink"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectShareGrants: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                orgId: components["parameters"]["OrgId"];
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The project's active share grants. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        grants: components["schemas"]["SharedProject"][];
                     };
                 };
             };

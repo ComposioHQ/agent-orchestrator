@@ -250,6 +250,30 @@ paths:
                     $ref: "#/components/schemas/ProjectShareLink"
         default:
           $ref: "#/components/responses/Error"
+  /api/cloud/v1/orgs/{orgId}/projects/{projectId}/shares/grants:
+    parameters:
+      - $ref: "#/components/parameters/OrgId"
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectShareGrants
+      tags: [Sharing]
+      description: Every active collaborator on the project — everyone who has redeemed a share link for it.
+      responses:
+        "200":
+          description: The project's active share grants.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [grants]
+                properties:
+                  grants:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SharedProject"
+        default:
+          $ref: "#/components/responses/Error"
   /api/cloud/v1/orgs/{orgId}/projects/{projectId}/shares/{linkId}/revoke:
     parameters:
       - $ref: "#/components/parameters/OrgId"
@@ -2072,7 +2096,7 @@ components:
     SharedProjectGrantSummary:
       type: object
       additionalProperties: false
-      required: [id, role, status, redeemedAt]
+      required: [id, role, status, deniedCommands, redeemedAt]
       properties:
         id:
           type: string
@@ -2082,6 +2106,17 @@ components:
         status:
           type: string
           enum: [active, revoked]
+        userEmail:
+          type: string
+          format: email
+        userDisplayName:
+          type: string
+        modeCap:
+          $ref: "#/components/schemas/ProjectShareModeCap"
+        deniedCommands:
+          type: array
+          items:
+            type: string
         redeemedAt:
           type: string
           format: date-time
