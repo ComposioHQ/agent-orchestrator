@@ -149,18 +149,6 @@ Baixe o build desktop mais recente para sua plataforma:
 
 Após instalar, abra o Agent Orchestrator e aponte-o para o repositório que você quer que o AO gerencie. O app desktop executa o daemon para você, então a CLI não é necessária. Builds desktop instalados verificam atualizações na inicialização e periodicamente enquanto o app está em execução. Veja o [guia de instalação](https://aoagents.dev/docs/installation) para configuração de CLIs de agentes e solução de problemas.
 
-<details>
-<summary>Instalar via npm (CLI legada, não mais recomendada)</summary>
-
-O npm ainda funciona, mas não é mais recomendado. `0.10.0` é a versão final publicada no npm, e o pacote `@aoagents/ao` está congelado e não receberá mais atualizações. Ele permanece disponível para usuários existentes que têm a CLI `ao` no PATH; `ao start` busca e abre o mesmo build desktop linkado acima. Para qualquer configuração nova, prefira o download desktop.
-
-```bash
-npm install -g @aoagents/ao
-ao start
-```
-
-</details>
-
 ## Acompanhe a jornada do AO no X
 
 <table>

@@ -3,7 +3,7 @@
 
 ### Agent Orchestrator
 
-#### The orchestration layer for parallel AI coding agents
+#### Delegate to an orchestrator. Supervise the work, not the terminals.
 
 [![GitHub stars](https://img.shields.io/github/stars/Untrivial-ai/agent-orchestrator?style=flat&logo=github)](https://github.com/Untrivial-ai/agent-orchestrator/stargazers)
 ![Top 6k repositories](https://img.shields.io/badge/Top%206k%20repositories-181717?style=flat&logo=github&logoColor=white)
@@ -13,9 +13,9 @@
 [![X](https://img.shields.io/badge/@aoagents-555?style=flat&logo=x&logoColor=white)](https://x.com/aoagents)
 [![Discord](https://img.shields.io/badge/Discord-555?style=flat&logo=discord&logoColor=white)](https://discord.com/invite/UZv7JjxbwG)
 
-Run Claude Code, Codex, Cursor, opencode, and other coding agents in parallel.<br />
-Git-backed sessions get isolated worktrees; Scratch sessions get AO-managed branchless directories.<br />
-Every session gets a live interface and its own feedback loop.
+Give a dedicated orchestrator the outcome you want. It plans the work, delegates implementation,<br />
+and coordinates Claude Code, Codex, Cursor, opencode, and other coding agents.<br />
+AO isolates every worker and turns live agent, pull request, CI, and review state into one Kanban control plane.
 
 [**Download AO**](#install) &nbsp;&bull;&nbsp; [Documentation](https://aoagents.dev/docs) &nbsp;&bull;&nbsp; [Releases](https://github.com/Untrivial-ai/agent-orchestrator/releases) &nbsp;&bull;&nbsp; [Contributing](CONTRIBUTING.md) &nbsp;&bull;&nbsp; [Discord](https://discord.com/invite/UZv7JjxbwG)
 
@@ -23,71 +23,85 @@ Every session gets a live interface and its own feedback loop.
 
 <br />
 
-<img src="docs/assets/readme/hero.png" alt="Agent Orchestrator dashboard showing parallel coding agent sessions" width="100%" />
+<img src="docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban showing worker sessions grouped by live status" width="100%" />
 </div>
 
-## Run more agents without managing more terminals
+## The coordination layer between you and your coding agents
 
-Agent Orchestrator is a local agent IDE for running AI coding agents in parallel. For Git-backed sessions, it brings an isolated worktree, branch, and pull request together with the Chat or terminal interface, browser preview, and feedback state in one supervisor. Scratch sessions use AO-managed branchless directories without pull request operations.
+Coding agents make implementation faster, but running more of them moves the bottleneck: now someone has to split the work, give each agent context, prevent branch collisions, notice failures, follow up on reviews, and remember what is ready to merge.
 
-The agents still do the coding. AO provides the control layer around them:
+AO is built around that coordination problem. Each project can have a dedicated, human-facing **orchestrator agent**. You describe an outcome to the orchestrator; it inspects the current project state, plans the work, delegates implementation to worker sessions, follows their progress, and reports blockers back to you. The orchestrator coordinates—it does not edit your code. Workers own implementation, tests, commits, and pull requests in their isolated workspaces.
 
-- **Work in parallel without collisions** — Git-backed sessions get their own branch and worktree; every session gets its own terminal
-- **See what needs attention** — track which agents are working, waiting, finished, or blocked
-- **Close the feedback loop** — route CI failures, review comments, and merge conflicts back to the right session
-- **Use the right agent for each task** — supervise different agent CLIs from one desktop app
+This creates a clear division of responsibility:
 
-Instead of coordinating a pile of agent terminals by hand, you get one visible, managed workflow.
+- **You set direction and make judgment calls** — define the outcome, answer product questions, review the result, and decide what ships.
+- **The orchestrator runs the plan** — it avoids duplicate work, spawns or redirects workers, sends follow-ups, and keeps the whole effort coherent.
+- **Workers execute independently** — each task can use the best agent for the job while AO keeps branches, workspaces, interfaces, and pull requests separate.
+- **AO maintains the control loop** — it observes agent activity and GitHub state, derives what needs attention, and routes CI failures, review feedback, and merge conflicts to the session that owns the work.
 
-## Features
+For a focused one-off task, you can skip the orchestrator and start a worker directly. At any point you can open a worker's structured Chat or native terminal UI and take a more hands-on role. AO supports both orchestrated outcomes and direct agent control without hiding the underlying tools.
+
+## A Kanban for live agent work
+
+AO's Kanban is the operational view of your agent team, not a manually maintained backlog. Cards move automatically from durable session and pull request facts, so the board answers the question that matters when several agents are running: **where do I need to look?**
+
+- **Working** — workers that are actively implementing or ready for another instruction
+- **Needs you** — blocked sessions, missing input, failed CI, requested changes, or lost signals
+- **In review** — open and draft pull requests waiting on checks or review
+- **Ready to merge** — approved or mergeable work, with merged sessions kept visible until they are archived
+
+Each card keeps the task, agent, branch, activity, pull request, and status together. Open it to inspect the conversation or terminal, changed files, PR summary, reviews, and preview without reconstructing context across tabs.
+
+## From goal to merge
+
+1. **Describe the outcome.** Talk to the project's orchestrator for multi-step work, or use **New task** to launch a bounded worker directly.
+2. **Delegate in parallel.** The orchestrator checks existing sessions, breaks the outcome into owned tasks, and starts workers with clear briefs.
+3. **Work in isolation.** Every Git-backed worker gets its own branch and worktree; Scratch workers get AO-managed branchless directories.
+4. **Follow live state.** The local daemon watches agent activity, pull requests, CI, review feedback, and merge conflicts. The Kanban updates from those facts.
+5. **Close the loop.** AO can send actionable failures and review feedback back to the responsible worker. You step in for decisions and work that is ready to merge.
+
+AO is local and supervisory. It does not replace your coding agents, source control, or code review, and it does not pretend that every decision should be automated. It gives agents the environment to work independently and gives you the leverage to supervise the system as a whole.
+
+## Product highlights
 
 <table>
   <tr>
     <td width="36%" valign="middle">
-      <h3>Parallel agent sessions</h3>
-      <p>Start multiple coding agents from the same project without mixing files, branches, terminals, or pull request state.</p>
+      <h3>Attention-first Kanban</h3>
+      <p>See work grouped by live execution and pull request state: working, needs you, in review, and ready to merge.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/hero.png" alt="Agent Orchestrator board with multiple parallel sessions" width="100%" />
+      <img src="docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban grouping worker sessions by working, needs you, in review, and ready to merge" width="100%" />
     </td>
   </tr>
   <tr>
     <td width="36%" valign="middle">
-      <h3>Chat and terminal control</h3>
-      <p>Use a structured Chat controller or attach to the agent's native terminal UI while keeping session and pull request state in view.</p>
+      <h3>Any agent, one workflow</h3>
+      <p>Choose the right coding agent for each worker. Use structured Chat or its native terminal UI without losing the surrounding task and PR context.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/tui.png" alt="Session terminal inside Agent Orchestrator" width="100%" />
+      <img src="docs/assets/readme/tui.png" alt="A coding agent's native terminal UI supervised inside Agent Orchestrator" width="100%" />
     </td>
   </tr>
   <tr>
     <td width="36%" valign="middle">
-      <h3>Review feedback loops</h3>
-      <p>Run reviewer agents, inspect review status, and route requested changes back to the worker that owns them.</p>
+      <h3>Pull requests and agent reviews</h3>
+      <p>Keep CI, mergeability, reviewer state, and interactive agent reviews beside the worker, then return requested changes to the same owner.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/review.png" alt="Session summary showing pull request and reviewer status" width="100%" />
+      <img src="docs/assets/readme/review.png" alt="Worker session with pull request, CI, and agent review state in Agent Orchestrator" width="100%" />
     </td>
   </tr>
   <tr>
     <td width="36%" valign="middle">
-      <h3>In-app browser preview</h3>
-      <p>Preview a session's local app beside its interface so UI work, browser state, and agent output stay together.</p>
+      <h3>Agent-controllable browser</h3>
+      <p>Preview and inspect a worker's local app beside its interface. Browser profiles are isolated per worker so parallel UI tasks do not share state.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/browser.png" alt="Browser preview tab showing a local app preview" width="100%" />
+      <img src="docs/assets/readme/browser.png" alt="A worker controlling its isolated in-app browser preview" width="100%" />
     </td>
   </tr>
 </table>
-
-## How AO works
-
-1. Add a project and start one or more agent sessions from the desktop app or CLI.
-2. AO creates an isolated worktree for each Git-backed session, or an AO-managed branchless directory for Scratch, then launches the selected Chat or terminal interface.
-3. The local daemon watches controller activity, pull requests, CI, review feedback, and merge conflicts.
-4. The app and CLI keep every session visible and let you send follow-up instructions to the right agent.
-
-AO stays local and supervisory: your coding agents keep doing the implementation while AO organizes their workspaces, state, interfaces, and feedback.
 
 ## Supported agents
 
@@ -159,18 +173,6 @@ Download the latest desktop build for your platform. The desktop app is the reco
 | Linux (Fedora/RHEL)   | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
 
 Open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. See the [installation guide](https://aoagents.dev/docs/installation) for agent CLI setup and troubleshooting.
-
-<details>
-<summary>Install via npm (legacy CLI, no longer recommended)</summary>
-
-`0.10.0` was the final version published to npm. The frozen `@aoagents/ao` package remains available for existing users who already have `ao` on their `PATH`; `ao start` fetches and opens the desktop build. For new setups, use the desktop download above.
-
-```bash
-npm install -g @aoagents/ao
-ao start
-```
-
-</details>
 
 ## Develop and contribute
 

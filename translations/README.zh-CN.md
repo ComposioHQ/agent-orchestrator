@@ -149,18 +149,6 @@ AO 内置 23 种 worker 智能体 harness 适配器：
 
 安装后，打开 Agent Orchestrator 并指向希望 AO 管理的仓库。桌面应用会为你运行 daemon，因此无需 CLI。已安装的桌面构建会在启动时以及运行期间定期检查更新。有关智能体 CLI 设置与故障排除，请参阅[安装指南](https://aoagents.dev/docs/installation)。
 
-<details>
-<summary>通过 npm 安装（旧版 CLI，不再推荐）</summary>
-
-npm 仍然可用，但不再推荐。`0.10.0` 是发布到 npm 的最终版本，`@aoagents/ao` 包已冻结，不会再收到更新。它仍可供 PATH 上已有 `ao` CLI 的现有用户使用；`ao start` 会获取并打开上方链接的同一桌面构建。任何新安装请优先使用桌面下载。
-
-```bash
-npm install -g @aoagents/ao
-ao start
-```
-
-</details>
-
 ## 在 X 上见证 AO 的旅程
 
 <table>

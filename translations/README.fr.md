@@ -149,18 +149,6 @@ Téléchargez la dernière build de bureau pour votre plateforme :
 
 Après l'installation, ouvrez Agent Orchestrator et pointez-le vers le dépôt que vous voulez qu'AO gère. L'application de bureau lance le daemon pour vous, aucune CLI n'est requise. Les builds de bureau installées vérifient les mises à jour au lancement et périodiquement pendant l'exécution. Consultez le [guide d'installation](https://aoagents.dev/docs/installation) pour la configuration des CLI d'agents et le dépannage.
 
-<details>
-<summary>Installer via npm (CLI legacy, plus recommandé)</summary>
-
-npm fonctionne encore mais n'est plus recommandé. `0.10.0` est la dernière version publiée sur npm, et le paquet `@aoagents/ao` est figé et ne recevra plus de mises à jour. Il reste disponible pour les utilisateurs existants qui ont la CLI `ao` dans leur PATH ; `ao start` récupère et ouvre la même build de bureau liée ci-dessus. Pour toute nouvelle installation, préférez le téléchargement de bureau.
-
-```bash
-npm install -g @aoagents/ao
-ao start
-```
-
-</details>
-
 ## Suivez le parcours d'AO sur X
 
 <table>

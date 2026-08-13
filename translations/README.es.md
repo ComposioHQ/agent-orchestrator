@@ -149,18 +149,6 @@ Descarga la última build de escritorio para tu plataforma:
 
 Tras instalar, abre Agent Orchestrator y apúntalo al repositorio que quieras que AO gestione. La app de escritorio ejecuta el daemon por ti, así que no se requiere CLI. Las builds de escritorio instaladas comprueban actualizaciones al iniciar y periódicamente mientras la app está en ejecución. Consulta la [guía de instalación](https://aoagents.dev/docs/installation) para la configuración de CLI de agentes y la resolución de problemas.
 
-<details>
-<summary>Instalar vía npm (CLI legacy, ya no recomendado)</summary>
-
-npm sigue funcionando, pero ya no se recomienda. `0.10.0` es la versión final publicada en npm y el paquete `@aoagents/ao` está congelado y no recibirá más actualizaciones. Sigue disponible para usuarios existentes que tengan la CLI `ao` en su PATH; `ao start` descarga y abre la misma build de escritorio enlazada arriba. Para cualquier instalación nueva, prefiere la descarga de escritorio.
-
-```bash
-npm install -g @aoagents/ao
-ao start
-```
-
-</details>
-
 ## Sigue el recorrido de AO en X
 
 <table>

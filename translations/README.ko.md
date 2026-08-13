@@ -149,18 +149,6 @@ AO는 23개의 워커 에이전트 하네스 어댑터를 제공합니다:
 
 설치 후 Agent Orchestrator를 열고 AO가 관리할 저장소를 지정하세요. 데스크톱 앱이 데몬을 실행하므로 CLI는 필요하지 않습니다. 설치된 데스크톱 빌드는 실행 시와 실행 중 주기적으로 업데이트를 확인합니다. 에이전트 CLI 설정 및 문제 해결은 [설치 가이드](https://aoagents.dev/docs/installation)를 참고하세요.
 
-<details>
-<summary>npm으로 설치 (레거시 CLI, 더 이상 권장하지 않음)</summary>
-
-npm은 여전히 동작하지만 더 이상 권장하지 않습니다. `0.10.0`이 npm에 게시된 최종 버전이며, `@aoagents/ao` 패키지는 동결되어 추가 업데이트를 받지 않습니다. PATH에 `ao` CLI가 있는 기존 사용자를 위해 유지됩니다. `ao start`는 위에 링크된 것과 동일한 데스크톱 빌드를 가져와 엽니다. 새 설치에서는 데스크톱 다운로드를 우선하세요.
-
-```bash
-npm install -g @aoagents/ao
-ao start
-```
-
-</details>
-
 ## X에서 AO의 여정을 확인하세요
 
 <table>
