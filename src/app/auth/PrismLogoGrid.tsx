@@ -81,7 +81,7 @@ function createScene(
 
   const logoSize = compact
     ? Math.min(width * 0.76, height * 0.76)
-    : Math.min(width * 0.67, height * 0.7, 590);
+    : Math.min(width * 0.62, height * 0.58);
   const logoLeft = (width - logoSize) / 2;
   const logoTop = (height - logoSize) / 2;
   sampleContext.drawImage(image, logoLeft, logoTop, logoSize, logoSize);
@@ -239,8 +239,12 @@ export function PrismLogoGrid({
       scene = createScene(canvas, image, compact);
       if (!scene) return;
       startedAt = performance.now();
-      lastProgress = reduceMotion ? 1 : 0;
-      frame = window.requestAnimationFrame(animate);
+      lastProgress = compact && !reduceMotion ? 0 : 1;
+      if (compact && !reduceMotion) {
+        frame = window.requestAnimationFrame(animate);
+      } else {
+        paintScene(scene, lastProgress);
+      }
     };
 
     image.addEventListener("load", reveal);
@@ -277,7 +281,7 @@ export function PrismLogoGrid({
   }
 
   return (
-    <div className="relative h-full min-h-0 animate-[auth-grid-enter_500ms_ease-out_both] overflow-hidden bg-[#08090b] motion-reduce:animate-none">
+    <div className="relative h-full min-h-0 overflow-hidden bg-[#08090b]">
       <canvas
         ref={canvasRef}
         className="pointer-events-none block size-full"
@@ -285,16 +289,13 @@ export function PrismLogoGrid({
         aria-label="Agent Orchestrator logo rendered as a colored square grid"
       />
       <div
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_20%,rgba(8,9,11,0.08)_58%,rgba(8,9,11,0.72)_100%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_35%,rgba(8,9,11,0.04)_72%,rgba(8,9,11,0.32)_100%)]"
         aria-hidden="true"
       />
       <div
         className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#08090b] to-transparent"
         aria-hidden="true"
       />
-      <p className="pointer-events-none absolute bottom-8 left-8 font-mono text-[10px] uppercase tracking-[0.16em] text-white/25">
-        Coordinate every agent from one place
-      </p>
     </div>
   );
 }

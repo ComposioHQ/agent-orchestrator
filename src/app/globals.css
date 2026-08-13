@@ -5,17 +5,6 @@
 @import "../styles/tokens.css";
 @source "../../node_modules/@aoagents/product-ui/dist";
 
-@keyframes auth-form-enter {
-  from {
-    opacity: 0;
-    transform: translateX(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 body {
   margin: 0;
   background: var(--color-bg-primary);

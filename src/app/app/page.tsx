@@ -11,7 +11,7 @@ import {
   type Session,
   type UpdateProjectInput,
 } from "@aoagents/cloud-client";
-import { Search, X } from "lucide-react";
+import { Menu, Search, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
@@ -76,6 +76,12 @@ export function CloudWorkspace() {
   const githubRequest = useRef(0);
   const providerRequest = useRef(0);
   const deletingSessionIds = useRef(new Set<string>());
+  const [previewUi, setPreviewUi] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    setPreviewUi(new URLSearchParams(window.location.search).get("ui") === "next");
+  }, []);
 
   const loadGitHubUser = useCallback(async () => {
     setGitHubUser(initialGitHubUserCapability);
@@ -705,7 +711,8 @@ export function CloudWorkspace() {
       data-testid="cloud-workspace"
       className="fixed inset-0 h-dvh overflow-hidden bg-[var(--color-bg-primary)] font-sans tracking-normal text-[var(--color-text-primary)] [color-scheme:dark] [&_*]:[scrollbar-color:rgb(255_255_255_/_12%)_transparent] [&_*]:[scrollbar-width:thin]"
     >
-      <div className="grid h-full grid-cols-[240px_minmax(0,1fr)]">
+      <div className="grid h-full grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
+        {previewUi && mobileNavOpen ? <button type="button" aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMobileNavOpen(false)} /> : null}
         <CloudSidebar
           account={account}
           onDeleteSession={(session) => void deleteSession(session)}
@@ -740,8 +747,11 @@ export function CloudWorkspace() {
           selectedProjectId={selectedProjectId}
           selectedSessionId={selectedSessionId}
           sessions={sessions}
+          mobileOpen={mobileNavOpen}
+          onCloseMobile={() => setMobileNavOpen(false)}
+          parity={previewUi}
         />
-        <CloudMainShell>
+        <CloudMainShell parity={previewUi}>
           {view === "settings" ? (
             <div className="relative min-h-0 flex-1">
               {error ? (
@@ -785,7 +795,7 @@ export function CloudWorkspace() {
               />
             ) : (
               <>
-                <CloudTopbar title={selectedProject?.displayName ?? "All projects"} />
+                <CloudTopbar title={selectedProject?.displayName ?? "All projects"} onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined} />
                 <div className="relative min-h-0 flex-1">
                   {error ? (
                     <div

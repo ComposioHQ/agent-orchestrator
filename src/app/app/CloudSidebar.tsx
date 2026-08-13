@@ -37,6 +37,9 @@ export function CloudSidebar({
   selectedProjectId,
   selectedSessionId,
   sessions,
+  mobileOpen = false,
+  onCloseMobile,
+  parity = false,
 }: {
   account: CurrentAccount;
   onNewProject: () => void;
@@ -53,6 +56,9 @@ export function CloudSidebar({
   selectedProjectId: string | null;
   selectedSessionId: string | null;
   sessions: Session[];
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+  parity?: boolean;
 }) {
   const [closedProjects, setClosedProjects] = useState<Set<string>>(new Set());
   const [openProjectMenu, setOpenProjectMenu] = useState<string | null>(null);
@@ -67,7 +73,7 @@ export function CloudSidebar({
     );
 
   return (
-    <aside className="flex min-h-0 flex-col bg-[var(--color-bg-sidebar)]">
+    <aside className={`${parity ? (mobileOpen ? "flex" : "hidden") : "flex"} min-h-0 flex-col bg-[var(--color-bg-sidebar)] ${parity ? "fixed inset-y-0 left-0 z-40 w-[min(86vw,280px)] border-r border-[var(--color-border-strong)] shadow-2xl lg:static lg:flex lg:w-auto lg:border-0 lg:shadow-none" : ""}`}>
       <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2 pt-2">
         <img
           src="/ao-logo.svg"
@@ -78,6 +84,7 @@ export function CloudSidebar({
         <span className="min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-[-0.025em]">
           Agent Orchestrator
         </span>
+        {parity && onCloseMobile ? <button type="button" aria-label="Close navigation" className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:hidden" onClick={onCloseMobile}>×</button> : null}
       </div>
 
       <CloudWorkspaceSwitcher
