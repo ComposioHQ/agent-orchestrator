@@ -32,6 +32,38 @@ func TestNativeConversationIDUsesTheSameClaudeUUIDAcrossInterfaces(t *testing.T)
 	}
 }
 
+func TestWindowsNativeClaudeCandidatesForNPMShim(t *testing.T) {
+	shim := filepath.Join("prefix", "claude.cmd")
+	want := []string{
+		filepath.Join("prefix", "claude.exe"),
+		filepath.Join("prefix", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"),
+	}
+	if got := windowsNativeClaudeCandidatesForShim(shim); !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveNativeWindowsClaudeFindsNPMExecutable(t *testing.T) {
+	prefix := t.TempDir()
+	shim := filepath.Join(prefix, "claude.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(prefix, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("native claude"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveNativeWindowsClaude(shim, "windows"); got != want {
+		t.Fatalf("resolved binary = %q, want %q", got, want)
+	}
+	if got := resolveNativeWindowsClaude(shim, "linux"); got != shim {
+		t.Fatalf("non-Windows resolution = %q, want unchanged shim %q", got, shim)
+	}
+}
+
 func TestNativeConversationExistsRequiresPersistedClaudeTranscript(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", configDir)

@@ -13,6 +13,32 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const activateConversationBranchSession = `-- name: ActivateConversationBranchSession :execrows
+UPDATE sessions
+SET provider_conversation_id = ?, controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat' AND is_terminated = 0
+`
+
+type ActivateConversationBranchSessionParams struct {
+	ProviderConversationID string
+	ControllerGeneration   string
+	UpdatedAt              time.Time
+	ID                     domain.SessionID
+}
+
+func (q *Queries) ActivateConversationBranchSession(ctx context.Context, arg ActivateConversationBranchSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, activateConversationBranchSession,
+		arg.ProviderConversationID,
+		arg.ControllerGeneration,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const claimChatControllerGeneration = `-- name: ClaimChatControllerGeneration :execrows
 UPDATE sessions
 SET controller_generation = ?, updated_at = ?
@@ -89,7 +115,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_review_enabled
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled
 FROM sessions WHERE id = ?
 `
 
@@ -131,6 +157,7 @@ type GetSessionRow struct {
 	LatestAssistantUpdate     string
 	NativeTranscriptPath      string
 	AutoInjectReview          bool
+	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 }
 
@@ -175,6 +202,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.LatestAssistantUpdate,
 		&i.NativeTranscriptPath,
 		&i.AutoInjectReview,
+		&i.AutoInjectCI,
 		&i.AutoReviewEnabled,
 	)
 	return i, err
@@ -189,12 +217,12 @@ INSERT INTO sessions (
     latest_user_prompt, latest_assistant_update, native_transcript_path,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation,
-    created_at, updated_at, is_pinned, pinned_at, auto_inject_review
+    created_at, updated_at, is_pinned, pinned_at, auto_inject_review, auto_inject_ci
 ) VALUES (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -237,6 +265,7 @@ type InsertSessionParams struct {
 	IsPinned                  bool
 	PinnedAt                  sql.NullTime
 	AutoInjectReview          bool
+	AutoInjectCI              bool
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -279,6 +308,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.IsPinned,
 		arg.PinnedAt,
 		arg.AutoInjectReview,
+		arg.AutoInjectCI,
 	)
 	return err
 }
@@ -292,7 +322,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_review_enabled
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled
 FROM sessions ORDER BY project_id, num
 `
 
@@ -334,6 +364,7 @@ type ListAllSessionsRow struct {
 	LatestAssistantUpdate     string
 	NativeTranscriptPath      string
 	AutoInjectReview          bool
+	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 }
 
@@ -384,6 +415,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.LatestAssistantUpdate,
 			&i.NativeTranscriptPath,
 			&i.AutoInjectReview,
+			&i.AutoInjectCI,
 			&i.AutoReviewEnabled,
 		); err != nil {
 			return nil, err
@@ -408,7 +440,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_review_enabled
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -450,6 +482,7 @@ type ListSessionsByProjectRow struct {
 	LatestAssistantUpdate     string
 	NativeTranscriptPath      string
 	AutoInjectReview          bool
+	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 }
 
@@ -500,6 +533,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.LatestAssistantUpdate,
 			&i.NativeTranscriptPath,
 			&i.AutoInjectReview,
+			&i.AutoInjectCI,
 			&i.AutoReviewEnabled,
 		); err != nil {
 			return nil, err
@@ -592,6 +626,24 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	var is_seed bool
 	err := row.Scan(&is_seed)
 	return is_seed, err
+}
+
+const setSessionAutoInjectCI = `-- name: SetSessionAutoInjectCI :execrows
+UPDATE sessions SET auto_inject_ci = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionAutoInjectCIParams struct {
+	AutoInjectCI bool
+	UpdatedAt    time.Time
+	ID           domain.SessionID
+}
+
+func (q *Queries) SetSessionAutoInjectCI(ctx context.Context, arg SetSessionAutoInjectCIParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionAutoInjectCI, arg.AutoInjectCI, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setSessionAutoInjectReview = `-- name: SetSessionAutoInjectReview :execrows
@@ -721,7 +773,7 @@ UPDATE sessions SET
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, updated_at = ?,
-    is_pinned = ?, pinned_at = ?, auto_inject_review = ?
+    is_pinned = ?, pinned_at = ?, auto_inject_review = ?, auto_inject_ci = ?
 WHERE id = ?
 `
 
@@ -759,6 +811,7 @@ type UpdateSessionParams struct {
 	IsPinned                  bool
 	PinnedAt                  sql.NullTime
 	AutoInjectReview          bool
+	AutoInjectCI              bool
 	ID                        domain.SessionID
 }
 
@@ -797,6 +850,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.IsPinned,
 		arg.PinnedAt,
 		arg.AutoInjectReview,
+		arg.AutoInjectCI,
 		arg.ID,
 	)
 	return err

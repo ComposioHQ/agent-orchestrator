@@ -3,6 +3,8 @@ package chat_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +30,7 @@ type historyRecorder struct {
 	rollbackErr  error
 	setTitleErr  error
 	forkErr      error
+	forkAnchors  []*string
 	echoRenameTo string
 }
 
@@ -45,13 +48,33 @@ func (h *historyRecorder) Rollback(_ context.Context, providerTurnID string) err
 	return nil
 }
 
-func (h *historyRecorder) Fork(context.Context) (string, error) {
+func (h *historyRecorder) Fork(_ context.Context, anchor *string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if anchor == nil {
+		h.forkAnchors = append(h.forkAnchors, nil)
+	} else {
+		anchorCopy := *anchor
+		h.forkAnchors = append(h.forkAnchors, &anchorCopy)
+	}
 	if h.forkErr != nil {
 		return "", h.forkErr
 	}
 	return h.forkedTo, nil
+}
+
+func (h *historyRecorder) lastForkAnchor() *string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.forkAnchors) == 0 {
+		return nil
+	}
+	anchor := h.forkAnchors[len(h.forkAnchors)-1]
+	if anchor == nil {
+		return nil
+	}
+	anchorCopy := *anchor
+	return &anchorCopy
 }
 
 // SetTitle records the name and, like the real provider, reports it back on the event
@@ -116,6 +139,17 @@ func completeTurn(t *testing.T, h *harness, text, providerTurn string) string {
 		},
 	)
 	return turn.ID
+}
+
+func requireMessageTexts(t *testing.T, messages []domain.ConversationMessage, want []string) {
+	t.Helper()
+	got := make([]string, 0, len(messages))
+	for _, message := range messages {
+		got = append(got, message.Text)
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("message texts = %#v, want %#v", got, want)
+	}
 }
 
 // The end-to-end shape of an undo: the provider is asked to forget, and AO's timeline
@@ -469,6 +503,341 @@ func TestForkClassifiesAProviderRefusal(t *testing.T) {
 	_, err := h.svc.ForkConversation(context.Background(), testSession)
 	if !errors.Is(err, chatsvc.ErrProviderRefused) {
 		t.Fatalf("err = %v, want ErrProviderRefused", err)
+	}
+}
+
+type editDriverState struct {
+	mu          sync.Mutex
+	startCalls  int
+	resumeCalls []ports.ChatResumeConfig
+	fresh       *fakeConversation
+	resumed     map[string]*fakeConversation
+}
+
+func newEditHarness(t *testing.T) (*harness, *historyRecorder, *editDriverState) {
+	t.Helper()
+	st := openStore(t)
+	source := newHistoryRecorder()
+	fresh := newFakeConversation()
+	fresh.providerConversationID = "thread-fresh"
+	fresh.turnSeq = 100
+	forked := newFakeConversation()
+	forked.providerConversationID = "thread-forked"
+	forked.turnSeq = 200
+	root := newFakeConversation()
+	root.providerConversationID = "thread-1"
+	root.turnSeq = 300
+	state := &editDriverState{
+		fresh: fresh,
+		resumed: map[string]*fakeConversation{
+			"thread-forked": forked,
+			"thread-1":      root,
+		},
+	}
+	driver := fakeDriver{conv: source.fakeConversation}
+	driver.start = func(ports.ChatStartConfig) (ports.ChatConversation, error) {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		state.startCalls++
+		if state.startCalls == 1 {
+			return source, nil
+		}
+		return state.fresh, nil
+	}
+	driver.resume = func(cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		state.resumeCalls = append(state.resumeCalls, cfg)
+		conv := state.resumed[cfg.ProviderConversationID]
+		if conv == nil {
+			return nil, errors.New("unexpected provider conversation: " + cfg.ProviderConversationID)
+		}
+		return conv, nil
+	}
+
+	clock := time.Date(2026, 8, 9, 15, 0, 0, 0, time.UTC)
+	var idMu sync.Mutex
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: driver},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			idMu.Lock()
+			defer idMu.Unlock()
+			nextID++
+			return fmt.Sprintf("edit-id-%d", nextID)
+		},
+		Now: func() time.Time { return clock },
+	})
+	workspace := t.TempDir()
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Kind: domain.KindWorker,
+		Harness: domain.HarnessCodex, WorkspacePath: workspace,
+		Env: map[string]string{"AO_EDIT_TEST": "yes"}, SystemPrompt: "preserved prompt",
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	record, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("GetSession: found=%v err=%v", found, err)
+	}
+	record.Metadata.ProviderConversationID = "thread-1"
+	record.Metadata.ControllerGeneration = ctrl.Generation()
+	if err := st.UpdateSession(context.Background(), record); err != nil {
+		t.Fatalf("UpdateSession provider controller: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	return &harness{svc: svc, st: st, conv: source.fakeConversation, ctrl: ctrl, clock: clock}, source, state
+}
+
+func TestEditMessageForksBeforeMiddlePromptAndReusesStoredContent(t *testing.T) {
+	h, source, driver := newEditHarness(t)
+	ctx := context.Background()
+	first := completeTurn(t, h, "A", "provider-turn-1")
+	_ = first
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "B", Origin: domain.MessageOriginHuman, ClientMessageID: "original-b",
+		Content: []ports.ChatContent{{Type: "image", Data: "data:image/png;base64,AA==", MIMEType: "image/png", Name: "diagram.png"}},
+	})
+	if err != nil {
+		t.Fatalf("Send B: %v", err)
+	}
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-2"},
+		ports.ChatEvent{Kind: ports.ChatEventMessageCompleted, ProviderTurnID: "provider-turn-2", ProviderItemID: "answer-b", Text: "answer B"},
+		ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-2", TurnState: domain.TurnStateCompleted},
+	)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	result, err := h.svc.EditMessage(ctx, testSession, second.ID, ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "edit-b", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	if result.SourceBranchID == "" || result.ActiveBranchID == "" || result.SourceBranchID == result.ActiveBranchID {
+		t.Fatalf("branch result = %+v", result)
+	}
+	if anchor := source.lastForkAnchor(); anchor == nil || *anchor != "provider-turn-1" {
+		t.Fatalf("fork anchor = %#v", anchor)
+	}
+	if got := source.rollbackTargets(); len(got) != 0 {
+		t.Fatalf("editing called rollback: %v", got)
+	}
+	driver.mu.Lock()
+	replacement := driver.resumed["thread-forked"]
+	resumes := append([]ports.ChatResumeConfig(nil), driver.resumeCalls...)
+	driver.mu.Unlock()
+	sent := replacement.sentMessages()
+	if len(sent) != 1 || sent[0].Text != "B edited" || len(sent[0].Content) != 1 || sent[0].Content[0].Data != "data:image/png;base64,AA==" {
+		t.Fatalf("replacement send = %#v", sent)
+	}
+	if len(resumes) != 1 || resumes[0].WorkspacePath == "" || resumes[0].Env["AO_EDIT_TEST"] != "yes" || resumes[0].SystemPrompt != "preserved prompt" {
+		t.Fatalf("resume config = %#v", resumes)
+	}
+}
+
+func TestEditMessageFirstPromptStartsFreshConversation(t *testing.T) {
+	h, source, driver := newEditHarness(t)
+	first := completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	if _, err := h.svc.EditMessage(context.Background(), testSession, first, ports.ChatUserMessage{
+		Text: "A edited", ClientMessageID: "edit-a", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("EditMessage first: %v", err)
+	}
+	driver.mu.Lock()
+	startCalls := driver.startCalls
+	driver.mu.Unlock()
+	if startCalls != 2 {
+		t.Fatalf("driver Start calls = %d, want 2", startCalls)
+	}
+	if anchor := source.lastForkAnchor(); anchor != nil {
+		t.Fatalf("first prompt forked existing provider history at %#v", anchor)
+	}
+	if sent := driver.fresh.sentTexts(); len(sent) != 1 || sent[0] != "A edited" {
+		t.Fatalf("fresh provider sends = %v", sent)
+	}
+}
+
+func TestEditMessageRefusesBusyControllerAndLeavesSourceActive(t *testing.T) {
+	h, source, driver := newEditHarness(t)
+	turn, err := h.svc.Send(context.Background(), testSession, ports.ChatUserMessage{
+		Text: "running", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	conversation, err := h.st.ConversationForSession(context.Background(), testSession)
+	if err != nil {
+		t.Fatalf("ConversationForSession: %v", err)
+	}
+	_, err = h.svc.EditMessage(context.Background(), testSession, turn.ID, ports.ChatUserMessage{Text: "edited"})
+	if !errors.Is(err, chatsvc.ErrTurnRunning) {
+		t.Fatalf("EditMessage busy error = %v, want ErrTurnRunning", err)
+	}
+	after, err := h.st.ConversationForSession(context.Background(), testSession)
+	if err != nil || after.ActiveBranchID != conversation.ActiveBranchID {
+		t.Fatalf("active branch after busy refusal = %q, want %q, err=%v", after.ActiveBranchID, conversation.ActiveBranchID, err)
+	}
+	if anchor := source.lastForkAnchor(); anchor != nil {
+		t.Fatalf("busy edit called Fork at %#v", anchor)
+	}
+	driver.mu.Lock()
+	startCalls := driver.startCalls
+	driver.mu.Unlock()
+	if startCalls != 1 {
+		t.Fatalf("busy edit started replacement provider; starts=%d", startCalls)
+	}
+}
+
+func TestEditMessageForkFailureReopensSource(t *testing.T) {
+	h, source, _ := newEditHarness(t)
+	first := completeTurn(t, h, "A", "provider-turn-1")
+	_ = first
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+	source.mu.Lock()
+	source.forkErr = errors.New("fork unavailable")
+	source.mu.Unlock()
+	conversation, err := h.st.ConversationForSession(context.Background(), testSession)
+	if err != nil {
+		t.Fatalf("ConversationForSession: %v", err)
+	}
+	if _, err := h.svc.EditMessage(context.Background(), testSession, second,
+		ports.ChatUserMessage{Text: "B edited"}); err == nil {
+		t.Fatal("EditMessage succeeded after provider fork failure")
+	}
+	after, err := h.st.ConversationForSession(context.Background(), testSession)
+	if err != nil || after.ActiveBranchID != conversation.ActiveBranchID {
+		t.Fatalf("active branch after fork failure = %q, want %q, err=%v", after.ActiveBranchID, conversation.ActiveBranchID, err)
+	}
+	if _, err := h.svc.Send(context.Background(), testSession, ports.ChatUserMessage{Text: "source reopened"}); err != nil {
+		t.Fatalf("Send after fork failure: %v", err)
+	}
+}
+
+func TestEditMessageSendFailureKeepsAnEmptyBranchForRetry(t *testing.T) {
+	h, source, driver := newEditHarness(t)
+	ctx := context.Background()
+	completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second := completeTurn(t, h, "B", "provider-turn-2")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	driver.mu.Lock()
+	replacement := driver.resumed["thread-forked"]
+	replacement.mu.Lock()
+	replacement.sendErr = errors.New("provider unavailable")
+	replacement.mu.Unlock()
+	driver.mu.Unlock()
+
+	failed, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "edit-b-failed", Origin: domain.MessageOriginHuman,
+	})
+	if err == nil {
+		t.Fatal("EditMessage succeeded after replacement send failure")
+	}
+	if failed.ActiveBranchID == "" || failed.ActiveBranchID == failed.SourceBranchID {
+		t.Fatalf("failed edit branch result = %+v", failed)
+	}
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot failed branch: %v", err)
+	}
+	requireMessageTexts(t, snapshot.Messages, []string{"A", "reply to A"})
+
+	replacement.mu.Lock()
+	replacement.sendErr = nil
+	replacement.mu.Unlock()
+	retried, err := h.svc.EditMessage(ctx, testSession, second, ports.ChatUserMessage{
+		Text: "B edited", ClientMessageID: "edit-b-retry", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("retry EditMessage: %v", err)
+	}
+	if retried.SourceBranchID != failed.SourceBranchID || retried.ActiveBranchID != failed.ActiveBranchID {
+		t.Fatalf("retry created another branch: failed=%+v retried=%+v", failed, retried)
+	}
+	source.mu.Lock()
+	forkCount := len(source.forkAnchors)
+	source.mu.Unlock()
+	driver.mu.Lock()
+	resumeCount := len(driver.resumeCalls)
+	driver.mu.Unlock()
+	if forkCount != 1 || resumeCount != 1 {
+		t.Fatalf("retry provider setup: forks=%d resumes=%d, want one of each", forkCount, resumeCount)
+	}
+	if sent := replacement.sentTexts(); len(sent) != 1 || sent[0] != "B edited" {
+		t.Fatalf("replacement provider sends = %v", sent)
+	}
+	snapshot, err = h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot retried branch: %v", err)
+	}
+	requireMessageTexts(t, snapshot.Messages, []string{"A", "reply to A", "B edited"})
+}
+
+func TestEditMessageRejectsMalformedStoredContentBeforeFork(t *testing.T) {
+	h, source, _ := newEditHarness(t)
+	created, err := h.st.AppendUserMessage(context.Background(), h.ctrl.ConversationID(), testSession,
+		h.ctrl.Generation(), domain.ConversationMessage{
+			ID: "legacy-message", Text: "legacy", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "legacy-client", DeliveryContentJSON: `{broken`,
+		}, "legacy-turn", h.now())
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage legacy: created=%v err=%v", created, err)
+	}
+	_, err = h.svc.EditMessage(context.Background(), testSession, "legacy-turn", ports.ChatUserMessage{Text: "edited"})
+	if !errors.Is(err, chatsvc.ErrEditTurnInvalid) {
+		t.Fatalf("EditMessage malformed content error = %v, want ErrEditTurnInvalid", err)
+	}
+	if anchor := source.lastForkAnchor(); anchor != nil {
+		t.Fatalf("malformed content called Fork at %#v", anchor)
+	}
+}
+
+func TestActivateBranchResumesWithoutSending(t *testing.T) {
+	h, _, driver := newEditHarness(t)
+	first := completeTurn(t, h, "A", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	result, err := h.svc.EditMessage(context.Background(), testSession, first, ports.ChatUserMessage{
+		Text: "A edited", ClientMessageID: "edit-a", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("EditMessage: %v", err)
+	}
+	driver.fresh.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-101"},
+		ports.ChatEvent{Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-101", TurnState: domain.TurnStateCompleted},
+	)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		controller, controllerErr := h.svc.Controller(testSession)
+		if controllerErr == nil && controller.State() == ports.ChatControllerReady {
+			snapshot, snapshotErr := h.st.LoadConversationSnapshot(context.Background(), h.ctrl.ConversationID())
+			if snapshotErr == nil && len(snapshot.Turns) == 1 && snapshot.Turns[0].State.Terminal() {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	active, err := h.svc.ActivateBranch(context.Background(), testSession, result.SourceBranchID)
+	if err != nil {
+		t.Fatalf("ActivateBranch: %v", err)
+	}
+	if active != result.SourceBranchID {
+		t.Fatalf("active branch = %q, want %q", active, result.SourceBranchID)
+	}
+	driver.mu.Lock()
+	root := driver.resumed["thread-1"]
+	driver.mu.Unlock()
+	if sent := root.sentTexts(); len(sent) != 0 {
+		t.Fatalf("branch activation sent messages: %v", sent)
 	}
 }
 

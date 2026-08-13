@@ -226,6 +226,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/mobile/secure-pairing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Turn TLS-over-Tailscale secure pairing on or off */
+        post: operations["setMobileSecurePairing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mobile/status": {
         parameters: {
             query?: never;
@@ -623,6 +640,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/auto-inject-ci": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Set the automatic CI-failure injection default for new session PRs */
+        patch: operations["setSessionAutoInjectCI"];
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/auto-inject-review": {
         parameters: {
             query?: never;
@@ -685,6 +719,23 @@ export interface paths {
         put?: never;
         /** Answer a pending approval in a chat session */
         post: operations["resolveSessionConversationApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume a durable conversation branch without sending */
+        post: operations["activateSessionConversationBranch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -889,6 +940,23 @@ export interface paths {
         /** Name the provider's conversation thread */
         put: operations["setSessionConversationTitle"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Branch before and replace an earlier human prompt */
+        post: operations["editSessionConversationMessage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1478,6 +1546,9 @@ export interface components {
             message: string;
             requestId?: string;
         };
+        ActivateConversationBranchResponse: {
+            activeBranchId: string;
+        };
         AddProjectInput: {
             asWorkspace?: boolean;
             config?: components["schemas"]["ProjectConfig"];
@@ -1612,8 +1683,17 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
+        ControllersSecurePairingStatus: {
+            active: boolean;
+            available: boolean;
+            enabled: boolean;
+            host: string;
+            port: number;
+            reason: string;
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
+            autoInjectCI: boolean;
             autoInjectReview: boolean;
             autoReviewEnabled: boolean;
             branch?: string;
@@ -1646,6 +1726,9 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        ControllersSetSecurePairingRequest: {
+            enabled: boolean;
+        };
         ControllersSetSessionAutoReviewRequest: {
             enabled: boolean;
         };
@@ -1676,6 +1759,13 @@ export interface components {
             summary: string;
             turnId?: string;
         };
+        ConversationBranchPointResponse: {
+            nextBranchId?: string;
+            position: number;
+            previousBranchId?: string;
+            total: number;
+            turnId: string;
+        };
         ConversationConfigChoiceResponse: {
             description?: string;
             group?: string;
@@ -1697,6 +1787,12 @@ export interface components {
         ConversationConfigOptionsResponse: {
             options: components["schemas"]["ConversationConfigOptionResponse"][];
         };
+        ConversationContentSummaryResponse: {
+            mimeType?: string;
+            name?: string;
+            type: string;
+            uri?: string;
+        };
         ConversationDiffFileResponse: {
             additions: number;
             deletions: number;
@@ -1717,7 +1813,9 @@ export interface components {
             status: string;
         };
         ConversationMessageResponse: {
+            content?: components["schemas"]["ConversationContentSummaryResponse"][];
             createdAt: string;
+            editAvailable: boolean;
             id: string;
             /** @enum {string} */
             kind: "message";
@@ -1791,7 +1889,10 @@ export interface components {
         };
         ConversationSnapshotResponse: {
             account?: components["schemas"]["ConversationAccountPayload"];
+            activeBranchId?: string;
             activities: components["schemas"]["ConversationActivityResponse"][];
+            branchPoints?: components["schemas"]["ConversationBranchPointResponse"][];
+            branchedFromEarlierMessage: boolean;
             capabilities?: string[];
             compactedAt?: null | string;
             /** @enum {string} */
@@ -1916,6 +2017,18 @@ export interface components {
         DomainReviewerConfig: {
             harness: string;
         };
+        EditConversationMessageRequest: {
+            clientMessageId?: string;
+            text: string;
+        };
+        EditConversationMessageResponse: {
+            activeBranchId: string;
+            providerTurnId?: string;
+            sourceBranchId: string;
+            /** @enum {string} */
+            state?: "queued" | "running" | "completed" | "interrupted" | "failed";
+            turnId?: string;
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -2028,6 +2141,8 @@ export interface components {
             host: string;
             password: string;
             port: number;
+            securePairing: components["schemas"]["ControllersSecurePairingStatus"];
+            tailscaleHost: string;
             warning: string;
         };
         NotificationEnvelope: {
@@ -2309,6 +2424,7 @@ export interface components {
             transition?: components["schemas"]["SessionInterfaceTransition"];
         };
         SessionPRCISummary: {
+            autoInjectCI: boolean;
             failingChecks: components["schemas"]["SessionPRFailingCheck"][];
             /** @enum {string} */
             state: "unknown" | "pending" | "passing" | "failing";
@@ -2387,7 +2503,7 @@ export interface components {
             /** Format: date-time */
             observedAt?: string;
             /** @enum {string} */
-            provider: "github";
+            provider: "github" | "gitlab";
             repo: string;
             review: components["schemas"]["SessionPRReviewSummary"];
             /** Format: date-time */
@@ -2484,6 +2600,15 @@ export interface components {
             ok: boolean;
             reviewSessionId: string;
         };
+        SetSessionAutoInjectCIRequest: {
+            autoInjectCI: boolean;
+        };
+        SetSessionAutoInjectCIResponse: {
+            autoInjectCI: boolean;
+            ok: boolean;
+            session: components["schemas"]["ControllersSessionView"];
+            sessionId: string;
+        };
         SetSessionAutoInjectReviewRequest: {
             autoInjectReview: boolean;
         };
@@ -2549,6 +2674,8 @@ export interface components {
             mode?: "chat" | "tui";
             projectId: string;
             prompt?: string;
+            /** @enum {string} */
+            trackerProvider?: "github" | "gitlab";
         };
         SpawnSessionResponse: {
             promptBytes: number;
@@ -2628,7 +2755,7 @@ export interface components {
             assignee?: string;
             enabled?: boolean;
             /** @enum {string} */
-            provider?: "github";
+            provider?: "github" | "gitlab";
             repo?: string;
         };
         TriggerReviewRequest: {
@@ -3411,6 +3538,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MobileStatusResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setMobileSecurePairing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSetSecurePairingRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MobileStatusResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Forbidden */
@@ -4947,6 +5125,69 @@ export interface operations {
             };
         };
     };
+    setSessionAutoInjectCI: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetSessionAutoInjectCIRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetSessionAutoInjectCIResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     setSessionAutoInjectReview: {
         parameters: {
             query?: never;
@@ -5160,6 +5401,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    activateSessionConversationBranch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Conversation branch identifier, from a snapshot branch navigation point. */
+                branchId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivateConversationBranchResponse"];
                 };
             };
             /** @description Not Found */
@@ -5937,6 +6239,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetConversationTitleResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    editSessionConversationMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description AO conversation turn identifier, from the snapshot's turns array. */
+                turnId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditConversationMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditConversationMessageResponse"];
                 };
             };
             /** @description Bad Request */

@@ -57,7 +57,8 @@ func openStore(t *testing.T) *sqlite.Store {
 /* ---- a fake conversation the controller can drive ---------------------- */
 
 type fakeConversation struct {
-	events chan ports.ChatEvent
+	events                 chan ports.ChatEvent
+	providerConversationID string
 
 	mu        sync.Mutex
 	sent      []ports.ChatUserMessage
@@ -113,12 +114,13 @@ func (f *deferredConversation) DiscardDeferredTurn(string) {}
 
 func newFakeConversation() *fakeConversation {
 	return &fakeConversation{
-		events:   make(chan ports.ChatEvent, 64),
-		resolved: map[string]ports.ChatDecision{},
+		events:                 make(chan ports.ChatEvent, 64),
+		providerConversationID: "thread-1",
+		resolved:               map[string]ports.ChatDecision{},
 	}
 }
 
-func (f *fakeConversation) ProviderConversationID() string       { return "thread-1" }
+func (f *fakeConversation) ProviderConversationID() string       { return f.providerConversationID }
 func (f *fakeConversation) Capabilities() ports.ChatCapabilities { return productionCaps() }
 func (f *fakeConversation) Events() <-chan ports.ChatEvent       { return f.events }
 
@@ -143,6 +145,12 @@ func (f *fakeConversation) sentTexts() []string {
 		texts = append(texts, msg.Text)
 	}
 	return texts
+}
+
+func (f *fakeConversation) sentMessages() []ports.ChatUserMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ports.ChatUserMessage(nil), f.sent...)
 }
 
 func (f *fakeConversation) Interrupt(context.Context, string) error { return nil }
@@ -179,6 +187,8 @@ type fakeDriver struct {
 	conv      ports.ChatConversation
 	startCfg  *ports.ChatStartConfig
 	resumeCfg *ports.ChatResumeConfig
+	start     func(ports.ChatStartConfig) (ports.ChatConversation, error)
+	resume    func(ports.ChatResumeConfig) (ports.ChatConversation, error)
 }
 
 type sequenceDriver struct {
@@ -215,11 +225,17 @@ func (d fakeDriver) Start(_ context.Context, cfg ports.ChatStartConfig) (ports.C
 	if d.startCfg != nil {
 		*d.startCfg = cfg
 	}
+	if d.start != nil {
+		return d.start(cfg)
+	}
 	return d.conv, nil
 }
 func (d fakeDriver) Resume(_ context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
 	if d.resumeCfg != nil {
 		*d.resumeCfg = cfg
+	}
+	if d.resume != nil {
+		return d.resume(cfg)
 	}
 	return d.conv, nil
 }

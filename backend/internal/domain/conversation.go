@@ -138,6 +138,10 @@ type ConversationRecord struct {
 	// on clean replacement while the conversation identity remains stable.
 	ProjectID ProjectID `json:"projectId"`
 	SessionID SessionID `json:"sessionId,omitempty"`
+	// ActiveBranchID identifies the one provider-thread lineage the session may
+	// write. Sibling branches remain durable and are selected by moving this head;
+	// display status is still derived independently at read time.
+	ActiveBranchID string `json:"activeBranchId,omitempty"`
 	// LatestSequence is the highest sequence handed out in this conversation.
 	// New messages and activities take LatestSequence+1 under the same
 	// transaction that bumps it, so ordering has a single writer.
@@ -181,6 +185,45 @@ type ConversationRecord struct {
 	AppliedTitle string    `json:"-"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// ConversationBranch is one durable provider-thread lineage node.
+type ConversationBranch struct {
+	ID                     string    `json:"id"`
+	ConversationID         string    `json:"conversationId"`
+	SessionID              SessionID `json:"sessionId"`
+	ProviderConversationID string    `json:"-"`
+	ParentBranchID         string    `json:"parentBranchId,omitempty"`
+	ForkAfterTurnID        string    `json:"forkAfterTurnId,omitempty"`
+	ReplacedTurnID         string    `json:"replacedTurnId,omitempty"`
+	ReplacementTurnID      string    `json:"replacementTurnId,omitempty"`
+	ForkAfterSequence      int64     `json:"-"`
+	Active                 bool      `json:"active"`
+	CreatedAt              time.Time `json:"createdAt"`
+}
+
+// ConversationBranchPoint describes the sibling continuations available at one
+// human prompt. Position is one-based; previous and next deliberately do not
+// wrap so a client can disable the corresponding edge control.
+type ConversationBranchPoint struct {
+	TurnID           string `json:"turnId"`
+	Position         int    `json:"position"`
+	Total            int    `json:"total"`
+	PreviousBranchID string `json:"previousBranchId,omitempty"`
+	NextBranchID     string `json:"nextBranchId,omitempty"`
+}
+
+// ConversationEditAnchor is the immutable source material needed to fork
+// immediately before one human prompt. The sequence cutoff applies uniformly to
+// every branch-owned timeline table.
+type ConversationEditAnchor struct {
+	ConversationID              string
+	SourceBranchID              string
+	ReplacedTurnID              string
+	PreviousProviderTurnID      string
+	ForkAfterSequence           int64
+	OriginalDeliveryContentJSON string
+	RetryActiveBranch           bool
 }
 
 // ConversationUsage is the conversation's token position.
@@ -554,3 +597,6 @@ var ErrNoQueuedTurn = errors.New("no queued turn")
 // named against. It lives here rather than in the storage layer so a controller and
 // an HTTP handler can both recognize it without importing SQLite.
 var ErrNoConversationTurn = errors.New("conversation turn not found")
+
+// ErrNoConversationBranch reports a branch id outside the named conversation.
+var ErrNoConversationBranch = errors.New("conversation branch not found")

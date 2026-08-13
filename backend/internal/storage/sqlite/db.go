@@ -134,6 +134,9 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
+	if err := prepareAutoInjectReviewMigration(db); err != nil {
+		return fmt.Errorf("prepare auto-inject-review migration: %w", err)
+	}
 	if err := repairRenumberedAgentSwitchMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered agent-switch migration history: %w", err)
 	}
@@ -154,6 +157,50 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareAutoInjectReviewMigration preserves development databases whose
+// physical review-injection schema exists without the corresponding goose
+// ledger entry. Without this repair, goose replays 0084 and startup stops on
+// the first duplicate column. Fresh schemas still run the migration normally;
+// only the complete four-table shape is accepted as already applied.
+func prepareAutoInjectReviewMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+
+	var applied int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 84 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+
+	for _, table := range []string{"sessions", "review_run", "pr_reviews", "pr_comment"} {
+		var present int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'auto_inject_review'`, table,
+		).Scan(&present); err != nil {
+			return err
+		}
+		if present == 0 {
+			return nil
+		}
+	}
+
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (84, 1)`)
+	return err
 }
 
 // prepareBrowserVerifierMigration preserves development databases that ran an
@@ -455,34 +502,42 @@ func quoteSQLiteIdent(name string) string {
 // physical schema is absent, release the burned ledger entry so goose can apply
 // the real 0052 migration below.
 func repairRenumberedChatMigrationHistory(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var gooseTable, chatColumn, conversationsTable int
-	if err := tx.QueryRow(
+	// Probe on a read-only query first. A fresh database (the common import
+	// path and the cli import test) has no goose_db_version table yet, so there
+	// is nothing to repair; entering a write transaction would needlessly
+	// create WAL/SHM files and is the exact I/O surface that surfaced as a
+	// transient SQLITE_IOERR_WRITE on macOS CI runners.
+	var gooseTable int
+	if err := db.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
 	).Scan(&gooseTable); err != nil {
 		return err
 	}
 	if gooseTable == 0 {
-		return tx.Commit()
+		return nil
 	}
-	if err := tx.QueryRow(
+
+	var chatColumn, conversationsTable int
+	if err := db.QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'session_mode'`,
 	).Scan(&chatColumn); err != nil {
 		return err
 	}
-	if err := tx.QueryRow(
+	if err := db.QueryRow(
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversations'`,
 	).Scan(&conversationsTable); err != nil {
 		return err
 	}
 	if chatColumn == 0 || conversationsTable == 0 {
-		return tx.Commit()
+		return nil
 	}
+
+	// Only enter a write transaction when there is actual repair work to do.
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
 
 	legacyApplied := false
 	for oldVersion := int64(52); oldVersion <= 65; oldVersion++ {

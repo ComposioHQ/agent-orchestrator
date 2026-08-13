@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,6 +41,9 @@ type fakeAgent struct {
 	cancelErr           error
 	cancelCalls         int
 	mode                string
+	modeNotFound        bool // SetSessionMode returns -32601
+	configNotFound      bool // SetSessionConfigOption returns -32601
+	newSessionUpdates   []acpsdk.SessionUpdate
 	options             map[string]string
 	newConfig           []acpsdk.SessionConfigOption
 	setConfig           []acpsdk.SessionConfigOption
@@ -122,10 +126,16 @@ func (a *fakeAgent) CloseSession(context.Context, acpsdk.CloseSessionRequest) (a
 func (a *fakeAgent) ListSessions(context.Context, acpsdk.ListSessionsRequest) (acpsdk.ListSessionsResponse, error) {
 	return acpsdk.ListSessionsResponse{}, nil
 }
-func (a *fakeAgent) NewSession(_ context.Context, params acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
+func (a *fakeAgent) NewSession(ctx context.Context, params acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
 	a.mu.Lock()
 	a.newParams = params
+	updates := append([]acpsdk.SessionUpdate(nil), a.newSessionUpdates...)
 	a.mu.Unlock()
+	for _, update := range updates {
+		if err := a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: "claude-session-1", Update: update}); err != nil {
+			return acpsdk.NewSessionResponse{}, err
+		}
+	}
 	return acpsdk.NewSessionResponse{SessionId: "claude-session-1", ConfigOptions: a.newConfig}, nil
 }
 func (a *fakeAgent) ResumeSession(_ context.Context, params acpsdk.ResumeSessionRequest) (acpsdk.ResumeSessionResponse, error) {
@@ -151,6 +161,10 @@ func (a *fakeAgent) LoadSession(ctx context.Context, params acpsdk.LoadSessionRe
 func (a *fakeAgent) SetSessionConfigOption(_ context.Context, params acpsdk.SetSessionConfigOptionRequest) (acpsdk.SetSessionConfigOptionResponse, error) {
 	a.mu.Lock()
 	a.setCalls++
+	if a.configNotFound {
+		a.mu.Unlock()
+		return acpsdk.SetSessionConfigOptionResponse{}, acpsdk.NewMethodNotFound("session/set_config_option")
+	}
 	if params.ValueId != nil {
 		if a.options == nil {
 			a.options = make(map[string]string)
@@ -169,6 +183,10 @@ func (a *fakeAgent) SetSessionConfigOption(_ context.Context, params acpsdk.SetS
 }
 func (a *fakeAgent) SetSessionMode(_ context.Context, params acpsdk.SetSessionModeRequest) (acpsdk.SetSessionModeResponse, error) {
 	a.mu.Lock()
+	if a.modeNotFound {
+		a.mu.Unlock()
+		return acpsdk.SetSessionModeResponse{}, acpsdk.NewMethodNotFound("session/set_mode")
+	}
 	a.mode = string(params.ModeId)
 	a.mu.Unlock()
 	return acpsdk.SetSessionModeResponse{}, nil
@@ -1147,5 +1165,163 @@ func nextEvent(t *testing.T, events <-chan ports.ChatEvent) ports.ChatEvent {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for event")
 		return ports.ChatEvent{}
+	}
+}
+
+// TestACPDriverStartToleratesMethodNotFound verifies that Start() succeeds
+// even when the agent returns -32601 for session/set_mode and
+// session/set_config_option. The launch-time flags (model, --auto, --yolo)
+// are expected to have already applied the initial settings.
+func TestACPDriverStartToleratesMethodNotFound(t *testing.T) {
+	agent := &fakeAgent{
+		modeNotFound:   true,
+		configNotFound: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionMode:  func(ports.PermissionMode) string { return "acceptEdits" },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(),
+		Model:         "glm-5.2",
+		Permissions:   ports.PermissionModeAcceptEdits,
+	})
+	if err != nil {
+		t.Fatalf("Start with -32601 setters: %v", err)
+	}
+	defer conv.Close()
+}
+
+// TestACPDriverSendTurnPropagatesMethodNotFound verifies that SendTurn returns
+// an actionable error (not a silent skip) when the agent returns -32601 for
+// session/set_mode or session/set_config_option during a runtime settings change.
+func TestACPDriverSendTurnPropagatesMethodNotFound(t *testing.T) {
+	agent := &fakeAgent{
+		modeNotFound:   true,
+		configNotFound: true,
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionMode:  func(ports.PermissionMode) string { return "acceptEdits" },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	// A runtime mode change should fail with ErrACPSetterUnsupported, not be
+	// silently swallowed.
+	_, err = conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text:     "hello",
+		Settings: ports.ChatTurnSettings{Approval: ports.PermissionModeAcceptEdits},
+	})
+	if !errors.Is(err, ErrACPSetterUnsupported) {
+		t.Fatalf("SendTurn with -32601 mode setter: err = %v, want ErrACPSetterUnsupported", err)
+	}
+}
+
+// TestNormalizeMCPServersFailsWithoutCapabilities verifies that
+// normalizeMCPServers returns an error when MCP server configs are provided
+// but the agent does not advertise any MCP capability.
+func TestNormalizeMCPServersFailsWithoutCapabilities(t *testing.T) {
+	configs := []ports.ChatMCPServerConfig{{Name: "test", Type: "stdio", Command: "echo"}}
+	_, err := normalizeMCPServers(configs, acpsdk.McpCapabilities{})
+	if err == nil {
+		t.Fatal("normalizeMCPServers with no MCP caps: err = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "does not support per-session MCP") {
+		t.Fatalf("err = %v, want mention of per-session MCP", err)
+	}
+}
+
+// TestNormalizeMCPServersSucceedsWithHttpCapability verifies that stdio
+// servers pass when the agent advertises HTTP MCP (any MCP capability is
+// sufficient — the transport-specific check happens later).
+func TestNormalizeMCPServersSucceedsWithHttpCapability(t *testing.T) {
+	configs := []ports.ChatMCPServerConfig{{Name: "test", Type: "stdio", Command: "echo"}}
+	servers, err := normalizeMCPServers(configs, acpsdk.McpCapabilities{Http: true})
+	if err != nil {
+		t.Fatalf("normalizeMCPServers with Http cap: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("servers = %d, want 1", len(servers))
+	}
+}
+
+// TestNormalizeMCPServersEmptyReturnsEmptySlice verifies that empty configs
+// return a non-nil empty slice (not nil) so the SDK serializes it correctly.
+func TestNormalizeMCPServersEmptyReturnsEmptySlice(t *testing.T) {
+	servers, err := normalizeMCPServers(nil, acpsdk.McpCapabilities{})
+	if err != nil {
+		t.Fatalf("normalizeMCPServers(nil): %v", err)
+	}
+	if servers == nil {
+		t.Fatal("servers = nil, want non-nil empty slice")
+	}
+	if len(servers) != 0 {
+		t.Fatalf("servers = %d, want 0", len(servers))
+	}
+}
+
+// TestACPDriverPreservesEarlyConfigOptionUpdates verifies that config option
+// updates received via session/update during session/new are not overwritten
+// when the NewSession response carries an empty config options catalog.
+func TestACPDriverPreservesEarlyConfigOptionUpdates(t *testing.T) {
+	earlyOption := selectConfigOption("model", "Model", "model", "glm-5.2", "glm-5.2", "kimi")
+	agent := &fakeAgent{
+		newConfig: nil, // session/new response has no config options
+		newSessionUpdates: []acpsdk.SessionUpdate{
+			{ConfigOptionUpdate: &acpsdk.SessionConfigOptionUpdate{ConfigOptions: []acpsdk.SessionConfigOption{earlyOption}}},
+		},
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	configurer := conv.(ports.ChatConfigOptionController)
+	options, err := configurer.ListConfigOptions(context.Background())
+	if err != nil {
+		t.Fatalf("ListConfigOptions: %v", err)
+	}
+	if len(options) != 1 {
+		t.Fatalf("options = %d, want 1 (early update preserved)", len(options))
+	}
+	if options[0].ID != "model" {
+		t.Fatalf("option id = %q, want %q", options[0].ID, "model")
 	}
 }

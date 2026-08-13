@@ -211,6 +211,7 @@ type transitionRuntime struct {
 	*fakeRuntime
 	log                        *[]string
 	stopErrors                 []error
+	runtimeOccupied            bool
 	outputForCall              func(int) string
 	outputCallTimes            []time.Time
 	blockAliveUntilContextDone bool
@@ -238,12 +239,23 @@ func (r *transitionRuntime) Destroy(ctx context.Context, handle ports.RuntimeHan
 			return err
 		}
 	}
-	return r.fakeRuntime.Destroy(ctx, handle)
+	err := r.fakeRuntime.Destroy(ctx, handle)
+	if err == nil {
+		r.runtimeOccupied = false
+	}
+	return err
 }
 
 func (r *transitionRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	*r.log = append(*r.log, "start:tui")
-	return r.fakeRuntime.Create(ctx, cfg)
+	if r.runtimeOccupied {
+		return ports.RuntimeHandle{}, fmt.Errorf("session %q already exists", cfg.SessionID)
+	}
+	handle, err := r.fakeRuntime.Create(ctx, cfg)
+	if err == nil {
+		r.runtimeOccupied = true
+	}
+	return handle, err
 }
 
 func (r *transitionRuntime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
@@ -260,6 +272,7 @@ type transitionChat struct {
 	preparedPolicy   domain.SessionInterfaceTransitionPolicy
 	start            ChatStart
 	preflightErr     error
+	startErr         error
 	preflightStarted chan struct{}
 	preflightRelease chan struct{}
 	relayMessages    []string
@@ -285,6 +298,9 @@ func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarnes
 func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
 	c.start = cfg
 	*c.log = append(*c.log, "start:chat")
+	if c.startErr != nil {
+		return ChatStarted{}, c.startErr
+	}
 	started := ChatStarted{ProviderConversationID: cfg.ProviderConversationID, ControllerGeneration: "chat-generation"}
 	if cfg.ControllerReady != nil {
 		if err := cfg.ControllerReady(started); err != nil {
@@ -431,6 +447,34 @@ func TestInterfaceTransitionTUIToChatStopsBeforeStartingAndReusesNativeConversat
 	}
 	if got := fmt.Sprint(*log); got != "[stop:tui:runtime-1 start:chat]" {
 		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionRollbackClearsStaleTUIRuntimeBeforeRestore(t *testing.T) {
+	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeTUI)
+	runtime.runtimeOccupied = true
+	runtime.stopErrors = []error{errors.New("teardown timed out")}
+	runtime.aliveByHandle = map[string]bool{"runtime-1": false}
+	chat.startErr = errors.New("ACP session/new: spawn EINVAL")
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "TARGET_RESUME_FAILED" {
+		t.Fatalf("transition = %+v, want failed target resume after successful rollback", settled)
+	}
+	if got := store.sessions["session-1"].Mode; got != domain.SessionModeTUI {
+		t.Fatalf("mode = %s, want restored TUI", got)
+	}
+	if runtime.created != 1 {
+		t.Fatalf("restored runtime create count = %d, want 1", runtime.created)
+	}
+	wantLog := "[stop:tui:runtime-1 start:chat stop:chat stop:tui:runtime-1 start:tui]"
+	if got := fmt.Sprint(*log); got != wantLog {
+		t.Fatalf("controller order = %s, want %s", got, wantLog)
 	}
 }
 
