@@ -162,6 +162,10 @@ func (c *Controller) PromoteQueuedTurn(
 			c.log.Error("failed to release queued turn promotion", "turn", turnID, "error", releaseErr)
 		}
 	}
+	if queued.Origin != domain.MessageOriginHuman {
+		release()
+		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %s", ErrTurnNotQueued, turnID)
+	}
 	settleUncertain := func(cause error) error {
 		// A transport error commonly cancels the request context after the provider
 		// may already have accepted the steer. The durable safety transition must

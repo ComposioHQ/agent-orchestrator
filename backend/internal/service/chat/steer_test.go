@@ -479,6 +479,35 @@ func TestPromoteQueuedTurnRefusalRestoresItsQueuePosition(t *testing.T) {
 	}
 }
 
+// Only human-originated queue items are eligible for mid-turn guidance. The
+// service must enforce that boundary even when a caller bypasses the frontend,
+// without consuming or reordering the automation item.
+func TestPromoteQueuedTurnRejectsNonHumanSourceWithoutContactingProvider(t *testing.T) {
+	h, provider := steerHarness(t)
+	ctx := context.Background()
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "automation follow-up", ClientMessageID: "queued-automation", Origin: domain.MessageOriginAutomation,
+	})
+	if err != nil {
+		t.Fatalf("queue automation turn: %v", err)
+	}
+
+	_, err = h.svc.PromoteQueuedTurn(ctx, testSession, queued.ID)
+	if !errors.Is(err, chatsvc.ErrTurnNotQueued) {
+		t.Fatalf("promotion error = %v, want ErrTurnNotQueued", err)
+	}
+	if calls := provider.steers(); len(calls) != 0 {
+		t.Fatalf("provider received %d steer attempts, want none", len(calls))
+	}
+	next, err := h.st.NextQueuedTurn(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load queue after rejection: %v", err)
+	}
+	if next.TurnID != queued.ID || next.Origin != domain.MessageOriginAutomation {
+		t.Fatalf("queue head after rejection = %+v, want unchanged automation turn %s", next, queued.ID)
+	}
+}
+
 // A transport failure after the request leaves delivery unknowable. Returning the
 // source to the queue would let drain send guidance the provider may already have
 // accepted, so it must settle failed and require an explicit user decision.
