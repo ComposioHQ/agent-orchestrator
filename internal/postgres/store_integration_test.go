@@ -926,7 +926,14 @@ func countProjectsWithoutRLSContext(ctx context.Context, pool *pgxpool.Pool) (in
 		return 0, err
 	}
 	defer pool.Exec(ctx, `DROP ROLE `+quotedRole)
-	if _, err := pool.Exec(ctx, `GRANT SELECT ON ao_projects TO `+quotedRole); err != nil {
+	// ao_projects' read policy checks ao_project_share_grants in an EXISTS
+	// clause (see migration 00025), so evaluating it requires SELECT on
+	// that table too — matching the runtime app role, which is granted
+	// blanket SELECT/INSERT/UPDATE/DELETE on every table (see migrate.go).
+	if _, err := pool.Exec(
+		ctx,
+		`GRANT SELECT ON ao_projects, ao_project_share_grants TO `+quotedRole,
+	); err != nil {
 		return 0, err
 	}
 	tx, err := pool.Begin(ctx)
