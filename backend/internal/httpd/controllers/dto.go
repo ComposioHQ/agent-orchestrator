@@ -335,6 +335,28 @@ type SetSessionReviewerRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
 
+// SetSessionAutoReviewRequest configures daemon-side review automation.
+type SetSessionAutoReviewRequest struct {
+	Enabled        bool `json:"enabled"`
+	enabledPresent bool
+}
+
+// UnmarshalJSON distinguishes an omitted required boolean from an explicit
+// false without making the generated API schema nullable.
+func (r *SetSessionAutoReviewRequest) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	r.enabledPresent = wire.Enabled != nil
+	if wire.Enabled != nil {
+		r.Enabled = *wire.Enabled
+	}
+	return nil
+}
+
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
 // session workspace; a non-empty url is used verbatim as the preview target.

@@ -128,6 +128,8 @@ export interface ChatWorkspaceProps {
 	headerActions?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
+	reviewerTerminal?: { handleId: string; harness: string };
+	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** Older durable history is available but not loaded into the DOM yet. */
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
@@ -224,6 +226,8 @@ export function ChatWorkspace({
 	sessionRole = "worker",
 	headerActions,
 	controllerTransitioning,
+	reviewerTerminal,
+	onOpenReviewerTerminal,
 	hasOlder,
 	loadingOlder,
 	onLoadOlder,
@@ -379,6 +383,8 @@ export function ChatWorkspace({
 			<ChatHeader
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
+				reviewerTerminal={reviewerTerminal}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				headerActions={headerActions}
 				onOpenShell={onOpenShell}
 				openingShell={openingShell}
@@ -649,6 +655,8 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	sessionTitle,
+	reviewerTerminal,
+	onOpenReviewerTerminal,
 	headerActions,
 	onOpenShell,
 	openingShell,
@@ -662,6 +670,8 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
+	reviewerTerminal?: { handleId: string; harness: string };
+	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	headerActions?: ReactNode;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
@@ -707,6 +717,22 @@ function ChatHeader({
 										<span className="truncate">{label}</span>
 									</button>
 								</span>
+								{reviewerTerminal ? (
+									<span className="group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3 text-muted-foreground hover:bg-raised hover:text-foreground">
+										<AgentAvatar className="size-icon-base" decorative provider={reviewerTerminal.harness} />
+										<button
+											aria-label="Reviewer"
+											className="inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none"
+											onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
+											role="tab"
+											tabIndex={0}
+											title={reviewerTerminal.harness}
+											type="button"
+										>
+											<span className="truncate">Reviewer</span>
+										</button>
+									</span>
+								) : null}
 							</div>
 							<Button
 								aria-label="New terminal"

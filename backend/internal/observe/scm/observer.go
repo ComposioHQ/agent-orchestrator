@@ -1808,6 +1808,7 @@ func domainFromObservation(sessionID domain.SessionID, sessionRecord domain.Sess
 			URL:              review.URL,
 			Body:             review.Body,
 			IsBot:            review.IsBot,
+			TargetSHA:        review.TargetSHA,
 			SubmittedAt:      firstTime(review.SubmittedAt, now),
 			AutoInjectReview: sessionRecord.AutoInjectReview,
 		})

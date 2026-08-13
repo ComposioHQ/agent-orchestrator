@@ -96,6 +96,7 @@ type SessionService interface {
 	SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
 	SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
 	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error)
+	SetAutoReview(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
@@ -171,6 +172,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Patch("/sessions/{sessionId}/auto-inject-review", c.setAutoInjectReviewPolicy)
 	r.Patch("/sessions/{sessionId}/auto-inject-ci", c.setAutoInjectCIPolicy)
 	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
+	r.Put("/sessions/{sessionId}/auto-review", c.setAutoReview)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
 	r.Get("/sessions/{sessionId}/agent-switches", c.listAgentSwitches)
@@ -1013,6 +1015,28 @@ func (c *SessionsController) setReviewer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	sess, err := c.Svc.SetReviewerHarness(r.Context(), sessionID(r), in.Harness)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
+}
+
+func (c *SessionsController) setAutoReview(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/sessions/{sessionId}/auto-review")
+		return
+	}
+	var in SetSessionAutoReviewRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if !in.enabledPresent {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "AUTO_REVIEW_ENABLED_REQUIRED", "enabled is required", nil)
+		return
+	}
+	sess, err := c.Svc.SetAutoReview(r.Context(), sessionID(r), in.Enabled)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

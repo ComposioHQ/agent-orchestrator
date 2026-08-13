@@ -18,6 +18,7 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
+	projects   map[string]domain.ProjectRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	reviews    map[string][]domain.PullRequestReview
 	comments   map[string][]domain.PullRequestComment
@@ -25,6 +26,7 @@ type fakeStore struct {
 	signatures map[string]string
 
 	listPRsErr        error
+	listReviewsErr    error
 	signatureWriteErr error
 	signatureWrites   int
 }
@@ -32,6 +34,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		sessions:   map[domain.SessionID]domain.SessionRecord{},
+		projects:   map[string]domain.ProjectRecord{},
 		prs:        map[domain.SessionID][]domain.PullRequest{},
 		reviews:    map[string][]domain.PullRequestReview{},
 		comments:   map[string][]domain.PullRequestComment{},
@@ -74,7 +77,15 @@ func (f *fakeStore) GetPR(_ context.Context, prURL string) (domain.PullRequest, 
 }
 
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.listReviewsErr != nil {
+		return nil, f.listReviewsErr
+	}
 	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	rec, ok := f.projects[id]
+	return rec, ok, nil
 }
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {

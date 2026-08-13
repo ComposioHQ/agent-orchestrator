@@ -23,6 +23,9 @@ import (
 // ChatLauncher starts the structured controller for a chat session. Implemented
 // by the chat service; nil in a build without chat support.
 type ChatLauncher interface {
+	// SupportsChat reports whether a harness has a Chat driver at all, without
+	// probing the local install. Use it to decide whether Chat is even offerable.
+	SupportsChat(harness domain.AgentHarness) bool
 	// PreflightChat reports whether a harness can start in chat mode right now.
 	// Called before any durable state exists so an unsupported request costs
 	// nothing.

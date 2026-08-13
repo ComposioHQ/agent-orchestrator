@@ -299,6 +299,7 @@ type PRReview struct {
 	SubmittedAt      time.Time
 	Body             string
 	AutoInjectReview bool
+	TargetSha        string
 }
 
 type PRReviewThread struct {
@@ -350,6 +351,7 @@ type ReviewRun struct {
 	DeliveredAt      sql.NullTime
 	BatchID          string
 	AutoInjectReview bool
+	TriggerSource    domain.ReviewTriggerSource
 }
 
 type Session struct {
@@ -391,6 +393,7 @@ type Session struct {
 	LatestAssistantUpdate     string
 	NativeTranscriptPath      string
 	AutoInjectCI              bool
+	AutoReviewEnabled         bool
 }
 
 type SessionCleanupFact struct {
@@ -513,7 +516,7 @@ type WorkspaceRepo struct {
 	Name          string
 	RelativePath  string
 	RepoOriginURL string
-	DefaultBranch string
 	RegisteredAt  time.Time
+	DefaultBranch string
 	GitStatus     string
 }

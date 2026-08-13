@@ -726,6 +726,23 @@ export interface paths {
         patch: operations["setSessionAutoInjectReview"];
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/auto-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Enable or disable automatic review for a session */
+        put: operations["setSessionAutoReview"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation": {
         parameters: {
             query?: never;
@@ -1747,6 +1764,7 @@ export interface components {
             activity: components["schemas"]["DomainActivity"];
             autoInjectCI: boolean;
             autoInjectReview: boolean;
+            autoReviewEnabled: boolean;
             branch?: string;
             /** Format: date-time */
             createdAt: string;
@@ -1778,6 +1796,9 @@ export interface components {
             updatedAt: string;
         };
         ControllersSetSecurePairingRequest: {
+            enabled: boolean;
+        };
+        ControllersSetSessionAutoReviewRequest: {
             enabled: boolean;
         };
         ConversationAccountPayload: {
@@ -2429,6 +2450,8 @@ export interface components {
             sessionId: string;
             status: string;
             targetSha: string;
+            /** @enum {string} */
+            triggerSource: "manual" | "auto";
             verdict: string;
         };
         ReviewRunResponse: {
@@ -5460,6 +5483,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetSessionAutoInjectReviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionAutoReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSetSessionAutoReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */
