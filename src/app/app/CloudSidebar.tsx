@@ -327,13 +327,14 @@ export function CloudSidebar({
                     >
                       <div className="ml-3.5 flex flex-col gap-px py-1">
                         {projectSessions.map((session) => (
+                          <ContextMenu key={session.id}>
+                          <ContextMenuTrigger asChild>
                           <div
                             className={`group/session flex h-8 w-full items-center rounded-lg transition-colors hover:bg-[var(--color-interactive-hover)] ${
                               selectedSessionId === session.id
                                 ? "bg-[var(--color-interactive-active)]"
                                 : ""
                             }`}
-                            key={session.id}
                           >
                             <div className="flex min-w-0 flex-1 transition-transform duration-100 ease-out active:scale-[0.97]">
                               <button
@@ -376,6 +377,25 @@ export function CloudSidebar({
                               <Trash2 aria-hidden="true" />
                             </button>
                           </div>
+                          </ContextMenuTrigger>
+                          <ContextMenuContent className="min-w-40">
+                            <ContextMenuItem onSelect={() => onSelectSession(session.id)}>
+                              Open session
+                            </ContextMenuItem>
+                            <ContextMenuItem onSelect={() => togglePin(session.id)}>
+                              <Pin aria-hidden="true" />
+                              {pinnedIds.has(session.id) ? "Unpin" : "Pin"}
+                            </ContextMenuItem>
+                            <ContextMenuSeparator />
+                            <ContextMenuItem
+                              className="text-[var(--destructive)] focus:text-[var(--destructive)] [&_svg]:text-[var(--destructive)]"
+                              onSelect={() => { if (window.confirm(`Delete ${session.displayName}?`)) onDeleteSession(session); }}
+                            >
+                              <Trash2 aria-hidden="true" />
+                              Delete session
+                            </ContextMenuItem>
+                          </ContextMenuContent>
+                          </ContextMenu>
                         ))}
                       </div>
                     </motion.div>
@@ -392,6 +412,8 @@ export function CloudSidebar({
             </div>
             <div className="flex flex-col gap-px">
               {standaloneRows.map(({ project, session }) => (
+                <ContextMenu key={session.id}>
+                <ContextMenuTrigger asChild>
                 <motion.div
                   whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
                   transition={{ duration: 0.06, ease: "easeOut" }}
@@ -400,7 +422,6 @@ export function CloudSidebar({
                       ? "bg-[var(--color-interactive-active)]"
                       : ""
                   }`}
-                  key={session.id}
                   title={project.displayName}
                 >
                   <div className="flex min-w-0 flex-1 transition-transform duration-100 ease-out active:scale-[0.97]">
@@ -444,6 +465,25 @@ export function CloudSidebar({
                     <Trash2 aria-hidden="true" />
                   </button>
                 </motion.div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="min-w-40">
+                  <ContextMenuItem onSelect={() => onSelectSession(session.id)}>
+                    Open session
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => togglePin(session.id)}>
+                    <Pin aria-hidden="true" />
+                    {pinnedIds.has(session.id) ? "Unpin" : "Pin"}
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    className="text-[var(--destructive)] focus:text-[var(--destructive)] [&_svg]:text-[var(--destructive)]"
+                    onSelect={() => { if (window.confirm(`Delete ${session.displayName}?`)) onDeleteSession(session); }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                    Delete session
+                  </ContextMenuItem>
+                </ContextMenuContent>
+                </ContextMenu>
               ))}
             </div>
           </div>

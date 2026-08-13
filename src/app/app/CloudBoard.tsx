@@ -9,7 +9,15 @@ import {
   SessionsBoardGridView,
   toSessionStatus,
 } from "@aoagents/product-ui";
+import { Pin, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 const columns = boardAttentionZoneOrder.map((zone) =>
   getAttentionZoneViewForZone(zone),
@@ -48,9 +56,13 @@ const boardLabels = {
 };
 
 export function CloudBoard({
+  onDeleteSession,
+  onPinSession,
   onSelectSession,
   sessions,
 }: {
+  onDeleteSession: (session: Session) => void;
+  onPinSession: (session: Session) => void;
   onSelectSession: (sessionId: string) => void;
   sessions: Session[];
 }) {
@@ -85,36 +97,64 @@ export function CloudBoard({
       columns={columns}
       labels={boardLabels}
       sessions={presentation}
-      renderSessionCard={(session) => (
-        <SessionCardView
-          externalLink={CloudExternalLink}
-          labels={{
-            formatTime: relativeTime,
-            intakeIssue: (id) => `Issue ${id}`,
-            pr: {
-              short: "PR",
-              states: {
-                closed: "Closed",
-                draft: "Draft",
-                merged: "Merged",
-                open: "Open",
-              },
-            },
-            updatedAt: (timestamp) =>
-              `Updated ${new Date(timestamp).toLocaleString()}`,
-          }}
-          onOpen={() => onSelectSession(session.id)}
-          renderAvatar={(provider) => (
-            <AgentAvatar
-              className="mt-0.5"
-              decorative
-              logoSrc={`/agents/${provider}.svg`}
-              provider={provider}
-            />
-          )}
-          session={session}
-        />
-      )}
+      renderSessionCard={(session) => {
+        const original = sessions.find((s) => s.id === session.id);
+        return (
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <div>
+                <SessionCardView
+                  externalLink={CloudExternalLink}
+                  labels={{
+                    formatTime: relativeTime,
+                    intakeIssue: (id) => `Issue ${id}`,
+                    pr: {
+                      short: "PR",
+                      states: {
+                        closed: "Closed",
+                        draft: "Draft",
+                        merged: "Merged",
+                        open: "Open",
+                      },
+                    },
+                    updatedAt: (timestamp) =>
+                      `Updated ${new Date(timestamp).toLocaleString()}`,
+                  }}
+                  onOpen={() => onSelectSession(session.id)}
+                  renderAvatar={(provider) => (
+                    <AgentAvatar
+                      className="mt-0.5"
+                      decorative
+                      logoSrc={`/agents/${provider}.svg`}
+                      provider={provider}
+                    />
+                  )}
+                  session={session}
+                />
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="min-w-40">
+              <ContextMenuItem onSelect={() => onSelectSession(session.id)}>
+                Open session
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => original && onPinSession(original)}>
+                <Pin aria-hidden="true" />
+                Pin
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                className="text-[var(--destructive)] focus:text-[var(--destructive)] [&_svg]:text-[var(--destructive)]"
+                onSelect={() => {
+                  if (original && window.confirm(`Delete ${session.title}?`)) onDeleteSession(original);
+                }}
+              >
+                <Trash2 aria-hidden="true" />
+                Delete session
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
+        );
+      }}
     />
   );
 }

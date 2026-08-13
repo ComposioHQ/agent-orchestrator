@@ -819,6 +819,8 @@ export function CloudWorkspace() {
                   </div>
                 ) : (
                   <CloudBoard
+                    onDeleteSession={(session) => void deleteSession(session)}
+                    onPinSession={() => {}}
                     onSelectSession={setSelectedSessionId}
                     sessions={visibleSessions}
                   />
