@@ -94,6 +94,14 @@ func clientSendInput(addr, input string) error {
 // Returns "" on timeout or connection failure (no error), matching the TS.
 // lines <= 0 is handled by the caller (runtime.go rejects it before calling).
 func clientGetOutput(addr string, lines int) (string, error) {
+	return clientReadOutput(addr, lines, MsgGetOutputReq, MsgGetOutputRes)
+}
+
+func clientGetStyledOutput(addr string, lines int) (string, error) {
+	return clientReadOutput(addr, lines, MsgGetStyledOutputReq, MsgGetStyledOutputRes)
+}
+
+func clientReadOutput(addr string, lines int, requestType, responseType byte) (string, error) {
 	conn, err := dialHost(addr, getOutputTimeout)
 	if err != nil {
 		return "", nil // ponytail: connect failure -> "" like the TS
@@ -103,14 +111,14 @@ func clientGetOutput(addr string, lines int) (string, error) {
 	_ = conn.SetDeadline(time.Now().Add(getOutputTimeout))
 
 	req, _ := json.Marshal(GetOutputReq{Lines: lines})
-	reqFrame, _ := EncodeMessage(MsgGetOutputReq, req) // req is small JSON, never overflows uint32
+	reqFrame, _ := EncodeMessage(requestType, req) // req is small JSON, never overflows uint32
 	if _, err := conn.Write(reqFrame); err != nil {
 		return "", nil
 	}
 
 	resultC := make(chan string, 1)
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
-		if msgType == MsgGetOutputRes {
+		if msgType == responseType {
 			select {
 			case resultC <- string(payload):
 			default:

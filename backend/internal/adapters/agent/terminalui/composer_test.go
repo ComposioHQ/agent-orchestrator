@@ -5,6 +5,13 @@ import (
 	"testing"
 )
 
+func TestPlainTerminalTextStripsControlsAndPreservesVisibleRows(t *testing.T) {
+	input := "\x1b[2mfirst\x1b[0m\r\n\x1b]8;;https://example.com\x1b\\second\x1b]8;;\x1b\\"
+	if got, want := PlainTerminalText(input), "first\n\nsecond"; got != want {
+		t.Fatalf("PlainTerminalText() = %q, want %q", got, want)
+	}
+}
+
 func TestLastPromptIsEmptyOrDimPlaceholder(t *testing.T) {
 	tests := []struct {
 		name   string

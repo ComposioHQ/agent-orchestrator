@@ -12,21 +12,21 @@ import (
 )
 
 const (
-	interfaceTransitionPoll             = 150 * time.Millisecond
-	interfaceTransitionIdleSettle       = 750 * time.Millisecond
-	interfaceTransitionStaleIdleSamples = 3
-	interfaceTransitionStaleIdleLimit   = 5 * time.Second
-	interfaceTransitionOutputLines      = 40
-	interfaceInterruptSettle            = 2 * time.Second
-	interfaceTransitionStopLimit        = 15 * time.Second
-	interfaceTransitionStepLimit        = 45 * time.Second
-	interfaceDeliveryRetry              = 2 * time.Second
-	interfaceDeliveryIdlePoll           = 30 * time.Second
+	interfaceTransitionPoll               = 150 * time.Millisecond
+	interfaceTransitionIdleSettle         = 750 * time.Millisecond
+	interfaceTransitionSurfaceIdleSamples = 3
+	interfaceTransitionStaleIdleLimit     = 5 * time.Second
+	interfaceTransitionOutputLines        = 40
+	interfaceInterruptSettle              = 2 * time.Second
+	interfaceTransitionStopLimit          = 15 * time.Second
+	interfaceTransitionStepLimit          = 45 * time.Second
+	interfaceDeliveryRetry                = 2 * time.Second
+	interfaceDeliveryIdlePoll             = 30 * time.Second
 )
 
 var (
 	errDrainQuiescenceUnverified = errors.New("AO could not verify that the terminal was idle after the latest input. The source interface was left untouched; retry after the terminal settles")
-	errDrainDraftPresent         = errors.New("AO found unsent text in the terminal composer. The source interface was left untouched; submit or clear the draft and retry, or choose Stop now and switch to discard it")
+	errDrainDraftPresent         = errors.New("AO found unsent text in the terminal composer. The source interface was left untouched; submit or clear the draft and retry, or choose Discard draft and switch")
 )
 
 // interfaceTransitionStore is optional so the existing narrow Manager Store
@@ -538,15 +538,17 @@ func (m *Manager) prepareSourceHandoff(
 
 	var detector ports.TerminalActivityDetector
 	var surfaceInspector ports.TerminalSurfaceInspector
+	var emptyComposerDetector ports.EmptyComposerDetector
 	if agent, ok := m.agents.Agent(rec.Harness); ok {
 		detector, _ = agent.(ports.TerminalActivityDetector)
 		surfaceInspector, _ = agent.(ports.TerminalSurfaceInspector)
+		emptyComposerDetector, _ = agent.(ports.EmptyComposerDetector)
 	}
 	styledOutput, _ := m.runtime.(ports.StyledTerminalOutputReader)
 	// Surface proof is a joint capability: the adapter must understand its TUI
-	// and the runtime must preserve the styling that distinguishes provider chrome
-	// from human-authored text. ConPTY intentionally lacks styled capture, so it
-	// retains the causally-fresh idle / legacy detector fallback below.
+	// and the runtime must provide a rendered viewport with the styling that
+	// distinguishes provider chrome from human-authored text. Runtimes without
+	// that capability retain the causally-fresh idle / legacy fallback below.
 	requiresSurfaceProof := surfaceInspector != nil && styledOutput != nil
 	ticker := time.NewTicker(m.interfaceTransition.pollInterval)
 	defer ticker.Stop()
@@ -588,22 +590,19 @@ func (m *Manager) prepareSourceHandoff(
 			if outputErr == nil {
 				observation := surfaceInspector.InspectTerminalSurface(output)
 				switch {
+				case observation.Composer == ports.TerminalComposerDraft &&
+					current.Activity.State == domain.ActivityIdle:
+					// A positively identified draft is sufficient to preserve the
+					// source. Work markers are provider chrome heuristics and may
+					// also occur in transcript or draft text, so they cannot hide
+					// unsent input when the durable provider state is idle.
+					if cancelProbe != nil {
+						cancelProbe()
+					}
+					return errDrainDraftPresent
 				case observation.Work == ports.TerminalSurfaceWorkIdle &&
 					observation.Composer == ports.TerminalComposerEmpty:
 					idleProven = true
-				case observation.Work == ports.TerminalSurfaceWorkIdle &&
-					observation.Composer == ports.TerminalComposerDraft:
-					if cancelProbe != nil {
-						cancelProbe()
-					}
-					return errDrainDraftPresent
-				case observation.Composer == ports.TerminalComposerDraft &&
-					current.Activity.State == domain.ActivityIdle &&
-					observation.Work == ports.TerminalSurfaceWorkUnknown:
-					if cancelProbe != nil {
-						cancelProbe()
-					}
-					return errDrainDraftPresent
 				case observation.Work == ports.TerminalSurfaceWorkActive,
 					observation.Work == ports.TerminalSurfaceWorkWaitingInput,
 					observation.Work == ports.TerminalSurfaceWorkBlocked:
@@ -617,6 +616,12 @@ func (m *Manager) prepareSourceHandoff(
 				now = time.Now()
 				state, authoritative := detector.DetectTerminalActivity(output)
 				idleProven = authoritative && state == domain.ActivityIdle
+				if idleProven && emptyComposerDetector != nil {
+					// The legacy activity contract cannot carry draft state. At
+					// this destructive boundary, an adapter that can separately
+					// prove composer emptiness must do so before idle is accepted.
+					idleProven = emptyComposerDetector.ComposerIsEmpty(output)
+				}
 			}
 		}
 		if current.Activity.State != domain.ActivityIdle || surfaceKnownBusy {
@@ -634,7 +639,7 @@ func (m *Manager) prepareSourceHandoff(
 			if idleSince.IsZero() {
 				idleSince = now
 			} else if now.Sub(idleSince) >= m.interfaceTransition.idleSettle &&
-				(!requiresSurfaceProof && durableIdleProven || idleSamples >= interfaceTransitionStaleIdleSamples) {
+				(!requiresSurfaceProof && durableIdleProven || idleSamples >= interfaceTransitionSurfaceIdleSamples) {
 				if cancelProbe != nil {
 					cancelProbe()
 				}

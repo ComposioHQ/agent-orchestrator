@@ -28,10 +28,53 @@ func livePID() int { return os.Getpid() }
 // ponytail: PID 2147483647 (MaxInt32) is never a real process; signal-0 returns ESRCH.
 func deadPID() int { return 2147483647 }
 
-func TestRuntimeDoesNotAdvertiseStyledRenderedTerminalOutput(t *testing.T) {
-	var runtime any = New(Options{})
-	if _, ok := runtime.(ports.StyledTerminalOutputReader); ok {
-		t.Fatal("raw ConPTY history must not be used as rendered composer state")
+func TestRuntimeProvidesStyledRenderedTerminalOutput(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	runtime := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	var candidate any = runtime
+	if _, ok := candidate.(ports.StyledTerminalOutputReader); !ok {
+		t.Fatal("ConPTY runtime must expose its rendered current surface")
+	}
+
+	handle, err := runtime.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-styled",
+		WorkspacePath: "/tmp/w",
+		Argv:          []string{"sh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := hosts[handle.ID]
+	defer host.cleanup(t)
+
+	if _, err := host.pty.WriteOutput([]byte("\x1b[2J\x1b[HOLD TRANSCRIPT\n")); err != nil {
+		t.Fatal(err)
+	}
+	current := "\x1b[2J\x1b[H────────────────\n❯ \x1b[2mAsk a question\x1b[0m\n────────────────\n"
+	if _, err := host.pty.WriteOutput([]byte(current)); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		output, outputErr := runtime.GetStyledOutput(context.Background(), handle, 10)
+		if outputErr != nil {
+			t.Fatal(outputErr)
+		}
+		if strings.Contains(output, "Ask a question") {
+			if strings.Contains(output, "OLD TRANSCRIPT") {
+				t.Fatalf("styled output retained overwritten history: %q", output)
+			}
+			if !strings.Contains(output, "\x1b[") {
+				t.Fatalf("styled output lost ANSI cell styling: %q", output)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rendered current surface never became observable: %q", output)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

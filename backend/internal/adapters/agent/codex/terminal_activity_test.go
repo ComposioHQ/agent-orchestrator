@@ -63,16 +63,36 @@ func TestInspectTerminalSurfaceSeparatesCodexWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerDraft,
 		},
 		{
+			name:       "active wording inside draft is not current chrome",
+			output:     "› Quote esc to interrupt here\n\ngpt-5.6-sol low · ~/project\n",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
 			name:       "active empty composer",
 			output:     "• Working (2m 10s • esc to interrupt)\n› \x1b[2mAdd tests\x1b[0m\n\ngpt-5.6-sol low · ~/project\n",
 			wantWork:   ports.TerminalSurfaceWorkActive,
 			wantEditor: ports.TerminalComposerEmpty,
 		},
 		{
+			name: "old active row in transcript is not current chrome",
+			output: "• Working (2m 10s • esc to interrupt)\nThe work finished.\n" +
+				"› \x1b[2mAdd tests\x1b[0m\n\ngpt-5.6-sol low · ~/project\n",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
 			name:       "approval picker",
 			output:     "› 1. Approve once\n  2. Deny\nPress enter to confirm or esc to go back\n",
 			wantWork:   ports.TerminalSurfaceWorkWaitingInput,
-			wantEditor: ports.TerminalComposerDraft,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "approval picker with normal footer still visible",
+			output: "Run this command?\n› 1. Approve once\n  2. Deny\n" +
+				"Press enter to confirm or esc to go back\n\ngpt-5.6-sol low · ~/project\n",
+			wantWork:   ports.TerminalSurfaceWorkWaitingInput,
+			wantEditor: ports.TerminalComposerUnknown,
 		},
 	}
 	for _, tt := range tests {

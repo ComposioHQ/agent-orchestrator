@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -25,6 +26,7 @@ func (p *Plugin) InspectTerminalSurface(output string) ports.TerminalSurfaceObse
 		observation.Work = ports.TerminalSurfaceWorkActive
 	case claudeConfirmationFrameVisible(recent):
 		observation.Work = ports.TerminalSurfaceWorkBlocked
+		observation.Composer = ports.TerminalComposerUnknown
 	case observation.Composer != ports.TerminalComposerUnknown:
 		observation.Work = ports.TerminalSurfaceWorkIdle
 	}
@@ -42,17 +44,56 @@ func claudeComposerState(state terminalui.ComposerState) ports.TerminalComposerS
 	}
 }
 
-// Claude animates one of these glyphs at the start of its live work-status row.
-// Requiring both the glyph and the interrupt hint prevents ordinary assistant
-// prose that mentions the hint from becoming evidence that work is still active.
+// Claude renders its active status immediately above the current composer (or
+// above the composer's upper border). Transcript and draft text may quote the
+// same words, so only that structurally current row is eligible as work chrome.
 func claudeActiveFrameVisible(output string) bool {
-	for _, line := range terminalSurfaceLines(output) {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "esc to interrupt") && strings.ContainsAny(line, "✢✳✶✻✽") {
-			return true
+	lines := terminalui.PlainTerminalLines(output)
+	prompt := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "❯") {
+			prompt = i
+			break
 		}
 	}
-	return false
+	if prompt < 0 {
+		return false
+	}
+	status := previousClaudeSurfaceLine(lines, prompt)
+	if status >= 0 && claudeHorizontalRule(lines[status]) {
+		status = previousClaudeSurfaceLine(lines, status)
+	}
+	if status < 0 {
+		return false
+	}
+	line := strings.TrimSpace(lines[status])
+	first, _ := utf8.DecodeRuneInString(line)
+	if !strings.ContainsRune("✢✳✶✻✽", first) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(line), "esc to interrupt")
+}
+
+func previousClaudeSurfaceLine(lines []string, before int) int {
+	for i := before - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+func claudeHorizontalRule(line string) bool {
+	line = strings.TrimSpace(line)
+	if utf8.RuneCountInString(line) < 16 {
+		return false
+	}
+	for _, r := range line {
+		if r != '─' {
+			return false
+		}
+	}
+	return true
 }
 
 // A Claude confirmation menu has a question before its selected prompt row and

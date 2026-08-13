@@ -19,6 +19,7 @@ const runtimeLaunchIDEnv = "AO_RUNTIME_LAUNCH_ID"
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
+var _ ports.StyledTerminalOutputReader = (*Runtime)(nil)
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -286,6 +287,20 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
 	}
 	return clientGetOutput(sess.addr, lines)
+}
+
+// GetStyledOutput returns the current rendered ConPTY viewport with ANSI cell
+// styles preserved. The pty-host owns the screen model so this remains valid
+// across daemon restarts and never substitutes the raw scrollback ring.
+func (r *Runtime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
+	if lines <= 0 {
+		return "", fmt.Errorf("conpty: lines must be > 0")
+	}
+	sess := r.resolve(handle.ID)
+	if sess == nil {
+		return "", fmt.Errorf("conpty: session %q not found", handle.ID)
+	}
+	return clientGetStyledOutput(sess.addr, lines)
 }
 
 // resolve looks up a session by id: first the in-memory map, then the B2

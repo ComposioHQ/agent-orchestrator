@@ -1021,6 +1021,12 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerDraft,
 		},
 		{
+			name:       "active wording inside draft is not current chrome",
+			output:     rule + "\n❯ quote ✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
 			name:       "active with empty composer",
 			output:     "✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n❯\n" + rule,
 			wantWork:   ports.TerminalSurfaceWorkActive,
@@ -1030,7 +1036,7 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			name:       "permission dialog",
 			output:     "Do you want to proceed?\n❯ 1. Yes\n  2. No\nPress enter to confirm",
 			wantWork:   ports.TerminalSurfaceWorkBlocked,
-			wantEditor: ports.TerminalComposerDraft,
+			wantEditor: ports.TerminalComposerUnknown,
 		},
 		{
 			name: "permission wording in completed response is not current chrome",
@@ -1042,6 +1048,13 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 		{
 			name: "interrupt wording in completed response is not active chrome",
 			output: "The status previously read esc to interrupt while the command ran.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "old active row separated from composer is not current chrome",
+			output: "✶ Generating… (esc to interrupt · 2s)\nThe work finished.\n" +
 				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
 			wantWork:   ports.TerminalSurfaceWorkIdle,
 			wantEditor: ports.TerminalComposerEmpty,

@@ -1,15 +1,12 @@
 package codex
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
-
-var codexTerminalEscape = regexp.MustCompile(`\x1b(?:\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|\][^\x07]*(?:\x07|\x1b\\))`)
 
 // DetectTerminalActivity reports idle only when Codex's composer and footer are visible.
 func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
@@ -35,34 +32,90 @@ func (p *Plugin) InspectTerminalSurface(output string) ports.TerminalSurfaceObse
 	if start < 0 {
 		start = 0
 	}
-	for _, line := range lines[start:] {
-		if strings.Contains(strings.ToLower(line), "esc to interrupt") {
-			if strings.Contains(strings.ToLower(line), "press enter to confirm") ||
-				strings.Contains(strings.ToLower(line), "enter to select") {
-				observation.Work = ports.TerminalSurfaceWorkWaitingInput
-			} else {
-				observation.Work = ports.TerminalSurfaceWorkActive
-			}
-			return observation
-		}
+	if codexConfirmationFrame(lines, start) {
+		observation.Work = ports.TerminalSurfaceWorkWaitingInput
+		observation.Composer = ports.TerminalComposerUnknown
+		return observation
 	}
-	for _, line := range lines[start:] {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "press enter to confirm") || strings.Contains(lower, "esc to go back") {
-			observation.Work = ports.TerminalSurfaceWorkWaitingInput
+	prompt, _ := codexPromptFooter(lines, start)
+	if prompt >= 0 {
+		if prompt > start && codexActiveStatusLine(lines[prompt-1]) {
+			observation.Work = ports.TerminalSurfaceWorkActive
 			return observation
 		}
-	}
-	for i := len(lines) - 2; i >= start; i-- {
-		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "›") {
-			continue
-		}
-		if strings.Contains(lines[i+1], " · ") {
-			observation.Work = ports.TerminalSurfaceWorkIdle
-			return observation
-		}
+		observation.Work = ports.TerminalSurfaceWorkIdle
+		return observation
 	}
 	return observation
+}
+
+func codexConfirmationFrame(lines []string, start int) bool {
+	selection := -1
+	for i := len(lines) - 1; i >= start; i-- {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "›") && codexNumberedOption(strings.TrimSpace(strings.TrimPrefix(line, "›"))) {
+			selection = i
+			break
+		}
+	}
+	if selection < 0 {
+		return false
+	}
+	hint := -1
+	for i := selection + 1; i < len(lines); i++ {
+		if codexConfirmationHint(lines[i]) {
+			hint = i
+			break
+		}
+	}
+	if hint < 0 {
+		return false
+	}
+	for i := start; i < hint; i++ {
+		if i != selection && codexNumberedOption(strings.TrimSpace(lines[i])) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexNumberedOption(line string) bool {
+	dot := strings.IndexByte(line, '.')
+	if dot <= 0 {
+		return false
+	}
+	for _, r := range line[:dot] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func codexPromptFooter(lines []string, start int) (int, int) {
+	for footer := len(lines) - 1; footer > start; footer-- {
+		if !strings.Contains(lines[footer], " · ") {
+			continue
+		}
+		for prompt := footer - 1; prompt >= start; prompt-- {
+			if strings.HasPrefix(strings.TrimSpace(lines[prompt]), "›") {
+				return prompt, footer
+			}
+		}
+	}
+	return -1, -1
+}
+
+func codexActiveStatusLine(line string) bool {
+	line = strings.TrimSpace(line)
+	return strings.HasPrefix(line, "• ") && strings.Contains(strings.ToLower(line), "esc to interrupt")
+}
+
+func codexConfirmationHint(line string) bool {
+	lower := strings.ToLower(line)
+	return strings.Contains(lower, "press enter to confirm") ||
+		strings.Contains(lower, "enter to select") ||
+		strings.Contains(lower, "esc to go back")
 }
 
 // codexComposerFrame excludes Codex's normal non-dim footer while retaining
@@ -75,12 +128,12 @@ func codexComposerFrame(output string) string {
 		start = 0
 	}
 	for footer := len(raw) - 1; footer >= start; footer-- {
-		plainFooter := strings.TrimSpace(codexTerminalEscape.ReplaceAllString(raw[footer], ""))
+		plainFooter := strings.TrimSpace(terminalui.PlainTerminalText(raw[footer]))
 		if !strings.Contains(plainFooter, " · ") {
 			continue
 		}
 		for prompt := footer - 1; prompt >= start; prompt-- {
-			plainPrompt := strings.TrimSpace(codexTerminalEscape.ReplaceAllString(raw[prompt], ""))
+			plainPrompt := strings.TrimSpace(terminalui.PlainTerminalText(raw[prompt]))
 			if strings.HasPrefix(plainPrompt, "›") {
 				return strings.Join(raw[prompt:footer], "\n")
 			}
@@ -101,8 +154,7 @@ func codexComposerState(state terminalui.ComposerState) ports.TerminalComposerSt
 }
 
 func terminalLines(output string) []string {
-	plain := codexTerminalEscape.ReplaceAllString(strings.ReplaceAll(output, "\r", "\n"), "")
-	raw := strings.Split(plain, "\n")
+	raw := terminalui.PlainTerminalLines(output)
 	lines := raw[:0]
 	for _, line := range raw {
 		line = strings.TrimSpace(line)

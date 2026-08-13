@@ -88,8 +88,9 @@ type Runtime interface {
 
 // StyledTerminalOutputReader is an optional runtime capability for safety
 // checks that must distinguish dim placeholder text from a human-authored
-// draft. Implementations return the same bounded pane excerpt as GetOutput but
-// preserve ANSI style sequences. Callers must fail closed when unavailable.
+// draft. Implementations return a bounded excerpt of the rendered current
+// viewport with ANSI cell styles preserved; raw terminal history is not valid
+// evidence for this contract. Callers must fail closed when unavailable.
 type StyledTerminalOutputReader interface {
 	GetStyledOutput(ctx context.Context, handle RuntimeHandle, lines int) (string, error)
 }

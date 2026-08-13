@@ -16,6 +16,23 @@ type styledRune struct {
 	dim   bool
 }
 
+// PlainTerminalText removes terminal control sequences while preserving the
+// visible text and line structure of a rendered capture. Provider adapters use
+// this when matching UI chrome; composer parsing below still retains SGR state.
+func PlainTerminalText(output string) string {
+	lines := styledTerminalLines(output)
+	plain := make([]string, len(lines))
+	for i, line := range lines {
+		plain[i] = styledString(line)
+	}
+	return strings.Join(plain, "\n")
+}
+
+// PlainTerminalLines is PlainTerminalText split into visible rows.
+func PlainTerminalLines(output string) []string {
+	return strings.Split(PlainTerminalText(output), "\n")
+}
+
 // ComposerState is a conservative interpretation of one current composer.
 // Unknown means the expected structure was incomplete or absent; it must not
 // be treated as empty by a caller making a destructive decision.

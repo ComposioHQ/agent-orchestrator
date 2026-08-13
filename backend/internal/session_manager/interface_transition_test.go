@@ -208,6 +208,10 @@ func (transitionSurfaceAgent) InspectTerminalSurface(output string) ports.Termin
 		return ports.TerminalSurfaceObservation{
 			Work: ports.TerminalSurfaceWorkIdle, Composer: ports.TerminalComposerDraft,
 		}
+	case activeDraftTerminalOutput:
+		return ports.TerminalSurfaceObservation{
+			Work: ports.TerminalSurfaceWorkActive, Composer: ports.TerminalComposerDraft,
+		}
 	case activeTerminalOutput:
 		return ports.TerminalSurfaceObservation{Work: ports.TerminalSurfaceWorkActive}
 	default:
@@ -218,17 +222,22 @@ func (transitionSurfaceAgent) InspectTerminalSurface(output string) ports.Termin
 type transitionSurfaceDetectorAgent struct{ transitionSurfaceAgent }
 
 func (transitionSurfaceDetectorAgent) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
-	if output == idleTerminalOutput {
+	if output == idleTerminalOutput || output == draftTerminalOutput {
 		return domain.ActivityIdle, true
 	}
 	return "", false
 }
 
+func (transitionSurfaceDetectorAgent) ComposerIsEmpty(output string) bool {
+	return output == idleTerminalOutput
+}
+
 const (
-	idleTerminalOutput      = "idle"
-	draftTerminalOutput     = "draft"
-	activeTerminalOutput    = "active"
-	ambiguousTerminalOutput = "ambiguous"
+	idleTerminalOutput        = "idle"
+	draftTerminalOutput       = "draft"
+	activeDraftTerminalOutput = "active-draft"
+	activeTerminalOutput      = "active"
+	ambiguousTerminalOutput   = "ambiguous"
 )
 
 type emptyTransitionAgent struct{ transitionAgent }
@@ -247,9 +256,9 @@ type transitionRuntime struct {
 	blockAliveUntilContextDone bool
 }
 
-// unstyledTransitionRuntime models runtimes such as ConPTY that cannot return
-// a current rendered screen with SGR styling. Embedding would promote the
-// optional styled capability, so delegate the required Runtime methods only.
+// unstyledTransitionRuntime models a legacy runtime that cannot return a
+// current rendered screen with SGR styling. Embedding would promote the optional
+// styled capability, so delegate the required Runtime methods only.
 type unstyledTransitionRuntime struct{ runtime *transitionRuntime }
 
 func (r *unstyledTransitionRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -563,9 +572,9 @@ func TestInterfaceTransitionTUIToChatDrainsAVisibleIdleComposerAfterNonSubmittin
 	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
 		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
 	}
-	if runtime.outputCalls < interfaceTransitionStaleIdleSamples {
+	if runtime.outputCalls < interfaceTransitionSurfaceIdleSamples {
 		t.Fatalf("terminal output calls = %d, want at least %d consecutive idle samples",
-			runtime.outputCalls, interfaceTransitionStaleIdleSamples)
+			runtime.outputCalls, interfaceTransitionSurfaceIdleSamples)
 	}
 	if firstCapture := runtime.outputCallTimes[0]; firstCapture.Before(now.Add(manager.interfaceTransition.idleSettle)) {
 		t.Fatalf("first terminal capture at %s, before input settled at %s",
@@ -612,6 +621,88 @@ func TestInterfaceTransitionTUIToChatPreservesAVisibleDraftEvenAfterFreshIdle(t 
 	case <-gate.released:
 	case <-time.After(time.Second):
 		t.Fatal("terminal input gate remained closed after draft detection")
+	}
+}
+
+func TestInterfaceTransitionTUIToChatPreservesDraftWhenSurfaceAlsoLooksActive(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: transitionSurfaceAgent{}}
+	now := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
+	store.sessions["session-1"] = rec
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.outputs = []string{activeDraftTerminalOutput}
+	gate := &transitionInputGate{
+		acquired: make(chan string, 1),
+		released: make(chan string, 1),
+	}
+	manager.SetTerminalInputGate(gate)
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "DRAIN_DRAFT_PRESENT" {
+		t.Fatalf("transition = %+v, want failed DRAIN_DRAFT_PRESENT", settled)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("source runtime destroyed %d times with a visible draft", runtime.destroyed)
+	}
+	select {
+	case <-gate.released:
+	case <-time.After(time.Second):
+		t.Fatal("terminal input gate remained closed after draft detection")
+	}
+}
+
+func TestInterfaceTransitionTUIToChatCanInterruptAfterDraftDrainFailure(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: transitionSurfaceAgent{}}
+	now := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	store.sessions["session-1"] = rec
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.outputs = []string{draftTerminalOutput}
+	manager.SetTerminalInputGate(&transitionInputGate{
+		acquired: make(chan string, 2), released: make(chan string, 2), lastInputAt: now,
+	})
+
+	drain, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := awaitTransition(t, store, drain.ID)
+	if failed.Phase != domain.SessionInterfaceTransitionFailed || failed.ErrorCode != "DRAIN_DRAFT_PRESENT" {
+		t.Fatalf("drain transition = %+v, want failed DRAIN_DRAFT_PRESENT", failed)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("source runtime destroyed %d times before explicit discard", runtime.destroyed)
+	}
+
+	recovery, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt)
+	if err != nil {
+		t.Fatalf("start interrupt recovery: %v", err)
+	}
+	settled := awaitTransition(t, store, recovery.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("interrupt recovery = %+v, want completed", settled)
+	}
+	if settled.Policy != domain.SessionInterfaceTransitionInterrupt {
+		t.Fatalf("recovery policy = %q, want interrupt", settled.Policy)
+	}
+	if runtime.destroyed != 1 {
+		t.Fatalf("source runtime destroyed %d times after explicit discard, want 1", runtime.destroyed)
+	}
+	if got := store.sessions["session-1"].Mode; got != domain.SessionModeChat {
+		t.Fatalf("session mode = %q, want chat", got)
 	}
 }
 
@@ -773,6 +864,35 @@ func TestInterfaceTransitionTUIToChatFallsBackWhenStyledOutputIsUnavailable(t *t
 				t.Fatalf("plain terminal captures = %d, want fresh durable idle to avoid capture", runtime.outputCalls)
 			}
 		})
+	}
+}
+
+func TestInterfaceTransitionTUIToChatUnstyledFallbackDoesNotApproveAnIdleDraft(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: transitionSurfaceDetectorAgent{}}
+	manager.runtime = &unstyledTransitionRuntime{runtime: runtime}
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.outputs = []string{draftTerminalOutput}
+	inputAt := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: inputAt.Add(-time.Minute)}
+	store.sessions["session-1"] = rec
+	manager.SetTerminalInputGate(&transitionInputGate{
+		acquired: make(chan string, 1), released: make(chan string, 1), lastInputAt: inputAt,
+	})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "DRAIN_QUIESCENCE_UNVERIFIED" {
+		t.Fatalf("transition = %+v, want failed DRAIN_QUIESCENCE_UNVERIFIED", settled)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("source runtime destroyed %d times with an unverified draft", runtime.destroyed)
 	}
 }
 
