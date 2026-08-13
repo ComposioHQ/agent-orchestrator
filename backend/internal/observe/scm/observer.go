@@ -146,6 +146,11 @@ type Config struct {
 	CacheMax int
 	// IdentityResolver resolves the active SCM account lazily. Nil preserves branch-based discovery.
 	IdentityResolver ports.SCMIdentityResolver
+	// ScopedIdentityResolver resolves the authenticated identity per provider key.
+	// When set, the observer resolves identities for all providers upfront in
+	// each poll and checks PR authors against the matching provider's identity.
+	// When nil, the observer falls back to IdentityResolver (single-provider).
+	ScopedIdentityResolver ports.ScopedIdentityResolver
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
@@ -219,6 +224,8 @@ type Observer struct {
 	disabled bool
 	// identityResolver is the explicitly wired source of the active SCM account.
 	identityResolver ports.SCMIdentityResolver
+	// scopedIdentityResolver resolves the authenticated identity per provider key.
+	scopedIdentityResolver ports.ScopedIdentityResolver
 	// rateLimitUntil records, per provider key, the time until which that
 	// provider's calls should be skipped. Set when a provider returns a
 	// rate-limit error so the observer applies a cooldown instead of polling
@@ -231,7 +238,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, identityResolver: cfg.IdentityResolver, Cache: newCache(cfg.CacheMax), rateLimitUntil: map[string]time.Time{}}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, identityResolver: cfg.IdentityResolver, scopedIdentityResolver: cfg.ScopedIdentityResolver, Cache: newCache(cfg.CacheMax), rateLimitUntil: map[string]time.Time{}}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -934,7 +941,11 @@ func pendingRepoRefreshes(guards map[string]repoGuardState) map[string]bool {
 // NotModified against a known ETag are skipped, since nothing new can have
 // appeared since the last poll.
 func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRepo, subjects map[string]*subject, guards map[string]repoGuardState, now time.Time, markRepoFailed func(ports.SCMRepo)) (listedPRs, listedRepos map[string]bool) {
-	identity, identityKnown := o.authenticatedIdentity(ctx)
+	// Resolve identities per-provider when a ScopedIdentityResolver is wired.
+	// This ensures GitHub PRs are checked against the GitHub identity and
+	// GitLab PRs against the GitLab identity. Falls back to the single-
+	// provider IdentityResolver path for backward compatibility.
+	identities, identityKnown := o.resolveIdentities(ctx, sessionRepos)
 	byRepo := map[string][]sessionRepo{}
 	repos := map[string]ports.SCMRepo{}
 	for _, sr := range sessionRepos {
@@ -983,8 +994,14 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			if pr.Number <= 0 || pr.SourceBranch == "" {
 				continue
 			}
-			if identityKnown && !strings.EqualFold(strings.TrimSpace(pr.Author), identity.Login) {
-				continue
+			if identityKnown {
+				id, ok := identities[repo.Provider]
+				if !ok {
+					id, ok = identities[""] // fallback single-identity
+				}
+				if ok && !strings.EqualFold(strings.TrimSpace(pr.Author), id.Login) {
+					continue
+				}
 			}
 			key := prKey(repo, pr.Number)
 			if _, ok := subjects[key]; ok {
@@ -1055,6 +1072,45 @@ func (o *Observer) authenticatedIdentity(ctx context.Context) (ports.SCMIdentity
 		return ports.SCMIdentity{}, false
 	}
 	return identity, true
+}
+
+// resolveIdentities resolves the authenticated identity for each provider key
+// present in sessionRepos. When a ScopedIdentityResolver is wired, identities
+// are resolved upfront (one call per provider) and cached in a map keyed by
+// provider key. If identity resolution fails for one provider, PRs from that
+// provider fall back to branch-based discovery while other providers continue
+// normally. When no ScopedIdentityResolver is available, it falls back to the
+// single-provider IdentityResolver path.
+func (o *Observer) resolveIdentities(ctx context.Context, sessionRepos []sessionRepo) (map[string]ports.SCMIdentity, bool) {
+	if o.scopedIdentityResolver != nil {
+		providers := map[string]bool{}
+		for _, sr := range sessionRepos {
+			providers[sr.repo.Provider] = true
+		}
+		identities := make(map[string]ports.SCMIdentity, len(providers))
+		anyKnown := false
+		for key := range providers {
+			id, err := o.scopedIdentityResolver.AuthenticatedIdentityForProvider(ctx, key)
+			if err != nil {
+				o.logger.Debug("scm observer: per-provider identity unavailable; preserving branch-based discovery for provider", "provider", key, "err", err)
+				continue
+			}
+			id.Login = strings.TrimSpace(id.Login)
+			if !id.Human || id.Login == "" {
+				o.logger.Debug("scm observer: per-provider human identity unavailable; preserving branch-based discovery for provider", "provider", key)
+				continue
+			}
+			identities[key] = id
+			anyKnown = true
+		}
+		return identities, anyKnown
+	}
+	// Fallback: single-provider IdentityResolver path.
+	identity, ok := o.authenticatedIdentity(ctx)
+	if !ok {
+		return nil, false
+	}
+	return map[string]ports.SCMIdentity{"": identity}, true
 }
 
 // matchSession picks the session that owns sourceBranch. A session owns the
