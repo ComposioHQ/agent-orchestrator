@@ -69,6 +69,7 @@ export function CloudNewSessionDialog({
       const name = prompt.trim().slice(0, 60) || "New session";
       await onCreate({ displayName: name, harness, prompt: prompt.trim(), model: model || undefined });
       reset();
+      onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Failed to create session.");
       setIsSubmitting(false);
@@ -182,7 +183,7 @@ export function CloudNewSessionDialog({
                 {isSubmitting ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
                 {isSubmitting ? "Starting…" : "Start"}
                 {!isSubmitting ? (
-                  <kbd className="inline-flex min-w-4 items-center justify-center font-mono text-[10px] leading-none opacity-75" aria-hidden="true">↵</kbd>
+                  <kbd className="inline-flex min-w-4 items-center justify-center font-mono text-base leading-none opacity-75" aria-hidden="true">↵</kbd>
                 ) : null}
               </button>
             </div>

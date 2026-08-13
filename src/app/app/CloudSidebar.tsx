@@ -113,7 +113,7 @@ export function CloudSidebar({
         <button
           type="button"
           aria-label="Search"
-          className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-lg bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)] px-2.5 text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+          className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-lg bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)] px-2.5 text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[color-mix(in_oklch,var(--foreground)_8%,transparent)] hover:text-[var(--foreground)]"
           onClick={onOpenCommand}
         >
           <Search className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
@@ -205,7 +205,7 @@ export function CloudSidebar({
               <ContextMenuTrigger asChild>
               <div
                 className={`group relative flex items-center rounded-lg transition-colors hover:bg-[var(--color-interactive-hover)] ${
-                  selectedProjectId === project.id
+                  selectedProjectId === project.id && !selectedSessionId
                     ? "bg-[var(--color-interactive-active)]"
                     : ""
                 }`}
@@ -216,7 +216,7 @@ export function CloudSidebar({
                   whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
                   transition={{ duration: 0.06, ease: "easeOut" }}
                   className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 pr-8 text-left text-sm font-medium ${
-                    selectedProjectId === project.id
+                    selectedProjectId === project.id && !selectedSessionId
                       ? "text-[var(--foreground)]"
                       : "text-[var(--muted-foreground)]"
                   }`}
@@ -247,10 +247,10 @@ export function CloudSidebar({
                   <DropdownMenuPrimitive.Trigger asChild>
                     <button
                       aria-label={`Actions for ${project.displayName}`}
-                      className="absolute right-1.5 z-10 grid size-6 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] opacity-0 hover:text-[var(--foreground)] focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                      className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,margin,opacity,color] group-hover:mr-1.5 group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] focus-visible:w-5 focus-visible:opacity-100 data-[state=open]:mr-1.5 data-[state=open]:w-5 data-[state=open]:opacity-100 [&_svg]:size-3"
                       type="button"
                     >
-                      <MoreHorizontal className="size-3.5" aria-hidden="true" />
+                      <MoreHorizontal aria-hidden="true" />
                     </button>
                   </DropdownMenuPrimitive.Trigger>
                   <DropdownMenuPrimitive.Portal>
@@ -302,7 +302,7 @@ export function CloudSidebar({
                       exit={{ y: -12, opacity: 0 }}
                       transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
                     >
-                      <div className="ml-3.5 py-1">
+                      <div className="ml-3.5 flex flex-col gap-px py-1">
                         {projectSessions.map((session) => (
                           <div
                             className={`group/session flex h-8 w-full items-center rounded-lg transition-colors hover:bg-[var(--color-interactive-hover)] ${
@@ -367,7 +367,7 @@ export function CloudSidebar({
             <div className="flex h-8 shrink-0 items-center gap-2 px-2 text-sm font-medium text-[var(--color-text-passive)]">
               <span className="min-w-0 flex-1 truncate">Agents</span>
             </div>
-            <div className="space-y-0.5">
+            <div className="flex flex-col gap-px">
               {standaloneRows.map(({ project, session }) => (
                 <motion.div
                   whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}

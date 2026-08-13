@@ -102,7 +102,8 @@ export function CloudWorkspaceSwitcher({
         aria-expanded={open}
         whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
         transition={{ duration: 0.06, ease: "easeOut" }}
-        className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)] px-2.5 text-left text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none"
+        data-state={open ? "open" : "closed"}
+        className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)] px-2.5 text-left text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[color-mix(in_oklch,var(--foreground)_8%,transparent)] hover:text-[var(--foreground)] data-[state=open]:bg-[color-mix(in_oklch,var(--foreground)_8%,transparent)] data-[state=open]:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none"
         onClick={() => setOpen((current) => !current)}
       >
         {selectedWorkspace ? (

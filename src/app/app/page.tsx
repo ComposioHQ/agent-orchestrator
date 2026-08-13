@@ -11,7 +11,15 @@ import {
   type Session,
   type UpdateProjectInput,
 } from "@aoagents/cloud-client";
-import { Menu, Search, X } from "lucide-react";
+import { Folder, Menu, Plus, Search, Settings, X } from "lucide-react";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
@@ -832,39 +840,47 @@ export function CloudWorkspace() {
           providers={providers}
           selectedOrganizationId={organizationId}
       />
-      {commandOpen ? (
-        <CloudSearch
-          onClose={() => setCommandOpen(false)}
-          onSelectProject={(id) => {
-            setSelectedProjectId(id);
-            setSelectedSessionId(null);
-            setCommandOpen(false);
-          }}
-          onSelectSession={(id) => {
-            const session = sessions.find((item) => item.id === id);
-            if (session) setSelectedProjectId(session.projectId);
-            setSelectedSessionId(id);
-            setCommandOpen(false);
-          }}
-          projects={projects}
-          sessions={sessions}
-        />
-      ) : null}
-      {newProjectOpen ? (
-        <NewProjectDialog
-          github={github}
-          githubUser={githubUser}
-          onClose={() => setNewProjectOpen(false)}
-          onCreateFromGitHub={createProjectFromGitHub}
-          onCreateScratchProject={createScratchProject}
-          onCreateStandalone={(input) => createScratchWork(input, "worker")}
-          onOpenProviderSettings={() => {
-            setNewProjectOpen(false);
-            setSettingsTarget("providers");
-            setSettingsOpen(true);
-          }}
-        />
-      ) : null}
+      <CloudSearch
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        onSelectProject={(id) => {
+          setSelectedProjectId(id);
+          setSelectedSessionId(null);
+          setCommandOpen(false);
+        }}
+        onSelectSession={(id) => {
+          const session = sessions.find((item) => item.id === id);
+          if (session) setSelectedProjectId(session.projectId);
+          setSelectedSessionId(id);
+          setCommandOpen(false);
+        }}
+        onNewProject={() => {
+          setCommandOpen(false);
+          setNewProjectOpen(true);
+        }}
+        onOpenSettings={() => {
+          setCommandOpen(false);
+          setSettingsTarget("general");
+          setSettingsOpen(true);
+        }}
+        projects={projects}
+        sessions={sessions}
+      />
+      <NewProjectDialog
+        connectedProviders={providers.status === "available" ? providers.connections.map((c) => c.provider) : []}
+        github={github}
+        githubUser={githubUser}
+        onClose={() => setNewProjectOpen(false)}
+        onCreateFromGitHub={createProjectFromGitHub}
+        onCreateScratchProject={createScratchProject}
+        onCreateStandalone={(input) => createScratchWork(input, "worker")}
+        onOpenProviderSettings={() => {
+          setNewProjectOpen(false);
+          setSettingsTarget("providers");
+          setSettingsOpen(true);
+        }}
+        open={newProjectOpen}
+      />
       <CloudNewSessionDialog
         open={newSessionProjectId !== null}
         projectName={projects.find((p) => p.id === newSessionProjectId)?.displayName ?? ""}
@@ -920,113 +936,84 @@ function LoadingState({
 }
 
 function CloudSearch({
-  onClose,
+  open,
+  onOpenChange,
   onSelectProject,
   onSelectSession,
+  onNewProject,
+  onOpenSettings,
   projects,
   sessions,
 }: {
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onSelectProject: (id: string) => void;
   onSelectSession: (id: string) => void;
+  onNewProject: () => void;
+  onOpenSettings: () => void;
   projects: Project[];
   sessions: Session[];
 }) {
-  const [query, setQuery] = useState("");
-  const normalized = query.trim().toLowerCase();
-  const filteredProjects = projects.filter(
-    (project) =>
-      !isStandaloneProject(project) &&
-      `${project.displayName} ${project.repositoryUrl}`
-        .toLowerCase()
-        .includes(normalized),
-  );
-  const filteredSessions = sessions.filter(({ displayName, branch }) =>
-    `${displayName} ${branch}`.toLowerCase().includes(normalized),
-  );
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/55 px-4 pt-[14vh]"
-      onMouseDown={(event) => {
-        if (event.currentTarget === event.target) onClose();
-      }}
-    >
-      <section
-        aria-label="Search workspace"
-        aria-modal="true"
-        className="w-full max-w-[680px] overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-2xl"
-        role="dialog"
-      >
-        <div className="flex items-center gap-3 border-b border-[var(--color-border-strong)] px-4 py-3">
-          <Search className="size-4 text-[var(--color-text-passive)]" />
-          <input
-            aria-label="Search"
-            autoFocus
-            className="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-text-passive)]"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search projects and sessions…"
-            value={query}
-          />
-          <button aria-label="Close search" onClick={onClose} type="button">
-            <X className="size-4 text-[var(--color-text-passive)]" />
-          </button>
-        </div>
-        <div className="max-h-[50vh] overflow-y-auto p-2">
-          {[...filteredProjects, ...filteredSessions].length === 0 ? (
-            <p className="p-6 text-center text-xs text-[var(--color-text-passive)]">
-              No matching projects or sessions.
-            </p>
-          ) : null}
-          {filteredProjects.map((project) => (
-            <SearchResult
-              detail={project.repositoryUrl}
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
+      <CommandInput placeholder="Search projects, sessions, and commands…" />
+      <CommandList>
+        <CommandEmpty>No results found.</CommandEmpty>
+        <CommandGroup heading="Projects">
+          {projects.filter((p) => !isStandaloneProject(p)).map((project) => (
+            <CommandItem
               key={project.id}
-              label={project.displayName}
-              onClick={() => onSelectProject(project.id)}
-              type="Project"
-            />
+              value={`project ${project.displayName} ${project.repositoryUrl}`}
+              onSelect={() => onSelectProject(project.id)}
+            >
+              <Folder className="size-3.5" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
+              <span className="max-w-[45%] truncate text-xs text-[var(--color-text-passive)]">
+                {project.repositoryUrl}
+              </span>
+            </CommandItem>
           ))}
-          {filteredSessions.map((session) => (
-            <SearchResult
-              detail={session.branch}
-              key={session.id}
-              label={session.displayName}
-              onClick={() => onSelectSession(session.id)}
-              type="Session"
-            />
-          ))}
-        </div>
-      </section>
-    </div>
+        </CommandGroup>
+        {sessions.length > 0 ? (
+          <CommandGroup heading="Sessions">
+            {sessions.map((session) => (
+              <CommandItem
+                key={session.id}
+                value={`session ${session.displayName} ${session.branch}`}
+                onSelect={() => onSelectSession(session.id)}
+              >
+                <span
+                  className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate">{session.displayName}</span>
+                <span className="max-w-[45%] truncate text-xs text-[var(--color-text-passive)]">
+                  {session.branch}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ) : null}
+        <CommandGroup heading="Actions">
+          <CommandItem value="new project create" onSelect={onNewProject}>
+            <Plus className="size-3.5" aria-hidden="true" />
+            New project
+          </CommandItem>
+          <CommandItem value="settings preferences" onSelect={onOpenSettings}>
+            <Settings className="size-3.5" aria-hidden="true" />
+            Settings
+          </CommandItem>
+        </CommandGroup>
+      </CommandList>
+    </CommandDialog>
   );
 }
 
-function SearchResult({
-  detail,
-  label,
-  onClick,
-  type,
-}: {
-  detail: string;
-  label: string;
-  onClick: () => void;
-  type: string;
-}) {
-  return (
-    <button
-      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-[var(--color-interactive-hover)]"
-      onClick={onClick}
-      type="button"
-    >
-      <span className="w-14 shrink-0 font-mono text-[9px] uppercase tracking-wider text-[var(--color-text-passive)]">
-        {type}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-      <span className="max-w-[45%] truncate text-xs text-[var(--color-text-passive)]">
-        {detail}
-      </span>
-    </button>
-  );
+function activityDot(activity: Session["activityState"]): string {
+  if (activity === "active") return "bg-status-working";
+  if (activity === "waiting_input" || activity === "blocked") return "bg-status-needs-you";
+  if (activity === "exited") return "bg-status-exited";
+  return "bg-status-idle";
 }
 
 function handleLoadError(
