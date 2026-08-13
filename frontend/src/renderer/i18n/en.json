@@ -191,7 +191,7 @@
 	"inspector.aria": "Session inspector",
 	"inspector.branch": "Branch",
 	"inspector.ci.autoInject": "Automatically send CI failures",
-	"inspector.ci.autoInjectDescription": "When disabled, CI failures are not sent to the worker agent to fix.",
+	"inspector.ci.autoInjectDescription": "Sets the default for newly created pull requests. When disabled, CI failures are not sent to the worker agent to fix.",
 	"inspector.ci.autoInjectError": "Unable to update automatic CI injection ({{status}})",
 	"inspector.ci.notInjected": "CI failures not injected",
 	"inspector.browser": "Browser",
