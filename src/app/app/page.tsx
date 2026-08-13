@@ -787,7 +787,7 @@ export function CloudWorkspace() {
           onCloseMobile={() => setMobileNavOpen(false)}
           parity={previewUi}
         />
-        <CloudMainShell parity={previewUi}>
+        <CloudMainShell parity={previewUi} sidebarCollapsed={sidebarCollapsed}>
           {selectedSession ? (
             <CloudSessionWorkspace
               onClose={() => setSelectedSessionId(null)}

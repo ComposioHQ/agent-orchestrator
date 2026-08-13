@@ -141,8 +141,8 @@ export function CloudSessionWorkspace({
   }, [tab, directory]);
 
   return (
-    <div className={`grid min-h-0 flex-1 transition-[grid-template-columns] duration-200 ease-out ${inspectorOpen ? "grid-cols-[minmax(0,1fr)_minmax(320px,38%)]" : "grid-cols-[minmax(0,1fr)_0px]"}`}>
-      <section className="flex min-h-0 min-w-0 flex-col bg-[var(--color-bg-terminal-opaque)]">
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-bg-terminal-opaque)]">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] pl-1.5 pr-2.5">
           {onToggleSidebar ? (
             <button
@@ -158,14 +158,6 @@ export function CloudSessionWorkspace({
               )}
             </button>
           ) : null}
-          <button
-            aria-label="Back to project"
-            className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-            onClick={onClose}
-            type="button"
-          >
-            <ChevronLeft className="size-4" />
-          </button>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-semibold leading-none tracking-[-0.02em]">
               {session.displayName}
@@ -240,7 +232,10 @@ export function CloudSessionWorkspace({
         )}
       </section>
 
-      <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)]">
+      <aside
+        className="flex min-h-0 flex-col overflow-hidden border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] transition-[width] duration-200 ease-out"
+        style={{ width: inspectorOpen ? "38%" : 0, minWidth: inspectorOpen ? 320 : 0 }}
+      >
         <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
           <InspectorButton
             active={tab === "changes"}
