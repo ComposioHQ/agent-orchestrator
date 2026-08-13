@@ -133,6 +133,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
+	const terminalLiveResizeTimerRef = useRef<number | null>(null);
 	const initializedInspectorSessionIdRef = useRef<string | null>(null);
 	const [inspectorMinimumSize, setInspectorMinimumSize] = useState("0%");
 	const [inspectorMotionState, setInspectorMotionState] = useState<"closed" | "closing" | "open" | "opening">(
@@ -145,6 +146,27 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
+	const stopTerminalLiveResize = useCallback(() => {
+		if (terminalLiveResizeTimerRef.current !== null) {
+			window.clearTimeout(terminalLiveResizeTimerRef.current);
+			terminalLiveResizeTimerRef.current = null;
+		}
+		sessionSplitRef.current?.removeAttribute("data-terminal-live-resize");
+	}, []);
+	const startTerminalLiveResize = useCallback(() => {
+		const split = sessionSplitRef.current;
+		if (!split) return;
+		if (terminalLiveResizeTimerRef.current !== null) {
+			window.clearTimeout(terminalLiveResizeTimerRef.current);
+		}
+		split.setAttribute("data-terminal-live-resize", "true");
+		terminalLiveResizeTimerRef.current = window.setTimeout(() => {
+			split.removeAttribute("data-terminal-live-resize");
+			terminalLiveResizeTimerRef.current = null;
+		}, INSPECTOR_MOTION_MS);
+	}, []);
+
+	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
 	useLayoutEffect(() => {
 		const element = sessionSplitRef.current;
@@ -632,18 +654,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useLayoutEffect(() => {
 		if (!hasInspector) {
 			setInspectorMotionState("closed");
+			stopTerminalLiveResize();
 			return;
 		}
 		if (!inspectorImperativeReadyRef.current) {
 			setInspectorMotionState(isInspectorOpen ? "open" : "closed");
 		}
-	}, [hasInspector, isInspectorOpen]);
+	}, [hasInspector, isInspectorOpen, stopTerminalLiveResize]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorImperativeReadyRef.current) return;
 		const panel = inspectorRef.current;
 		if (!panel) return;
 		if (isInspectorOpen) {
 			setInspectorMotionState("opening");
+			startTerminalLiveResize();
 			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
 			panel.resize(initialInspectorSize(Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX)));
 			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
@@ -656,6 +680,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		// next frame, when the fresh constraints have landed; collapse() is
 		// idempotent, so the double call is safe wherever the derivation lands.
 		setInspectorMotionState("closing");
+		startTerminalLiveResize();
 		panel.collapse();
 		const frame = window.requestAnimationFrame(() => panel.collapse());
 		const timer = window.setTimeout(() => setInspectorMotionState("closed"), INSPECTOR_MOTION_MS);
@@ -663,7 +688,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			window.clearTimeout(timer);
 			window.cancelAnimationFrame(frame);
 		};
-	}, [hasInspector, isInspectorOpen]);
+	}, [hasInspector, isInspectorOpen, startTerminalLiveResize]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorRef.current) {
 			inspectorImperativeReadyRef.current = false;

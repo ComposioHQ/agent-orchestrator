@@ -344,7 +344,15 @@ vi.mock("../hooks/useShellTerminals", () => ({
 // produce meaningful sizes — record the props SessionView passes and expose a
 // fake imperative handle per panel instead.
 vi.mock("./ui/resizable", () => ({
-	ResizablePanelGroup: ({ children, elementRef }: { children?: ReactNode; elementRef?: Ref<HTMLDivElement | null> }) => (
+	ResizablePanelGroup: ({
+		children,
+		elementRef,
+		...rest
+	}: {
+		children?: ReactNode;
+		elementRef?: Ref<HTMLDivElement | null>;
+		[key: string]: unknown;
+	}) => (
 		<div
 			data-testid="panel-group"
 			ref={(element) => {
@@ -352,6 +360,7 @@ vi.mock("./ui/resizable", () => ({
 					(elementRef as { current: HTMLDivElement | null }).current = element;
 				}
 			}}
+			{...rest}
 		>
 			{children}
 		</div>
@@ -983,6 +992,24 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-1")).toBe(false);
 		expect(handle.collapse).toHaveBeenCalledTimes(1);
 		expect(handle.expand).not.toHaveBeenCalled();
+	});
+
+	it("marks the split for live terminal fitting throughout the inspector transition", () => {
+		vi.useFakeTimers();
+		try {
+			render(<SessionView sessionId="sess-1" />);
+
+			fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
+			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-terminal-live-resize", "true");
+
+			act(() => vi.advanceTimersByTime(239));
+			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-terminal-live-resize", "true");
+
+			act(() => vi.advanceTimersByTime(1));
+			expect(screen.getByTestId("panel-group")).not.toHaveAttribute("data-terminal-live-resize");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("keeps StrictMode mount imperative-free and expands on the first user toggle", () => {
