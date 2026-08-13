@@ -52,38 +52,54 @@ func (s *Service) trackerIDForIssue(cfg ports.SpawnConfig, project domain.Projec
 	if err != nil || n <= 0 {
 		return domain.TrackerID{}, false
 	}
-	provider, repo, ok := s.repoForTracker(project, cfg.TrackerProvider)
+	provider, host, repo, ok := s.repoForTracker(project, cfg.TrackerProvider)
 	if !ok {
 		return domain.TrackerID{}, false
 	}
-	return domain.TrackerID{Provider: provider, Native: fmt.Sprintf("%s#%d", repo, n)}, true
+	return domain.TrackerID{Provider: provider, Native: fmt.Sprintf("%s#%d", repo, n), Host: host}, true
 }
 
-func (s *Service) repoForTracker(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) (domain.TrackerProvider, string, bool) {
+func (s *Service) repoForTracker(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) (domain.TrackerProvider, string, string, bool) {
 	if s.scm != nil {
 		repo, ok := s.scm.ParseRepository(project.RepoOriginURL)
 		if ok && repo.Provider != "" && repo.Repo != "" {
 			// SCM classified the origin (e.g. "github" or "gitlab"). Use the
 			// resolved provider so the multi-tracker dispatches to the
-			// correct adapter. The previous implementation returned false for
-			// non-GitHub providers; now we return the provider so GitLab
-			// projects construct a GitLab tracker ID.
-			return domain.TrackerProvider(repo.Provider), repo.Repo, true
+			// correct adapter. The host is resolved from the SCM origin so
+			// self-managed GitLab instances route correctly; gitlab.com and
+			// GitHub always produce "" (zero value).
+			return domain.TrackerProvider(repo.Provider), normalizeTrackerHost(repo.Provider, repo.Host), repo.Repo, true
 		}
 		// SCM could not classify the origin (ok == false), or classified it
 		// with an empty repo; fall through to the URL-based heuristic below.
 	}
 	// SCM not available or couldn't resolve — use the tracker-provider hint
 	// from the CLI flag (defaults to "github" for backward compat).
-	_, owner, repo, err := repoFromURL(project.RepoOriginURL)
+	host, owner, repo, err := repoFromURL(project.RepoOriginURL)
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	provider := fallbackProvider
 	if provider == "" {
 		provider = domain.TrackerProviderGitHub
 	}
-	return provider, owner + "/" + repo, true
+	return provider, normalizeTrackerHost(string(provider), host), owner + "/" + repo, true
+}
+
+// normalizeTrackerHost returns the host to set on a TrackerID/TrackerRepo.
+// For GitHub, the host is always "" — GitHub tracker IDs don't use Host.
+// For GitLab, "gitlab.com" and "www.gitlab.com" normalize to "" (the zero
+// value meaning gitlab.com) so that callers don't need to special-case the
+// default host. Self-managed hosts pass through unchanged.
+func normalizeTrackerHost(provider, host string) string {
+	if provider != string(domain.TrackerProviderGitLab) {
+		return ""
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "gitlab.com" || host == "www.gitlab.com" {
+		return ""
+	}
+	return host
 }
 
 func canonicalGitHubIssueNative(raw string) (string, bool) {
