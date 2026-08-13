@@ -112,7 +112,7 @@ describe("SessionsBoardView", () => {
 		expect(onOpen).toHaveBeenCalledOnce();
 	});
 
-	it("wraps card metrics below the status before the labels can collide", () => {
+	it("truncates the status before card metrics can collide", () => {
 		render(
 			<SessionCardView
 				externalLink={ExternalLink}
@@ -131,10 +131,13 @@ describe("SessionsBoardView", () => {
 			/>,
 		);
 
-		const status = screen.getByText("Review pending");
-		const metadataRow = status.parentElement;
-		expect(status).toHaveClass("shrink-0");
-		expect(metadataRow).toHaveClass("flex-wrap", "gap-x-2", "gap-y-1");
+		const statusLabel = screen.getByText("Review pending");
+		const status = statusLabel.parentElement;
+		const metadataRow = status?.parentElement;
+		expect(statusLabel).toHaveClass("min-w-0", "truncate");
+		expect(status).toHaveClass("min-w-0", "flex-1");
+		expect(metadataRow).toHaveClass("flex", "items-center", "gap-2");
+		expect(metadataRow).not.toHaveClass("flex-wrap");
 		expect(screen.getByText("24.6M tok").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
 	});
 

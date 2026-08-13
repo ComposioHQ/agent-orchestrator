@@ -43,7 +43,7 @@ test("renderer: SSE pushes card updates without a manual refresh @T0 @BRD", asyn
 	await expect(page.locator(columnCard("merge", "live"))).toContainText("Ready");
 });
 
-test("renderer: narrow card metadata wraps without clipping the status @BRD", async ({ page }) => {
+test("renderer: narrow card status truncates without overlapping metadata @BRD", async ({ page }) => {
 	await installFakeAgent(page, {
 		workers: [{ id: "review", title: "Review worker", status: "review_pending", activity: "idle" }],
 	});
@@ -70,12 +70,17 @@ test("renderer: narrow card metadata wraps without clipping the status @BRD", as
 	const statusMetrics = await status.evaluate((element) => ({
 		clientWidth: element.clientWidth,
 		scrollWidth: element.scrollWidth,
+		overflow: getComputedStyle(element).overflow,
+		textOverflow: getComputedStyle(element).textOverflow,
+		whiteSpace: getComputedStyle(element).whiteSpace,
 	}));
 	const statusBox = await status.boundingBox();
 	const usageBox = await usage.boundingBox();
 
-	expect(statusMetrics.scrollWidth).toBeLessThanOrEqual(statusMetrics.clientWidth);
+	expect(statusMetrics.scrollWidth).toBeGreaterThan(statusMetrics.clientWidth);
+	expect(statusMetrics).toMatchObject({ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
 	expect(statusBox).not.toBeNull();
 	expect(usageBox).not.toBeNull();
-	expect(usageBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height);
+	expect(Math.abs(usageBox!.y - statusBox!.y)).toBeLessThan(2);
+	expect(statusBox!.x + statusBox!.width).toBeLessThanOrEqual(usageBox!.x);
 });
