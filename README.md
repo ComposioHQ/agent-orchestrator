@@ -3,7 +3,7 @@
 
 ### Agent Orchestrator
 
-#### Run coding agents in parallel—with as much orchestration as you want.
+#### Plan, run, and supervise coding agents from one place.
 
 [![GitHub stars](https://img.shields.io/github/stars/Untrivial-ai/agent-orchestrator?style=flat&logo=github)](https://github.com/Untrivial-ai/agent-orchestrator/stargazers)
 ![Top 6k repositories](https://img.shields.io/badge/Top%206k%20repositories-181717?style=flat&logo=github&logoColor=white)
@@ -13,9 +13,9 @@
 [![X](https://img.shields.io/badge/@aoagents-555?style=flat&logo=x&logoColor=white)](https://x.com/aoagents)
 [![Discord](https://img.shields.io/badge/Discord-555?style=flat&logo=discord&logoColor=white)](https://discord.com/invite/UZv7JjxbwG)
 
-Start focused workers directly, or use a project-aware orchestrator to brainstorm, plan, and delegate.<br />
-AO isolates every coding agent and turns live task, pull request, CI, and review state<br />
-into one attention-first Kanban.
+Give every coding task its own agent, workspace, and feedback loop.<br />
+Plan and delegate larger outcomes with a project-aware orchestrator.<br />
+Follow every worker, pull request, CI run, and review in a live Kanban.
 
 [**Download AO**](#install) &nbsp;&bull;&nbsp; [Documentation](https://aoagents.dev/docs) &nbsp;&bull;&nbsp; [Releases](https://github.com/Untrivial-ai/agent-orchestrator/releases) &nbsp;&bull;&nbsp; [Contributing](CONTRIBUTING.md) &nbsp;&bull;&nbsp; [Discord](https://discord.com/invite/UZv7JjxbwG)
 
@@ -26,50 +26,48 @@ into one attention-first Kanban.
 <img src="docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban showing worker sessions grouped by live status" width="100%" />
 </div>
 
-## One control plane for parallel agent work
+## A workspace for agent-driven development
 
-Coding agents make implementation faster, but running more of them moves the bottleneck: now someone has to split the work, give each agent context, prevent branch collisions, notice failures, follow up on reviews, and remember what is ready to merge.
+One coding agent can handle a task. Running several across a project creates a different job: deciding what matters, splitting work cleanly, giving each agent the right context, preventing branch collisions, and following every change through review and merge.
 
-AO puts that entire loop in one local control plane. It does not require an orchestrator: start a worker directly, choose its agent and model, and give it a focused task. AO creates the isolated workspace, keeps the agent interface and code changes together, watches activity and pull request state, and surfaces what happens next.
+AO is a local desktop workspace built for that job. Add a repository and create a worker session with the coding agent, model, and interface that fit the task. For Git-backed work, AO gives the worker its own branch and worktree. The task, conversation, terminal, changed files, browser preview, pull request, CI, and review state stay attached to that session from start to finish.
 
-For larger or less-defined work, open the project's orchestrator. It adds a planning and coordination layer without taking away direct control.
+Behind the desktop app, AO's local daemon watches agent activity and source-control state. The result is a shared, live view of the project instead of a collection of disconnected terminals, branches, and browser tabs.
 
-### Start a worker directly
+## Workers execute focused tasks
 
-Use **New task** when you already know what needs to be done. Pick the coding agent, model, and interface for that task; attach relevant files; then work with the agent in structured Chat or its native terminal UI. Direct workers get the same isolation, Kanban visibility, PR tracking, feedback loops, reviews, and browser tools as orchestrator-created workers.
+A worker is AO's unit of execution: one task, one coding agent, and one isolated workspace. Use **New task** when the work is already clear. Describe the outcome, choose an agent and model, attach relevant files, and work with the agent in structured Chat or its native terminal UI.
 
-### Think with a project orchestrator
+Open a worker at any time to continue the conversation, attach to its terminal, inspect its changes, use its isolated browser, review its pull request, or send CI and review feedback back to the same agent. This makes each task independently understandable and keeps parallel work from collapsing into one shared context.
 
-The orchestrator is a dedicated, human-facing agent for the project. Use it before implementation to explore the repository, brainstorm product and technical directions, reason through tradeoffs, identify high-impact work, and turn an ambiguous goal into an executable plan.
+## The orchestrator plans across the project
 
-Its conversation is durable and project-scoped, so it preserves goals, decisions, constraints, and earlier tradeoffs instead of starting from zero every time. It combines that planning memory with repository context and live AO state—active workers, task ownership, pull requests, CI, and reviews. Together, that gives it the complete planning context for the project: what you are trying to achieve, why earlier choices were made, what is already underway, and what remains highest-impact.
+The project orchestrator is AO's persistent planning and coordination agent. It works at the level above individual tasks: the product direction, technical strategy, priorities, and sequence of work across the repository.
 
-When the plan is ready, the same orchestrator can break it into owned tasks, spawn or redirect isolated workers, send follow-up context, monitor their PR and review state, and summarize progress or blockers. It coordinates the work; workers own implementation, tests, commits, and pull requests.
+Use the orchestrator to explore an idea before implementation, brainstorm product and technical approaches, reason through tradeoffs, identify high-impact work, and turn an ambiguous outcome into a concrete plan. Its project-scoped conversation preserves goals, decisions, constraints, and earlier reasoning. It combines that planning history with repository context and live AO state—active workers, ownership, pull requests, CI, and reviews—so planning stays grounded in both the project and the work already underway.
 
-### Stay hands-on at any level
+When a plan becomes actionable, the orchestrator can break it into focused tasks, spawn or redirect workers, pass each worker the relevant context, follow their progress, and coordinate follow-up work. The orchestrator owns planning and delegation; workers own implementation, tests, commits, and pull requests.
 
-AO does not hide the underlying agents. Open any session to continue the conversation, attach to its terminal, inspect changed files and pull request state, run an agent review, or work beside its isolated browser preview. Use the orchestrator for project-level thinking, workers for execution, and the Kanban to supervise both direct and delegated work.
+## The Kanban keeps the system legible
 
-## A Kanban for live agent work
-
-AO's Kanban is the operational view of your agent team, not a manually maintained backlog. Cards move automatically from durable session and pull request facts, so the board answers the question that matters when several agents are running: **where do I need to look?**
+Every worker appears on the same live board, whether you started it from **New task** or the orchestrator delegated it. AO derives each card's position from session, pull request, CI, and review facts, turning the Kanban into an operational view of the project:
 
 - **Working** — workers that are actively implementing or ready for another instruction
 - **Needs you** — blocked sessions, missing input, failed CI, requested changes, or lost signals
 - **In review** — open and draft pull requests waiting on checks or review
 - **Ready to merge** — approved or mergeable work, with merged sessions kept visible until they are archived
 
-Each card keeps the task, agent, branch, activity, pull request, and status together. Open it to inspect the conversation or terminal, changed files, PR summary, reviews, and preview without reconstructing context across tabs.
+Each card keeps the task, agent, branch, activity, pull request, and status together. Open it to inspect the conversation or terminal, changed files, PR summary, reviews, and preview. The board shows what is moving, what is blocked, and where your attention will have the most impact.
 
-## From task to merge
+## One workflow, from idea to merge
 
-1. **Choose how to start.** Launch a bounded worker directly, or brainstorm and plan a larger outcome with the project orchestrator before it delegates.
-2. **Work in isolation.** Every Git-backed worker gets its own branch and worktree; Scratch workers get AO-managed branchless directories.
-3. **Follow live state.** The local daemon watches agent activity, pull requests, CI, review feedback, and merge conflicts. The Kanban updates from those facts.
-4. **Inspect or intervene.** Open the worker's Chat or terminal, changed files, PR summary, agent reviews, and browser preview whenever hands-on context is useful.
-5. **Close the loop.** AO can send actionable failures and review feedback back to the responsible worker. You step in for decisions and work that is ready to merge.
+1. **Start at the right level.** Give a clear task directly to a worker, or develop a larger outcome with the project orchestrator and let it shape the plan.
+2. **Delegate focused work.** Start workers yourself or have the orchestrator create them with the context and ownership they need.
+3. **Build in isolation.** Every Git-backed worker gets its own branch and worktree; Scratch workers get AO-managed branchless directories.
+4. **Supervise live state.** AO follows agent activity, pull requests, CI, review feedback, and merge conflicts, then reflects those facts on the Kanban.
+5. **Close the feedback loop.** Inspect any worker directly, make project-level decisions with the orchestrator, and return actionable failures or review comments to the agent that owns the work.
 
-AO is local and supervisory. It does not replace your coding agents, source control, or code review, and it does not pretend that every decision should be automated. It gives agents the environment to work independently and gives you the leverage to supervise the system as a whole.
+AO works with the coding agents and source-control workflow you already use. Agents keep their native strengths; AO supplies the project context, isolated execution, coordination, and operational view that make them work as a system.
 
 ## Product highlights
 
