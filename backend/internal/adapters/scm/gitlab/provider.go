@@ -266,16 +266,39 @@ func (p *Provider) AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity
 }
 
 // SCMCredentialsAvailable reports whether usable GitLab credentials exist.
+// It checks the default token source first, then falls back to per-host
+// token sources (AO_GITLAB_HOST_TOKENS). If any token source (default or
+// host-specific) is usable, it returns true. This ensures the observer is
+// not disabled when a user configures only self-managed host tokens without
+// a default token.
 func (p *Provider) SCMCredentialsAvailable(ctx context.Context) (bool, error) {
-	if p.client == nil || p.client.tokens == nil {
-		return true, nil
+	// Check the default token source first.
+	if p.client != nil && p.client.tokens != nil {
+		_, err := p.client.tokens.Token(ctx)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, ErrNoToken) {
+			return false, err
+		}
 	}
-	_, err := p.client.tokens.Token(ctx)
-	if err == nil {
-		return true, nil
+
+	// Default token is not available — check per-host tokens.
+	for _, src := range p.hostTokens {
+		if src == nil {
+			continue
+		}
+		_, err := src.Token(ctx)
+		if err == nil {
+			return true, nil
+		}
+		// If a host token source returns a non-ErrNoToken error (e.g. glab
+		// command failed), propagate it so the caller knows credentials exist
+		// but are misconfigured.
+		if !errors.Is(err, ErrNoToken) {
+			return false, err
+		}
 	}
-	if errors.Is(err, ErrNoToken) {
-		return false, nil
-	}
-	return false, err
+
+	return false, nil
 }

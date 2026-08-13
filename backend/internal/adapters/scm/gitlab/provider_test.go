@@ -1150,6 +1150,72 @@ func TestSCMCredentialsAvailable(t *testing.T) {
 	}
 }
 
+// TestSCMCredentialsAvailable_HostTokens verifies that the credentials probe
+// checks hostTokens in addition to the default token. When a user configures
+// only AO_GITLAB_HOST_TOKENS (self-managed host tokens) without a default
+// token, the probe must still return true so the observer is not disabled.
+func TestSCMCredentialsAvailable_HostTokens(t *testing.T) {
+	// No default token, but a valid hostToken → true.
+	pHostOnly, _ := NewProvider(ProviderOptions{
+		Client:             NewClient(ClientOptions{Token: StaticTokenSource("")}),
+		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.internal"},
+		HostTokens: map[string]TokenSource{
+			"gitlab.internal": StaticTokenSource("host-token-123"),
+		},
+	})
+	avail, err := pHostOnly.SCMCredentialsAvailable(context.Background())
+	if err != nil || !avail {
+		t.Errorf("no default token + valid hostToken: want (true, nil), got (%v, %v)", avail, err)
+	}
+
+	// No default token, no hostTokens → false.
+	pNoTokens, _ := NewProvider(ProviderOptions{
+		Client:             NewClient(ClientOptions{Token: StaticTokenSource("")}),
+		SkipTokenPreflight: true,
+	})
+	avail, err = pNoTokens.SCMCredentialsAvailable(context.Background())
+	if err != nil || avail {
+		t.Errorf("no default token, no hostTokens: want (false, nil), got (%v, %v)", avail, err)
+	}
+
+	// Valid default token, no hostTokens → true.
+	pDefaultOnly, _ := NewProvider(ProviderOptions{
+		Client: NewClient(ClientOptions{Token: StaticTokenSource("default-token")}),
+	})
+	avail, err = pDefaultOnly.SCMCredentialsAvailable(context.Background())
+	if err != nil || !avail {
+		t.Errorf("valid default token, no hostTokens: want (true, nil), got (%v, %v)", avail, err)
+	}
+
+	// No default token, hostToken present but error → false with error.
+	errSrc := &errorTokenSource{err: errors.New("glab command failed")}
+	pHostErr, _ := NewProvider(ProviderOptions{
+		Client:             NewClient(ClientOptions{Token: StaticTokenSource("")}),
+		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.internal"},
+		HostTokens: map[string]TokenSource{
+			"gitlab.internal": errSrc,
+		},
+	})
+	avail, err = pHostErr.SCMCredentialsAvailable(context.Background())
+	if avail {
+		t.Errorf("no default token + hostToken error: want avail=false, got true")
+	}
+	if err == nil {
+		t.Errorf("no default token + hostToken error: want non-nil error, got nil")
+	}
+}
+
+// errorTokenSource is a test TokenSource that always returns the given error.
+type errorTokenSource struct {
+	err error
+}
+
+func (s *errorTokenSource) Token(context.Context) (string, error) {
+	return "", s.err
+}
+
 func TestClassifyError(t *testing.T) {
 	tests := []struct {
 		status int
