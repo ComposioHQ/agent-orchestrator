@@ -64,6 +64,7 @@ export function CloudWorkspace() {
   const [settingsTarget, setSettingsTarget] = useState<
     "general" | "workspaces" | "providers"
   >("general");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
@@ -354,7 +355,7 @@ export function CloudWorkspace() {
   useEffect(() => {
     const settings = new URLSearchParams(window.location.search).get("settings");
     if (settings === "providers") {
-      setSettingsTarget("providers");
+      setSettingsTarget("general");
       setSettingsOpen(true);
       window.history.replaceState(null, "", window.location.pathname);
     }
@@ -743,7 +744,7 @@ export function CloudWorkspace() {
       data-testid="cloud-workspace"
       className="fixed inset-0 h-dvh overflow-hidden bg-[var(--color-bg-primary)] font-sans tracking-normal text-[var(--color-text-primary)] [color-scheme:dark] [&_*]:[scrollbar-color:rgb(255_255_255_/_12%)_transparent] [&_*]:[scrollbar-width:thin]"
     >
-      <div className="grid h-full grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <div className={`grid h-full grid-cols-1 ${sidebarCollapsed ? "lg:grid-cols-[0px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]"} transition-[grid-template-columns] duration-200 ease-out`}>
         {previewUi && mobileNavOpen ? <button type="button" aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMobileNavOpen(false)} /> : null}
         <CloudSidebar
           account={account}
@@ -796,6 +797,8 @@ export function CloudWorkspace() {
                 const project = projects.find((p) => p.id === selectedSession.projectId);
                 if (project) setShareProject(project);
               }}
+              onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+              sidebarOpen={!sidebarCollapsed}
               organizationId={organizationId}
               session={selectedSession}
             />
@@ -804,6 +807,8 @@ export function CloudWorkspace() {
               <CloudTopbar
                 title={selectedProject?.displayName ?? "All projects"}
                 onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined}
+                onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+                sidebarOpen={!sidebarCollapsed}
                 showBoardActions={!!selectedProjectId}
                 onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
                 onOrchestrator={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
@@ -895,7 +900,7 @@ export function CloudWorkspace() {
         onCreateStandalone={(input) => createScratchWork(input, "worker")}
         onOpenProviderSettings={() => {
           setNewProjectOpen(false);
-          setSettingsTarget("providers");
+          setSettingsTarget("general");
           setSettingsOpen(true);
         }}
         open={newProjectOpen}

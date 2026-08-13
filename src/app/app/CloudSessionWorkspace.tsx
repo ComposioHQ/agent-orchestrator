@@ -11,6 +11,10 @@ import {
   FileCode2,
   Files,
   GitCompareArrows,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Share2,
   Terminal,
   Trash2,
@@ -28,6 +32,8 @@ export function CloudSessionWorkspace({
   onDelete,
   onNewTask,
   onShare,
+  onToggleSidebar,
+  sidebarOpen = true,
   organizationId,
   session,
 }: {
@@ -35,10 +41,13 @@ export function CloudSessionWorkspace({
   onDelete: () => void;
   onNewTask: () => void;
   onShare: () => void;
+  onToggleSidebar?: () => void;
+  sidebarOpen?: boolean;
   organizationId: string;
   session: Session;
 }) {
   const client = useMemo(browserCloudClient, []);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [tab, setTab] = useState<InspectorTab>("changes");
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
   const [directory, setDirectory] = useState("");
@@ -132,9 +141,23 @@ export function CloudSessionWorkspace({
   }, [tab, directory]);
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(320px,38%)]">
+    <div className={`grid min-h-0 flex-1 transition-[grid-template-columns] duration-200 ease-out ${inspectorOpen ? "grid-cols-[minmax(0,1fr)_minmax(320px,38%)]" : "grid-cols-[minmax(0,1fr)_0px]"}`}>
       <section className="flex min-h-0 min-w-0 flex-col bg-[var(--color-bg-terminal-opaque)]">
-        <header className="flex h-10 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] pl-3 pr-2.5">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] pl-1.5 pr-2.5">
+          {onToggleSidebar ? (
+            <button
+              type="button"
+              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+              className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={onToggleSidebar}
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="size-4" aria-hidden="true" />
+              ) : (
+                <PanelLeftOpen className="size-4" aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
           <button
             aria-label="Back to project"
             className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
@@ -181,6 +204,18 @@ export function CloudSessionWorkspace({
               <OrchestratorIcon className="size-3.5" aria-hidden="true" />
               Orchestrator
             </button>
+            <button
+              type="button"
+              aria-label={inspectorOpen ? "Close inspector" : "Open inspector"}
+              className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={() => setInspectorOpen((c) => !c)}
+            >
+              {inspectorOpen ? (
+                <PanelRightClose className="size-4" aria-hidden="true" />
+              ) : (
+                <PanelRightOpen className="size-4" aria-hidden="true" />
+              )}
+            </button>
           </div>
         </header>
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3">
@@ -205,8 +240,8 @@ export function CloudSessionWorkspace({
         )}
       </section>
 
-      <aside className="flex min-h-0 min-w-0 flex-col border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)]">
-        <div className="flex h-12 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
+      <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)]">
+        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
           <InspectorButton
             active={tab === "changes"}
             label={`Changes ${diff?.files.length ?? 0}`}

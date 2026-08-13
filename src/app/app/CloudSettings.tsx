@@ -100,8 +100,8 @@ export function CloudSettings({
   const displayPanel = open ? panel : lastPanelRef.current;
 
   useEffect(() => {
-    setPanel(initialPanel);
-  }, [initialPanel]);
+    if (open) setPanel("general");
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onBack()}>

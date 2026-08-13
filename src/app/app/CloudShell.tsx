@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, Plus, Share2, Trash2 } from "lucide-react";
+import { Menu, PanelLeftClose, PanelLeftOpen, Plus, Share2, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { OrchestratorIcon } from "@/components/icons";
 
@@ -21,6 +21,8 @@ export function CloudMainShell({ children, parity = false }: { children: ReactNo
 export function CloudTopbar({
   title,
   onOpenSidebar,
+  onToggleSidebar,
+  sidebarOpen = true,
   onNewTask,
   onOrchestrator,
   onShare,
@@ -29,6 +31,8 @@ export function CloudTopbar({
 }: {
   title: string;
   onOpenSidebar?: () => void;
+  onToggleSidebar?: () => void;
+  sidebarOpen?: boolean;
   onNewTask?: () => void;
   onOrchestrator?: () => void;
   onShare?: () => void;
@@ -38,16 +42,30 @@ export function CloudTopbar({
   return (
     <header
       aria-label="Project toolbar"
-      className="relative z-10 flex h-10 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] pl-3 pr-2.5 sm:pl-[18px]"
+      className="relative z-10 flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] pl-1.5 pr-2.5"
     >
       {onOpenSidebar ? (
         <button
           type="button"
           aria-label="Open navigation"
-          className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:hidden"
+          className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:hidden"
           onClick={onOpenSidebar}
         >
           <Menu className="size-4" aria-hidden="true" />
+        </button>
+      ) : null}
+      {onToggleSidebar ? (
+        <button
+          type="button"
+          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          className="hidden size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:grid"
+          onClick={onToggleSidebar}
+        >
+          {sidebarOpen ? (
+            <PanelLeftClose className="size-4" aria-hidden="true" />
+          ) : (
+            <PanelLeftOpen className="size-4" aria-hidden="true" />
+          )}
         </button>
       ) : null}
       <h1 className="min-w-0 truncate text-sm font-semibold leading-none tracking-[-0.02em] text-[var(--foreground)]">
@@ -97,7 +115,7 @@ export function CloudTopbar({
           <button
             type="button"
             aria-label="Delete"
-            className="grid size-[34px] cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+            className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
             onClick={onDelete}
           >
             <Trash2 className="size-4" aria-hidden="true" />

@@ -136,9 +136,9 @@ function ShareSection({ children, label }: { children: ReactNode; label: string 
 }
 
 function optionClass(selected: boolean) {
-  return `cursor-pointer rounded-lg px-3 py-2.5 text-left transition-colors ${
+  return `flex flex-1 cursor-pointer flex-col items-stretch rounded-lg px-3 py-2.5 text-left transition-colors ${
     selected
-      ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-      : "bg-[var(--color-interactive-hover)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+      ? "border border-[var(--ring)]/40 bg-[var(--ring)]/10 text-[var(--foreground)]"
+      : "border border-transparent bg-[var(--color-interactive-hover)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
   }`;
 }

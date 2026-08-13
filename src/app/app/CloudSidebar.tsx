@@ -104,7 +104,7 @@ export function CloudSidebar({
     );
 
   return (
-    <aside className={`${parity ? (mobileOpen ? "flex" : "hidden") : "flex"} min-h-0 flex-col bg-[var(--color-bg-sidebar)] [&_button]:cursor-pointer ${parity ? "fixed inset-y-0 left-0 z-40 w-[min(86vw,280px)] border-r border-[var(--color-border-strong)] shadow-2xl lg:static lg:flex lg:w-auto lg:border-0 lg:shadow-none" : ""}`}>
+    <aside className={`${parity ? (mobileOpen ? "flex" : "hidden") : "flex"} min-h-0 flex-col overflow-hidden bg-[var(--color-bg-sidebar)] transition-[width,opacity] duration-200 ease-out [&_button]:cursor-pointer ${parity ? "fixed inset-y-0 left-0 z-40 w-[min(86vw,280px)] border-r border-[var(--color-border-strong)] shadow-2xl lg:static lg:flex lg:w-auto lg:border-0 lg:shadow-none" : ""}`}>
       {parity && onCloseMobile ? <div className="flex shrink-0 items-center justify-end px-3 pt-2"><button type="button" aria-label="Close navigation" className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:hidden" onClick={onCloseMobile}>×</button></div> : null}
 
       <CloudWorkspaceSwitcher
@@ -256,6 +256,14 @@ export function CloudSidebar({
                   type="button"
                 >
                   <OrchestratorIcon aria-hidden="true" />
+                </button>
+                <button
+                  aria-label="Share project"
+                  className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
+                  onClick={(e) => { e.stopPropagation(); onShareProject(project); }}
+                  type="button"
+                >
+                  <Share2 aria-hidden="true" />
                 </button>
                 <DropdownMenuPrimitive.Root>
                   <DropdownMenuPrimitive.Trigger asChild>
@@ -452,6 +460,14 @@ export function CloudSidebar({
                     {pinnedIds.has(session.id) ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
                   </button>
                   <button
+                    aria-label="Share"
+                    className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
+                    onClick={(e) => { e.stopPropagation(); onShareProject(project); }}
+                    type="button"
+                  >
+                    <Share2 aria-hidden="true" />
+                  </button>
+                  <button
                     aria-label="Delete session"
                     className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,margin,opacity,color] group-hover:mr-1.5 group-hover:w-5 group-hover:opacity-100 hover:text-[var(--destructive)] [&_svg]:size-3"
                     onClick={(e) => {
@@ -473,6 +489,10 @@ export function CloudSidebar({
                   <ContextMenuItem onSelect={() => togglePin(session.id)}>
                     <Pin aria-hidden="true" />
                     {pinnedIds.has(session.id) ? "Unpin" : "Pin"}
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => onShareProject(project)}>
+                    <Share2 aria-hidden="true" />
+                    Share
                   </ContextMenuItem>
                   <ContextMenuSeparator />
                   <ContextMenuItem
