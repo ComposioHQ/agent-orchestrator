@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-	title: "AO Cloud",
+	title: "Agent Orchestrator",
 	description: "The hosted Agent Orchestrator workspace.",
 	icons: { icon: "/ao-logo.svg" },
 };

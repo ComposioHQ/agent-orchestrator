@@ -56,14 +56,13 @@ export function CloudBoard({
 }) {
   if (sessions.length === 0) {
     return (
-      <div className="grid h-full place-items-center p-8">
-        <div className="max-w-sm text-center">
-          <p className="text-sm font-medium text-[var(--foreground)]">
+      <div className="flex h-full min-h-0 items-center justify-center overflow-y-auto">
+        <div className="flex w-full max-w-[400px] flex-col items-center pb-[5vh] text-center">
+          <h2 className="text-[15px] font-semibold tracking-tight text-[var(--foreground)]">
             No sessions yet
-          </p>
-          <p className="mt-2 text-xs leading-5 text-[var(--muted-foreground)]">
-            Workers and their activity will appear here when Cloud execution is
-            available.
+          </h2>
+          <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
+            Sessions and their activity will appear here once work begins on this project.
           </p>
         </div>
       </div>

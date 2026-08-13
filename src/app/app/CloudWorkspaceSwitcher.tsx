@@ -129,9 +129,9 @@ export function CloudWorkspaceSwitcher({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -3, scale: 0.99 }}
             transition={menuTransition}
-            className="absolute left-0 top-[calc(100%+6px)] z-50 w-[calc(100%+24px)] origin-top overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1.5"
+            className="absolute left-0 top-[calc(100%+6px)] z-50 w-[calc(100%+24px)] origin-top overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1"
           >
-            <div className="py-0.5">
+            <div>
               <button
                 type="button"
                 role="menuitem"

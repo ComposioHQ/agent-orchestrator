@@ -432,7 +432,7 @@
 	/* Settings */
 	--color-bg-settings-row: transparent;
 	--color-bg-settings-menu: var(--popover);
-	--color-bg-settings-menu-selected: color-mix(in oklch, var(--popover) 92%, var(--foreground) 8%);
+	--color-bg-settings-menu-selected: color-mix(in oklab, var(--popover) 92%, var(--foreground) 8%);
 	--color-bg-settings-dialog: var(--card);
 	--color-text-settings-title: var(--foreground);
 	--color-text-settings-muted: var(--muted-foreground);
@@ -776,7 +776,7 @@
 
 	--color-bg-settings-row: var(--card);
 	--color-bg-settings-menu: var(--popover);
-	--color-bg-settings-menu-selected: color-mix(in oklch, var(--popover) 92%, var(--foreground) 8%);
+	--color-bg-settings-menu-selected: color-mix(in oklab, var(--popover) 92%, var(--foreground) 8%);
 	--color-bg-settings-dialog: var(--card);
 	--color-text-settings-title: var(--foreground);
 	--color-text-settings-muted: var(--muted-foreground);

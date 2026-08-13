@@ -21,6 +21,7 @@ import {
   type LocalAgentInput,
   type ScratchProjectInput,
 } from "./CloudDialogs";
+import { CloudNewSessionDialog } from "./CloudNewSessionDialog";
 import { CloudSettings } from "./CloudSettings";
 import { CloudProjectSettingsDialog } from "./CloudProjectSettingsDialog";
 import { CloudShareDialog } from "./CloudShareDialog";
@@ -56,6 +57,7 @@ export function CloudWorkspace() {
   >("general");
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newSessionProjectId, setNewSessionProjectId] = useState<string | null>(null);
   const [projectSettings, setProjectSettings] = useState<Project | null>(null);
   const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
   const [shareProject, setShareProject] = useState<Project | null>(null);
@@ -417,6 +419,28 @@ export function CloudWorkspace() {
     setSelectedSessionId(sessionResponse.session.id);
   };
 
+  const createSessionInProject = async (
+    projectId: string,
+    input: { displayName: string; harness: string; prompt: string },
+  ) => {
+    const sessionResponse = await client.createSession(
+      organizationId,
+      {
+        projectId,
+        kind: "worker",
+        harness: input.harness,
+        displayName: input.displayName,
+        prompt: input.prompt,
+        mode: "trusted",
+        deniedCommands: [],
+      },
+      { idempotencyKey: newIdempotencyKey("project-session") },
+    );
+    setSessions((current) => [...current, sessionResponse.session]);
+    setSelectedProjectId(projectId);
+    setSelectedSessionId(sessionResponse.session.id);
+  };
+
   const createScratchProject = async (input: ScratchProjectInput) => {
     if (!input.githubInstallationId) {
       await createScratchWork(input, "orchestrator");
@@ -715,6 +739,9 @@ export function CloudWorkspace() {
           account={account}
           onDeleteSession={(session) => void deleteSession(session)}
           onNewProject={() => setNewProjectOpen(true)}
+          onNewSession={(projectId) => {
+            setNewSessionProjectId(projectId);
+          }}
           onOpenCommand={() => setCommandOpen(true)}
           onOpenSettings={() => {
             setSettingsTarget("general");
@@ -838,6 +865,13 @@ export function CloudWorkspace() {
           }}
         />
       ) : null}
+      <CloudNewSessionDialog
+        open={newSessionProjectId !== null}
+        projectName={projects.find((p) => p.id === newSessionProjectId)?.displayName ?? ""}
+        connectedProviders={providers.status === "available" ? providers.connections.map((c) => c.provider) : []}
+        onClose={() => setNewSessionProjectId(null)}
+        onCreate={(input) => createSessionInProject(newSessionProjectId!, input)}
+      />
       {shareProject ? (
         <CloudShareDialog
           onClose={() => setShareProject(null)}

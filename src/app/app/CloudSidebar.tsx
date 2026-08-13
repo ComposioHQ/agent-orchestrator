@@ -6,23 +6,34 @@ import type {
   Session,
 } from "@aoagents/cloud-client";
 import {
-  Bot,
   Folder,
   FolderOpen,
   MoreHorizontal,
+  Pin,
+  PinOff,
   Plus,
   Search,
   Settings,
   Share2,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 import { CloudWorkspaceSwitcher } from "./CloudWorkspaceSwitcher";
 
 export function CloudSidebar({
   account,
   onNewProject,
+  onNewSession,
   onOpenCommand,
   onOpenSettings,
   onSelectOrganization,
@@ -42,6 +53,7 @@ export function CloudSidebar({
 }: {
   account: CurrentAccount;
   onNewProject: () => void;
+  onNewSession: (projectId: string) => void;
   onOpenCommand: () => void;
   onOpenSettings: () => void;
   onSelectOrganization: (organizationId: string) => void;
@@ -59,9 +71,24 @@ export function CloudSidebar({
   onCloseMobile?: () => void;
   parity?: boolean;
 }) {
+  const prefersReducedMotion = useReducedMotion();
   const [closedProjects, setClosedProjects] = useState<Set<string>>(new Set());
-  const [openProjectMenu, setOpenProjectMenu] = useState<string | null>(null);
-  const [openSessionMenu, setOpenSessionMenu] = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem("ao.pinned-sessions");
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+  const togglePin = (sessionId: string) => {
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      try { localStorage.setItem("ao.pinned-sessions", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+  const pinnedSessions = sessions.filter((s) => pinnedIds.has(s.id));
   const projectItems = projects.filter((project) => !isStandaloneProject(project));
   const standaloneRows = projects
     .filter(isStandaloneProject)
@@ -72,7 +99,7 @@ export function CloudSidebar({
     );
 
   return (
-    <aside className={`${parity ? (mobileOpen ? "flex" : "hidden") : "flex"} min-h-0 flex-col bg-[var(--color-bg-sidebar)] ${parity ? "fixed inset-y-0 left-0 z-40 w-[min(86vw,280px)] border-r border-[var(--color-border-strong)] shadow-2xl lg:static lg:flex lg:w-auto lg:border-0 lg:shadow-none" : ""}`}>
+    <aside className={`${parity ? (mobileOpen ? "flex" : "hidden") : "flex"} min-h-0 flex-col bg-[var(--color-bg-sidebar)] [&_button]:cursor-pointer ${parity ? "fixed inset-y-0 left-0 z-40 w-[min(86vw,280px)] border-r border-[var(--color-border-strong)] shadow-2xl lg:static lg:flex lg:w-auto lg:border-0 lg:shadow-none" : ""}`}>
       {parity && onCloseMobile ? <div className="flex shrink-0 items-center justify-end px-3 pt-2"><button type="button" aria-label="Close navigation" className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:hidden" onClick={onCloseMobile}>×</button></div> : null}
 
       <CloudWorkspaceSwitcher
@@ -96,6 +123,54 @@ export function CloudSidebar({
           </kbd>
         </button>
       </div>
+
+      {pinnedSessions.length > 0 ? (
+        <>
+          <div className="flex h-8 shrink-0 items-center gap-2 px-4 text-sm font-medium text-[var(--color-text-passive)]">
+            <span className="min-w-0 flex-1 truncate">Pinned</span>
+          </div>
+          <div className="px-2 pb-2">
+            {pinnedSessions.map((session) => (
+              <div
+                className={`group/session flex h-8 w-full items-center rounded-lg transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                  selectedSessionId === session.id
+                    ? "bg-[var(--color-interactive-active)]"
+                    : ""
+                }`}
+                key={session.id}
+              >
+                <div className="flex min-w-0 flex-1 transition-transform duration-100 ease-out active:scale-[0.97]">
+                  <button
+                    type="button"
+                    className={`flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 text-left text-sm outline-none ${
+                      selectedSessionId === session.id
+                        ? "text-[var(--foreground)]"
+                        : "text-[var(--muted-foreground)]"
+                    }`}
+                    onClick={() => onSelectSession(session.id)}
+                  >
+                    <span
+                      className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {session.displayName}
+                    </span>
+                  </button>
+                </div>
+                <button
+                  aria-label="Unpin session"
+                  className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,margin,opacity,color] group-hover/session:mr-1.5 group-hover/session:w-5 group-hover/session:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
+                  onClick={(e) => { e.stopPropagation(); togglePin(session.id); }}
+                  type="button"
+                >
+                  <PinOff aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
 
       <div className="flex h-8 shrink-0 items-center gap-2 px-4 text-sm font-medium text-[var(--color-text-passive)]">
         <span className="min-w-0 flex-1 truncate">Projects</span>
@@ -126,29 +201,35 @@ export function CloudSidebar({
           );
           return (
             <div className="mb-1" key={project.id}>
+              <ContextMenu>
+              <ContextMenuTrigger asChild>
               <div
-                className={`group relative flex items-center rounded-lg ${
+                className={`group relative flex items-center rounded-lg transition-colors hover:bg-[var(--color-interactive-hover)] ${
                   selectedProjectId === project.id
                     ? "bg-[var(--color-interactive-active)]"
                     : ""
                 }`}
               >
-                <button
+                <motion.button
                   type="button"
                   aria-expanded={open}
-                  className={`flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                  whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
+                  transition={{ duration: 0.06, ease: "easeOut" }}
+                  className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 pr-8 text-left text-sm font-medium ${
                     selectedProjectId === project.id
                       ? "text-[var(--foreground)]"
                       : "text-[var(--muted-foreground)]"
                   }`}
                   onClick={() => {
-                    onSelectProject(project.id);
-                    setClosedProjects((current) => {
-                      const next = new Set(current);
-                      if (next.has(project.id)) next.delete(project.id);
-                      else next.add(project.id);
-                      return next;
-                    });
+                    const dashboardActive = selectedProjectId === project.id && !selectedSessionId;
+                    if (!open) {
+                      setClosedProjects((c) => { const n = new Set(c); n.delete(project.id); return n; });
+                      onSelectProject(project.id);
+                    } else if (dashboardActive) {
+                      setClosedProjects((c) => { const n = new Set(c); n.add(project.id); return n; });
+                    } else {
+                      onSelectProject(project.id);
+                    }
                   }}
                 >
                   <span className="relative grid size-4 shrink-0 place-items-center">
@@ -161,141 +242,185 @@ export function CloudSidebar({
                   <span className="min-w-0 flex-1 truncate">
                     {project.displayName}
                   </span>
-                </button>
-                <button
-                  aria-expanded={openProjectMenu === project.id}
-                  aria-haspopup="menu"
-                  aria-label={`Actions for ${project.displayName}`}
-                  className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] opacity-0 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] focus-visible:opacity-100 group-hover:opacity-100"
-                  onClick={() =>
-                    setOpenProjectMenu((current) =>
-                      current === project.id ? null : project.id,
-                    )
-                  }
-                  type="button"
-                >
-                  <MoreHorizontal className="size-3.5" aria-hidden="true" />
-                </button>
-                {openProjectMenu === project.id ? (
-                  <div
-                    className="absolute left-8 top-8 z-30 w-44 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] p-1 shadow-xl"
-                    role="menu"
-                  >
+                </motion.button>
+                <DropdownMenuPrimitive.Root>
+                  <DropdownMenuPrimitive.Trigger asChild>
                     <button
-                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-                      onClick={() => {
-                        setOpenProjectMenu(null);
-                        onProjectSettings(project);
-                      }}
-                      role="menuitem"
+                      aria-label={`Actions for ${project.displayName}`}
+                      className="absolute right-1.5 z-10 grid size-6 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] opacity-0 hover:text-[var(--foreground)] focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
                       type="button"
                     >
-                      <Settings className="size-3.5" aria-hidden="true" />
-                      Project settings
+                      <MoreHorizontal className="size-3.5" aria-hidden="true" />
                     </button>
-                    <button
-                      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-                      onClick={() => {
-                        setOpenProjectMenu(null);
-                        onShareProject(project);
-                      }}
-                      role="menuitem"
-                      type="button"
+                  </DropdownMenuPrimitive.Trigger>
+                  <DropdownMenuPrimitive.Portal>
+                    <DropdownMenuPrimitive.Content
+                      side="right"
+                      align="start"
+                      sideOffset={6}
+                      className="z-[100] min-w-44 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
                     >
-                      <Share2 className="size-3.5" aria-hidden="true" />
-                      Share project
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              {open ? (
-                <div className="ml-3.5 py-1">
-                  {projectSessions.map((session) => (
-                    <div
-                      className="group relative flex items-center"
-                      key={session.id}
-                    >
-                      <button
-                        type="button"
-                        className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 pr-8 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
-                          selectedSessionId === session.id
-                            ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                            : "text-[var(--muted-foreground)]"
-                        }`}
-                        onClick={() => onSelectSession(session.id)}
-                      >
-                        <span
-                          className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                          aria-hidden="true"
-                        />
-                        <span className="min-w-0 flex-1 truncate">
-                          {session.displayName}
-                        </span>
-                      </button>
-                      <SessionActions
-                        onDelete={() => {
-                          setOpenSessionMenu(null);
-                          onDeleteSession(session);
-                        }}
-                        onToggle={() =>
-                          setOpenSessionMenu((current) =>
-                            current === session.id ? null : session.id,
-                          )
-                        }
-                        open={openSessionMenu === session.id}
-                        session={session}
+                      <ProjectMenuItems
+                        onNewSession={() => onNewSession(project.id)}
+                        onSettings={() => onProjectSettings(project)}
+                        onShare={() => onShareProject(project)}
                       />
-                    </div>
-                  ))}
-                </div>
-              ) : null}
+                    </DropdownMenuPrimitive.Content>
+                  </DropdownMenuPrimitive.Portal>
+                </DropdownMenuPrimitive.Root>
+              </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="min-w-44">
+                <ContextMenuItem onSelect={() => onNewSession(project.id)}>
+                  <Plus aria-hidden="true" />
+                  New session
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => onProjectSettings(project)}>
+                  <Settings aria-hidden="true" />
+                  Project settings
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => onShareProject(project)}>
+                  <Share2 aria-hidden="true" />
+                  Share project
+                </ContextMenuItem>
+              </ContextMenuContent>
+              </ContextMenu>
+              <AnimatePresence initial={false}>
+                {open && projectSessions.length > 0 && (
+                  <motion.div
+                    key="sessions"
+                    initial={{ height: 0 }}
+                    animate={{ height: "auto" }}
+                    exit={{ height: 0 }}
+                    transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+                    style={{ overflow: "hidden" }}
+                  >
+                    <motion.div
+                      initial={{ y: -12, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      exit={{ y: -12, opacity: 0 }}
+                      transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+                    >
+                      <div className="ml-3.5 py-1">
+                        {projectSessions.map((session) => (
+                          <div
+                            className={`group/session flex h-8 w-full items-center rounded-lg transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                              selectedSessionId === session.id
+                                ? "bg-[var(--color-interactive-active)]"
+                                : ""
+                            }`}
+                            key={session.id}
+                          >
+                            <div className="flex min-w-0 flex-1 transition-transform duration-100 ease-out active:scale-[0.97]">
+                              <button
+                                type="button"
+                                className={`flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 text-left text-sm outline-none ${
+                                  selectedSessionId === session.id
+                                    ? "text-[var(--foreground)]"
+                                    : "text-[var(--muted-foreground)]"
+                                }`}
+                                onClick={() => onSelectSession(session.id)}
+                              >
+                                <span
+                                  className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                                  aria-hidden="true"
+                                />
+                                <span className="min-w-0 flex-1 truncate">
+                                  {session.displayName}
+                                </span>
+                              </button>
+                            </div>
+                            <button
+                              aria-label={pinnedIds.has(session.id) ? "Unpin session" : "Pin session"}
+                              className={`grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover/session:w-5 group-hover/session:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3 ${pinnedIds.has(session.id) ? "text-[var(--foreground)]" : ""}`}
+                              onClick={(e) => { e.stopPropagation(); togglePin(session.id); }}
+                              type="button"
+                            >
+                              {pinnedIds.has(session.id) ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+                            </button>
+                            <button
+                              aria-label="Delete session"
+                              className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,margin,opacity,color] group-hover/session:mr-1.5 group-hover/session:w-5 group-hover/session:opacity-100 hover:text-[var(--destructive)] [&_svg]:size-3"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`Delete ${session.displayName}?`)) {
+                                  onDeleteSession(session);
+                                }
+                              }}
+                              type="button"
+                            >
+                              <Trash2 aria-hidden="true" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           );
         })}
         {standaloneRows.length > 0 ? (
-          <div className="mt-4 border-t border-[var(--color-border-strong)] pt-3">
-            <div className="mb-1 px-2 font-mono text-[10px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-passive)]">
-              Standalone Agents
+          <div className="mt-2 pt-2">
+            <div className="flex h-8 shrink-0 items-center gap-2 px-2 text-sm font-medium text-[var(--color-text-passive)]">
+              <span className="min-w-0 flex-1 truncate">Agents</span>
             </div>
-            <div className="space-y-1">
+            <div className="space-y-0.5">
               {standaloneRows.map(({ project, session }) => (
-                <div
-                  className="group relative flex items-center"
+                <motion.div
+                  whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
+                  transition={{ duration: 0.06, ease: "easeOut" }}
+                  className={`group relative flex items-center rounded-lg transition-colors hover:bg-[var(--color-interactive-hover)] ${
+                    selectedSessionId === session.id
+                      ? "bg-[var(--color-interactive-active)]"
+                      : ""
+                  }`}
                   key={session.id}
                   title={project.displayName}
                 >
+                  <div className="flex min-w-0 flex-1 transition-transform duration-100 ease-out active:scale-[0.97]">
+                    <button
+                      className={`flex h-9 w-full min-w-0 items-center gap-1.5 rounded-lg px-2.5 text-left text-sm outline-none ${
+                        selectedSessionId === session.id
+                          ? "text-[var(--foreground)]"
+                          : "text-[var(--muted-foreground)]"
+                      }`}
+                      onClick={() => onSelectSession(session.id)}
+                      type="button"
+                    >
+                      <span
+                        className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 flex-1 truncate">
+                        {session.displayName}
+                      </span>
+                    </button>
+                  </div>
                   <button
-                    className={`flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 pr-8 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
-                      selectedSessionId === session.id
-                        ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                        : "text-[var(--muted-foreground)]"
-                    }`}
-                    onClick={() => onSelectSession(session.id)}
+                    aria-label={pinnedIds.has(session.id) ? "Unpin session" : "Pin session"}
+                    className={`grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3 ${pinnedIds.has(session.id) ? "text-[var(--foreground)]" : ""}`}
+                    onClick={(e) => { e.stopPropagation(); togglePin(session.id); }}
                     type="button"
                   >
-                    <Bot className="size-4 shrink-0" aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate">
-                      {session.displayName}
-                    </span>
-                    <span
-                      className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                      aria-hidden="true"
-                    />
+                    {pinnedIds.has(session.id) ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
                   </button>
-                  <SessionActions
-                    onDelete={() => {
-                      setOpenSessionMenu(null);
-                      onDeleteSession(session);
+                  <button
+                    aria-label="Delete session"
+                    className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,margin,opacity,color] group-hover:mr-1.5 group-hover:w-5 group-hover:opacity-100 hover:text-[var(--destructive)] [&_svg]:size-3"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Delete ${session.displayName}?`)) {
+                        onDeleteSession(session);
+                      }
                     }}
-                    onToggle={() =>
-                      setOpenSessionMenu((current) =>
-                        current === session.id ? null : session.id,
-                      )
-                    }
-                    open={openSessionMenu === session.id}
-                    session={session}
-                  />
-                </div>
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                </motion.div>
               ))}
             </div>
           </div>
@@ -304,7 +429,7 @@ export function CloudSidebar({
 
       <div className="mt-auto border-t border-[var(--color-border-strong)] p-2">
         <button
-          className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+          className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
           onClick={onOpenSettings}
           type="button"
         >
@@ -316,59 +441,35 @@ export function CloudSidebar({
   );
 }
 
-function SessionActions({
-  onDelete,
-  onToggle,
-  open,
-  session,
+function ProjectMenuItems({
+  onNewSession,
+  onSettings,
+  onShare,
 }: {
-  onDelete: () => void;
-  onToggle: () => void;
-  open: boolean;
-  session: Session;
+  onNewSession: () => void;
+  onSettings: () => void;
+  onShare: () => void;
 }) {
+  const itemClass =
+    "relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-sm outline-none transition-colors text-[var(--muted-foreground)] focus:bg-[var(--color-interactive-hover)] focus:text-[var(--foreground)] [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-passive)]";
   return (
     <>
-      <button
-        aria-expanded={open}
-        aria-haspopup="menu"
-        aria-label={`Actions for ${session.displayName}`}
-        className="absolute right-1 grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] opacity-0 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] focus-visible:opacity-100 group-hover:opacity-100"
-        onClick={(event) => {
-          event.stopPropagation();
-          onToggle();
-        }}
-        type="button"
-      >
-        <MoreHorizontal className="size-3.5" aria-hidden="true" />
-      </button>
-      {open ? (
-        <div
-          className="absolute right-1 top-8 z-40 w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] p-1 shadow-xl"
-          role="menu"
-        >
-          <button
-            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
-            onClick={() => {
-              if (
-                window.confirm(
-                  `Delete ${session.displayName}? Its sandbox will be stopped, while durable audit history is retained.`,
-                )
-              ) {
-                onDelete();
-              }
-            }}
-            role="menuitem"
-            type="button"
-          >
-            <Trash2 className="size-3.5" aria-hidden="true" />
-            Delete session
-          </button>
-        </div>
-      ) : null}
+      <DropdownMenuPrimitive.Item className={itemClass} onSelect={onNewSession}>
+        <Plus aria-hidden="true" />
+        New session
+      </DropdownMenuPrimitive.Item>
+      <DropdownMenuPrimitive.Item className={itemClass} onSelect={onSettings}>
+        <Settings aria-hidden="true" />
+        Project settings
+      </DropdownMenuPrimitive.Item>
+      <DropdownMenuPrimitive.Item className={itemClass} onSelect={onShare}>
+        <Share2 aria-hidden="true" />
+        Share project
+      </DropdownMenuPrimitive.Item>
     </>
   );
 }
+
 
 export function isStandaloneProject(project: Project): boolean {
   return (

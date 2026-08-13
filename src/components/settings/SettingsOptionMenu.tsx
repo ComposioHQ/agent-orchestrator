@@ -78,7 +78,7 @@ export function SettingsOptionMenu<T extends string>({
           <div className="relative min-h-0">
             <div
               ref={scrollRef}
-              className="max-h-select-menu-max overflow-y-auto overscroll-contain"
+              className="flex max-h-select-menu-max flex-col gap-px overflow-y-auto overscroll-contain"
               onScroll={updateScrollCue}
             >
               {options.map((option) => (
@@ -90,7 +90,7 @@ export function SettingsOptionMenu<T extends string>({
                     "settings-menu-item min-w-0 cursor-default select-none outline-none",
                     "focus:bg-settings-menu-selected focus:text-settings-title",
                     "data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title",
-                    option.value === value && "border-settings-menu bg-settings-menu-selected text-settings-title",
+                    option.value === value && "bg-settings-menu-selected text-settings-title",
                   )}
                 >
                   {option.icon}
