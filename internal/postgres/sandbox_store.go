@@ -238,6 +238,87 @@ func (s *Store) SetSandboxDesiredState(
 	})
 }
 
+// RunningSandboxSessions lists every session whose sandbox is fully up
+// (desired and observed both `running`) across every organization, for the
+// idle-pause scanner. Only ao_sandboxes grants withService a cross-tenant
+// view, so this reads nothing else — a caller must re-enter a specific org's
+// tenant context (withOrg) before it can act on what it finds here.
+func (s *Store) RunningSandboxSessions(ctx context.Context) ([]domain.SandboxRef, error) {
+	var refs []domain.SandboxRef
+	err := s.withService(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(
+			ctx,
+			`SELECT session_id, org_id FROM ao_sandboxes
+			WHERE desired_state = 'running' AND observed_state = 'running'`,
+		)
+		if err != nil {
+			return fmt.Errorf("list running sandbox sessions: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ref domain.SandboxRef
+			if err := rows.Scan(&ref.SessionID, &ref.OrgID); err != nil {
+				return err
+			}
+			refs = append(refs, ref)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return refs, nil
+}
+
+// PauseIfIdle pauses one session's sandbox when the user has been silent for
+// at least idleThreshold and the agent has no active turn. The idle check and
+// the state flip are one statement, so a user message or a turn claim that
+// lands mid-scan simply fails the WHERE clause instead of racing it — the next
+// scan tick re-evaluates from scratch. Reports whether it paused.
+func (s *Store) PauseIfIdle(
+	ctx context.Context,
+	orgID, sessionID string,
+	idleThreshold time.Duration,
+) (bool, error) {
+	var paused bool
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET desired_state = 'paused', reconcile_after = now(), updated_at = now()
+			WHERE session_id = $1
+				AND org_id = $2
+				AND desired_state = 'running'
+				AND observed_state = 'running'
+				AND EXISTS (
+					SELECT 1 FROM ao_sessions
+					WHERE ao_sessions.id = $1
+						AND ao_sessions.org_id = $2
+						AND ao_sessions.last_user_message_at IS NOT NULL
+						AND ao_sessions.last_user_message_at <= now() - $3::interval
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM ao_turns
+					WHERE ao_turns.session_id = $1
+						AND ao_turns.org_id = $2
+						AND ao_turns.state IN ('queued', 'provisioning', 'running', 'cancel_requested')
+				)`,
+			sessionID,
+			orgID,
+			intervalString(idleThreshold),
+		)
+		if err != nil {
+			return fmt.Errorf("pause idle sandbox: %w", err)
+		}
+		paused = tag.RowsAffected() > 0
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return paused, nil
+}
+
 // CountActiveSandboxes counts sandboxes whose provider deletion has not yet
 // been observed. Delete intent alone does not release paid capacity.
 func (s *Store) CountActiveSandboxes(

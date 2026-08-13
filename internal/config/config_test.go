@@ -358,6 +358,31 @@ func TestLoadAcceptsCompleteNodeOpsConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsPreferControlPlaneIdlePauseOverProviderAutoPause(t *testing.T) {
+	nodeOpsEnvironment(t)
+	t.Setenv("AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS", "")
+	t.Setenv("AO_CLOUD_IDLE_PAUSE_THRESHOLD", "")
+	t.Setenv("AO_CLOUD_IDLE_PAUSE_INTERVAL", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// CreateOS's own idle timer only resets on an `exec` call, and the worker
+	// only ever sends one at boot, so it cannot tell a working agent from an
+	// abandoned one. It must default off; the control plane's own idle-pause
+	// scanner is what actually decides.
+	if cfg.NodeOpsAutoPauseSeconds != 0 {
+		t.Errorf("NodeOpsAutoPauseSeconds = %d, want 0 (disabled by default)", cfg.NodeOpsAutoPauseSeconds)
+	}
+	if cfg.IdlePauseThreshold != 15*time.Minute {
+		t.Errorf("IdlePauseThreshold = %v, want 15m", cfg.IdlePauseThreshold)
+	}
+	if cfg.IdlePauseInterval != 30*time.Second {
+		t.Errorf("IdlePauseInterval = %v, want 30s", cfg.IdlePauseInterval)
+	}
+}
+
 func TestLoadRejectsIncompleteRepositoryBrokerConfiguration(t *testing.T) {
 	nodeOpsEnvironment(t)
 	t.Setenv("AO_CLOUD_ENV_CONTROL_TOKEN", "")
@@ -396,6 +421,12 @@ func TestLoadRejectsIncompleteNodeOpsConfiguration(t *testing.T) {
 			value: "5s",
 		},
 		{name: "zero sandbox quota", key: "AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG", value: "0"},
+		{
+			name:  "idle pause threshold shorter than a minute",
+			key:   "AO_CLOUD_IDLE_PAUSE_THRESHOLD",
+			value: "30s",
+		},
+		{name: "zero idle pause interval", key: "AO_CLOUD_IDLE_PAUSE_INTERVAL", value: "0s"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			nodeOpsEnvironment(t)

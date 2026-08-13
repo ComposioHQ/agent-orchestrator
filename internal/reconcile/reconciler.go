@@ -69,6 +69,10 @@ const (
 	defaultLease             = 30 * time.Second
 	defaultWorkerDestination = "/usr/local/bin/ao-worker"
 	bootstrapTicketTTL       = 10 * time.Minute
+	// capacityRetryBackoff paces retries when the provider is at its
+	// concurrency quota. Short enough that a session queues rather than stalls,
+	// long enough not to hammer the provider while the account stays full.
+	capacityRetryBackoff = 15 * time.Second
 )
 
 // Reconciler converges durable sandbox intent with provider state.
@@ -463,6 +467,16 @@ func (r *Reconciler) provision(
 	startedAt := time.Now()
 	environment, err := provider.Create(ctx, spec)
 	if err != nil {
+		// A concurrency-quota rejection is not a failed session — the account
+		// is simply full. Leave the sandbox desired-running and re-observe as
+		// still provisioning so a later tick retries once a slot frees, which
+		// turns "over the ceiling" into a queue instead of a dead session.
+		if errors.Is(err, sandbox.ErrAtCapacity) {
+			r.log.Info("provider at capacity; will retry",
+				"session_id", record.SessionID, "provider", record.Provider)
+			return r.observe(ctx, record, record.ProviderEnvironmentID,
+				domain.SandboxObservedProvisioning, "waiting for provider capacity", capacityRetryBackoff)
+		}
 		return r.fail(ctx, record, err)
 	}
 	r.log.Info("sandbox provisioned",
@@ -524,9 +538,10 @@ func (r *Reconciler) recreate(
 // means a config change never disturbs an in-flight session.
 type nodeOpsProfile struct {
 	NodeOps struct {
-		DefaultShape  string `json:"defaultShape"`
-		DefaultRootFS string `json:"defaultRootFs"`
-		Ingress       string `json:"ingress"`
+		DefaultShape     string `json:"defaultShape"`
+		DefaultRootFS    string `json:"defaultRootFs"`
+		Ingress          string `json:"ingress"`
+		AutoPauseSeconds int    `json:"autoPauseSeconds"`
 	} `json:"nodeOps"`
 }
 
@@ -571,14 +586,15 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		workerEnvironment["AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT"] = "true"
 	}
 	return sandbox.Spec{
-		Name:            "ao-" + record.SessionID,
-		SessionID:       record.SessionID,
-		OrgID:           record.OrgID,
-		ResourceProfile: domain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
-		Shape:           profile.NodeOps.DefaultShape,
-		RootFS:          profile.NodeOps.DefaultRootFS,
-		Ingress:         profile.NodeOps.Ingress,
-		Environment:     workerEnvironment,
+		Name:             "ao-" + record.SessionID,
+		SessionID:        record.SessionID,
+		OrgID:            record.OrgID,
+		ResourceProfile:  domain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
+		Shape:            profile.NodeOps.DefaultShape,
+		RootFS:           profile.NodeOps.DefaultRootFS,
+		Ingress:          profile.NodeOps.Ingress,
+		AutoPauseSeconds: profile.NodeOps.AutoPauseSeconds,
+		Environment:      workerEnvironment,
 		Labels: map[string]string{
 			"ao.session_id": record.SessionID,
 			"ao.org_id":     record.OrgID,

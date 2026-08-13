@@ -134,6 +134,11 @@ type createSandboxRequest struct {
 	SSHPubKeys     []string          `json:"ssh_pubkeys,omitempty"`
 	Region         string            `json:"region,omitempty"`
 	IngressEnabled bool              `json:"ingress_enabled,omitempty"`
+	// AutoPauseAfterSeconds is the CreateOS idle timeout. The API silently
+	// ignores an unknown field, so this name must match the control plane
+	// exactly (verified against the createos-sandbox SDK); a typo would leave
+	// idle sandboxes running forever with no error to notice.
+	AutoPauseAfterSeconds int `json:"auto_pause_after_seconds,omitempty"`
 }
 
 // Create provisions one sandbox for a session.
@@ -158,6 +163,9 @@ func (c *Client) Create(ctx context.Context, spec sandbox.Spec) (sandbox.Environ
 		SSHPubKeys:     c.sshPubKeys,
 		Region:         c.region,
 		IngressEnabled: strings.EqualFold(strings.TrimSpace(spec.Ingress), "enabled"),
+	}
+	if spec.AutoPauseSeconds > 0 {
+		body.AutoPauseAfterSeconds = spec.AutoPauseSeconds
 	}
 	var view sandboxView
 	if err := c.do(ctx, http.MethodPost, "/v1/sandboxes", body, &view); err != nil {
@@ -464,8 +472,10 @@ type envelope struct {
 }
 
 // statusError converts a non-2xx response. A 404 becomes ErrNotFound, which is
-// the only error the reconciler treats as proof an environment is gone;
-// everything else stays a transport failure that leaves observed state alone.
+// the only error the reconciler treats as proof an environment is gone; a
+// quota rejection becomes ErrAtCapacity, which the reconciler retries rather
+// than fails; everything else stays a transport failure that leaves observed
+// state alone.
 func statusError(response *http.Response) error {
 	if response.StatusCode >= 200 && response.StatusCode <= 299 {
 		return nil
@@ -474,9 +484,18 @@ func statusError(response *http.Response) error {
 		return sandbox.ErrNotFound
 	}
 	snippet, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
+	body := truncate(strings.TrimSpace(string(snippet)), maxErrorBody)
+	// A concurrency rejection is a wait, not a failure. 429 is unambiguous; a
+	// 403 is overloaded (auth vs quota), so it only counts when the body names
+	// the quota — the CreateOS message is "sandbox concurrent quota reached".
+	if response.StatusCode == http.StatusTooManyRequests ||
+		(response.StatusCode == http.StatusForbidden &&
+			strings.Contains(strings.ToLower(body), "quota")) {
+		return fmt.Errorf("%w: createos %d: %s", sandbox.ErrAtCapacity, response.StatusCode, body)
+	}
 	return &HTTPError{
 		StatusCode: response.StatusCode,
-		Body:       truncate(strings.TrimSpace(string(snippet)), maxErrorBody),
+		Body:       body,
 	}
 }
 
