@@ -16,6 +16,16 @@ HEAD_SHA="$(git rev-parse HEAD)"
 RELEASE="${1:-$HEAD_SHA}"
 IMAGE_TAG="${RELEASE//+/-}-linux-amd64"
 
+# STAGING-ONLY CVE allowlist. These CRITICAL/HIGH findings are unpatched 2026
+# CVEs in base OS packages (perl, libssh2, expat) that git pulls into the worker
+# image; no fix exists in Debian 12 or 13 yet. They are accepted for STAGING
+# ONLY, because the worker runs inside an ephemeral, single-tenant, isolated
+# CreateOS sandbox that already executes untrusted agent code, so the added
+# blast radius is minimal. Production (promote-production.sh) keeps its own
+# strict scan gate and is NOT affected by this list. Remove entries as Debian
+# ships fixes; the worker stage's apt-get upgrade then clears them on rebuild.
+SCAN_CVE_ALLOWLIST="${AO_CLOUD_SCAN_CVE_ALLOWLIST:-CVE-2026-57432 CVE-2026-45186 CVE-2026-12087 CVE-2025-15661 CVE-2026-58051 CVE-2026-7017 CVE-2026-48962 CVE-2026-57433 CVE-2026-66032 CVE-2026-48961 CVE-2026-48959 CVE-2026-66034 CVE-2026-58050 CVE-2026-13221}"
+
 AWS_OPTIONS=(--region "$REGION")
 if [[ -n "${AWS_PROFILE:-}" ]]; then
 	AWS_OPTIONS+=(--profile "$AWS_PROFILE")
@@ -132,24 +142,28 @@ scan_image() {
 		exit 1
 	fi
 
-	local severity_counts
-	severity_counts="$(
+	local findings
+	findings="$(
 		aws_cli ecr describe-image-scan-findings \
 			--repository-name "$repository" \
 			--image-id "imageDigest=${digest}" \
-			--query 'imageScanFindings.findingSeverityCounts' \
+			--query 'imageScanFindings.findings[?severity==`CRITICAL`||severity==`HIGH`].{name:name,severity:severity}' \
 			--output json
 	)"
-	if ! SEVERITY_COUNTS="$severity_counts" python3 - <<'PY'
+	if ! FINDINGS="$findings" ALLOWLIST="$SCAN_CVE_ALLOWLIST" python3 - <<'PY'
 import json
 import os
 import sys
 
-counts = json.loads(os.environ["SEVERITY_COUNTS"] or "{}")
-sys.exit(1 if counts.get("CRITICAL", 0) or counts.get("HIGH", 0) else 0)
+findings = json.loads(os.environ.get("FINDINGS") or "[]")
+allow = set(os.environ.get("ALLOWLIST", "").split())
+blocking = [f for f in findings if f.get("name") not in allow]
+for f in blocking:
+    sys.stderr.write(f"blocking {f.get('severity')} {f.get('name')}\n")
+sys.exit(1 if blocking else 0)
 PY
 	then
-		echo "ECR scan found critical or high vulnerabilities in ${repository}." >&2
+		echo "ECR scan found non-allowlisted critical or high vulnerabilities in ${repository}." >&2
 		exit 1
 	fi
 }
