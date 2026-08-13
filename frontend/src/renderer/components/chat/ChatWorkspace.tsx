@@ -383,6 +383,8 @@ export function ChatWorkspace({
 			<ChatHeader
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
+				reviewerTerminal={reviewerTerminal}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				headerActions={headerActions}
 				onOpenShell={onOpenShell}
 				openingShell={openingShell}
@@ -653,6 +655,8 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	sessionTitle,
+	reviewerTerminal,
+	onOpenReviewerTerminal,
 	headerActions,
 	onOpenShell,
 	openingShell,
@@ -666,6 +670,8 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
+	reviewerTerminal?: { handleId: string; harness: string };
+	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	headerActions?: ReactNode;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
