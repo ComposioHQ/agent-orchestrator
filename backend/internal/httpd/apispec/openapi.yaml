@@ -7645,6 +7645,11 @@ components:
         prompt:
           maxLength: 4096
           type: string
+        trackerProvider:
+          enum:
+          - github
+          - gitlab
+          type: string
       required:
       - projectId
       type: object
@@ -7814,6 +7819,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
