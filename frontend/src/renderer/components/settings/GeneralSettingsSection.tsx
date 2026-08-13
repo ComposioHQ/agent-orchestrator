@@ -1,9 +1,11 @@
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
 import { useRpcStore } from "../../stores/rpc-store";
+import { useRpcStatus } from "../../hooks/useRpcStatus";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -71,19 +73,25 @@ function SessionInterfaceRow() {
 function DiscordRichPresenceRow() {
 	const { t } = useTranslation();
 	const enabled = useRpcStore((state) => state.enabled);
+	const loaded = useRpcStore((state) => state.loaded);
 	const saving = useRpcStore((state) => state.saving);
 	const saveError = useRpcStore((state) => state.saveError);
 	const setEnabled = useRpcStore((state) => state.setEnabled);
+	const load = useRpcStore((state) => state.load);
+	useEffect(() => {
+		void load();
+	}, [load]);
+	useRpcStatus();
 	const note = saveError ? t("settings.discordRichPresence.saveFailed") : t("settings.discordRichPresence.help");
 	return (
 		<div className="flex w-full flex-col">
 			<SettingsRow className="rounded-none" label={t("settings.discordRichPresence.label")}>
 				<Switch
-					checked={enabled}
+					checked={loaded && enabled}
 					onCheckedChange={(next) => {
 						void setEnabled(next);
 					}}
-					disabled={saving}
+					disabled={!loaded || saving}
 					aria-label={t("settings.discordRichPresence.label")}
 					className={cn(
 						"h-(--size-settings-mobile-switch-h) w-(--size-settings-mobile-switch-w) shrink-0 transition-colors duration-300 ease-out",
