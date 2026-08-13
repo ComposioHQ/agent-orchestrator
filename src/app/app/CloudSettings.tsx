@@ -96,6 +96,11 @@ export function CloudSettings({
       <DialogContent
         className={`${settingsDialogContentClass} cloud-settings-dialog max-h-none origin-center overflow-hidden p-0`}
         showCloseButton={false}
+        style={{
+          height: "min(680px, calc(100svh - 32px))",
+          maxWidth: "calc(100vw - 32px)",
+          width: "min(920px, calc(100vw - 32px))",
+        }}
       >
         <div className="flex h-full min-h-0">
           <aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-card">
