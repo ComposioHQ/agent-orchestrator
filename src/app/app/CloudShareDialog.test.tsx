@@ -19,10 +19,12 @@ it("uses sandbox policy as the only link permission control", () => {
   render(
     <CloudShareDialog
       busy={false}
+      grants={[]}
       links={[]}
       onClose={vi.fn()}
       onCreate={vi.fn()}
       onRevoke={vi.fn()}
+      onRevokeGrant={vi.fn()}
       project={project}
     />,
   );
@@ -57,10 +59,12 @@ it("creates a link and shows its one-time url", async () => {
   render(
     <CloudShareDialog
       busy={false}
+      grants={[]}
       links={[]}
       onClose={vi.fn()}
       onCreate={onCreate}
       onRevoke={vi.fn()}
+      onRevokeGrant={vi.fn()}
       project={project}
     />,
   );
@@ -96,10 +100,12 @@ it("lists active links and revokes them", async () => {
   render(
     <CloudShareDialog
       busy={false}
+      grants={[]}
       links={[activeLink]}
       onClose={vi.fn()}
       onCreate={vi.fn()}
       onRevoke={onRevoke}
+      onRevokeGrant={vi.fn()}
       project={project}
     />,
   );

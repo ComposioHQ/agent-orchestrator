@@ -195,14 +195,54 @@ func (s *Store) RevokeProjectShareGrant(
 	})
 }
 
+// ListProjectShareGrants returns every active collaborator on a project —
+// everyone who has redeemed a share link for it — for its owning org's
+// management UI. Unlike ListSharedProjects (the recipient's own "shared
+// with me" view), this is scoped to one project and requires the caller to
+// already be a member of its org.
+func (s *Store) ListProjectShareGrants(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID, projectID string,
+) ([]domain.SharedProject, error) {
+	var grants []domain.SharedProject
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		rows, err := tx.Query(
+			ctx,
+			`SELECT `+sharedProjectColumns+sharedProjectFrom+`
+			WHERE grant_row.org_id = $1 AND grant_row.project_id = $2 AND grant_row.status = 'active'
+			ORDER BY grant_row.redeemed_at DESC`,
+			orgID, projectID,
+		)
+		if err != nil {
+			return fmt.Errorf("list project share grants: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			grant, err := scanSharedProject(rows)
+			if err != nil {
+				return err
+			}
+			grants = append(grants, grant)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return grants, nil
+}
+
 const sharedProjectColumns = `
 	grant_row.id, grant_row.org_id, grant_row.project_id, COALESCE(grant_row.session_id::text, ''),
 	grant_row.user_id, grant_row.shared_by_user_id, grant_row.role, grant_row.status,
+	COALESCE(grant_row.mode_cap, ''), COALESCE(grant_row.denied_commands, ARRAY[]::text[]),
 	grant_row.redeemed_at, grant_row.updated_at,
 	project.id, project.org_id, project.display_name, project.repository_url, project.default_branch,
 	project.github_repository_id, project.config, project.created_at, project.updated_at,
 	COALESCE(session_row.display_name, ''),
-	COALESCE(sharer.email, ''), COALESCE(sharer.display_name, '')`
+	COALESCE(sharer.email, ''), COALESCE(sharer.display_name, ''),
+	COALESCE(recipient.email, ''), COALESCE(recipient.display_name, '')`
 
 const sharedProjectFrom = `
 	FROM ao_project_share_grants grant_row
@@ -210,7 +250,8 @@ const sharedProjectFrom = `
 		ON project.org_id = grant_row.org_id AND project.id = grant_row.project_id
 	LEFT JOIN ao_sessions session_row
 		ON session_row.org_id = grant_row.org_id AND session_row.id = grant_row.session_id
-	JOIN ao_users sharer ON sharer.id = grant_row.shared_by_user_id`
+	JOIN ao_users sharer ON sharer.id = grant_row.shared_by_user_id
+	JOIN ao_users recipient ON recipient.id = grant_row.user_id`
 
 func scanSharedProject(row pgx.Row) (domain.SharedProject, error) {
 	var shared domain.SharedProject
@@ -219,11 +260,13 @@ func scanSharedProject(row pgx.Row) (domain.SharedProject, error) {
 	if err := row.Scan(
 		&shared.Grant.ID, &shared.Grant.OrgID, &shared.Grant.ProjectID, &shared.Grant.SessionID,
 		&shared.Grant.UserID, &shared.Grant.SharedByUserID, &shared.Grant.Role, &shared.Grant.Status,
+		&shared.Grant.ModeCap, &shared.Grant.DeniedCommands,
 		&shared.Grant.RedeemedAt, &shared.Grant.UpdatedAt,
 		&shared.Project.ID, &shared.Project.OrgID, &shared.Project.DisplayName, &shared.Project.RepositoryURL,
 		&shared.Project.DefaultBranch, &githubRepoID, &config, &shared.Project.CreatedAt, &shared.Project.UpdatedAt,
 		&shared.SessionName,
 		&shared.SharedByEmail, &shared.SharedByName,
+		&shared.Grant.UserEmail, &shared.Grant.UserDisplayName,
 	); err != nil {
 		return domain.SharedProject{}, err
 	}
@@ -286,9 +329,10 @@ func (s *Store) RedeemProjectShareLink(
 	if _, err := tx.Exec(
 		ctx,
 		`INSERT INTO ao_project_share_grants (
-			share_link_id, org_id, project_id, session_id, user_id, shared_by_user_id, role
+			share_link_id, org_id, project_id, session_id, user_id, shared_by_user_id, role,
+			mode_cap, denied_commands
 		) VALUES (
-			$1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7
+			$1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, NULLIF($8, ''), $9
 		)
 		ON CONFLICT (user_id, org_id, project_id, COALESCE(session_id, '00000000-0000-0000-0000-000000000000'::uuid))
 			WHERE status = 'active'
@@ -296,10 +340,13 @@ func (s *Store) RedeemProjectShareLink(
 			share_link_id = EXCLUDED.share_link_id,
 			role = EXCLUDED.role,
 			shared_by_user_id = EXCLUDED.shared_by_user_id,
+			mode_cap = EXCLUDED.mode_cap,
+			denied_commands = EXCLUDED.denied_commands,
 			status = 'active',
 			redeemed_at = now(),
 			updated_at = now()`,
 		link.ID, orgID, link.ProjectID, link.SessionID, principal.UserID, link.CreatedByUserID, link.Role,
+		link.ModeCap, link.DeniedCommands,
 	); err != nil {
 		return domain.SharedProject{}, fmt.Errorf("create project share grant: %w", err)
 	}
@@ -455,17 +502,73 @@ func (s *Store) ListSharedProjectSessions(
 	return sessions, nil
 }
 
+// sessionAccess is what withSessionAccess resolves a caller's authority to
+// operate on one session down to. For an org member, Role is "member" and
+// ModeCap/DeniedCommands are zero (a member is bound only by the session's
+// own Mode/DeniedCommands, never by a share grant's — see effectiveMode and
+// effectiveDeniedCommands). For a shared collaborator, Role is the grant's
+// "viewer" or "editor", and ModeCap/DeniedCommands are the policy frozen
+// onto that grant at redemption time (see RedeemProjectShareLink) — a cap
+// on top of the session's own values, never a grant of more than it allows.
+type sessionAccess struct {
+	Role           string
+	ModeCap        string
+	DeniedCommands []string
+}
+
+// shareModeRank orders share-policy modes from most to least restrictive,
+// so effectiveMode can pick whichever of two modes restricts further. Not
+// a valid mode on its own; effectiveMode treats an empty modeCap ("no cap")
+// as imposing no restriction at all rather than ranking it here.
+var shareModeRank = map[string]int{"read-only": 0, "standard": 1, "trusted": 2}
+
+// effectiveMode narrows a session's own mode by a share grant's modeCap, if
+// any — the cap can only restrict further, never loosen what the session
+// itself already allows. An empty cap (no cap) leaves the session's mode
+// unchanged.
+func effectiveMode(sessionMode, modeCap string) string {
+	if modeCap == "" {
+		return sessionMode
+	}
+	if shareModeRank[modeCap] < shareModeRank[sessionMode] {
+		return modeCap
+	}
+	return sessionMode
+}
+
+// effectiveDeniedCommands unions a session's own denied-command list with a
+// share grant's — either source denying a command is enough to deny it.
+func effectiveDeniedCommands(sessionDenied, grantDenied []string) []string {
+	if len(grantDenied) == 0 {
+		return sessionDenied
+	}
+	seen := make(map[string]bool, len(sessionDenied)+len(grantDenied))
+	out := make([]string, 0, len(sessionDenied)+len(grantDenied))
+	for _, command := range sessionDenied {
+		if !seen[command] {
+			seen[command] = true
+			out = append(out, command)
+		}
+	}
+	for _, command := range grantDenied {
+		if !seen[command] {
+			seen[command] = true
+			out = append(out, command)
+		}
+	}
+	return out
+}
+
 // withSessionAccess authorizes a session-scoped operation for either an
 // active org member (any role — identical to withTenant's own check) or,
 // failing that, the holder of an active share grant covering this exact
-// session or its whole project. fn receives the resolved access role:
-// "member" for an org member, or the grant's "viewer"/"editor" role for a
-// shared collaborator, so callers can gate write operations accordingly.
+// session or its whole project. fn receives the resolved sessionAccess so
+// callers can gate write operations and apply the grant's policy cap.
 func (s *Store) withSessionAccess(
 	ctx context.Context,
 	principal domain.Principal,
 	orgID, sessionID string,
-	fn func(tx pgx.Tx, role string) error,
+	fn func(tx pgx.Tx, access sessionAccess) error,
 ) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -511,7 +614,7 @@ func (s *Store) withSessionAccess(
 		return err
 	}
 
-	role := "member"
+	access := sessionAccess{Role: "member"}
 	if !isMember {
 		var projectID string
 		err := tx.QueryRow(
@@ -527,13 +630,14 @@ func (s *Store) withSessionAccess(
 		}
 		err = tx.QueryRow(
 			ctx,
-			`SELECT role FROM ao_project_share_grants
+			`SELECT role, COALESCE(mode_cap, ''), COALESCE(denied_commands, ARRAY[]::text[])
+			FROM ao_project_share_grants
 			WHERE org_id = $1 AND project_id = $2 AND user_id = $3 AND status = 'active'
 			  AND (session_id = $4 OR session_id IS NULL)
 			ORDER BY (session_id IS NULL)
 			LIMIT 1`,
 			orgID, projectID, principal.UserID, sessionID,
-		).Scan(&role)
+		).Scan(&access.Role, &access.ModeCap, &access.DeniedCommands)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrForbidden
 		}
@@ -542,7 +646,7 @@ func (s *Store) withSessionAccess(
 		}
 	}
 
-	if err := fn(tx, role); err != nil {
+	if err := fn(tx, access); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

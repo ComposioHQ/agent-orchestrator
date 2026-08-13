@@ -28,8 +28,8 @@ func (s *Store) SendMessage(
 	text string,
 ) (domain.ClientEvent, error) {
 	var event domain.ClientEvent
-	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, role string) error {
-		if role == "viewer" {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, access sessionAccess) error {
+		if access.Role == "viewer" {
 			return ErrForbidden
 		}
 		var err error
@@ -339,7 +339,7 @@ func (s *Store) ListClientEvents(
 	limit int,
 ) ([]domain.ClientEvent, bool, error) {
 	var events []domain.ClientEvent
-	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ string) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		var exists bool
 		if err := tx.QueryRow(
 			ctx,

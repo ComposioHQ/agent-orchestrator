@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type shareFixture struct {
@@ -292,6 +294,98 @@ func TestRedeemingALinkAgainRefreshesRatherThanDuplicatesTheGrant(t *testing.T) 
 	}
 	if len(mine) != 1 {
 		t.Fatalf("expected exactly one grant after redeeming twice, got %d: %#v", len(mine), mine)
+	}
+}
+
+func TestTerminalTicketScopesAndPolicyCapForSharedSessions(t *testing.T) {
+	t.Parallel()
+	f := newShareFixture(t, "terminal-share")
+	ctx := context.Background()
+
+	if err := f.store.withOrg(ctx, f.ownerOrgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sessions SET mode = 'trusted', denied_commands = '{}' WHERE id = $1`,
+			f.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("set session trusted: %v", err)
+	}
+	registerTestWorker(t, sandboxFixture{
+		store: f.store, principal: f.owner, orgID: f.ownerOrgID,
+		projectID: f.projectID, sessionID: f.sessionID,
+	})
+
+	// A viewer grant caps the session down to read-only, so an agent-kind
+	// ticket must be refused outright — no scope split matters if no ticket
+	// issues at all.
+	_, viewerToken, err := f.store.CreateProjectShareLink(ctx, f.owner, f.ownerOrgID, f.projectID, domain.CreateShareLink{
+		SessionID: f.sessionID, Role: "viewer", ModeCap: "read-only",
+	})
+	if err != nil {
+		t.Fatalf("create viewer share link: %v", err)
+	}
+	if _, err := f.store.RedeemProjectShareLink(ctx, f.other, f.ownerOrgID, viewerToken); err != nil {
+		t.Fatalf("redeem viewer share link: %v", err)
+	}
+	if _, _, err := f.store.IssueTerminalTicket(ctx, f.other, f.ownerOrgID, f.sessionID, "agent", time.Minute); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer agent terminal ticket error = %v, want ErrForbidden", err)
+	}
+
+	// An editor grant with no cap leaves the session's own trusted mode
+	// alone, so a ticket issues — but scoped to read-only, since role
+	// alone (not mode) gates terminal:operate.
+	editor, _ := registerTestUser(t, f.store, "editor-"+strings.ToLower(uuid.NewString()[:8])+"@example.com", "editor-"+strings.ToLower(uuid.NewString()[:8]), time.Now())
+	_, editorToken, err := f.store.CreateProjectShareLink(ctx, f.owner, f.ownerOrgID, f.projectID, domain.CreateShareLink{
+		SessionID: f.sessionID, Role: "editor",
+	})
+	if err != nil {
+		t.Fatalf("create editor share link: %v", err)
+	}
+	if _, err := f.store.RedeemProjectShareLink(ctx, editor, f.ownerOrgID, editorToken); err != nil {
+		t.Fatalf("redeem editor share link: %v", err)
+	}
+	_, scopes, err := f.store.IssueTerminalTicket(ctx, editor, f.ownerOrgID, f.sessionID, "agent", time.Minute)
+	if err != nil {
+		t.Fatalf("editor terminal ticket: %v", err)
+	}
+	if !slices.Contains(scopes, "terminal:operate") {
+		t.Fatalf("editor scopes = %v, want terminal:operate present", scopes)
+	}
+
+	// The owner (a member) is unaffected by either grant's cap.
+	_, memberScopes, err := f.store.IssueTerminalTicket(ctx, f.owner, f.ownerOrgID, f.sessionID, "agent", time.Minute)
+	if err != nil {
+		t.Fatalf("member terminal ticket: %v", err)
+	}
+	if !slices.Contains(memberScopes, "terminal:operate") {
+		t.Fatalf("member scopes = %v, want terminal:operate present", memberScopes)
+	}
+}
+
+func TestListProjectShareGrantsShowsRecipientIdentity(t *testing.T) {
+	t.Parallel()
+	f := newShareFixture(t, "list-grants")
+	ctx := context.Background()
+
+	_, token, err := f.store.CreateProjectShareLink(ctx, f.owner, f.ownerOrgID, f.projectID, domain.CreateShareLink{
+		Role: "editor",
+	})
+	if err != nil {
+		t.Fatalf("create share link: %v", err)
+	}
+	if _, err := f.store.RedeemProjectShareLink(ctx, f.other, f.ownerOrgID, token); err != nil {
+		t.Fatalf("redeem share link: %v", err)
+	}
+	if _, err := f.store.ListProjectShareGrants(ctx, f.other, f.ownerOrgID, f.projectID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("non-member list grants error = %v, want ErrForbidden", err)
+	}
+	grants, err := f.store.ListProjectShareGrants(ctx, f.owner, f.ownerOrgID, f.projectID)
+	if err != nil {
+		t.Fatalf("owner list grants: %v", err)
+	}
+	if len(grants) != 1 || grants[0].Grant.UserEmail != f.other.Email {
+		t.Fatalf("grants = %#v, want one grant for %s", grants, f.other.Email)
 	}
 }
 

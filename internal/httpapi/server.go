@@ -90,6 +90,7 @@ type Store interface {
 	PRFactsBySession(ctx context.Context, orgID string, sessionIDs []string) (map[string][]contract.PRFacts, error)
 	CreateProjectShareLink(context.Context, domain.Principal, string, string, domain.CreateShareLink) (domain.ShareLink, string, error)
 	ListProjectShareLinks(context.Context, domain.Principal, string, string) ([]domain.ShareLink, error)
+	ListProjectShareGrants(context.Context, domain.Principal, string, string) ([]domain.SharedProject, error)
 	RevokeProjectShareLink(context.Context, domain.Principal, string, string, string) error
 	RevokeProjectShareGrant(context.Context, domain.Principal, string, string, string) error
 	RedeemProjectShareLink(context.Context, domain.Principal, string, string) (domain.SharedProject, error)
@@ -315,6 +316,7 @@ func New(options Options) *Server {
 			router.Delete("/projects/{projectId}", server.deleteProject)
 			router.Get("/projects/{projectId}/shares", server.listProjectShareLinks)
 			router.Post("/projects/{projectId}/shares", server.createProjectShareLink)
+			router.Get("/projects/{projectId}/shares/grants", server.listProjectShareGrants)
 			router.Post("/projects/{projectId}/shares/{linkId}/revoke", server.revokeProjectShareLink)
 			router.Post("/projects/{projectId}/shares/grants/{grantId}/revoke", server.revokeProjectShareGrant)
 			router.Get("/shared/projects/{projectId}/sessions", server.listSharedProjectSessions)

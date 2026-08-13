@@ -51,10 +51,14 @@ func toShareLinkResponse(link domain.ShareLink) shareLinkResponse {
 
 type sharedProjectResponse struct {
 	Grant struct {
-		ID         string    `json:"id"`
-		Role       string    `json:"role"`
-		Status     string    `json:"status"`
-		RedeemedAt time.Time `json:"redeemedAt"`
+		ID              string    `json:"id"`
+		Role            string    `json:"role"`
+		Status          string    `json:"status"`
+		UserEmail       string    `json:"userEmail,omitempty"`
+		UserDisplayName string    `json:"userDisplayName,omitempty"`
+		ModeCap         string    `json:"modeCap,omitempty"`
+		DeniedCommands  []string  `json:"deniedCommands"`
+		RedeemedAt      time.Time `json:"redeemedAt"`
 	} `json:"grant"`
 	Project       projectResponse `json:"project"`
 	SessionID     string          `json:"sessionId,omitempty"`
@@ -74,6 +78,10 @@ func toSharedProjectResponse(shared domain.SharedProject) sharedProjectResponse 
 	response.Grant.ID = shared.Grant.ID
 	response.Grant.Role = shared.Grant.Role
 	response.Grant.Status = shared.Grant.Status
+	response.Grant.UserEmail = shared.Grant.UserEmail
+	response.Grant.UserDisplayName = shared.Grant.UserDisplayName
+	response.Grant.ModeCap = shared.Grant.ModeCap
+	response.Grant.DeniedCommands = shared.Grant.DeniedCommands
 	response.Grant.RedeemedAt = shared.Grant.RedeemedAt
 	return response
 }
@@ -203,6 +211,25 @@ func (s *Server) listProjectShareLinks(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toShareLinkResponse(link))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"links": items})
+}
+
+func (s *Server) listProjectShareGrants(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	projectID := chi.URLParam(r, "projectId")
+	if requireUUID(orgID, "orgId") != nil || requireUUID(projectID, "projectId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and projectId must be UUIDs.")
+		return
+	}
+	grants, err := s.store.ListProjectShareGrants(r.Context(), principalFrom(r), orgID, projectID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	items := make([]sharedProjectResponse, 0, len(grants))
+	for _, grant := range grants {
+		items = append(items, toSharedProjectResponse(grant))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"grants": items})
 }
 
 func (s *Server) revokeProjectShareLink(w http.ResponseWriter, r *http.Request) {

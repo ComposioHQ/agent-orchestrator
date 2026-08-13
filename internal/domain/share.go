@@ -36,7 +36,9 @@ type CreateShareLink struct {
 }
 
 // ShareGrant is one redeemed share, from the sharer's or a project admin's
-// point of view.
+// point of view. ModeCap and DeniedCommands are frozen from the link at
+// redemption time (see RedeemProjectShareLink) — revoking or editing the
+// link afterward does not change an already-redeemed grant's policy.
 type ShareGrant struct {
 	ID              string
 	OrgID           string
@@ -48,6 +50,8 @@ type ShareGrant struct {
 	SharedByUserID  string
 	Role            string
 	Status          string
+	ModeCap         string
+	DeniedCommands  []string
 	RedeemedAt      time.Time
 	UpdatedAt       time.Time
 }

@@ -73,6 +73,7 @@ export function CloudWorkspace() {
   const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
   const [shareProject, setShareProject] = useState<Project | null>(null);
   const [shareLinks, setShareLinks] = useState<ProjectShareLink[]>([]);
+  const [shareGrants, setShareGrants] = useState<SharedProject[]>([]);
   const [shareLinksBusy, setShareLinksBusy] = useState(false);
   const [sharedProjects, setSharedProjects] = useState<SharedProject[]>([]);
   const [sharedProjectSessions, setSharedProjectSessions] = useState<
@@ -783,8 +784,14 @@ export function CloudWorkspace() {
   const openShareDialog = async (project: Project) => {
     setShareProject(project);
     setShareLinks([]);
+    setShareGrants([]);
     try {
-      setShareLinks(await client.listProjectShareLinks(organizationId, project.id));
+      const [links, grants] = await Promise.all([
+        client.listProjectShareLinks(organizationId, project.id),
+        client.listProjectShareGrants(organizationId, project.id),
+      ]);
+      setShareLinks(links);
+      setShareGrants(grants);
     } catch (cause) {
       handleLoadError(cause, setError);
     }
@@ -826,6 +833,21 @@ export function CloudWorkspace() {
         current.map((item) =>
           item.id === link.id ? { ...item, status: "revoked" } : item,
         ),
+      );
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setShareLinksBusy(false);
+    }
+  };
+
+  const revokeShareGrant = async (grant: SharedProject) => {
+    if (!shareProject) return;
+    setShareLinksBusy(true);
+    try {
+      await client.revokeProjectShareGrant(organizationId, shareProject.id, grant.grant.id);
+      setShareGrants((current) =>
+        current.filter((item) => item.grant.id !== grant.grant.id),
       );
     } catch (cause) {
       handleLoadError(cause, setError);
@@ -1051,10 +1073,12 @@ export function CloudWorkspace() {
       {shareProject ? (
         <CloudShareDialog
           busy={shareLinksBusy}
+          grants={shareGrants}
           links={shareLinks}
           onClose={() => setShareProject(null)}
           onCreate={createShareLink}
           onRevoke={revokeShareLink}
+          onRevokeGrant={revokeShareGrant}
           project={shareProject}
         />
       ) : null}

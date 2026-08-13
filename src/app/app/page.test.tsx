@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => ({
   listProjectShareLinks: vi.fn(),
   createProjectShareLink: vi.fn(),
   revokeProjectShareLink: vi.fn(),
+  listProjectShareGrants: vi.fn(),
+  revokeProjectShareGrant: vi.fn(),
   redeemProjectShareLink: vi.fn(),
   listSharedProjects: vi.fn(),
   listSharedProjectSessions: vi.fn(),
@@ -66,6 +68,8 @@ vi.mock("@/lib/cloud-client", () => ({
     listProjectShareLinks: mocks.listProjectShareLinks,
     createProjectShareLink: mocks.createProjectShareLink,
     revokeProjectShareLink: mocks.revokeProjectShareLink,
+    listProjectShareGrants: mocks.listProjectShareGrants,
+    revokeProjectShareGrant: mocks.revokeProjectShareGrant,
     redeemProjectShareLink: mocks.redeemProjectShareLink,
     listSharedProjects: mocks.listSharedProjects,
     listSharedProjectSessions: mocks.listSharedProjectSessions,
@@ -170,6 +174,7 @@ beforeEach(() => {
   mocks.listOrgMembers.mockResolvedValue([]);
   mocks.listOrgInvitations.mockResolvedValue([]);
   mocks.listProjectShareLinks.mockResolvedValue([]);
+  mocks.listProjectShareGrants.mockResolvedValue([]);
   mocks.listSharedProjects.mockResolvedValue([]);
   mocks.listSharedProjectSessions.mockResolvedValue([]);
   mocks.createProject.mockResolvedValue({

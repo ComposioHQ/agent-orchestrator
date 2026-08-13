@@ -4,8 +4,9 @@ import type {
   Project,
   ProjectShareLink,
   ProjectShareModeCap,
+  SharedProject,
 } from "@aoagents/cloud-client";
-import { Check, Copy, Trash2, X } from "lucide-react";
+import { Check, Copy, Trash2, User, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
@@ -35,13 +36,16 @@ const POLICIES: Array<{
 
 export function CloudShareDialog({
   busy,
+  grants,
   links,
   onClose,
   onCreate,
   onRevoke,
+  onRevokeGrant,
   project,
 }: {
   busy: boolean;
+  grants: SharedProject[];
   links: ProjectShareLink[];
   onClose: () => void;
   onCreate: (input: {
@@ -50,6 +54,7 @@ export function CloudShareDialog({
     modeCap: ProjectShareModeCap;
   }) => Promise<ProjectShareLink>;
   onRevoke: (link: ProjectShareLink) => Promise<void>;
+  onRevokeGrant: (grant: SharedProject) => Promise<void>;
   project: Project;
 }) {
   const [scope, setScope] = useState<ShareScope>("anyone");
@@ -212,6 +217,40 @@ export function CloudShareDialog({
                         disabled={busy}
                         onClick={() => void onRevoke(link)}
                         title="Revoke link"
+                        type="button"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </ShareSection>
+            ) : null}
+
+            {grants.length > 0 ? (
+              <ShareSection label="Collaborators">
+                <div className="divide-y divide-[var(--color-border-strong)] rounded-md border border-[var(--color-border-strong)]">
+                  {grants.map((grant) => (
+                    <div
+                      className="flex items-center gap-3 px-3 py-2.5"
+                      key={grant.grant.id}
+                    >
+                      <User className="size-3.5 shrink-0 text-[var(--color-text-passive)]" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm text-[var(--foreground)]">
+                          {grant.grant.userDisplayName || grant.grant.userEmail}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[var(--color-text-passive)]">
+                          {grant.grant.role}
+                          {grant.sessionName ? ` · ${grant.sessionName}` : ""}
+                        </p>
+                      </div>
+                      <button
+                        aria-label={`Revoke access for ${grant.grant.userEmail}`}
+                        className={iconButtonClass}
+                        disabled={busy}
+                        onClick={() => void onRevokeGrant(grant)}
+                        title="Revoke access"
                         type="button"
                       >
                         <Trash2 className="size-3.5" />

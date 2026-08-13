@@ -122,7 +122,7 @@ func (s *Store) OpenReviewTerminal(
 			return err
 		}
 		if _, err := createWorkerRequest(
-			ctx, tx, orgID, sessionID, "terminal.open", openPayload, reviewTerminalRequestTTL,
+			ctx, tx, orgID, sessionID, "terminal.open", openPayload, reviewTerminalRequestTTL, "",
 		); err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func (s *Store) OpenReviewTerminal(
 			return err
 		}
 		_, err = createWorkerRequest(
-			ctx, tx, orgID, sessionID, "terminal.input", inputPayload, reviewTerminalRequestTTL,
+			ctx, tx, orgID, sessionID, "terminal.input", inputPayload, reviewTerminalRequestTTL, "",
 		)
 		return err
 	})
@@ -175,7 +175,7 @@ func (s *Store) CloseReviewTerminal(ctx context.Context, orgID, sessionID, revie
 		if err != nil {
 			return err
 		}
-		_, err = createWorkerRequest(ctx, tx, orgID, sessionID, "terminal.close", payload, reviewTerminalRequestTTL)
+		_, err = createWorkerRequest(ctx, tx, orgID, sessionID, "terminal.close", payload, reviewTerminalRequestTTL, "")
 		if errors.Is(err, ErrWorkerUnavailable) {
 			return nil
 		}
@@ -330,7 +330,7 @@ func (s *Store) ListReviewRunsBySession(
 	orgID, sessionID string,
 ) ([]domain.ReviewRunPullRequest, error) {
 	var out []domain.ReviewRunPullRequest
-	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ string) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		rows, err := tx.Query(
 			ctx,
 			`SELECT run.id, run.org_id, run.pull_request_id, run.review_session_id,
