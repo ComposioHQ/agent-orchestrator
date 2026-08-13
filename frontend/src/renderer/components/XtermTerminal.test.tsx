@@ -158,6 +158,8 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+		window.ao!.terminal.setFocused = vi.fn();
+		window.ao!.terminal.onFontSizeShortcut = () => () => undefined;
 	});
 
 	it("finishes retained activation when xterm emits no render event", async () => {
@@ -285,6 +287,67 @@ describe("XtermTerminal", () => {
 		expect(allowed).toBe(false);
 		expect(event.preventDefault).toHaveBeenCalled();
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("copied selection");
+	});
+
+	it.each([
+		["Command", "MacIntel", false, true],
+		["Ctrl", "Linux x86_64", true, false],
+	])("uses %s plus/minus for terminal font size on %s", (_label, platform, ctrlKey, metaKey) => {
+		setNavigatorPlatform(platform);
+		const onChangeFontSize = vi.fn();
+		render(<XtermTerminal onChangeFontSize={onChangeFontSize} theme="dark" />);
+
+		const increase = {
+			altKey: false,
+			code: "Equal",
+			ctrlKey,
+			key: "=",
+			metaKey,
+			preventDefault: vi.fn(),
+			shiftKey: false,
+			stopPropagation: vi.fn(),
+			type: "keydown",
+		} as unknown as KeyboardEvent;
+		const decrease = {
+			...increase,
+			code: "Minus",
+			key: "-",
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const otherPlatformModifier = { ...increase, ctrlKey: !ctrlKey, metaKey: !metaKey };
+
+		expect(state.lastTerminal!.keyHandler!(increase)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(decrease)).toBe(false);
+		expect(state.lastTerminal!.keyHandler!(otherPlatformModifier)).toBe(true);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(1, 1);
+		expect(onChangeFontSize).toHaveBeenNthCalledWith(2, -1);
+		expect(increase.preventDefault).toHaveBeenCalledOnce();
+		expect(decrease.preventDefault).toHaveBeenCalledOnce();
+	});
+
+	it("reports terminal focus and applies main-process font-size shortcuts only there", () => {
+		let fontSizeShortcut: ((delta: -1 | 1) => void) | undefined;
+		window.ao!.terminal.onFontSizeShortcut = (listener) => {
+			fontSizeShortcut = listener;
+			return () => undefined;
+		};
+		const onChangeFontSize = vi.fn();
+		const { container } = render(<XtermTerminal onChangeFontSize={onChangeFontSize} theme="dark" />);
+		const textarea = container.querySelector("textarea")!;
+
+		textarea.focus();
+		expect(window.ao!.terminal.setFocused).toHaveBeenLastCalledWith(true);
+		fontSizeShortcut?.(1);
+		expect(onChangeFontSize).toHaveBeenCalledWith(1);
+
+		const outside = document.createElement("button");
+		document.body.appendChild(outside);
+		outside.focus();
+		expect(window.ao!.terminal.setFocused).toHaveBeenLastCalledWith(false);
+		fontSizeShortcut?.(-1);
+		expect(onChangeFontSize).toHaveBeenCalledTimes(1);
+		outside.remove();
 	});
 
 	it("handles native copy events from inside the terminal", () => {

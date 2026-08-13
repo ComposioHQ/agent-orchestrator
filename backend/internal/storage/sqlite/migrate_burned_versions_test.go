@@ -94,6 +94,9 @@ var shippedMigrations = map[int64]string{
 	88: "0088_add_auto_inject_ci_toggle.sql",
 	89: "0089_conversation_turn_promotion.sql",
 	90: "0090_workspace_git_status.sql",
+	91: "0091_session_auto_review.sql",
+	92: "0092_pr_reviews_target_sha.sql",
+	93: "0093_review_run_trigger_source.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, Minus, Plus, TriangleAlert } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
@@ -24,8 +24,6 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type CenterPaneProps = {
 	session?: WorkspaceSession;
@@ -320,32 +318,6 @@ export function CenterPane({
 							</button>
 						) : null}
 					</div>
-					<div
-						aria-label={t("terminal.controlsAria")}
-						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
-						role="toolbar"
-					>
-						<TerminalControl
-							disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-							label={t("terminal.decreaseFontSize")}
-							onClick={() => updateFontSize(-1)}
-						>
-							<Minus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-						<span
-							aria-label={t("terminal.fontSizeAria", { size: fontSize })}
-							className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
-						>
-							{fontSize}px
-						</span>
-						<TerminalControl
-							disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-							label={t("terminal.increaseFontSize")}
-							onClick={() => updateFontSize(1)}
-						>
-							<Plus aria-hidden="true" className="size-icon-sm" />
-						</TerminalControl>
-					</div>
 				</div>
 				{isFullscreen ? null : (
 					<div
@@ -382,6 +354,7 @@ export function CenterPane({
 						focusRequested={switchPermissionRequired && target.kind === "worker"}
 						isFullscreen={isFullscreen}
 						inputDisabled={agentInputDisabled && target.kind === "worker"}
+						onChangeFontSize={updateFontSize}
 						onToggleFullscreen={toggleFullscreen}
 						session={session}
 						terminalTarget={target}
@@ -559,35 +532,5 @@ function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: Ses
 				) : null}
 			</button>
 		</span>
-	);
-}
-
-type TerminalControlProps = {
-	children: ReactNode;
-	disabled?: boolean;
-	isPressed?: boolean;
-	label: string;
-	onClick: () => void;
-};
-
-function TerminalControl({ children, disabled, isPressed, label, onClick }: TerminalControlProps) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<Button
-					aria-label={label}
-					aria-pressed={isPressed}
-					className="size-control-sm p-0 text-passive"
-					disabled={disabled}
-					onClick={onClick}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					{children}
-				</Button>
-			</TooltipTrigger>
-			<TooltipContent>{label}</TooltipContent>
-		</Tooltip>
 	);
 }

@@ -44,6 +44,8 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/** Resize this terminal without changing application zoom. */
+	onChangeFontSize?: (delta: number) => void;
 	isFullscreen?: boolean;
 	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
 	onToggleFullscreen?: () => void;
@@ -109,6 +111,7 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.theme === right.theme &&
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
+		left.onChangeFontSize === right.onChangeFontSize &&
 		left.isFullscreen === right.isFullscreen &&
 		left.onToggleFullscreen === right.onToggleFullscreen &&
 		left.inputDisabled === right.inputDisabled &&
@@ -646,6 +649,7 @@ export function TerminalPane({
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
+	onChangeFontSize,
 	isFullscreen,
 	onToggleFullscreen,
 	inputDisabled,
@@ -719,6 +723,7 @@ export function TerminalPane({
 		daemonReady,
 		terminalTarget,
 		fontSize,
+		onChangeFontSize,
 		isFullscreen,
 		onToggleFullscreen,
 		inputDisabled,
@@ -738,6 +743,7 @@ export function TerminalPane({
 			fontSize={fontSize}
 			isFullscreen={isFullscreen}
 			inputDisabled={inputDisabled}
+			onChangeFontSize={onChangeFontSize}
 			onToggleFullscreen={onToggleFullscreen}
 			focusRequested={focusRequested}
 			terminalTarget={terminalTarget}
@@ -882,6 +888,7 @@ function AttachedTerminal({
 	daemonReady,
 	terminalTarget,
 	fontSize,
+	onChangeFontSize,
 	isFullscreen,
 	onToggleFullscreen,
 	inputDisabled,
@@ -1062,6 +1069,7 @@ function AttachedTerminal({
 					focusRequested={focusRequested}
 					isFullscreen={isFullscreen}
 					isVisible={isVisible}
+					onChangeFontSize={onChangeFontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
