@@ -6,7 +6,9 @@ import type {
   CreateGitHubProjectInput,
   CreateGitHubScratchProjectInput,
   CreateGitHubScratchProjectResponse,
+  CreateInvitationInput,
   CreateProjectInput,
+  CreateProjectShareLinkInput,
   CreateSessionInput,
   CurrentAccount,
   DeleteProjectResponse,
@@ -19,16 +21,22 @@ import type {
   GitHubUserAuthorizationStart,
   GitHubUserConnection,
   IdempotentRequestOptions,
+  OrganizationInvitation,
+  OrganizationMember,
+  OrganizationMembership,
   PaginationOptions,
   Project,
   ProjectPage,
+  ProjectShareLink,
   PutAgentProviderConnectionInput,
   RedactedProviderConnection,
+  RedeemShareLinkInput,
   RequestOptions,
   Session,
   SessionPage,
   SessionPullRequests,
   SessionReviewState,
+  SharedProject,
   TerminalKind,
   TerminalTicket,
   UpdateProjectInput,
@@ -196,6 +204,179 @@ export class CloudClient {
         method: "DELETE",
         signal: options.signal,
       },
+    );
+  }
+
+  async listProjectShareLinks(
+    orgId: string,
+    projectId: string,
+    options: RequestOptions = {},
+  ): Promise<ProjectShareLink[]> {
+    const response = await this.request<{ links: ProjectShareLink[] }>(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares`),
+      options,
+    );
+    return response.links;
+  }
+
+  createProjectShareLink(
+    orgId: string,
+    projectId: string,
+    input: CreateProjectShareLinkInput,
+    options: RequestOptions = {},
+  ): Promise<{ link: ProjectShareLink }> {
+    return this.request(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares`),
+      { method: "POST", body: input, signal: options.signal },
+    );
+  }
+
+  revokeProjectShareLink(
+    orgId: string,
+    projectId: string,
+    linkId: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(linkId)}/revoke`,
+      ),
+      { method: "POST", signal: options.signal },
+    );
+  }
+
+  revokeProjectShareGrant(
+    orgId: string,
+    projectId: string,
+    grantId: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/grants/${encodeURIComponent(grantId)}/revoke`,
+      ),
+      { method: "POST", signal: options.signal },
+    );
+  }
+
+  async listSharedProjectSessions(
+    orgId: string,
+    projectId: string,
+    options: RequestOptions = {},
+  ): Promise<Session[]> {
+    const response = await this.request<{ sessions: Session[] }>(
+      this.orgPath(orgId, `/shared/projects/${encodeURIComponent(projectId)}/sessions`),
+      options,
+    );
+    return response.sessions;
+  }
+
+  redeemProjectShareLink(
+    input: RedeemShareLinkInput,
+    options: RequestOptions = {},
+  ): Promise<{ shared: SharedProject }> {
+    return this.request("/api/cloud/v1/share-links/redeem", {
+      method: "POST",
+      body: input,
+      signal: options.signal,
+    });
+  }
+
+  async listSharedProjects(
+    options: RequestOptions = {},
+  ): Promise<SharedProject[]> {
+    const response = await this.request<{ shared: SharedProject[] }>(
+      "/api/cloud/v1/shared/projects",
+      options,
+    );
+    return response.shared;
+  }
+
+  async listOrgMembers(
+    orgId: string,
+    options: RequestOptions = {},
+  ): Promise<OrganizationMember[]> {
+    const response = await this.request<{ members: OrganizationMember[] }>(
+      this.orgPath(orgId, "/members"),
+      options,
+    );
+    return response.members;
+  }
+
+  async listOrgInvitations(
+    orgId: string,
+    options: RequestOptions = {},
+  ): Promise<OrganizationInvitation[]> {
+    const response = await this.request<{
+      invitations: OrganizationInvitation[];
+    }>(this.orgPath(orgId, "/invitations"), options);
+    return response.invitations;
+  }
+
+  createOrgInvitation(
+    orgId: string,
+    input: CreateInvitationInput,
+    options: RequestOptions = {},
+  ): Promise<{ invitation: OrganizationInvitation }> {
+    return this.request(this.orgPath(orgId, "/invitations"), {
+      method: "POST",
+      body: input,
+      signal: options.signal,
+    });
+  }
+
+  getOrgInvitation(
+    orgId: string,
+    invitationId: string,
+    options: RequestOptions = {},
+  ): Promise<{ invitation: OrganizationInvitation }> {
+    return this.request(
+      this.orgPath(orgId, `/invitations/${encodeURIComponent(invitationId)}`),
+      options,
+    );
+  }
+
+  acceptOrgInvitation(
+    orgId: string,
+    invitationId: string,
+    options: RequestOptions = {},
+  ): Promise<{ organization: OrganizationMembership }> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/invitations/${encodeURIComponent(invitationId)}/accept`,
+      ),
+      { method: "POST", signal: options.signal },
+    );
+  }
+
+  declineOrgInvitation(
+    orgId: string,
+    invitationId: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/invitations/${encodeURIComponent(invitationId)}/decline`,
+      ),
+      { method: "POST", signal: options.signal },
+    );
+  }
+
+  revokeOrgInvitation(
+    orgId: string,
+    invitationId: string,
+    options: RequestOptions = {},
+  ): Promise<void> {
+    return this.request(
+      this.orgPath(
+        orgId,
+        `/invitations/${encodeURIComponent(invitationId)}/revoke`,
+      ),
+      { method: "POST", signal: options.signal },
     );
   }
 
