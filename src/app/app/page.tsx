@@ -52,8 +52,8 @@ export function CloudWorkspace() {
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTarget, setSettingsTarget] = useState<
-    "organization" | "providers"
-  >("organization");
+    "general" | "organization" | "providers"
+  >("general");
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectSettings, setProjectSettings] = useState<Project | null>(null);
@@ -717,7 +717,7 @@ export function CloudWorkspace() {
           onNewProject={() => setNewProjectOpen(true)}
           onOpenCommand={() => setCommandOpen(true)}
           onOpenSettings={() => {
-            setSettingsTarget("organization");
+            setSettingsTarget("general");
             setSettingsOpen(true);
             setSelectedSessionId(null);
           }}

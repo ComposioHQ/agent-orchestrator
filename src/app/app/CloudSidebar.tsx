@@ -86,7 +86,7 @@ export function CloudSidebar({
         <button
           type="button"
           aria-label="Search"
-          className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-lg bg-[var(--muted)] px-2.5 text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+          className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-lg bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)] px-2.5 text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
           onClick={onOpenCommand}
         >
           <Search className="size-3.5" strokeWidth={1.75} aria-hidden="true" />

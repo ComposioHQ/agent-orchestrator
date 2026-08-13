@@ -13,3 +13,6 @@ node_modules/
 out/
 next-env.d.ts
 *.tsbuildinfo
+
+# Reference files from Electron app
+refs/

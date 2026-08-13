@@ -5,39 +5,52 @@
 @import "../styles/tokens.css";
 @source "../../node_modules/@aoagents/product-ui/dist";
 
+/* ═══════════════════════════════════════════════════════════════
+   KEYFRAMES
+   ═══════════════════════════════════════════════════════════════ */
+
 @keyframes overlay-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
-
 @keyframes overlay-out {
   from { opacity: 1; }
   to { opacity: 0; }
 }
-
 @keyframes modal-in {
   from { opacity: 0; scale: 0.95; }
   to { opacity: 1; scale: 1; }
 }
-
 @keyframes modal-out {
   from { opacity: 1; scale: 1; }
   to { opacity: 0; scale: 0.95; }
 }
+@keyframes popover-in {
+  from { opacity: 0; scale: 0.98; }
+  to { opacity: 1; scale: 1; }
+}
+@keyframes popover-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: 0; scale: 0.98; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   UTILITIES — copied from the Electron renderer styles.css
+   ═══════════════════════════════════════════════════════════════ */
 
 @utility dialog-overlay {
   position: fixed;
   inset: 0;
   z-index: var(--z-overlay);
   background-color: rgba(0, 0, 0, 0.6);
-  -webkit-backdrop-filter: blur(1px);
-  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(var(--blur-overlay));
+  backdrop-filter: blur(var(--blur-overlay));
 }
 
-.settings-row-bar {
+@utility settings-row-bar {
   display: flex;
-  min-height: var(--size-settings-row);
   height: var(--size-settings-row);
+  min-height: var(--size-settings-row);
   align-items: center;
   justify-content: space-between;
   gap: var(--size-settings-row-icon-gap);
@@ -47,30 +60,53 @@
   padding-block: var(--size-settings-row-padding);
 }
 
-button.settings-row-bar {
-  background-color: var(--color-bg-settings-row);
-}
-
-.settings-grouped-rows .settings-row-bar {
-  height: auto;
-  min-height: calc(var(--size-settings-action-height) + 1rem);
-  padding-block: 0.5rem;
-  padding-inline: 0.75rem;
-  border-radius: 0;
-}
-
-.settings-close-button {
-  display: grid;
-  width: 2rem;
-  height: 2rem;
-  place-items: center;
-  border-radius: var(--radius-md, 0.375rem);
+@utility settings-option-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 1.5);
+  border-radius: var(--radius-md);
+  padding-inline: var(--space-2);
+  padding-block: var(--space-1);
+  font-size: var(--font-size-base);
   color: var(--color-text-settings-muted);
+  outline: none;
+  box-shadow: none;
   transition-property: color, background-color;
-  transition-duration: 150ms;
+  transition-duration: var(--duration-fast);
 }
 
-.settings-row-value {
+@utility settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--spacing) * 2);
+  border-radius: var(--radius-settings-row);
+  border: 1px solid transparent;
+  padding-inline: var(--space-3);
+  padding-block: var(--space-2_5);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-row);
+  color: var(--color-text-settings-row);
+}
+
+@utility settings-menu-surface {
+  display: flex;
+  width: max-content;
+  max-width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+  min-width: var(--size-settings-menu-min-width);
+  max-height: var(--size-select-menu-max);
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-settings-panel);
+  border: 1px solid var(--color-border-settings-menu);
+  background-color: var(--color-bg-settings-menu);
+  padding: var(--space-2);
+  gap: var(--space-1_5);
+  box-shadow: none;
+}
+
+@utility settings-row-value {
   min-width: 0;
   max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
   flex: 0 1 auto;
@@ -78,25 +114,77 @@ button.settings-row-bar {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: right;
-  font-size: var(--font-size-base, 0.875rem);
+  font-size: var(--font-size-base);
   line-height: var(--line-height-row);
   color: var(--color-text-settings-muted);
 }
 
-@utility animate-overlay-in {
-  animation: overlay-in 80ms cubic-bezier(0.23, 1, 0.32, 1);
+@utility settings-close-button {
+  display: grid;
+  width: calc(var(--spacing) * 8);
+  height: calc(var(--spacing) * 8);
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--color-text-settings-muted);
+  transition-property: color, background-color;
+  transition-duration: var(--duration-normal);
+
+  &:hover {
+    background-color: var(--color-bg-settings-row-hover);
+    color: var(--color-text-settings-title);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+  }
 }
 
-@utility animate-overlay-out {
-  animation: overlay-out 60ms ease-in;
+@utility border-settings-menu {
+  border-color: var(--color-border-settings-menu);
 }
 
-@utility animate-modal-in {
-  animation: modal-in 120ms cubic-bezier(0.23, 1, 0.32, 1);
+/* ═══════════════════════════════════════════════════════════════
+   NON-UTILITY RULES — cascading overrides that cannot be @utility
+   ═══════════════════════════════════════════════════════════════ */
+
+button.settings-row-bar {
+  background-color: var(--color-bg-settings-row);
 }
 
-@utility animate-modal-out {
-  animation: modal-out 70ms cubic-bezier(0.4, 0, 1, 1);
+button.settings-link-row:hover,
+button.settings-link-row:active {
+  background-color: var(--color-bg-settings-row-hover);
+  color: var(--color-text-settings-title);
+}
+
+.settings-grouped-rows .settings-row-bar {
+  height: auto;
+  min-height: calc(var(--size-settings-action-height) + (var(--space-2) * 2));
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  border-radius: 0;
+}
+
+.settings-grouped-rows .settings-link-row.settings-row-bar {
+  border-radius: var(--radius-md);
+}
+
+.settings-option-trigger:hover,
+.settings-option-trigger[data-state="open"] {
+  background-color: var(--color-bg-settings-trigger-hover);
+  color: var(--color-text-settings-trigger);
+}
+
+.model-menu-overflow-cue {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: var(--space-8);
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--color-bg-settings-menu));
+  transition: opacity var(--duration-fast) ease-out;
 }
 
 body {

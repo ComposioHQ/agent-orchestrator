@@ -12,6 +12,7 @@ import {
   GitFork,
   KeyRound,
   RefreshCw,
+  Settings2,
   Unplug,
   User,
   X,
@@ -19,6 +20,14 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
+import {
+  type ThemePreference,
+  type ThemeStyle,
+  readStoredThemePreference,
+  readStoredThemeStyle,
+  saveThemePreference,
+  saveThemeStyle,
+} from "@/lib/theme";
 import {
   Dialog,
   DialogClose,
@@ -31,13 +40,14 @@ import {
   settingsDialogHeaderClass,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { SettingsOptionMenu } from "@/components/settings/SettingsOptionMenu";
 import type {
   GitHubCapability,
   GitHubUserCapability,
   ProviderCapability,
 } from "./cloud-ui-types";
 
-type SettingsPanel = "profile" | "notifications" | "organization" | "providers";
+type SettingsPanel = "general" | "profile" | "notifications" | "organization" | "providers";
 type AgentProvider = "claude-code" | "codex" | "cursor";
 
 export function CloudSettings({
@@ -63,7 +73,7 @@ export function CloudSettings({
   busy: boolean;
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
-  initialPanel: "organization" | "providers";
+  initialPanel: SettingsPanel;
   open: boolean;
   onBack: () => void;
   onConnectGitHub: () => Promise<void>;
@@ -110,6 +120,12 @@ export function CloudSettings({
               Settings
             </p>
             <nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2 pt-0">
+              <SettingsNavItem
+                active={displayPanel === "general"}
+                icon={Settings2}
+                label="General"
+                onClick={() => setPanel("general")}
+              />
               <SettingsNavItem
                 active={displayPanel === "profile"}
                 icon={User}
@@ -163,6 +179,10 @@ export function CloudSettings({
             </DialogHeader>
             <div className={cn(settingsDialogBodyClass, "flex-1")}>
               <div className="w-full space-y-8">
+
+                {displayPanel === "general" ? (
+                  <GeneralSettingsPanel />
+                ) : null}
 
                 {displayPanel === "profile" ? (
                   <SettingsSection title="Profile" titleHidden grouped>
@@ -478,6 +498,8 @@ function SettingsRow({
 
 function settingsTitle(panel: SettingsPanel) {
   switch (panel) {
+    case "general":
+      return "General";
     case "profile":
       return "Profile";
     case "notifications":
@@ -491,6 +513,8 @@ function settingsTitle(panel: SettingsPanel) {
 
 function settingsDescription(panel: SettingsPanel) {
   switch (panel) {
+    case "general":
+      return "Appearance and display preferences.";
     case "profile":
       return "Manage how your account appears in AO Cloud.";
     case "notifications":
@@ -500,6 +524,56 @@ function settingsDescription(panel: SettingsPanel) {
     default:
       return "Review organization membership and workspace configuration.";
   }
+}
+
+const COLOR_THEMES: Array<{ value: ThemeStyle; label: string }> = [
+  { value: "orchestrate", label: "Orchestrate" },
+  { value: "github", label: "GitHub" },
+  { value: "catppuccin", label: "Catppuccin" },
+  { value: "dracula", label: "Dracula" },
+  { value: "tokyo-night", label: "Tokyo Night" },
+  { value: "rose-pine", label: "Rosé Pine" },
+  { value: "nord", label: "Nord" },
+  { value: "gruvbox", label: "Gruvbox" },
+  { value: "solarized", label: "Solarized" },
+];
+
+const APPEARANCE_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+];
+
+function GeneralSettingsPanel() {
+  const [themeStyle, setThemeStyle] = useState<ThemeStyle>(readStoredThemeStyle);
+  const [themePref, setThemePref] = useState<ThemePreference>(readStoredThemePreference);
+
+  return (
+    <SettingsSection title="Appearance" grouped>
+      <SettingsRow label="Color theme">
+        <SettingsOptionMenu
+          aria-label="Color theme"
+          value={themeStyle}
+          options={COLOR_THEMES}
+          onChange={(v) => {
+            setThemeStyle(v);
+            saveThemeStyle(v);
+          }}
+        />
+      </SettingsRow>
+      <SettingsRow label="Appearance">
+        <SettingsOptionMenu
+          aria-label="Appearance"
+          value={themePref}
+          options={APPEARANCE_OPTIONS}
+          onChange={(v) => {
+            setThemePref(v);
+            saveThemePreference(v);
+          }}
+        />
+      </SettingsRow>
+    </SettingsSection>
+  );
 }
 
 const fieldClass =
