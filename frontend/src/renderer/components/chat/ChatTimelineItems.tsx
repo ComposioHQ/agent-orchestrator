@@ -54,6 +54,7 @@ import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
+import { ConversationContentItems } from "./ConversationContentItems";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
@@ -257,7 +258,9 @@ export function HumanMessage({
 				</div>
 			)}
 			{queued ? (
-				<span className="text-[11px] text-muted-foreground">Queued · sends when the agent finishes</span>
+				<div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+					<span>Queued · sends when the agent finishes</span>
+				</div>
 			) : null}
 			{message.delivery && message.delivery !== "accepted" ? (
 				<DeliveryNote state={message.delivery} />
@@ -1280,7 +1283,14 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 	return (
 		<div className="flex flex-col items-end gap-1">
 			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
-				{text}
+				{text ? <p>{text}</p> : null}
+				<ConversationContentItems
+					content={activity.detail?.content ?? []}
+					ariaLabel="Steered attachments"
+					imageLabel="Image"
+					imageAlt={(position) => `Steered attachment ${position}`}
+					className={cn(text && "mt-2")}
+				/>
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
 				<CornerDownRight aria-hidden="true" className="size-3" />

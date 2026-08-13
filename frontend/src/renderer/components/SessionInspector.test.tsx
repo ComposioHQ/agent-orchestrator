@@ -394,6 +394,8 @@ describe("SessionInspector PR section", () => {
 	it("renders PRs and reviews before the stacked compact policy rows", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
+		expect(screen.getByText("Session controls")).toBeInTheDocument();
+
 		const policyRow = (name: string) =>
 			screen.getByRole("switch", { name }).closest("[data-slot='inspector-policy-row']") as HTMLElement;
 		const ciRow = policyRow("Automatically send CI failures");
@@ -421,7 +423,12 @@ describe("SessionInspector PR section", () => {
 		}
 		expect(
 			screen.getByRole("button", {
-				name: "When disabled, CI failures for newly created pull requests will not be sent to the worker agent but will still be displayed. Existing pull requests keep their original setting.",
+				name: "Sets the default for newly created pull requests. When disabled, CI failures are not sent to the worker agent to fix.",
+			}),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "When disabled, AO keeps this session open after all pull requests merge.",
 			}),
 		).toBeInTheDocument();
 	});
@@ -444,7 +451,7 @@ describe("SessionInspector PR section", () => {
 
 	it("restores the CI injection toggle and shows the API error when saving fails", async () => {
 		patchMock.mockResolvedValueOnce({ error: new Error("CI policy unavailable"), response: { status: 500 } });
-		renderWithQuery(<SessionInspector session={session([])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		const toggle = screen.getByRole("switch", { name: "Automatically send CI failures" });
 		await userEvent.click(toggle);
@@ -809,7 +816,7 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		for (const title of ["Pull request", "Completion", "Activity"]) {
+		for (const title of ["Pull request", "Session controls", "Activity"]) {
 			const heading = screen.getByText(title).parentElement;
 			expect(heading?.parentElement).toHaveAttribute("data-testid", "inspector-section");
 		}
@@ -1025,6 +1032,105 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+	});
+
+	it("configures session auto-review and disables manual controls", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [reviewState(3, "needs_review")] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }] },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("button", { name: "Run review" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Select reviewer agent" })).toBeDisabled();
+		const toggle = screen.getByRole("switch", { name: "Auto review" });
+		expect(toggle).toBeChecked();
+		await userEvent.click(toggle);
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { enabled: false },
+			}),
+		);
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+	});
+
+	it("enables auto-review for the current session", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review")]);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		const toggle = screen.getByRole("switch", { name: "Auto review" });
+		expect(toggle).not.toBeChecked();
+		await userEvent.click(toggle);
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { enabled: true },
+			}),
+		);
+	});
+
+	it("shows reviewing status and cancel action while auto-review is running", async () => {
+		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "reviewer-pane", reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }] },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("button", { name: "Stop review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill review session" })).toBeDisabled();
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
 	});
 
 	it("hides review summary sections when no review data exists", async () => {
@@ -1623,7 +1729,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
-	it("shows cancelled review runs without marking them failed", async () => {
+	it("does not list a cancelled run as a reviewed outcome", async () => {
 		mockCommonGets([], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: { ...failedReview, status: "cancelled" } },
 		]);
@@ -1631,7 +1737,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findAllByText("Cancelled")).toHaveLength(1);
+		expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.queryByText("reviewer crashed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
@@ -1655,7 +1761,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("shows failed latest runs as failed and still allows rerun", async () => {
+	it("does not list a failed run without a verdict and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
 		]);
@@ -1663,8 +1769,26 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findAllByText("Failed")).not.toHaveLength(0);
+		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
+	});
+
+	it("surfaces the latest automatic review failure while auto review is enabled", async () => {
+		const failedAutoReview = {
+			...failedReview,
+			triggerSource: "auto",
+			body: 'reviewer preflight: reviewer harness "kimi" is unauthorized',
+		};
+		mockCommonGets([], "", [
+			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedAutoReview },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("status")).toHaveTextContent(
+			'Auto review Failed: reviewer preflight: reviewer harness "kimi" is unauthorized',
+		);
 	});
 
 	it("does not expose the Reviews tab when the session has no PRs", async () => {

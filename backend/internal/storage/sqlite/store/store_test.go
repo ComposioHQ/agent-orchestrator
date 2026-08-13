@@ -636,6 +636,42 @@ func TestSessionAutoInjectReviewPolicyRoundTripAndCDC(t *testing.T) {
 	}
 }
 
+func TestSessionAutoReviewPolicyRoundTripAndCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	updatedAt := r.UpdatedAt.Add(time.Minute)
+	ok, err := s.SetSessionAutoReview(ctx, r.ID, true, updatedAt)
+	if err != nil || !ok {
+		t.Fatalf("enable auto review: ok=%v err=%v", ok, err)
+	}
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("get session: found=%v err=%v", found, err)
+	}
+	if !got.AutoReviewEnabled || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("auto review policy not persisted: %+v", got)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || string(evs[0].Type) != "session_updated" {
+		t.Fatalf("auto review policy events = %+v, want one session_updated", evs)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := payload["autoReviewEnabled"].(bool); !ok || !enabled {
+		t.Fatalf("autoReviewEnabled payload = %#v, want true", payload["autoReviewEnabled"])
+	}
+}
+
 func TestSessionRuntimeLaunchIDRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -912,7 +948,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		UpdatedAt: now, ObservedAt: now, CIObservedAt: now, ReviewObservedAt: now,
 	}
 	checks := []domain.PullRequestCheck{{Name: "build", CommitHash: "h1", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "ci", Details: "99", LogTail: "boom", CreatedAt: now}}
-	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", SubmittedAt: now, AutoInjectReview: false}}
+	reviews := []domain.PullRequestReview{{ID: "review-1", Author: "reviewer", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please fix the nil check", TargetSHA: "h1", SubmittedAt: now, AutoInjectReview: false}}
 	threads := []domain.PullRequestReviewThread{{ThreadID: "t1", Path: "main.go", Line: 7, SemanticHash: "th", UpdatedAt: now}}
 	comments := []domain.PullRequestComment{{ThreadID: "t1", ID: "c1", Author: "reviewer", File: "main.go", Line: 7, Body: "fix", URL: "comment", CreatedAt: now, AutoInjectReview: false}}
 
@@ -935,7 +971,7 @@ func TestWriteSCMObservationPersistsMetadataChecksReviewsAndComments(t *testing.
 		t.Fatalf("threads not persisted: %+v", gotThreads)
 	}
 	gotReviews, _ := s.ListPRReviews(ctx, pr.URL)
-	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" || gotReviews[0].AutoInjectReview {
+	if len(gotReviews) != 1 || gotReviews[0].ID != "review-1" || gotReviews[0].URL != "https://github.com/o/r/pull/1#pullrequestreview-1" || gotReviews[0].Body != "please fix the nil check" || gotReviews[0].TargetSHA != "h1" || gotReviews[0].AutoInjectReview {
 		t.Fatalf("reviews not persisted: %+v", gotReviews)
 	}
 	gotComments, _ := s.ListPRComments(ctx, pr.URL)

@@ -201,6 +201,7 @@ type ReviewRun = NonNullable<PRReviewState["latestRun"]>;
 const reviewRun = (prNumber: number): ReviewRun => ({
 	autoInjectReview: false,
 	batchId: "batch-1",
+	triggerSource: "manual" as const,
 	body: "review body",
 	createdAt: "2026-06-10T00:00:00Z",
 	githubReviewId: `${prNumber}01`,

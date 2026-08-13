@@ -95,13 +95,15 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 						sessionId: session.id,
 						status: "delivered",
 						targetSha,
+						triggerSource: "manual" as const,
 						verdict: pr.review === "approved" ? "approved" : "changes_requested",
 					}
 				: undefined;
-		const run = (over: Record<string, unknown>) => ({
-			autoInjectReview: session.autoInjectReview ?? true,
-			batchId: `demo-batch-${session.id}`,
-			body: "",
+	const run = (over: Record<string, unknown>) => ({
+		autoInjectReview: session.autoInjectReview ?? true,
+		batchId: `demo-batch-${session.id}`,
+		body: "",
+		triggerSource: "manual" as const,
 			createdAt: reviewedAt,
 			githubReviewId: "",
 			harness: "codex",
@@ -168,6 +170,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			batchId: `demo-batch-${session.id}`,
 			githubReviewId: "",
 			prUrl: state.prUrl,
+			triggerSource: "manual" as const,
 			reviewId: `demo-review-${state.prNumber}`,
 			sessionId: session.id,
 			status: "delivered",

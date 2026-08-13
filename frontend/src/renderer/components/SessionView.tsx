@@ -282,11 +282,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		setTerminalTarget((current) =>
 			current.kind === "reviewer" &&
+				reviewerQuery.isFetched &&
 			(!availableReviewerTerminal || availableReviewerTerminal.handleId !== current.handleId)
 				? { kind: "worker" }
 				: current,
 		);
-	}, [availableReviewerTerminal]);
+	}, [availableReviewerTerminal, reviewerQuery.isFetched]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
@@ -641,6 +642,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						{showChatSurface ? (
 							<SessionChatSurface
 								session={session}
+								reviewerTerminal={reviewerTerminal}
+								onOpenReviewerTerminal={selectReviewerTerminal}
 								headerActions={sessionHeaderActions}
 								controllerTransitioning={chatControllerTransitioning}
 								onOpenShell={addShellTerminal}
