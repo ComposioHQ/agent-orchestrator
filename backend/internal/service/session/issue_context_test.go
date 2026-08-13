@@ -31,6 +31,13 @@ func TestCanonicalGitLabIssueURL(t *testing.T) {
 			wantOk:     true,
 		},
 		{
+			name:       "www.gitlab.com normalizes to empty host",
+			raw:        "https://www.gitlab.com/group/project/-/issues/42",
+			wantNative: "group/project#42",
+			wantHost:   "", // www.gitlab.com → zero value (same as gitlab.com)
+			wantOk:     true,
+		},
+		{
 			name:       "self-managed GitLab",
 			raw:        "https://gitlab.internal/group/project/-/issues/42",
 			wantNative: "group/project#42",

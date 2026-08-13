@@ -7,6 +7,7 @@ import (
 
 	scmmulti "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/multi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
+	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -50,8 +51,8 @@ func TestSCMWiring_NewMultiSCMProviderReturnsScopedResolver(t *testing.T) {
 }
 
 // TestSCMWiring_ObserverConfigHasScopedResolver verifies that the observer
-// constructed with a multi provider has a non-nil ScopedIdentityResolver,
-// mirroring how startSCMObserver wires it in production.
+// Config constructed in production wiring (startSCMObserver) carries a
+// non-nil ScopedIdentityResolver when a multi provider is available.
 func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 	gh, err := newGitHubSCMProvider(slog.Default())
 	if err != nil {
@@ -67,9 +68,12 @@ func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 		scmmulti.NamedProvider{Key: "gitlab", Provider: gl},
 	)
 
-	// Simulate the production wiring: the multi provider is passed as both
-	// the SCM provider and the ScopedIdentityResolver.
-	cfg := observerConfigForTest(multi)
+	// Mirror the production wiring in startSCMObserver: the multi provider
+	// is passed as the ScopedIdentityResolver in the observer Config.
+	cfg := scmobserve.Config{
+		Logger:                 slog.Default(),
+		ScopedIdentityResolver: multi,
+	}
 	if cfg.ScopedIdentityResolver == nil {
 		t.Fatal("ScopedIdentityResolver is nil; production wiring must set it")
 	}
@@ -77,17 +81,6 @@ func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 	// Verify it actually resolves per-provider (github identity is available
 	// if a token was set; if not, it should still return an error, not panic).
 	_, _ = cfg.ScopedIdentityResolver.AuthenticatedIdentityForProvider(context.Background(), "github")
-}
-
-// observerConfigForTest builds a minimal observer Config that mirrors the
-// production wiring in startSCMObserver. The helper avoids importing the
-// observer package directly (which would create an import cycle in tests).
-func observerConfigForTest(multi *scmmulti.Provider) observerConfig {
-	return observerConfig{ScopedIdentityResolver: multi}
-}
-
-type observerConfig struct {
-	ScopedIdentityResolver ports.ScopedIdentityResolver
 }
 
 func testGitLabConfig() config.GitLabConfig {

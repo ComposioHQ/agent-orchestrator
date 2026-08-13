@@ -197,7 +197,7 @@ func canonicalGitLabIssueURL(raw string) (native, host string, ok bool) {
 	// u.Host preserves the port (e.g. "gitlab.internal:8443") so that
 	// self-managed hosts with non-default ports match AllowedHosts entries.
 	host = u.Host
-	if strings.EqualFold(host, "gitlab.com") {
+	if strings.EqualFold(host, "gitlab.com") || strings.EqualFold(host, "www.gitlab.com") {
 		host = "" // zero value means gitlab.com
 	}
 	return fmt.Sprintf("%s#%d", strings.Join(parts, "/"), n), host, true

@@ -106,7 +106,7 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 
 	allowed := make(map[string]bool, len(opts.AllowedHosts))
 	for _, h := range opts.AllowedHosts {
-		h = strings.TrimSpace(strings.ToLower(h))
+		h = NormalizeHost(h)
 		if h != "" {
 			allowed[h] = true
 		}
@@ -114,7 +114,7 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 
 	hostTokens := make(map[string]TokenSource, len(opts.HostTokens))
 	for h, src := range opts.HostTokens {
-		h = strings.TrimSpace(strings.ToLower(h))
+		h = NormalizeHost(h)
 		if h != "" && src != nil {
 			hostTokens[h] = src
 		}
@@ -140,11 +140,11 @@ func NewProvider(opts ProviderOptions) (*Provider, error) {
 // to talk to. gitlab.com is always allowed; self-managed hosts must be in the
 // configured allowlist.
 func (p *Provider) isHostAllowed(host string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
+	host = NormalizeHost(host)
 	if host == "" {
 		return false
 	}
-	if host == "gitlab.com" || host == "www.gitlab.com" {
+	if IsGitLabDotCom(host) {
 		return true
 	}
 	return p.allowedHosts[host]
@@ -163,43 +163,40 @@ func (p *Provider) isHostAllowed(host string) bool {
 // supported (matching the reviewer's "reject HTTPS-to-HTTP downgrades" rule
 // from Item 6).
 func (p *Provider) clientForHost(host string) *Client {
+	h := NormalizeHost(host)
 	// Empty host (e.g. test repos without Host set) falls back to the default
-	// client so tests using a test-server RESTBase keep working.
-	if host == "" {
+	// client so tests using a test-server RESTBase keep working. gitlab.com and
+	// www.gitlab.com also use the default client.
+	if IsGitLabDotCom(h) {
 		return p.client
 	}
 	// Reject non-allowlisted hosts before any credential is attached.
-	if !p.isHostAllowed(host) {
+	if !p.allowedHosts[h] {
 		return nil
-	}
-	// gitlab.com uses the default client (whose RESTBase is the test server in
-	// tests, or the real https://gitlab.com/api/v4 in production).
-	if host == "gitlab.com" || host == "www.gitlab.com" {
-		return p.client
 	}
 	// If the default client's RESTBase already matches this host (e.g. a test
 	// server whose host happens to be in the allowlist), reuse it.
-	if p.client != nil && hostMatchesRESTBase(p.client.restBase, host) {
+	if p.client != nil && hostMatchesRESTBase(p.client.restBase, h) {
 		return p.client
 	}
 
 	p.hostMu.Lock()
 	defer p.hostMu.Unlock()
-	if c, ok := p.hostClients[host]; ok {
+	if c, ok := p.hostClients[h]; ok {
 		return c
 	}
 
 	cfg := p.hostClientCfg
 	// Derive the REST base from the host, preserving any port (e.g.
 	// "gitlab.internal:8443" → "https://gitlab.internal:8443/api/v4").
-	cfg.RESTBase = "https://" + host + "/api/v4"
+	cfg.RESTBase = "https://" + h + "/api/v4"
 	// Select the per-host token if one is configured; otherwise the default
 	// token (cfg.Token) applies.
-	if src, ok := p.hostTokens[strings.ToLower(host)]; ok {
+	if src, ok := p.hostTokens[h]; ok {
 		cfg.Token = src
 	}
 	c := NewClient(cfg)
-	p.hostClients[host] = c
+	p.hostClients[h] = c
 	return c
 }
 

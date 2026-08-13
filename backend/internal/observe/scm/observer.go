@@ -41,6 +41,11 @@ const (
 	DefaultPRMaxAge = 5 * time.Minute
 	// BatchSize is the maximum number of PRs in one provider batch fetch.
 	BatchSize = 25
+
+	// fallbackIdentityKey is the map key used when the observer falls back
+	// to the single-provider IdentityResolver path. It represents the
+	// unnamed identity that applies when no ScopedIdentityResolver is wired.
+	fallbackIdentityKey = ""
 )
 
 // Provider is the normalized SCM provider contract used by the observer.
@@ -997,7 +1002,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			if identityKnown {
 				id, ok := identities[repo.Provider]
 				if !ok {
-					id, ok = identities[""] // fallback single-identity
+					id, ok = identities[fallbackIdentityKey] // fallback single-identity
 				}
 				if ok && !strings.EqualFold(strings.TrimSpace(pr.Author), id.Login) {
 					continue
@@ -1110,7 +1115,7 @@ func (o *Observer) resolveIdentities(ctx context.Context, sessionRepos []session
 	if !ok {
 		return nil, false
 	}
-	return map[string]ports.SCMIdentity{"": identity}, true
+	return map[string]ports.SCMIdentity{fallbackIdentityKey: identity}, true
 }
 
 // matchSession picks the session that owns sourceBranch. A session owns the

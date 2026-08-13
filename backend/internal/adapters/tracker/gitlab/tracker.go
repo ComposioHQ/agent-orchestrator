@@ -129,15 +129,15 @@ func New(opts Options) (*Tracker, error) {
 	// Build per-host config for self-managed hosts.
 	hosts := make(map[string]hostEntry, len(opts.AllowedHosts))
 	for _, raw := range opts.AllowedHosts {
-		h := strings.TrimSpace(strings.ToLower(raw))
-		if h == "" {
+		h := scmgitlab.NormalizeHost(raw)
+		if h == "" || scmgitlab.IsGitLabDotCom(h) {
 			continue
 		}
 		he := hostEntry{
 			baseURL: "https://" + h + "/api/v4",
 			tokens:  src, // fall back to default token
 		}
-		if ts, ok := opts.HostTokens[strings.ToLower(raw)]; ok && ts != nil {
+		if ts, ok := opts.HostTokens[h]; ok && ts != nil {
 			he.tokens = ts
 		}
 		hosts[h] = he
@@ -160,8 +160,8 @@ func New(opts Options) (*Tracker, error) {
 // Self-managed hosts must be in the allowlist; unconfigured hosts return an
 // error so callers fail closed before any credential is attached.
 func (t *Tracker) configForHost(host string) (hostEntry, error) {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "" || host == "gitlab.com" || host == "www.gitlab.com" {
+	host = scmgitlab.NormalizeHost(host)
+	if scmgitlab.IsGitLabDotCom(host) {
 		return t.defaultHost, nil
 	}
 	if he, ok := t.hosts[host]; ok {
