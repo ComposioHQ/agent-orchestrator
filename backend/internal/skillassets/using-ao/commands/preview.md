@@ -22,9 +22,9 @@ ao preview docs/guide.md
 
 Do not compensate for the current directory with `../README.md`. Relative
 targets already start at the workspace root, so parent traversal instead tries
-to leave the workspace and is invalid. An absolute path is also accepted when
-it resolves inside the session workspace, but a workspace-root-relative path
-is clearer and more portable.
+to leave the workspace and is rejected with `PREVIEW_FILE_OUTSIDE_WORKSPACE`.
+An absolute path is also accepted when it resolves inside the session
+workspace, but a workspace-root-relative path is clearer and more portable.
 
 AO serves workspace files through the daemon's existing confined loopback
 preview origin. This is a local preview, not a deployment or a new development
