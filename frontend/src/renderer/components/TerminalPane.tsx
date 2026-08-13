@@ -44,6 +44,9 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	isFullscreen?: boolean;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
 	/** Refuse agent PTY input while a controller transition owns the source. */
 	inputDisabled?: boolean;
 	/** Focus the terminal when an in-flight controller asks for human input. */
@@ -106,6 +109,8 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.theme === right.theme &&
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
+		left.isFullscreen === right.isFullscreen &&
+		left.onToggleFullscreen === right.onToggleFullscreen &&
 		left.inputDisabled === right.inputDisabled &&
 		left.focusRequested === right.focusRequested &&
 		left.createMux === right.createMux &&
@@ -641,6 +646,8 @@ export function TerminalPane({
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
+	isFullscreen,
+	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
 }: TerminalPaneProps) {
@@ -706,7 +713,17 @@ export function TerminalPane({
 		);
 	}
 
-	const props = { session, theme, daemonReady, terminalTarget, fontSize, inputDisabled, focusRequested };
+	const props = {
+		session,
+		theme,
+		daemonReady,
+		terminalTarget,
+		fontSize,
+		isFullscreen,
+		onToggleFullscreen,
+		inputDisabled,
+		focusRequested,
+	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
 		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
@@ -719,7 +736,9 @@ export function TerminalPane({
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			isFullscreen={isFullscreen}
 			inputDisabled={inputDisabled}
+			onToggleFullscreen={onToggleFullscreen}
 			focusRequested={focusRequested}
 			terminalTarget={terminalTarget}
 		/>
@@ -863,6 +882,8 @@ function AttachedTerminal({
 	daemonReady,
 	terminalTarget,
 	fontSize,
+	isFullscreen,
+	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
 	createMux,
@@ -1039,10 +1060,12 @@ function AttachedTerminal({
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
 					focusRequested={focusRequested}
+					isFullscreen={isFullscreen}
 					isVisible={isVisible}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
+					onToggleFullscreen={onToggleFullscreen}
 					onVisibleSize={syncVisibleSize}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}

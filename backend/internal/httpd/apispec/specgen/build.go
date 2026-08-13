@@ -181,6 +181,7 @@ var schemaNames = map[string]string{
 	"ControllersSetConversationTitleResponse":         "SetConversationTitleResponse",
 	"ControllersSteerConversationRequest":             "SteerConversationRequest",
 	"ControllersSteerConversationResponse":            "SteerConversationResponse",
+	"ControllersPromoteQueuedTurnResponse":            "PromoteQueuedTurnResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -218,6 +219,8 @@ var schemaNames = map[string]string{
 	"ControllersSetSessionMergePolicyResponse":            "SetSessionMergePolicyResponse",
 	"ControllersSetSessionAutoInjectReviewRequest":        "SetSessionAutoInjectReviewRequest",
 	"ControllersSetSessionAutoInjectReviewResponse":       "SetSessionAutoInjectReviewResponse",
+	"ControllersSetSessionAutoInjectCIRequest":            "SetSessionAutoInjectCIRequest",
+	"ControllersSetSessionAutoInjectCIResponse":           "SetSessionAutoInjectCIResponse",
 	"ControllersRenameSessionRequest":                     "RenameSessionRequest",
 	"ControllersSetSessionReviewerRequest":                "SetSessionReviewerRequest",
 	"ControllersRenameSessionResponse":                    "RenameSessionResponse",
@@ -322,7 +325,12 @@ var schemaNames = map[string]string{
 	"ControllersDevImportProjectsRequest":  "DevImportProjectsRequest",
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
-	"ControllersMobileStatusResponse": "MobileStatusResponse",
+	"ControllersMobileStatusResponse":  "MobileStatusResponse",
+	"ControllersMobileDeviceResponse":  "MobileDeviceResponse",
+	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
+	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
+	"ControllersInstallIDParam":        "InstallIDParam",
+	"ControllersPushPairingIDParam":    "PushPairingIDParam",
 	// devimport report
 	"DevimportReport":   "DevImportProjectsReport",
 	"DevimportConflict": "DevImportProjectsConflict",
@@ -433,6 +441,7 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, mobileDeviceOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	return ops
@@ -722,6 +731,19 @@ func shellTerminalOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", id: "promoteQueuedSessionConversationTurn", tag: "conversations",
+			summary:    "Promote a queued message into the in-flight turn",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.PromoteQueuedTurnResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback", id: "rollbackSessionConversation", tag: "conversations",
 			summary:    "Discard a turn and everything after it from the agent's memory",
 			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
@@ -854,7 +876,7 @@ func agentOperations() []operation {
 	}
 }
 
-// mobileOperations declares the 4 /mobile control operations. These are
+// mobileOperations declares the 5 /mobile control operations. These are
 // mounted on the loopback router (mountMobile in router.go), not the REST
 // /api/v1 group — only the desktop/CLI may enable, disable, or regenerate the
 // phone's LAN access; the phone never toggles its own connection. Must stay
@@ -894,6 +916,58 @@ func mobileOperations() []operation {
 				{http.StatusOK, controllers.MobileStatusResponse{}},
 				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/secure-pairing", id: "setMobileSecurePairing", tag: "mobile",
+			summary: "Turn TLS-over-Tailscale secure pairing on or off",
+			reqBody: controllers.SetSecurePairingRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// mobileDeviceOperations declares the desktop-only mobile device roster
+// routes. These sit under /api/v1/mobile — like mobileOperations above — so
+// they inherit the LAN listener's transport-level block; a paired phone can
+// neither list nor manage the household's other devices. Must stay 1:1 with
+// the routes mountMobileDevices registers (enforced by the parity test).
+func mobileDeviceOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/mobile/devices", id: "listMobileDevices", tag: "mobile",
+			summary: "List paired mobile devices with their live/muted status",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileDevicesResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/mobile/devices/{installId}", id: "muteMobileDevice", tag: "mobile",
+			summary:    "Mute or unmute push notifications for a paired device",
+			pathParams: []any{controllers.InstallIDParam{}},
+			reqBody:    controllers.MuteDeviceRequest{},
+			resps: []respUnit{
+				{http.StatusOK, map[string]bool{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/mobile/devices/{installId}", id: "removeMobileDevice", tag: "mobile",
+			summary:    "Remove a paired device from the roster",
+			pathParams: []any{controllers.InstallIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
 			},
 		},
 	}
@@ -1013,10 +1087,20 @@ func pushOperations() []operation {
 		},
 		{
 			method: http.MethodDelete, path: "/api/v1/push/devices/{token}", id: "unregisterPushDevice", tag: "push",
-			summary:    "Unregister a phone's Expo push token",
+			summary:    "Unregister a phone's Expo push token, leaving it paired",
 			pathParams: []any{controllers.PushDeviceTokenParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.UnregisterPushDeviceResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/push/pairings/{id}", id: "unpairPushDevice", tag: "push",
+			summary:    "Unpair this phone from the daemon, removing it from the roster",
+			pathParams: []any{controllers.PushPairingIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
@@ -1469,6 +1553,19 @@ func sessionOperations() []operation {
 			reqBody:    controllers.SetSessionAutoInjectReviewRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SetSessionAutoInjectReviewResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/auto-inject-ci", id: "setSessionAutoInjectCI", tag: "sessions",
+			summary:    "Set the automatic CI-failure injection default for new session PRs",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionAutoInjectCIRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetSessionAutoInjectCIResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
