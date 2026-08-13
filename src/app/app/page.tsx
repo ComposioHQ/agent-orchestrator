@@ -745,6 +745,7 @@ export function CloudWorkspace() {
         {previewUi && mobileNavOpen ? <button type="button" aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMobileNavOpen(false)} /> : null}
         <CloudSidebar
           account={account}
+          onDeleteProject={(project) => void deleteProject(project)}
           onDeleteSession={(session) => void deleteSession(session)}
           onNewProject={() => setNewProjectOpen(true)}
           onNewSession={(projectId) => {
@@ -786,12 +787,20 @@ export function CloudWorkspace() {
           {selectedSession ? (
             <CloudSessionWorkspace
               onClose={() => setSelectedSessionId(null)}
+              onDelete={() => { void deleteSession(selectedSession); setSelectedSessionId(null); }}
+              onNewTask={() => setNewSessionProjectId(selectedSession.projectId)}
               organizationId={organizationId}
               session={selectedSession}
             />
           ) : (
             <>
-              <CloudTopbar title={selectedProject?.displayName ?? "All projects"} onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined} />
+              <CloudTopbar
+                title={selectedProject?.displayName ?? "All projects"}
+                onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined}
+                showBoardActions={!!selectedProjectId}
+                onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
+                onOrchestrator={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
+              />
               <div className="relative min-h-0 flex-1">
                 {error ? (
                   <div

@@ -42,7 +42,7 @@
   position: fixed;
   inset: 0;
   z-index: var(--z-overlay);
-  background-color: rgba(0, 0, 0, 0.6);
+  background-color: rgba(0, 0, 0, 0.35);
   -webkit-backdrop-filter: blur(var(--blur-overlay));
   backdrop-filter: blur(var(--blur-overlay));
 }
@@ -94,15 +94,23 @@
   min-width: var(--size-settings-menu-min-width);
   max-height: var(--size-select-menu-max);
   flex-direction: column;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
   border-radius: 12px;
   border: none;
   background-color: var(--color-bg-settings-menu);
   padding: 4px;
   gap: 1px;
-  box-shadow: none;
+}
+
+.settings-menu-surface,
+.settings-menu-surface *,
+.settings-menu-surface [data-radix-dropdown-menu-viewport] {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+.settings-menu-surface::-webkit-scrollbar,
+.settings-menu-surface *::-webkit-scrollbar {
+  display: none !important;
 }
 
 @utility settings-row-value {
@@ -218,12 +226,31 @@ button.settings-link-row:active {
   animation: popover-in 150ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+/* Override product-ui board column headers: sans-serif, title case, no uppercase */
+[data-testid="cloud-main-shell"] .font-mono.uppercase.tracking-wide-sm {
+  font-family: var(--font-family-base);
+  text-transform: capitalize;
+  letter-spacing: normal;
+}
+
 body {
   margin: 0;
   background: var(--color-bg-primary);
   color: var(--color-text-primary);
   -webkit-user-select: none;
   user-select: none;
+}
+
+:focus, :focus-visible {
+  outline: none !important;
+}
+button:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, [role="button"]:focus-visible,
+[role="menuitem"]:focus-visible, [role="menuitemradio"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: none !important;
 }
 
 input {

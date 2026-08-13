@@ -20,6 +20,7 @@ import {
 import { type ReactNode, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import { OrchestratorIcon } from "@/components/icons";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -39,6 +40,7 @@ export function CloudSidebar({
   onSelectOrganization,
   onSelectProject,
   onSelectSession,
+  onDeleteProject,
   onDeleteSession,
   onProjectSettings,
   onShareProject,
@@ -59,6 +61,7 @@ export function CloudSidebar({
   onSelectOrganization: (organizationId: string) => void;
   onSelectProject: (projectId: string) => void;
   onSelectSession: (sessionId: string) => void;
+  onDeleteProject: (project: Project) => void;
   onDeleteSession: (session: Session) => void;
   onProjectSettings: (project: Project) => void;
   onShareProject: (project: Project) => void;
@@ -243,6 +246,14 @@ export function CloudSidebar({
                     {project.displayName}
                   </span>
                 </motion.button>
+                <button
+                  aria-label="Orchestrator"
+                  className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
+                  onClick={(e) => { e.stopPropagation(); onNewSession(project.id); }}
+                  type="button"
+                >
+                  <OrchestratorIcon aria-hidden="true" />
+                </button>
                 <DropdownMenuPrimitive.Root>
                   <DropdownMenuPrimitive.Trigger asChild>
                     <button
@@ -261,6 +272,7 @@ export function CloudSidebar({
                       className="z-[100] min-w-44 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
                     >
                       <ProjectMenuItems
+                        onDelete={() => { if (window.confirm(`Remove ${project.displayName}?`)) onDeleteProject(project); }}
                         onNewSession={() => onNewSession(project.id)}
                         onSettings={() => onProjectSettings(project)}
                         onShare={() => onShareProject(project)}
@@ -283,6 +295,14 @@ export function CloudSidebar({
                 <ContextMenuItem onSelect={() => onShareProject(project)}>
                   <Share2 aria-hidden="true" />
                   Share project
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  className="text-[var(--destructive)] focus:text-[var(--destructive)] [&_svg]:text-[var(--destructive)]"
+                  onSelect={() => { if (window.confirm(`Remove ${project.displayName}?`)) onDeleteProject(project); }}
+                >
+                  <Trash2 aria-hidden="true" />
+                  Remove project
                 </ContextMenuItem>
               </ContextMenuContent>
               </ContextMenu>
@@ -442,16 +462,18 @@ export function CloudSidebar({
 }
 
 function ProjectMenuItems({
+  onDelete,
   onNewSession,
   onSettings,
   onShare,
 }: {
+  onDelete: () => void;
   onNewSession: () => void;
   onSettings: () => void;
   onShare: () => void;
 }) {
   const itemClass =
-    "relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-sm outline-none transition-colors text-[var(--muted-foreground)] focus:bg-[var(--color-interactive-hover)] focus:text-[var(--foreground)] [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-passive)]";
+    "relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-sm outline-none transition-colors text-[var(--muted-foreground)] focus:bg-[var(--color-interactive-hover)] focus:text-[var(--foreground)] [&_svg]:size-4 [&_svg]:shrink-0";
   return (
     <>
       <DropdownMenuPrimitive.Item className={itemClass} onSelect={onNewSession}>
@@ -465,6 +487,13 @@ function ProjectMenuItems({
       <DropdownMenuPrimitive.Item className={itemClass} onSelect={onShare}>
         <Share2 aria-hidden="true" />
         Share project
+      </DropdownMenuPrimitive.Item>
+      <DropdownMenuPrimitive.Item
+        className={`${itemClass} text-[var(--destructive)] focus:text-[var(--destructive)] [&_svg]:text-[var(--destructive)]`}
+        onSelect={onDelete}
+      >
+        <Trash2 aria-hidden="true" />
+        Remove project
       </DropdownMenuPrimitive.Item>
     </>
   );

@@ -85,7 +85,7 @@ beforeEach(() => {
 it("uses the interactive agent terminal as the primary session surface", async () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()}
       organizationId="org-1"
       session={session}
     />,
@@ -100,7 +100,7 @@ it("uses the interactive agent terminal as the primary session surface", async (
 it("opens and edits repository files in the right inspector", async () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()}
       organizationId="org-1"
       session={session}
     />,
@@ -124,7 +124,7 @@ it("opens and edits repository files in the right inspector", async () => {
 it("opens a separate trusted workspace shell in the right inspector", () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()}
       organizationId="org-1"
       session={{ ...session, mode: "trusted" }}
     />,
@@ -138,7 +138,7 @@ it("opens a separate trusted workspace shell in the right inspector", () => {
 it("waits for the worker before mounting the terminal", () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()}
       organizationId="org-1"
       session={{ ...session, runtimeConnected: false }}
     />,

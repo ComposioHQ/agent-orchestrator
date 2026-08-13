@@ -33,7 +33,7 @@ export function ContextMenuItem({
       className={cn(
         "relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-sm outline-none transition-colors",
         "text-[var(--muted-foreground)] focus:bg-[var(--color-interactive-hover)] focus:text-[var(--foreground)] data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-        "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-passive)]",
+        "[&_svg]:size-4 [&_svg]:shrink-0",
         className,
       )}
       {...props}

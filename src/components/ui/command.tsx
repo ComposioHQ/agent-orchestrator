@@ -123,7 +123,7 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
         "relative mx-2 flex cursor-default select-none items-center gap-2.5 rounded-md py-1.5 pr-2.5 pl-3.5 text-[13px] leading-[22px] text-[var(--muted-foreground)] outline-none",
         "data-[selected=true]:bg-[var(--color-bg-command-item-active)] data-[selected=true]:text-[var(--foreground)]",
         "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
-        "[&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-passive)] data-[selected=true]:[&_svg]:text-[var(--foreground)]",
+        "[&_svg]:size-3.5 [&_svg]:shrink-0",
         className,
       )}
       {...props}

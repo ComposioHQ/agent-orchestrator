@@ -11,10 +11,10 @@ import {
   FileCode2,
   Files,
   GitCompareArrows,
-  RefreshCw,
   Terminal,
-  X,
+  Trash2,
 } from "lucide-react";
+import { OrchestratorIcon } from "@/components/icons";
 import { useEffect, useMemo, useState } from "react";
 
 import { browserCloudClient } from "@/lib/cloud-client";
@@ -24,10 +24,14 @@ type InspectorTab = "changes" | "files" | "terminal";
 
 export function CloudSessionWorkspace({
   onClose,
+  onDelete,
+  onNewTask,
   organizationId,
   session,
 }: {
   onClose: () => void;
+  onDelete: () => void;
+  onNewTask: () => void;
   organizationId: string;
   session: Session;
 }) {
@@ -117,37 +121,56 @@ export function CloudSessionWorkspace({
   }, [organizationId, session.id, session.runtimeConnected]);
 
   useEffect(() => {
-    if (tab === "files" && entries.length === 0) void loadDirectory("");
-  }, [tab]);
+    if (tab === "files") {
+      if (entries.length === 0) void loadDirectory("");
+      const timer = window.setInterval(() => void loadDirectory(directory), 5_000);
+      return () => window.clearInterval(timer);
+    }
+  }, [tab, directory]);
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(320px,38%)]">
       <section className="flex min-h-0 min-w-0 flex-col bg-[#101317]">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] px-4">
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold tracking-[-0.02em]">
-              {session.displayName}
-            </h1>
-            <p className="mt-0.5 truncate font-mono text-[9px] text-[var(--color-text-passive)]">
-              {session.branch} · {session.harness} · {session.mode}
-            </p>
-          </div>
-          <span
-            className={`size-1.5 rounded-full ${
-              session.runtimeConnected ? "bg-[#60a5fa]" : "bg-[#646a73]"
-            }`}
-          />
-          <span className="text-[10px] text-[var(--color-text-passive)]">
-            {session.runtimeConnected ? "Connected" : "Connecting"}
-          </span>
+        <header className="flex h-10 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] pl-3 pr-2.5">
           <button
-            aria-label="Close session"
-            className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+            aria-label="Back to project"
+            className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
             onClick={onClose}
             type="button"
           >
-            <X className="size-4" />
+            <ChevronLeft className="size-4" />
           </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold leading-none tracking-[-0.02em]">
+              {session.displayName}
+            </h1>
+          </div>
+          <span
+            className={`size-1.5 rounded-full ${
+              session.runtimeConnected ? "bg-[var(--color-status-working)]" : "bg-[var(--color-status-idle)]"
+            }`}
+          />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              aria-label="Kill session"
+              className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--error)]/70 transition-colors hover:bg-[var(--error)]/10 hover:text-[var(--error)]"
+              onClick={() => {
+                if (window.confirm(`Terminate ${session.displayName}?`)) onDelete();
+              }}
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="Orchestrator"
+              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md bg-[var(--color-accent-strong)] px-2.5 text-xs font-semibold leading-none text-[var(--color-accent-foreground)] transition-[filter] duration-100 hover:brightness-110 active:brightness-95"
+              onClick={onClose}
+            >
+              <OrchestratorIcon className="size-3.5" aria-hidden="true" />
+              Orchestrator
+            </button>
+          </div>
         </header>
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3">
           <Terminal className="size-3.5 text-[var(--color-accent)]" />
@@ -194,20 +217,6 @@ export function CloudSessionWorkspace({
           >
             <Terminal className="size-3.5" />
           </InspectorButton>
-          {tab !== "terminal" ? (
-            <button
-              aria-label="Refresh inspector"
-              className="ml-auto grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-              onClick={() =>
-                tab === "changes"
-                  ? void loadDiff()
-                  : void loadDirectory(directory)
-              }
-              type="button"
-            >
-              <RefreshCw className="size-3.5" />
-            </button>
-          ) : null}
         </div>
         {error ? (
           <p className="border-b border-[var(--color-error)]/20 bg-[var(--color-error)]/8 px-3 py-2 text-[10px] text-[var(--color-error)]">
