@@ -263,7 +263,7 @@ describe("SessionsBoard", () => {
 		const terminateButton = within(idleCard).getByRole("button", { name: "Terminate brand-font-pipeline" });
 		expect(terminateButton).toHaveClass("opacity-0", "group-hover:opacity-100", "group-focus-within:opacity-100");
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
-		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
+		expect(within(idleCard).getByText("Idle").parentElement?.parentElement).toHaveClass("flex");
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
@@ -341,8 +341,8 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const working = within(card).getByText("Working").closest("span") as HTMLElement;
-		expect(working.querySelector("span")).toHaveClass("bg-status-working", "animate-status-pulse");
+		const working = within(card).getByText("Working").parentElement as HTMLElement;
+		expect(working.querySelector('[aria-hidden="true"]')).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
 	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
@@ -422,9 +422,9 @@ describe("SessionsBoard", () => {
 		const noSignalCard = screen.getByText("no-signal-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 		const draftCard = screen.getByText("draft-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
 
-		expect(within(idleCard).getByText("Idle").closest("span")).toHaveClass("text-status-idle");
-		expect(within(noSignalCard).getByText("No signal").closest("span")).toHaveClass("text-status-unknown");
-		expect(within(draftCard).getByText("Draft PR").closest("span")).toHaveClass("text-status-in-review");
+		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("text-status-idle");
+		expect(within(noSignalCard).getByText("No signal").parentElement).toHaveClass("text-status-unknown");
+		expect(within(draftCard).getByText("Draft PR").parentElement).toHaveClass("text-status-in-review");
 	});
 
 	it("places an exited live session in Needs you with an Exited badge", () => {
@@ -454,7 +454,7 @@ describe("SessionsBoard", () => {
 		const needsYouColumn = screen.getByText("Needs you").closest("section") as HTMLElement;
 		expect(needsYouColumn.firstElementChild).toHaveClass("h-12");
 		expect(within(needsYouColumn).getByText("agent-exited-task")).toBeInTheDocument();
-		expect(within(needsYouColumn).getByText("Exited").closest("span")).toHaveClass("text-status-exited");
+		expect(within(needsYouColumn).getByText("Exited").parentElement).toHaveClass("text-status-exited");
 	});
 
 	it("renders an idle-first work lane with a separate lower working section", () => {
@@ -531,7 +531,7 @@ describe("SessionsBoard", () => {
 		expect(within(workLane).queryByText("idle-with-pr-task")).not.toBeInTheDocument();
 
 		const idleCard = screen.getByText("idle-no-pr-task").closest('[data-testid="board-session-card"]') as HTMLElement;
-		const badge = within(idleCard).getByText("Idle").closest("span");
+		const badge = within(idleCard).getByText("Idle").parentElement;
 		expect(badge).toHaveClass("text-status-idle");
 		expect(badge).not.toHaveClass("text-status-working");
 	});
@@ -1145,7 +1145,7 @@ describe("SessionsBoard", () => {
 		expect(
 			within(archivedMergedCard!).queryByRole("button", { name: "Terminate archived merged worker" }),
 		).not.toBeInTheDocument();
-		expect(within(archivedMergedCard!).getByText("Merged").closest("span")).toHaveClass("text-status-merged");
+		expect(within(archivedMergedCard!).getByText("Merged").parentElement).toHaveClass("text-status-merged");
 		expect(within(archive).getByRole("button", { name: "Restore archived merged worker" })).toBeInTheDocument();
 	});
 

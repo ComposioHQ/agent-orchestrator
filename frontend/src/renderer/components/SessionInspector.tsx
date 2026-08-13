@@ -205,8 +205,6 @@ function SummaryView({
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
-	const showCompletion = session.kind !== "orchestrator";
-
 	return (
 		<SessionInspectorSummaryView
 			activity={
@@ -216,7 +214,7 @@ function SummaryView({
 				</>
 			}
 			activityTitle={t("inspector.activity")}
-			completion={showCompletion ? <CompletionControls session={session} /> : undefined}
+			completion={<SessionControls session={session} />}
 			pullRequestCards={
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
@@ -229,15 +227,7 @@ function SummaryView({
 				</div>
 			}
 			pullRequestTitle={prSectionTitle}
-			reviews={
-				<>
-					{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
-					<div className="mb-4">
-						<AutoInjectCIPolicyControl session={session} />
-						{hasPRs ? <AutoInjectReviewPolicyControl session={session} /> : null}
-					</div>
-				</>
-			}
+			reviews={hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 		/>
 	);
 }
@@ -464,7 +454,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function CompletionControls({ session }: { session: WorkspaceSession }) {
+function SessionControls({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -515,8 +505,10 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	if (session.isTerminated === true) return null;
 
 	return (
-		<Section title={t("inspector.completion")}>
-			{canTerminateNow ? (
+		<Section title={t("inspector.sessionControls")}>
+			<AutoInjectCIPolicyControl session={session} />
+			<AutoInjectReviewPolicyControl session={session} />
+			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
 					<SessionTerminationPopover
@@ -541,10 +533,12 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 					<InspectorPolicyRow
 						ariaLabel={t("inspector.terminateOnMerge")}
 						checked={Boolean(session.terminateOnPrMerge)}
+						description={t("inspector.terminateOnMergeDescription")}
 						disabled={policy.isPending}
 						id={`merge-policy-${session.id}`}
 						label={t("inspector.terminateOnMergeShort")}
 						onCheckedChange={(checked) => policy.mutate(checked)}
+						tooltipClassName="max-w-60"
 					/>
 					{policyError ? (
 						<p className="mt-1 text-2xs leading-normal text-error" role="status">

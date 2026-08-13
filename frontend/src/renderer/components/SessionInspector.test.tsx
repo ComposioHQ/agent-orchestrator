@@ -394,6 +394,8 @@ describe("SessionInspector PR section", () => {
 	it("renders PRs and reviews before the stacked compact policy rows", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
+		expect(screen.getByText("Session controls")).toBeInTheDocument();
+
 		const policyRow = (name: string) =>
 			screen.getByRole("switch", { name }).closest("[data-slot='inspector-policy-row']") as HTMLElement;
 		const ciRow = policyRow("Automatically send CI failures");
@@ -421,7 +423,12 @@ describe("SessionInspector PR section", () => {
 		}
 		expect(
 			screen.getByRole("button", {
-				name: "When disabled, CI failures for newly created pull requests will not be sent to the worker agent but will still be displayed. Existing pull requests keep their original setting.",
+				name: "Sets the default for newly created pull requests. When disabled, CI failures are not sent to the worker agent to fix.",
+			}),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "When disabled, AO keeps this session open after all pull requests merge.",
 			}),
 		).toBeInTheDocument();
 	});
@@ -444,7 +451,7 @@ describe("SessionInspector PR section", () => {
 
 	it("restores the CI injection toggle and shows the API error when saving fails", async () => {
 		patchMock.mockResolvedValueOnce({ error: new Error("CI policy unavailable"), response: { status: 500 } });
-		renderWithQuery(<SessionInspector session={session([])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		const toggle = screen.getByRole("switch", { name: "Automatically send CI failures" });
 		await userEvent.click(toggle);
@@ -809,7 +816,7 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		for (const title of ["Pull request", "Completion", "Activity"]) {
+		for (const title of ["Pull request", "Session controls", "Activity"]) {
 			const heading = screen.getByText(title).parentElement;
 			expect(heading?.parentElement).toHaveAttribute("data-testid", "inspector-section");
 		}

@@ -464,9 +464,9 @@ export function SessionCardView({
 			</div>
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
-				<div className="flex items-center justify-between gap-2">
+				<div className="flex items-center gap-2">
 					<span
-						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
+						className={cn("inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium", badge.className)}
 						style={showLiveActivity ? { color: activity.tone } : undefined}
 					>
 						<span
@@ -476,7 +476,7 @@ export function SessionCardView({
 								showLiveActivity ? activity.indicatorClassName : "bg-current",
 							)}
 						/>
-						{badge.label}
+						<span className="min-w-0 truncate">{badge.label}</span>
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						{usage ? renderUsage(usage) : null}

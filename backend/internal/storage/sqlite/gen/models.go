@@ -187,6 +187,8 @@ type ConversationTurn struct {
 	RolledBackAt         sql.NullTime
 	PlanJson             string
 	BranchID             string
+	PromotionStartedAt   sql.NullTime
+	PromotedToTurnID     sql.NullString
 }
 
 type ModelUsageEvent struct {
@@ -516,4 +518,5 @@ type WorkspaceRepo struct {
 	RepoOriginURL string
 	RegisteredAt  time.Time
 	DefaultBranch string
+	GitStatus     string
 }
