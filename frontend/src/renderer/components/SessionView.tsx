@@ -332,8 +332,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		setInterfaceSwitchDialogOpen(true);
 	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
+	// the button entirely rather than showing a permanently disabled control.
+	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
 	const showInterfaceSwitchAction = Boolean(
-		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
+		!interfaceSwitchUnsupported && (interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError),
 	);
 	const interfaceSwitchAction = session && showInterfaceSwitchAction ? (
 		<SessionInterfaceSwitchButton

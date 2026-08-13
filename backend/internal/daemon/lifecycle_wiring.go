@@ -439,6 +439,10 @@ var _ interface {
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
 
+func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
+	return c.svc.SupportsChat(harness)
+}
+
 func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness)
 }

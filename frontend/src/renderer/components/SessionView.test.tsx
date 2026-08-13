@@ -17,7 +17,7 @@ const interfaceTransitionMock = vi.hoisted(() => ({
 }));
 const interfaceTransitionState = vi.hoisted(() => ({
 	status: undefined as
-		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string }
+		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string; reasonCode?: string }
 		| undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
@@ -650,6 +650,33 @@ describe("SessionView", () => {
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "chat", policy: "drain" });
+	});
+
+	it.each([
+		["worker", "sess-1"],
+		["orchestrator", "sess-orch"],
+	] as const)("hides the interface switch button for %s sessions when Chat UI is unsupported", (_label, sessionId) => {
+		interfaceTransitionState.status = { supported: false, targetMode: "chat", reasonCode: "CHAT_UNSUPPORTED" };
+		const session = workerSession(sessionId);
+		session.mode = "tui";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId={sessionId} />);
+
+		expect(screen.queryByRole("button", { name: "Switch to chat UI" })).not.toBeInTheDocument();
+	});
+
+	it("shows the switch button when the adapter only reports a generic unsupported reason", () => {
+		interfaceTransitionState.status = { supported: false, targetMode: "chat", reasonCode: "INTERFACE_HANDOFF_UNSUPPORTED" };
+		const session = workerSession("sess-1");
+		session.mode = "tui";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByRole("button", { name: "Switch to chat UI" })).toBeInTheDocument();
 	});
 
 	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {
