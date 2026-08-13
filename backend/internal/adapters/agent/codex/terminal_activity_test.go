@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestDetectTerminalActivity(t *testing.T) {
@@ -37,6 +38,48 @@ func TestDetectTerminalActivity(t *testing.T) {
 			got, ok := (&Plugin{}).DetectTerminalActivity(tt.output)
 			if got != tt.want || ok != tt.ok {
 				t.Fatalf("DetectTerminalActivity() = (%q, %v), want (%q, %v)", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestInspectTerminalSurfaceSeparatesCodexWorkFromComposer(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantWork   ports.TerminalSurfaceWorkState
+		wantEditor ports.TerminalComposerState
+	}{
+		{
+			name:       "idle empty composer",
+			output:     "\x1b[1m›\x1b[0m \x1b[2mWrite tests for @filename\x1b[0m\n\ngpt-5.6-sol low · ~/project\n",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "idle draft",
+			output:     "› Keep this draft\n\ngpt-5.6-sol low · ~/project\n",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active empty composer",
+			output:     "• Working (2m 10s • esc to interrupt)\n› \x1b[2mAdd tests\x1b[0m\n\ngpt-5.6-sol low · ~/project\n",
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "approval picker",
+			output:     "› 1. Approve once\n  2. Deny\nPress enter to confirm or esc to go back\n",
+			wantWork:   ports.TerminalSurfaceWorkWaitingInput,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := (&Plugin{}).InspectTerminalSurface(tt.output)
+			if got.Work != tt.wantWork || got.Composer != tt.wantEditor {
+				t.Fatalf("InspectTerminalSurface() = %+v, want work=%v composer=%v", got, tt.wantWork, tt.wantEditor)
 			}
 		})
 	}

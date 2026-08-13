@@ -999,6 +999,57 @@ func TestComposerIsEmptyUsesClaudePromptMarker(t *testing.T) {
 	}
 }
 
+func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
+	plugin := &Plugin{}
+	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
+	tests := []struct {
+		name       string
+		output     string
+		wantWork   ports.TerminalSurfaceWorkState
+		wantEditor ports.TerminalComposerState
+	}{
+		{
+			name:       "idle empty composer",
+			output:     rule + "\n\x1b[39m❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "idle draft",
+			output:     rule + "\n❯ keep this draft\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active with empty composer",
+			output:     "✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n❯\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "permission dialog",
+			output:     "Do you want to proceed?\n❯ 1. Yes\n  2. No\nPress enter to confirm",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name: "transcript marker is outside current surface",
+			output: "Earlier output mentioned esc to interrupt\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n" +
+				"❯\u00a0",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := plugin.InspectTerminalSurface(tt.output)
+			if got.Work != tt.wantWork || got.Composer != tt.wantEditor {
+				t.Fatalf("InspectTerminalSurface() = %+v, want work=%v composer=%v", got, tt.wantWork, tt.wantEditor)
+			}
+		})
+	}
+}
+
 func contains(values []string, needle string) bool {
 	for _, v := range values {
 		if v == needle {

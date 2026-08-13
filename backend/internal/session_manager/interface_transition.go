@@ -24,7 +24,10 @@ const (
 	interfaceDeliveryIdlePoll           = 30 * time.Second
 )
 
-var errDrainQuiescenceUnverified = errors.New("AO could not verify that the terminal was idle after the latest input. The source interface was left untouched; retry after the terminal settles")
+var (
+	errDrainQuiescenceUnverified = errors.New("AO could not verify that the terminal was idle after the latest input. The source interface was left untouched; retry after the terminal settles")
+	errDrainDraftPresent         = errors.New("AO found unsent text in the terminal composer. The source interface was left untouched; submit or clear the draft and retry, or choose Stop now and switch to discard it")
+)
 
 // interfaceTransitionStore is optional so the existing narrow Manager Store
 // port and its many focused fakes do not grow methods unrelated to their tests.
@@ -295,8 +298,11 @@ func (m *Manager) runInterfaceTransition(
 	}
 	if err := m.prepareSourceHandoff(ctx, rec, transition.Policy, lastTerminalInputAt); err != nil {
 		code := "SOURCE_QUIESCE_FAILED"
-		if errors.Is(err, errDrainQuiescenceUnverified) {
+		switch {
+		case errors.Is(err, errDrainQuiescenceUnverified):
 			code = "DRAIN_QUIESCENCE_UNVERIFIED"
+		case errors.Is(err, errDrainDraftPresent):
+			code = "DRAIN_DRAFT_PRESENT"
 		}
 		fail(code, err)
 		return
@@ -531,14 +537,18 @@ func (m *Manager) prepareSourceHandoff(
 	}
 
 	var detector ports.TerminalActivityDetector
+	var surfaceInspector ports.TerminalSurfaceInspector
 	if agent, ok := m.agents.Agent(rec.Harness); ok {
 		detector, _ = agent.(ports.TerminalActivityDetector)
+		surfaceInspector, _ = agent.(ports.TerminalSurfaceInspector)
 	}
+	styledOutput, _ := m.runtime.(ports.StyledTerminalOutputReader)
+	requiresSurfaceProof := surfaceInspector != nil
 	ticker := time.NewTicker(m.interfaceTransition.pollInterval)
 	defer ticker.Stop()
 	idleSince := time.Time{}
 	idleSamples := 0
-	staleIdleSince := time.Time{}
+	unverifiedIdleSince := time.Time{}
 	for {
 		current, ok, err := m.store.GetSession(ctx, rec.ID)
 		if err != nil {
@@ -551,39 +561,76 @@ func (m *Manager) prepareSourceHandoff(
 			return nil
 		}
 		now := time.Now()
-		idleProven := tuiIdleAfterInput(current, lastTerminalInputAt)
-		staleIdle := current.Activity.State == domain.ActivityIdle && !idleProven
+		durableIdleProven := tuiIdleAfterInput(current, lastTerminalInputAt)
+		idleProven := durableIdleProven && !requiresSurfaceProof
+		unverifiedIdle := current.Activity.State == domain.ActivityIdle && !idleProven
 		probeCtx := ctx
 		var cancelProbe context.CancelFunc
-		if staleIdle {
-			if staleIdleSince.IsZero() {
-				staleIdleSince = now
+		if unverifiedIdle {
+			if unverifiedIdleSince.IsZero() {
+				unverifiedIdleSince = now
 			}
-			probeCtx, cancelProbe = context.WithDeadline(ctx, staleIdleSince.Add(m.interfaceTransition.staleIdleLimit))
-			// A screen can still show the idle composer briefly after Enter was
-			// accepted. Give the last input a full settle window before treating
-			// adapter markers as evidence, then require repeated samples below.
-			inputQuiet := lastTerminalInputAt.IsZero() ||
-				!now.Before(lastTerminalInputAt.Add(m.interfaceTransition.idleSettle))
-			if detector != nil && inputQuiet {
-				output, outputErr := m.runtime.GetOutput(probeCtx, handle, interfaceTransitionOutputLines)
-				now = time.Now()
-				if outputErr == nil {
-					state, authoritative := detector.DetectTerminalActivity(output)
-					idleProven = authoritative && state == domain.ActivityIdle
+			probeCtx, cancelProbe = context.WithDeadline(ctx, unverifiedIdleSince.Add(m.interfaceTransition.staleIdleLimit))
+		}
+		// A screen can still show the idle composer briefly after Enter was
+		// accepted. Give the last input a full settle window before treating
+		// adapter markers as evidence, then require repeated samples below.
+		inputQuiet := lastTerminalInputAt.IsZero() ||
+			!now.Before(lastTerminalInputAt.Add(m.interfaceTransition.idleSettle))
+		surfaceKnownBusy := false
+		if requiresSurfaceProof && inputQuiet && styledOutput != nil {
+			output, outputErr := styledOutput.GetStyledOutput(probeCtx, handle, interfaceTransitionOutputLines)
+			now = time.Now()
+			if outputErr == nil {
+				observation := surfaceInspector.InspectTerminalSurface(output)
+				switch {
+				case observation.Work == ports.TerminalSurfaceWorkIdle &&
+					observation.Composer == ports.TerminalComposerEmpty:
+					idleProven = true
+				case observation.Work == ports.TerminalSurfaceWorkIdle &&
+					observation.Composer == ports.TerminalComposerDraft:
+					if cancelProbe != nil {
+						cancelProbe()
+					}
+					return errDrainDraftPresent
+				case observation.Composer == ports.TerminalComposerDraft &&
+					current.Activity.State == domain.ActivityIdle &&
+					observation.Work == ports.TerminalSurfaceWorkUnknown:
+					if cancelProbe != nil {
+						cancelProbe()
+					}
+					return errDrainDraftPresent
+				case observation.Work == ports.TerminalSurfaceWorkActive,
+					observation.Work == ports.TerminalSurfaceWorkWaitingInput,
+					observation.Work == ports.TerminalSurfaceWorkBlocked:
+					surfaceKnownBusy = true
 				}
 			}
-		} else {
-			// A reported active turn or user-paced decision is allowed to wait
-			// without a deadline. A real state change resets prior ambiguity.
-			staleIdleSince = time.Time{}
+		} else if !requiresSurfaceProof && unverifiedIdle && detector != nil && inputQuiet {
+			// Compatibility path for terminal activity adapters that have not yet
+			// adopted the richer surface observation capability.
+			if output, outputErr := m.runtime.GetOutput(probeCtx, handle, interfaceTransitionOutputLines); outputErr == nil {
+				now = time.Now()
+				state, authoritative := detector.DetectTerminalActivity(output)
+				idleProven = authoritative && state == domain.ActivityIdle
+			}
+		}
+		if current.Activity.State != domain.ActivityIdle || surfaceKnownBusy {
+			// Active work and user-paced decisions may wait without a deadline.
+			// A recognized current-screen state resets prior ambiguity.
+			unverifiedIdleSince = time.Time{}
+			if surfaceKnownBusy && cancelProbe != nil {
+				cancelProbe()
+				cancelProbe = nil
+				probeCtx = ctx
+			}
 		}
 		if idleProven {
 			idleSamples++
 			if idleSince.IsZero() {
 				idleSince = now
 			} else if now.Sub(idleSince) >= m.interfaceTransition.idleSettle &&
-				(!staleIdle || idleSamples >= interfaceTransitionStaleIdleSamples) {
+				(!requiresSurfaceProof && durableIdleProven || idleSamples >= interfaceTransitionStaleIdleSamples) {
 				if cancelProbe != nil {
 					cancelProbe()
 				}
@@ -601,10 +648,11 @@ func (m *Manager) prepareSourceHandoff(
 			return nil
 		}
 		now = time.Now()
-		// Bound the whole contradictory stale-idle regime, not just consecutive
-		// unknown captures. Partial terminal redraws may alternate between idle
+		// Bound the whole contradictory idle regime, not just consecutive
+		// unknown captures. Partial terminal redraws may alternate between safe
 		// and ambiguous forever; neither outcome is enough to stop the source.
-		if staleIdle && now.Sub(staleIdleSince) >= m.interfaceTransition.staleIdleLimit {
+		if current.Activity.State == domain.ActivityIdle && !idleProven && !surfaceKnownBusy &&
+			!unverifiedIdleSince.IsZero() && now.Sub(unverifiedIdleSince) >= m.interfaceTransition.staleIdleLimit {
 			return errDrainQuiescenceUnverified
 		}
 		select {

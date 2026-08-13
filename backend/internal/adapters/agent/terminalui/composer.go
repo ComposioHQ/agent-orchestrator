@@ -1,4 +1,4 @@
-// Package terminalui contains conservative helpers for recognizing an empty
+// Package terminalui contains conservative helpers for interpreting an
 // interactive-agent composer from bounded terminal output.
 package terminalui
 
@@ -16,15 +16,35 @@ type styledRune struct {
 	dim   bool
 }
 
+// ComposerState is a conservative interpretation of one current composer.
+// Unknown means the expected structure was incomplete or absent; it must not
+// be treated as empty by a caller making a destructive decision.
+type ComposerState uint8
+
+// Composer states. Unknown is the fail-closed zero value.
+const (
+	ComposerUnknown ComposerState = iota
+	ComposerEmpty
+	ComposerDraft
+)
+
 // LastPromptIsEmptyOrDimPlaceholder returns true only when a prompt marker is
 // present near the bottom of the terminal and every visible rune after it is
 // either whitespace or rendered with SGR dim styling. Interactive agents use
 // dim text for placeholder suggestions; normal text is a human-authored draft.
 // Plain captures that lose styling therefore fail closed for non-empty text.
 func LastPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
+	return LastPromptComposerState(output, marker) == ComposerEmpty
+}
+
+// LastPromptComposerState classifies a footer-free prompt composer. Normal
+// visible text after the prompt is a draft; whitespace and dim provider
+// placeholder text are empty. Missing or incomplete prompt evidence is
+// unknown.
+func LastPromptComposerState(output, marker string) ComposerState {
 	marker = strings.TrimSpace(marker)
 	if marker == "" {
-		return false
+		return ComposerUnknown
 	}
 	lines := styledTerminalLines(output)
 	start := len(lines) - composerLookbackLines
@@ -42,7 +62,7 @@ func LastPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
 				continue
 			}
 			if !r.dim {
-				return false
+				return ComposerDraft
 			}
 		}
 		// Wrapped composer content is rendered on following rows without
@@ -58,13 +78,13 @@ func LastPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
 					continue
 				}
 				if !r.dim {
-					return false
+					return ComposerDraft
 				}
 			}
 		}
-		return true
+		return ComposerEmpty
 	}
-	return false
+	return ComposerUnknown
 }
 
 // LastBorderedPromptIsEmptyOrDimPlaceholder recognizes providers that render
@@ -73,9 +93,16 @@ func LastPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
 // composer are considered input. Requiring both matching rules keeps the check
 // fail-closed when a capture is partial or the provider changes its layout.
 func LastBorderedPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
+	return LastBorderedPromptComposerState(output, marker) == ComposerEmpty
+}
+
+// LastBorderedPromptComposerState classifies only the content between a pair
+// of matching composer rules. Provider status chrome below the lower rule is
+// excluded. An incomplete border is unknown rather than empty.
+func LastBorderedPromptComposerState(output, marker string) ComposerState {
 	marker = strings.TrimSpace(marker)
 	if marker == "" {
-		return false
+		return ComposerUnknown
 	}
 	lines := styledTerminalLines(output)
 	markerRunes := []rune(marker)
@@ -87,11 +114,6 @@ func LastBorderedPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
 		line := trimLeftStyledSpace(lines[i])
 		if len(line) < len(markerRunes) || styledString(line[:len(markerRunes)]) != marker {
 			continue
-		}
-		for _, r := range line[len(markerRunes):] {
-			if !unicode.IsSpace(r.value) && !r.dim {
-				return false
-			}
 		}
 		upperWidth := 0
 		for j := i - 1; j >= 0 && upperWidth == 0; j-- {
@@ -105,18 +127,23 @@ func LastBorderedPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
 			}
 		}
 		if upperWidth == 0 || lowerIndex < 0 || upperWidth != lowerWidth {
-			return false
+			return ComposerUnknown
+		}
+		for _, r := range line[len(markerRunes):] {
+			if !unicode.IsSpace(r.value) && !r.dim {
+				return ComposerDraft
+			}
 		}
 		for _, continuation := range lines[i+1 : lowerIndex] {
 			for _, r := range continuation {
 				if !unicode.IsSpace(r.value) && !r.dim {
-					return false
+					return ComposerDraft
 				}
 			}
 		}
-		return true
+		return ComposerEmpty
 	}
-	return false
+	return ComposerUnknown
 }
 
 func horizontalRuleWidth(line []styledRune) int {
