@@ -18,6 +18,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/httpapi"
 	"github.com/Untrivial-ai/ao-cloud/internal/idlepause"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/Untrivial-ai/ao-cloud/internal/prstatus"
 	"github.com/Untrivial-ai/ao-cloud/internal/reconcile"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox/createos"
@@ -268,6 +269,15 @@ func run(logger *slog.Logger) error {
 			Logger:        logger,
 		})
 	}
+	// The scanner only has anything to refresh where GitHub is configured to
+	// resolve an installation for.
+	var prStatusScanner *prstatus.Scanner
+	if githubService != nil {
+		prStatusScanner = prstatus.New(store, githubService, prstatus.Options{
+			Interval: cfg.PRStatusPollInterval,
+			Logger:   logger,
+		})
+	}
 	// Worker tokens are only issued where sandboxes are provisioned. Leaving
 	// this nil elsewhere is what makes the worker routes 404 instead of
 	// accepting credentials no sandbox could have been given.
@@ -338,6 +348,15 @@ func run(logger *slog.Logger) error {
 			)
 			if err := idlePauseScanner.Run(ctx); err != nil {
 				logger.Error("idle-pause scanner stopped", "error", err)
+			}
+		}()
+	}
+
+	if prStatusScanner != nil {
+		go func() {
+			logger.Info("pull request status scanner started", "interval", cfg.PRStatusPollInterval)
+			if err := prStatusScanner.Run(ctx); err != nil {
+				logger.Error("pull request status scanner stopped", "error", err)
 			}
 		}()
 	}

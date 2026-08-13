@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -249,6 +251,132 @@ func (s *Server) workerCheckoutGrant(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, worker.CheckoutGrantResponse{
 		CloneURL: grant.CloneURL, Token: grant.Token, ExpiresAt: grant.ExpiresAt,
 	})
+}
+
+func (s *Server) workerPushGrant(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:git scope is required.")
+		return
+	}
+	if s.checkoutBroker == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "SCM_BROKER_UNAVAILABLE", "Repository push is not available.")
+		return
+	}
+	grant, err := s.checkoutBroker.IssuePushGrant(r.Context(), claims.OrgID, claims.SessionID)
+	if errors.Is(err, postgres.ErrForbidden) || errors.Is(err, postgres.ErrNotFound) {
+		writeError(w, r, http.StatusForbidden, "PUSH_NOT_AUTHORIZED", "This session does not have an active repository grant.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("issue worker push grant", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A repository push grant could not be issued.")
+		return
+	}
+	if grant.Token == "" || grant.CloneURL == "" || !grant.ExpiresAt.After(time.Now()) {
+		s.logger.Error("worker push broker returned an invalid grant", "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A repository push grant could not be issued.")
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.CheckoutGrantResponse{
+		CloneURL: grant.CloneURL, Token: grant.Token, ExpiresAt: grant.ExpiresAt,
+	})
+}
+
+func (s *Server) workerRaisePullRequest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:git scope is required.")
+		return
+	}
+	if s.checkoutBroker == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "SCM_BROKER_UNAVAILABLE", "Raising a pull request is not available.")
+		return
+	}
+	var input worker.RaisePullRequestRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	input.Title = strings.TrimSpace(input.Title)
+	input.HeadBranch = strings.TrimSpace(input.HeadBranch)
+	if input.Title == "" || len(input.Title) > 256 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_TITLE", "The pull request title must be 1-256 characters.")
+		return
+	}
+	if input.HeadBranch == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_HEAD_BRANCH", "The pushed branch name is required.")
+		return
+	}
+	pr, err := s.checkoutBroker.RaisePullRequest(r.Context(), claims.OrgID, claims.SessionID, domain.RaisePullRequest{
+		Title:      input.Title,
+		Body:       input.Body,
+		HeadBranch: input.HeadBranch,
+		BaseBranch: input.BaseBranch,
+	})
+	if errors.Is(err, postgres.ErrForbidden) || errors.Is(err, postgres.ErrNotFound) {
+		writeError(w, r, http.StatusForbidden, "PULL_REQUEST_NOT_AUTHORIZED", "This session does not have an active repository grant.")
+		return
+	}
+	if errors.Is(err, postgres.ErrInvalid) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request could not be opened with the given branches.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("raise worker pull request", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_FAILED", "The pull request could not be opened.")
+		return
+	}
+	writeJSON(w, http.StatusCreated, worker.RaisePullRequestResponse{
+		ID:         pr.ID,
+		Number:     pr.Number,
+		HTMLURL:    pr.URL,
+		HeadBranch: pr.SourceBranch,
+		BaseBranch: pr.TargetBranch,
+	})
+}
+
+func (s *Server) workerSubmitReview(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:git scope is required.")
+		return
+	}
+	if s.checkoutBroker == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "SCM_BROKER_UNAVAILABLE", "Submitting a review is not available.")
+		return
+	}
+	reviewRunID := chi.URLParam(r, "reviewRunId")
+	if requireUUID(reviewRunID, "reviewRunId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "reviewRunId must be a UUID.")
+		return
+	}
+	var input worker.SubmitReviewRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	run, err := s.checkoutBroker.SubmitReview(r.Context(), claims.OrgID, claims.SessionID, reviewRunID, domain.SubmitReviewResult{
+		Verdict: contract.AOReviewVerdict(strings.TrimSpace(input.Verdict)),
+		Body:    input.Body,
+	})
+	if errors.Is(err, postgres.ErrForbidden) || errors.Is(err, postgres.ErrNotFound) {
+		writeError(w, r, http.StatusForbidden, "REVIEW_NOT_AUTHORIZED", "This session may not submit a verdict for this review.")
+		return
+	}
+	if errors.Is(err, postgres.ErrInvalid) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_REVIEW", "The review verdict could not be recorded.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("submit worker review", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "REVIEW_FAILED", "The review could not be delivered.")
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.SubmitReviewResponse{ID: run.ID, Status: string(run.Status)})
 }
 
 // workerEvent publishes one worker-originated event onto the session stream.

@@ -56,6 +56,40 @@ type CheckoutGrantResponse struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+// RaisePullRequestRequest asks the control plane to open a pull request for
+// a branch the worker has already pushed. BaseBranch may be empty to fall
+// back to the repository's default branch.
+type RaisePullRequestRequest struct {
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	HeadBranch string `json:"headBranch"`
+	BaseBranch string `json:"baseBranch,omitempty"`
+}
+
+// RaisePullRequestResponse describes the pull request the control plane
+// opened on GitHub.
+type RaisePullRequestResponse struct {
+	ID         string `json:"id"`
+	Number     int    `json:"number"`
+	HTMLURL    string `json:"htmlUrl"`
+	HeadBranch string `json:"headBranch"`
+	BaseBranch string `json:"baseBranch"`
+}
+
+// SubmitReviewRequest reports a review session's verdict on the AO review
+// pass it was asked to perform. Verdict is "approved" or "changes_requested".
+type SubmitReviewRequest struct {
+	Verdict string `json:"verdict"`
+	Body    string `json:"body"`
+}
+
+// SubmitReviewResponse confirms a review verdict was recorded and delivered
+// to GitHub.
+type SubmitReviewResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
 // EventRequest publishes one worker-originated event onto the session stream.
 type EventRequest struct {
 	Type    string `json:"type"`

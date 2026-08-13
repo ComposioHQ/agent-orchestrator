@@ -76,14 +76,23 @@ type Session struct {
 	UpdatedAt        time.Time
 }
 
-func (s Session) Status(now time.Time) contract.SessionStatus {
+// Status derives the session's display status the same way the public
+// agent-orchestrator repo's local desktop app does: activity/runtime facts
+// alone can only ever produce working/exited/needs_input/no_signal/idle/
+// terminated. Passing this session's actual pull-request facts (prs) is
+// what lets it also resolve to the PR-lifecycle statuses — pr_open,
+// draft, ci_failed, review_pending, changes_requested, approved,
+// mergeable, merged — matching contract.DeriveStatus's precedence rules.
+// A nil/empty prs is only correct for a session that provably has no pull
+// requests yet (e.g. one just created).
+func (s Session) Status(now time.Time, prs []contract.PRFacts) contract.SessionStatus {
 	return contract.DeriveStatus(contract.SessionFacts{
 		Activity:       s.ActivityState,
 		LastActivityAt: s.UpdatedAt,
 		HasSignal:      s.RuntimeConnected,
 		SignalExpected: s.RuntimeState != "",
 		IsTerminated:   s.IsTerminated,
-	}, nil, now, 2*time.Minute)
+	}, prs, now, 2*time.Minute)
 }
 
 type CreateSession struct {

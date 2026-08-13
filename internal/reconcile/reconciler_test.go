@@ -230,6 +230,19 @@ func (s *fakeStore) UpdateSandboxObservation(
 	return nil
 }
 
+func (s *fakeStore) RecordSandboxFailure(
+	_ context.Context,
+	_, _, _ string,
+	providerEnvironmentID, lastError string,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observations = append(
+		s.observations, observation{providerEnvironmentID, domain.SandboxObservedFailed, lastError},
+	)
+	return nil
+}
+
 func (s *fakeStore) ReleaseSandboxClaim(_ context.Context, _, _, _ string, _ time.Time) error {
 	return nil
 }

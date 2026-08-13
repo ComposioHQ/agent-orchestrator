@@ -18,6 +18,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
 	"github.com/Untrivial-ai/ao-cloud/internal/secrets"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -77,6 +78,9 @@ type Store interface {
 	MarkTerminalExited(context.Context, string, string, string, string, int64, int) error
 	EnsureWorkerAgentTerminal(context.Context, string, string, string, int64, time.Duration) (domain.TerminalSession, error)
 	ListTerminalOutput(context.Context, domain.TerminalSession, int64, int) ([]domain.TerminalOutput, string, error)
+	ListPullRequestsBySession(context.Context, domain.Principal, string, string) ([]domain.PullRequest, error)
+	ListReviewRunsBySession(context.Context, domain.Principal, string, string) ([]domain.ReviewRunPullRequest, error)
+	PRFactsBySession(ctx context.Context, orgID string, sessionIDs []string) (map[string][]contract.PRFacts, error)
 }
 
 // WorkerTokens issues and verifies the short-lived credentials sandbox workers
@@ -89,6 +93,9 @@ type WorkerTokens interface {
 
 type CheckoutBroker interface {
 	IssueCheckoutGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
+	IssuePushGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
+	RaisePullRequest(context.Context, string, string, domain.RaisePullRequest) (domain.PullRequest, error)
+	SubmitReview(context.Context, string, string, string, domain.SubmitReviewResult) (domain.ReviewRun, error)
 }
 
 type Server struct {
@@ -260,6 +267,9 @@ func New(options Options) *Server {
 			router.Post("/worker/turns/{turnId}/fail", server.workerFailTurn)
 			router.Get("/worker/credential", server.workerCredential)
 			router.Post("/worker/checkout-grant", server.workerCheckoutGrant)
+			router.Post("/worker/push-grant", server.workerPushGrant)
+			router.Post("/worker/pull-requests", server.workerRaisePullRequest)
+			router.Post("/worker/reviews/{reviewRunId}/submit", server.workerSubmitReview)
 			router.Get("/worker/children", server.listWorkerChildren)
 			router.Post("/worker/children", server.createWorkerChild)
 			router.Post("/worker/children/{sessionId}/messages", server.sendWorkerChildMessage)
@@ -303,6 +313,8 @@ func New(options Options) *Server {
 			router.Get("/sessions/{sessionId}/workspace/file", server.readWorkspaceFile)
 			router.Put("/sessions/{sessionId}/workspace/file", server.writeWorkspaceFile)
 			router.Get("/sessions/{sessionId}/workspace/diff", server.getWorkspaceDiff)
+			router.Get("/sessions/{sessionId}/pull-requests", server.listSessionPullRequests)
+			router.Get("/sessions/{sessionId}/reviews", server.getSessionReviewState)
 		})
 	})
 	server.handler = router

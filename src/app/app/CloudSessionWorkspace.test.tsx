@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   listWorkspaceFiles: vi.fn(),
   readWorkspaceFile: vi.fn(),
   writeWorkspaceFile: vi.fn(),
+  listSessionPullRequests: vi.fn(),
+  getSessionReviewState: vi.fn(),
 }));
 
 vi.mock("@/lib/cloud-client", () => ({
@@ -80,6 +82,15 @@ beforeEach(() => {
     content: "updated\n",
     size: 8,
   });
+  mocks.listSessionPullRequests.mockResolvedValue({
+    sessionId: "session-1",
+    pullRequests: [],
+  });
+  mocks.getSessionReviewState.mockResolvedValue({
+    sessionId: "session-1",
+    reviews: [],
+    runs: [],
+  });
 });
 
 it("uses the interactive agent terminal as the primary session surface", async () => {
@@ -148,4 +159,91 @@ it("waits for the worker before mounting the terminal", () => {
     screen.getByText("Waiting for the isolated worker and agent terminal…"),
   ).toBeVisible();
   expect(screen.queryByText("Interactive agent terminal")).not.toBeInTheDocument();
+});
+
+it("shows a pull request's status and AO's review verdict in the pull requests tab", async () => {
+  mocks.listSessionPullRequests.mockResolvedValue({
+    sessionId: "session-1",
+    pullRequests: [
+      {
+        url: "https://github.com/acme/api/pull/7",
+        htmlUrl: "https://github.com/acme/api/pull/7",
+        number: 7,
+        title: "Fix the transport bug",
+        state: "open",
+        provider: "github",
+        repository: "acme/api",
+        author: "octocat",
+        sourceBranch: "feat/transport",
+        targetBranch: "main",
+        headSha: "deadbeef",
+        additions: 12,
+        deletions: 3,
+        changedFiles: 2,
+        ci: { state: "failing", failingChecks: [] },
+        review: {
+          decision: "changes_requested",
+          hasUnresolvedHumanComments: false,
+          unresolvedBy: [],
+          reviews: [],
+        },
+        mergeability: {
+          state: "conflicting",
+          reasons: [],
+          pullRequestUrl: "https://github.com/acme/api/pull/7",
+          conflictFiles: [],
+        },
+        updatedAt: "2026-08-12T00:00:00Z",
+        observedAt: "2026-08-12T00:00:00Z",
+        ciObservedAt: "2026-08-12T00:00:00Z",
+        reviewObservedAt: "2026-08-12T00:00:00Z",
+      },
+    ],
+  });
+  mocks.getSessionReviewState.mockResolvedValue({
+    sessionId: "session-1",
+    reviews: [
+      {
+        pullRequestUrl: "https://github.com/acme/api/pull/7",
+        pullRequestNumber: 7,
+        title: "Fix the transport bug",
+        targetSha: "deadbeef",
+        status: "changes_requested",
+        latestRun: {
+          id: "run-1",
+          reviewId: "run-1",
+          sessionId: "session-1",
+          batchId: "",
+          harness: "codex",
+          pullRequestUrl: "https://github.com/acme/api/pull/7",
+          targetSha: "deadbeef",
+          status: "delivered",
+          verdict: "changes_requested",
+          body: "Please add a test for the retry path.",
+          providerReviewId: "999",
+          createdAt: "2026-08-12T00:00:00Z",
+          deliveredAt: "2026-08-12T00:01:00Z",
+          autoInjectReview: false,
+        },
+      },
+    ],
+    runs: [],
+  });
+
+  render(
+    <CloudSessionWorkspace
+      onClose={vi.fn()}
+      organizationId="org-1"
+      session={session}
+    />,
+  );
+
+  fireEvent.click(await screen.findByRole("button", { name: "Pull requests 1" }));
+
+  expect(await screen.findByText("#7 Fix the transport bug")).toBeVisible();
+  expect(screen.getByText("Failing")).toBeVisible();
+  expect(screen.getByText("Conflicts")).toBeVisible();
+  expect(
+    screen.getByText("Please add a test for the retry path."),
+  ).toBeVisible();
 });

@@ -142,6 +142,11 @@ func (s *Store) UpdateSandboxObservation(
 				reconcile_after = $6,
 				reconcile_lease_owner = '',
 				reconcile_lease_until = NULL,
+				-- Any non-failed observation is forward progress: reset the
+				-- backoff counter RecordSandboxFailure grows, so a sandbox
+				-- that recovers doesn't carry a stale long backoff into its
+				-- next unrelated failure.
+				consecutive_failures = CASE WHEN $4 = 'failed' THEN consecutive_failures ELSE 0 END,
 				worker_last_seen_at = CASE
 					WHEN $4 IN ('requested', 'provisioning', 'bootstrapping')
 						AND (
@@ -172,6 +177,65 @@ func (s *Store) UpdateSandboxObservation(
 		)
 		if err != nil {
 			return fmt.Errorf("update sandbox observation: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrSandboxLeaseLost
+		}
+		return nil
+	})
+}
+
+// Failure backoff bounds for RecordSandboxFailure: base * 2^min(failures,
+// failureBackoffMaxShift), capped at failureBackoffCapSeconds — 15s, 30s,
+// 60s, 120s, 240s, then held at the 5-minute cap. A persistently broken
+// provider integration is retried periodically rather than essentially
+// never, while a transient blip still gets its very next retry quickly.
+const (
+	failureBackoffBaseSeconds = 15
+	failureBackoffMaxShift    = 5
+	failureBackoffCapSeconds  = 300
+)
+
+// RecordSandboxFailure marks a sandbox's most recent reconcile attempt as
+// failed and schedules the next retry with exponential backoff based on how
+// many consecutive failures it's had. The backoff is computed server-side
+// from the row's pre-update consecutive_failures value, so incrementing the
+// counter and scheduling the matching retry happen atomically. A later
+// non-failed observation (UpdateSandboxObservation) resets the counter.
+func (s *Store) RecordSandboxFailure(
+	ctx context.Context,
+	owner, orgID, sessionID string,
+	providerEnvironmentID, lastError string,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET provider_environment_id = NULLIF($3, ''),
+				observed_state = 'failed',
+				last_error = $4,
+				consecutive_failures = consecutive_failures + 1,
+				reconcile_after = now() + make_interval(secs =>
+					LEAST($5::float8 * power(2, LEAST(consecutive_failures, $6::int)), $7::float8)
+				),
+				reconcile_lease_owner = '',
+				reconcile_lease_until = NULL,
+				updated_at = now()
+			WHERE session_id = $1
+				AND org_id = $8
+				AND reconcile_lease_owner = $2
+				AND reconcile_lease_until > now()`,
+			sessionID,
+			owner,
+			providerEnvironmentID,
+			lastError,
+			failureBackoffBaseSeconds,
+			failureBackoffMaxShift,
+			failureBackoffCapSeconds,
+			orgID,
+		)
+		if err != nil {
+			return fmt.Errorf("record sandbox failure: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
 			return ErrSandboxLeaseLost

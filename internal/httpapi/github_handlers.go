@@ -561,7 +561,7 @@ func (s *Server) createGitHubScratchProject(
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"project":    toProjectResponse(project),
 		"repository": toGitHubRepositoryResponse(grant.Authority.Repository),
-		"session":    toSessionResponse(session),
+		"session":    toSessionResponse(session, nil),
 	})
 }
 

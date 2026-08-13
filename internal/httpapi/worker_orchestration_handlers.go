@@ -40,9 +40,18 @@ func (s *Server) listWorkerChildren(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	childIDs := make([]string, len(children))
+	for i, child := range children {
+		childIDs[i] = child.ID
+	}
+	prFacts, err := s.store.PRFactsBySession(r.Context(), claims.OrgID, childIDs)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	items := make([]sessionResponse, 0, len(children))
 	for _, child := range children {
-		items = append(items, toSessionResponse(child))
+		items = append(items, toSessionResponse(child, prFacts[child.ID]))
 	}
 	page := pageInfo{HasMore: hasMore}
 	if hasMore && len(children) > 0 {
@@ -140,7 +149,7 @@ func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"session": toSessionResponse(child)})
+	writeJSON(w, http.StatusCreated, map[string]any{"session": toSessionResponse(child, nil)})
 }
 
 func (s *Server) sendWorkerChildMessage(w http.ResponseWriter, r *http.Request) {

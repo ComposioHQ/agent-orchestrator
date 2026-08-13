@@ -802,6 +802,7 @@ export function CloudWorkspace() {
                   ) : (
                     <CloudBoard
                       onSelectSession={setSelectedSessionId}
+                      organizationId={organizationId}
                       sessions={visibleSessions}
                     />
                   )}

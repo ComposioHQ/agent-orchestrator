@@ -439,6 +439,77 @@ func (c *Client) CreateRepositoryAsUser(
 	return repository, nil
 }
 
+// PullRequestResponse is the GitHub API's pull request shape, trimmed to the
+// fields this client needs.
+type PullRequestResponse struct {
+	ID           int64  `json:"id"`
+	Number       int    `json:"number"`
+	HTMLURL      string `json:"html_url"`
+	State        string `json:"state"`
+	Title        string `json:"title"`
+	User         User   `json:"user"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
+	ChangedFiles int    `json:"changed_files"`
+	Head         struct {
+		SHA string `json:"sha"`
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+// CreatePullRequestInput is the request to open a pull request.
+type CreatePullRequestInput struct {
+	Title string
+	Body  string
+	Head  string
+	Base  string
+}
+
+// CreatePullRequest opens a pull request using an installation access token
+// (from repositoryWriteToken, not repositoryToken — this needs pull_requests
+// write, not just contents read).
+func (c *Client) CreatePullRequest(
+	ctx context.Context,
+	token, owner, repo string,
+	input CreatePullRequestInput,
+) (PullRequestResponse, error) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	head := strings.TrimSpace(input.Head)
+	base := strings.TrimSpace(input.Base)
+	title := strings.TrimSpace(input.Title)
+	if owner == "" || repo == "" || head == "" || base == "" || title == "" {
+		return PullRequestResponse{}, errors.New(
+			"pull request owner, repo, head, base, and title are required",
+		)
+	}
+	var pr PullRequestResponse
+	if err := c.userJSON(
+		ctx,
+		token,
+		http.MethodPost,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/pulls",
+		map[string]any{
+			"title": title,
+			"body":  input.Body,
+			"head":  head,
+			"base":  base,
+		},
+		&pr,
+	); err != nil {
+		return PullRequestResponse{}, err
+	}
+	if pr.Number <= 0 || pr.HTMLURL == "" || pr.Head.SHA == "" {
+		return PullRequestResponse{}, errors.New(
+			"GitHub returned an incomplete pull request response",
+		)
+	}
+	return pr, nil
+}
+
 func (c *Client) GetRepositoryAsUser(
 	ctx context.Context,
 	token, owner, name string,
@@ -597,6 +668,207 @@ func (c *Client) repositoryToken(
 		return installationAccessToken{}, errors.New("GitHub returned an expired installation token")
 	}
 	return response, nil
+}
+
+// repositoryWriteToken mints a short-lived installation token scoped to one
+// repository with write access to its contents and pull requests. Unlike
+// repositoryToken (contents:read, used for checkout), this is minted only
+// right before a push or a pull-request API call and is never handed to a
+// worker directly — the control plane holds it for the duration of one
+// server-side operation and lets it expire otherwise.
+func (c *Client) repositoryWriteToken(
+	ctx context.Context,
+	installationID, repositoryID int64,
+) (installationAccessToken, error) {
+	if installationID <= 0 || repositoryID <= 0 {
+		return installationAccessToken{}, errors.New("GitHub installation token scope is invalid")
+	}
+	response, err := c.createInstallationToken(ctx, installationID, map[string]any{
+		"repository_ids": []int64{repositoryID},
+		"permissions": map[string]string{
+			"contents":      "write",
+			"pull_requests": "write",
+		},
+	})
+	if err != nil {
+		return installationAccessToken{}, err
+	}
+	if response.ExpiresAt.IsZero() || !response.ExpiresAt.After(c.now()) {
+		return installationAccessToken{}, errors.New("GitHub returned an expired installation token")
+	}
+	return response, nil
+}
+
+// statusReadToken mints a short-lived installation token scoped to one
+// repository with read access to pull requests and checks — the permissions
+// GitHub's fine-grained token model requires to fetch PR/review/check-run
+// detail, distinct from repositoryToken's contents:read (used for checkout).
+func (c *Client) statusReadToken(
+	ctx context.Context,
+	installationID, repositoryID int64,
+) (installationAccessToken, error) {
+	if installationID <= 0 || repositoryID <= 0 {
+		return installationAccessToken{}, errors.New("GitHub installation token scope is invalid")
+	}
+	response, err := c.createInstallationToken(ctx, installationID, map[string]any{
+		"repository_ids": []int64{repositoryID},
+		"permissions": map[string]string{
+			"pull_requests": "read",
+			"checks":        "read",
+		},
+	})
+	if err != nil {
+		return installationAccessToken{}, err
+	}
+	if response.ExpiresAt.IsZero() || !response.ExpiresAt.After(c.now()) {
+		return installationAccessToken{}, errors.New("GitHub returned an expired installation token")
+	}
+	return response, nil
+}
+
+// PullRequestDetail is the subset of GitHub's pull request detail response
+// used to refresh a tracked pull request's lifecycle and mergeability.
+type PullRequestDetail struct {
+	Number         int    `json:"number"`
+	State          string `json:"state"`
+	Draft          bool   `json:"draft"`
+	Merged         bool   `json:"merged"`
+	MergeableState string `json:"mergeable_state"`
+	Additions      int    `json:"additions"`
+	Deletions      int    `json:"deletions"`
+	ChangedFiles   int    `json:"changed_files"`
+	Head           struct {
+		SHA string `json:"sha"`
+	} `json:"head"`
+}
+
+// GetPullRequest fetches one pull request's current lifecycle and
+// mergeability state.
+func (c *Client) GetPullRequest(
+	ctx context.Context,
+	token, owner, repo string,
+	number int,
+) (PullRequestDetail, error) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	if owner == "" || repo == "" || number <= 0 {
+		return PullRequestDetail{}, errors.New("pull request owner, repo, and number are required")
+	}
+	var detail PullRequestDetail
+	if err := c.userJSON(
+		ctx, token, http.MethodGet,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/pulls/"+strconv.Itoa(number),
+		nil, &detail,
+	); err != nil {
+		return PullRequestDetail{}, err
+	}
+	if detail.Number <= 0 {
+		return PullRequestDetail{}, errors.New("GitHub returned an incomplete pull request response")
+	}
+	return detail, nil
+}
+
+// CheckRun is one GitHub Checks API run against a commit.
+type CheckRun struct {
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
+// ListCheckRuns returns every check run GitHub has recorded against ref
+// (typically a pull request's head SHA), most recent GitHub Checks API page
+// only — sufficient to aggregate an overall CI state.
+func (c *Client) ListCheckRuns(
+	ctx context.Context,
+	token, owner, repo, ref string,
+) ([]CheckRun, error) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	ref = strings.TrimSpace(ref)
+	if owner == "" || repo == "" || ref == "" {
+		return nil, errors.New("check run owner, repo, and ref are required")
+	}
+	var response struct {
+		CheckRuns []CheckRun `json:"check_runs"`
+	}
+	if err := c.userJSON(
+		ctx, token, http.MethodGet,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/commits/"+url.PathEscape(ref)+"/check-runs?per_page=100",
+		nil, &response,
+	); err != nil {
+		return nil, err
+	}
+	return response.CheckRuns, nil
+}
+
+// PullRequestReview is one submitted review on a pull request. ID and
+// SubmittedAt exist to order a reviewer's reviews chronologically — GitHub
+// returns every review event ever submitted, not just each reviewer's
+// current standing verdict.
+type PullRequestReview struct {
+	ID          int64     `json:"id"`
+	User        User      `json:"user"`
+	State       string    `json:"state"`
+	SubmittedAt time.Time `json:"submitted_at"`
+}
+
+// ListPullRequestReviews returns every review submitted on a pull request.
+func (c *Client) ListPullRequestReviews(
+	ctx context.Context,
+	token, owner, repo string,
+	number int,
+) ([]PullRequestReview, error) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	if owner == "" || repo == "" || number <= 0 {
+		return nil, errors.New("pull request review owner, repo, and number are required")
+	}
+	var reviews []PullRequestReview
+	if err := c.userJSON(
+		ctx, token, http.MethodGet,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/pulls/"+strconv.Itoa(number)+"/reviews?per_page=100",
+		nil, &reviews,
+	); err != nil {
+		return nil, err
+	}
+	return reviews, nil
+}
+
+// pullRequestReviewResponse is the subset of GitHub's create-review response
+// this client needs.
+type pullRequestReviewResponse struct {
+	ID int64 `json:"id"`
+}
+
+// CreatePullRequestReview posts a review comment on a pull request. It
+// always submits event "COMMENT" — GitHub refuses to let the same identity
+// that opened a pull request APPROVE or REQUEST_CHANGES on it, so a comment
+// is the only decisive-looking event this identity can actually post; the
+// verdict itself lives in the comment body and in AO's own review-run
+// record, not in GitHub's native review state.
+func (c *Client) CreatePullRequestReview(
+	ctx context.Context,
+	token, owner, repo string,
+	number int,
+	body string,
+) (int64, error) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	if owner == "" || repo == "" || number <= 0 || strings.TrimSpace(body) == "" {
+		return 0, errors.New("pull request review owner, repo, number, and body are required")
+	}
+	var review pullRequestReviewResponse
+	if err := c.userJSON(
+		ctx, token, http.MethodPost,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/pulls/"+strconv.Itoa(number)+"/reviews",
+		map[string]any{"body": body, "event": "COMMENT"},
+		&review,
+	); err != nil {
+		return 0, err
+	}
+	if review.ID <= 0 {
+		return 0, errors.New("GitHub returned an incomplete pull request review response")
+	}
+	return review.ID, nil
 }
 
 func (c *Client) createInstallationToken(

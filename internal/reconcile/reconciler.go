@@ -22,6 +22,7 @@ type Store interface {
 	ClaimSandboxes(ctx context.Context, owner string, limit int, lease time.Duration) ([]domain.Sandbox, error)
 	RenewSandboxClaim(ctx context.Context, owner, orgID, sessionID string, lease time.Duration) error
 	UpdateSandboxObservation(ctx context.Context, owner, orgID, sessionID, providerEnvironmentID, observedState, lastError string, reconcileAfter time.Time) error
+	RecordSandboxFailure(ctx context.Context, owner, orgID, sessionID, providerEnvironmentID, lastError string) error
 	ReleaseSandboxClaim(ctx context.Context, owner, orgID, sessionID string, reconcileAfter time.Time) error
 	IssueAccessTicket(ctx context.Context, orgID, sessionID, purpose string, scopes []string, ttl time.Duration) (string, error)
 	AppendSessionEvent(ctx context.Context, orgID, sessionID, eventType string, payload json.RawMessage) (domain.ClientEvent, error)
@@ -604,9 +605,15 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 	}, nil
 }
 
+// fail records a reconcile failure and schedules the next retry with
+// exponential backoff (internal/postgres/sandbox_store.go's
+// RecordSandboxFailure) rather than a flat interval — a persistently broken
+// provider integration backs off instead of hammering it every 15s forever,
+// while a transient failure still gets retried quickly.
 func (r *Reconciler) fail(ctx context.Context, record domain.Sandbox, cause error) error {
-	updateErr := r.observe(ctx, record, record.ProviderEnvironmentID,
-		domain.SandboxObservedFailed, cause.Error(), 15*time.Second)
+	updateErr := r.store.RecordSandboxFailure(
+		ctx, r.owner, record.OrgID, record.SessionID, record.ProviderEnvironmentID, cause.Error(),
+	)
 	if updateErr != nil && !errors.Is(updateErr, postgres.ErrSandboxLeaseLost) {
 		return errors.Join(cause, updateErr)
 	}

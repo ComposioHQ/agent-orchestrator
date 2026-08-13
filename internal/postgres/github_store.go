@@ -903,6 +903,51 @@ func (s *Store) ListGitHubRepositories(
 	return repositories, hasMore, nil
 }
 
+// GitHubInstallationForRepository resolves the active installation backing
+// one of an organization's granted repositories, keyed by full_name
+// (owner/repo) rather than by session — background pull-request status
+// polling must keep refreshing after the session that raised a PR has
+// terminated, since the PR itself lives on until closed or merged.
+func (s *Store) GitHubInstallationForRepository(
+	ctx context.Context,
+	orgID, repository string,
+) (installationID, repositoryID int64, err error) {
+	err = s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			ctx,
+			`WITH latest_grant AS (
+				SELECT DISTINCT ON (github_repository_id)
+					id, github_repository_id, installation_id, revoked_at
+				FROM ao_github_repository_grants
+				WHERE org_id = $1
+				ORDER BY github_repository_id, granted_at DESC, id DESC
+			)
+			SELECT installation.github_installation_id, repository.github_repository_id
+			FROM ao_github_repositories repository
+			JOIN latest_grant grant_row
+			  ON grant_row.github_repository_id = repository.github_repository_id
+			JOIN ao_github_installations installation
+			  ON installation.org_id = $1 AND installation.id = grant_row.installation_id
+			WHERE repository.full_name = $2
+			  AND grant_row.revoked_at IS NULL
+			  AND installation.status = 'active'
+			  AND installation.suspended_at IS NULL
+			  AND installation.disconnected_at IS NULL
+			  AND installation.deleted_at IS NULL
+			  AND repository.is_archived = false
+			  AND repository.is_disabled = false`,
+			orgID, repository,
+		).Scan(&installationID, &repositoryID)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	return installationID, repositoryID, nil
+}
+
 func (s *Store) CreateGitHubProject(
 	ctx context.Context,
 	principal domain.Principal,

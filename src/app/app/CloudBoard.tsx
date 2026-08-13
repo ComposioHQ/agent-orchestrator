@@ -8,8 +8,12 @@ import {
   SessionCardView,
   SessionsBoardGridView,
   toSessionStatus,
+  type BoardPullRequestPresentation,
 } from "@aoagents/product-ui";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+
+import { browserCloudClient } from "@/lib/cloud-client";
+import { toBoardPullRequest } from "./pr-display";
 
 const columns = boardAttentionZoneOrder.map((zone) =>
   getAttentionZoneViewForZone(zone),
@@ -49,11 +53,46 @@ const boardLabels = {
 
 export function CloudBoard({
   onSelectSession,
+  organizationId,
   sessions,
 }: {
   onSelectSession: (sessionId: string) => void;
+  organizationId: string;
   sessions: Session[];
 }) {
+  const [pullRequestsBySession, setPullRequestsBySession] = useState<
+    Record<string, BoardPullRequestPresentation[]>
+  >({});
+  const sessionIds = sessions.map((session) => session.id).join(",");
+
+  useEffect(() => {
+    if (!sessionIds) return;
+    let cancelled = false;
+    const client = browserCloudClient();
+    const loadPullRequests = async () => {
+      const entries = await Promise.all(
+        sessionIds.split(",").map(async (sessionId) => {
+          try {
+            const page = await client.listSessionPullRequests(
+              organizationId,
+              sessionId,
+            );
+            return [sessionId, page.pullRequests.map(toBoardPullRequest)] as const;
+          } catch {
+            return [sessionId, []] as const;
+          }
+        }),
+      );
+      if (!cancelled) setPullRequestsBySession(Object.fromEntries(entries));
+    };
+    void loadPullRequests();
+    const interval = window.setInterval(() => void loadPullRequests(), 8_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [organizationId, sessionIds]);
+
   if (sessions.length === 0) {
     return (
       <div className="grid h-full place-items-center p-8">
@@ -105,6 +144,7 @@ export function CloudBoard({
               `Updated ${new Date(timestamp).toLocaleString()}`,
           }}
           onOpen={() => onSelectSession(session.id)}
+          prs={pullRequestsBySession[session.id]}
           renderAvatar={(provider) => (
             <AgentAvatar
               className="mt-0.5"
@@ -120,24 +160,30 @@ export function CloudBoard({
   );
 }
 
-function CloudExternalLink({
+export function CloudExternalLink({
+  ariaLabel,
   children,
   className,
   href,
   stopPropagation,
+  title,
 }: {
+  ariaLabel?: string;
   children: ReactNode;
   className?: string;
   href: string;
   stopPropagation?: boolean;
+  title?: string;
 }) {
   return (
     <a
+      aria-label={ariaLabel}
       className={className}
       href={href}
       onClick={stopPropagation ? (event) => event.stopPropagation() : undefined}
       rel="noreferrer"
       target="_blank"
+      title={title}
     >
       {children}
     </a>

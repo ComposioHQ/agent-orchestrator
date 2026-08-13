@@ -176,6 +176,40 @@ func (b *RemoteCheckoutBroker) IssueCheckoutGrant(
 	return grant, nil
 }
 
+// errRemotePushNotSupported is returned by IssuePushGrant and
+// RaisePullRequest: pushing and raising pull requests remotely would need a
+// production-side capability-redemption endpoint of their own (mirroring
+// /control/github/capabilities/redeem), which does not exist yet. This
+// environment can still check out and read a repository through the
+// existing redeem endpoint above — only writing back to GitHub is
+// unsupported here for now.
+var errRemotePushNotSupported = errors.New(
+	"raising a pull request is not supported for a repository authorized through the remote capability broker yet",
+)
+
+func (b *RemoteCheckoutBroker) IssuePushGrant(
+	context.Context,
+	string, string,
+) (CheckoutGrant, error) {
+	return CheckoutGrant{}, errRemotePushNotSupported
+}
+
+func (b *RemoteCheckoutBroker) RaisePullRequest(
+	context.Context,
+	string, string,
+	domain.RaisePullRequest,
+) (domain.PullRequest, error) {
+	return domain.PullRequest{}, errRemotePushNotSupported
+}
+
+func (b *RemoteCheckoutBroker) SubmitReview(
+	context.Context,
+	string, string, string,
+	domain.SubmitReviewResult,
+) (domain.ReviewRun, error) {
+	return domain.ReviewRun{}, errRemotePushNotSupported
+}
+
 func (b *RemoteCheckoutBroker) ValidateCapability(
 	ctx context.Context,
 	capability string,
