@@ -44,6 +44,15 @@ const (
 	maxResponseBody      = 1 << 20
 )
 
+// checkoutGrant is fetched exactly once, at bootstrap, and PrepareCheckout
+// never touches it again on its own — a session running longer than the
+// grant's GitHub-issued lifetime (~1h) would otherwise have no path back to
+// working git credentials. This interval re-fetches a fresh grant and
+// re-runs the checkout's fetch step comfortably inside that lifetime. It's a
+// var, not a const, so a test can shrink it and exercise the loop without
+// actually waiting through it.
+var checkoutRenewalInterval = 45 * time.Minute
+
 var workerCapabilities = []string{
 	"worker.heartbeat",
 	"worker.events",
@@ -190,11 +199,15 @@ func run(logger *slog.Logger) error {
 		AgentCommand: agentCommand, AgentTerminalID: agentTerminal.TerminalID,
 		Started: started,
 	}
-	results := make(chan error, 2)
+	results := make(chan error, 3)
 	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
 	go func() { results <- transportSupervisor.Run(runCtx) }()
+	go func() {
+		results <- client.checkoutRenewalLoop(runCtx, logger, workspace, bootstrap.Launch.RepositoryURL)
+	}()
 	if err := <-started; err != nil {
 		cancel()
+		<-results
 		<-results
 		<-results
 		return fmt.Errorf("start interactive coding-agent terminal: %w", err)
@@ -209,6 +222,7 @@ func run(logger *slog.Logger) error {
 	}
 	first := <-results
 	cancel()
+	<-results
 	<-results
 	if ctx.Err() != nil {
 		logger.Info("worker shutting down")
@@ -284,6 +298,45 @@ func (c *client) heartbeatLoop(ctx context.Context, logger *slog.Logger) error {
 				return err
 			}
 		}
+	}
+}
+
+// checkoutRenewalLoop keeps the workspace's git credentials from silently
+// going stale in a long-running session. Scratch workspaces have no real git
+// remote to refresh, so they idle for the session's lifetime instead of
+// ticking — this keeps the goroutine/results bookkeeping in run() uniform
+// regardless of session kind.
+func (c *client) checkoutRenewalLoop(
+	ctx context.Context, logger *slog.Logger, workspace, repositoryURL string,
+) error {
+	if worker.IsScratchRepositoryURL(repositoryURL) {
+		<-ctx.Done()
+		return nil
+	}
+	ticker := time.NewTicker(checkoutRenewalInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			c.renewCheckout(ctx, logger, workspace)
+		}
+	}
+}
+
+// renewCheckout fetches a fresh checkout grant and re-runs the checkout's
+// fetch step. A failure here is not fatal to the worker — losing a moment of
+// git freshness is far less severe than losing worker liveness, which is what
+// the heartbeat loop guards — so it logs and lets the next tick retry.
+func (c *client) renewCheckout(ctx context.Context, logger *slog.Logger, workspace string) {
+	grant, err := c.checkoutGrant(ctx)
+	if err != nil {
+		logger.Warn("renew checkout grant failed", "error", err)
+		return
+	}
+	if err := worker.PrepareCheckout(ctx, worker.ExecGitRunner{}, workspace, grant); err != nil {
+		logger.Warn("refresh repository checkout failed", "error", err)
 	}
 }
 
