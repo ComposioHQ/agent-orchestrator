@@ -684,3 +684,266 @@ func TestTrackerIntakeConfig_WithDefaultsStillGitHub(t *testing.T) {
 		t.Fatalf("WithDefaults: Provider = %q, want %q", c.Provider, domain.TrackerProviderGitHub)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Host-aware tracker (ticket 09)
+// ---------------------------------------------------------------------------
+
+// newHostAwareTrackerForTest constructs a host-aware tracker with a default
+// (gitlab.com) fake server and an optional self-managed host fake server.
+// The self-managed host's base URL is wired via AllowedHosts + HostTokens.
+func newHostAwareTrackerForTest(t *testing.T, defaultSrv *fakeGL, hostEntries map[string]struct {
+	server *fakeGL
+	token  string
+}) *Tracker {
+	t.Helper()
+	opts := Options{
+		BaseURL:    defaultSrv.server.URL,
+		Token:      scmgitlab.StaticTokenSource("tkn-default"),
+		HTTPClient: defaultSrv.server.Client(),
+	}
+	for host, he := range hostEntries {
+		opts.AllowedHosts = append(opts.AllowedHosts, host)
+		if he.token != "" {
+			if opts.HostTokens == nil {
+				opts.HostTokens = make(map[string]scmgitlab.TokenSource)
+			}
+			opts.HostTokens[strings.ToLower(host)] = scmgitlab.StaticTokenSource(he.token)
+		}
+	}
+	tr, err := New(opts)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	// Override the per-host base URL to point at the fake server.
+	// The tracker derives self-managed base URLs as https://<host>/api/v4,
+	// but for testing we need to point at the httptest server URL.
+	for host, he := range hostEntries {
+		lh := strings.ToLower(strings.TrimSpace(host))
+		entry := tr.hosts[lh]
+		entry.baseURL = he.server.server.URL
+		tr.hosts[lh] = entry
+	}
+	return tr
+}
+
+func TestGet_SelfManagedHost_RoutesToCorrectBaseURLAndToken(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	selfManagedSrv := newFakeGL(t)
+
+	tr := newHostAwareTrackerForTest(t, defaultSrv, map[string]struct {
+		server *fakeGL
+		token  string
+	}{
+		"gitlab.internal": {server: selfManagedSrv, token: "tkn-internal"},
+	})
+
+	// Register handler on the self-managed server only.
+	selfManagedSrv.on("GET", "/projects/group/project/issues/42", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tkn-internal" {
+			t.Errorf("Authorization = %q, want Bearer tkn-internal", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"iid": 42,
+			"title": "Self-managed issue",
+			"description": "d",
+			"state": "opened",
+			"web_url": "https://gitlab.internal/group/project/-/issues/42"
+		}`))
+	})
+
+	issue, err := tr.Get(ctx(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Host:     "gitlab.internal",
+		Native:   "group/project#42",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Title != "Self-managed issue" {
+		t.Fatalf("Title = %q, want %q", issue.Title, "Self-managed issue")
+	}
+	if issue.ID.Host != "gitlab.internal" {
+		t.Fatalf("issue.ID.Host = %q, want %q", issue.ID.Host, "gitlab.internal")
+	}
+	// Ensure the default server was NOT hit.
+	if calls := defaultSrv.calls(); len(calls) != 0 {
+		t.Fatalf("default server received unexpected calls: %#v", calls)
+	}
+}
+
+func TestGet_DefaultHost_BackwardCompat(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	tr := newHostAwareTrackerForTest(t, defaultSrv, nil)
+
+	defaultSrv.on("GET", "/projects/o/r/issues/1", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tkn-default" {
+			t.Errorf("Authorization = %q, want Bearer tkn-default", got)
+		}
+		_, _ = w.Write([]byte(`{"iid":1,"title":"default","description":"","state":"opened","web_url":"https://gitlab.com/o/r/-/issues/1"}`))
+	})
+
+	// Host: "" routes to the default (gitlab.com) server.
+	issue, err := tr.Get(ctx(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Native:   "o/r#1",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.ID.Host != "" {
+		t.Fatalf("issue.ID.Host = %q, want \"\"", issue.ID.Host)
+	}
+}
+
+func TestGet_GitLabComExplicit_RoutesToDefault(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	tr := newHostAwareTrackerForTest(t, defaultSrv, nil)
+
+	defaultSrv.on("GET", "/projects/o/r/issues/1", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"iid":1,"title":"t","description":"","state":"opened","web_url":"https://gitlab.com/o/r/-/issues/1"}`))
+	})
+
+	// Host: "gitlab.com" should route to the default, same as Host: "".
+	issue, err := tr.Get(ctx(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Host:     "gitlab.com",
+		Native:   "o/r#1",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if issue.Title != "t" {
+		t.Fatalf("Title = %q, want %q", issue.Title, "t")
+	}
+}
+
+func TestGet_UnconfiguredHost_Rejected(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	tr := newHostAwareTrackerForTest(t, defaultSrv, nil)
+
+	_, err := tr.Get(ctx(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Host:     "gitlab.evil.example",
+		Native:   "o/r#1",
+	})
+	if !errors.Is(err, ErrHostNotAllowed) {
+		t.Fatalf("err = %v, want ErrHostNotAllowed", err)
+	}
+	// No HTTP call should have been made to any server.
+	if calls := defaultSrv.calls(); len(calls) != 0 {
+		t.Fatalf("unexpected HTTP calls: %#v", calls)
+	}
+}
+
+func TestList_SelfManagedHost_RoutesCorrectly(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	selfManagedSrv := newFakeGL(t)
+
+	tr := newHostAwareTrackerForTest(t, defaultSrv, map[string]struct {
+		server *fakeGL
+		token  string
+	}{
+		"gitlab.internal": {server: selfManagedSrv, token: "tkn-internal"},
+	})
+
+	selfManagedSrv.on("GET", "/projects/group/proj/issues", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tkn-internal" {
+			t.Errorf("Authorization = %q, want Bearer tkn-internal", got)
+		}
+		_, _ = w.Write([]byte(`[{"iid":1,"title":"sm","description":"d","state":"opened","web_url":"https://gitlab.internal/group/proj/-/issues/1"}]`))
+	})
+
+	issues, err := tr.List(ctx(), domain.TrackerRepo{
+		Provider: domain.TrackerProviderGitLab,
+		Host:     "gitlab.internal",
+		Native:   "group/proj",
+	}, domain.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("len = %d, want 1", len(issues))
+	}
+	if issues[0].ID.Host != "gitlab.internal" {
+		t.Fatalf("issues[0].ID.Host = %q, want %q", issues[0].ID.Host, "gitlab.internal")
+	}
+	if calls := defaultSrv.calls(); len(calls) != 0 {
+		t.Fatalf("default server received unexpected calls: %#v", calls)
+	}
+}
+
+func TestList_UnconfiguredHost_Rejected(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	tr := newHostAwareTrackerForTest(t, defaultSrv, nil)
+
+	_, err := tr.List(ctx(), domain.TrackerRepo{
+		Provider: domain.TrackerProviderGitLab,
+		Host:     "gitlab.evil.example",
+		Native:   "o/r",
+	}, domain.ListFilter{})
+	if !errors.Is(err, ErrHostNotAllowed) {
+		t.Fatalf("err = %v, want ErrHostNotAllowed", err)
+	}
+	if calls := defaultSrv.calls(); len(calls) != 0 {
+		t.Fatalf("unexpected HTTP calls: %#v", calls)
+	}
+}
+
+func TestGet_SelfManagedHost_FallsBackToDefaultToken(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	selfManagedSrv := newFakeGL(t)
+
+	// Register the self-managed host in AllowedHosts but do NOT provide a
+	// HostTokens entry — the default token should be used.
+	tr := newHostAwareTrackerForTest(t, defaultSrv, map[string]struct {
+		server *fakeGL
+		token  string
+	}{
+		"gitlab.internal": {server: selfManagedSrv},
+	})
+
+	selfManagedSrv.on("GET", "/projects/o/r/issues/1", func(w http.ResponseWriter, r *http.Request) {
+		// Should use the default token since no per-host token was configured.
+		if got := r.Header.Get("Authorization"); got != "Bearer tkn-default" {
+			t.Errorf("Authorization = %q, want Bearer tkn-default", got)
+		}
+		_, _ = w.Write([]byte(`{"iid":1,"title":"t","description":"","state":"opened","web_url":"https://gitlab.internal/o/r/-/issues/1"}`))
+	})
+
+	_, err := tr.Get(ctx(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Host:     "gitlab.internal",
+		Native:   "o/r#1",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+}
+
+func TestGet_HostCaseInsensitive(t *testing.T) {
+	defaultSrv := newFakeGL(t)
+	selfManagedSrv := newFakeGL(t)
+
+	tr := newHostAwareTrackerForTest(t, defaultSrv, map[string]struct {
+		server *fakeGL
+		token  string
+	}{
+		"gitlab.internal": {server: selfManagedSrv, token: "tkn-internal"},
+	})
+
+	selfManagedSrv.on("GET", "/projects/o/r/issues/1", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"iid":1,"title":"t","description":"","state":"opened","web_url":"https://gitlab.internal/o/r/-/issues/1"}`))
+	})
+
+	// Upper-case host should match the lower-cased allowlist entry.
+	_, err := tr.Get(ctx(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Host:     "GitLab.Internal",
+		Native:   "o/r#1",
+	})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+}

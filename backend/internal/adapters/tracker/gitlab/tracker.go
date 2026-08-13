@@ -35,11 +35,12 @@ const (
 // errors.Is; the orchestrator's lifecycle code is intentionally insulated
 // from raw HTTP status codes.
 var (
-	ErrNotFound      = errors.New("gitlab tracker: issue not found")
-	ErrRateLimited   = errors.New("gitlab tracker: rate limited")
-	ErrAuthFailed    = errors.New("gitlab tracker: authentication failed")
-	ErrWrongProvider = errors.New("gitlab tracker: id is not a gitlab tracker id")
-	ErrBadID         = errors.New("gitlab tracker: malformed native id")
+	ErrNotFound       = errors.New("gitlab tracker: issue not found")
+	ErrRateLimited    = errors.New("gitlab tracker: rate limited")
+	ErrAuthFailed     = errors.New("gitlab tracker: authentication failed")
+	ErrWrongProvider  = errors.New("gitlab tracker: id is not a gitlab tracker id")
+	ErrBadID          = errors.New("gitlab tracker: malformed native id")
+	ErrHostNotAllowed = errors.New("gitlab tracker: host not in allowlist")
 )
 
 // RateLimitError is an alias for httpkit.RateLimitError so existing callers
@@ -50,11 +51,32 @@ type RateLimitError = httpkit.RateLimitError
 // Options configures a Tracker. All fields except Token are optional —
 // production code typically sets Token alone; tests inject HTTPClient and
 // BaseURL to point at an httptest fake.
+//
+// AllowedHosts is the list of self-managed GitLab hosts the tracker is
+// permitted to talk to. gitlab.com (Host: "") is always allowed and does
+// not need to appear here. A host not in this list and not gitlab.com is
+// rejected before any credential is attached.
+//
+// HostTokens maps a self-managed host to a token override. Hosts in
+// AllowedHosts without an explicit entry fall back to the default Token.
+// The per-host selection ensures the gitlab.com token is not attached to a
+// self-managed host and vice versa.
 type Options struct {
-	Token      scmgitlab.TokenSource
-	HTTPClient *http.Client
-	BaseURL    string
-	UserAgent  string
+	Token        scmgitlab.TokenSource
+	HTTPClient   *http.Client
+	BaseURL      string
+	UserAgent    string
+	AllowedHosts []string
+	HostTokens   map[string]scmgitlab.TokenSource
+}
+
+// hostEntry holds the per-host base URL and token source. The default
+// entry (for gitlab.com / Host: "") uses Options.BaseURL and Options.Token.
+// Self-managed hosts get a derived base URL (https://<host>/api/v4) and
+// either the per-host token from HostTokens or the default token.
+type hostEntry struct {
+	baseURL string
+	tokens  scmgitlab.TokenSource
 }
 
 // Tracker implements ports.Tracker against the GitLab REST API v4.
@@ -64,11 +86,23 @@ type Options struct {
 // successful preflight is cached for the lifetime of the Tracker so repeat
 // calls are free, while failures are intentionally NOT cached so a
 // transient startup glitch doesn't permanently brick the adapter.
+//
+// The tracker is host-aware: it maintains a per-host base URL + token map,
+// mirroring the SCM provider's clientForHost pattern. gitlab.com (zero-value
+// Host: "") uses the default base URL and default token. Self-managed hosts
+// must be in AllowedHosts; unconfigured hosts are rejected before any
+// credential is attached.
 type Tracker struct {
 	http      *http.Client
-	tokens    scmgitlab.TokenSource
-	baseURL   string
 	userAgent string
+
+	// defaultHost is the config for gitlab.com (Host: "").
+	defaultHost hostEntry
+
+	// hosts maps each allowed self-managed host to its config (base URL +
+	// token). Hosts in AllowedHosts without an explicit HostTokens entry fall
+	// back to the default token.
+	hosts map[string]hostEntry
 
 	preflight httpkit.PreflightCache
 }
@@ -83,22 +117,57 @@ func New(opts Options) (*Tracker, error) {
 	if _, err := src.Token(context.Background()); err != nil {
 		return nil, err
 	}
+	baseURL := opts.BaseURL
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	ua := opts.UserAgent
+	if ua == "" {
+		ua = defaultUserAgent
+	}
+
+	// Build per-host config for self-managed hosts.
+	hosts := make(map[string]hostEntry, len(opts.AllowedHosts))
+	for _, raw := range opts.AllowedHosts {
+		h := strings.TrimSpace(strings.ToLower(raw))
+		if h == "" {
+			continue
+		}
+		he := hostEntry{
+			baseURL: "https://" + h + "/api/v4",
+			tokens:  src, // fall back to default token
+		}
+		if ts, ok := opts.HostTokens[strings.ToLower(raw)]; ok && ts != nil {
+			he.tokens = ts
+		}
+		hosts[h] = he
+	}
+
 	t := &Tracker{
-		http:      opts.HTTPClient,
-		tokens:    src,
-		baseURL:   opts.BaseURL,
-		userAgent: opts.UserAgent,
+		http:        opts.HTTPClient,
+		userAgent:   ua,
+		defaultHost: hostEntry{baseURL: baseURL, tokens: src},
+		hosts:       hosts,
 	}
 	if t.http == nil {
 		t.http = &http.Client{Timeout: 30 * time.Second}
 	}
-	if t.baseURL == "" {
-		t.baseURL = defaultBaseURL
-	}
-	if t.userAgent == "" {
-		t.userAgent = defaultUserAgent
-	}
 	return t, nil
+}
+
+// configForHost returns the per-host config (base URL + token) for the given
+// host. Host "" and "gitlab.com" use the default config (gitlab.com).
+// Self-managed hosts must be in the allowlist; unconfigured hosts return an
+// error so callers fail closed before any credential is attached.
+func (t *Tracker) configForHost(host string) (hostEntry, error) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || host == "gitlab.com" || host == "www.gitlab.com" {
+		return t.defaultHost, nil
+	}
+	if he, ok := t.hosts[host]; ok {
+		return he, nil
+	}
+	return hostEntry{}, fmt.Errorf("gitlab tracker: host %q not in allowlist: %w", host, ErrHostNotAllowed)
 }
 
 // Statically assert Tracker satisfies the port. If this stops compiling, the
@@ -130,9 +199,13 @@ func (t *Tracker) Get(ctx context.Context, id domain.TrackerID) (domain.Issue, e
 	if err != nil {
 		return domain.Issue{}, err
 	}
+	he, err := t.configForHost(id.Host)
+	if err != nil {
+		return domain.Issue{}, err
+	}
 	path := fmt.Sprintf("/projects/%s/issues/%d", url.PathEscape(projectPath), iid)
 
-	resp, err := t.do(ctx, http.MethodGet, path, nil)
+	resp, err := t.do(ctx, he, http.MethodGet, path, nil)
 	if err != nil {
 		return domain.Issue{}, err
 	}
@@ -140,13 +213,16 @@ func (t *Tracker) Get(ctx context.Context, id domain.TrackerID) (domain.Issue, e
 	if err := json.Unmarshal(resp, &raw); err != nil {
 		return domain.Issue{}, fmt.Errorf("gitlab tracker: decode issue: %w", err)
 	}
-	return issueFromGitLab(projectPath, raw), nil
+	issue := issueFromGitLab(projectPath, raw)
+	issue.ID.Host = id.Host // preserve host for round-trip
+	return issue, nil
 }
 
 // issueFromGitLab projects a raw GitLab issue payload into the normalized
 // domain.Issue. projectPath is passed in because the TrackerID.Native
 // shape is "path/to/project#iid" and we want the returned ID to round-trip
-// through the same adapter.
+// through the same adapter. The caller sets Host on the returned Issue after
+// this function returns.
 func issueFromGitLab(projectPath string, raw glIssue) domain.Issue {
 	assignees := make([]string, 0, len(raw.Assignees))
 	for _, a := range raw.Assignees {
@@ -198,6 +274,10 @@ func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter doma
 	if err != nil {
 		return nil, err
 	}
+	he, err := t.configForHost(repo.Host)
+	if err != nil {
+		return nil, err
+	}
 
 	q := url.Values{}
 	switch filter.State {
@@ -225,7 +305,7 @@ func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter doma
 		if page >= maxListPages {
 			return nil, fmt.Errorf("gitlab tracker: list pagination exceeded %d pages", maxListPages)
 		}
-		respBody, nextPath, err := t.roundTrip(ctx, http.MethodGet, path, nil)
+		respBody, nextPath, err := t.roundTrip(ctx, he, http.MethodGet, path, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -235,7 +315,9 @@ func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter doma
 		}
 		pageIssues := make([]domain.Issue, 0, len(raw))
 		for _, r := range raw {
-			pageIssues = append(pageIssues, issueFromGitLab(projectPath, r))
+			issue := issueFromGitLab(projectPath, r)
+			issue.ID.Host = repo.Host // preserve host for round-trip
+			pageIssues = append(pageIssues, issue)
 		}
 		var done bool
 		out, done = httpkit.AppendIssuesWithLimit(out, pageIssues, filter.Limit)
@@ -261,7 +343,9 @@ func (t *Tracker) List(ctx context.Context, repo domain.TrackerRepo, filter doma
 // startup glitch is recoverable on a subsequent call.
 func (t *Tracker) Preflight(ctx context.Context) error {
 	return t.preflight.Run(ctx, func(ctx context.Context) error {
-		_, err := t.do(ctx, http.MethodGet, "/user", nil)
+		// Preflight checks the default (gitlab.com) token. Self-managed host
+		// tokens are validated on first use.
+		_, err := t.do(ctx, t.defaultHost, http.MethodGet, "/user", nil)
 		return err
 	})
 }
@@ -270,12 +354,12 @@ func (t *Tracker) Preflight(ctx context.Context) error {
 // HTTP plumbing
 // ---------------------------------------------------------------------------
 
-func (t *Tracker) do(ctx context.Context, method, path string, body any) ([]byte, error) {
-	respBody, _, err := t.roundTrip(ctx, method, path, body)
+func (t *Tracker) do(ctx context.Context, he hostEntry, method, path string, body any) ([]byte, error) {
+	respBody, _, err := t.roundTrip(ctx, he, method, path, body)
 	return respBody, err
 }
 
-func (t *Tracker) roundTrip(ctx context.Context, method, path string, body any) ([]byte, string, error) {
+func (t *Tracker) roundTrip(ctx context.Context, he hostEntry, method, path string, body any) ([]byte, string, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -284,7 +368,7 @@ func (t *Tracker) roundTrip(ctx context.Context, method, path string, body any) 
 		}
 		rdr = bytes.NewReader(b)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, t.baseURL+path, rdr)
+	req, err := http.NewRequestWithContext(ctx, method, he.baseURL+path, rdr)
 	if err != nil {
 		return nil, "", fmt.Errorf("gitlab tracker: build request: %w", err)
 	}
@@ -293,7 +377,7 @@ func (t *Tracker) roundTrip(ctx context.Context, method, path string, body any) 
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", t.userAgent)
-	tok, err := t.tokens.Token(ctx)
+	tok, err := he.tokens.Token(ctx)
 	if err != nil {
 		return nil, "", err
 	}
@@ -304,7 +388,7 @@ func (t *Tracker) roundTrip(ctx context.Context, method, path string, body any) 
 		return nil, "", fmt.Errorf("gitlab tracker: %s %s: %w", method, path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	nextPath := httpkit.ParseLinkNext(resp.Header.Get("Link"), t.baseURL)
+	nextPath := httpkit.ParseLinkNext(resp.Header.Get("Link"), he.baseURL)
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		return nil, "", fmt.Errorf("gitlab tracker: read response body: %w", readErr)
