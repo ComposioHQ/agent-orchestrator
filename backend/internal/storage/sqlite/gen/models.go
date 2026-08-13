@@ -260,6 +260,7 @@ type PR struct {
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
 	AutoInjectCI             bool
+	ProviderID               string
 }
 
 type PRCheck struct {
@@ -311,6 +312,11 @@ type PRReviewThread struct {
 	IsBot        int64
 	SemanticHash string
 	UpdatedAt    time.Time
+}
+
+type PRURLAlias struct {
+	AliasURL     string
+	CanonicalURL string
 }
 
 type Project struct {

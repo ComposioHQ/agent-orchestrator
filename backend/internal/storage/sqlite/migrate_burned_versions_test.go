@@ -100,6 +100,7 @@ var shippedMigrations = map[int64]string{
 	94: "0094_agent_switch_recovery.sql",
 	95: "0095_allow_omp_harness.sql",
 	96: "0096_session_worktree_base_ref.sql",
+	97: "0097_pr_provider_identity.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

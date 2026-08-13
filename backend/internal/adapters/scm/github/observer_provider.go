@@ -312,6 +312,7 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 type restListPull struct {
 	URL     string `json:"url"`
 	HTMLURL string `json:"html_url"`
+	NodeID  string `json:"node_id"`
 	Number  int    `json:"number"`
 	State   string `json:"state"`
 	Draft   bool   `json:"draft"`
@@ -337,6 +338,7 @@ type restListPull struct {
 func restListPullToSCM(pull restListPull) ports.SCMPRObservation {
 	closed := strings.EqualFold(pull.State, "closed")
 	return ports.SCMPRObservation{
+		ProviderID:        pull.NodeID,
 		URL:               firstNonEmpty(pull.HTMLURL, pull.URL),
 		Number:            pull.Number,
 		State:             normalizePRState(pull.Draft, false, closed),
@@ -372,7 +374,7 @@ func buildSCMBatchQuery(refs []ports.SCMPRRef) (string, []string) {
 
 func scmPRFields() string {
 	return strings.ReplaceAll(`
-number url state isDraft merged closed title additions deletions changedFiles
+number id url state isDraft merged closed title additions deletions changedFiles
 mergeable mergeStateStatus reviewDecision headRefName headRefOid baseRefName baseRefOid
 createdAt updatedAt mergedAt closedAt
 author{ login }
@@ -470,13 +472,23 @@ func scmObservationFromGraphQL(ref ports.SCMPRRef, pr map[string]any) ports.SCMO
 	merged := boolv(pr["merged"])
 	closed := boolv(pr["closed"]) && !merged
 	draft := boolv(pr["isDraft"])
+	canonicalRepo := repoFullName(ref.Repo)
+	if owner, repoName, _, err := parsePRURL(prURL); err == nil {
+		canonicalRepo = owner + "/" + repoName
+	}
+	urlAlias := strings.TrimSpace(ref.URL)
+	if urlAlias == strings.TrimSpace(prURL) {
+		urlAlias = ""
+	}
 	obs := ports.SCMObservation{
 		Fetched:  true,
 		Provider: ref.Repo.Provider,
 		Host:     ref.Repo.Host,
-		Repo:     repoFullName(ref.Repo),
+		Repo:     canonicalRepo,
 		PR: ports.SCMPRObservation{
+			ProviderID:               str(pr["id"]),
 			URL:                      prURL,
+			URLAlias:                 urlAlias,
 			Number:                   int(num(pr["number"])),
 			State:                    normalizePRState(draft, merged, closed),
 			Draft:                    draft,
