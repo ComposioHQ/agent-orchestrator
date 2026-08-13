@@ -162,7 +162,7 @@ func (c *Controller) PromoteQueuedTurn(
 			c.log.Error("failed to release queued turn promotion", "turn", turnID, "error", releaseErr)
 		}
 	}
-	settleUncertain := func(cause error) (PromoteQueuedTurnResult, error) {
+	settleUncertain := func(cause error) error {
 		// A transport error commonly cancels the request context after the provider
 		// may already have accepted the steer. The durable safety transition must
 		// survive that cancellation or the source remains visibly queued forever.
@@ -172,7 +172,7 @@ func (c *Controller) PromoteQueuedTurn(
 			c.log.Error("failed to settle uncertain queued turn promotion",
 				"turn", turnID, "cause", cause, "error", settleErr)
 		}
-		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %w", ErrPromotionUncertain, cause)
+		return fmt.Errorf("%w: %w", ErrPromotionUncertain, cause)
 	}
 
 	var content []ports.ChatContent
@@ -203,7 +203,8 @@ func (c *Controller) PromoteQueuedTurn(
 			release()
 			return PromoteQueuedTurnResult{}, classified
 		default:
-			return settleUncertain(fmt.Errorf("steer queued turn %s: %w", turnID, err))
+			return PromoteQueuedTurnResult{}, settleUncertain(
+				fmt.Errorf("steer queued turn %s: %w", turnID, err))
 		}
 	}
 	landed := ref.ProviderTurnID
@@ -213,11 +214,11 @@ func (c *Controller) PromoteQueuedTurn(
 	activityID := c.newID()
 	activity, err := makeSteerActivity(activityID, msg, turnID)
 	if err != nil {
-		return settleUncertain(err)
+		return PromoteQueuedTurnResult{}, settleUncertain(err)
 	}
 	if err := c.store.CompleteQueuedTurnPromotion(
 		ctx, c.conversation.ID, turnID, landed, activity, c.now()); err != nil {
-		return settleUncertain(err)
+		return PromoteQueuedTurnResult{}, settleUncertain(err)
 	}
 	return PromoteQueuedTurnResult{
 		SourceTurnID: turnID, ProviderTurnID: landed, ActivityID: activityID,
