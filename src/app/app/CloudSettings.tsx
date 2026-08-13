@@ -94,7 +94,7 @@ export function CloudSettings({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onBack()}>
       <DialogContent
-        className={`${settingsDialogContentClass} h-(--size-settings-dialog-height) w-(--size-settings-dialog-wide) max-h-none origin-center overflow-hidden p-0`}
+        className={`${settingsDialogContentClass} cloud-settings-dialog max-h-none origin-center overflow-hidden p-0`}
         showCloseButton={false}
       >
         <div className="flex h-full min-h-0">
@@ -133,7 +133,7 @@ export function CloudSettings({
               <SettingsNavItem
                 active={panel === "providers"}
                 icon={KeyRound}
-                label="Provider connections"
+                label="Providers"
                 onClick={() => setPanel("providers")}
               />
             </nav>
@@ -490,7 +490,7 @@ function settingsTitle(panel: SettingsPanel) {
     case "notifications":
       return "Notifications";
     case "providers":
-      return "Provider connections";
+      return "Providers";
     default:
       return "Organization";
   }

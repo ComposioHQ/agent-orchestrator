@@ -423,7 +423,7 @@ it("connects coding-agent credentials from provider settings", async () => {
     "page",
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Provider connections" }));
+  fireEvent.click(screen.getByRole("button", { name: "Providers" }));
   expect(screen.getByText("No GitHub installation")).toBeVisible();
   fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
   fireEvent.change(screen.getByLabelText("Secret"), {

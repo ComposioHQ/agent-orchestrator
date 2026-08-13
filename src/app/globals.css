@@ -34,6 +34,13 @@
   backdrop-filter: blur(1px);
 }
 
+/* The copied Electron dialog is always 920 × 680, capped by its viewport gutter.
+ * This wins over the generic Dialog primitive's `w-full` base utility. */
+.cloud-settings-dialog {
+  width: min(var(--size-settings-dialog-wide), calc(100vw - var(--space-8))) !important;
+  height: min(var(--size-settings-dialog-height), calc(100svh - var(--space-8))) !important;
+}
+
 .settings-row-bar {
   display: flex;
   min-height: var(--size-settings-row);
