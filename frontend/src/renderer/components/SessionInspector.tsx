@@ -1342,7 +1342,8 @@ function ReviewPanel({
 		.filter((run): run is NonNullable<typeof run> => Boolean(run))
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
-	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
+	const projectDefaultHarness = config?.reviewers?.[0]?.harness || "claude-code";
+	const harness = latest?.harness || projectDefaultHarness;
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
@@ -1403,7 +1404,7 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							defaultHarness={harness}
-							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
+							defaultOptionLabel={`${projectDefaultLabel} (${projectDefaultHarness})`}
 							defaultTriggerLabel={harness || projectDefaultLabel}
 							disabled={reviewRunning || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
@@ -1411,6 +1412,7 @@ function ReviewPanel({
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
 							value={reviewerOverride}
+							excludedHarness={projectDefaultHarness}
 						/>
 						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
