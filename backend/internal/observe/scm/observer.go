@@ -601,8 +601,37 @@ func (o *Observer) Poll(ctx context.Context) error {
 		}
 		o.cacheSetTime(o.Cache.LastPRFetchAt, &o.Cache.lastPRFetchOrder, key, now)
 	}
+	// Per-ref monotonicity (finding #1): build a map of repoKey → candidate
+	// PR keys so the final cursor-advance loop can verify that every ref in
+	// a repo succeeded before advancing the repo-level ETag/cursor. Without
+	// this, a single failed ref followed by a successful observation for a
+	// different PR in the same repo restores repoRefreshOK=true and advances
+	// the cursor, making the failed update unrecoverable.
+	repoCandidateKeys := map[string][]string{}
+	for pk := range selection.candidateKeys {
+		subj, ok := selection.subjectsByPR[pk]
+		if !ok {
+			continue
+		}
+		rk := prKey(subj.repo, 0)
+		repoCandidateKeys[rk] = append(repoCandidateKeys[rk], pk)
+	}
 	for key, ok := range repoRefreshOK {
 		if !ok {
+			continue
+		}
+		// The repo ETag/cursor advances only when every candidate ref in
+		// that repo has prRefreshOK == true. A single failed ref prevents
+		// the cursor from advancing so the failed update is recoverable on
+		// the next poll.
+		allRefsOK := true
+		for _, pk := range repoCandidateKeys[key] {
+			if !prRefreshOK[pk] {
+				allRefsOK = false
+				break
+			}
+		}
+		if !allRefsOK {
 			continue
 		}
 		if etag := repoGuards[key].result.ETag; etag != "" {

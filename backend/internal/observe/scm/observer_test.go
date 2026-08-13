@@ -2682,3 +2682,122 @@ func TestPoll_CooldownSkip_MarksRepoRefreshIncomplete(t *testing.T) {
 		t.Fatalf("sync cursor advanced after cooldown-skip: got %v, want %v (unchanged)", got, cursorBefore)
 	}
 }
+
+// TestPoll_RepoRefreshMonotonicity_OneRefFailsOneSucceeds (finding #1) verifies
+// that when two MRs share a repo and one fetch fails while the other succeeds,
+// the repo ETag and LastSyncCursor do NOT advance. Without per-ref tracking,
+// markRepoRefreshOK (called after the successful PR persistence) would clear
+// the repo-level failure set by markRepoRefreshFailed for the failed PR,
+// making the failed update unrecoverable.
+func TestPoll_RepoRefreshMonotonicity_OneRefFailsOneSucceeds(t *testing.T) {
+	store := testStoreWithSession()
+	// Two tracked PRs in the same repo with durable hashes.
+	pr1, pr2 := knownPR(1), knownPR(2)
+	for _, p := range []*domain.PullRequest{&pr1, &pr2} {
+		p.MetadataHash = "durable-meta"
+		p.CIHash = "durable-ci"
+		p.ReviewHash = "durable-review"
+	}
+	store.prs["p-1"] = []domain.PullRequest{pr1, pr2}
+
+	// PR 1 fetch will fail (per-observation error), PR 2 fetch will succeed.
+	pr2Obs := testObs(2)
+	pr2Obs.PR.Title = "PR 2 updated" // force a metadata change so it persists
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{Number: 1, State: "open", SourceBranch: "feat", HeadRepo: "o/r"}, {Number: 2, State: "open", SourceBranch: "feat", HeadRepo: "o/r"}}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 2): pr2Obs},
+		// PR 1 returns a Fetched=false placeholder with a non-rate-limit error.
+		fetchObsErrors: map[string]error{prKey(testRepo, 1): errors.New("gitlab 503")},
+	}
+	lc := &fakeLifecycle{}
+	now := time.Unix(1600, 0).UTC()
+	obs := newTestObserver(store, provider, lc, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = now.Add(-time.Hour)
+	cursorBefore := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// PR 2 must have been persisted (metadata changed).
+	foundPr2Write := false
+	for _, w := range store.writes {
+		if w.pr.Number == 2 {
+			foundPr2Write = true
+			break
+		}
+	}
+	if !foundPr2Write {
+		t.Fatalf("PR 2 (successful fetch) must be persisted; writes=%#v", store.writes)
+	}
+
+	// The repo ETag must NOT advance — PR 1 failed.
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got == "repo2" {
+		t.Fatalf("repo ETag advanced to %q when one ref failed; durable state must not advance", got)
+	}
+	// The sync cursor must NOT advance.
+	if got := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; got != cursorBefore {
+		t.Fatalf("sync cursor advanced when one ref failed: got %v, want %v (unchanged)", got, cursorBefore)
+	}
+}
+
+// TestPoll_RepoRefreshMonotonicity_BothRefsSucceed (finding #1) verifies
+// that when two MRs share a repo and both fetches succeed, the repo ETag and
+// LastSyncCursor DO advance.
+func TestPoll_RepoRefreshMonotonicity_BothRefsSucceed(t *testing.T) {
+	store := testStoreWithSession()
+	// Two tracked PRs in the same repo with durable hashes.
+	pr1, pr2 := knownPR(1), knownPR(2)
+	for _, p := range []*domain.PullRequest{&pr1, &pr2} {
+		p.MetadataHash = "durable-meta"
+		p.CIHash = "durable-ci"
+		p.ReviewHash = "durable-review"
+	}
+	store.prs["p-1"] = []domain.PullRequest{pr1, pr2}
+
+	// Both PR observations have a metadata change so they persist.
+	pr1Obs := testObs(1)
+	pr1Obs.PR.Title = "PR 1 updated"
+	pr2Obs := testObs(2)
+	pr2Obs.PR.Title = "PR 2 updated"
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo2"}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{Number: 1, State: "open", SourceBranch: "feat", HeadRepo: "o/r"}, {Number: 2, State: "open", SourceBranch: "feat", HeadRepo: "o/r"}}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): pr1Obs, prKey(testRepo, 2): pr2Obs},
+	}
+	lc := &fakeLifecycle{}
+	now := time.Unix(1700, 0).UTC()
+	obs := newTestObserver(store, provider, lc, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = now.Add(-time.Hour)
+	cursorBefore := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both PRs must have been persisted.
+	foundPr1, foundPr2 := false, false
+	for _, w := range store.writes {
+		if w.pr.Number == 1 {
+			foundPr1 = true
+		}
+		if w.pr.Number == 2 {
+			foundPr2 = true
+		}
+	}
+	if !foundPr1 || !foundPr2 {
+		t.Fatalf("both PRs must be persisted; writes=%#v", store.writes)
+	}
+
+	// The repo ETag must advance.
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got != "repo2" {
+		t.Fatalf("repo ETag not advanced after all refs succeeded: got %q, want repo2", got)
+	}
+	// The sync cursor must advance.
+	if got := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; !got.After(cursorBefore) {
+		t.Fatalf("sync cursor not advanced after all refs succeeded: got %v, want > %v", got, cursorBefore)
+	}
+}
