@@ -21,6 +21,7 @@ type fakeStore struct {
 	prs        map[domain.SessionID][]domain.PullRequest
 	reviews    map[string][]domain.PullRequestReview
 	comments   map[string][]domain.PullRequestComment
+	prPolicies map[string]bool
 	signatures map[string]string
 
 	listPRsErr        error
@@ -34,6 +35,7 @@ func newFakeStore() *fakeStore {
 		prs:        map[domain.SessionID][]domain.PullRequest{},
 		reviews:    map[string][]domain.PullRequestReview{},
 		comments:   map[string][]domain.PullRequestComment{},
+		prPolicies: map[string]bool{},
 		signatures: map[string]string{},
 	}
 }
@@ -48,6 +50,27 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) GetPR(_ context.Context, prURL string) (domain.PullRequest, bool, error) {
+	for _, prs := range f.prs {
+		for _, pr := range prs {
+			if pr.URL != prURL {
+				continue
+			}
+			if policy, ok := f.prPolicies[prURL]; ok {
+				pr.AutoInjectCI = policy
+			} else {
+				pr.AutoInjectCI = true
+			}
+			return pr, true, nil
+		}
+	}
+	policy, explicitlySet := f.prPolicies[prURL]
+	if !explicitlySet {
+		policy = true
+	}
+	return domain.PullRequest{URL: prURL, AutoInjectCI: policy}, true, nil
 }
 
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
@@ -1655,6 +1678,22 @@ func TestPRObservation_CancelledChecksDoNotNudge(t *testing.T) {
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("cancelled-only checks must not nudge, got %v", msg.msgs)
+	}
+}
+
+func TestPRObservation_CIFailureNotInjectedWhenPRPolicyDisabled(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.prPolicies["pr1"] = false
+	o := ports.PRObservation{Fetched: true, URL: "pr1", CI: domain.CIFailing, Checks: []ports.PRCheckObservation{
+		{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"},
+	}}
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("CI failure was injected with PR policy disabled: %v", msg.msgs)
 	}
 }
 

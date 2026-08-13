@@ -88,6 +88,8 @@ func TestDeriveSCMStatusPipelineAndWorstWins(t *testing.T) {
 		{"review pending", []contract.PRFacts{{Review: contract.ReviewRequired}}, contract.StatusReviewPending},
 		{"approved", []contract.PRFacts{{Review: contract.ReviewApproved}}, contract.StatusApproved},
 		{"mergeable", []contract.PRFacts{{Mergeability: contract.MergeMergeable}}, contract.StatusMergeable},
+		{"merge blocked", []contract.PRFacts{{Mergeability: contract.MergeBlocked}}, contract.StatusPROpen},
+		{"merge blocked with approved review", []contract.PRFacts{{Mergeability: contract.MergeBlocked, Review: contract.ReviewApproved}}, contract.StatusPROpen},
 		{"changes requested", []contract.PRFacts{{Review: contract.ReviewChangesRequest}}, contract.StatusChangesRequested},
 		{"review comments", []contract.PRFacts{{ReviewComments: true}}, contract.StatusChangesRequested},
 		{"draft", []contract.PRFacts{{Draft: true}}, contract.StatusDraft},

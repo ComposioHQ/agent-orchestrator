@@ -104,7 +104,10 @@ type chatSpawn struct {
 // first so no app-server process is left behind holding the worktree.
 func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domain.SessionRecord, error) {
 	id := in.record.ID
-	agentConfig := effectiveAgentConfig(in.cfg.Kind, in.project.Config)
+	agentConfig := applySpawnAgentConfig(
+		effectiveAgentConfig(in.cfg.Kind, in.project.Config),
+		in.cfg.AgentConfig,
+	)
 
 	// The same env the terminal path builds, including the HookPATH pin. The
 	// provider passes its environment through to the shell commands it runs, so

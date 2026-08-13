@@ -32,30 +32,32 @@ import (
 )
 
 type fakeSessionService struct {
-	sessions         map[domain.SessionID]domain.Session
-	sent             string
-	sentAttachment   *ports.SpawnAttachment
-	delegationInput  sessionsvc.DelegateTaskInput
-	delegationErr    error
-	cleanupProjects  []domain.ProjectID
-	cleanupResult    []domain.SessionID
-	cleanupSkipped   []sessionsvc.CleanupSkipped
-	workspaceFiles   sessionsvc.WorkspaceFiles
-	workspaceFile    sessionsvc.WorkspaceFileDetail
-	workspacePaths   []string
-	spawnErr         error
-	orchestratorMode domain.SessionMode
-	claimErr         error
-	listPRErr        error
-	workspaceErr     error
-	staged           []ports.SpawnAttachment
-	stagedPaths      []string
-	stageErr         error
-	agentSwitches    map[domain.AgentSwitchID]domain.AgentSwitch
-	switchConfig     sessionsvc.SwitchAgentInput
-	switchErr        error
-	handoff          json.RawMessage
-	handoffSource    domain.AgentGenerationID
+	sessions            map[domain.SessionID]domain.Session
+	sent                string
+	sentAttachment      *ports.SpawnAttachment
+	delegationInput     sessionsvc.DelegateTaskInput
+	delegationErr       error
+	cleanupProjects     []domain.ProjectID
+	cleanupResult       []domain.SessionID
+	cleanupSkipped      []sessionsvc.CleanupSkipped
+	workspaceFiles      sessionsvc.WorkspaceFiles
+	workspaceFile       sessionsvc.WorkspaceFileDetail
+	workspacePaths      []string
+	spawnErr            error
+	orchestratorMode    domain.SessionMode
+	claimErr            error
+	listPRErr           error
+	workspaceErr        error
+	staged              []ports.SpawnAttachment
+	stagedPaths         []string
+	stageErr            error
+	agentSwitches       map[domain.AgentSwitchID]domain.AgentSwitch
+	switchConfig        sessionsvc.SwitchAgentInput
+	switchErr           error
+	handoff             json.RawMessage
+	handoffSource       domain.AgentGenerationID
+	autoInjectCISession domain.SessionID
+	autoInjectCIEnabled bool
 }
 
 type fakeManagedPreviewServer struct {
@@ -117,7 +119,7 @@ func (f *fakeManagedPreviewServer) Status(sessionID domain.SessionID) previewser
 
 func newFakeSessionService() *fakeSessionService {
 	now := time.Now().UTC()
-	s := domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, AutoInjectReview: true, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle, TerminalHandleID: "ao-1/terminal_0"}
+	s := domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, AutoInjectReview: true, AutoInjectCI: true, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle, TerminalHandleID: "ao-1/terminal_0"}
 	return &fakeSessionService{
 		sessions:      map[domain.SessionID]domain.Session{s.ID: s},
 		agentSwitches: map[domain.AgentSwitchID]domain.AgentSwitch{},
@@ -146,7 +148,7 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 		return domain.Session{}, 0, 0, f.spawnErr
 	}
 	now := time.Now().UTC()
-	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, DisplayName: cfg.DisplayName, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, AutoInjectReview: true, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
+	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, DisplayName: cfg.DisplayName, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, AutoInjectReview: true, AutoInjectCI: true, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
 	f.sessions[s.ID] = s
 	return s, len(cfg.Prompt), 0, nil
 }
@@ -206,6 +208,18 @@ func (f *fakeSessionService) SetAutoInjectReview(_ context.Context, id domain.Se
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	s.AutoInjectReview = autoInject
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) SetAutoInjectCI(_ context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	f.autoInjectCISession = id
+	f.autoInjectCIEnabled = autoInject
+	s.AutoInjectCI = autoInject
 	f.sessions[id] = s
 	return s, nil
 }
@@ -860,6 +874,23 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("session auto-inject review policy not updated: %+v", svc.sessions["ao-2"])
 	}
 
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2/auto-inject-ci", `{"autoInjectCI":false}`)
+	if status != http.StatusOK {
+		t.Fatalf("auto-inject CI policy = %d, want 200; body=%s", status, body)
+	}
+	var ciPolicy struct {
+		OK           bool   `json:"ok"`
+		SessionID    string `json:"sessionId"`
+		AutoInjectCI bool   `json:"autoInjectCI"`
+	}
+	mustJSON(t, body, &ciPolicy)
+	if !ciPolicy.OK || ciPolicy.SessionID != "ao-2" || ciPolicy.AutoInjectCI {
+		t.Fatalf("auto-inject CI policy response = %#v", ciPolicy)
+	}
+	if svc.autoInjectCISession != "ao-2" || svc.autoInjectCIEnabled || svc.sessions["ao-2"].AutoInjectCI {
+		t.Fatalf("auto-inject CI service input = session:%q enabled:%v", svc.autoInjectCISession, svc.autoInjectCIEnabled)
+	}
+
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/pin", "")
 	if status != http.StatusOK {
 		t.Fatalf("pin = %d, want 200; body=%s", status, body)
@@ -907,6 +938,27 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_SetAutoInjectCIValidatesBody(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		body     string
+		wantCode string
+	}{
+		{name: "malformed JSON", body: `{`, wantCode: "INVALID_JSON"},
+		{name: "missing autoInjectCI", body: `{}`, wantCode: "AUTO_INJECT_CI_REQUIRED"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			srv := newSessionTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-1/auto-inject-ci", tt.body)
+			assertErrorCode(t, body, status, http.StatusBadRequest, tt.wantCode)
+			if svc.autoInjectCISession != "" {
+				t.Fatalf("SetAutoInjectCI called for invalid body with session %q", svc.autoInjectCISession)
+			}
+		})
 	}
 }
 

@@ -445,7 +445,7 @@ describe("CenterPane toolbar session label", () => {
 		act(() => document.dispatchEvent(new Event("fullscreenchange")));
 
 		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
@@ -482,7 +482,7 @@ describe("CenterPane toolbar session label", () => {
 			name: "Terminal display controls",
 		});
 		expect(tabList.contains(toolbar)).toBe(false);
-		expect(toolbar).toContainElement(screen.getByRole("button", { name: "Fullscreen terminal" }));
+		expect(toolbar).toContainElement(screen.getByRole("button", { name: "Decrease terminal font size" }));
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {

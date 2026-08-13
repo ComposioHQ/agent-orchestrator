@@ -29,6 +29,7 @@ import {
 import {
 	Archive,
 	ArrowDown,
+	CornerDownRight,
 	GitBranch,
 	Loader2,
 	Maximize2,
@@ -206,6 +207,8 @@ export interface ChatWorkspaceProps {
 	 * is worse than none.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
+	/** Promote one already queued turn into the running turn. */
+	onPromoteQueuedTurn?: (turnId: string) => Promise<unknown>;
 	steerPending?: boolean;
 	/** Why the last steer was refused, from the daemon's typed answer. */
 	steerRefusal?: string;
@@ -261,6 +264,7 @@ export function ChatWorkspace({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
+	onPromoteQueuedTurn,
 	steerPending,
 	steerRefusal,
 	onReloadMcpServers,
@@ -271,6 +275,21 @@ export function ChatWorkspace({
 	const approval = pendingApproval(snapshot);
 	const userInput = pendingUserInput(snapshot);
 	const queuedCount = queuedTurnIds(snapshot).size;
+	const queuedMessages = useMemo(() => {
+		const messagesByTurn = new Map(
+			snapshot.items
+				.filter(
+					(item): item is ConversationMessage =>
+						item.kind === "message" && item.role === "user" && item.origin === "human" && Boolean(item.turnId),
+				)
+				.map((message) => [message.turnId as string, message]),
+		);
+		return snapshot.turns.flatMap((queuedTurn) => {
+			if (queuedTurn.state !== "queued") return [];
+			const message = messagesByTurn.get(queuedTurn.id);
+			return message ? [{ turnId: queuedTurn.id, message }] : [];
+		});
+	}, [snapshot.items, snapshot.turns]);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -441,7 +460,14 @@ export function ChatWorkspace({
 							onInterrupt={onInterrupt}
 						/>
 					) : null}
+					{turn?.state === "running" && queuedMessages.length > 0 ? (
+						<QueuedMessageDock
+							messages={queuedMessages}
+							onSteer={onPromoteQueuedTurn}
+						/>
+					) : null}
 					<ChatComposer
+						attachedTop={turn?.state === "running" && queuedMessages.length > 0}
 						onSend={(text, attachments) => onSend?.(text, attachments)}
 						commandError={commandError}
 						settings={
@@ -1822,6 +1848,79 @@ function EmptyState({ harness }: { harness: string }) {
 }
 
 /* -------------------------------------------------------------------------- */
+
+function QueuedMessageDock({
+	messages,
+	onSteer,
+}: {
+	messages: Array<{ turnId: string; message: ConversationMessage }>;
+	onSteer?: (turnId: string) => Promise<unknown>;
+}) {
+	const [steeringTurnId, setSteeringTurnId] = useState<string>();
+	const [errors, setErrors] = useState<Record<string, string>>({});
+
+	async function steer(turnId: string) {
+		if (!onSteer || steeringTurnId) return;
+		setSteeringTurnId(turnId);
+		setErrors((current) => {
+			const next = { ...current };
+			delete next[turnId];
+			return next;
+		});
+		try {
+			await onSteer(turnId);
+		} catch {
+			setErrors((current) => ({
+				...current,
+				[turnId]: "Could not steer this message. It remains queued.",
+			}));
+		} finally {
+			setSteeringTurnId(undefined);
+		}
+	}
+
+	return (
+		<div
+			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[10px] border border-b-0 border-border-strong bg-surface"
+			data-testid="queued-message-dock"
+		>
+			{messages.map(({ turnId, message }) => {
+				const steering = steeringTurnId === turnId;
+				return (
+					<div
+						key={turnId}
+						className="border-b border-border px-3 py-2 last:border-b-0"
+						data-testid={`queued-message-${turnId}`}
+					>
+						<div className="flex min-h-7 min-w-0 items-center gap-2">
+							<CornerDownRight aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+							<span className="min-w-0 flex-1 truncate text-sm text-foreground" title={message.text}>
+								{message.text}
+							</span>
+							{onSteer ? (
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									disabled={Boolean(steeringTurnId)}
+									onClick={() => void steer(turnId)}
+								>
+									<CornerDownRight aria-hidden="true" className="size-3" />
+									{steering ? "Steering…" : "Steer"}
+								</Button>
+							) : null}
+						</div>
+						{errors[turnId] ? (
+							<p role="status" className="mt-1 text-[11px] text-warning">
+								{errors[turnId]}
+							</p>
+						) : null}
+					</div>
+				);
+			})}
+		</div>
+	);
+}
 
 /**
  * The in-flight turn. Elapsed time is shown because a long silence is otherwise

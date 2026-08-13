@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, TriangleAlert } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Minus, Plus, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
@@ -369,18 +369,6 @@ export function CenterPane({
 						>
 							<Plus aria-hidden="true" className="size-icon-sm" />
 						</TerminalControl>
-						<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-						<TerminalControl
-							isPressed={isFullscreen}
-							label={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
-							onClick={() => void toggleFullscreen()}
-						>
-							{isFullscreen ? (
-								<Minimize2 aria-hidden="true" className="size-icon-md" />
-							) : (
-								<Maximize2 aria-hidden="true" className="size-icon-md" />
-							)}
-						</TerminalControl>
 					</div>
 				</div>
 				{isFullscreen ? null : (
@@ -416,7 +404,9 @@ export function CenterPane({
 						daemonReady={daemonReady}
 						fontSize={fontSize}
 						focusRequested={switchPermissionRequired && target.kind === "worker"}
+						isFullscreen={isFullscreen}
 						inputDisabled={agentInputDisabled && target.kind === "worker"}
+						onToggleFullscreen={toggleFullscreen}
 						session={session}
 						terminalTarget={target}
 						theme={theme}
