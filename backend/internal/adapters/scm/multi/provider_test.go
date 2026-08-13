@@ -194,14 +194,29 @@ func TestSCMCredentialsAvailable_NoneTrue(t *testing.T) {
 	}
 }
 
+// TestFetchPullRequests_PropagatesError verifies that when the only provider
+// fails, no top-level error is returned. Instead, the failed observation carries
+// the provider's error in obs.Error for per-observation routing (review finding #5
+// / Ticket 02). Previously, the all-fail path returned an arbitrary map-iteration
+// error, causing the observer to apply one error classification to all refs.
 func TestFetchPullRequests_PropagatesError(t *testing.T) {
-	gh := &fakeProvider{key: "github", fetchErr: errors.New("github down")}
+	fetchErr := errors.New("github down")
+	gh := &fakeProvider{key: "github", fetchErr: fetchErr}
 	m := New(NamedProvider{Key: "github", Provider: gh})
 
 	refs := []ports.SCMPRRef{{Repo: ports.SCMRepo{Provider: "github"}, Number: 1}}
-	_, err := m.FetchPullRequests(context.Background(), refs)
-	if err == nil {
-		t.Fatal("expected error")
+	obs, err := m.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("error = %v, want nil (all-fail path returns per-observation errors, not top-level)", err)
+	}
+	if len(obs) != 1 {
+		t.Fatalf("got %d observations, want 1", len(obs))
+	}
+	if obs[0].Fetched {
+		t.Errorf("obs[0].Fetched = true, want false for failed provider")
+	}
+	if !errors.Is(obs[0].Error, fetchErr) {
+		t.Errorf("obs[0].Error = %v, want github failure %v", obs[0].Error, fetchErr)
 	}
 }
 
@@ -352,21 +367,46 @@ func TestSCMCredentialsAvailable_HealthyProviderSuppressesError(t *testing.T) {
 	}
 }
 
-// TestFetchPullRequests_AllProvidersFail verifies that when ALL providers fail,
-// an error is returned so the observer can mark repos as failed (review
-// finding #5).
+// TestFetchPullRequests_AllProvidersFail verifies that when ALL providers
+// fail, no top-level error is returned (Ticket 02). Each failed observation
+// carries its provider's error in obs.Error for per-observation routing.
+// Previously, the all-fail path returned an arbitrary map-iteration error,
+// causing the observer to apply one error classification to ALL refs across
+// ALL providers — e.g. treating a GitLab auth error as a GitHub rate-limit.
 func TestFetchPullRequests_AllProvidersFail(t *testing.T) {
-	gh := &fakeProvider{key: "github", parseOK: true, fetchErr: errors.New("github down")}
-	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: errors.New("gitlab down")}
+	ghErr := errors.New("github down")
+	glErr := errors.New("gitlab down")
+	gh := &fakeProvider{key: "github", parseOK: true, fetchErr: ghErr}
+	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: glErr}
 	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
 
 	refs := []ports.SCMPRRef{
 		{Repo: ports.SCMRepo{Provider: "github"}, Number: 10},
 		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
 	}
-	_, err := m.FetchPullRequests(context.Background(), refs)
-	if err == nil {
-		t.Fatal("expected error when all providers fail")
+	obs, err := m.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("error = %v, want nil (all-fail path returns per-observation errors, not top-level)", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("got %d observations, want 2", len(obs))
+	}
+	// Each observation must carry its own provider's error, not an arbitrary one.
+	if !errors.Is(obs[0].Error, ghErr) {
+		t.Errorf("obs[0].Error = %v, want github failure %v", obs[0].Error, ghErr)
+	}
+	if !errors.Is(obs[1].Error, glErr) {
+		t.Errorf("obs[1].Error = %v, want gitlab failure %v", obs[1].Error, glErr)
+	}
+	if obs[0].Fetched || obs[1].Fetched {
+		t.Errorf("all-fail observations must be Fetched=false")
+	}
+	// Ensure the errors are NOT cross-contaminated.
+	if errors.Is(obs[0].Error, glErr) {
+		t.Errorf("obs[0].Error = gitlab failure; must carry github's own error, not gitlab's")
+	}
+	if errors.Is(obs[1].Error, ghErr) {
+		t.Errorf("obs[1].Error = github failure; must carry gitlab's own error, not github's")
 	}
 }
 
@@ -420,8 +460,11 @@ func TestFetchPullRequests_PartialBatchSingleProvider(t *testing.T) {
 
 // TestFetchPullRequests_SingleProviderAllFail verifies that when a single
 // sub-provider returns all Fetched=false observations plus a non-nil error,
-// the multi provider returns a top-level error so the observer's cooldown/retry
-// logic fires (review finding #5).
+// no top-level error is returned (Ticket 02). Each failed observation carries
+// the provider's error in obs.Error for per-observation routing. The observer's
+// per-observation routing at the !obs.Fetched branch classifies rate-limit
+// vs non-rate-limit per observation, and the "missing from chunk" loop calls
+// markRepoRefreshFailed for all Fetched=false observations.
 func TestFetchPullRequests_SingleProviderAllFail(t *testing.T) {
 	fetchErr := errors.New("gitlab down")
 	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: fetchErr}
@@ -431,9 +474,21 @@ func TestFetchPullRequests_SingleProviderAllFail(t *testing.T) {
 		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 10},
 		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
 	}
-	_, err := m.FetchPullRequests(context.Background(), refs)
-	if err == nil {
-		t.Fatal("expected top-level error when single provider fully fails with no Fetched=true")
+	obs, err := m.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("error = %v, want nil (all-fail path returns per-observation errors, not top-level)", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("got %d observations, want 2", len(obs))
+	}
+	if obs[0].Fetched || obs[1].Fetched {
+		t.Errorf("all-fail observations must be Fetched=false")
+	}
+	if !errors.Is(obs[0].Error, fetchErr) {
+		t.Errorf("obs[0].Error = %v, want gitlab failure %v", obs[0].Error, fetchErr)
+	}
+	if !errors.Is(obs[1].Error, fetchErr) {
+		t.Errorf("obs[1].Error = %v, want gitlab failure %v", obs[1].Error, fetchErr)
 	}
 }
 

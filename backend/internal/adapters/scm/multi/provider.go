@@ -92,8 +92,11 @@ func (m *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 // Provider failures are scoped to their own refs: a GitLab timeout must not
 // suppress successful GitHub observations. A failing provider leaves
 // Fetched=false placeholders for its refs; healthy-provider results continue
-// through persistence. An error is returned only when ALL groups fail, so the
-// observer can mark repos as failed without discarding healthy results
+// through persistence. A nil error is always returned: each failed
+// placeholder carries its provider's error in obs.Error, and the observer's
+// per-observation routing classifies rate-limit vs non-rate-limit per
+// provider. Returning a top-level error would cause the observer to apply
+// one error classification to ALL refs across ALL providers.
 func (m *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	// Partition refs by provider key.
 	groups := make(map[string][]indexedRef)
@@ -154,32 +157,21 @@ func (m *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 		}
 	}
 
-	// Suppress the top-level error when any observation has Fetched=true,
-	// even if groupErrs is non-empty. This covers the partial-batch case:
-	// a single sub-provider returns some Fetched=true observations plus a
-	// non-nil error (e.g. one ref failed, one succeeded). If we returned the
-	// error, the observer's chunk loop would discard ALL results including
-	// the Fetched=true ones. By returning nil, the observer's existing
-	// per-observation routing handles the failed refs via their .Error field.
+	// Always return a nil top-level error when groupErrs is non-empty.
+	// Each failed placeholder already carries its provider's error in
+	// obs.Error, and the observer's per-observation routing at the
+	// !obs.Fetched branch classifies rate-limit vs non-rate-limit per
+	// observation. The "missing from chunk" loop calls markRepoRefreshFailed
+	// for all Fetched=false observations. Returning an arbitrary map-iteration
+	// error here would cause the observer's chunk loop to discard ALL results
+	// and apply one error classification to ALL refs across ALL providers —
+	// e.g. treating a GitLab auth error as a GitHub rate-limit cooldown.
 	//
-	// The all-fail path (no Fetched=true in any group) still returns a
-	// top-level error so the observer's cooldown/retry logic fires.
-	if len(groupErrs) > 0 {
-		anyFetched := false
-		for i := range results {
-			if results[i].Fetched {
-				anyFetched = true
-				break
-			}
-		}
-		if !anyFetched {
-			// All groups failed with no successful observations — return the
-			// first group's error so the observer can mark repos as failed.
-			for _, err := range groupErrs {
-				return results, err
-			}
-		}
-	}
+	// This covers both the partial-batch case (some Fetched=true, some
+	// Fetched=false) and the all-fail case (no Fetched=true in any group).
+	// In the all-fail case, every placeholder has obs.Error set, so the
+	// observer enters per-provider cooldown or marks refresh-incomplete for
+	// each provider individually — never cross-provider.
 	return results, nil
 }
 

@@ -2801,3 +2801,113 @@ func TestPoll_RepoRefreshMonotonicity_BothRefsSucceed(t *testing.T) {
 		t.Fatalf("sync cursor not advanced after all refs succeeded: got %v, want > %v", got, cursorBefore)
 	}
 }
+
+// TestPoll_AllFail_ScopedPerProviderError (Ticket 02) verifies that when ALL
+// providers fail in a single chunk, the observer applies the correct error
+// classification PER PROVIDER — not one arbitrary classification to all refs.
+// GitHub fails with a rate-limit error → GitHub enters per-provider cooldown.
+// GitLab fails with an auth error (non-rate-limit) → GitLab is marked
+// refresh-incomplete (repo ETag/cursor do not advance) but does NOT enter
+// cooldown. The two classifications must not be cross-applied: GitHub must not
+// be marked refresh-incomplete-only (missing its cooldown), and GitLab must
+// not enter cooldown (wrongly treating an auth error as rate-limit).
+//
+// This test uses the hostAwareProvider (from scoped_identity_test.go) which
+// routes gitlab.com URLs to the gitlab provider key, so the observer sees two
+// providers in a single poll.
+func TestPoll_AllFail_ScopedPerProviderError(t *testing.T) {
+	store := testStoreWithTwoSessions()
+	// Two tracked PRs — one GitHub, one GitLab — both with durable hashes.
+	ghPR := knownPR(1)
+	ghPR.MetadataHash = "durable-meta"
+	ghPR.CIHash = "durable-ci"
+	ghPR.ReviewHash = "durable-review"
+	ghPR.Provider = "github"
+	ghPR.Host = "github.com"
+	ghPR.Repo = "o/r"
+
+	glPR := knownPR(3)
+	glPR.MetadataHash = "durable-meta"
+	glPR.CIHash = "durable-ci"
+	glPR.ReviewHash = "durable-review"
+	glPR.Provider = "gitlab"
+	glPR.Host = "gitlab.com"
+	glPR.Repo = "o/r"
+	glPR.URL = "https://gitlab.com/o/r/-/merge_requests/3"
+
+	store.prs["gh-1"] = []domain.PullRequest{ghPR}
+	store.prs["gl-1"] = []domain.PullRequest{glPR}
+
+	ghRateLimitErr := &testRateLimitError{retryAfter: 2 * time.Minute}
+	glAuthErr := errors.New("gitlab 401 unauthorized")
+
+	provider := &hostAwareProvider{fakeProvider: &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{
+			prKey(testRepo, 0): {ETag: "repo2"},
+			prKey(glRepo, 0):   {ETag: "repo2"},
+		},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(testRepo, 0): {{Number: 1, State: "open", SourceBranch: "feat", HeadRepo: "o/r"}},
+			prKey(glRepo, 0):   {{Number: 3, State: "open", SourceBranch: "feat", HeadRepo: "o/r"}},
+		},
+		// Both PRs fail: GitHub with rate-limit, GitLab with auth error.
+		fetchObsErrors: map[string]error{
+			prKey(testRepo, 1): ghRateLimitErr,
+			prKey(glRepo, 3):   glAuthErr,
+		},
+	}}
+
+	now := time.Unix(2000, 0).UTC()
+	obs := New(provider, store, &fakeLifecycle{}, Config{
+		Clock:            func() time.Time { return now },
+		Tick:             time.Hour,
+		Logger:           quietSlog(),
+		CacheMax:         128,
+		IdentityResolver: provider.fakeProvider,
+	})
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo1"
+	obs.Cache.RepoPRListETag[prKey(glRepo, 0)] = "repo1"
+	ghCursorBefore := now.Add(-time.Hour)
+	glCursorBefore := now.Add(-time.Hour)
+	obs.Cache.LastSyncCursor[prKey(testRepo, 0)] = ghCursorBefore
+	obs.Cache.LastSyncCursor[prKey(glRepo, 0)] = glCursorBefore
+
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// GitHub must be in rate-limit cooldown (rate-limit error classified correctly).
+	if !obs.inRateLimitCooldown(now, "github") {
+		t.Fatal("github provider must be in rate-limit cooldown after rate-limit error")
+	}
+
+	// GitLab must NOT be in cooldown (auth error is non-rate-limit).
+	if obs.inRateLimitCooldown(now, "gitlab") {
+		t.Fatal("gitlab provider must NOT enter cooldown for a non-rate-limit (auth) error")
+	}
+
+	// Both repos must be marked refresh-incomplete: GitHub via cooldown-skip,
+	// GitLab via per-observation non-rate-limit routing. The ETags must NOT
+	// have advanced to "repo2".
+	if got := obs.Cache.RepoPRListETag[prKey(testRepo, 0)]; got == "repo2" {
+		t.Fatalf("github repo ETag advanced to %q after all-fail; durable state must not advance", got)
+	}
+	if got := obs.Cache.RepoPRListETag[prKey(glRepo, 0)]; got == "repo2" {
+		t.Fatalf("gitlab repo ETag advanced to %q after all-fail; durable state must not advance", got)
+	}
+
+	// Neither sync cursor must advance.
+	if got := obs.Cache.LastSyncCursor[prKey(testRepo, 0)]; got != ghCursorBefore {
+		t.Fatalf("github sync cursor advanced after all-fail: got %v, want %v (unchanged)", got, ghCursorBefore)
+	}
+	if got := obs.Cache.LastSyncCursor[prKey(glRepo, 0)]; got != glCursorBefore {
+		t.Fatalf("gitlab sync cursor advanced after all-fail: got %v, want %v (unchanged)", got, glCursorBefore)
+	}
+
+	// No PRs should have been persisted (all failed).
+	for _, w := range store.writes {
+		if w.pr.Number == 1 || w.pr.Number == 3 {
+			t.Fatalf("failed PR %d must not be persisted; writes=%#v", w.pr.Number, store.writes)
+		}
+	}
+}
