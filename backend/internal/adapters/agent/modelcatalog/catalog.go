@@ -408,7 +408,7 @@ func parseAgyModels(output []byte) ([]ports.AgentModelInfo, error) {
 			continue
 		}
 
-		// Backwards-compatible với Agy versions chỉ trả model ID.
+		// Backwards-compatible with Agy versions that only return model ID.
 		fields := strings.Fields(line)
 		if len(fields) != 1 || !looksLikeModelID(fields[0]) {
 			continue
