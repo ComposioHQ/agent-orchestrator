@@ -183,10 +183,10 @@ Open Agent Orchestrator and point it at the repository you want AO to manage. Th
 
 ## Report a bug
 
-The recommended way to report a bug is to ask your coding agent to follow the repository's [bug-triage skill](.agents/skills/bug-triage/SKILL.md). It guides the agent through reproducing the problem on current code, gathering diagnostics, tracing the relevant code path, checking for duplicates, and filing or updating a detailed GitHub issue.
+The recommended way to report a bug is to ask your coding agent to follow the repository's [bug-triage skill](https://github.com/Untrivial-ai/agent-orchestrator/blob/main/.agents/skills/bug-triage/SKILL.md). It guides the agent through reproducing the problem on current code, gathering diagnostics, tracing the relevant code path, checking for duplicates, and filing or updating a detailed GitHub issue.
 
 ```text
-Use .agents/skills/bug-triage/SKILL.md to investigate this bug and file the issue: <describe what happened>
+Read and follow https://github.com/Untrivial-ai/agent-orchestrator/blob/main/.agents/skills/bug-triage/SKILL.md to investigate this bug and file or update the GitHub issue: <describe what happened>
 ```
 
 ## Develop and contribute
