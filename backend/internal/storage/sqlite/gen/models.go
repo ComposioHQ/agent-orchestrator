@@ -257,6 +257,7 @@ type PR struct {
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
+	AutoInjectCI             bool
 }
 
 type PRCheck struct {
@@ -387,6 +388,7 @@ type Session struct {
 	LatestUserPrompt          string
 	LatestAssistantUpdate     string
 	NativeTranscriptPath      string
+	AutoInjectCI              bool
 }
 
 type SessionCleanupFact struct {

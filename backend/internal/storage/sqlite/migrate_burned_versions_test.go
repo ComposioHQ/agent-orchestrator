@@ -256,7 +256,8 @@ INSERT INTO projects (
 		t.Fatalf("repeat migrate on repaired schema: %v", err)
 	}
 	for table, want := range map[string][]string{
-		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier", "auto_inject_review"},
+		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier", "auto_inject_review", "auto_inject_ci"},
+		"pr":            {"auto_inject_ci"},
 		"notifications": {"resolved_at"},
 	} {
 		for _, column := range want {

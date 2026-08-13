@@ -159,11 +159,12 @@ type ListSessionsResponse struct {
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
-	ProjectID domain.ProjectID    `json:"projectId"`
-	IssueID   domain.IssueID      `json:"issueId,omitempty"`
-	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand"`
-	Branch    string              `json:"branch,omitempty"`
+	ProjectID       domain.ProjectID       `json:"projectId"`
+	IssueID         domain.IssueID         `json:"issueId,omitempty"`
+	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab"`
+	Kind            domain.SessionKind     `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand"`
+	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
 	// Omitted resolves to the daemon default (tui), which is why an upgrade
@@ -173,6 +174,7 @@ type SpawnSessionRequest struct {
 	// producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
+
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
@@ -431,6 +433,20 @@ type SetSessionAutoInjectReviewResponse struct {
 	Session          SessionView      `json:"session"`
 }
 
+// SetSessionAutoInjectCIRequest updates the default automatic CI delivery
+// policy captured by PRs created after the change.
+type SetSessionAutoInjectCIRequest struct {
+	AutoInjectCI bool `json:"autoInjectCI"`
+}
+
+// SetSessionAutoInjectCIResponse confirms the persisted session default.
+type SetSessionAutoInjectCIResponse struct {
+	OK           bool             `json:"ok"`
+	SessionID    domain.SessionID `json:"sessionId"`
+	AutoInjectCI bool             `json:"autoInjectCI"`
+	Session      SessionView      `json:"session"`
+}
+
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
 type RestoreSessionResponse struct {
 	OK          bool                       `json:"ok"`
@@ -588,7 +604,7 @@ type SessionPRSummary struct {
 	Number           int                          `json:"number"`
 	Title            string                       `json:"title"`
 	State            domain.PRState               `json:"state" enum:"draft,open,merged,closed"`
-	Provider         string                       `json:"provider" enum:"github"`
+	Provider         string                       `json:"provider" enum:"github,gitlab"`
 	Repo             string                       `json:"repo"`
 	Author           string                       `json:"author"`
 	SourceBranch     string                       `json:"sourceBranch"`
@@ -612,6 +628,7 @@ type SessionPRSummary struct {
 type SessionPRCISummary struct {
 	State         domain.CIState          `json:"state" enum:"unknown,pending,passing,failing"`
 	FailingChecks []SessionPRFailingCheck `json:"failingChecks"`
+	AutoInjectCI  bool                    `json:"autoInjectCI"`
 }
 
 // SessionPRFailingCheck is one failed or cancelled CI check for a PR.
@@ -720,7 +737,7 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 	for _, ch := range in.FailingChecks {
 		checks = append(checks, SessionPRFailingCheck{Name: ch.Name, Status: ch.Status, Conclusion: ch.Conclusion, URL: ch.URL})
 	}
-	return SessionPRCISummary{State: in.State, FailingChecks: checks}
+	return SessionPRCISummary{State: in.State, FailingChecks: checks, AutoInjectCI: in.AutoInjectCI}
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {
@@ -1107,11 +1124,38 @@ type ResolveCommentsResponse struct {
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
 type MobileStatusResponse struct {
-	Enabled  bool   `json:"enabled"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Password string `json:"password"`
-	Warning  string `json:"warning"`
+	Enabled bool   `json:"enabled"`
+	Host    string `json:"host"`
+	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
+	// Tailscale is not up. The renderer encodes it into the pairing QR when the
+	// user selects the Tailscale tab, and shows a hint instead when it is empty.
+	TailscaleHost string              `json:"tailscaleHost"`
+	Port          int                 `json:"port"`
+	Password      string              `json:"password"`
+	Warning       string              `json:"warning"`
+	SecurePairing SecurePairingStatus `json:"securePairing"`
+}
+
+// SecurePairingStatus describes the optional TLS-over-Tailscale pairing mode,
+// in which `tailscale serve` fronts the bridge with a real certificate so iOS
+// can pair by scanning (App Transport Security blocks cleartext to Tailscale's
+// 100.64.0.0/10 range).
+type SecurePairingStatus struct {
+	Enabled   bool   `json:"enabled"`   // the user turned the mode on
+	Available bool   `json:"available"` // CLI present, MagicDNS name known, certs enabled
+	Active    bool   `json:"active"`    // proxy verified pointing at the live bridge port
+	Host      string `json:"host"`      // MagicDNS name; "" when unknown
+	Port      int    `json:"port"`      // 443 when active, else 0
+	// Reason is a fixed enum the renderer maps to localized setup steps:
+	// no_cli, no_magicdns, no_certs, serve_failed, port_mismatch, clear_failed.
+	// Empty when Available. Never a raw error string — those are untranslated
+	// and can leak paths.
+	Reason string `json:"reason"`
+}
+
+// SetSecurePairingRequest is the body of POST /api/v1/mobile/secure-pairing.
+type SetSecurePairingRequest struct {
+	Enabled bool `json:"enabled"`
 }
 
 // PushDeviceTokenParam is the {token} path parameter for push-device routes.

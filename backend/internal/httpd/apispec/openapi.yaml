@@ -538,6 +538,43 @@ paths:
       summary: Rotate the Connect Mobile password, dropping any connected phone
       tags:
       - mobile
+  /api/v1/mobile/secure-pairing:
+    post:
+      operationId: setMobileSecurePairing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSetSecurePairingRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Turn TLS-over-Tailscale secure pairing on or off
+      tags:
+      - mobile
   /api/v1/mobile/status:
     get:
       operationId: getMobileStatus
@@ -1743,6 +1780,57 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Write images into a running session's worktree and return their paths
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/auto-inject-ci:
+    patch:
+      operationId: setSessionAutoInjectCI
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionAutoInjectCIRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionAutoInjectCIResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the automatic CI-failure injection default for new session PRs
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/auto-inject-review:
@@ -4917,10 +5005,34 @@ components:
         disabled:
           type: boolean
       type: object
+    ControllersSecurePairingStatus:
+      properties:
+        active:
+          type: boolean
+        available:
+          type: boolean
+        enabled:
+          type: boolean
+        host:
+          type: string
+        port:
+          type: integer
+        reason:
+          type: string
+      required:
+      - enabled
+      - available
+      - active
+      - host
+      - port
+      - reason
+      type: object
     ControllersSessionView:
       properties:
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        autoInjectCI:
+          type: boolean
         autoInjectReview:
           type: boolean
         branch:
@@ -5035,11 +5147,19 @@ components:
       - isTerminated
       - terminateOnPrMerge
       - autoInjectReview
+      - autoInjectCI
       - createdAt
       - updatedAt
       - isPinned
       - status
       - prs
+      type: object
+    ControllersSetSecurePairingRequest:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
       type: object
     ConversationAccountPayload:
       properties:
@@ -6134,14 +6254,20 @@ components:
           type: string
         port:
           type: integer
+        securePairing:
+          $ref: '#/components/schemas/ControllersSecurePairingStatus'
+        tailscaleHost:
+          type: string
         warning:
           type: string
       required:
       - enabled
       - host
+      - tailscaleHost
       - port
       - password
       - warning
+      - securePairing
       type: object
     NotificationEnvelope:
       properties:
@@ -6848,6 +6974,8 @@ components:
       type: object
     SessionPRCISummary:
       properties:
+        autoInjectCI:
+          type: boolean
         failingChecks:
           items:
             $ref: '#/components/schemas/SessionPRFailingCheck'
@@ -6862,6 +6990,7 @@ components:
       required:
       - state
       - failingChecks
+      - autoInjectCI
       type: object
     SessionPRConflictFile:
       properties:
@@ -7064,6 +7193,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
@@ -7287,6 +7417,29 @@ components:
       - ok
       - reviewSessionId
       type: object
+    SetSessionAutoInjectCIRequest:
+      properties:
+        autoInjectCI:
+          type: boolean
+      required:
+      - autoInjectCI
+      type: object
+    SetSessionAutoInjectCIResponse:
+      properties:
+        autoInjectCI:
+          type: boolean
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - autoInjectCI
+      - session
+      type: object
     SetSessionAutoInjectReviewRequest:
       properties:
         autoInjectReview:
@@ -7492,6 +7645,11 @@ components:
         prompt:
           maxLength: 4096
           type: string
+        trackerProvider:
+          enum:
+          - github
+          - gitlab
+          type: string
       required:
       - projectId
       type: object
@@ -7661,6 +7819,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
