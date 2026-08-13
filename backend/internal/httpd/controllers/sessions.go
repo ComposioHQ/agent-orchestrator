@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"os"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -13,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -1605,7 +1605,7 @@ func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, w
 	// 1. Check if raw is a file:// URL
 	if fileURLPath, isFileURL, err := previewFileURLPath(raw); isFileURL {
 		if err != nil {
-			return "",  errPreviewFileNotFound
+			return "", errPreviewFileNotFound
 		}
 		return workspaceAbsolutePreviewURL(r, id, workspacePath, fileURLPath)
 	}
