@@ -77,6 +77,38 @@ Each card keeps the task, agent, branch, activity, pull request, and status toge
 
 AO works with the coding agents and source-control workflow you already use. Agents keep their native strengths; AO supplies the project context, isolated execution, coordination, and operational view that make them work as a system.
 
+## Product highlights
+
+<table>
+  <tr>
+    <td width="36%" valign="middle">
+      <h3>Pull requests and agent reviews</h3>
+      <p>Keep CI, mergeability, reviewer state, and interactive agent reviews beside the worker, then return requested changes to the same owner.</p>
+    </td>
+    <td width="64%">
+      <img src="docs/assets/readme/review.png" alt="Worker session with pull request, CI, and agent review state in Agent Orchestrator" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td width="36%" valign="middle">
+      <h3>Agent-controllable browser</h3>
+      <p>Preview and inspect a worker's local app beside its interface. Browser profiles are isolated per worker so parallel UI tasks do not share state.</p>
+    </td>
+    <td width="64%">
+      <img src="docs/assets/readme/browser.png" alt="A worker controlling its isolated in-app browser preview" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td width="36%" valign="middle">
+      <h3>Native interfaces, one supervisor</h3>
+      <p>Use structured Chat or the agent's native terminal UI while AO keeps task context, workspace state, and feedback in one place.</p>
+    </td>
+    <td width="64%">
+      <img src="docs/assets/readme/session-terminal.png" alt="Agent terminal interface supervised inside Agent Orchestrator" width="100%" />
+    </td>
+  </tr>
+</table>
+
 ## Supported agents
 
 **26 coding agents supported** through one supervised workflow.
