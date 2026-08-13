@@ -441,10 +441,14 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 	// e.g. a brand-new MR that appeared between listing and fetch), fall back
 	// to the HTTP fetch. GitLab's list and detail MR responses share the same
 	// shape for the fields AO uses, so the cached restMR is a valid
-	// substitute; diff_refs.base_sha (ticket 02) is populated from the list
-	// response.
+	// substitute.
+	//
+	// diff_refs guard (finding #2): GitLab's project MR listing does not
+	// guarantee diff_refs in the response — only the single-MR endpoint
+	// documents it. If the cached entry lacks diff_refs.base_sha, fall through
+	// to the HTTP GET rather than emitting an empty BaseSHA.
 	var mr restMR
-	if cached, ok := p.cache.getMRDetail(repo.Host, repo.Repo, ref.Number); ok {
+	if cached, ok := p.cache.getMRDetail(repo.Host, repo.Repo, ref.Number); ok && cached.DiffRefs.BaseSHA != "" {
 		mr = *cached
 	} else {
 		mrPath := fmt.Sprintf("/projects/%s/merge_requests/%d", projectPath(repo.Owner, repo.Name), ref.Number)

@@ -2588,6 +2588,99 @@ func TestFetchPullRequests_MRDetailCacheTTLExpiry(t *testing.T) {
 	}
 }
 
+// TestFetchPullRequests_ListCacheMissingDiffRefs_FetchesDetail is the regression
+// test for finding #2: when the MR list payload omits diff_refs (GitLab's
+// project MR listing does not guarantee it), fetchSingleMR must NOT reuse the
+// cached restMR. Instead it falls through to the HTTP GET /merge_requests/:iid
+// detail request, and BaseSHA is populated from the detail response.
+func TestFetchPullRequests_ListCacheMissingDiffRefs_FetchesDetail(t *testing.T) {
+	var mrDetailHits atomic.Int32
+	mux := http.NewServeMux()
+	// MR list endpoint returns one MR WITHOUT diff_refs — simulates a GitLab
+	// instance or API version that omits diff_refs from the listing.
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		listMR := mrDetailFixture(1, "") // base_sha is irrelevant; we delete diff_refs below
+		delete(listMR, "diff_refs")
+		json.NewEncoder(w).Encode([]map[string]any{listMR})
+	})
+	// MR detail endpoint — returns the MR WITH diff_refs. This MUST be hit
+	// because the list-cached entry lacks diff_refs.base_sha.
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		mrDetailHits.Add(1)
+		json.NewEncoder(w).Encode(mrDetailFixture(1, "base123"))
+	})
+	registerMRSupportingEndpoints(mux)
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	// Populate the MR-detail cache via the listing (entry has no diff_refs).
+	if _, err := p.ListPRsByRepo(context.Background(), repo, time.Time{}); err != nil {
+		t.Fatalf("ListPRsByRepo: %v", err)
+	}
+
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	// The MR detail endpoint MUST have been hit — the list-cached entry lacks
+	// diff_refs.base_sha, so the cache must not be reused.
+	if got := mrDetailHits.Load(); got != 1 {
+		t.Errorf("MR detail endpoint hits = %d, want 1 (cached entry lacks diff_refs.base_sha, must fall back to HTTP)", got)
+	}
+	// BaseSHA must be populated from the detail response, not empty.
+	if got, want := obs[0].PR.BaseSHA, "base123"; got != want {
+		t.Errorf("PR.BaseSHA = %q, want %q (populated from detail HTTP response)", got, want)
+	}
+}
+
+// TestFetchPullRequests_ListCacheWithDiffRefs_SkipsDetail verifies the happy
+// path of finding #2's guard: when the list-cached restMR has a non-empty
+// diff_refs.base_sha, fetchSingleMR reuses the cache and does NOT issue the
+// detail HTTP request. BaseSHA comes from the cached entry.
+func TestFetchPullRequests_ListCacheWithDiffRefs_SkipsDetail(t *testing.T) {
+	var mrDetailHits atomic.Int32
+	mux := http.NewServeMux()
+	// MR list endpoint returns one MR WITH diff_refs (the common case).
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{mrDetailFixture(1, "base123")})
+	})
+	// MR detail endpoint — if hit, the test fails (cache should be reused).
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		mrDetailHits.Add(1)
+		json.NewEncoder(w).Encode(mrDetailFixture(1, "base123"))
+	})
+	registerMRSupportingEndpoints(mux)
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	// Populate the MR-detail cache via the listing (entry has diff_refs).
+	if _, err := p.ListPRsByRepo(context.Background(), repo, time.Time{}); err != nil {
+		t.Fatalf("ListPRsByRepo: %v", err)
+	}
+
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	// The MR detail endpoint must NOT have been hit — the cached entry has
+	// a non-empty diff_refs.base_sha.
+	if got := mrDetailHits.Load(); got != 0 {
+		t.Errorf("MR detail endpoint hits = %d, want 0 (cached entry has diff_refs.base_sha, cache must be reused)", got)
+	}
+	// BaseSHA comes from the list-cached restMR.
+	if got, want := obs[0].PR.BaseSHA, "base123"; got != want {
+		t.Errorf("PR.BaseSHA = %q, want %q (served from list cache)", got, want)
+	}
+}
+
 // TestRestMR_DiffRefsBaseSHA_FromListResponse verifies the restMR struct tag
 // correctly parses diff_refs.base_sha from a GitLab MR list payload. The list
 // and detail MR responses share the same shape for diff_refs, so this also
