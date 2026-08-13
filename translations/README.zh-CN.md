@@ -34,11 +34,15 @@ AO 是为此打造的本地桌面工作区。添加一个仓库，然后根据�
 
 在桌面应用背后，AO 的本地守护进程会监视智能体活动和源代码管理状态。你看到的是项目统一且实时的全局视图，而不是彼此割裂的终端、分支和浏览器标签页。
 
+<img src="../docs/assets/readme/tui.png" alt="Agent Orchestrator workspace with a supervised native agent interface" width="100%" />
+
 ## Worker 执行专注、明确的任务
 
 Worker 是 AO 的执行单元：一项任务、一个编程智能体和一个隔离工作区。当工作已经明确时，使用 **New task**。描述期望结果，选择智能体和模型，附上相关文件，然后通过结构化 Chat 或智能体原生的终端界面与其协作。
 
 你可以随时打开 worker，继续对话、连接终端、检查变更、使用隔离浏览器、查看拉取请求，或把 CI 和评审反馈交还给同一个智能体。这样，每项任务都能独立理解，并行工作也不会挤进同一个共享上下文。
+
+<img src="../docs/assets/readme/new-task.png" alt="Creating a focused worker task in Agent Orchestrator" width="100%" />
 
 ## 项目编排器负责全局规划
 
@@ -47,6 +51,8 @@ Worker 是 AO 的执行单元：一项任务、一个编程智能体和一个隔
 你可以在实施之前用编排器探索想法、讨论产品和技术方案、分析取舍、识别高影响力工作，并把模糊的目标转化为具体计划。项目级对话会保留目标、决策、约束和之前的推理。编排器将这些规划历史与仓库上下文及 AO 的实时状态结合起来，其中包括活跃 worker、任务归属、拉取请求、CI 和评审。这让规划既立足于项目全局，也始终反映正在进行的工作。
 
 当计划可以付诸执行时，编排器能够将其拆成专注的任务，启动或重定向 worker，把相关上下文交给每个 worker，跟踪进展并协调后续工作。编排器负责规划和委派；worker 负责实现、测试、提交和拉取请求。
+
+<img src="../docs/assets/readme/orchestrator.png" alt="Agent Orchestrator coordinating multiple workers with project context" width="100%" />
 
 ## 看板让整个系统一目了然
 
@@ -58,6 +64,8 @@ Worker 是 AO 的执行单元：一项任务、一个编程智能体和一个隔
 - **Ready to merge（可以合并）：** 已获批准或可合并的工作；已合并的会话会保持可见，直到被归档
 
 每张卡片都把任务、智能体、分支、活动、拉取请求和状态放在一起。打开卡片即可查看对话或终端、变更文件、PR 摘要、评审和预览。看板会告诉你哪些工作正在推进，哪些工作被阻塞，以及你的注意力放在哪里能产生最大影响。
+
+<img src="../docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban showing workers grouped by live status" width="100%" />
 
 ## 从想法到合并，一套完整工作流
 
@@ -74,24 +82,6 @@ AO 与你现有的编程智能体和源代码管理流程配合使用。智能�
 <table>
   <tr>
     <td width="36%" valign="middle">
-      <h3>优先呈现待关注事项的看板</h3>
-      <p>根据实时执行和拉取请求状态查看工作分组：处理中、需要你、评审中和可以合并。</p>
-    </td>
-    <td width="64%">
-      <img src="../docs/assets/readme/hero.png" alt="Agent Orchestrator 看板，按处理中、需要你、评审中和可以合并来分组 worker 会话" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>隔离的 worker，任意智能体</h3>
-      <p>为每个使用 Git 的 worker 提供独立的分支和 worktree，为任务选择合适的编程智能体，并使用结构化 Chat 或智能体原生的终端界面。</p>
-    </td>
-    <td width="64%">
-      <img src="../docs/assets/readme/tui.png" alt="在 Agent Orchestrator 中受监督的编程智能体原生终端界面" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
       <h3>拉取请求和智能体评审</h3>
       <p>将 CI、可合并状态、评审者状态和交互式智能体评审放在 worker 旁边，再把要求的修改交还给同一个负责人。</p>
     </td>
@@ -106,6 +96,15 @@ AO 与你现有的编程智能体和源代码管理流程配合使用。智能�
     </td>
     <td width="64%">
       <img src="../docs/assets/readme/browser.png" alt="Worker 控制其隔离的应用内浏览器预览" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td width="36%" valign="middle">
+      <h3>原生界面，由一个监督层统一管理</h3>
+      <p>使用结构化 Chat 或智能体原生终端界面，同时让 AO 将任务上下文、工作区状态和反馈集中在一个地方。</p>
+    </td>
+    <td width="64%">
+      <img src="../docs/assets/readme/tui.png" alt="Agent terminal interface supervised inside Agent Orchestrator" width="100%" />
     </td>
   </tr>
 </table>

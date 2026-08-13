@@ -34,11 +34,15 @@ AO is a local desktop workspace built for that job. Add a repository and create 
 
 Behind the desktop app, AO's local daemon watches agent activity and source-control state. The result is a shared, live view of the project instead of a collection of disconnected terminals, branches, and browser tabs.
 
+<img src="docs/assets/readme/tui.png" alt="Agent Orchestrator workspace showing a coding agent's native terminal UI" width="100%" />
+
 ## Workers execute focused tasks
 
 A worker is AO's unit of execution: one task, one coding agent, and one isolated workspace. Use **New task** when the work is already clear. Describe the outcome, choose an agent and model, attach relevant files, and work with the agent in structured Chat or its native terminal UI.
 
 Open a worker at any time to continue the conversation, attach to its terminal, inspect its changes, use its isolated browser, review its pull request, or send CI and review feedback back to the same agent. This makes each task independently understandable and keeps parallel work from collapsing into one shared context.
+
+<img src="docs/assets/readme/new-task.png" alt="Create a new task in Agent Orchestrator with an agent and model selected" width="100%" />
 
 ## The orchestrator plans across the project
 
@@ -47,6 +51,8 @@ The project orchestrator is AO's persistent planning and coordination agent. It 
 Use the orchestrator to explore an idea before implementation, brainstorm product and technical approaches, reason through tradeoffs, identify high-impact work, and turn an ambiguous outcome into a concrete plan. Its project-scoped conversation preserves goals, decisions, constraints, and earlier reasoning. It combines that planning history with repository context and live AO state, including active workers, ownership, pull requests, CI, and reviews. This keeps planning grounded in both the project and the work already underway.
 
 When a plan becomes actionable, the orchestrator can break it into focused tasks, spawn or redirect workers, pass each worker the relevant context, follow their progress, and coordinate follow-up work. The orchestrator owns planning and delegation; workers own implementation, tests, commits, and pull requests.
+
+<img src="docs/assets/readme/orchestrator.png" alt="Agent Orchestrator coordinating multiple workers and passing them focused project context" width="100%" />
 
 ## The Kanban keeps the system legible
 
@@ -58,6 +64,8 @@ Every worker appears on the same live board, whether you started it from **New t
 - **Ready to merge:** approved or mergeable work, with merged sessions kept visible until they are archived
 
 Each card keeps the task, agent, branch, activity, pull request, and status together. Open it to inspect the conversation or terminal, changed files, PR summary, reviews, and preview. The board shows what is moving, what is blocked, and where your attention will have the most impact.
+
+<img src="docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban showing worker sessions grouped by live status" width="100%" />
 
 ## One workflow, from idea to merge
 
@@ -74,24 +82,6 @@ AO works with the coding agents and source-control workflow you already use. Age
 <table>
   <tr>
     <td width="36%" valign="middle">
-      <h3>Attention-first Kanban</h3>
-      <p>See work grouped by live execution and pull request state: working, needs you, in review, and ready to merge.</p>
-    </td>
-    <td width="64%">
-      <img src="docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban grouping worker sessions by working, needs you, in review, and ready to merge" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>Isolated workers, any agent</h3>
-      <p>Give each Git-backed worker its own branch and worktree, choose the right coding agent for the task, and use structured Chat or its native terminal UI.</p>
-    </td>
-    <td width="64%">
-      <img src="docs/assets/readme/tui.png" alt="A coding agent's native terminal UI supervised inside Agent Orchestrator" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
       <h3>Pull requests and agent reviews</h3>
       <p>Keep CI, mergeability, reviewer state, and interactive agent reviews beside the worker, then return requested changes to the same owner.</p>
     </td>
@@ -106,6 +96,15 @@ AO works with the coding agents and source-control workflow you already use. Age
     </td>
     <td width="64%">
       <img src="docs/assets/readme/browser.png" alt="A worker controlling its isolated in-app browser preview" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td width="36%" valign="middle">
+      <h3>Native interfaces, one supervisor</h3>
+      <p>Use structured Chat or the agent's native terminal UI while AO keeps task context, workspace state, and feedback in one place.</p>
+    </td>
+    <td width="64%">
+      <img src="docs/assets/readme/tui.png" alt="Agent terminal interface supervised inside Agent Orchestrator" width="100%" />
     </td>
   </tr>
 </table>

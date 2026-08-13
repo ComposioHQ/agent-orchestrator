@@ -9,6 +9,8 @@ import { ApiError, getPreview, isTerminalStatus, killSession, sendMessage } from
 import { authHeaders, isConfigured, loadConfig, type ServerConfig } from "../config";
 import { terminalTheme, type Theme } from "../theme";
 import { haptics } from "../haptics";
+import { resetHeaderRightForSwap } from "../headerRightSwap";
+import { MinimalBackButton } from "../MinimalBackButton";
 import { MuxClient, type MuxStatus } from "../mux";
 import { Composer } from "./Composer";
 import { dockInset } from "./keyboardInset";
@@ -539,6 +541,14 @@ export default function TerminalScreen() {
 	const projectId = params.projectId ? String(params.projectId) : undefined;
 	const router = useRouter();
 	const navigation = useNavigation();
+	const [headerRightReady, setHeaderRightReady] = useState(false);
+	useLayoutEffect(
+		() => resetHeaderRightForSwap(
+			() => navigation.setOptions({ headerRight: undefined }),
+			() => setHeaderRightReady(true),
+		),
+		[navigation],
+	);
 	const insets = useSafeAreaInsets();
 
 	// Leaving the screen: pop when there's history, otherwise go to the board.
@@ -691,12 +701,7 @@ export default function TerminalScreen() {
 			// Always render our own Back control so it works even when the app was
 			// cold-started directly on this route (reload/deep link) and the stack
 			// has no history for the default back button to use.
-			headerLeft: () => (
-				<Pressable onPress={leave} hitSlop={12} style={styles.headerBack}>
-					<Feather name="chevron-left" size={22} color={t.blue} />
-					<Text style={styles.headerBackText}>Back</Text>
-				</Pressable>
-			),
+			headerLeft: () => <MinimalBackButton onPress={leave} />,
 		});
 	}, [navigation, id, leave, params.title, shellOnly]);
 
@@ -967,6 +972,7 @@ export default function TerminalScreen() {
 	);
 
 	const requestInterfaceSwitch = useCallback(() => {
+		haptics.tap();
 		if (!interfaceSwitch.status?.supported) {
 			Alert.alert(
 				"Chat unavailable",
@@ -1014,7 +1020,7 @@ export default function TerminalScreen() {
 	// `toggleBrowser` is declared here — referencing it in that effect's dep array
 	// would read it before initialisation.
 	useLayoutEffect(() => {
-		if (shellOnly) {
+		if (shellOnly || !headerRightReady) {
 			navigation.setOptions({ headerRight: undefined });
 			return;
 		}
@@ -1050,7 +1056,7 @@ export default function TerminalScreen() {
 				</View>
 			),
 		});
-	}, [navigation, browserOpen, hasPreview, toggleBrowser, styles, t, shellOnly, interfaceTransitionActive, interfaceSwitch.starting, interfaceSwitch.status?.supported, requestInterfaceSwitch]);
+	}, [headerRightReady, navigation, browserOpen, hasPreview, toggleBrowser, styles, t, shellOnly, interfaceTransitionActive, interfaceSwitch.starting, interfaceSwitch.status?.supported, requestInterfaceSwitch]);
 
 	const confirmKill = useCallback(() => {
 		const doKill = async () => {
@@ -1180,7 +1186,7 @@ export default function TerminalScreen() {
 						<Pressable
 							hitSlop={6}
 							accessibilityLabel="Smaller text"
-							onPress={() => zoom(-1)}
+						onPress={() => { haptics.tap(); zoom(-1); }}
 							style={({ pressed }) => [styles.zoomBtn, pressed && { opacity: 0.6 }]}
 						>
 							<Feather name="minus" size={13} color={t.textSecondary} />
@@ -1189,7 +1195,7 @@ export default function TerminalScreen() {
 						<Pressable
 							hitSlop={6}
 							accessibilityLabel="Larger text"
-							onPress={() => zoom(1)}
+						onPress={() => { haptics.tap(); zoom(1); }}
 							style={({ pressed }) => [styles.zoomBtn, pressed && { opacity: 0.6 }]}
 						>
 							<Feather name="plus" size={13} color={t.textSecondary} />
@@ -1199,7 +1205,7 @@ export default function TerminalScreen() {
 				{dead && !shellOnly ? (
 					<Pressable
 						hitSlop={8}
-						onPress={onRestore}
+						onPress={() => { haptics.tap(); void onRestore(); }}
 						disabled={restoring}
 						style={({ pressed }) => [styles.restoreBtn, (pressed || restoring) && { opacity: 0.7 }]}
 					>
@@ -1221,7 +1227,7 @@ export default function TerminalScreen() {
 			</View>
 
 			{banner && (
-				<Pressable onPress={() => setBanner(null)} style={styles.banner}>
+				<Pressable onPress={() => { haptics.tap(); setBanner(null); }} style={styles.banner}>
 					<Text style={styles.bannerText}>{banner} (tap to dismiss)</Text>
 				</Pressable>
 			)}
@@ -1232,14 +1238,23 @@ export default function TerminalScreen() {
 					<Text style={styles.bannerText}>{interfaceSwitch.transition.errorDetail || "The interface switch failed; Terminal UI remains available."}</Text>
 					<View style={styles.interfaceFailureActions}>
 						{interfaceFailureRecovery ? (
-							<Pressable accessibilityRole="button" onPress={requestInterfaceFailureRecovery}>
+							<Pressable
+								accessibilityRole="button"
+								onPress={() => {
+									haptics.tap();
+									requestInterfaceFailureRecovery();
+								}}
+							>
 								<Text style={styles.interfaceFailureActionText}>{interfaceFailureRecovery.actionLabel}</Text>
 							</Pressable>
 						) : null}
 						<Pressable
 							accessibilityRole="button"
 							accessibilityLabel="Dismiss interface switch error"
-							onPress={() => setDismissedInterfaceTransitionID(interfaceSwitch.transition?.id ?? "")}
+							onPress={() => {
+								haptics.tap();
+								setDismissedInterfaceTransitionID(interfaceSwitch.transition?.id ?? "");
+							}}
 						>
 							<Text style={styles.interfaceFailureDismissText}>Dismiss</Text>
 						</Pressable>
@@ -1271,7 +1286,7 @@ export default function TerminalScreen() {
 							{mobileInterfaceTransitionIsCancellable(interfaceSwitch.transition) ? (
 								<Pressable
 									disabled={interfaceSwitch.cancelling}
-									onPress={() => void interfaceSwitch.cancel().catch(() => {})}
+									onPress={() => { haptics.tap(); void interfaceSwitch.cancel().catch(() => {}); }}
 									style={styles.interfaceCancel}
 								>
 									<Text style={styles.interfaceCancelText}>{interfaceSwitch.cancelling ? "Cancelling…" : "Cancel switch"}</Text>
@@ -1289,7 +1304,7 @@ export default function TerminalScreen() {
 						<Text style={styles.deadTitle}>{shellOnly ? "Shell closed" : "Session terminated"}</Text>
 						<Text style={styles.deadMsg}>{shellOnly ? "This worktree shell is no longer running." : "This session has no live terminal. Restore it to bring the agent back."}</Text>
 						{!shellOnly ? <Pressable
-							onPress={onRestore}
+								onPress={() => { haptics.tap(); void onRestore(); }}
 							disabled={restoring}
 							style={({ pressed }) => [styles.restoreCta, (pressed || restoring) && { opacity: 0.8 }]}
 						>
@@ -1308,10 +1323,10 @@ export default function TerminalScreen() {
 							<Text style={styles.browserPath} numberOfLines={1}>
 								{preview.entry}
 							</Text>
-							<Pressable hitSlop={8} onPress={() => previewWebRef.current?.reload()} style={styles.browserAction}>
+							<Pressable hitSlop={8} onPress={() => { haptics.tap(); previewWebRef.current?.reload(); }} style={styles.browserAction}>
 								<Feather name="rotate-cw" size={15} color={t.blue} />
 							</Pressable>
-							<Pressable hitSlop={8} onPress={() => setBrowserOpen(false)} style={styles.browserAction}>
+							<Pressable hitSlop={8} onPress={() => { haptics.tap(); setBrowserOpen(false); }} style={styles.browserAction}>
 								<Feather name="x" size={17} color={t.textSecondary} />
 							</Pressable>
 						</View>
@@ -1507,8 +1522,6 @@ const makeStyles = (t: Theme) =>
 	browserPath: { flex: 1, color: t.textSecondary, fontFamily: t.fontMono, fontSize: 12 },
 	browserAction: { paddingHorizontal: 4, paddingVertical: 2 },
 	browserWeb: { flex: 1, backgroundColor: "#ffffff" },
-	headerBack: { flexDirection: "row", alignItems: "center", paddingRight: 8 },
-	headerBackText: { color: t.blue, fontSize: 17, marginLeft: 2 },
 	restoreBtn: {
 		flexDirection: "row",
 		alignItems: "center",

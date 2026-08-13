@@ -324,7 +324,12 @@ var schemaNames = map[string]string{
 	"ControllersDevImportProjectsRequest":  "DevImportProjectsRequest",
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
-	"ControllersMobileStatusResponse": "MobileStatusResponse",
+	"ControllersMobileStatusResponse":  "MobileStatusResponse",
+	"ControllersMobileDeviceResponse":  "MobileDeviceResponse",
+	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
+	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
+	"ControllersInstallIDParam":        "InstallIDParam",
+	"ControllersPushPairingIDParam":    "PushPairingIDParam",
 	// devimport report
 	"DevimportReport":   "DevImportProjectsReport",
 	"DevimportConflict": "DevImportProjectsConflict",
@@ -435,6 +440,7 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, mobileDeviceOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	return ops
@@ -912,6 +918,47 @@ func mobileOperations() []operation {
 	}
 }
 
+// mobileDeviceOperations declares the desktop-only mobile device roster
+// routes. These sit under /api/v1/mobile — like mobileOperations above — so
+// they inherit the LAN listener's transport-level block; a paired phone can
+// neither list nor manage the household's other devices. Must stay 1:1 with
+// the routes mountMobileDevices registers (enforced by the parity test).
+func mobileDeviceOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/mobile/devices", id: "listMobileDevices", tag: "mobile",
+			summary: "List paired mobile devices with their live/muted status",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileDevicesResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/mobile/devices/{installId}", id: "muteMobileDevice", tag: "mobile",
+			summary:    "Mute or unmute push notifications for a paired device",
+			pathParams: []any{controllers.InstallIDParam{}},
+			reqBody:    controllers.MuteDeviceRequest{},
+			resps: []respUnit{
+				{http.StatusOK, map[string]bool{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/mobile/devices/{installId}", id: "removeMobileDevice", tag: "mobile",
+			summary:    "Remove a paired device from the roster",
+			pathParams: []any{controllers.InstallIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+			},
+		},
+	}
+}
+
 // importOperations declares the 2 /import operations. Must stay 1:1 with
 // the routes ImportController.Register mounts (enforced by the parity test).
 func importOperations() []operation {
@@ -1026,10 +1073,20 @@ func pushOperations() []operation {
 		},
 		{
 			method: http.MethodDelete, path: "/api/v1/push/devices/{token}", id: "unregisterPushDevice", tag: "push",
-			summary:    "Unregister a phone's Expo push token",
+			summary:    "Unregister a phone's Expo push token, leaving it paired",
 			pathParams: []any{controllers.PushDeviceTokenParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.UnregisterPushDeviceResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/push/pairings/{id}", id: "unpairPushDevice", tag: "push",
+			summary:    "Unpair this phone from the daemon, removing it from the roster",
+			pathParams: []any{controllers.PushPairingIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

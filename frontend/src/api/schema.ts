@@ -175,6 +175,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/mobile/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List paired mobile devices with their live/muted status */
+        get: operations["listMobileDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mobile/devices/{installId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a paired device from the roster */
+        delete: operations["removeMobileDevice"];
+        options?: never;
+        head?: never;
+        /** Mute or unmute push notifications for a paired device */
+        patch: operations["muteMobileDevice"];
+        trace?: never;
+    };
     "/api/v1/mobile/disable": {
         parameters: {
             query?: never;
@@ -512,8 +547,25 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Unregister a phone's Expo push token */
+        /** Unregister a phone's Expo push token, leaving it paired */
         delete: operations["unregisterPushDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/pairings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unpair this phone from the daemon, removing it from the roster */
+        delete: operations["unpairPushDevice"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2115,6 +2167,25 @@ export interface components {
             ok: boolean;
             prNumber: number;
         };
+        MobileDeviceResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            deviceName?: string;
+            installId: string;
+            /** Format: date-time */
+            lastSeenAt: string;
+            /** @description True when the phone's app is open and polling. */
+            live: boolean;
+            muted: boolean;
+            /** @description True when this device has a push token registered. */
+            notificationsEnabled: boolean;
+            /** @enum {string} */
+            platform?: "ios" | "android";
+            token?: string;
+        };
+        MobileDevicesResponse: {
+            devices: components["schemas"]["MobileDeviceResponse"][];
+        };
         MobileStatusResponse: {
             enabled: boolean;
             host: string;
@@ -2123,6 +2194,10 @@ export interface components {
             securePairing: components["schemas"]["ControllersSecurePairingStatus"];
             tailscaleHost: string;
             warning: string;
+        };
+        MuteDeviceRequest: {
+            /** @description True to stop sending push notifications to this device. */
+            muted: boolean;
         };
         NotificationEnvelope: {
             notification: components["schemas"]["NotificationResponse"];
@@ -2252,18 +2327,20 @@ export interface components {
             /** Format: date-time */
             lastSeenAt: string;
             platform?: string;
-            token: string;
+            token?: string;
         };
         RegisterPushDeviceRequest: {
             /** @description Human-friendly device label. */
             deviceName?: string;
+            /** @description Stable per-install device id, keying the registry so a rotated push token updates the same row. Optional: older app builds omit it and the daemon synthesizes one. */
+            installId?: string;
             /**
              * @description Device platform.
              * @enum {string}
              */
             platform?: "ios" | "android";
-            /** @description Expo push token, e.g. ExponentPushToken[...]. */
-            token: string;
+            /** @description Expo push token, e.g. ExponentPushToken[...]. Optional: omitted when the phone has no push token yet. */
+            token?: string;
         };
         ReloadConversationMCPServersResponse: {
             servers: components["schemas"]["ConversationMCPServerPayload"][];
@@ -3423,6 +3500,139 @@ export interface operations {
             };
         };
     };
+    listMobileDevices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MobileDevicesResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    removeMobileDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The device's stable install id. */
+                installId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    muteMobileDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The device's stable install id. */
+                installId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MuteDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     disableMobile: {
         parameters: {
             query?: never;
@@ -4566,6 +4776,45 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UnregisterPushDeviceResponse"];
                 };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    unpairPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone's install id, or its push token for older builds. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Internal Server Error */
             500: {
