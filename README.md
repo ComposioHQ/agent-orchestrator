@@ -42,7 +42,7 @@ A worker is AO's unit of execution: one task, one coding agent, and one isolated
 
 Open a worker at any time to continue the conversation, attach to its terminal, inspect its changes, use its isolated browser, review its pull request, or send CI and review feedback back to the same agent. This makes each task independently understandable and keeps parallel work from collapsing into one shared context.
 
-<img src="docs/assets/readme/create-task.png" alt="Create a new task in Agent Orchestrator with an agent and model selected" width="100%" />
+<img src="docs/assets/readme/new-task.png" alt="Create a new task in Agent Orchestrator with an agent and model selected" width="100%" />
 
 ## The orchestrator plans across the project
 
