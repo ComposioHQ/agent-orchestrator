@@ -14,6 +14,15 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
 	case "stop":
+		var native struct {
+			Status string `json:"status"`
+		}
+		if len(payload) > 0 && json.Unmarshal(payload, &native) != nil {
+			return "", false
+		}
+		if native.Status == "error" {
+			return domain.ActivityWaitingInput, true
+		}
 		return domain.ActivityIdle, true
 	case "thread-state":
 		var native struct {

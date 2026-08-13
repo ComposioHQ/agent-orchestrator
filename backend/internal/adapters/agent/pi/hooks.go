@@ -90,6 +90,8 @@ function sessionID(ctx: any): string {
 }
 
 export default function (pi: ExtensionAPI) {
+	let settledSupported = false;
+	let legacyAgentEndTimer: ReturnType<typeof setTimeout> | undefined;
   pi.on("session_start", async (_event, ctx) => {
     callHookSync("session-start", { session_id: sessionID(ctx) });
   });
@@ -100,13 +102,20 @@ export default function (pi: ExtensionAPI) {
   // compact, or queue follow-up work after it; a subsequent start immediately
   // reactivates AO, while agent_settled below confirms the final idle state.
   pi.on("agent_end", async (_event, ctx) => {
-    callHookSync("stop", { session_id: sessionID(ctx) });
+	    if (settledSupported) return;
+	    legacyAgentEndTimer = setTimeout(() => {
+	      if (!settledSupported) callHookSync("stop", { session_id: sessionID(ctx) });
+	    }, 0);
   });
   pi.on("agent_settled", async (_event, ctx) => {
-    callHookSync("stop", { session_id: sessionID(ctx) });
+	    settledSupported = true;
+	    if (legacyAgentEndTimer) clearTimeout(legacyAgentEndTimer);
+	    callHookSync("stop", { session_id: sessionID(ctx) });
   });
   pi.on("session_shutdown", async (event, ctx) => {
-    callHookSync("session-end", { session_id: sessionID(ctx), reason: event.reason });
+	    if (event.reason === "quit") {
+	      callHookSync("session-end", { session_id: sessionID(ctx), reason: event.reason });
+	    }
   });
 }
 `
