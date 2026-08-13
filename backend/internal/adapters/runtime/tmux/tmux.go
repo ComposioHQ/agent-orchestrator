@@ -786,18 +786,25 @@ func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
 }
 
 func attachEnv(base []string) []string {
-	env := append([]string(nil), base...)
+	env := make([]string, 0, len(base)+2)
 	hasTerm := false
 	hasColorTerm := false
-	for i, kv := range env {
+	for _, kv := range base {
 		switch {
+		case strings.HasPrefix(kv, "TMUX="):
+			// The attach client runs in AO's own PTY, not inside the tmux
+			// client from which the daemon may have been launched. Keeping an
+			// inherited TMUX value makes tmux reject this valid attach as an
+			// unsafe nested session.
+			continue
 		case strings.HasPrefix(kv, "TERM="):
-			env[i] = "TERM=xterm-256color"
+			kv = "TERM=xterm-256color"
 			hasTerm = true
 		case strings.HasPrefix(kv, "COLORTERM="):
-			env[i] = "COLORTERM=truecolor"
+			kv = "COLORTERM=truecolor"
 			hasColorTerm = true
 		}
+		env = append(env, kv)
 	}
 	if !hasTerm {
 		env = append(env, "TERM=xterm-256color")

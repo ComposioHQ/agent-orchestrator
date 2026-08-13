@@ -1304,7 +1304,7 @@ func TestAttachCommandRejectsInvalidHandle(t *testing.T) {
 }
 
 func TestAttachEnvForcesUsableTerm(t *testing.T) {
-	env := attachEnv([]string{"PATH=/bin", "TERM=dumb", "COLORTERM=ansi", "SHELL=/bin/sh"})
+	env := attachEnv([]string{"PATH=/bin", "TMUX=/tmp/tmux-501/default,123,0", "TERM=dumb", "COLORTERM=ansi", "SHELL=/bin/sh"})
 	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "COLORTERM=truecolor", "SHELL=/bin/sh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachEnv = %#v, want %#v", got, want)
 	}
