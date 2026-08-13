@@ -105,8 +105,12 @@ export async function startDiscordRpc(): Promise<void> {
 	}, RPC_PRESENCE_REFRESH_INTERVAL_MS);
 }
 
-export async function setRpcSettings(_settings: RpcSettings): Promise<void> {
-	void refreshPresence();
+export async function setRpcSettings(settings: RpcSettings): Promise<void> {
+	if (settings.enabled) {
+		await startDiscordRpc();
+	} else {
+		await disposeDiscordRpc();
+	}
 }
 
 export function pickRepresentativeStatus(sessions: { status: string; isTerminated: boolean }[]): { label: string; count: number } | null {

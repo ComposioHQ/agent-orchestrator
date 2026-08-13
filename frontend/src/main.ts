@@ -1666,7 +1666,7 @@ ipcMain.handle(RPC_SET_SETTINGS_CHANNEL, async (_event, settings: RpcSettings): 
 	const runFile = runFilePath();
 	if (!runFile) return settings;
 	const next = await updateRpcSettings(path.dirname(runFile), () => settings);
-	void setRpcSettings(next);
+	await setRpcSettings(next);
 	return next;
 });
 ipcMain.handle(RPC_GET_STATUS_CHANNEL, () => getRpcStatus());
@@ -2008,7 +2008,11 @@ app.whenReady().then(async () => {
 	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
-	void startDiscordRpc();
+	const rpcRunFile = runFilePath();
+	if (rpcRunFile) {
+		const rpcSettings = await readRpcSettings(path.dirname(rpcRunFile));
+		if (rpcSettings.enabled) void startDiscordRpc();
+	}
 
 	// Windows/Linux: on first launch, the deep-link URL may arrive as a
 	// process.argv entry (e.g. ao-app://callback?token=...).

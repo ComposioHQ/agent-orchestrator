@@ -28,8 +28,7 @@ export const RPC_SET_SETTINGS_CHANNEL = "rpc:setSettings";
 export const RPC_GET_STATUS_CHANNEL = "rpc:getStatus";
 export const RPC_STATUS_CHANNEL = "rpc:status";
 
-export const DISCORD_CLIENT_ID =
-	process.env.AO_DISCORD_CLIENT_ID ?? "000000000000000000";
+export const DISCORD_CLIENT_ID = "1512528923303350463";
 
 export const RPC_PRESENCE_REFRESH_INTERVAL_MS = 15_000;
 export const RPC_LARGE_IMAGE_KEY = "ao-logo";
