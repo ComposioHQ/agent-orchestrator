@@ -464,9 +464,9 @@ export function SessionCardView({
 			</div>
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
-				<div className="flex items-center justify-between gap-2">
+				<div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
 					<span
-						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
+						className={cn("inline-flex shrink-0 items-center gap-1.5 text-2xs font-medium", badge.className)}
 						style={showLiveActivity ? { color: activity.tone } : undefined}
 					>
 						<span

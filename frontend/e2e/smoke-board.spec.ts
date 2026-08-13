@@ -42,3 +42,40 @@ test("renderer: SSE pushes card updates without a manual refresh @T0 @BRD", asyn
 	await expect(page.locator(columnCard("merge", "live"))).toBeVisible();
 	await expect(page.locator(columnCard("merge", "live"))).toContainText("Ready");
 });
+
+test("renderer: narrow card metadata wraps without clipping the status @BRD", async ({ page }) => {
+	await installFakeAgent(page, {
+		workers: [{ id: "review", title: "Review worker", status: "review_pending", activity: "idle" }],
+	});
+	await page.route("**/api/v1/usage/sessions**", (route) =>
+		route.fulfill({
+			contentType: "application/json",
+			body: JSON.stringify({
+				sessions: [{ sessionId: "review", totalTokens: 24_600_000, incomplete: false }],
+			}),
+		}),
+	);
+	await page.goto("/#/");
+
+	const card = page.locator(columnCard("pending", "review"));
+	const status = card.getByText("Review pending", { exact: true });
+	const usage = card.getByText("24.6M tok", { exact: true });
+	await expect(usage).toBeVisible();
+
+	// Reproduce the effective card width reached at enlarged browser zoom.
+	await card.evaluate((element) => {
+		(element as HTMLElement).style.width = "12rem";
+	});
+
+	const statusMetrics = await status.evaluate((element) => ({
+		clientWidth: element.clientWidth,
+		scrollWidth: element.scrollWidth,
+	}));
+	const statusBox = await status.boundingBox();
+	const usageBox = await usage.boundingBox();
+
+	expect(statusMetrics.scrollWidth).toBeLessThanOrEqual(statusMetrics.clientWidth);
+	expect(statusBox).not.toBeNull();
+	expect(usageBox).not.toBeNull();
+	expect(usageBox!.y).toBeGreaterThanOrEqual(statusBox!.y + statusBox!.height);
+});
