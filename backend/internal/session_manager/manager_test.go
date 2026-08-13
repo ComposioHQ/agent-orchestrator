@@ -3030,6 +3030,23 @@ func TestSpawn_FetchesDefaultBranchBeforeCreatingWorkerWorktree(t *testing.T) {
 	}
 }
 
+func TestSpawn_FetchesWorkspaceChildDefaultBranchesBeforeCreatingProject(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api", DefaultBranch: "release/2026"}}
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	want := []fetchDefaultBranchCall{
+		{repoPath: "/repo/mer", remote: "origin", branch: "main"},
+		{repoPath: filepath.Join("/repo/mer", "api"), remote: "origin", branch: "release/2026"},
+	}
+	if !reflect.DeepEqual(ws.fetches, want) {
+		t.Fatalf("fetches = %#v, want %#v", ws.fetches, want)
+	}
+}
+
 func TestSpawn_FetchesQualifiedDefaultBranchRemote(t *testing.T) {
 	m, st, _, ws := newManager()
 	cfg := testRoleAgents()

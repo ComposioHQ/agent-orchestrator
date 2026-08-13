@@ -59,9 +59,15 @@ func TestBaseRefCandidates(t *testing.T) {
 	}
 
 	got = baseRefCandidates("feature/test", "upstream/main")
-	want = []string{"origin/feature/test", "upstream/main", "feature/test"}
+	want = []string{"origin/feature/test", "origin/upstream/main", "upstream/main", "feature/test"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
+	}
+
+	got = baseRefCandidates("ao/feature", "release/2026")
+	want = []string{"origin/ao/feature", "origin/release/2026", "release/2026", "ao/feature"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("slash candidates = %#v, want %#v", got, want)
 	}
 }
 

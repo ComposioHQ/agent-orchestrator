@@ -898,17 +898,35 @@ func (m *Manager) refreshDefaultBranchBestEffort(ctx context.Context, project do
 	if strings.TrimSpace(project.Path) == "" {
 		return
 	}
-	defaultBranch := project.Config.WithDefaults().DefaultBranch
-	remote, branch := m.defaultBranchFetchTarget(ctx, project.Path, defaultBranch)
-	fetchCtx, cancel := context.WithTimeout(ctx, defaultBranchFetchTimeout)
-	defer cancel()
-	if err := m.workspace.FetchDefaultBranch(fetchCtx, project.Path, remote, branch); err != nil {
-		m.logger.Warn("spawn: default branch refresh failed; continuing with local refs",
-			"projectID", project.ID,
-			"remote", remote,
-			"branch", branch,
-			"error", err,
-		)
+	refresh := func(repoPath, defaultBranch string) {
+		remote, branch := m.defaultBranchFetchTarget(ctx, repoPath, defaultBranch)
+		fetchCtx, cancel := context.WithTimeout(ctx, defaultBranchFetchTimeout)
+		defer cancel()
+		if err := m.workspace.FetchDefaultBranch(fetchCtx, repoPath, remote, branch); err != nil {
+			m.logger.Warn("spawn: default branch refresh failed; continuing with local refs",
+				"projectID", project.ID,
+				"repoPath", repoPath,
+				"remote", remote,
+				"branch", branch,
+				"error", err,
+			)
+		}
+	}
+	refresh(project.Path, project.Config.WithDefaults().DefaultBranch)
+	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		return
+	}
+	repos, err := m.store.ListWorkspaceRepos(ctx, project.ID)
+	if err != nil {
+		m.logger.Warn("spawn: workspace child repo lookup failed; continuing with local refs", "projectID", project.ID, "error", err)
+		return
+	}
+	for _, repo := range repos {
+		branch := repo.DefaultBranch
+		if strings.TrimSpace(branch) == "" {
+			branch = project.Config.WithDefaults().DefaultBranch
+		}
+		refresh(filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)), branch)
 	}
 }
 
