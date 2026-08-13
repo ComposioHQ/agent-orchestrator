@@ -42,7 +42,7 @@ func TestCanonicalGitLabIssueURL(t *testing.T) {
 			name:      "self-managed with port",
 			raw:       "https://gitlab.local:8443/group/project/-/issues/7",
 			wantNative: "group/project#7",
-			wantHost:  "gitlab.local",
+			wantHost:  "gitlab.local:8443",
 			wantOk:    true,
 		},
 		{

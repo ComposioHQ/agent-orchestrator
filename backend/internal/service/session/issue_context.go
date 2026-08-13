@@ -148,7 +148,7 @@ func canonicalGitHubIssueURL(raw string) (string, bool) {
 // default host) so that callers can set TrackerID.Host without special-casing.
 func canonicalGitLabIssueURL(raw string) (native, host string, ok bool) {
 	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" {
+	if err != nil || u.Host == "" {
 		return "", "", false
 	}
 	path := strings.Trim(u.Path, "/")
@@ -178,7 +178,9 @@ func canonicalGitLabIssueURL(raw string) (native, host string, ok bool) {
 		return "", "", false
 	}
 	parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
-	host = u.Hostname()
+	// u.Host preserves the port (e.g. "gitlab.internal:8443") so that
+	// self-managed hosts with non-default ports match AllowedHosts entries.
+	host = u.Host
 	if strings.EqualFold(host, "gitlab.com") {
 		host = "" // zero value means gitlab.com
 	}
