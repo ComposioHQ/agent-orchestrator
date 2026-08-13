@@ -79,7 +79,7 @@ func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 
 	// Verify it actually resolves per-provider (github identity is available
 	// if a token was set; if not, it should still return an error, not panic).
-	_, _ = cfg.ScopedIdentityResolver.AuthenticatedIdentityForProvider(context.Background(), "github")
+	_, _ = cfg.ScopedIdentityResolver.AuthenticatedIdentityForProvider(context.Background(), "github", "")
 }
 
 func testGitLabConfig() config.GitLabConfig {

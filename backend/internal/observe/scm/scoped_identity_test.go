@@ -20,7 +20,7 @@ type fakeScopedIdentityResolver struct {
 	calls      []string
 }
 
-func (r *fakeScopedIdentityResolver) AuthenticatedIdentityForProvider(_ context.Context, provider string) (ports.SCMIdentity, error) {
+func (r *fakeScopedIdentityResolver) AuthenticatedIdentityForProvider(_ context.Context, provider, host string) (ports.SCMIdentity, error) {
 	r.calls = append(r.calls, provider)
 	if err, ok := r.errs[provider]; ok {
 		return ports.SCMIdentity{}, err

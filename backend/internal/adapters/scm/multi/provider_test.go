@@ -532,7 +532,7 @@ func TestAuthenticatedIdentityForProvider_DelegatesToCorrectSubProvider(t *testi
 	gl := &fakeProvider{key: "gitlab", identity: glIdentity}
 	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
 
-	got, err := m.AuthenticatedIdentityForProvider(context.Background(), "github")
+	got, err := m.AuthenticatedIdentityForProvider(context.Background(), "github", "")
 	if err != nil {
 		t.Fatalf("github: unexpected error: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestAuthenticatedIdentityForProvider_DelegatesToCorrectSubProvider(t *testi
 		t.Errorf("github identity = %+v, want %+v", got, ghIdentity)
 	}
 
-	got, err = m.AuthenticatedIdentityForProvider(context.Background(), "gitlab")
+	got, err = m.AuthenticatedIdentityForProvider(context.Background(), "gitlab", "")
 	if err != nil {
 		t.Fatalf("gitlab: unexpected error: %v", err)
 	}
@@ -556,7 +556,7 @@ func TestAuthenticatedIdentityForProvider_UnknownProviderReturnsError(t *testing
 	gh := &fakeProvider{key: "github", identity: ports.SCMIdentity{Login: "octocat"}}
 	m := New(NamedProvider{Key: "github", Provider: gh})
 
-	_, err := m.AuthenticatedIdentityForProvider(context.Background(), "bitbucket")
+	_, err := m.AuthenticatedIdentityForProvider(context.Background(), "bitbucket", "")
 	if err == nil {
 		t.Fatal("expected error for unknown provider")
 	}
@@ -655,5 +655,83 @@ func TestFetchPullRequests_FailedPlaceholderProducesNonEmptyKey(t *testing.T) {
 	wantKey := "gitlab:gitlab.com:owner/repo#99"
 	if key != wantKey {
 		t.Errorf("prKey = %q, want %q", key, wantKey)
+	}
+}
+
+// fakeHostScopedProvider wraps fakeProvider and adds per-host identity
+// resolution, simulating a GitLab provider with self-managed hosts.
+type fakeHostScopedProvider struct {
+	*fakeProvider
+	hostIdentities map[string]ports.SCMIdentity
+	hostErrs       map[string]error
+	hostCalls      []string
+}
+
+func (f *fakeHostScopedProvider) AuthenticatedIdentityForHost(_ context.Context, host string) (ports.SCMIdentity, error) {
+	f.hostCalls = append(f.hostCalls, host)
+	if err, ok := f.hostErrs[host]; ok {
+		return ports.SCMIdentity{}, err
+	}
+	if id, ok := f.hostIdentities[host]; ok {
+		return id, nil
+	}
+	return ports.SCMIdentity{}, fmt.Errorf("no identity for host %q", host)
+}
+
+// TestAuthenticatedIdentityForProvider_DelegatesHostToSubProvider verifies
+// that the multi provider passes the host parameter through to host-scoped
+// sub-providers (GitLab), so a self-managed host gets the correct identity
+// (ticket 05).
+func TestAuthenticatedIdentityForProvider_DelegatesHostToSubProvider(t *testing.T) {
+	ghIdentity := ports.SCMIdentity{Login: "octocat", Human: true}
+	glDefault := ports.SCMIdentity{Login: "gl-dot-com-user", Human: true}
+	glSelf := ports.SCMIdentity{Login: "self-managed-user", Human: true}
+
+	gh := &fakeProvider{key: "github", identity: ghIdentity}
+	gl := &fakeHostScopedProvider{
+		fakeProvider: &fakeProvider{key: "gitlab", identity: glDefault},
+		hostIdentities: map[string]ports.SCMIdentity{
+			"":                glDefault,
+			"gitlab.internal": glSelf,
+		},
+	}
+	m := New(
+		NamedProvider{Key: "github", Provider: gh},
+		NamedProvider{Key: "gitlab", Provider: gl},
+	)
+
+	// GitHub ignores host — delegates to AuthenticatedIdentity.
+	got, err := m.AuthenticatedIdentityForProvider(context.Background(), "github", "github.com")
+	if err != nil {
+		t.Fatalf("github: unexpected error: %v", err)
+	}
+	if got != ghIdentity {
+		t.Errorf("github identity = %+v, want %+v", got, ghIdentity)
+	}
+	if len(gl.hostCalls) != 0 {
+		t.Errorf("github should not call host-scoped method; got calls %v", gl.hostCalls)
+	}
+
+	// GitLab gitlab.com (empty host) — delegates to AuthenticatedIdentityForHost("").
+	got, err = m.AuthenticatedIdentityForProvider(context.Background(), "gitlab", "")
+	if err != nil {
+		t.Fatalf("gitlab default: unexpected error: %v", err)
+	}
+	if got != glDefault {
+		t.Errorf("gitlab default identity = %+v, want %+v", got, glDefault)
+	}
+
+	// GitLab self-managed host — delegates to AuthenticatedIdentityForHost("gitlab.internal").
+	got, err = m.AuthenticatedIdentityForProvider(context.Background(), "gitlab", "gitlab.internal")
+	if err != nil {
+		t.Fatalf("gitlab self-managed: unexpected error: %v", err)
+	}
+	if got != glSelf {
+		t.Errorf("gitlab self-managed identity = %+v, want %+v", got, glSelf)
+	}
+
+	// Verify the host parameter was passed through correctly.
+	if len(gl.hostCalls) != 2 || gl.hostCalls[0] != "" || gl.hostCalls[1] != "gitlab.internal" {
+		t.Errorf("host calls = %v, want [\"\" \"gitlab.internal\"]", gl.hostCalls)
 	}
 }

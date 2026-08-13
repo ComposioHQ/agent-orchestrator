@@ -48,6 +48,17 @@ const (
 	fallbackIdentityKey = ""
 )
 
+// identityKey builds the cache key for a per-provider, per-host identity.
+// GitHub repos carry Host="github.com" but GitHub identity is not
+// host-scoped, so all GitHub hosts collapse to the same key. GitLab repos
+// on self-managed hosts get a distinct key from gitlab.com.
+func identityKey(provider, host string) string {
+	if provider == "github" {
+		return provider // GitHub identity is not host-scoped
+	}
+	return provider + "|" + host
+}
+
 // Provider is the normalized SCM provider contract used by the observer.
 type Provider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
@@ -1022,7 +1033,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 				continue
 			}
 			if identityKnown {
-				id, ok := identities[repo.Provider]
+				id, ok := identities[identityKey(repo.Provider, repo.Host)]
 				if !ok {
 					id, ok = identities[fallbackIdentityKey] // fallback single-identity
 				}
@@ -1103,31 +1114,35 @@ func (o *Observer) authenticatedIdentity(ctx context.Context) (ports.SCMIdentity
 
 // resolveIdentities resolves the authenticated identity for each provider key
 // present in sessionRepos. When a ScopedIdentityResolver is wired, identities
-// are resolved upfront (one call per provider) and cached in a map keyed by
-// provider key. If identity resolution fails for one provider, PRs from that
-// provider fall back to branch-based discovery while other providers continue
-// normally. When no ScopedIdentityResolver is available, it falls back to the
+// are resolved upfront (one call per unique provider+host pair) and cached in
+// a map keyed by identityKey(provider, host). This ensures a self-managed
+// GitLab host gets its own identity, distinct from gitlab.com. If identity
+// resolution fails for one provider+host, PRs from that provider+host fall
+// back to branch-based discovery while other providers continue normally.
+// When no ScopedIdentityResolver is available, it falls back to the
 // single-provider IdentityResolver path.
 func (o *Observer) resolveIdentities(ctx context.Context, sessionRepos []sessionRepo) (map[string]ports.SCMIdentity, bool) {
 	if o.scopedIdentityResolver != nil {
-		providers := map[string]bool{}
-		for _, sr := range sessionRepos {
-			providers[sr.repo.Provider] = true
-		}
-		identities := make(map[string]ports.SCMIdentity, len(providers))
+		seen := map[string]bool{}
+		identities := make(map[string]ports.SCMIdentity)
 		anyKnown := false
-		for key := range providers {
-			id, err := o.scopedIdentityResolver.AuthenticatedIdentityForProvider(ctx, key)
+		for _, sr := range sessionRepos {
+			ik := identityKey(sr.repo.Provider, sr.repo.Host)
+			if seen[ik] {
+				continue
+			}
+			seen[ik] = true
+			id, err := o.scopedIdentityResolver.AuthenticatedIdentityForProvider(ctx, sr.repo.Provider, sr.repo.Host)
 			if err != nil {
-				o.logger.Debug("scm observer: per-provider identity unavailable; preserving branch-based discovery for provider", "provider", key, "err", err)
+				o.logger.Debug("scm observer: per-provider identity unavailable; preserving branch-based discovery for provider", "provider", sr.repo.Provider, "host", sr.repo.Host, "err", err)
 				continue
 			}
 			id.Login = strings.TrimSpace(id.Login)
 			if !id.Human || id.Login == "" {
-				o.logger.Debug("scm observer: per-provider human identity unavailable; preserving branch-based discovery for provider", "provider", key)
+				o.logger.Debug("scm observer: per-provider human identity unavailable; preserving branch-based discovery for provider", "provider", sr.repo.Provider, "host", sr.repo.Host)
 				continue
 			}
-			identities[key] = id
+			identities[ik] = id
 			anyKnown = true
 		}
 		return identities, anyKnown

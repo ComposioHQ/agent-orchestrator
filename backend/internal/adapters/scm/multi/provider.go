@@ -199,9 +199,19 @@ type credentialChecker interface {
 
 // identityResolver is the type assertion used by
 // AuthenticatedIdentityForProvider to delegate to a sub-provider's existing
-// AuthenticatedIdentity method.
+// AuthenticatedIdentity method. Sub-providers that are not host-scoped
+// (e.g. GitHub) satisfy this interface.
 type identityResolver interface {
 	AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity, error)
+}
+
+// hostScopedIdentityResolver is the type assertion used by
+// AuthenticatedIdentityForProvider to delegate to a sub-provider's
+// per-host identity method (e.g. GitLab's AuthenticatedIdentityForHost).
+// Host-scoped sub-providers satisfy this interface in addition to, or
+// instead of, identityResolver.
+type hostScopedIdentityResolver interface {
+	AuthenticatedIdentityForHost(ctx context.Context, host string) (ports.SCMIdentity, error)
 }
 
 // SCMCredentialsAvailable returns true if ANY sub-provider has usable credentials.
@@ -246,13 +256,21 @@ func repoFullNameFromRef(repo ports.SCMRepo) string {
 }
 
 // AuthenticatedIdentityForProvider resolves the authenticated identity for the
-// sub-provider matching the given provider key. It satisfies
+// sub-provider matching the given provider key. The host parameter is passed
+// through to host-scoped sub-providers (e.g. GitLab) so that self-managed
+// hosts resolve identity against the correct client. Sub-providers that are
+// not host-scoped (e.g. GitHub) ignore the host parameter. It satisfies
 // ports.ScopedIdentityResolver.
-func (m *Provider) AuthenticatedIdentityForProvider(ctx context.Context, provider string) (ports.SCMIdentity, error) {
+func (m *Provider) AuthenticatedIdentityForProvider(ctx context.Context, provider, host string) (ports.SCMIdentity, error) {
 	p, err := m.resolve(provider)
 	if err != nil {
 		return ports.SCMIdentity{}, err
 	}
+	// Prefer the host-scoped path when the sub-provider supports it (GitLab).
+	if hs, ok := p.(hostScopedIdentityResolver); ok {
+		return hs.AuthenticatedIdentityForHost(ctx, host)
+	}
+	// Fall back to the non-host-scoped path (GitHub).
 	resolver, ok := p.(identityResolver)
 	if !ok {
 		return ports.SCMIdentity{}, fmt.Errorf("scm multi: provider %q does not implement AuthenticatedIdentity", provider)
