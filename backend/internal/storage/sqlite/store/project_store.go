@@ -65,7 +65,7 @@ func (s *Store) writeWorkspaceProject(ctx context.Context, label string, r domai
 				RepoOriginURL: repo.RepoOriginURL,
 				DefaultBranch: repo.DefaultBranch,
 				RegisteredAt:  repo.RegisteredAt,
-				GitStatus:     string(repo.GitStatus),
+				GitStatus:     string(repo.GitStatus.WithDefault()),
 			}); err != nil {
 				return err
 			}
