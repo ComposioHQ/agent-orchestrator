@@ -71,7 +71,6 @@ func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 	// Mirror the production wiring in startSCMObserver: the multi provider
 	// is passed as the ScopedIdentityResolver in the observer Config.
 	cfg := scmobserve.Config{
-		Logger:                 slog.Default(),
 		ScopedIdentityResolver: multi,
 	}
 	if cfg.ScopedIdentityResolver == nil {
