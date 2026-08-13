@@ -820,7 +820,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										) : null
 									}
 									isInspectorVisible={inspectorPanelVisible}
-									notificationAction={inspectorPanelVisible ? <NotificationCenter /> : undefined}
+									notificationAction={isInspectorOpen ? <NotificationCenter /> : undefined}
 									onOpenFiles={handleOpenFiles}
 									onOpenReviewerTerminal={selectReviewerTerminal}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}

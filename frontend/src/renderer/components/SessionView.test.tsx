@@ -133,6 +133,9 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
+vi.mock("./NotificationCenter", () => ({
+	NotificationCenter: () => <button type="button">Notifications</button>,
+}));
 vi.mock("./chat/SessionChatSurface", () => ({
 	SessionChatSurface: ({ onOpenShell, headerActions }: { onOpenShell?: () => void; headerActions?: ReactNode }) => (
 		<div data-testid="chat-surface">
@@ -276,18 +279,21 @@ vi.mock("../hooks/useBrowserView", () => ({
 vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({
 		filesView,
+		notificationAction,
 		onOpenFiles,
 		onToggleBrowserPopOut,
 		onToggleVisibility,
 		view,
 	}: {
 		filesView?: ReactNode;
+		notificationAction?: ReactNode;
 		onOpenFiles?: () => void;
 		onToggleBrowserPopOut?: () => void;
 		onToggleVisibility?: () => void;
 		view?: string;
 	}) => (
 		<div>
+			{notificationAction}
 			<button type="button" onClick={onToggleVisibility}>
 				close inspector
 			</button>
@@ -955,9 +961,11 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 
+		expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "close inspector" }));
 
 		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
 	});
 
 	it("persists drag resizes and never closes the store from a drag", () => {
