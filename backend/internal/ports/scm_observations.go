@@ -112,6 +112,13 @@ type SCMIdentityResolver interface {
 	AuthenticatedIdentity(ctx context.Context) (SCMIdentity, error)
 }
 
+// ScopedIdentityResolver resolves the authenticated identity for a specific
+// provider key. Multi-provider implementations use this to delegate to the
+// matching sub-provider's AuthenticatedIdentity method.
+type ScopedIdentityResolver interface {
+	AuthenticatedIdentityForProvider(ctx context.Context, provider string) (SCMIdentity, error)
+}
+
 // SCMPRObservation carries provider-neutral PR metadata.
 type SCMPRObservation struct {
 	// URL is the canonical PR URL used as the persistence key.

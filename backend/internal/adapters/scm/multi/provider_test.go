@@ -20,6 +20,8 @@ type fakeProvider struct {
 	// behavior. The provider returns these observations (as-is) plus fetchErr.
 	// This simulates a partial batch: some Fetched=true, some Fetched=false.
 	partialResults []ports.SCMObservation
+	identity       ports.SCMIdentity
+	identityErr    error
 }
 
 func (f *fakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
@@ -66,6 +68,10 @@ func (f *fakeProvider) FetchReviewThreads(_ context.Context, _ ports.SCMPRRef) (
 
 func (f *fakeProvider) SCMCredentialsAvailable(_ context.Context) (bool, error) {
 	return f.credsAvailable, f.credsErr
+}
+
+func (f *fakeProvider) AuthenticatedIdentity(_ context.Context) (ports.SCMIdentity, error) {
+	return f.identity, f.identityErr
 }
 
 func TestParseRepository_RoutesToFirstMatch(t *testing.T) {
@@ -457,5 +463,45 @@ func TestFetchPullRequests_TwoProvidersOneFailsOneSucceeds(t *testing.T) {
 	// GitLab slot: Fetched=false placeholder with the error attached.
 	if obs[1].Fetched {
 		t.Errorf("obs[1].Fetched = true, want false for failed gitlab fetch")
+	}
+}
+
+// TestAuthenticatedIdentityForProvider_DelegatesToCorrectSubProvider verifies
+// that AuthenticatedIdentityForProvider resolves the identity from the
+// sub-provider matching the given key (finding #7).
+func TestAuthenticatedIdentityForProvider_DelegatesToCorrectSubProvider(t *testing.T) {
+	ghIdentity := ports.SCMIdentity{Login: "octocat", Human: true}
+	glIdentity := ports.SCMIdentity{Login: "gitlab-bot", Human: false}
+	gh := &fakeProvider{key: "github", identity: ghIdentity}
+	gl := &fakeProvider{key: "gitlab", identity: glIdentity}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	got, err := m.AuthenticatedIdentityForProvider(context.Background(), "github")
+	if err != nil {
+		t.Fatalf("github: unexpected error: %v", err)
+	}
+	if got != ghIdentity {
+		t.Errorf("github identity = %+v, want %+v", got, ghIdentity)
+	}
+
+	got, err = m.AuthenticatedIdentityForProvider(context.Background(), "gitlab")
+	if err != nil {
+		t.Fatalf("gitlab: unexpected error: %v", err)
+	}
+	if got != glIdentity {
+		t.Errorf("gitlab identity = %+v, want %+v", got, glIdentity)
+	}
+}
+
+// TestAuthenticatedIdentityForProvider_UnknownProviderReturnsError verifies
+// that requesting identity for an unregistered provider key returns an error
+// (finding #7).
+func TestAuthenticatedIdentityForProvider_UnknownProviderReturnsError(t *testing.T) {
+	gh := &fakeProvider{key: "github", identity: ports.SCMIdentity{Login: "octocat"}}
+	m := New(NamedProvider{Key: "github", Provider: gh})
+
+	_, err := m.AuthenticatedIdentityForProvider(context.Background(), "bitbucket")
+	if err == nil {
+		t.Fatal("expected error for unknown provider")
 	}
 }

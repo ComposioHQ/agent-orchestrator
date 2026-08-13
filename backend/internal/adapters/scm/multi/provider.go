@@ -201,6 +201,13 @@ type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
 }
 
+// identityResolver is the type assertion used by
+// AuthenticatedIdentityForProvider to delegate to a sub-provider's existing
+// AuthenticatedIdentity method.
+type identityResolver interface {
+	AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity, error)
+}
+
 // SCMCredentialsAvailable returns true if ANY sub-provider has usable credentials.
 // When no provider reports usable credentials, the first real error (if any)
 // is returned so CheckCredentialsOnce retries on the next poll rather than
@@ -228,4 +235,19 @@ func (m *Provider) SCMCredentialsAvailable(ctx context.Context) (bool, error) {
 type indexedRef struct {
 	idx int
 	ref ports.SCMPRRef
+}
+
+// AuthenticatedIdentityForProvider resolves the authenticated identity for the
+// sub-provider matching the given provider key. It satisfies
+// ports.ScopedIdentityResolver.
+func (m *Provider) AuthenticatedIdentityForProvider(ctx context.Context, provider string) (ports.SCMIdentity, error) {
+	p, err := m.resolve(provider)
+	if err != nil {
+		return ports.SCMIdentity{}, err
+	}
+	resolver, ok := p.(identityResolver)
+	if !ok {
+		return ports.SCMIdentity{}, fmt.Errorf("scm multi: provider %q does not implement AuthenticatedIdentity", provider)
+	}
+	return resolver.AuthenticatedIdentity(ctx)
 }
