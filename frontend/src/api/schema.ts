@@ -982,6 +982,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Acknowledge a failed or recovered interface handoff notice */
+        put: operations["acknowledgeSessionInterfaceTransitionNotice"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -1528,6 +1545,11 @@ export interface components {
             error: string;
             message: string;
             requestId?: string;
+        };
+        AcknowledgeSessionInterfaceTransitionNoticeResponse: {
+            ok: boolean;
+            sessionId: string;
+            transition: components["schemas"]["SessionInterfaceTransition"];
         };
         ActivateConversationBranchResponse: {
             activeBranchId: string;
@@ -2380,6 +2402,8 @@ export interface components {
             errorCode?: string;
             errorDetail?: string;
             id: string;
+            /** Format: date-time */
+            noticeAcknowledgedAt?: null | string;
             /** @enum {string} */
             phase: "requested" | "preflighting" | "draining" | "source_stopping" | "source_stopped" | "target_starting" | "activating" | "completed" | "failed" | "cancelled" | "recovery_required";
             /** @enum {string} */
@@ -6487,6 +6511,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CancelSessionInterfaceTransitionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    acknowledgeSessionInterfaceTransitionNotice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Durable interface-transition identifier. */
+                transitionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AcknowledgeSessionInterfaceTransitionNoticeResponse"];
                 };
             };
             /** @description Not Found */

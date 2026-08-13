@@ -5,7 +5,11 @@ vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn
 vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 
 import { ApiError, apiRequest, getPreview, getSettings, launchOrchestrator, mobileReachablePreviewURL, restoreSession, resumeSessionAgent, spawnSession } from "./api";
-import { getConversationPage, getWorkspacePaths } from "./chat/api";
+import {
+	acknowledgeSessionInterfaceTransitionNotice,
+	getConversationPage,
+	getWorkspacePaths,
+} from "./chat/api";
 import type { ServerConfig } from "./config";
 
 const cfg: ServerConfig = { host: "ao.test", httpPort: "3011", muxPort: "3011", secure: false, password: "secret12" };
@@ -45,6 +49,35 @@ describe("mobile Chat API boundaries", () => {
 		const [url, init] = vi.mocked(fetch).mock.calls[0];
 		expect(url).toBe("http://ao.test:3011/api/v1/sessions/chat-terminated/restore");
 		expect(init?.method).toBe("POST");
+	});
+
+	it("acknowledges the exact durable interface-transition notice", async () => {
+		vi.mocked(fetch).mockResolvedValue(
+			response({
+				transition: {
+					id: "transition/1",
+					sessionId: "chat/1",
+					sourceMode: "chat",
+					targetMode: "tui",
+					policy: "drain",
+					phase: "recovery_required",
+					createdAt: "2026-08-12T10:00:00Z",
+					updatedAt: "2026-08-12T10:01:00Z",
+					noticeAcknowledgedAt: "2026-08-13T08:00:00Z",
+				},
+			}),
+		);
+		const transition = await acknowledgeSessionInterfaceTransitionNotice(
+			cfg,
+			"chat/1",
+			"transition/1",
+		);
+		const [url, init] = vi.mocked(fetch).mock.calls[0];
+		expect(url).toBe(
+			"http://ao.test:3011/api/v1/sessions/chat%2F1/interface-transition/transition%2F1/notice-acknowledgement",
+		);
+		expect(init?.method).toBe("PUT");
+		expect(transition.noticeAcknowledgedAt).toBe("2026-08-13T08:00:00Z");
 	});
 
 	it("preserves daemon request IDs on API errors", async () => {
