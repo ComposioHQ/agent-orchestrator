@@ -191,7 +191,7 @@
 	"inspector.aria": "セッションインスペクター",
 	"inspector.branch": "ブランチ",
 	"inspector.ci.autoInject": "CI 失敗を自動送信",
-	"inspector.ci.autoInjectDescription": "無効にすると、CI 失敗はプルリクエスト概要にのみ表示され、ワーカーエージェントには送信されません。",
+	"inspector.ci.autoInjectDescription": "When disabled, CI failures are not sent to the worker agent but are only displayed in the pull request summary.",
 	"inspector.ci.autoInjectError": "CI の自動注入を更新できませんでした ({{status}})",
 	"inspector.ci.notInjected": "CI 失敗は注入されていません",
 	"inspector.browser": "ブラウザ",

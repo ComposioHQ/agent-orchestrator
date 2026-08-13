@@ -193,7 +193,7 @@
 	"inspector.aria": "Inspetor da sessão",
 	"inspector.branch": "Branch",
 	"inspector.ci.autoInject": "Enviar falhas de CI automaticamente",
-	"inspector.ci.autoInjectDescription": "Quando desativado, falhas de CI são apenas exibidas no resumo do pull request e não são enviadas ao agente worker.",
+	"inspector.ci.autoInjectDescription": "When disabled, CI failures are not sent to the worker agent but are only displayed in the pull request summary.",
 	"inspector.ci.autoInjectError": "Não foi possível atualizar a injeção automática de CI ({{status}})",
 	"inspector.ci.notInjected": "Falhas de CI não injetadas",
 	"inspector.browser": "Navegador",

@@ -193,7 +193,7 @@
 	"inspector.aria": "Inspecteur de session",
 	"inspector.branch": "Branche",
 	"inspector.ci.autoInject": "Envoyer automatiquement les échecs CI",
-	"inspector.ci.autoInjectDescription": "Lorsque cette option est désactivée, les échecs CI sont seulement affichés dans le résumé de la pull request et ne sont pas envoyés à l’agent worker.",
+	"inspector.ci.autoInjectDescription": "When disabled, CI failures are not sent to the worker agent but are only displayed in the pull request summary.",
 	"inspector.ci.autoInjectError": "Impossible de mettre à jour l’injection automatique de la CI ({{status}})",
 	"inspector.ci.notInjected": "Échecs CI non injectés",
 	"inspector.browser": "Navigateur",
