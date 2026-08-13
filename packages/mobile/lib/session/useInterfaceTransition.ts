@@ -4,29 +4,17 @@ import {
 	cancelSessionInterfaceTransition,
 	getSessionInterfaceTransition,
 	startSessionInterfaceTransition,
-	type SessionInterfaceTransition,
 	type SessionInterfaceTransitionStatus,
 } from "../chat/api";
+import {
+	interfaceTransitionPollInterval,
+	mobileInterfaceTransitionIsActive,
+} from "./interfaceTransition";
 
-const activePhases = new Set<SessionInterfaceTransition["phase"]>([
-	"requested",
-	"preflighting",
-	"draining",
-	"source_stopping",
-	"source_stopped",
-	"target_starting",
-	"activating",
-]);
-
-export function mobileInterfaceTransitionIsActive(transition?: SessionInterfaceTransition): boolean {
-	return Boolean(transition && activePhases.has(transition.phase));
-}
-
-export function mobileInterfaceTransitionIsCancellable(transition?: SessionInterfaceTransition): boolean {
-	return Boolean(
-		transition && ["requested", "preflighting", "draining"].includes(transition.phase),
-	);
-}
+export {
+	mobileInterfaceTransitionIsActive,
+	mobileInterfaceTransitionIsCancellable,
+} from "./interfaceTransition";
 
 export function useInterfaceTransition(
 	cfg: ServerConfig | null,
@@ -65,8 +53,8 @@ export function useInterfaceTransition(
 	}, [refresh]);
 
 	useEffect(() => {
-		if (!cfg || !sessionId) return;
-		const interval = mobileInterfaceTransitionIsActive(status?.transition) ? 300 : 10_000;
+		const interval = interfaceTransitionPollInterval(status?.transition);
+		if (!cfg || !sessionId || interval === undefined) return;
 		const timer = setInterval(() => void refresh(), interval);
 		return () => clearInterval(timer);
 	}, [cfg, refresh, sessionId, status?.transition?.phase]);

@@ -916,6 +916,9 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	}
 	childRepos := make([]ports.WorkspaceProjectRepoConfig, 0, len(repos))
 	for _, repo := range repos {
+		if repo.GitStatus == domain.GitStatusNeedsInit {
+			continue
+		}
 		childRepos = append(childRepos, ports.WorkspaceProjectRepoConfig{
 			Name:         repo.Name,
 			RelativePath: repo.RelativePath,
@@ -2889,6 +2892,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		// statement that can change it afterwards.
 		Mode:             domain.NormalizeSessionMode(cfg.RequestedMode),
 		AutoInjectReview: true,
+		AutoInjectCI:     true,
 	}
 }
 

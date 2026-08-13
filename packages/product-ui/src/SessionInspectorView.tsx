@@ -239,6 +239,7 @@ export function InspectorPullRequestCardView({
 	openLabel,
 	pr,
 	pullRequestIcon,
+	statusNotice,
 }: {
 	countNounLabel: CountNounLabel;
 	externalIcon?: ReactNode;
@@ -248,6 +249,7 @@ export function InspectorPullRequestCardView({
 	openLabel: string;
 	pr: InspectorPullRequest;
 	pullRequestIcon?: ReactNode;
+	statusNotice?: ReactNode;
 }) {
 	return (
 		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
@@ -295,6 +297,7 @@ export function InspectorPullRequestCardView({
 						externalLink={ExternalLink}
 						presentation={pr.card}
 					/>
+					{statusNotice}
 					{mergeError ? (
 						<p className="mt-2 text-2xs leading-normal text-error" role="status">
 							{mergeError}

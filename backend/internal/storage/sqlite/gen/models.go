@@ -187,6 +187,8 @@ type ConversationTurn struct {
 	RolledBackAt         sql.NullTime
 	PlanJson             string
 	BranchID             string
+	PromotionStartedAt   sql.NullTime
+	PromotedToTurnID     sql.NullString
 }
 
 type ModelUsageEvent struct {
@@ -257,6 +259,7 @@ type PR struct {
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
+	AutoInjectCI             bool
 }
 
 type PRCheck struct {
@@ -387,6 +390,7 @@ type Session struct {
 	LatestUserPrompt          string
 	LatestAssistantUpdate     string
 	NativeTranscriptPath      string
+	AutoInjectCI              bool
 }
 
 type SessionCleanupFact struct {
@@ -509,6 +513,7 @@ type WorkspaceRepo struct {
 	Name          string
 	RelativePath  string
 	RepoOriginURL string
-	RegisteredAt  time.Time
 	DefaultBranch string
+	RegisteredAt  time.Time
+	GitStatus     string
 }

@@ -411,7 +411,7 @@ describe("CenterPane toolbar session label", () => {
 		);
 	});
 
-	it("keeps session-level actions available while the terminal is fullscreen", () => {
+	it("hides session-level actions while the terminal is fullscreen", () => {
 		const view = renderCenterPane({
 			session: worker,
 			topbarActions: <button type="button">Session action</button>,
@@ -421,10 +421,8 @@ describe("CenterPane toolbar session label", () => {
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
 		act(() => document.dispatchEvent(new Event("fullscreenchange")));
 
-		expect(screen.getByTestId("session-action-region")).toContainElement(
-			screen.getByRole("button", { name: "Session action" }),
-		);
-		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
+		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
@@ -461,7 +459,7 @@ describe("CenterPane toolbar session label", () => {
 			name: "Terminal display controls",
 		});
 		expect(tabList.contains(toolbar)).toBe(false);
-		expect(toolbar).toContainElement(screen.getByRole("button", { name: "Fullscreen terminal" }));
+		expect(toolbar).toContainElement(screen.getByRole("button", { name: "Decrease terminal font size" }));
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {

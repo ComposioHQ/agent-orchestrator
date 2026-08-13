@@ -33,6 +33,7 @@ type sessionStore interface {
 	// when no open PR remains and at least one merged) and to suppress
 	// merge-conflict nudges on PRs stacked behind an open parent.
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	GetPR(ctx context.Context, prURL string) (domain.PullRequest, bool, error)
 	// ListPRReviews and ListPRComments return the effective rows committed by
 	// the SCM observer, including each item's preserved injection decision.
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)

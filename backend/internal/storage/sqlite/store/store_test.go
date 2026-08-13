@@ -38,6 +38,7 @@ func sampleRecord(project string) domain.SessionRecord {
 		Activity:         domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
 		Metadata:         domain.SessionMetadata{Branch: "feat/x", WorkspacePath: "/ws"},
 		AutoInjectReview: true,
+		AutoInjectCI:     true,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -735,6 +736,7 @@ func TestPRCRUD(t *testing.T) {
 	pr := domain.PullRequest{
 		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
 		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now, StateChangedAt: now,
+		AutoInjectCI: true,
 	}
 	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
@@ -745,6 +747,81 @@ func TestPRCRUD(t *testing.T) {
 	}
 	if list, _ := s.ListPRsBySession(ctx, r.ID); len(list) != 1 {
 		t.Fatalf("list prs = %d, want 1", len(list))
+	}
+}
+
+func TestPRAutoInjectCISnapshotsSessionDefaultAtCreation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	owner, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+	first := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: owner.ID, Number: 1, CI: domain.CIFailing, UpdatedAt: now}
+
+	if err := s.WritePR(ctx, first, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GetPR(ctx, first.URL)
+	if err != nil || !found || !got.AutoInjectCI {
+		t.Fatalf("new PR policy = found:%v err:%v value:%v, want enabled", found, err, got.AutoInjectCI)
+	}
+
+	base, _ := s.LatestSeq(ctx)
+	changedAt := now.Add(time.Minute)
+	ok, err := s.SetSessionAutoInjectCI(ctx, owner.ID, false, changedAt)
+	if err != nil || !ok {
+		t.Fatalf("disable session CI default: ok=%v err=%v", ok, err)
+	}
+	session, found, err := s.GetSession(ctx, owner.ID)
+	if err != nil || !found || session.AutoInjectCI {
+		t.Fatalf("disabled session default = found:%v err:%v session:%+v", found, err, session)
+	}
+
+	events, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || string(events[0].Type) != "session_updated" {
+		t.Fatalf("policy change events = %+v, want one session_updated", events)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := payload["autoInjectCI"].(bool); !ok || enabled {
+		t.Fatalf("autoInjectCI payload = %#v, want false", payload["autoInjectCI"])
+	}
+
+	// Re-observing the first PR after changing the session default must preserve
+	// the value captured when that PR was first inserted.
+	first.UpdatedAt = changedAt.Add(time.Minute)
+	if err := s.WritePR(ctx, first, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = s.GetPR(ctx, first.URL)
+	if !got.AutoInjectCI {
+		t.Fatal("session toggle rewrote the first PR's enabled snapshot")
+	}
+
+	second := domain.PullRequest{URL: "https://github.com/o/r/pull/2", SessionID: owner.ID, Number: 2, UpdatedAt: changedAt}
+	if err := s.WritePR(ctx, second, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = s.GetPR(ctx, second.URL)
+	if got.AutoInjectCI {
+		t.Fatal("PR created while disabled did not capture the disabled default")
+	}
+
+	if ok, err := s.SetSessionAutoInjectCI(ctx, owner.ID, true, changedAt.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("enable session CI default: ok=%v err=%v", ok, err)
+	}
+	second.UpdatedAt = changedAt.Add(2 * time.Minute)
+	if err := s.WritePR(ctx, second, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = s.GetPR(ctx, second.URL)
+	if got.AutoInjectCI {
+		t.Fatal("later session enable rewrote the second PR's disabled snapshot")
 	}
 }
 

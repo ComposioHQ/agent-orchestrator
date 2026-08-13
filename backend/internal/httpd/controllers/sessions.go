@@ -94,6 +94,7 @@ type SessionService interface {
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
 	SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
+	SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error)
 	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
@@ -168,6 +169,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Patch("/sessions/{sessionId}", c.rename)
 	r.Patch("/sessions/{sessionId}/merge-policy", c.setMergePolicy)
 	r.Patch("/sessions/{sessionId}/auto-inject-review", c.setAutoInjectReviewPolicy)
+	r.Patch("/sessions/{sessionId}/auto-inject-ci", c.setAutoInjectCIPolicy)
 	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
@@ -265,7 +267,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, TrackerProvider: in.TrackerProvider, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -966,6 +968,40 @@ func (c *SessionsController) setAutoInjectReviewPolicy(w http.ResponseWriter, r 
 	})
 }
 
+func (c *SessionsController) setAutoInjectCIPolicy(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/auto-inject-ci")
+		return
+	}
+	// Decode through a pointer so an omitted required field remains distinct
+	// from the valid explicit value {"autoInjectCI":false}. The public request
+	// DTO stays non-pointer so the generated OpenAPI schema remains a required,
+	// non-nullable boolean.
+	var in struct {
+		AutoInjectCI *bool `json:"autoInjectCI"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if in.AutoInjectCI == nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "AUTO_INJECT_CI_REQUIRED", "autoInjectCI is required", nil)
+		return
+	}
+	autoInjectCI := *in.AutoInjectCI
+	sess, err := c.Svc.SetAutoInjectCI(r.Context(), sessionID(r), autoInjectCI)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetSessionAutoInjectCIResponse{
+		OK:           true,
+		SessionID:    sessionID(r),
+		AutoInjectCI: autoInjectCI,
+		Session:      sessionView(sess),
+	})
+}
+
 func (c *SessionsController) setReviewer(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
 		apispec.NotImplemented(w, r, "PUT", "/api/v1/sessions/{sessionId}/reviewer")
@@ -1481,7 +1517,7 @@ func writeSessionPRError(w http.ResponseWriter, r *http.Request, err error) {
 	var claimed ports.PRClaimedByActiveSessionError
 	switch {
 	case errors.Is(err, sessionsvc.ErrInvalidPRRef):
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_REF", "PR reference must be a github.com PR URL or a number", nil)
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR_REF", "PR reference must be a PR/MR URL or a number", nil)
 	case errors.Is(err, sessionsvc.ErrPRNotFound):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PR_NOT_FOUND", "Unknown PR", nil)
 	case errors.Is(err, sessionsvc.ErrPRNotOpen):
