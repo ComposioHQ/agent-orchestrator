@@ -27,6 +27,9 @@ const mocks = vi.hoisted(() => ({
   disconnectGitHubUser: vi.fn(),
   putAgentProviderConnection: vi.fn(),
   deleteAgentProviderConnection: vi.fn(),
+  listUserProviderConnections: vi.fn(),
+  putUserProviderConnection: vi.fn(),
+  deleteUserProviderConnection: vi.fn(),
   listOrgMembers: vi.fn(),
   listOrgInvitations: vi.fn(),
   createOrgInvitation: vi.fn(),
@@ -61,6 +64,9 @@ vi.mock("@/lib/cloud-client", () => ({
     disconnectGitHubUser: mocks.disconnectGitHubUser,
     putAgentProviderConnection: mocks.putAgentProviderConnection,
     deleteAgentProviderConnection: mocks.deleteAgentProviderConnection,
+    listUserProviderConnections: mocks.listUserProviderConnections,
+    putUserProviderConnection: mocks.putUserProviderConnection,
+    deleteUserProviderConnection: mocks.deleteUserProviderConnection,
     listOrgMembers: mocks.listOrgMembers,
     listOrgInvitations: mocks.listOrgInvitations,
     createOrgInvitation: mocks.createOrgInvitation,
@@ -171,6 +177,7 @@ beforeEach(() => {
     session: { id: "session-1", desiredState: "deleted" },
   });
   mocks.listProviderConnections.mockResolvedValue([]);
+  mocks.listUserProviderConnections.mockResolvedValue([]);
   mocks.listOrgMembers.mockResolvedValue([]);
   mocks.listOrgInvitations.mockResolvedValue([]);
   mocks.listProjectShareLinks.mockResolvedValue([]);

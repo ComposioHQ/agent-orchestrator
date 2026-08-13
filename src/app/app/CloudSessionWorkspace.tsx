@@ -28,6 +28,7 @@ import { useEffect, useMemo, useState } from "react";
 import { browserCloudClient } from "@/lib/cloud-client";
 import { CloudExternalLink } from "./CloudBoard";
 import { CloudTerminal } from "./CloudTerminal";
+import { OrchestratorIcon } from "./OrchestratorIcon";
 import { pullRequestSummaryParts, toInspectorReviewGroups } from "./pr-display";
 
 type InspectorTab = "changes" | "files" | "reviews" | "terminal";
@@ -177,9 +178,15 @@ export function CloudSessionWorkspace({
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(320px,38%)]">
       <section className="flex min-h-0 min-w-0 flex-col bg-[#101317]">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] px-4">
+          {session.kind === "orchestrator" ? (
+            <OrchestratorIcon
+              className="size-4 shrink-0 text-[var(--color-text-passive)]"
+              aria-hidden="true"
+            />
+          ) : null}
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-semibold tracking-[-0.02em]">
-              {session.displayName}
+              {session.kind === "orchestrator" ? "Orchestrator" : session.displayName}
             </h1>
             <p className="mt-0.5 truncate font-mono text-[9px] text-[var(--color-text-passive)]">
               {session.branch} · {session.harness} · {session.mode}

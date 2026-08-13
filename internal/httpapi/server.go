@@ -263,6 +263,9 @@ func New(options Options) *Server {
 		router.Post("/auth/local/login", server.loginLocal)
 		router.With(server.authenticate).Post("/auth/local/logout", server.logoutLocal)
 		router.With(server.authenticate).Get("/me", server.me)
+		router.With(server.authenticate).Get("/me/providers", server.listUserProviderConnections)
+		router.With(server.authenticate).Put("/me/providers/{agent}", server.putUserAgentConnection)
+		router.With(server.authenticate).Delete("/me/providers/{agent}", server.deleteUserAgentConnection)
 		router.With(server.authenticate).Post("/share-links/redeem", server.redeemProjectShareLink)
 		router.With(server.authenticate).Get("/shared/projects", server.listSharedProjects)
 		if server.github != nil {

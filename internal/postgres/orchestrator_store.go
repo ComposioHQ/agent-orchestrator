@@ -104,6 +104,7 @@ func (s *Store) SendOrchestratorChildMessage(
 		}
 		event, err = sendMessageTx(
 			ctx, tx, orgID, childSessionID, idempotencyKey, text, "", orchestratorSessionID,
+			"", nil,
 		)
 		return err
 	})

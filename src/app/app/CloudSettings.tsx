@@ -51,6 +51,8 @@ export function CloudSettings({
   onDisconnectAgent,
   onDisconnectGitHub,
   onDisconnectGitHubUser,
+  onConnectUserAgent,
+  onDisconnectUserAgent,
   onInviteMember,
   onRevokeInvitation,
   onSelectOrganization,
@@ -58,6 +60,8 @@ export function CloudSettings({
   providerBusy,
   providers,
   selectedOrganizationId,
+  userProviderBusy,
+  userProviders,
 }: {
   account: CurrentAccount;
   busy: boolean;
@@ -77,6 +81,13 @@ export function CloudSettings({
   ) => Promise<void>;
   onDisconnectGitHub: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectGitHubUser: () => Promise<void>;
+  onConnectUserAgent: (
+    provider: AgentProvider,
+    input: PutAgentProviderConnectionInput,
+  ) => Promise<void>;
+  onDisconnectUserAgent: (
+    connection: RedactedProviderConnection,
+  ) => Promise<void>;
   onInviteMember: (input: CreateInvitationInput) => Promise<void>;
   onRevokeInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
@@ -84,6 +95,8 @@ export function CloudSettings({
   providerBusy: boolean;
   providers: ProviderCapability;
   selectedOrganizationId: string;
+  userProviderBusy: boolean;
+  userProviders: ProviderCapability;
 }) {
   const [panel, setPanel] = useState<SettingsPanel>(initialPanel);
   const membership =
@@ -213,6 +226,17 @@ export function CloudSettings({
             </SettingsSection>
           ) : null}
 
+          {panel === "profile" ? (
+            <CodingAgentSettings
+              busy={userProviderBusy}
+              description="Connect a credential once and it works in every organization you belong to — no need to reconnect it per org."
+              onConnect={onConnectUserAgent}
+              onDisconnect={onDisconnectUserAgent}
+              providers={userProviders}
+              title="Your personal coding agents"
+            />
+          ) : null}
+
           {panel === "notifications" ? (
             <SettingsSection
               description="Organization invitation APIs are not available yet."
@@ -289,17 +313,21 @@ export function CloudSettings({
 
 function CodingAgentSettings({
   busy,
+  description = "Credentials are validated, encrypted, and never returned by the API.",
   onConnect,
   onDisconnect,
   providers,
+  title = "Coding agents",
 }: {
   busy: boolean;
+  description?: string;
   onConnect: (
     provider: AgentProvider,
     input: PutAgentProviderConnectionInput,
   ) => Promise<void>;
   onDisconnect: (connection: RedactedProviderConnection) => Promise<void>;
   providers: ProviderCapability;
+  title?: string;
 }) {
   const [editing, setEditing] = useState<AgentProvider | null>(null);
   const [credentialType, setCredentialType] =
@@ -313,10 +341,7 @@ function CodingAgentSettings({
   ];
 
   return (
-    <SettingsSection
-      description="Credentials are validated, encrypted, and never returned by the API."
-      title="Coding agents"
-    >
+    <SettingsSection description={description} title={title}>
       {providers.status === "loading" ? (
         <p className="text-sm text-[var(--color-text-passive)]">
           Loading coding-agent connections…

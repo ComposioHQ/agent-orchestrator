@@ -35,6 +35,7 @@ func (s *Store) SendMessage(
 		var err error
 		event, err = sendMessageTx(
 			ctx, tx, orgID, sessionID, idempotencyKey, text, principal.UserID, "",
+			access.ModeCap, access.DeniedCommands,
 		)
 		return err
 	})
@@ -45,6 +46,8 @@ func sendMessageTx(
 	ctx context.Context,
 	tx pgx.Tx,
 	orgID, sessionID, idempotencyKey, text, actorUserID, actorSessionID string,
+	modeCap string,
+	deniedCommands []string,
 ) (domain.ClientEvent, error) {
 	payload, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
@@ -70,7 +73,7 @@ func sendMessageTx(
 	if err != nil {
 		return domain.ClientEvent{}, normalizeConstraintError(err)
 	}
-	event, err := appendUserMessage(ctx, tx, orgID, sessionID, text)
+	event, err := appendUserMessage(ctx, tx, orgID, sessionID, text, modeCap, deniedCommands)
 	if err != nil {
 		return domain.ClientEvent{}, err
 	}
@@ -213,12 +216,24 @@ func (s *Store) AppendSessionEvent(
 	return event, nil
 }
 
+// appendUserMessage records a user message and, depending on how the
+// session is currently running, either injects it directly into an
+// already-open interactive agent terminal or queues it as a new turn.
+// modeCap/deniedCommands are the sender's share-grant cap, if any (zero
+// values for an org member or an unshared session) — a live terminal was
+// opened under whatever mode was in force when it started, so a capped
+// sender's message is re-checked against that same cap here rather than
+// trusted just because the terminal already exists; a queued turn instead
+// carries the cap forward onto the ao_turns row for ClaimWorkerTurn to
+// apply against the session's mode at claim time.
 func appendUserMessage(
 	ctx context.Context,
 	tx pgx.Tx,
 	orgID string,
 	sessionID string,
 	text string,
+	modeCap string,
+	deniedCommands []string,
 ) (domain.ClientEvent, error) {
 	event, err := appendUserMessageEvent(ctx, tx, orgID, sessionID, text)
 	if err != nil {
@@ -226,15 +241,25 @@ func appendUserMessage(
 	}
 	var terminalID string
 	var workerEpoch int64
+	var sessionMode string
+	var sessionDeniedCommands []string
 	err = tx.QueryRow(ctx,
-		`SELECT id, worker_epoch FROM ao_terminal_sessions
-		WHERE org_id = $1 AND session_id = $2 AND kind = 'agent'
-		  AND state = 'open' AND expires_at > now()
-		ORDER BY created_at DESC
+		`SELECT terminal.id, terminal.worker_epoch, session.mode, session.denied_commands
+		FROM ao_terminal_sessions terminal
+		JOIN ao_sessions session
+			ON session.org_id = terminal.org_id AND session.id = terminal.session_id
+		WHERE terminal.org_id = $1 AND terminal.session_id = $2 AND terminal.kind = 'agent'
+		  AND terminal.state = 'open' AND terminal.expires_at > now()
+		ORDER BY terminal.created_at DESC
 		LIMIT 1`,
 		orgID, sessionID,
-	).Scan(&terminalID, &workerEpoch)
+	).Scan(&terminalID, &workerEpoch, &sessionMode, &sessionDeniedCommands)
 	if err == nil {
+		effective := effectiveMode(sessionMode, modeCap)
+		effectiveDenied := effectiveDeniedCommands(sessionDeniedCommands, deniedCommands)
+		if effective == "read-only" || len(effectiveDenied) != 0 {
+			return domain.ClientEvent{}, ErrForbidden
+		}
 		payload, marshalErr := json.Marshal(map[string]any{
 			"terminalId": terminalID,
 			"data":       []byte(text + "\r"),
@@ -258,11 +283,13 @@ func appendUserMessage(
 	if _, err := tx.Exec(
 		ctx,
 		`INSERT INTO ao_turns (
-			org_id, session_id, user_message_sequence
-		) VALUES ($1, $2, $3)`,
+			org_id, session_id, user_message_sequence, mode_cap, denied_commands
+		) VALUES ($1, $2, $3, NULLIF($4, ''), $5)`,
 		orgID,
 		sessionID,
 		event.Sequence,
+		modeCap,
+		nonNilStrings(deniedCommands),
 	); err != nil {
 		return domain.ClientEvent{}, normalizeConstraintError(err)
 	}

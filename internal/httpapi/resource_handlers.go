@@ -266,7 +266,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			s.writeStoreError(w, r, err)
 			return
 		}
-		if !agentConnectionAvailable(connections, request.Harness) {
+		available := agentConnectionAvailable(connections, request.Harness)
+		if !available {
+			if userStore, ok := s.store.(userProviderCredentialStore); ok {
+				available, err = userStore.UserAgentCredentialAvailable(
+					r.Context(), principalFrom(r).UserID, request.Harness,
+				)
+				if err != nil {
+					s.writeStoreError(w, r, err)
+					return
+				}
+			}
+		}
+		if !available {
 			writeError(
 				w, r, http.StatusUnprocessableEntity,
 				"agent_provider_required",

@@ -37,6 +37,8 @@ func (s *Store) ClaimWorkerTurn(
 		}
 
 		var state string
+		var turnModeCap string
+		var turnDeniedCommands []string
 		err := tx.QueryRow(
 			ctx,
 			`WITH candidate AS (
@@ -78,14 +80,17 @@ func (s *Store) ClaimWorkerTurn(
 				session.mode, session.denied_commands, session.harness,
 				claimed.attempt_count, claimed.worker_epoch,
 				claimed.state, session.agent_session_id,
-				claimed.user_message_sequence
+				claimed.user_message_sequence,
+				COALESCE(claimed_turn.mode_cap, ''), COALESCE(claimed_turn.denied_commands, ARRAY[]::text[])
 			FROM claimed
 			JOIN ao_sessions session
 				ON session.org_id = $1 AND session.id = claimed.session_id
 			JOIN ao_events event
 				ON event.org_id = $1
 				AND event.session_id = claimed.session_id
-				AND event.sequence = claimed.user_message_sequence`,
+				AND event.sequence = claimed.user_message_sequence
+			JOIN ao_turns claimed_turn
+				ON claimed_turn.id = claimed.id`,
 			orgID,
 			sessionID,
 			epoch,
@@ -101,6 +106,8 @@ func (s *Store) ClaimWorkerTurn(
 			&state,
 			&turn.AgentSessionID,
 			&turn.UserEventSequence,
+			&turnModeCap,
+			&turnDeniedCommands,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -108,6 +115,11 @@ func (s *Store) ClaimWorkerTurn(
 		if err != nil {
 			return fmt.Errorf("claim worker turn: %w", err)
 		}
+		// The session's own mode/denied_commands are the ceiling; a turn
+		// created from a capped share-grant holder's message narrows that
+		// ceiling further, never loosens it. See effectiveMode.
+		turn.Mode = effectiveMode(turn.Mode, turnModeCap)
+		turn.DeniedCommands = effectiveDeniedCommands(turn.DeniedCommands, turnDeniedCommands)
 		turn.CancelRequested = state == "cancel_requested"
 		claimed = true
 		return appendTypedEvent(ctx, tx, orgID, sessionID, "chat.turn_started", map[string]any{
@@ -342,6 +354,60 @@ func (s *Store) WorkerAgentCredential(
 				AND session.is_terminated = false`,
 			orgID,
 			sessionID,
+			defaultWorkerCredentialLabel,
+		).Scan(
+			&credential.Provider,
+			&credential.CredentialType,
+			&credential.EncryptedSecret,
+			&credential.Nonce,
+		)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		// The org has no shared connection for this harness — fall back to
+		// the session creator's own personal connection, if they have one.
+		// This is what lets connecting a credential once make it usable
+		// across every org a person belongs to, not just the one they
+		// connected it in; it never overrides an org-level connection that
+		// exists, only fills in when there isn't one.
+		var harness string
+		var createdByUserID *string
+		if err := tx.QueryRow(
+			ctx,
+			`SELECT harness, created_by_user_id::text
+			FROM ao_sessions
+			WHERE org_id = $1 AND id = $2 AND is_terminated = false`,
+			orgID, sessionID,
+		).Scan(&harness, &createdByUserID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if createdByUserID == nil {
+			return ErrNotFound
+		}
+		if _, err := tx.Exec(
+			ctx, `SELECT set_config('ao.user_id', $1, true)`, *createdByUserID,
+		); err != nil {
+			return err
+		}
+		err = tx.QueryRow(
+			ctx,
+			`SELECT connection.provider,
+				COALESCE(connection.config->>'credentialType', ''),
+				connection.encrypted_secret,
+				connection.secret_nonce
+			FROM ao_user_provider_connections connection
+			WHERE connection.user_id = $1
+			  AND connection.provider = $2
+			  AND connection.label = $3
+			  AND connection.validation_state = 'valid'`,
+			*createdByUserID,
+			harness,
 			defaultWorkerCredentialLabel,
 		).Scan(
 			&credential.Provider,

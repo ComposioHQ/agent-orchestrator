@@ -297,6 +297,70 @@ func TestRedeemingALinkAgainRefreshesRatherThanDuplicatesTheGrant(t *testing.T) 
 	}
 }
 
+func TestClaimedTurnAppliesTheSharedSendersPolicyCapNotJustTheSessionsOwnMode(t *testing.T) {
+	t.Parallel()
+	f := newShareFixture(t, "turn-cap")
+	ctx := context.Background()
+
+	// The session itself is fully trusted, with nothing denied — proving the
+	// cap below comes from the grant, not the session's own (looser) policy.
+	if err := f.store.withOrg(ctx, f.ownerOrgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sessions SET mode = 'trusted', denied_commands = '{}' WHERE id = $1`,
+			f.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("set session trusted: %v", err)
+	}
+	workerID, epoch := registerTestWorker(t, sandboxFixture{
+		store: f.store, principal: f.owner, orgID: f.ownerOrgID,
+		projectID: f.projectID, sessionID: f.sessionID,
+	})
+
+	_, editorToken, err := f.store.CreateProjectShareLink(ctx, f.owner, f.ownerOrgID, f.projectID, domain.CreateShareLink{
+		SessionID: f.sessionID, Role: "editor", ModeCap: "standard", DeniedCommands: []string{"rm -rf"},
+	})
+	if err != nil {
+		t.Fatalf("create capped editor share link: %v", err)
+	}
+	if _, err := f.store.RedeemProjectShareLink(ctx, f.other, f.ownerOrgID, editorToken); err != nil {
+		t.Fatalf("redeem share link: %v", err)
+	}
+	if _, err := f.store.SendMessage(ctx, f.other, f.ownerOrgID, f.sessionID, uuid.NewString(), "run rm -rf on the repo"); err != nil {
+		t.Fatalf("shared editor send message: %v", err)
+	}
+
+	turn, ok, err := f.store.ClaimWorkerTurn(ctx, f.ownerOrgID, f.sessionID, workerID, epoch)
+	if err != nil || !ok {
+		t.Fatalf("claim turn: turn=%+v ok=%v err=%v", turn, ok, err)
+	}
+	if turn.Mode != "standard" {
+		t.Fatalf("claimed turn mode = %q, want standard (capped from the session's own trusted)", turn.Mode)
+	}
+	if !slices.Contains(turn.DeniedCommands, "rm -rf") {
+		t.Fatalf("claimed turn denied commands = %v, want rm -rf present", turn.DeniedCommands)
+	}
+	if _, err := f.store.FinishWorkerTurn(
+		ctx, f.ownerOrgID, f.sessionID, workerID, turn.ID, epoch, turn.Attempt, "completed", "",
+	); err != nil {
+		t.Fatalf("finish first turn: %v", err)
+	}
+
+	// The owner's own message on the same session is unaffected by the
+	// other user's grant — it claims under the session's own trusted mode.
+	if _, err := f.store.SendMessage(ctx, f.owner, f.ownerOrgID, f.sessionID, uuid.NewString(), "carry on"); err != nil {
+		t.Fatalf("owner send message: %v", err)
+	}
+	ownerTurn, ok, err := f.store.ClaimWorkerTurn(ctx, f.ownerOrgID, f.sessionID, workerID, epoch)
+	if err != nil || !ok {
+		t.Fatalf("claim owner turn: turn=%+v ok=%v err=%v", ownerTurn, ok, err)
+	}
+	if ownerTurn.Mode != "trusted" || len(ownerTurn.DeniedCommands) != 0 {
+		t.Fatalf("owner turn = mode=%q denied=%v, want trusted/empty", ownerTurn.Mode, ownerTurn.DeniedCommands)
+	}
+}
+
 func TestTerminalTicketScopesAndPolicyCapForSharedSessions(t *testing.T) {
 	t.Parallel()
 	f := newShareFixture(t, "terminal-share")
@@ -360,6 +424,77 @@ func TestTerminalTicketScopesAndPolicyCapForSharedSessions(t *testing.T) {
 	}
 	if !slices.Contains(memberScopes, "terminal:operate") {
 		t.Fatalf("member scopes = %v, want terminal:operate present", memberScopes)
+	}
+}
+
+func TestCappedSenderCannotInjectIntoAnAlreadyOpenAgentTerminal(t *testing.T) {
+	t.Parallel()
+	f := newShareFixture(t, "live-terminal-cap")
+	ctx := context.Background()
+
+	if err := f.store.withOrg(ctx, f.ownerOrgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sessions SET mode = 'trusted', denied_commands = '{}' WHERE id = $1`,
+			f.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("set session trusted: %v", err)
+	}
+	_, epoch := registerTestWorker(t, sandboxFixture{
+		store: f.store, principal: f.owner, orgID: f.ownerOrgID,
+		projectID: f.projectID, sessionID: f.sessionID,
+	})
+	// Simulate a live, already-open interactive agent terminal — opened
+	// under the session's own trusted mode, before any sharing happened.
+	if err := f.store.withOrg(ctx, f.ownerOrgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO ao_terminal_sessions (org_id, session_id, worker_epoch, kind, state, expires_at)
+			VALUES ($1, $2, $3, 'agent', 'open', now() + interval '1 hour')`,
+			f.ownerOrgID, f.sessionID, epoch,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("open live agent terminal: %v", err)
+	}
+
+	_, viewerToken, err := f.store.CreateProjectShareLink(ctx, f.owner, f.ownerOrgID, f.projectID, domain.CreateShareLink{
+		SessionID: f.sessionID, Role: "viewer", ModeCap: "read-only",
+	})
+	if err != nil {
+		t.Fatalf("create viewer share link: %v", err)
+	}
+	if _, err := f.store.RedeemProjectShareLink(ctx, f.other, f.ownerOrgID, viewerToken); err != nil {
+		t.Fatalf("redeem share link: %v", err)
+	}
+
+	// A viewer is blocked before ever reaching the terminal-input injection
+	// (SendMessage itself rejects viewers) — this is the belt on top of the
+	// suspenders below, which cover an editor with a narrower cap instead.
+	if _, err := f.store.SendMessage(ctx, f.other, f.ownerOrgID, f.sessionID, uuid.NewString(), "hello"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("viewer send message into live terminal error = %v, want ErrForbidden", err)
+	}
+
+	editor, _ := registerTestUser(t, f.store, "cappededitor-"+strings.ToLower(uuid.NewString()[:8])+"@example.com", "cappededitor-"+strings.ToLower(uuid.NewString()[:8]), time.Now())
+	_, editorToken, err := f.store.CreateProjectShareLink(ctx, f.owner, f.ownerOrgID, f.projectID, domain.CreateShareLink{
+		SessionID: f.sessionID, Role: "editor", DeniedCommands: []string{"rm -rf"},
+	})
+	if err != nil {
+		t.Fatalf("create capped editor share link: %v", err)
+	}
+	if _, err := f.store.RedeemProjectShareLink(ctx, editor, f.ownerOrgID, editorToken); err != nil {
+		t.Fatalf("redeem editor share link: %v", err)
+	}
+	// An editor with ANY additional denied-commands cap cannot inject into
+	// an already-open terminal either — a live TUI can't be faithfully
+	// filtered by command prefix, same reasoning as IssueTerminalTicket.
+	if _, err := f.store.SendMessage(ctx, editor, f.ownerOrgID, f.sessionID, uuid.NewString(), "hello"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("capped editor send message into live terminal error = %v, want ErrForbidden", err)
+	}
+
+	// The owner, uncapped, can still use the live terminal normally.
+	if _, err := f.store.SendMessage(ctx, f.owner, f.ownerOrgID, f.sessionID, uuid.NewString(), "hello"); err != nil {
+		t.Fatalf("owner send message into live terminal: %v", err)
 	}
 }
 

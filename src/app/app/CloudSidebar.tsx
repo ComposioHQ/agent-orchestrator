@@ -23,6 +23,15 @@ import {
 import { useState } from "react";
 
 import { CloudWorkspaceSwitcher } from "./CloudWorkspaceSwitcher";
+import { OrchestratorIcon } from "./OrchestratorIcon";
+
+// An orchestrator sorts first within its project — it's the one session
+// that's meant to always be reachable, with every worker it spawns
+// (matching kind: "worker" and the same projectId) listed as VMs under it.
+function bySessionKind(a: Session, b: Session): number {
+  if (a.kind === b.kind) return 0;
+  return a.kind === "orchestrator" ? -1 : 1;
+}
 
 export function CloudSidebar({
   account,
@@ -139,9 +148,9 @@ export function CloudSidebar({
         ) : null}
         {projectItems.map((project) => {
           const open = !closedProjects.has(project.id);
-          const projectSessions = sessions.filter(
-            (session) => session.projectId === project.id,
-          );
+          const projectSessions = sessions
+            .filter((session) => session.projectId === project.id)
+            .sort(bySessionKind);
           return (
             <div className="mb-1" key={project.id}>
               <div
@@ -242,13 +251,25 @@ export function CloudSidebar({
                         }`}
                         onClick={() => onSelectSession(session.id)}
                       >
-                        <span
-                          className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                          aria-hidden="true"
-                        />
+                        {session.kind === "orchestrator" ? (
+                          <OrchestratorIcon
+                            className="size-3.5 shrink-0"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <span
+                            className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                            aria-hidden="true"
+                          />
+                        )}
                         <span className="min-w-0 flex-1 truncate">
                           {session.displayName}
                         </span>
+                        {session.kind === "orchestrator" ? (
+                          <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-[var(--color-text-passive)]">
+                            Orchestrator
+                          </span>
+                        ) : null}
                       </button>
                       <SessionActions
                         onDelete={() => {
@@ -388,7 +409,7 @@ export function CloudSidebar({
                             No sessions yet.
                           </p>
                         ) : (
-                          projectSessions.map((session) => (
+                          projectSessions.sort(bySessionKind).map((session) => (
                             <button
                               className={`flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-[var(--color-interactive-hover)] ${
                                 selectedSessionId === session.id
@@ -399,10 +420,17 @@ export function CloudSidebar({
                               onClick={() => onSelectSharedSession(shared, session.id)}
                               type="button"
                             >
-                              <span
-                                className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                                aria-hidden="true"
-                              />
+                              {session.kind === "orchestrator" ? (
+                                <OrchestratorIcon
+                                  className="size-3.5 shrink-0"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <span
+                                  className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                                  aria-hidden="true"
+                                />
+                              )}
                               <span className="min-w-0 flex-1 truncate">
                                 {session.displayName}
                               </span>

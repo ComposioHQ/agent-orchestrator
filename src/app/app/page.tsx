@@ -92,6 +92,10 @@ export function CloudWorkspace() {
     initialProviderCapability,
   );
   const [providerBusy, setProviderBusy] = useState(false);
+  const [userProviders, setUserProviders] = useState<ProviderCapability>(
+    initialProviderCapability,
+  );
+  const [userProviderBusy, setUserProviderBusy] = useState(false);
   const [members, setMembers] = useState<MembersCapability>(
     initialMembersCapability,
   );
@@ -326,6 +330,22 @@ export function CloudWorkspace() {
     }
   }, [client]);
 
+  const loadUserProviders = useCallback(async () => {
+    try {
+      const connections = await client.listUserProviderConnections();
+      setUserProviders({ status: "available", connections });
+    } catch (cause) {
+      setUserProviders({
+        status: "error",
+        connections: [],
+        message:
+          cause instanceof Error
+            ? cause.message
+            : "Could not load your personal provider connections.",
+      });
+    }
+  }, [client]);
+
   useEffect(() => {
     let active = true;
     void client
@@ -342,6 +362,7 @@ export function CloudWorkspace() {
           }
         }
         void loadSharedProjects();
+        void loadUserProviders();
         const firstOrganization = value.organizations[0]?.id;
         if (!firstOrganization) {
           setError("Your account has no active organization memberships.");
@@ -360,7 +381,7 @@ export function CloudWorkspace() {
     return () => {
       active = false;
     };
-  }, [client, loadOrganization, loadSharedProjects]);
+  }, [client, loadOrganization, loadSharedProjects, loadUserProviders]);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -743,6 +764,62 @@ export function CloudWorkspace() {
     }
   };
 
+  const connectUserAgentProvider = async (
+    provider: "claude-code" | "codex" | "cursor",
+    input: PutAgentProviderConnectionInput,
+  ) => {
+    setUserProviderBusy(true);
+    setError("");
+    try {
+      const response = await client.putUserProviderConnection(
+        provider,
+        input,
+      );
+      setUserProviders((current) => ({
+        status: "available",
+        connections: [
+          ...current.connections.filter(
+            (connection) => connection.provider !== provider,
+          ),
+          response.providerConnection,
+        ],
+      }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+      throw cause;
+    } finally {
+      setUserProviderBusy(false);
+    }
+  };
+
+  const disconnectUserAgentProvider = async (
+    connection: RedactedProviderConnection,
+  ) => {
+    const provider = connection.provider;
+    if (
+      provider !== "claude-code" &&
+      provider !== "codex" &&
+      provider !== "cursor"
+    ) {
+      return;
+    }
+    setUserProviderBusy(true);
+    setError("");
+    try {
+      await client.deleteUserProviderConnection(provider);
+      setUserProviders((current) => ({
+        ...current,
+        connections: current.connections.filter(
+          (item) => item.id !== connection.id,
+        ),
+      }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setUserProviderBusy(false);
+    }
+  };
+
   const inviteMember = async (input: CreateInvitationInput) => {
     setMembersBusy(true);
     setError("");
@@ -980,7 +1057,9 @@ export function CloudWorkspace() {
                 membersBusy={membersBusy}
                 onConnectGitHub={connectGitHub}
                 onConnectAgent={connectAgentProvider}
+                onConnectUserAgent={connectUserAgentProvider}
                 onDisconnectAgent={disconnectAgentProvider}
+                onDisconnectUserAgent={disconnectUserAgentProvider}
                 onBack={() => setView("board")}
                 onDisconnectGitHub={disconnectGitHubInstallation}
                 onDisconnectGitHubUser={disconnectGitHubUser}
@@ -996,6 +1075,8 @@ export function CloudWorkspace() {
                 providerBusy={providerBusy}
                 providers={providers}
                 selectedOrganizationId={organizationId}
+                userProviderBusy={userProviderBusy}
+                userProviders={userProviders}
               />
             </div>
           ) : (
