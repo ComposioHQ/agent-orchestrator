@@ -493,7 +493,8 @@ it("opens project actions and creates a real share link", async () => {
       deniedCommands: [],
       createdAt: "2026-08-13T00:00:00Z",
       updatedAt: "2026-08-13T00:00:00Z",
-      url: "https://app.example.com/share/org-1/tok_abc123",
+      token: "tok_abc123",
+      url: "https://wrong-internal-host.example/share/org-1/tok_abc123",
     },
   });
   render(<CloudWorkspace />);
@@ -518,7 +519,7 @@ it("opens project actions and creates a real share link", async () => {
   );
   expect(
     await within(dialog).findByDisplayValue(
-      "https://app.example.com/share/org-1/tok_abc123",
+      `${window.location.origin}/share/org-1/tok_abc123`,
     ),
   ).toBeVisible();
 });

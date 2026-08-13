@@ -25,9 +25,16 @@ type shareLinkResponse struct {
 	ExpiresAt      *time.Time `json:"expiresAt,omitempty"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	UpdatedAt      time.Time  `json:"updatedAt"`
-	// URL is only ever populated once, by createProjectShareLink, from the
-	// raw token the store never persists. Every other response omits it.
-	URL string `json:"url,omitempty"`
+	// Token and URL are only ever populated once, by createProjectShareLink,
+	// from the raw token the store never persists. Every other response
+	// omits them. Token is the source of truth — the client builds the
+	// actual link it displays/copies from window.location.origin plus
+	// Token, since only the browser reliably knows its own public-facing
+	// host; URL is a best-effort convenience for non-browser callers, built
+	// from what this request's own proxy chain reported (see
+	// shareLinkURL), which is not guaranteed correct in every deployment.
+	Token string `json:"token,omitempty"`
+	URL   string `json:"url,omitempty"`
 }
 
 func toShareLinkResponse(link domain.ShareLink) shareLinkResponse {
@@ -170,6 +177,7 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	response := toShareLinkResponse(link)
+	response.Token = token
 	response.URL = shareLinkURL(r, orgID, token)
 	writeJSON(w, http.StatusCreated, map[string]any{"link": response})
 }

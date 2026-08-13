@@ -53,7 +53,8 @@ it("creates a link and shows its one-time url", async () => {
     deniedCommands: [],
     createdAt: "2026-08-13T00:00:00Z",
     updatedAt: "2026-08-13T00:00:00Z",
-    url: "https://app.example.com/share/org-1/tok_abc123",
+    token: "tok_abc123",
+    url: "https://wrong-internal-host.example/share/org-1/tok_abc123",
   } as ProjectShareLink;
   const onCreate = vi.fn().mockResolvedValue(link);
   render(
@@ -76,8 +77,13 @@ it("creates a link and shows its one-time url", async () => {
     recipients: [],
     modeCap: "standard",
   });
+  // Built from window.location.origin, not the server-provided url — the
+  // server only sees whatever internal host this request happened to be
+  // proxied through, which the browser must never trust for a link it will
+  // open later.
+  const expectedURL = `${window.location.origin}/share/${project.orgId}/${link.token}`;
   await waitFor(() =>
-    expect(screen.getByDisplayValue(link.url as string)).toBeVisible(),
+    expect(screen.getByDisplayValue(expectedURL)).toBeVisible(),
   );
 });
 

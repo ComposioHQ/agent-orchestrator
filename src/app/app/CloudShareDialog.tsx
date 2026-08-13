@@ -67,6 +67,15 @@ export function CloudShareDialog({
   const [copied, setCopied] = useState(false);
 
   const activeLinks = links.filter((link) => link.status === "active");
+  // Built from window.location.origin, not the server's best-effort url —
+  // only the browser reliably knows its own public-facing host; the
+  // backend sees whatever internal address it was reached through, which
+  // is wrong to embed in a link meant to be opened later, in any
+  // deployment (local dev included).
+  const createdLinkURL =
+    createdLink?.token && typeof window !== "undefined"
+      ? `${window.location.origin}/share/${project.orgId}/${createdLink.token}`
+      : undefined;
 
   return (
     <div
@@ -95,7 +104,7 @@ export function CloudShareDialog({
 
         <div className="max-h-[calc(90vh-48px)] overflow-y-auto">
           <div className="space-y-6 p-5">
-            {createdLink?.url ? (
+            {createdLinkURL ? (
               <div className="rounded-lg border border-[#4d8dff]/40 bg-[#4d8dff]/10 px-3 py-3">
                 <p className="mb-2 text-xs text-[var(--muted-foreground)]">
                   Link created. Copy it now — it will not be shown again.
@@ -104,13 +113,13 @@ export function CloudShareDialog({
                   <input
                     className="h-9 min-w-0 flex-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 font-mono text-xs text-[var(--foreground)]"
                     readOnly
-                    value={createdLink.url}
+                    value={createdLinkURL}
                     onFocus={(event) => event.currentTarget.select()}
                   />
                   <button
                     className={buttonClass}
                     onClick={async () => {
-                      await navigator.clipboard.writeText(createdLink.url ?? "");
+                      await navigator.clipboard.writeText(createdLinkURL);
                       setCopied(true);
                       window.setTimeout(() => setCopied(false), 1500);
                     }}
