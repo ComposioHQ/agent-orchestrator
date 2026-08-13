@@ -50,7 +50,7 @@ class EventSourceStub {
 		this.handlers.set(type, listener);
 	}
 	emit(type: string, data: string) {
-		this.handlers.get(type)?.({ data } as unknown as Event);
+		this.handlers.get(type)?.({ type, data } as unknown as Event);
 	}
 	close() {
 		this.closed = true;
@@ -137,6 +137,138 @@ describe("createEventTransport", () => {
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-scm-summary"] });
 			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-usage"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("routes a session_updated burst away from per-session SCM summaries and bounds the flush rate", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			const source = EventSourceStub.instances[0];
+
+			// Live-measured shape: an active agent emits ~3 session_updated
+			// events/second (usage-binding and activity CDC) with no PR changes.
+			for (let i = 0; i < 20; i++) {
+				source.emit(
+					"session_updated",
+					JSON.stringify({
+						seq: i,
+						projectId: "proj-1",
+						sessionId: "sess-1",
+						type: "session_updated",
+						payload: { id: "sess-1" },
+						createdAt: "2026-08-10T00:00:00Z",
+					}),
+				);
+				vi.advanceTimersByTime(320);
+			}
+			vi.advanceTimersByTime(2_000);
+
+			const calls = (queryClient.invalidateQueries as ReturnType<typeof vi.fn>).mock.calls.map((call) =>
+				(call[0] as { queryKey: readonly string[] }).queryKey.join("/"),
+			);
+			// No PR event arrived, so no per-session PR summary refetch at all.
+			expect(calls.filter((key) => key.startsWith("session-scm-summary"))).toHaveLength(0);
+			// Twenty events collapse into throttled workspace+usage rounds
+			// (~1/second) instead of one round per event.
+			const workspaceFlushes = calls.filter((key) => key === "workspaces").length;
+			expect(workspaceFlushes).toBeGreaterThan(0);
+			expect(workspaceFlushes).toBeLessThanOrEqual(8);
+			expect(calls.filter((key) => key === "session-usage")).toHaveLength(workspaceFlushes);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("scopes PR events to the owning session's SCM summary without touching usage", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"pr_updated",
+				JSON.stringify({
+					seq: 7,
+					projectId: "proj-1",
+					sessionId: "sess-9",
+					type: "pr_updated",
+					payload: { url: "https://github.com/x/y/pull/1" },
+					createdAt: "2026-08-10T00:00:00Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-scm-summary", "sess-9"],
+			});
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({
+				queryKey: ["session-scm-summary"],
+			});
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["session-usage"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("falls back to the SCM summary root when a PR moves between sessions", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"pr_session_changed",
+				JSON.stringify({
+					seq: 8,
+					projectId: "proj-1",
+					sessionId: "sess-2",
+					type: "pr_session_changed",
+					payload: { url: "https://github.com/x/y/pull/2" },
+					createdAt: "2026-08-10T00:00:00Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["session-scm-summary"],
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("flushes under a continuous sub-debounce event stream instead of starving", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			const source = EventSourceStub.instances[0];
+
+			// 100 ms spacing never lets a plain trailing debounce fire.
+			for (let i = 0; i < 50; i++) {
+				source.emit(
+					"session_updated",
+					JSON.stringify({
+						seq: i,
+						projectId: "proj-1",
+						sessionId: "sess-1",
+						type: "session_updated",
+						payload: { id: "sess-1" },
+						createdAt: "2026-08-10T00:00:00Z",
+					}),
+				);
+				vi.advanceTimersByTime(100);
+			}
+
+			const workspaceFlushes = (queryClient.invalidateQueries as ReturnType<typeof vi.fn>).mock.calls.filter(
+				(call) => (call[0] as { queryKey: readonly string[] }).queryKey.join("/") === "workspaces",
+			).length;
+			// 5 s of continuous events: flushed about once a second, not zero, not 50×.
+			expect(workspaceFlushes).toBeGreaterThanOrEqual(4);
+			expect(workspaceFlushes).toBeLessThanOrEqual(6);
 		} finally {
 			vi.useRealTimers();
 		}

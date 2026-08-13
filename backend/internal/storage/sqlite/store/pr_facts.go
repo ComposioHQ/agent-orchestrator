@@ -53,6 +53,36 @@ func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) 
 	return out, nil
 }
 
+// ListAllPRFacts returns every session's PR snapshots in one query, grouped by
+// owning session and newest-first within each group — the batch form of
+// ListPRFactsForSession for the session list read path. Sessions without PRs
+// have no map entry.
+func (s *Store) ListAllPRFacts(ctx context.Context) (map[domain.SessionID][]domain.PRFacts, error) {
+	rows, err := s.qr.ListAllPRFacts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list all pr facts: %w", err)
+	}
+	out := make(map[domain.SessionID][]domain.PRFacts)
+	for _, r := range rows {
+		out[r.SessionID] = append(out[r.SessionID], domain.PRFacts{
+			URL:            r.URL,
+			Number:         int(r.Number),
+			Draft:          r.PRState == domain.PRStateDraft,
+			Merged:         r.PRState == domain.PRStateMerged,
+			Closed:         r.PRState == domain.PRStateClosed,
+			CI:             r.CIState,
+			Review:         r.ReviewDecision,
+			Mergeability:   r.Mergeability,
+			ReviewComments: r.ReviewComments,
+			SourceBranch:   r.SourceBranch,
+			TargetBranch:   r.TargetBranch,
+			HeadSHA:        r.HeadSha,
+			UpdatedAt:      r.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
 func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
 	state := r.PRState
 	return domain.PRFacts{

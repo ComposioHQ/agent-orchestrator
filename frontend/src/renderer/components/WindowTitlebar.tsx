@@ -78,7 +78,9 @@ export function WindowTitlebar({
 }) {
 	const { t } = useTranslation();
 	const theme = useResolvedTheme();
-	const { isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
 	// Electron draws the min/max/close overlay natively and can't read our CSS, so

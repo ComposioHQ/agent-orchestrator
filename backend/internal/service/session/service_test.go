@@ -224,6 +224,14 @@ func (f *fakeStore) ListPRFactsForSession(_ context.Context, id domain.SessionID
 	return []domain.PRFacts{pr}, nil
 }
 
+func (f *fakeStore) ListAllPRFacts(context.Context) (map[domain.SessionID][]domain.PRFacts, error) {
+	out := make(map[domain.SessionID][]domain.PRFacts, len(f.pr))
+	for id, pr := range f.pr {
+		out[id] = []domain.PRFacts{pr}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRequestCheck, error) {
 	return append([]domain.PullRequestCheck(nil), f.checks[prURL]...), nil
 }

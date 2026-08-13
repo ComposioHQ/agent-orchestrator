@@ -22,8 +22,16 @@ type previewSet struct {
 	url string
 }
 
-func (f *fakePreviewSessions) ListAllSessions(_ context.Context) ([]domain.SessionRecord, error) {
-	return append([]domain.SessionRecord(nil), f.sessions...), nil
+func (f *fakePreviewSessions) ListSessionPreviewRows(_ context.Context) ([]domain.SessionRecord, error) {
+	// Mirror the production query's contract: terminated sessions are excluded.
+	out := make([]domain.SessionRecord, 0, len(f.sessions))
+	for _, sess := range f.sessions {
+		if sess.IsTerminated {
+			continue
+		}
+		out = append(out, sess)
+	}
+	return out, nil
 }
 
 func (f *fakePreviewSessions) SetPreview(_ context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {

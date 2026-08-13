@@ -313,6 +313,31 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 	return mapListAllSessionsRows(rows), nil
 }
 
+// ListSessionPreviewRows returns sparse records for the preview poller's scan
+// loop: identity, kind, and preview/workspace fields only. All other
+// SessionRecord fields are zero values — callers must not treat these as full
+// records. Terminated sessions are excluded.
+func (s *Store) ListSessionPreviewRows(ctx context.Context) ([]domain.SessionRecord, error) {
+	rows, err := s.qr.ListSessionPreviewRows(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list session preview rows: %w", err)
+	}
+	out := make([]domain.SessionRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.SessionRecord{
+			ID:           r.ID,
+			Kind:         r.Kind,
+			IsTerminated: r.IsTerminated,
+			Metadata: domain.SessionMetadata{
+				WorkspacePath:   r.WorkspacePath,
+				PreviewURL:      r.PreviewURL,
+				PreviewRevision: r.PreviewRevision,
+			},
+		})
+	}
+	return out, nil
+}
+
 func mapListSessionsByProjectRows(rows []gen.ListSessionsByProjectRow) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
 	for _, r := range rows {

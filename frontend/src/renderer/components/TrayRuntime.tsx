@@ -29,12 +29,14 @@ export function TrayRuntime() {
 	}, [workspaces]);
 
 	const lastPushed = useRef<string | null>(null);
-	const serialized = JSON.stringify(sessions);
 	useEffect(() => {
+		// Serialize inside the effect: it runs only when the memoized entries
+		// change identity, not on every unrelated shell render.
+		const serialized = JSON.stringify(sessions);
 		if (lastPushed.current === serialized) return;
 		lastPushed.current = serialized;
 		aoBridge.tray.setAttentionState({ sessions });
-	}, [serialized, sessions]);
+	}, [sessions]);
 
 	useEffect(() => {
 		return aoBridge.tray.onOpenSession((target) => {
