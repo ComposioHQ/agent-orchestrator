@@ -44,7 +44,7 @@ Open a worker at any time to continue the conversation, attach to its terminal, 
 
 The project orchestrator is AO's persistent planning and coordination agent. It works at the level above individual tasks: the product direction, technical strategy, priorities, and sequence of work across the repository.
 
-Use the orchestrator to explore an idea before implementation, brainstorm product and technical approaches, reason through tradeoffs, identify high-impact work, and turn an ambiguous outcome into a concrete plan. Its project-scoped conversation preserves goals, decisions, constraints, and earlier reasoning. It combines that planning history with repository context and live AO state—active workers, ownership, pull requests, CI, and reviews—so planning stays grounded in both the project and the work already underway.
+Use the orchestrator to explore an idea before implementation, brainstorm product and technical approaches, reason through tradeoffs, identify high-impact work, and turn an ambiguous outcome into a concrete plan. Its project-scoped conversation preserves goals, decisions, constraints, and earlier reasoning. It combines that planning history with repository context and live AO state, including active workers, ownership, pull requests, CI, and reviews. This keeps planning grounded in both the project and the work already underway.
 
 When a plan becomes actionable, the orchestrator can break it into focused tasks, spawn or redirect workers, pass each worker the relevant context, follow their progress, and coordinate follow-up work. The orchestrator owns planning and delegation; workers own implementation, tests, commits, and pull requests.
 
@@ -52,10 +52,10 @@ When a plan becomes actionable, the orchestrator can break it into focused tasks
 
 Every worker appears on the same live board, whether you started it from **New task** or the orchestrator delegated it. AO derives each card's position from session, pull request, CI, and review facts, turning the Kanban into an operational view of the project:
 
-- **Working** — workers that are actively implementing or ready for another instruction
-- **Needs you** — blocked sessions, missing input, failed CI, requested changes, or lost signals
-- **In review** — open and draft pull requests waiting on checks or review
-- **Ready to merge** — approved or mergeable work, with merged sessions kept visible until they are archived
+- **Working:** workers that are actively implementing or ready for another instruction
+- **Needs you:** blocked sessions, missing input, failed CI, requested changes, or lost signals
+- **In review:** open and draft pull requests waiting on checks or review
+- **Ready to merge:** approved or mergeable work, with merged sessions kept visible until they are archived
 
 Each card keeps the task, agent, branch, activity, pull request, and status together. Open it to inspect the conversation or terminal, changed files, PR summary, reviews, and preview. The board shows what is moving, what is blocked, and where your attention will have the most impact.
 
@@ -226,7 +226,7 @@ Join [Discord](https://discord.com/invite/UZv7JjxbwG) for help and contributor d
 
 ## Anonymous telemetry
 
-AO uses privacy-preserving product usage and reliability metrics—designed to exclude PII and project content—to understand adoption and improve the product. [Learn more about telemetry and privacy](docs/telemetry.md).
+AO uses privacy-preserving product usage and reliability metrics designed to exclude PII and project content. These metrics help us understand adoption and improve the product. [Learn more about telemetry and privacy](docs/telemetry.md).
 
 ## License
 
