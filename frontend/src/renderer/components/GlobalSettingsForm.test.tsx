@@ -307,6 +307,15 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("You're on the latest version.")).toBeInTheDocument();
 	});
 
+	it("shows localized restart guidance for a net:: error status", async () => {
+		updGetStatus.mockResolvedValue({ state: "error", message: "net::ERR_FAILED", netError: true });
+		renderForm();
+		const guidance = await screen.findByText(
+			"Couldn't reach the update server — the app's network connection appears stuck. Restarting the app usually fixes this. (net::ERR_FAILED)",
+		);
+		expect(guidance).toBeInTheDocument();
+	});
+
 	it("opens feedback from settings and copies redacted report drafts", async () => {
 		const user = userEvent.setup();
 		const open = vi.spyOn(window, "open").mockReturnValue(null);

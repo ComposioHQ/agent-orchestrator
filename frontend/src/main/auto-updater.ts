@@ -422,19 +422,16 @@ function recordAutomaticCheckFailure(err: unknown): void {
   else consecutiveAutomaticNetFailures = 0;
 }
 
-// updateRequestErrorMessage turns a Chromium network-stack failure into
-// restart guidance instead of the raw net:: string (#3526); the original
-// message stays appended for diagnostics.
-function updateRequestErrorMessage(err: unknown): string {
-  const raw =
-    err instanceof Error
-      ? err.message
-      : err === undefined || err === null
-        ? "Update check failed"
-        : String(err);
-  if (isNetError(err))
-    return `Couldn't reach the update server — the app's network connection appears stuck. Restarting the app usually fixes this. (${raw})`;
-  return raw;
+// errorMessage extracts the user-facing message for an update error status,
+// defaulting null/undefined to a generic label. Net-error restart guidance is
+// localized in the renderer from the netError flag instead of being built here
+// (#3526).
+function errorMessage(err: unknown): string {
+  return err instanceof Error
+    ? err.message
+    : err == null
+      ? "Update check failed"
+      : String(err);
 }
 
 // isManifest404Error checks whether the error is a 404 on a release
@@ -570,12 +567,13 @@ function wireUpdaterEvents(): void {
       return;
     }
     // All other errors: broadcast so the user knows something went wrong.
-    // Chromium network-stack failures get restart guidance instead of the raw
-    // net:: string (#3526).
+    // Chromium network-stack failures carry a netError flag so the renderer can
+    // localize restart guidance instead of showing the raw net:: string (#3526).
     broadcast(
       withActiveRequest({
         state: "error",
-        message: updateRequestErrorMessage(err),
+        message: errorMessage(err),
+        ...(isNetError(err) ? { netError: true } : {}),
       }),
     );
   });
@@ -756,7 +754,8 @@ export async function checkForUpdatesNow(
     } else {
       broadcast({
         state: "error",
-        message: updateRequestErrorMessage(err),
+        message: errorMessage(err),
+        ...(isNetError(err) ? { netError: true } : {}),
         requestId: options.requestId,
       });
     }

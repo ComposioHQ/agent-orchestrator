@@ -38,6 +38,10 @@ export interface UpdateStatus {
 	// with Chromium network-stack errors (net::ERR_*) — the app's network stack
 	// is wedged and restarting the app usually fixes it (#3526).
 	staleCheckNudge?: boolean;
+	// Present only when state === "error" and the failure is a Chromium
+	// network-stack error (net::ERR_*). The renderer localizes restart guidance
+	// from this flag instead of receiving pre-built English prose (#3526).
+	netError?: boolean;
 }
 
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */

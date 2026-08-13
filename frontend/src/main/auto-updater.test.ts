@@ -740,7 +740,7 @@ describe("startAutoUpdates", () => {
     });
   });
 
-  it("shows restart guidance instead of the raw net:: string on a rejected manual check", async () => {
+  it("flags net errors on a rejected manual check", async () => {
     const { module, autoUpdater } = await importAutoUpdater();
     autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("net::ERR_FAILED"));
 
@@ -748,12 +748,12 @@ describe("startAutoUpdates", () => {
 
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
-      message:
-        "Couldn't reach the update server — the app's network connection appears stuck. Restarting the app usually fixes this. (net::ERR_FAILED)",
+      message: "net::ERR_FAILED",
+      netError: true,
     });
   });
 
-  it("shows restart guidance on a net:: error event during a manual check", async () => {
+  it("flags net errors on a net:: error event during a manual check", async () => {
     const { module, updaterEvents } = await importAutoUpdater();
 
     await module.checkForUpdatesNow(stateDir);
@@ -761,8 +761,8 @@ describe("startAutoUpdates", () => {
 
     expect(module.getUpdateStatus()).toEqual({
       state: "error",
-      message:
-        "Couldn't reach the update server — the app's network connection appears stuck. Restarting the app usually fixes this. (net::ERR_FAILED)",
+      message: "net::ERR_FAILED",
+      netError: true,
     });
   });
 

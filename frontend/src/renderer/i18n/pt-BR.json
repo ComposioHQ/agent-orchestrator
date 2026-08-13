@@ -630,6 +630,7 @@
 	"settings.updates.needInstalledApp": "As atualizações exigem o app instalado.",
 	"settings.updates.noFeatureReleases": "Nenhum release de feature ativo.",
 	"settings.updates.networkStale": "Não foi possível verificar atualizações por um tempo — reiniciar o app geralmente resolve.",
+	"settings.updates.netErrorRestartGuidance": "Não foi possível acessar o servidor de atualização — a conexão de rede do app parece travada. Reiniciar o app geralmente resolve. ({{message}})",
 	"settings.updates.nightlyWarning": "Builds Nightly são gerados todos os dias e podem ser instáveis ou causar perda de dados. Use Nightly apenas se estiver confortável com isso.",
 	"settings.updates.onFeatureBuild": "Você está no build do PR #{{pr}}.",
 	"settings.updates.returnToNightly": "Voltar ao Nightly",
