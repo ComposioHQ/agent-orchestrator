@@ -44,8 +44,8 @@ func (s *Service) trackerIDForIssue(cfg ports.SpawnConfig, project domain.Projec
 		return domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: native}, true
 	}
 	// 2. Try GitLab issue URL (/-/issues/<iid> pattern).
-	if native, ok := canonicalGitLabIssueURL(issue); ok {
-		return domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: native}, true
+	if native, host, ok := canonicalGitLabIssueURL(issue); ok {
+		return domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: native, Host: host}, true
 	}
 	// 3. Plain issue number — resolve repo from SCM origin or tracker-provider hint.
 	n, err := strconv.Atoi(issue)
@@ -133,7 +133,8 @@ func canonicalGitHubIssueURL(raw string) (string, bool) {
 }
 
 // canonicalGitLabIssueURL parses a GitLab issue URL into the native
-// "project-path#iid" form. GitLab issue URLs use the /-/issues/ separator:
+// "project-path#iid" form and extracts the host. GitLab issue URLs use
+// the /-/issues/ separator:
 //
 //   - https://gitlab.com/owner/repo/-/issues/123
 //   - https://gitlab.com/group/subgroup/repo/-/issues/123
@@ -141,39 +142,47 @@ func canonicalGitHubIssueURL(raw string) (string, bool) {
 //
 // Any host is accepted because self-managed GitLab instances use arbitrary
 // hostnames; the /-/issues/ path pattern is distinctive to GitLab.
-func canonicalGitLabIssueURL(raw string) (string, bool) {
+//
+// The returned host is the URL hostname for self-managed instances (e.g.
+// "gitlab.internal") and "" for gitlab.com (the zero value, meaning the
+// default host) so that callers can set TrackerID.Host without special-casing.
+func canonicalGitLabIssueURL(raw string) (native, host string, ok bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" {
-		return "", false
+		return "", "", false
 	}
 	path := strings.Trim(u.Path, "/")
 	if path == "" {
-		return "", false
+		return "", "", false
 	}
 	idx := strings.Index(path, "/-/issues/")
 	if idx <= 0 {
-		return "", false
+		return "", "", false
 	}
 	projectPath := path[:idx] // "owner/repo" or "group/subgroup/repo"
 	rest := path[idx+len("/-/issues/"):]
 	if rest == "" {
-		return "", false
+		return "", "", false
 	}
 	n, err := strconv.Atoi(rest)
 	if err != nil || n <= 0 {
-		return "", false
+		return "", "", false
 	}
 	parts := strings.Split(projectPath, "/")
 	for _, p := range parts {
 		if p == "" {
-			return "", false
+			return "", "", false
 		}
 	}
 	if len(parts) < 2 {
-		return "", false
+		return "", "", false
 	}
 	parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
-	return fmt.Sprintf("%s#%d", strings.Join(parts, "/"), n), true
+	host = u.Hostname()
+	if strings.EqualFold(host, "gitlab.com") {
+		host = "" // zero value means gitlab.com
+	}
+	return fmt.Sprintf("%s#%d", strings.Join(parts, "/"), n), host, true
 }
 
 func formatIssueContext(issue domain.Issue) string {

@@ -1772,6 +1772,9 @@ func TestSpawnIssueContextFromGitLabTracker(t *testing.T) {
 	if tracker.ids[0].Native != "acme/repo#42" {
 		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
 	}
+	if tracker.ids[0].Host != "" {
+		t.Fatalf("tracker id host = %q, want empty (gitlab.com zero value)", tracker.ids[0].Host)
+	}
 	issueContext := fc.spawnedCfg.IssueContext
 	for _, want := range []string{
 		"Issue: acme/repo#42",
@@ -1786,6 +1789,40 @@ func TestSpawnIssueContextFromGitLabTracker(t *testing.T) {
 		if !strings.Contains(issueContext, want) {
 			t.Fatalf("IssueContext missing %q:\n%s", want, issueContext)
 		}
+	}
+}
+
+// TestSpawnIssueContextFromSelfManagedGitLabTracker verifies that a
+// self-managed GitLab URL (https://gitlab.internal/...) produces a
+// TrackerID with Host set to "gitlab.internal" and is dispatched to the
+// GitLab tracker.
+func TestSpawnIssueContextFromSelfManagedGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.internal/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42", Host: "gitlab.internal"},
+		Title: "Self-managed issue",
+		Body:  "Body text.",
+		State: domain.IssueOpen,
+		URL:   "https://gitlab.internal/acme/repo/-/issues/42",
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "https://gitlab.internal/acme/repo/-/issues/42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	if tracker.ids[0].Host != "gitlab.internal" {
+		t.Fatalf("tracker id host = %q, want %q", tracker.ids[0].Host, "gitlab.internal")
 	}
 }
 
