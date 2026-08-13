@@ -946,7 +946,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			} catch (err) {
 				entry.view.setVisible?.(false);
 				entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to resolve preview file") };
-				options.mainWindow.webContents.send("browser:navState", entry.state);
+				shellContents(options).send("browser:navState", entry.state);
 				return entry.state;
 			}
 		}
@@ -960,7 +960,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
 			entry.view.setVisible?.(false);
 			entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to load page") };
-			shellWebContents.send("browser:navState", entry.state);
+			shellContents(options).send("browser:navState", entry.state);
 			return entry.state;
 		}
 		const session = entries.get(entry.state.viewId);
