@@ -459,16 +459,19 @@ describe("CommandPalette drill-in + Enter", () => {
 });
 
 describe("CommandPalette actions", () => {
-	it("keeps keyboard selection stable while a different command is hovered", async () => {
+	it("activates the hovered command when Enter is pressed", async () => {
 		ctx.params = {};
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
-		await screen.findByPlaceholderText(/search projects/i);
-		const selectedBefore = document.querySelector('[cmdk-item][data-selected="true"]')?.getAttribute("data-value");
+		const input = await screen.findByPlaceholderText(/search projects/i);
 
-		fireEvent.pointerMove(screen.getByText("Toggle theme"));
+		fireEvent.pointerMove(screen.getByText("Toggle theme"), { pointerType: "mouse" });
+		await waitFor(() => {
+			expect(document.querySelector('[cmdk-item][data-selected="true"]')).toHaveTextContent("Toggle theme");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(document.querySelector('[cmdk-item][data-selected="true"]')?.getAttribute("data-value")).toBe(selectedBefore);
+		expect(useUiStore.getState().resolvedTheme).toBe("light");
 	});
 
 	it("shows disabled New task reason, skips it for selection, and ignores clicks", async () => {

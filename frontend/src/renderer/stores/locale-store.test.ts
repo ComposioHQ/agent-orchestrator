@@ -3,6 +3,17 @@ import { appI18n } from "../i18n";
 
 const getUiSettings = vi.fn();
 const setUiSettings = vi.fn();
+const loadCatalogMock = vi.hoisted(() => vi.fn());
+const setAppLocaleMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../i18n", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../i18n")>();
+	return {
+		...actual,
+		loadCatalog: (...args: Parameters<typeof actual.loadCatalog>) => loadCatalogMock(...args),
+		setAppLocale: (...args: Parameters<typeof actual.setAppLocale>) => setAppLocaleMock(...args),
+	};
+});
 
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
@@ -17,10 +28,15 @@ import { useLocaleStore } from "./locale-store";
 
 describe("locale-store", () => {
 	beforeEach(async () => {
+		const actualI18n = await vi.importActual<typeof import("../i18n")>("../i18n");
 		getUiSettings.mockReset();
 		setUiSettings.mockReset();
+		loadCatalogMock.mockReset();
+		setAppLocaleMock.mockReset();
 		getUiSettings.mockResolvedValue({ locale: "en" });
 		setUiSettings.mockImplementation(async (settings: { locale: string }) => settings);
+		loadCatalogMock.mockImplementation(actualI18n.loadCatalog);
+		setAppLocaleMock.mockImplementation(actualI18n.setAppLocale);
 		await appI18n.changeLanguage("en");
 		useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 		document.documentElement.lang = "en";
@@ -98,6 +114,33 @@ describe("locale-store", () => {
 		expect(useLocaleStore.getState().locale).toBe("en");
 		expect(useLocaleStore.getState().loaded).toBe(true);
 		expect(appI18n.t("settings.general")).toBe("General");
+	});
+
+	it("falls back to English when the persisted locale catalog cannot load", async () => {
+		getUiSettings.mockResolvedValue({ locale: "zh-CN" });
+		setAppLocaleMock.mockRejectedValueOnce(new Error("locale chunk unavailable"));
+
+		await expect(useLocaleStore.getState().load()).resolves.toBeUndefined();
+
+		expect(setAppLocaleMock).toHaveBeenNthCalledWith(1, "zh-CN");
+		expect(setAppLocaleMock).toHaveBeenNthCalledWith(2, "en");
+		expect(useLocaleStore.getState()).toMatchObject({ locale: "en", loaded: true });
+		expect(appI18n.language).toBe("en");
+		expect(document.documentElement.lang).toBe("en");
+	});
+
+	it("does not persist a locale whose catalog cannot load", async () => {
+		loadCatalogMock.mockRejectedValueOnce(new Error("locale chunk unavailable"));
+
+		await expect(useLocaleStore.getState().setLocale("zh-CN")).resolves.toBeUndefined();
+
+		expect(setUiSettings).not.toHaveBeenCalled();
+		expect(setAppLocaleMock).not.toHaveBeenCalled();
+		expect(useLocaleStore.getState()).toMatchObject({
+			locale: "en",
+			saving: false,
+			saveError: true,
+		});
 	});
 
 	it("keeps the current locale and exposes an error when persistence fails", async () => {

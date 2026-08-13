@@ -33,7 +33,10 @@ export function loadCatalog(locale: AppLocale): Promise<RuntimeCatalog> {
 	if (locale === "en") return Promise.resolve(enMessages);
 	const pending = pendingCatalogs.get(locale);
 	if (pending) return pending;
-	const loading = catalogLoaders[locale]();
+	const loading = catalogLoaders[locale]().catch((error: unknown) => {
+		pendingCatalogs.delete(locale);
+		throw error;
+	});
 	pendingCatalogs.set(locale, loading);
 	return loading;
 }

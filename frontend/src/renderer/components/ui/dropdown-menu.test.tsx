@@ -3,22 +3,26 @@ import { describe, expect, it, vi } from "vitest";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./dropdown-menu";
 
 describe("DropdownMenuItem", () => {
-	it("uses CSS hover styling without moving roving focus", () => {
+	it("moves roving focus to the hovered item and activates it with Enter", () => {
+		const firstSelect = vi.fn();
+		const secondSelect = vi.fn();
 		render(
 			<DropdownMenu open>
 				<DropdownMenuTrigger>Actions</DropdownMenuTrigger>
 				<DropdownMenuContent>
-					<DropdownMenuItem>First action</DropdownMenuItem>
-					<DropdownMenuItem>Second action</DropdownMenuItem>
+					<DropdownMenuItem onSelect={firstSelect}>First action</DropdownMenuItem>
+					<DropdownMenuItem onSelect={secondSelect}>Second action</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>,
 		);
 
 		const secondAction = screen.getByText("Second action");
-		fireEvent.pointerMove(secondAction);
+		fireEvent.pointerMove(secondAction, { pointerType: "mouse" });
+		fireEvent.keyDown(secondAction, { key: "Enter" });
 
-		expect(document.activeElement).not.toBe(secondAction);
-		expect(secondAction).toHaveClass("hover:bg-interactive-hover", "hover:text-foreground");
+		expect(document.activeElement).toBe(secondAction);
+		expect(firstSelect).not.toHaveBeenCalled();
+		expect(secondSelect).toHaveBeenCalledTimes(1);
 	});
 
 	it("still activates an item on click", () => {

@@ -123,7 +123,7 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Comman
 		<CommandPrimitive.Item
 			data-slot="command-item"
 			className={cn(
-				"relative mx-[var(--size-command-item-inset)] flex cursor-default select-none items-center gap-2.5 rounded-[var(--radius-command-item)] py-1.5 pr-2.5 pl-[var(--size-command-item-pad-l)] text-[13px] leading-[length:var(--leading-command-item)] text-[var(--color-text-command-item)] outline-none hover:bg-[var(--color-bg-command-item-active)]",
+				"relative mx-[var(--size-command-item-inset)] flex cursor-default select-none items-center gap-2.5 rounded-[var(--radius-command-item)] py-1.5 pr-2.5 pl-[var(--size-command-item-pad-l)] text-[13px] leading-[length:var(--leading-command-item)] text-[var(--color-text-command-item)] outline-none",
 				"data-[selected=true]:bg-[var(--color-bg-command-item-active)] data-[selected=true]:text-[var(--color-text-command-item)]",
 				"data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
 				"[&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-[var(--color-text-command-item)] data-[selected=true]:[&_svg]:text-[var(--color-text-command-item)]",

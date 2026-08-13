@@ -39,5 +39,6 @@ test("renderer: command palette hover does not rerender persistent shell content
 	await page.waitForTimeout(100);
 	const committedSubtrees = await page.evaluate(() => window.__aoRenderProfile?.entries() ?? []);
 
-	expect(committedSubtrees.map((entry) => entry.id)).not.toContain("command-palette");
+	expect(committedSubtrees.map((entry) => entry.id)).not.toContain("shell.sidebar");
+	expect(committedSubtrees.map((entry) => entry.id)).not.toContain("shell.route");
 });

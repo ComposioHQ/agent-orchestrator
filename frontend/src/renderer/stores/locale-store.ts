@@ -1,6 +1,14 @@
 import { create } from "zustand";
 import { aoBridge } from "../lib/bridge";
-import { appI18n, coerceLocale, DEFAULT_LOCALE, documentLang, setAppLocale, type AppLocale } from "../i18n";
+import {
+	appI18n,
+	coerceLocale,
+	DEFAULT_LOCALE,
+	documentLang,
+	loadCatalog,
+	setAppLocale,
+	type AppLocale,
+} from "../i18n";
 
 type LocaleState = {
 	locale: AppLocale;
@@ -44,7 +52,13 @@ export const useLocaleStore = create<LocaleState>((set, get) => ({
 				// A missing bridge or unreadable setting must not prevent the UI from starting.
 			}
 			if (revisionAtStart !== localeRevision) return;
-			await applyLocale(locale);
+			try {
+				await applyLocale(locale);
+			} catch {
+				if (revisionAtStart !== localeRevision) return;
+				locale = DEFAULT_LOCALE;
+				await applyLocale(locale);
+			}
 			if (revisionAtStart === localeRevision) set({ locale, loaded: true });
 		})();
 		try {
@@ -58,6 +72,9 @@ export const useLocaleStore = create<LocaleState>((set, get) => ({
 		const revision = ++localeRevision;
 		set({ saving: true, saveError: false });
 		try {
+			// Do not persist a locale whose deferred catalog is unavailable. A
+			// successful load is cached, so applyLocale reuses the same promise.
+			await loadCatalog(locale);
 			await aoBridge.uiSettings.set({ locale });
 			await applyLocale(locale);
 			if (revision === localeRevision) set({ locale, loaded: true, saving: false });

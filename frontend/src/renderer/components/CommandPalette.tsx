@@ -385,7 +385,6 @@ export function CommandPalette() {
 				}}
 				commandProps={{
 					shouldFilter: false,
-					disablePointerSelection: true,
 					loop: true,
 					label: t("command.palette"),
 				}}
