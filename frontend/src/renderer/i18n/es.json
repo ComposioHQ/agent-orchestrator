@@ -630,7 +630,7 @@
 	"settings.updates.needInstalledApp": "Las actualizaciones requieren la aplicación instalada.",
 	"settings.updates.noFeatureReleases": "No hay versiones de funciones activas.",
 	"settings.updates.networkStale": "No se han podido buscar actualizaciones desde hace un tiempo; reiniciar la aplicación suele solucionarlo.",
-	"settings.updates.netErrorRestartGuidance": "No se puede llegar al servidor de actualizaciones: la conexión de red de la aplicación parece bloqueada. Reiniciar la aplicación suele solucionarlo. ({{message}})",
+	"settings.updates.netErrorRestartGuidance": "No se puede llegar al servidor de actualizaciones: la conexión de red de la aplicación parece bloqueada. Reiniciar la aplicación suele solucionarlo.",
 	"settings.updates.nightlyWarning": "Las compilaciones Nightly se generan cada día y pueden ser inestables o perder datos. Usa Nightly solo si te sientes cómodo con eso.",
 	"settings.updates.onFeatureBuild": "Estás en la compilación del PR #{{pr}}.",
 	"settings.updates.returnToNightly": "Volver a Nightly",

@@ -311,7 +311,7 @@ describe("GlobalSettingsForm", () => {
 		updGetStatus.mockResolvedValue({ state: "error", message: "net::ERR_FAILED", netError: true });
 		renderForm();
 		const guidance = await screen.findByText(
-			"Couldn't reach the update server — the app's network connection appears stuck. Restarting the app usually fixes this. (net::ERR_FAILED)",
+			"Couldn't reach the update server — the app's network connection appears stuck. Restarting the app usually fixes this.",
 		);
 		expect(guidance).toBeInTheDocument();
 	});

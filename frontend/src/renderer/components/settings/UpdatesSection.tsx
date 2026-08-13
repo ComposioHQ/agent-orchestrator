@@ -292,9 +292,9 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 		case "error":
 			return (
 				<span className="text-xs text-error">
-					{status.netError
-						? t("settings.updates.netErrorRestartGuidance", { message: status.message ?? "" })
-						: status.message ?? t("settings.updates.updateFailed")}
+				{status.netError
+					? t("settings.updates.netErrorRestartGuidance")
+					: status.message ?? t("settings.updates.updateFailed")}
 				</span>
 			);
 		default:
