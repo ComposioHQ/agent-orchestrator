@@ -18,8 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
-
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogClose,
@@ -31,6 +30,7 @@ import {
   settingsDialogContentClass,
   settingsDialogHeaderClass,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 import type {
   GitHubCapability,
   GitHubUserCapability,
@@ -87,6 +87,10 @@ export function CloudSettings({
     account.organizations.find(({ id }) => id === selectedOrganizationId) ??
     account.organizations[0];
 
+  const lastPanelRef = useRef<SettingsPanel>(panel);
+  if (open) lastPanelRef.current = panel;
+  const displayPanel = open ? panel : lastPanelRef.current;
+
   useEffect(() => {
     setPanel(initialPanel);
   }, [initialPanel]);
@@ -94,13 +98,11 @@ export function CloudSettings({
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onBack()}>
       <DialogContent
-        className={`${settingsDialogContentClass} cloud-settings-dialog max-h-none origin-center overflow-hidden p-0`}
+        className={cn(
+          settingsDialogContentClass,
+          "h-(--size-settings-dialog-height) w-(--size-settings-dialog-wide) max-h-none origin-center overflow-hidden p-0",
+        )}
         showCloseButton={false}
-        style={{
-          height: "min(680px, calc(100svh - 32px))",
-          maxWidth: "calc(100vw - 32px)",
-          width: "min(920px, calc(100vw - 32px))",
-        }}
       >
         <div className="flex h-full min-h-0">
           <aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-card">
@@ -109,13 +111,13 @@ export function CloudSettings({
             </p>
             <nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2 pt-0">
               <SettingsNavItem
-                active={panel === "profile"}
+                active={displayPanel === "profile"}
                 icon={User}
                 label="Profile"
                 onClick={() => setPanel("profile")}
               />
               <SettingsNavItem
-                active={panel === "notifications"}
+                active={displayPanel === "notifications"}
                 icon={Bell}
                 label="Notifications"
                 onClick={() => setPanel("notifications")}
@@ -123,12 +125,12 @@ export function CloudSettings({
               {account.organizations.map((organization) => (
                 <SettingsNavItem
                   active={
-                    panel === "organization" &&
+                    displayPanel === "organization" &&
                     organization.id === selectedOrganizationId
                   }
                   icon={Building2}
                   key={organization.id}
-                  label={organization.displayName}
+                  label="Organization"
                   onClick={() => {
                     onSelectOrganization(organization.id);
                     setPanel("organization");
@@ -136,7 +138,7 @@ export function CloudSettings({
                 />
               ))}
               <SettingsNavItem
-                active={panel === "providers"}
+                active={displayPanel === "providers"}
                 icon={KeyRound}
                 label="Providers"
                 onClick={() => setPanel("providers")}
@@ -145,91 +147,79 @@ export function CloudSettings({
           </aside>
 
           <div className="flex min-w-0 flex-1 flex-col bg-card">
-            <DialogHeader className={`${settingsDialogHeaderClass} flex h-auto shrink-0 flex-row items-center justify-between border-b-0`}>
+            <DialogHeader className={cn(settingsDialogHeaderClass, "flex h-auto shrink-0 flex-row items-center justify-between border-b-0")}>
               <DialogTitle className="text-2xl font-bold text-foreground">
-              {settingsTitle(panel)}
+                {settingsTitle(displayPanel)}
               </DialogTitle>
               <DialogDescription className="sr-only">
-                {settingsDescription(panel)}
+                {settingsDescription(displayPanel)}
               </DialogDescription>
               <DialogClose
                 aria-label="Close settings"
-                className="settings-close-button grid size-8 place-items-center rounded-md border border-transparent text-[var(--color-text-passive)] transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)] hover:text-[var(--foreground)]"
+                className="settings-close-button border border-transparent transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)]"
               >
                 <X className="size-4" aria-hidden="true" />
               </DialogClose>
             </DialogHeader>
-        <div className={`${settingsDialogBodyClass} flex-1`}>
-        <div className="w-full space-y-8">
+            <div className={cn(settingsDialogBodyClass, "flex-1")}>
+              <div className="w-full space-y-8">
 
-          {panel === "profile" ? (
-            <SettingsSection
-              title="Profile"
-              titleHidden
-              grouped
-            >
-              <SettingsRow icon={User} label="Display name">
-                <span className="settings-row-value">{account.user.displayName}</span>
-              </SettingsRow>
-              <SettingsRow icon={User} label="Email">
-                <span className="settings-row-value">{account.user.email}</span>
-              </SettingsRow>
-            </SettingsSection>
-          ) : null}
+                {displayPanel === "profile" ? (
+                  <SettingsSection title="Profile" titleHidden grouped>
+                    <SettingsRow label="Display name">
+                      <span className="settings-row-value">{account.user.displayName}</span>
+                    </SettingsRow>
+                    <SettingsRow label="Email">
+                      <span className="settings-row-value">{account.user.email}</span>
+                    </SettingsRow>
+                  </SettingsSection>
+                ) : null}
 
-          {panel === "notifications" ? (
-            <SettingsSection
-              title="Invitations for you"
-              titleHidden
-              grouped
-            >
-              <SettingsRow icon={Bell} label="Activity">
-                <span className="settings-row-value">Not available</span>
-              </SettingsRow>
-            </SettingsSection>
-          ) : null}
+                {displayPanel === "notifications" ? (
+                  <SettingsSection title="Invitations for you" titleHidden grouped>
+                    <SettingsRow label="Activity">
+                      <span className="settings-row-value">Not available</span>
+                    </SettingsRow>
+                  </SettingsSection>
+                ) : null}
 
-          {panel === "organization" ? (
-            <SettingsSection
-              title={membership?.displayName ?? "Organization"}
-              titleHidden
-              grouped
-            >
-              <SettingsRow icon={Building2} label="Organization name">
-                <span className="settings-row-value">{membership?.displayName ?? "—"}</span>
-              </SettingsRow>
-              <SettingsRow icon={Building2} label="Role">
-                <span className="settings-row-value">{membership?.role ?? "Unknown"}</span>
-              </SettingsRow>
-              <SettingsRow icon={KeyRound} label="Credentials">
-                <span className="settings-row-value">Organization managed</span>
-              </SettingsRow>
-            </SettingsSection>
-          ) : null}
+                {displayPanel === "organization" ? (
+                  <SettingsSection title={membership?.displayName ?? "Organization"} titleHidden grouped>
+                    <SettingsRow label="Organization name">
+                      <span className="settings-row-value">{membership?.displayName ?? "—"}</span>
+                    </SettingsRow>
+                    <SettingsRow label="Role">
+                      <span className="settings-row-value">{membership?.role ?? "Unknown"}</span>
+                    </SettingsRow>
+                    <SettingsRow label="Credentials">
+                      <span className="settings-row-value">Organization managed</span>
+                    </SettingsRow>
+                  </SettingsSection>
+                ) : null}
 
-          {panel === "providers" ? (
-            <div className="space-y-8">
-              <GitHubSettings
-                busy={busy}
-                github={github}
-                githubUser={githubUser}
-                onConnect={onConnectGitHub}
-                onDisconnect={onDisconnectGitHub}
-                onDisconnectUser={onDisconnectGitHubUser}
-                onSync={onSyncGitHub}
-              />
-              <CodingAgentSettings
-                busy={providerBusy}
-                onConnect={onConnectAgent}
-                onDisconnect={onDisconnectAgent}
-                providers={providers}
-              />
+                {displayPanel === "providers" ? (
+                  <div className="space-y-8">
+                    <GitHubSettings
+                      busy={busy}
+                      github={github}
+                      githubUser={githubUser}
+                      onConnect={onConnectGitHub}
+                      onDisconnect={onDisconnectGitHub}
+                      onDisconnectUser={onDisconnectGitHubUser}
+                      onSync={onSyncGitHub}
+                    />
+                    <CodingAgentSettings
+                      busy={providerBusy}
+                      onConnect={onConnectAgent}
+                      onDisconnect={onDisconnectAgent}
+                      providers={providers}
+                    />
+                  </div>
+                ) : null}
+              </div>
             </div>
-          ) : null}
-        </div>
-      </div>
-        </div>
           </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -278,10 +268,10 @@ function CodingAgentSettings({
           const isEditing = editing === agent.id;
           return (
             <div key={agent.id}>
-              <SettingsRow icon={KeyRound} label={agent.label}>
+              <SettingsRow label={agent.label}>
                 <div className="flex items-center gap-3">
                   <span className="settings-row-value">
-                    {connection ? `Connected · ${connection.validationState}` : "Not connected"}
+                    {connection ? `Connected · ${connection.validationState}` : ""}
                   </span>
                   <button
                     className={buttonClass}
@@ -370,10 +360,10 @@ function GitHubSettings({
     github.installations.length > 0;
   return (
     <SettingsSection grouped title="GitHub">
-      <SettingsRow icon={GitFork} label="GitHub account">
+      <SettingsRow label="GitHub account">
         <div className="flex items-center gap-3">
           <span className="settings-row-value">
-            {connected ? githubUser.connection.login : "Not connected"}
+            {connected ? githubUser.connection.login : ""}
           </span>
           {hostedAuthRequired ? (
             <a className={primaryButtonClass} href="/github-sign-in">Continue</a>
@@ -390,10 +380,10 @@ function GitHubSettings({
       {github.status === "unavailable" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">{github.message ?? "GitHub is disabled for this environment."}</p> : null}
       {github.status === "error" ? <p className="px-3 py-4 text-sm text-[var(--color-error)]">{github.message ?? "GitHub connection could not be loaded."}</p> : null}
       {github.status === "available" && github.installations.length === 0 ? (
-        <SettingsRow icon={GitFork} label="App installation"><span className="settings-row-value">No GitHub installation</span></SettingsRow>
+        <SettingsRow label="App installation"><span className="settings-row-value">No GitHub installation</span></SettingsRow>
       ) : null}
       {github.status === "available" ? github.installations.map((installation) => (
-        <SettingsRow icon={GitFork} key={installation.id} label={installation.accountLogin}>
+        <SettingsRow key={installation.id} label={installation.accountLogin}>
           <div className="flex items-center gap-2">
             <span className="settings-row-value">{installation.repositorySelection} repositories</span>
             <button aria-label={`Sync ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => void onSync(installation)} title="Sync repositories" type="button"><RefreshCw className="size-3.5" /></button>
@@ -421,11 +411,12 @@ function SettingsNavItem({
   return (
     <button
       aria-current={active ? "page" : undefined}
-      className={`flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-[0.98] focus:outline-none focus-visible:outline-none focus-visible:ring-0 ${
+      className={cn(
+        "flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0",
         active
-          ? "bg-[var(--color-interactive-active)] text-foreground"
-          : "text-muted-foreground hover:bg-[var(--color-interactive-hover)] hover:text-foreground"
-      }`}
+          ? "bg-interactive-active text-foreground"
+          : "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+      )}
       onClick={onClick}
       type="button"
     >
@@ -468,17 +459,14 @@ function SettingsSection({
 
 function SettingsRow({
   children,
-  icon: Icon,
   label,
 }: {
   children: ReactNode;
-  icon: LucideIcon;
   label: string;
 }) {
   return (
     <div className="settings-row-bar">
       <div className="flex shrink-0 items-center gap-(--size-settings-row-icon-gap)">
-        <Icon className="size-icon-lg shrink-0 text-settings-muted" aria-hidden="true" />
         <span className="whitespace-nowrap text-sm leading-5 text-settings-label">
           {label}
         </span>
@@ -515,10 +503,10 @@ function settingsDescription(panel: SettingsPanel) {
 }
 
 const fieldClass =
-  "h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--foreground)] outline-none disabled:cursor-not-allowed disabled:opacity-55";
+  "h-10 w-full rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--foreground)] outline-none disabled:cursor-not-allowed disabled:opacity-55";
 const buttonClass =
-  "inline-flex h-9 items-center justify-center rounded-md border border-[var(--color-border-strong)] px-3 text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-settings-input)] px-3 text-sm text-[var(--foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
 const primaryButtonClass =
-  "inline-flex h-9 items-center justify-center rounded-md bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-foreground)] disabled:opacity-45";
+  "inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-transparent bg-[var(--color-accent-strong)] px-3 text-sm font-semibold text-[var(--color-accent-foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
 const iconButtonClass =
-  "grid size-8 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] disabled:opacity-45";
+  "grid size-8 cursor-pointer place-items-center rounded-2xl text-[var(--color-text-passive)] transition-opacity duration-150 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] disabled:opacity-45";

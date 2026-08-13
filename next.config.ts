@@ -3,6 +3,7 @@ import path from "node:path";
 
 const config: NextConfig = {
 	agentRules: false,
+	devIndicators: false,
 	reactStrictMode: true,
 	turbopack: {
 		root: path.resolve(process.cwd(), "../.."),

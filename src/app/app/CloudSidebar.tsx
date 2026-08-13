@@ -9,7 +9,6 @@ import {
   Bot,
   Folder,
   FolderOpen,
-  LogOut,
   MoreHorizontal,
   Plus,
   Search,
@@ -74,21 +73,11 @@ export function CloudSidebar({
 
   return (
     <aside className={`${parity ? (mobileOpen ? "flex" : "hidden") : "flex"} min-h-0 flex-col bg-[var(--color-bg-sidebar)] ${parity ? "fixed inset-y-0 left-0 z-40 w-[min(86vw,280px)] border-r border-[var(--color-border-strong)] shadow-2xl lg:static lg:flex lg:w-auto lg:border-0 lg:shadow-none" : ""}`}>
-      <div className="flex shrink-0 items-center gap-1.5 px-3 pb-2 pt-2">
-        <img
-          src="/ao-logo.svg"
-          alt=""
-          aria-hidden="true"
-          className="size-[22px] shrink-0 -translate-y-[3px] rounded-md object-cover"
-        />
-        <span className="min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-[-0.025em]">
-          Agent Orchestrator
-        </span>
-        {parity && onCloseMobile ? <button type="button" aria-label="Close navigation" className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:hidden" onClick={onCloseMobile}>×</button> : null}
-      </div>
+      {parity && onCloseMobile ? <div className="flex shrink-0 items-center justify-end px-3 pt-2"><button type="button" aria-label="Close navigation" className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] lg:hidden" onClick={onCloseMobile}>×</button></div> : null}
 
       <CloudWorkspaceSwitcher
         account={account}
+        onOpenSettings={onOpenSettings}
         onSelect={onSelectOrganization}
         selectedOrganizationId={selectedOrganizationId}
       />
@@ -97,12 +86,12 @@ export function CloudSidebar({
         <button
           type="button"
           aria-label="Search"
-          className="flex h-8 w-full items-center gap-2 rounded-lg bg-[var(--color-bg-primary)] px-2.5 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+          className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-lg bg-[var(--muted)] px-2.5 text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
           onClick={onOpenCommand}
         >
-          <Search className="size-4" strokeWidth={1.75} aria-hidden="true" />
-          <span className="min-w-0 flex-1 truncate text-left">Search</span>
-          <kbd className="rounded-sm border border-white/10 px-1.5 py-0.5 font-mono text-[10px]">
+          <Search className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-left leading-none">Search</span>
+          <kbd className="ml-auto shrink-0 rounded-sm border border-[var(--color-border-strong)]/60 bg-[var(--color-bg-secondary)]/50 px-1.5 py-0.5 font-mono text-[10px] leading-none text-[var(--muted-foreground)]/80">
             ⌘ K
           </kbd>
         </button>
@@ -322,21 +311,6 @@ export function CloudSidebar({
           <Settings className="size-3.5" aria-hidden="true" />
           Settings
         </button>
-        <div className="px-2.5 py-2">
-          <div className="truncate text-xs text-[var(--foreground)]">
-            {account.user.displayName}
-          </div>
-          <div className="truncate text-[10px] text-[var(--color-text-passive)]">
-            {account.user.email}
-          </div>
-        </div>
-        <a
-          className="flex h-8 items-center gap-2 rounded-lg px-2.5 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-          href="/sign-out"
-        >
-          <LogOut className="size-3.5" aria-hidden="true" />
-          Sign out
-        </a>
       </div>
     </aside>
   );

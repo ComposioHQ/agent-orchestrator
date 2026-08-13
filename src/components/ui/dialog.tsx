@@ -4,6 +4,7 @@ import * as React from "react";
 import { XIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { clsx } from "clsx";
+import { cn } from "@/lib/utils";
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
@@ -43,7 +44,7 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
-        className={clsx(
+        className={cn(
           "fixed left-[50%] top-[50%] z-50 flex w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex-col gap-4 border bg-background p-4 shadow-lg data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none sm:rounded-lg",
           className,
         )}
@@ -62,7 +63,7 @@ function DialogContent({
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-header" className={clsx("flex flex-col gap-1.5 p-0", className)} {...props} />;
+  return <div data-slot="dialog-header" className={cn("flex flex-col gap-1.5 p-0", className)} {...props} />;
 }
 
 function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {

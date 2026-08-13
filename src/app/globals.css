@@ -29,16 +29,9 @@
   position: fixed;
   inset: 0;
   z-index: var(--z-overlay);
-  background-color: color-mix(in oklch, var(--background) 85%, transparent);
+  background-color: rgba(0, 0, 0, 0.6);
   -webkit-backdrop-filter: blur(1px);
   backdrop-filter: blur(1px);
-}
-
-/* The copied Electron dialog is always 920 × 680, capped by its viewport gutter.
- * This wins over the generic Dialog primitive's `w-full` base utility. */
-.cloud-settings-dialog {
-  width: min(var(--size-settings-dialog-wide), calc(100vw - var(--space-8))) !important;
-  height: min(var(--size-settings-dialog-height), calc(100svh - var(--space-8))) !important;
 }
 
 .settings-row-bar {
@@ -64,6 +57,17 @@ button.settings-row-bar {
   padding-block: 0.5rem;
   padding-inline: 0.75rem;
   border-radius: 0;
+}
+
+.settings-close-button {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: var(--radius-md, 0.375rem);
+  color: var(--color-text-settings-muted);
+  transition-property: color, background-color;
+  transition-duration: 150ms;
 }
 
 .settings-row-value {

@@ -130,6 +130,12 @@
   --color-error: var(--error);
   --color-popover: var(--color-bg-secondary);
   --color-settings-label: var(--foreground);
+  --color-settings-muted: var(--color-text-settings-muted);
+  --color-interactive-hover: var(--color-interactive-hover);
+  --color-interactive-active: var(--color-interactive-active);
+  --spacing-icon-lg: var(--size-icon-lg);
+  --duration-fast: 100ms;
+  --scale-press: 0.98;
   --color-status-working: var(--status-working);
   --color-status-needs-you: var(--status-needs-you);
   --color-status-in-review: var(--status-in-review);
