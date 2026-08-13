@@ -72,6 +72,7 @@ export function TaskComposer({
 	const queryClient = useQueryClient();
 	const promptRef = useRef<HTMLTextAreaElement>(null);
 	const promptValueRef = useRef("");
+	const promptRevisionRef = useRef(0);
 	const [hasPrompt, setHasPrompt] = useState(false);
 	const [model, setModel] = useState("");
 	const [mode, setMode] = useState("");
@@ -235,6 +236,8 @@ export function TaskComposer({
 
 	const submitTask = async (interfaceMode?: "tui") => {
 		if (!projectId || isSubmitting) return;
+		const submittedBrief = promptValueRef.current;
+		const promptRevisionAtSubmit = promptRevisionRef.current;
 
 		const cleanModel = model.trim();
 		const cleanMode = mode.trim();
@@ -250,7 +253,7 @@ export function TaskComposer({
 			const attachmentPayloads = await toSettledPayload();
 			const sessionId = await createTask({
 				projectId,
-				brief: promptValueRef.current,
+				brief: submittedBrief,
 				// The visible selection is authoritative: it is either the user's pick
 				// or the resolved default, so spawning names it explicitly.
 				agent: selectedAgent ? (selectedAgent as CreateTaskInput["agent"]) : undefined,
@@ -258,9 +261,11 @@ export function TaskComposer({
 				mode: interfaceMode,
 				attachments: attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
 			});
-			promptValueRef.current = "";
-			if (promptRef.current) promptRef.current.value = "";
-			setHasPrompt(false);
+			if (promptRevisionRef.current === promptRevisionAtSubmit) {
+				promptValueRef.current = "";
+				if (promptRef.current) promptRef.current.value = "";
+				setHasPrompt(false);
+			}
 			onCreated(sessionId);
 		} catch (err) {
 			setCanCreateAsTUI(
@@ -282,6 +287,7 @@ export function TaskComposer({
 			promptMode="uncontrolled"
 			promptRef={promptRef}
 			onPromptChange={(value) => {
+				promptRevisionRef.current += 1;
 				promptValueRef.current = value;
 				setHasPrompt((current) => {
 					const next = value.trim() !== "";

@@ -130,6 +130,15 @@ describe("send keys", () => {
 		expect(field.value).toBe("");
 	});
 
+	it("does not reuse the clear caret for the next completion draft", async () => {
+		const { field } = renderComposer({ skills: SKILLS });
+		await userEvent.type(field, "hello{Enter}/r");
+
+		expect(field).toHaveValue("/r");
+		expect(field.selectionStart).toBe(2);
+		expect(screen.getByRole("listbox")).toBeInTheDocument();
+	});
+
 	it("keeps the draft and reports the error when sending fails", async () => {
 		const onSend = vi.fn().mockRejectedValue(new Error("daemon unavailable"));
 		render(<ChatComposer onSend={onSend} />);

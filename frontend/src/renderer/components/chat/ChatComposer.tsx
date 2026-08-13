@@ -155,8 +155,6 @@ export function ChatComposer({
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	const textRef = useRef("");
 	const filePicker = useRef<HTMLInputElement>(null);
-	/** Where the caret should land once React has committed the new text. */
-	const pendingCaret = useRef<number | null>(null);
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const menuId = useId();
 	/** Match the field to its content until CSS's seven-line cap takes over. */
@@ -235,8 +233,12 @@ export function ChatComposer({
 	 */
 	const applyText = useCallback(
 		(next: string, nextCaret: number) => {
-			pendingCaret.current = nextCaret;
-			if (textarea.current) textarea.current.value = next;
+			const node = textarea.current;
+			if (node) {
+				node.value = next;
+				node.setSelectionRange(nextCaret, nextCaret);
+				node.focus();
+			}
 			syncDraft(next, nextCaret);
 			resizeTextarea();
 		},
@@ -269,16 +271,6 @@ export function ChatComposer({
 		observer.observe(node);
 		return () => observer.disconnect();
 	}, [resizeTextarea]);
-
-	useLayoutEffect(() => {
-		const target = pendingCaret.current;
-		if (target === null) return;
-		pendingCaret.current = null;
-		const node = textarea.current;
-		if (!node) return;
-		node.setSelectionRange(target, target);
-		node.focus();
-	}, [suggestionDraft]);
 
 	const pick = useCallback(
 		(value: string) => {

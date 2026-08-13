@@ -271,6 +271,47 @@ describe("TaskComposer", () => {
 		});
 	});
 
+	it("submits the prompt snapshot and preserves edits made while an attachment settles", async () => {
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-1" } });
+		const onCreated = vi.fn();
+		let finishRead!: () => void;
+		class SlowFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(file: File) {
+				finishRead = () => {
+					this.result = `data:${file.type};base64,AQID`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", SlowFileReader);
+
+		const { container } = render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={onCreated} />
+			</Wrap>,
+		);
+
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(input, {
+			target: { files: [new File([new Uint8Array([1, 2, 3])], "slow.txt", { type: "text/plain" })] },
+		});
+		fireEvent.change(task(), { target: { value: "Original brief" } });
+		fireEvent.click(screen.getByText("Start task"));
+		fireEvent.change(task(), { target: { value: "Next task draft" } });
+
+		await act(async () => finishRead());
+		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-1"));
+
+		expect(h.post).toHaveBeenCalledTimes(1);
+		expect(h.post.mock.calls[0][1].body).toMatchObject({ brief: "Original brief" });
+		expect(task()).toHaveValue("Next task draft");
+	});
+
 	it("removes a selected file before submitting", async () => {
 		h.post.mockResolvedValueOnce({ data: { workerId: "sess-1" } });
 
