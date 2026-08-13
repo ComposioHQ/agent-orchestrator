@@ -8,12 +8,19 @@ import type { ReactNode } from "react";
 // first-run states, mocking only the HTTP client, the router, and the native
 // folder picker: an empty daemon shows the import chooser (no column shells), a
 // fresh project shows the task invitation, and any session brings the columns back.
-const { getMock, navigateMock, chooseDirectoryMock, spawnOrchestratorMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	navigateMock: vi.fn(),
-	chooseDirectoryMock: vi.fn(),
-	spawnOrchestratorMock: vi.fn(),
-}));
+const { getMock, navigateMock, chooseDirectoryMock, spawnOrchestratorMock, boardActionsInPanelMock } = vi.hoisted(
+	() => ({
+		getMock: vi.fn(),
+		navigateMock: vi.fn(),
+		chooseDirectoryMock: vi.fn(),
+		spawnOrchestratorMock: vi.fn(),
+		// jsdom's default navigator reports no platform, so the real
+		// usesBoardActionsInPanel() (macOS-only) is false here already; this mock
+		// only exists so the daemon-gating test below can flip it on to exercise
+		// the in-panel header actions row the same way macOS does.
+		boardActionsInPanelMock: vi.fn(() => false),
+	}),
+);
 
 vi.mock("../../lib/spawn-orchestrator", () => ({
 	isChatPreflightError: (error: unknown) =>
@@ -30,6 +37,11 @@ vi.mock("../../lib/api-client", () => ({
 vi.mock("../../lib/bridge", () => ({
 	aoBridge: { app: { chooseDirectory: chooseDirectoryMock } },
 }));
+
+vi.mock("../../lib/platform", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../../lib/platform")>();
+	return { ...actual, usesBoardActionsInPanel: () => boardActionsInPanelMock() };
+});
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@tanstack/react-router")>();
@@ -112,6 +124,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	createProjectMock.mockResolvedValue(undefined);
 	initializeProjectRepositoryMock.mockResolvedValue(undefined);
+	boardActionsInPanelMock.mockReturnValue(false);
 	useUiStore.setState({
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
@@ -218,6 +231,53 @@ describe("global board first launch", () => {
 		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
 		expect(screen.queryByTestId("daemon-startup-loader")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(4);
+	});
+
+	it("disables New task and Spawn Orchestrator on a stale board once the daemon exits (#2242)", async () => {
+		// Same scenario as the previous test (daemon died, board stays mounted
+		// with its last-known sessions) but on the in-panel action layout, so the
+		// header's New task / Spawn Orchestrator buttons are on screen. Before the
+		// fix these stayed enabled and threw "AO daemon is not ready" as an
+		// unhandled rejection when clicked.
+		boardActionsInPanelMock.mockReturnValue(true);
+		respondWith([project], [workerSession]);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastShell = {
+			daemonStatus: { state: "ready" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "ready",
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+		const { rerender } = render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard projectId="proj-1" />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		await screen.findByText("fix the bug");
+		expect(screen.getByRole("button", { name: "New task" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toBeEnabled();
+
+		lastShell = {
+			...lastShell,
+			daemonStatus: { state: "stopped", code: "exited" } as ShellContextValue["daemonStatus"],
+		};
+		rerender(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard projectId="proj-1" />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(screen.getByText("fix the bug")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "New task" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Spawn Orchestrator" })).toBeDisabled();
+
+		await userEvent.click(screen.getByRole("button", { name: "Spawn Orchestrator" }));
+		expect(spawnOrchestratorMock).not.toHaveBeenCalled();
 	});
 });
 

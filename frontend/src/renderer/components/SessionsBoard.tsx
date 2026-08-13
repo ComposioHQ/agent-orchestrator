@@ -246,13 +246,18 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</TopbarKillError>
 			)}
 			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
-				<TopbarButton disabled={isSpawning || isProjectRestarting} onClick={() => void openOrchestrator("tui")}>
+				<TopbarButton
+					disabled={isSpawning || isProjectRestarting || !isDaemonReady}
+					onClick={() => void openOrchestrator("tui")}
+				>
 					{t("newTask.createAsTui")}
 				</TopbarButton>
 			) : null}
 			<TopbarButton
 				aria-label={t("shell.newTask")}
-				disabled={isProjectRestarting}
+				// A dead daemon can't create a session; without this the button stays
+				// clickable after the board goes stale and the request just throws.
+				disabled={isProjectRestarting || !isDaemonReady}
 				onClick={() => projectId && requestNewTask(projectId)}
 				variant="accent"
 			>
@@ -265,7 +270,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
 						: t("shell.spawnOrchestrator")
 				}
-				disabled={isSpawning || isProjectRestarting}
+				disabled={isSpawning || isProjectRestarting || !isDaemonReady}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
 			>
