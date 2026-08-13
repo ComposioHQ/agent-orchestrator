@@ -54,6 +54,7 @@ import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import { HumanMessageEditor } from "./HumanMessageEditor";
 import { ConversationBranchNavigator } from "./ConversationBranchNavigator";
+import { ConversationContentItems } from "./ConversationContentItems";
 import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
@@ -1279,30 +1280,17 @@ function ReauthRow({ activity }: { activity: ConversationActivity }) {
  */
 export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 	const text = activity.detail?.text ?? activity.summary;
-	const images = (activity.detail?.content ?? []).filter(
-		(item) =>
-			item.type === "image" &&
-			typeof item.data === "string" &&
-			typeof item.mimeType === "string" &&
-			item.mimeType.toLowerCase().startsWith("image/"),
-	);
 	return (
 		<div className="flex flex-col items-end gap-1">
 			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
 				{text ? <p>{text}</p> : null}
-				{images.length > 0 ? (
-					<ul aria-label="Steered attachments" className={cn("flex max-w-full flex-wrap gap-2", text && "mt-2")}>
-						{images.map((item, index) => (
-							<li key={`${item.mimeType}-${index}`} className="max-w-full overflow-hidden rounded-md border border-border bg-background">
-								<img
-									src={`data:${item.mimeType};base64,${item.data}`}
-									alt={`Steered attachment ${index + 1}`}
-									className="block h-auto max-h-80 max-w-full object-contain"
-								/>
-							</li>
-						))}
-					</ul>
-				) : null}
+				<ConversationContentItems
+					content={activity.detail?.content ?? []}
+					ariaLabel="Steered attachments"
+					imageLabel="Image"
+					imageAlt={(position) => `Steered attachment ${position}`}
+					className={cn(text && "mt-2")}
+				/>
 			</div>
 			<span className="flex items-center gap-1 text-[11px] text-muted-foreground">
 				<CornerDownRight aria-hidden="true" className="size-3" />

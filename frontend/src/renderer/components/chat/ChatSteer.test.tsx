@@ -263,7 +263,7 @@ describe("ChatWorkspace steering", () => {
 		expect(screen.getByText(/Steered into the running turn/)).toBeInTheDocument();
 	});
 
-	it("renders a promoted steer attachment once on the running turn", () => {
+	it("renders every promoted steer content block on the running turn", () => {
 		const snapshot = {
 			...chatFixture,
 			items: chatFixture.items.map((item) =>
@@ -272,7 +272,11 @@ describe("ChatWorkspace steering", () => {
 							...item,
 							detail: {
 								...item.detail,
-								content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+								content: [
+									{ type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+									{ type: "resource_link", name: "reference.md", uri: "file:///reference.md" },
+									{ type: "resource", name: "notes.md", uri: "file:///notes.md", text: "details" },
+								],
 							},
 						}
 					: item,
@@ -281,5 +285,8 @@ describe("ChatWorkspace steering", () => {
 		render(<ChatWorkspace snapshot={snapshot} />);
 		const image = screen.getByRole("img", { name: "Steered attachment 1" });
 		expect(image).toHaveAttribute("src", "data:image/png;base64,aGVsbG8=");
+		const attachments = screen.getByRole("list", { name: "Steered attachments" });
+		expect(within(attachments).getByTitle("file:///reference.md")).toHaveTextContent("reference.md");
+		expect(within(attachments).getByTitle("file:///notes.md")).toHaveTextContent("notes.md");
 	});
 });
