@@ -2502,7 +2502,7 @@ export interface components {
             /** Format: date-time */
             observedAt?: string;
             /** @enum {string} */
-            provider: "github";
+            provider: "github" | "gitlab";
             repo: string;
             review: components["schemas"]["SessionPRReviewSummary"];
             /** Format: date-time */
@@ -2673,6 +2673,8 @@ export interface components {
             mode?: "chat" | "tui";
             projectId: string;
             prompt?: string;
+            /** @enum {string} */
+            trackerProvider?: "github" | "gitlab";
         };
         SpawnSessionResponse: {
             promptBytes: number;
@@ -2752,7 +2754,7 @@ export interface components {
             assignee?: string;
             enabled?: boolean;
             /** @enum {string} */
-            provider?: "github";
+            provider?: "github" | "gitlab";
             repo?: string;
         };
         TriggerReviewRequest: {
