@@ -92,7 +92,8 @@ var shippedMigrations = map[int64]string{
 	86: "0086_workspace_repo_default_branch.sql",
 	87: "0087_conversation_branches.sql",
 	88: "0088_add_auto_inject_ci_toggle.sql",
-	89: "0089_workspace_git_status.sql",
+	89: "0089_conversation_turn_promotion.sql",
+	90: "0090_workspace_git_status.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

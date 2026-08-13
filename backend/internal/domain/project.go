@@ -43,8 +43,10 @@ type ProjectRecord struct {
 type GitStatus string
 
 const (
-	GitStatusReady      GitStatus = "ready"
-	GitStatusNeedsInit   GitStatus = "needs_init"
+	// GitStatusReady marks a workspace child as a usable git repository.
+	GitStatusReady GitStatus = "ready"
+	// GitStatusNeedsInit marks a workspace child that still requires git init.
+	GitStatusNeedsInit GitStatus = "needs_init"
 )
 
 // WorkspaceRepoRecord is a child repo registered under a workspace project.
