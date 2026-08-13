@@ -423,7 +423,7 @@ describe("SessionInspector PR section", () => {
 		}
 		expect(
 			screen.getByRole("button", {
-				name: "When disabled, CI failures are not sent to the worker agent but are only displayed in the pull request summary.",
+				name: "When disabled, CI failures are not sent to the worker agent to fix.",
 			}),
 		).toBeInTheDocument();
 		expect(

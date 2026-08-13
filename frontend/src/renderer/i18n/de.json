@@ -191,7 +191,7 @@
 	"inspector.aria": "Sitzungs-Inspektor",
 	"inspector.branch": "Branch",
 	"inspector.ci.autoInject": "CI-Fehler automatisch senden",
-	"inspector.ci.autoInjectDescription": "When disabled, CI failures are not sent to the worker agent but are only displayed in the pull request summary.",
+	"inspector.ci.autoInjectDescription": "When disabled, CI failures are not sent to the worker agent to fix.",
 	"inspector.ci.autoInjectError": "Automatische CI-Übertragung konnte nicht aktualisiert werden ({{status}})",
 	"inspector.ci.notInjected": "CI-Fehler wurden nicht gesendet",
 	"inspector.browser": "Browser",
