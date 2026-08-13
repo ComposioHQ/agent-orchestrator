@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -157,6 +158,136 @@ func TestProviderEventIdentityDeduplicatesTheWholeProjection(t *testing.T) {
 	events, err := s.ProviderEventsSince(ctx, conversation, 0, 10)
 	if err != nil || len(events) != 1 {
 		t.Fatalf("events = %+v, %v; want one", events, err)
+	}
+}
+
+func TestCommandOutputStopsChangingAfterTruncation(t *testing.T) {
+	s, _, conversation := conversationFixture(t)
+	ctx := context.Background()
+	if err := s.UpsertActivity(ctx, conversation, "provider-turn-1", domain.ConversationActivity{
+		ID:             "activity-output-cap",
+		Kind:           domain.ActivityKindCommand,
+		Status:         domain.ActivityStatusRunning,
+		Summary:        "npm run dev",
+		ProviderItemID: "exec-output-cap",
+	}, histClock); err != nil {
+		t.Fatalf("seed command activity: %v", err)
+	}
+
+	truncatedAt := histClock.Add(time.Second)
+	found, err := s.AppendCommandOutput(ctx, conversation, "exec-output-cap",
+		strings.Repeat("x", store.MaxCommandOutputChars+1), truncatedAt)
+	if err != nil || !found {
+		t.Fatalf("append output through cap: found=%v err=%v", found, err)
+	}
+
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("load capped snapshot: %v", err)
+	}
+	if len(snapshot.Activities) != 1 {
+		t.Fatalf("activities = %d, want 1", len(snapshot.Activities))
+	}
+	capped := snapshot.Activities[0]
+	if len(capped.CommandOutput) != store.MaxCommandOutputChars || !capped.CommandOutputTruncated {
+		t.Fatalf("capped output = %d chars truncated=%v, want %d/true",
+			len(capped.CommandOutput), capped.CommandOutputTruncated, store.MaxCommandOutputChars)
+	}
+	cdcAfterCap, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("read CDC head after cap: %v", err)
+	}
+
+	found, err = s.AppendCommandOutput(ctx, conversation, "exec-output-cap", "still running\n", truncatedAt.Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("append output after cap: found=%v err=%v", found, err)
+	}
+	snapshot, err = s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("load snapshot after capped delta: %v", err)
+	}
+	after := snapshot.Activities[0]
+	if after.CommandOutput != capped.CommandOutput || !after.CommandOutputTruncated {
+		t.Fatalf("capped output changed after another delta: len=%d truncated=%v",
+			len(after.CommandOutput), after.CommandOutputTruncated)
+	}
+	if after.Revision != capped.Revision {
+		t.Errorf("revision after capped delta = %d, want unchanged %d", after.Revision, capped.Revision)
+	}
+	if !after.UpdatedAt.Equal(capped.UpdatedAt) {
+		t.Errorf("updated_at after capped delta = %s, want unchanged %s", after.UpdatedAt, capped.UpdatedAt)
+	}
+	cdcAfterNoop, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("read CDC head after capped delta: %v", err)
+	}
+	if cdcAfterNoop != cdcAfterCap {
+		t.Errorf("CDC head after capped delta = %d, want unchanged %d", cdcAfterNoop, cdcAfterCap)
+	}
+}
+
+func TestActivityStreamedTextStopsChangingAfterTruncation(t *testing.T) {
+	s, _, conversation := conversationFixture(t)
+	ctx := context.Background()
+	if err := s.UpsertActivity(ctx, conversation, "provider-turn-1", domain.ConversationActivity{
+		ID:             "activity-text-cap",
+		Kind:           domain.ActivityKindReasoning,
+		Status:         domain.ActivityStatusRunning,
+		Summary:        "Reasoning",
+		ProviderItemID: "reasoning-text-cap",
+	}, histClock); err != nil {
+		t.Fatalf("seed reasoning activity: %v", err)
+	}
+
+	truncatedAt := histClock.Add(time.Second)
+	found, err := s.AppendActivityStreamedText(ctx, conversation, "reasoning-text-cap",
+		strings.Repeat("x", store.MaxStreamedTextChars+1), truncatedAt)
+	if err != nil || !found {
+		t.Fatalf("append streamed text through cap: found=%v err=%v", found, err)
+	}
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("load capped snapshot: %v", err)
+	}
+	if len(snapshot.Activities) != 1 {
+		t.Fatalf("activities = %d, want 1", len(snapshot.Activities))
+	}
+	capped := snapshot.Activities[0]
+	if len(capped.StreamedText) != store.MaxStreamedTextChars || !capped.StreamedTextTruncated {
+		t.Fatalf("capped streamed text = %d chars truncated=%v, want %d/true",
+			len(capped.StreamedText), capped.StreamedTextTruncated, store.MaxStreamedTextChars)
+	}
+	cdcAfterCap, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("read CDC head after cap: %v", err)
+	}
+
+	found, err = s.AppendActivityStreamedText(ctx, conversation, "reasoning-text-cap",
+		"still reasoning", truncatedAt.Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("append streamed text after cap: found=%v err=%v", found, err)
+	}
+	snapshot, err = s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("load snapshot after capped delta: %v", err)
+	}
+	after := snapshot.Activities[0]
+	if after.StreamedText != capped.StreamedText || !after.StreamedTextTruncated {
+		t.Fatalf("capped streamed text changed after another delta: len=%d truncated=%v",
+			len(after.StreamedText), after.StreamedTextTruncated)
+	}
+	if after.Revision != capped.Revision {
+		t.Errorf("revision after capped delta = %d, want unchanged %d", after.Revision, capped.Revision)
+	}
+	if !after.UpdatedAt.Equal(capped.UpdatedAt) {
+		t.Errorf("updated_at after capped delta = %s, want unchanged %s", after.UpdatedAt, capped.UpdatedAt)
+	}
+	cdcAfterNoop, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatalf("read CDC head after capped delta: %v", err)
+	}
+	if cdcAfterNoop != cdcAfterCap {
+		t.Errorf("CDC head after capped delta = %d, want unchanged %d", cdcAfterNoop, cdcAfterCap)
 	}
 }
 

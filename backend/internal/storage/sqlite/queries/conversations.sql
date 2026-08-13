@@ -702,6 +702,9 @@ WHERE conversation_id = ? AND kind = 'user_input' AND status = 'pending';
 --
 -- execrows so the caller can tell "appended" from "no such activity yet", which
 -- is a real case: a delta can arrive before the item/started that creates the row.
+-- Once truncation is recorded, later deltas are deliberate no-ops. Keeping the
+-- revision stable prevents the activity CDC trigger from invalidating every live
+-- conversation client for text the row can no longer retain.
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: AppendConversationActivityOutput :execrows
@@ -715,7 +718,8 @@ SET command_output = substr(command_output || sqlc.arg(delta), 1, sqlc.arg(max_o
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND provider_item_id = sqlc.arg(provider_item_id)
-  AND status <> 'cancelled';
+  AND status <> 'cancelled'
+  AND command_output_truncated = 0;
 
 -- Append provider prose streamed for one activity, capped in one statement.
 --
@@ -728,6 +732,8 @@ WHERE conversation_id = sqlc.arg(conversation_id)
 -- execrows so the caller can tell "appended" from "no such activity yet", which is
 -- a real case: a reasoning delta can arrive before the item/started that creates
 -- the row.
+-- As with command output, a capped stream stays immutable so a provider that keeps
+-- emitting cannot create a no-visible-change CDC storm.
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: AppendConversationActivityStreamedText :execrows
@@ -741,7 +747,20 @@ SET streamed_text = substr(streamed_text || sqlc.arg(delta), 1, sqlc.arg(max_tex
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND provider_item_id = sqlc.arg(provider_item_id)
-  AND status <> 'cancelled';
+  AND status <> 'cancelled'
+  AND streamed_text_truncated = 0;
+
+-- A capped delta is still associated with a real activity. Append callers use
+-- this probe to distinguish that harmless no-op from the ordinary provider race
+-- where output arrives before item/started creates the activity.
+-- name: ConversationActivityExistsForProviderItem :one
+SELECT EXISTS(
+    SELECT 1
+    FROM conversation_activities
+    WHERE conversation_id = sqlc.arg(conversation_id)
+      AND provider_item_id = sqlc.arg(provider_item_id)
+      AND status <> 'cancelled'
+);
 
 -- Replace the streamed text with the provider's settled version.
 --

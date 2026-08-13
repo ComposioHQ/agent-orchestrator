@@ -857,10 +857,11 @@ func (c *Controller) drain(ctx context.Context) {
 	}
 }
 
-// BeginHandoff closes source intake and waits until the provider can be stopped
+// BeginHandoff closes source intake and prepares the provider to be stopped
 // without overlapping the target controller. Drain preserves and finishes work
-// AO had already accepted. Interrupt is the explicit brake and cancels both the
-// active turn and the queue behind it.
+// AO had already accepted. Interrupt is the explicit brake: once the provider
+// accepts cancellation, it cancels the durable queue and returns so a provider
+// that never reports turn/completed cannot make Terminal UI unreachable.
 func (c *Controller) BeginHandoff(
 	ctx context.Context,
 	policy domain.SessionInterfaceTransitionPolicy,
@@ -875,10 +876,12 @@ func (c *Controller) BeginHandoff(
 	c.handoff = true
 	c.handoffDrain = policy == domain.SessionInterfaceTransitionDrain
 	active := c.pendingTurnID != ""
+	interruptCutoff := time.Time{}
 	if policy == domain.SessionInterfaceTransitionInterrupt {
-		// This cutoff is also needed when no turn is active: drain performs the
-		// durable queued-turn cancellation without dispatching another turn.
-		c.cancelQueuedAt = c.now()
+		// This cutoff is also needed when no turn is active: the handoff still has
+		// to cancel the durable queue without dispatching another turn.
+		interruptCutoff = c.now()
+		c.cancelQueuedAt = interruptCutoff
 	}
 	c.mu.Unlock()
 	c.sendMu.Unlock()
@@ -889,9 +892,32 @@ func (c *Controller) BeginHandoff(
 				c.AbortHandoff()
 				return err
 			}
-		} else {
-			c.drain(ctx)
 		}
+		// Do not wait for turn/completed here. The interrupt RPC succeeding is the
+		// source-side cancellation boundary; Session Manager now needs to close the
+		// controller and launch Terminal UI. Some providers omit the completion
+		// event for a killed long-running tool, which was previously an unbounded
+		// wait in this loop.
+		//
+		// Cancel the queued rows directly before returning. Ordinarily drain does
+		// this after the active turn settles, but the whole point of this path is
+		// that settlement is not required. Use the cutoff captured while closing
+		// intake rather than consuming the shared marker: a racing completion may
+		// already have taken that marker, and this idempotent write is the handoff's
+		// independent proof that the durable queue is empty.
+		if err := c.store.CancelQueuedTurns(ctx, c.conversation.ID, interruptCutoff, c.now()); err != nil {
+			c.mu.Lock()
+			if c.cancelQueuedAt.IsZero() {
+				c.cancelQueuedAt = interruptCutoff
+			}
+			c.mu.Unlock()
+			c.AbortHandoff()
+			return fmt.Errorf("cancel queued turns before handoff: %w", err)
+		}
+		c.mu.Lock()
+		c.cancelQueuedAt = time.Time{}
+		c.mu.Unlock()
+		return nil
 	} else if !active {
 		// A queued row can exist in the narrow gap after a completion was
 		// projected and before its drain ran. Claim it now so drain mode cannot

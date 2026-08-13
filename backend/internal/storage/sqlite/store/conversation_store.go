@@ -985,7 +985,18 @@ func (s *Store) AppendActivityStreamedText(
 	if err != nil {
 		return false, fmt.Errorf("append streamed text to %s: %w", providerItemID, err)
 	}
-	return rows > 0, nil
+	if rows > 0 {
+		return true, nil
+	}
+	found, err := q.ConversationActivityExistsForProviderItem(ctx,
+		gen.ConversationActivityExistsForProviderItemParams{
+			ConversationID: conversationID,
+			ProviderItemID: providerItemID,
+		})
+	if err != nil {
+		return false, fmt.Errorf("find streamed text activity %s after no-op append: %w", providerItemID, err)
+	}
+	return found, nil
 }
 
 // SettleActivityStreamedText replaces streamed prose with the provider's settled
@@ -1305,7 +1316,18 @@ func (s *Store) AppendCommandOutput(
 	if err != nil {
 		return false, fmt.Errorf("append command output to %s: %w", providerItemID, err)
 	}
-	return rows > 0, nil
+	if rows > 0 {
+		return true, nil
+	}
+	found, err := q.ConversationActivityExistsForProviderItem(ctx,
+		gen.ConversationActivityExistsForProviderItemParams{
+			ConversationID: conversationID,
+			ProviderItemID: providerItemID,
+		})
+	if err != nil {
+		return false, fmt.Errorf("find command output activity %s after no-op append: %w", providerItemID, err)
+	}
+	return found, nil
 }
 
 // SetTurnDiff overwrites a turn's changed-file summary.
