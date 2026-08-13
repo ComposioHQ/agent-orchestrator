@@ -3,6 +3,7 @@ package multi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -503,5 +504,101 @@ func TestAuthenticatedIdentityForProvider_UnknownProviderReturnsError(t *testing
 	_, err := m.AuthenticatedIdentityForProvider(context.Background(), "bitbucket")
 	if err == nil {
 		t.Fatal("expected error for unknown provider")
+	}
+}
+
+// TestFetchPullRequests_FailedPlaceholderCarriesHostAndRepo verifies that
+// Fetched=false placeholders created by the multi provider carry Host and
+// Repo from the ref's SCMRepo. Without these fields, the observer's
+// prKeyFromObs returns an empty key, causing the placeholder to be skipped
+// at the `if key == "" { continue }` guard — the per-observation error
+// routing (rate-limit cooldown vs refresh-incomplete) is never reached and
+// the failed provider is retried every tick instead of entering cooldown.
+// This test covers both placeholder sites: the unknown-provider branch and
+// the provider-returned-fewer-than-refs branch.
+func TestFetchPullRequests_FailedPlaceholderCarriesHostAndRepo(t *testing.T) {
+	// Case 1: unknown provider — the first placeholder construction site.
+	// When the only provider is unknown, the all-fail path returns a top-level
+	// error, but the placeholder is still constructed with Host/Repo.
+	m := New(NamedProvider{Key: "github", Provider: &fakeProvider{key: "github"}})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "owner", Name: "repo", Repo: "owner/repo"}, Number: 42},
+	}
+	obs, _ := m.FetchPullRequests(context.Background(), refs)
+	if obs[0].Fetched {
+		t.Errorf("obs[0].Fetched = true, want false for unknown provider")
+	}
+	if obs[0].Host != "gitlab.com" {
+		t.Errorf("obs[0].Host = %q, want %q", obs[0].Host, "gitlab.com")
+	}
+	if obs[0].Repo != "owner/repo" {
+		t.Errorf("obs[0].Repo = %q, want %q", obs[0].Repo, "owner/repo")
+	}
+
+	// Case 2: provider returns fewer observations than refs (the second site).
+	// Simulate by returning partial results: one obs for two refs.
+	gl := &fakeProvider{
+		key:      "gitlab",
+		parseOK:  true,
+		fetchErr: errors.New("gitlab 503"),
+		partialResults: []ports.SCMObservation{
+			{Fetched: true, Provider: "gitlab", PR: ports.SCMPRObservation{Number: 10}},
+		},
+	}
+	m2 := New(NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs2 := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "group", Name: "proj", Repo: "group/proj"}, Number: 10},
+		{Repo: ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "group", Name: "proj", Repo: "group/proj"}, Number: 20},
+	}
+	obs2, _ := m2.FetchPullRequests(context.Background(), refs2)
+	if obs2[1].Fetched {
+		t.Errorf("obs2[1].Fetched = true, want false for missing obs")
+	}
+	if obs2[1].Host != "gitlab.com" {
+		t.Errorf("obs2[1].Host = %q, want %q", obs2[1].Host, "gitlab.com")
+	}
+	if obs2[1].Repo != "group/proj" {
+		t.Errorf("obs2[1].Repo = %q, want %q", obs2[1].Repo, "group/proj")
+	}
+
+	// Case 3: Repo field empty — fallback to Owner + "/" + Name.
+	refs3 := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "unknown", Host: "self-hosted.example", Owner: "myorg", Name: "myrepo"}, Number: 5},
+	}
+	m3 := New(NamedProvider{Key: "github", Provider: &fakeProvider{key: "github"}})
+	obs3, _ := m3.FetchPullRequests(context.Background(), refs3)
+	if obs3[0].Repo != "myorg/myrepo" {
+		t.Errorf("obs3[0].Repo = %q, want %q (fallback to Owner/Name)", obs3[0].Repo, "myorg/myrepo")
+	}
+	if obs3[0].Host != "self-hosted.example" {
+		t.Errorf("obs3[0].Host = %q, want %q", obs3[0].Host, "self-hosted.example")
+	}
+}
+
+// TestFetchPullRequests_FailedPlaceholderProducesNonEmptyKey verifies that
+// the observer's prKeyFromObs returns a non-empty key for a failed-provider
+// placeholder. This is the integration assertion: without Host/Repo on the
+// placeholder, prKeyFromObs returns "" and the observer skips it at the
+// `if key == "" { continue }` guard, preventing per-observation error routing.
+func TestFetchPullRequests_FailedPlaceholderProducesNonEmptyKey(t *testing.T) {
+	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: errors.New("gitlab rate limit")}
+	m := New(NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "owner", Name: "repo", Repo: "owner/repo"}, Number: 99},
+	}
+	obs, _ := m.FetchPullRequests(context.Background(), refs)
+
+	// The observer's prKeyFromObs builds: Provider + ":" + Host + ":" + Repo + "#" + Number
+	// All three components must be non-empty for the key to be non-empty.
+	key := obs[0].Provider + ":" + obs[0].Host + ":" + obs[0].Repo + "#" + fmt.Sprint(obs[0].PR.Number)
+	if key == "" || key == "gitlab::#99" {
+		t.Errorf("prKey would be empty or incomplete: %q (Host=%q Repo=%q)", key, obs[0].Host, obs[0].Repo)
+	}
+	wantKey := "gitlab:gitlab.com:owner/repo#99"
+	if key != wantKey {
+		t.Errorf("prKey = %q, want %q", key, wantKey)
 	}
 }

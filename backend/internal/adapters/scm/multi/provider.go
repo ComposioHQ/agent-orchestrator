@@ -112,6 +112,8 @@ func (m *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 				results[ir.idx] = ports.SCMObservation{
 					Fetched:  false,
 					Provider: key,
+					Host:     ir.ref.Repo.Host,
+					Repo:     repoFullNameFromRef(ir.ref.Repo),
 					PR:       ports.SCMPRObservation{Number: ir.ref.Number, URL: ir.ref.URL},
 				}
 			}
@@ -134,6 +136,8 @@ func (m *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 				results[ir.idx] = ports.SCMObservation{
 					Fetched:  false,
 					Provider: key,
+					Host:     ir.ref.Repo.Host,
+					Repo:     repoFullNameFromRef(ir.ref.Repo),
 					PR:       ports.SCMPRObservation{Number: ir.ref.Number, URL: ir.ref.URL},
 				}
 			}
@@ -235,6 +239,18 @@ func (m *Provider) SCMCredentialsAvailable(ctx context.Context) (bool, error) {
 type indexedRef struct {
 	idx int
 	ref ports.SCMPRRef
+}
+
+// repoFullNameFromRef returns the display repository name from a ref's
+// SCMRepo, preferring the pre-filled Repo field and falling back to
+// Owner + "/" + Name when Repo is empty. This mirrors the observer's
+// repoFullName helper and ensures Fetched=false placeholders carry a
+// non-empty Repo so prKeyFromObs produces a non-empty key.
+func repoFullNameFromRef(repo ports.SCMRepo) string {
+	if repo.Repo != "" {
+		return repo.Repo
+	}
+	return repo.Owner + "/" + repo.Name
 }
 
 // AuthenticatedIdentityForProvider resolves the authenticated identity for the
