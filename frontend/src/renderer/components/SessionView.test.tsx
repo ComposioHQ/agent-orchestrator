@@ -133,10 +133,25 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({ onOpenShell, headerActions }: { onOpenShell?: () => void; headerActions?: ReactNode }) => (
+	SessionChatSurface: ({
+		onOpenShell,
+		headerActions,
+		reviewerTerminal,
+		onOpenReviewerTerminal,
+	}: {
+		onOpenShell?: () => void;
+		headerActions?: ReactNode;
+		reviewerTerminal?: { handleId: string; harness: string };
+		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	}) => (
 		<div data-testid="chat-surface">
 			chat surface
 			{headerActions}
+			{reviewerTerminal ? (
+				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
+					Reviewer
+				</button>
+			) : null}
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
@@ -709,6 +724,30 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		await waitFor(() => expect(screen.getByTestId("reviewer-harness")).toHaveTextContent("codex"));
+	});
+
+	it("keeps the reviewer terminal reachable from a Chat session", async () => {
+		const worker = workerSession("sess-1");
+		worker.mode = "chat";
+		worker.prs = [{
+			url: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "none",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		}];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [], runs: [] },
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Reviewer" });
+		fireEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
 	});
 
 	it("returns to the session terminal when the reviewer handle is cleared", async () => {
