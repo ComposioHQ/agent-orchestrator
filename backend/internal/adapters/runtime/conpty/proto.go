@@ -11,6 +11,11 @@ import (
 	"math"
 )
 
+const (
+	conPTYHostProtocolVersion         = 2
+	conPTYStyledOutputProtocolVersion = 2
+)
+
 // Message type constants. Values must match pty-host.ts MSG_* constants exactly.
 const (
 	MsgTerminalData       byte = 0x01 // host -> client: raw PTY output
@@ -35,9 +40,10 @@ type ResizePayload struct {
 
 // StatusPayload is the JSON body for MsgStatusRes.
 type StatusPayload struct {
-	Alive    bool `json:"alive"`
-	PID      int  `json:"pid"`
-	ExitCode *int `json:"exitCode,omitempty"`
+	Alive           bool `json:"alive"`
+	PID             int  `json:"pid"`
+	ExitCode        *int `json:"exitCode,omitempty"`
+	ProtocolVersion int  `json:"protocolVersion,omitempty"`
 }
 
 // GetOutputReq is the JSON body for MsgGetOutputReq.

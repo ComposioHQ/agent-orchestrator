@@ -549,7 +549,7 @@ func (m *Manager) prepareSourceHandoff(
 	// and the runtime must provide a rendered viewport with the styling that
 	// distinguishes provider chrome from human-authored text. Runtimes without
 	// that capability retain the causally-fresh idle / legacy fallback below.
-	requiresSurfaceProof := surfaceInspector != nil && styledOutput != nil
+	surfaceProofAvailable := surfaceInspector != nil && styledOutput != nil
 	ticker := time.NewTicker(m.interfaceTransition.pollInterval)
 	defer ticker.Stop()
 	idleSince := time.Time{}
@@ -568,7 +568,7 @@ func (m *Manager) prepareSourceHandoff(
 		}
 		now := time.Now()
 		durableIdleProven := tuiIdleAfterInput(current, lastTerminalInputAt)
-		idleProven := durableIdleProven && !requiresSurfaceProof
+		idleProven := durableIdleProven && !surfaceProofAvailable
 		unverifiedIdle := current.Activity.State == domain.ActivityIdle && !idleProven
 		probeCtx := ctx
 		var cancelProbe context.CancelFunc
@@ -584,10 +584,18 @@ func (m *Manager) prepareSourceHandoff(
 		inputQuiet := lastTerminalInputAt.IsZero() ||
 			!now.Before(lastTerminalInputAt.Add(m.interfaceTransition.idleSettle))
 		surfaceKnownBusy := false
-		if requiresSurfaceProof && inputQuiet && styledOutput != nil {
+		if surfaceProofAvailable && inputQuiet && styledOutput != nil {
 			output, outputErr := styledOutput.GetStyledOutput(probeCtx, handle, interfaceTransitionOutputLines)
 			now = time.Now()
-			if outputErr == nil {
+			if errors.Is(outputErr, ports.ErrStyledTerminalOutputUnavailable) {
+				// Detached ConPTY hosts survive daemon/app upgrades. A host from a
+				// protocol version without current-screen support is a per-handle
+				// capability miss, so retain the same durable/legacy fallback as a
+				// runtime that never implemented styled output at all.
+				surfaceProofAvailable = false
+				idleProven = durableIdleProven
+				unverifiedIdle = current.Activity.State == domain.ActivityIdle && !idleProven
+			} else if outputErr == nil {
 				observation := surfaceInspector.InspectTerminalSurface(output)
 				switch {
 				case observation.Composer == ports.TerminalComposerDraft &&
@@ -600,7 +608,8 @@ func (m *Manager) prepareSourceHandoff(
 						cancelProbe()
 					}
 					return errDrainDraftPresent
-				case observation.Work == ports.TerminalSurfaceWorkIdle &&
+				case current.Activity.State == domain.ActivityIdle &&
+					observation.Work == ports.TerminalSurfaceWorkIdle &&
 					observation.Composer == ports.TerminalComposerEmpty:
 					idleProven = true
 				case observation.Work == ports.TerminalSurfaceWorkActive,
@@ -609,7 +618,8 @@ func (m *Manager) prepareSourceHandoff(
 					surfaceKnownBusy = true
 				}
 			}
-		} else if !requiresSurfaceProof && unverifiedIdle && detector != nil && inputQuiet {
+		}
+		if !surfaceProofAvailable && unverifiedIdle && detector != nil && inputQuiet {
 			// Compatibility path for terminal activity adapters that have not yet
 			// adopted the richer surface observation capability.
 			if output, outputErr := m.runtime.GetOutput(probeCtx, handle, interfaceTransitionOutputLines); outputErr == nil {
@@ -639,7 +649,7 @@ func (m *Manager) prepareSourceHandoff(
 			if idleSince.IsZero() {
 				idleSince = now
 			} else if now.Sub(idleSince) >= m.interfaceTransition.idleSettle &&
-				(!requiresSurfaceProof && durableIdleProven || idleSamples >= interfaceTransitionSurfaceIdleSamples) {
+				(!surfaceProofAvailable && durableIdleProven || idleSamples >= interfaceTransitionSurfaceIdleSamples) {
 				if cancelProbe != nil {
 					cancelProbe()
 				}

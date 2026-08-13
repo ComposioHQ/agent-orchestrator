@@ -366,7 +366,10 @@ func (h *host) handleClientMsg(conn net.Conn, msgType byte, payload []byte) {
 
 // statusFrame builds a MsgStatusRes frame.
 func statusFrame(alive bool, pid int, exitCode *int) []byte {
-	sp := StatusPayload{Alive: alive, PID: pid, ExitCode: exitCode}
+	sp := StatusPayload{
+		Alive: alive, PID: pid, ExitCode: exitCode,
+		ProtocolVersion: conPTYHostProtocolVersion,
+	}
 	b, _ := json.Marshal(sp)
 	frame, _ := EncodeMessage(MsgStatusRes, b) // b is small JSON, never overflows uint32
 	return frame

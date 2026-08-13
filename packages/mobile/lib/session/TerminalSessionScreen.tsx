@@ -1001,18 +1001,7 @@ export default function TerminalScreen() {
 
 	const requestInterfaceFailureRecovery = useCallback(() => {
 		if (!interfaceFailureRecovery) return;
-		Alert.alert(
-			interfaceFailureRecovery.confirmationTitle,
-			interfaceFailureRecovery.confirmationMessage,
-			[
-				{ text: "Keep draft", style: "cancel" },
-				{
-					text: interfaceFailureRecovery.confirmationAction,
-					style: interfaceFailureRecovery.confirmStyle,
-					onPress: () => void startInterfaceSwitch(interfaceFailureRecovery.policy),
-				},
-			],
-		);
+		interfaceFailureRecovery.confirm((policy) => void startInterfaceSwitch(policy));
 	}, [interfaceFailureRecovery, startInterfaceSwitch]);
 
 	// The browser toggle lives in the nav bar, beside the session name, to keep the
