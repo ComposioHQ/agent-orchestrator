@@ -76,6 +76,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			const latestRun =
 				pr.review === "approved" || pr.review === "changes_requested"
 					? {
+							autoInjectReview: false,
 							batchId: `demo-batch-${session.id}`,
 							body:
 								pr.review === "approved"

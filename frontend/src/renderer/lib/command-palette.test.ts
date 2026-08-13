@@ -199,6 +199,7 @@ describe("buildCommands pull requests", () => {
 type ReviewRun = NonNullable<PRReviewState["latestRun"]>;
 
 const reviewRun = (prNumber: number): ReviewRun => ({
+	autoInjectReview: false,
 	batchId: "batch-1",
 	body: "review body",
 	createdAt: "2026-06-10T00:00:00Z",
