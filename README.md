@@ -52,6 +52,8 @@ Use the orchestrator to explore an idea before implementation, brainstorm produc
 
 When a plan becomes actionable, the orchestrator can break it into focused tasks, spawn or redirect workers, pass each worker the relevant context, follow their progress, and coordinate follow-up work. The orchestrator owns planning and delegation; workers own implementation, tests, commits, and pull requests.
 
+<img src="docs/assets/readme/tui.png" alt="Agent Orchestrator coordinating focused worker sessions from a project-level view" width="100%" />
+
 ## The Kanban keeps the system legible
 
 Every worker appears on the same live board, whether you started it from **New task** or the orchestrator delegated it. AO derives each card's position from session, pull request, CI, and review facts, turning the Kanban into an operational view of the project:
@@ -63,6 +65,8 @@ Every worker appears on the same live board, whether you started it from **New t
 
 Each card keeps the task, agent, branch, activity, pull request, and status together. Open it to inspect the conversation or terminal, changed files, PR summary, reviews, and preview. The board shows what is moving, what is blocked, and where your attention will have the most impact.
 
+<img src="docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban showing worker sessions grouped by live status" width="100%" />
+
 ## One workflow, from idea to merge
 
 1. **Start at the right level.** Give a clear task directly to a worker, or develop a larger outcome with the project orchestrator and let it shape the plan.
@@ -72,47 +76,6 @@ Each card keeps the task, agent, branch, activity, pull request, and status toge
 5. **Close the feedback loop.** Inspect any worker directly, make project-level decisions with the orchestrator, and return actionable failures or review comments to the agent that owns the work.
 
 AO works with the coding agents and source-control workflow you already use. Agents keep their native strengths; AO supplies the project context, isolated execution, coordination, and operational view that make them work as a system.
-
-## Product highlights
-
-<table>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>Attention-first Kanban</h3>
-      <p>See work grouped by live execution and pull request state: working, needs you, in review, and ready to merge.</p>
-    </td>
-    <td width="64%">
-      <img src="docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban grouping worker sessions by working, needs you, in review, and ready to merge" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>Isolated workers, any agent</h3>
-      <p>Give each Git-backed worker its own branch and worktree, choose the right coding agent for the task, and use structured Chat or its native terminal UI.</p>
-    </td>
-    <td width="64%">
-      <img src="docs/assets/readme/tui.png" alt="A coding agent's native terminal UI supervised inside Agent Orchestrator" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>Pull requests and agent reviews</h3>
-      <p>Keep CI, mergeability, reviewer state, and interactive agent reviews beside the worker, then return requested changes to the same owner.</p>
-    </td>
-    <td width="64%">
-      <img src="docs/assets/readme/review.png" alt="Worker session with pull request, CI, and agent review state in Agent Orchestrator" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>Agent-controllable browser</h3>
-      <p>Preview and inspect a worker's local app beside its interface. Browser profiles are isolated per worker so parallel UI tasks do not share state.</p>
-    </td>
-    <td width="64%">
-      <img src="docs/assets/readme/browser.png" alt="A worker controlling its isolated in-app browser preview" width="100%" />
-    </td>
-  </tr>
-</table>
 
 ## Supported agents
 
