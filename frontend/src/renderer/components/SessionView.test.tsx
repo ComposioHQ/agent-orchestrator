@@ -906,6 +906,10 @@ describe("SessionView", () => {
 
 		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
 		expect(panelSizes("inspector")).toEqual(["360px", "360px", "50%"]);
+		expect(screen.getByTestId("panel-group")).toHaveStyle({
+			"--session-inspector-motion-duration": "240ms",
+			"--session-inspector-motion-easing": "cubic-bezier(0.16, 1, 0.3, 1)",
+		});
 		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
 	});
 

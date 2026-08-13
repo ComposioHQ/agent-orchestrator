@@ -47,6 +47,7 @@ const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
 const INSPECTOR_MOTION_MS = 240;
+const INSPECTOR_MOTION_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
@@ -738,7 +739,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				elementRef={sessionSplitRef}
 				id="session-workspace"
 				orientation="horizontal"
-				style={{ "--session-inspector-max-width": `${INSPECTOR_MAX_PERCENT}%` } as CSSProperties}
+				style={
+					{
+						"--session-inspector-max-width": `${INSPECTOR_MAX_PERCENT}%`,
+						"--session-inspector-motion-duration": `${INSPECTOR_MOTION_MS}ms`,
+						"--session-inspector-motion-easing": INSPECTOR_MOTION_EASING,
+					} as CSSProperties
+				}
 			>
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}

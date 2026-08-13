@@ -2462,7 +2462,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 /* Match the left sidebar's spring-like reveal while keeping direct separator
  * drags under the pointer. Both panels participate so neither edge snaps. */
 .session-split > [data-panel] {
-	transition: flex-grow 240ms cubic-bezier(0.16, 1, 0.3, 1);
+	transition: flex-grow var(--session-inspector-motion-duration, 240ms)
+		var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
 }
 
 .session-split > .session-inspector-panel[data-panel] {
@@ -2477,8 +2478,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	opacity: 1;
 	transform: translateX(0);
 	transition:
-		opacity 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
-		transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+		opacity var(--session-inspector-motion-duration, 240ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
+		transform var(--session-inspector-motion-duration, 240ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
 	will-change: opacity, transform;
 }
 
@@ -2487,6 +2490,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .session-inspector-motion[data-motion-state="closed"] {
 	opacity: 0;
 	transform: translateX(12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-split > [data-panel],
+	.session-inspector-motion {
+		transition: none;
+	}
 }
 
 .session-inspector__topbar {
