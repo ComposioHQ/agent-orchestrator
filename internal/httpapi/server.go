@@ -36,6 +36,13 @@ type Store interface {
 	PrincipalFromLocalToken(context.Context, []byte) (domain.Principal, error)
 	RevokeLocalSession(context.Context, []byte) error
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
+	ListOrgMembers(context.Context, domain.Principal, string) ([]domain.OrgMember, error)
+	ListOrgInvitations(context.Context, domain.Principal, string) ([]domain.Invitation, error)
+	CreateOrgInvitation(context.Context, domain.Principal, string, domain.CreateInvitation) (domain.Invitation, error)
+	RevokeOrgInvitation(context.Context, domain.Principal, string, string) error
+	GetOrgInvitation(context.Context, domain.Principal, string, string) (domain.Invitation, error)
+	AcceptOrgInvitation(context.Context, domain.Principal, string, string) (domain.Membership, error)
+	DeclineOrgInvitation(context.Context, domain.Principal, string, string) error
 	CreateProject(context.Context, domain.Principal, string, string, domain.CreateProject) (domain.Project, error)
 	ListProjects(context.Context, domain.Principal, string, *domain.Cursor, int) ([]domain.Project, bool, error)
 	UpdateProject(context.Context, domain.Principal, string, string, domain.UpdateProject) (domain.Project, error)
@@ -81,6 +88,13 @@ type Store interface {
 	ListPullRequestsBySession(context.Context, domain.Principal, string, string) ([]domain.PullRequest, error)
 	ListReviewRunsBySession(context.Context, domain.Principal, string, string) ([]domain.ReviewRunPullRequest, error)
 	PRFactsBySession(ctx context.Context, orgID string, sessionIDs []string) (map[string][]contract.PRFacts, error)
+	CreateProjectShareLink(context.Context, domain.Principal, string, string, domain.CreateShareLink) (domain.ShareLink, string, error)
+	ListProjectShareLinks(context.Context, domain.Principal, string, string) ([]domain.ShareLink, error)
+	RevokeProjectShareLink(context.Context, domain.Principal, string, string, string) error
+	RevokeProjectShareGrant(context.Context, domain.Principal, string, string, string) error
+	RedeemProjectShareLink(context.Context, domain.Principal, string, string) (domain.SharedProject, error)
+	ListSharedProjects(context.Context, domain.Principal) ([]domain.SharedProject, error)
+	ListSharedProjectSessions(context.Context, domain.Principal, string, string) ([]domain.Session, error)
 }
 
 // WorkerTokens issues and verifies the short-lived credentials sandbox workers
@@ -248,6 +262,8 @@ func New(options Options) *Server {
 		router.Post("/auth/local/login", server.loginLocal)
 		router.With(server.authenticate).Post("/auth/local/logout", server.logoutLocal)
 		router.With(server.authenticate).Get("/me", server.me)
+		router.With(server.authenticate).Post("/share-links/redeem", server.redeemProjectShareLink)
+		router.With(server.authenticate).Get("/shared/projects", server.listSharedProjects)
 		if server.github != nil {
 			router.With(server.authenticate).Get("/github/user", server.getGitHubUser)
 			router.With(server.authenticate).Post("/github/user/authorize", server.startGitHubUserAuthorization)
@@ -297,6 +313,11 @@ func New(options Options) *Server {
 			router.Post("/projects", server.createProject)
 			router.Patch("/projects/{projectId}", server.updateProject)
 			router.Delete("/projects/{projectId}", server.deleteProject)
+			router.Get("/projects/{projectId}/shares", server.listProjectShareLinks)
+			router.Post("/projects/{projectId}/shares", server.createProjectShareLink)
+			router.Post("/projects/{projectId}/shares/{linkId}/revoke", server.revokeProjectShareLink)
+			router.Post("/projects/{projectId}/shares/grants/{grantId}/revoke", server.revokeProjectShareGrant)
+			router.Get("/shared/projects/{projectId}/sessions", server.listSharedProjectSessions)
 			router.Get("/provider-connections", server.listProviderConnections)
 			router.Put("/provider-connections/agents/{agent}", server.putAgentConnection)
 			router.Delete("/provider-connections/agents/{agent}", server.deleteAgentConnection)
@@ -315,6 +336,13 @@ func New(options Options) *Server {
 			router.Get("/sessions/{sessionId}/workspace/diff", server.getWorkspaceDiff)
 			router.Get("/sessions/{sessionId}/pull-requests", server.listSessionPullRequests)
 			router.Get("/sessions/{sessionId}/reviews", server.getSessionReviewState)
+			router.Get("/members", server.listOrgMembers)
+			router.Get("/invitations", server.listOrgInvitations)
+			router.Post("/invitations", server.createOrgInvitation)
+			router.Get("/invitations/{invitationId}", server.getOrgInvitation)
+			router.Post("/invitations/{invitationId}/accept", server.acceptOrgInvitation)
+			router.Post("/invitations/{invitationId}/decline", server.declineOrgInvitation)
+			router.Post("/invitations/{invitationId}/revoke", server.revokeOrgInvitation)
 		})
 	})
 	server.handler = router

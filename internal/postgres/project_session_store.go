@@ -819,7 +819,7 @@ func (s *Store) GetSession(
 	sessionID string,
 ) (domain.Session, error) {
 	var session domain.Session
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ string) error {
 		return getSession(ctx, tx, orgID, sessionID, &session)
 	})
 	return session, err

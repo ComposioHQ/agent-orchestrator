@@ -27,7 +27,10 @@ func (s *Store) CreateWorkspaceRequest(
 	ttl time.Duration,
 ) (domain.WorkerRequest, error) {
 	var request domain.WorkerRequest
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, role string) error {
+		if role == "viewer" && kind == "workspace.write" {
+			return ErrForbidden
+		}
 		var err error
 		request, err = createWorkerRequest(ctx, tx, orgID, sessionID, kind, payload, ttl)
 		return err

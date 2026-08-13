@@ -330,7 +330,7 @@ func (s *Store) ListReviewRunsBySession(
 	orgID, sessionID string,
 ) ([]domain.ReviewRunPullRequest, error) {
 	var out []domain.ReviewRunPullRequest
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ string) error {
 		rows, err := tx.Query(
 			ctx,
 			`SELECT run.id, run.org_id, run.pull_request_id, run.review_session_id,

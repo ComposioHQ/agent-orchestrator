@@ -1,8 +1,10 @@
 "use client";
 
 import type {
+  CreateInvitationInput,
   CurrentAccount,
   GitHubInstallation,
+  OrganizationInvitation,
   PutAgentProviderConnectionInput,
   RedactedProviderConnection,
 } from "@aoagents/cloud-client";
@@ -12,11 +14,14 @@ import {
   ChevronLeft,
   GitFork,
   KeyRound,
+  Mail,
   Plus,
   RefreshCw,
   Settings,
   Unplug,
   User,
+  Users,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -25,6 +30,7 @@ import { useEffect, useState } from "react";
 import type {
   GitHubCapability,
   GitHubUserCapability,
+  MembersCapability,
   ProviderCapability,
 } from "./cloud-ui-types";
 
@@ -37,12 +43,16 @@ export function CloudSettings({
   github,
   githubUser,
   initialPanel,
+  members,
+  membersBusy,
   onBack,
   onConnectGitHub,
   onConnectAgent,
   onDisconnectAgent,
   onDisconnectGitHub,
   onDisconnectGitHubUser,
+  onInviteMember,
+  onRevokeInvitation,
   onSelectOrganization,
   onSyncGitHub,
   providerBusy,
@@ -54,6 +64,8 @@ export function CloudSettings({
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
   initialPanel: "organization" | "providers";
+  members: MembersCapability;
+  membersBusy: boolean;
   onBack: () => void;
   onConnectGitHub: () => Promise<void>;
   onConnectAgent: (
@@ -65,6 +77,8 @@ export function CloudSettings({
   ) => Promise<void>;
   onDisconnectGitHub: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectGitHubUser: () => Promise<void>;
+  onInviteMember: (input: CreateInvitationInput) => Promise<void>;
+  onRevokeInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
   onSyncGitHub: (installation: GitHubInstallation) => Promise<void>;
   providerBusy: boolean;
@@ -233,9 +247,12 @@ export function CloudSettings({
                     Save
                   </button>
                 </div>
-                <UnavailableRow
-                  description="Member lists, roles, and invitations require organization-management routes."
-                  title="Members and invitations"
+                <MembersSettings
+                  busy={membersBusy}
+                  members={members}
+                  onInvite={onInviteMember}
+                  onRevoke={onRevokeInvitation}
+                  viewerRole={membership?.role}
                 />
                 <UnavailableRow
                   description="Credential inheritance is not exposed by this control plane."
@@ -611,6 +628,183 @@ function GitHubSettings({
         </div>
       )}
     </SettingsSection>
+  );
+}
+
+function MembersSettings({
+  busy,
+  members,
+  onInvite,
+  onRevoke,
+  viewerRole,
+}: {
+  busy: boolean;
+  members: MembersCapability;
+  onInvite: (input: CreateInvitationInput) => Promise<void>;
+  onRevoke: (invitation: OrganizationInvitation) => Promise<void>;
+  viewerRole: string | undefined;
+}) {
+  const canManage = viewerRole === "owner" || viewerRole === "admin";
+  const [email, setEmail] = useState("");
+  const [role, setRole] =
+    useState<CreateInvitationInput["role"]>("member");
+  const [error, setError] = useState("");
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3">
+      <div className="flex items-start gap-3">
+        <Users className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm text-[var(--foreground)]">
+            Members and invitations
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
+            {canManage
+              ? "Invite teammates and manage who has access to this organization."
+              : "Only owners and admins can invite or remove members."}
+          </p>
+        </div>
+      </div>
+
+      {members.status === "loading" ? (
+        <p className="mt-3 text-sm text-[var(--color-text-passive)]">
+          Loading members…
+        </p>
+      ) : members.status === "error" ? (
+        <div className="mt-3 rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-sm text-[var(--color-error)]">
+          {members.message ?? "Members could not be loaded."}
+        </div>
+      ) : (
+        <div className="mt-4 space-y-5">
+          <div className="divide-y divide-[var(--color-border-strong)] rounded-md border border-[var(--color-border-strong)]">
+            {members.members.map((member) => (
+              <div
+                className="flex items-center gap-3 px-3 py-2.5"
+                key={member.userId}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-[var(--foreground)]">
+                    {member.displayName || member.email}
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-[var(--color-text-passive)]">
+                    {member.email}
+                  </p>
+                </div>
+                <span className="font-mono text-[9px] uppercase tracking-wide text-[var(--color-text-passive)]">
+                  {member.role}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {members.invitations.filter(
+            (invitation) => invitation.status === "pending",
+          ).length > 0 ? (
+            <div>
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-passive)]">
+                Pending invitations
+              </p>
+              <div className="divide-y divide-[var(--color-border-strong)] rounded-md border border-[var(--color-border-strong)]">
+                {members.invitations
+                  .filter((invitation) => invitation.status === "pending")
+                  .map((invitation) => (
+                    <div
+                      className="flex items-center gap-3 px-3 py-2.5"
+                      key={invitation.id}
+                    >
+                      <Mail className="size-3.5 shrink-0 text-[var(--color-text-passive)]" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm text-[var(--foreground)]">
+                          {invitation.email}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[var(--color-text-passive)]">
+                          Invited as {invitation.role} · expires{" "}
+                          {new Date(invitation.expiresAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      {canManage ? (
+                        <button
+                          aria-label={`Revoke invitation to ${invitation.email}`}
+                          className={iconButtonClass}
+                          disabled={busy}
+                          onClick={() => void onRevoke(invitation)}
+                          title="Revoke invitation"
+                          type="button"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      ) : null}
+                    </div>
+                  ))}
+              </div>
+            </div>
+          ) : null}
+
+          {canManage ? (
+            <form
+              className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto]"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                setError("");
+                try {
+                  await onInvite({ email: email.trim(), role });
+                  setEmail("");
+                  setRole("member");
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "The invitation could not be created.",
+                  );
+                }
+              }}
+            >
+              <label className="text-xs text-[var(--muted-foreground)]">
+                Invite by email
+                <input
+                  className={`${fieldClass} mt-1.5`}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="teammate@example.com"
+                  required
+                  type="email"
+                  value={email}
+                />
+              </label>
+              <label className="text-xs text-[var(--muted-foreground)]">
+                Role
+                <select
+                  className={`${fieldClass} mt-1.5`}
+                  onChange={(event) =>
+                    setRole(
+                      event.target.value as CreateInvitationInput["role"],
+                    )
+                  }
+                  value={role}
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <button
+                className={`${primaryButtonClass} self-end`}
+                disabled={busy || !email.trim()}
+                type="submit"
+              >
+                {busy ? "Inviting…" : "Invite"}
+              </button>
+              {error ? (
+                <p
+                  className="text-xs text-[var(--color-error)] sm:col-span-3"
+                  role="alert"
+                >
+                  {error}
+                </p>
+              ) : null}
+            </form>
+          ) : null}
+        </div>
+      )}
+    </div>
   );
 }
 

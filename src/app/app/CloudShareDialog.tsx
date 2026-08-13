@@ -1,22 +1,67 @@
 "use client";
 
-import type { Project } from "@aoagents/cloud-client";
-import { X } from "lucide-react";
+import type {
+  Project,
+  ProjectShareLink,
+  ProjectShareModeCap,
+} from "@aoagents/cloud-client";
+import { Check, Copy, Trash2, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 
 type ShareScope = "anyone" | "restricted";
-type SharePolicy = "read-only" | "standard" | "trusted";
+
+const POLICIES: Array<{
+  value: ProjectShareModeCap;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "read-only",
+    label: "Read only",
+    description: "View-only access · command guard on",
+  },
+  {
+    value: "standard",
+    label: "Standard",
+    description: "Selected-worker editing · command guard on",
+  },
+  {
+    value: "trusted",
+    label: "Trusted",
+    description: "Full interaction · command guard off",
+  },
+];
 
 export function CloudShareDialog({
+  busy,
+  links,
   onClose,
+  onCreate,
+  onRevoke,
   project,
 }: {
+  busy: boolean;
+  links: ProjectShareLink[];
   onClose: () => void;
+  onCreate: (input: {
+    accessScope: ShareScope;
+    recipients: string[];
+    modeCap: ProjectShareModeCap;
+  }) => Promise<ProjectShareLink>;
+  onRevoke: (link: ProjectShareLink) => Promise<void>;
   project: Project;
 }) {
   const [scope, setScope] = useState<ShareScope>("anyone");
-  const [policy, setPolicy] = useState<SharePolicy>("standard");
+  const [policy, setPolicy] = useState<ProjectShareModeCap>("standard");
+  const [recipientsText, setRecipientsText] = useState("");
+  const [error, setError] = useState("");
+  const [createdLink, setCreatedLink] = useState<ProjectShareLink | null>(
+    null,
+  );
+  const [copied, setCopied] = useState(false);
+
+  const activeLinks = links.filter((link) => link.status === "active");
 
   return (
     <div
@@ -45,6 +90,37 @@ export function CloudShareDialog({
 
         <div className="max-h-[calc(90vh-48px)] overflow-y-auto">
           <div className="space-y-6 p-5">
+            {createdLink?.url ? (
+              <div className="rounded-lg border border-[#4d8dff]/40 bg-[#4d8dff]/10 px-3 py-3">
+                <p className="mb-2 text-xs text-[var(--muted-foreground)]">
+                  Link created. Copy it now — it will not be shown again.
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="h-9 min-w-0 flex-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 font-mono text-xs text-[var(--foreground)]"
+                    readOnly
+                    value={createdLink.url}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                  <button
+                    className={buttonClass}
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(createdLink.url ?? "");
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1500);
+                    }}
+                    type="button"
+                  >
+                    {copied ? (
+                      <Check className="size-3.5" aria-hidden="true" />
+                    ) : (
+                      <Copy className="size-3.5" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <ShareSection label="Access">
               <div className="grid gap-2 sm:grid-cols-2">
                 {[
@@ -78,7 +154,9 @@ export function CloudShareDialog({
                   Recipient emails
                   <textarea
                     className="mt-1.5 min-h-20 w-full resize-y rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--foreground)] outline-none focus:border-[#4d8dff]"
+                    onChange={(event) => setRecipientsText(event.target.value)}
                     placeholder="teammate@example.com, reviewer@example.com"
+                    value={recipientsText}
                   />
                 </label>
               ) : null}
@@ -86,30 +164,12 @@ export function CloudShareDialog({
 
             <ShareSection label="Sandbox policy">
               <div className="grid gap-2 sm:grid-cols-3">
-                {[
-                  {
-                    value: "read-only" as const,
-                    label: "Read only",
-                    description: "View-only access · command guard on",
-                  },
-                  {
-                    value: "standard" as const,
-                    label: "Standard",
-                    description: "Selected-worker editing · command guard on",
-                  },
-                  {
-                    value: "trusted" as const,
-                    label: "Trusted",
-                    description: "Full interaction · command guard off",
-                  },
-                ].map((option) => (
+                {POLICIES.map((option) => (
                   <button
                     aria-pressed={policy === option.value}
                     className={optionClass(policy === option.value)}
                     key={option.value}
-                    onClick={() => {
-                      setPolicy(option.value);
-                    }}
+                    onClick={() => setPolicy(option.value)}
                     type="button"
                   >
                     <span className="block text-sm">{option.label}</span>
@@ -121,12 +181,46 @@ export function CloudShareDialog({
               </div>
             </ShareSection>
 
-            <div className="rounded-lg border border-[#facc15]/20 bg-[#facc15]/5 px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
-              Sharing routes are not implemented by the current control plane.
-              These link settings mirror the intended policy but cannot create a
-              link yet. Per-person policies and agent access will appear under
-              Manage access after recipients join.
-            </div>
+            {error ? (
+              <p className="text-xs text-[var(--color-error)]" role="alert">
+                {error}
+              </p>
+            ) : null}
+
+            {activeLinks.length > 0 ? (
+              <ShareSection label="Active links">
+                <div className="divide-y divide-[var(--color-border-strong)] rounded-md border border-[var(--color-border-strong)]">
+                  {activeLinks.map((link) => (
+                    <div
+                      className="flex items-center gap-3 px-3 py-2.5"
+                      key={link.id}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-[var(--foreground)]">
+                          {link.sessionId ? "One session" : "Whole project"} ·{" "}
+                          {link.modeCap ?? "standard"}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[var(--color-text-passive)]">
+                          {link.accessScope === "restricted"
+                            ? `Restricted to ${link.recipients.length} recipient${link.recipients.length === 1 ? "" : "s"}`
+                            : "Anyone with the link"}
+                        </p>
+                      </div>
+                      <button
+                        aria-label="Revoke link"
+                        className={iconButtonClass}
+                        disabled={busy}
+                        onClick={() => void onRevoke(link)}
+                        title="Revoke link"
+                        type="button"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </ShareSection>
+            ) : null}
           </div>
 
           <div className="flex justify-end gap-2 border-t border-[var(--color-border-strong)] px-5 py-4">
@@ -135,15 +229,35 @@ export function CloudShareDialog({
               onClick={onClose}
               type="button"
             >
-              Cancel
+              Close
             </button>
             <button
-              className="h-9 cursor-not-allowed rounded-md bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-foreground)] opacity-45"
-              disabled
-              title="Project sharing API is not implemented"
+              className="h-9 rounded-md bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-foreground)] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={busy}
+              onClick={async () => {
+                setError("");
+                const recipients = recipientsText
+                  .split(/[,\n]/)
+                  .map((email) => email.trim())
+                  .filter(Boolean);
+                try {
+                  const link = await onCreate({
+                    accessScope: scope,
+                    recipients,
+                    modeCap: policy,
+                  });
+                  setCreatedLink(link);
+                } catch (cause) {
+                  setError(
+                    cause instanceof Error
+                      ? cause.message
+                      : "The link could not be created.",
+                  );
+                }
+              }}
               type="button"
             >
-              Create link
+              {busy ? "Creating…" : "Create link"}
             </button>
           </div>
         </div>
@@ -176,3 +290,8 @@ function optionClass(selected: boolean) {
       : "border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] text-[var(--muted-foreground)] hover:border-white/20 hover:text-[var(--foreground)]"
   }`;
 }
+
+const buttonClass =
+  "inline-flex h-9 items-center justify-center rounded-md border border-[var(--color-border-strong)] px-3 text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] disabled:cursor-not-allowed disabled:opacity-45";
+const iconButtonClass =
+  "grid size-8 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] disabled:opacity-45";

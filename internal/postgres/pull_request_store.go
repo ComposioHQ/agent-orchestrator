@@ -86,7 +86,7 @@ func (s *Store) ListPullRequestsBySession(
 	orgID, sessionID string,
 ) ([]domain.PullRequest, error) {
 	var records []domain.PullRequest
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ string) error {
 		rows, err := tx.Query(
 			ctx,
 			`SELECT `+pullRequestColumns+`

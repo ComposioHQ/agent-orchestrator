@@ -27,6 +27,17 @@ const mocks = vi.hoisted(() => ({
   disconnectGitHubUser: vi.fn(),
   putAgentProviderConnection: vi.fn(),
   deleteAgentProviderConnection: vi.fn(),
+  listOrgMembers: vi.fn(),
+  listOrgInvitations: vi.fn(),
+  createOrgInvitation: vi.fn(),
+  revokeOrgInvitation: vi.fn(),
+  listProjectShareLinks: vi.fn(),
+  createProjectShareLink: vi.fn(),
+  revokeProjectShareLink: vi.fn(),
+  redeemProjectShareLink: vi.fn(),
+  listSharedProjects: vi.fn(),
+  listSharedProjectSessions: vi.fn(),
+  getSession: vi.fn(),
 }));
 
 vi.mock("@/lib/cloud-client", () => ({
@@ -48,7 +59,19 @@ vi.mock("@/lib/cloud-client", () => ({
     disconnectGitHubUser: mocks.disconnectGitHubUser,
     putAgentProviderConnection: mocks.putAgentProviderConnection,
     deleteAgentProviderConnection: mocks.deleteAgentProviderConnection,
+    listOrgMembers: mocks.listOrgMembers,
+    listOrgInvitations: mocks.listOrgInvitations,
+    createOrgInvitation: mocks.createOrgInvitation,
+    revokeOrgInvitation: mocks.revokeOrgInvitation,
+    listProjectShareLinks: mocks.listProjectShareLinks,
+    createProjectShareLink: mocks.createProjectShareLink,
+    revokeProjectShareLink: mocks.revokeProjectShareLink,
+    redeemProjectShareLink: mocks.redeemProjectShareLink,
+    listSharedProjects: mocks.listSharedProjects,
+    listSharedProjectSessions: mocks.listSharedProjectSessions,
+    getSession: mocks.getSession,
   }),
+  consumePendingShareRedemption: () => null,
   newIdempotencyKey: () => "test-key",
 }));
 
@@ -144,6 +167,11 @@ beforeEach(() => {
     session: { id: "session-1", desiredState: "deleted" },
   });
   mocks.listProviderConnections.mockResolvedValue([]);
+  mocks.listOrgMembers.mockResolvedValue([]);
+  mocks.listOrgInvitations.mockResolvedValue([]);
+  mocks.listProjectShareLinks.mockResolvedValue([]);
+  mocks.listSharedProjects.mockResolvedValue([]);
+  mocks.listSharedProjectSessions.mockResolvedValue([]);
   mocks.createProject.mockResolvedValue({
     project: {
       id: "project-scratch",
@@ -438,7 +466,24 @@ it("connects coding-agent credentials from provider settings", async () => {
   );
 });
 
-it("opens project actions and presents sharing without a false create action", async () => {
+it("opens project actions and creates a real share link", async () => {
+  mocks.createProjectShareLink.mockResolvedValue({
+    link: {
+      id: "link-1",
+      orgId: "org-1",
+      projectId: "project-1",
+      role: "editor",
+      status: "active",
+      accessScope: "anyone",
+      recipients: [],
+      interaction: "interact",
+      modeCap: "standard",
+      deniedCommands: [],
+      createdAt: "2026-08-13T00:00:00Z",
+      updatedAt: "2026-08-13T00:00:00Z",
+      url: "https://app.example.com/share/org-1/tok_abc123",
+    },
+  });
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
@@ -447,12 +492,23 @@ it("opens project actions and presents sharing without a false create action", a
   );
   fireEvent.click(screen.getByRole("menuitem", { name: "Share project" }));
 
-  const dialog = screen.getByRole("dialog", {
+  const dialog = await screen.findByRole("dialog", {
     name: "Share Cloud platform",
   });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create link" }));
+
+  await waitFor(() =>
+    expect(mocks.createProjectShareLink).toHaveBeenCalledWith(
+      "org-1",
+      "project-1",
+      { role: "editor", interaction: "interact", accessScope: "anyone", recipients: [], modeCap: "standard" },
+    ),
+  );
   expect(
-    within(dialog).getByRole("button", { name: "Create link" }),
-  ).toBeDisabled();
+    await within(dialog).findByDisplayValue(
+      "https://app.example.com/share/org-1/tok_abc123",
+    ),
+  ).toBeVisible();
 });
 
 it("updates project settings from the project action menu", async () => {
