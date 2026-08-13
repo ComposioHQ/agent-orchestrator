@@ -16,11 +16,13 @@ import {
 import type { Theme } from "../lib/theme";
 import { haptics } from "../lib/haptics";
 import { clearOnboardingSkipped } from "../lib/onboardingStore";
-import { parsePairingPayload } from "../lib/pairing";
+import { applyPairingPayload, parsePairingPayload } from "../lib/pairing";
 import { connectSheetRoute } from "../lib/sheetResult";
 import { useApp } from "../lib/store";
 import { Button, NumberedStep } from "../lib/ui";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
+import { MOBILE_EVENTS } from "../lib/telemetry/events";
+import { mobileTelemetry } from "../lib/telemetry/runtime";
 
 export default function PairScreen() {
 	const t = useTheme();
@@ -83,12 +85,7 @@ export default function PairScreen() {
 		rejected.current = null;
 		scanned.current = true;
 		const cfg = await loadConfig();
-		await verify({
-			...cfg,
-			host: parsed.host,
-			httpPort: parsed.port,
-			password: parsed.password || cfg.password,
-		});
+		await verify(applyPairingPayload(cfg, parsed));
 	}
 
 	async function verify(target: ServerConfig) {
@@ -98,6 +95,8 @@ export default function PairScreen() {
 		try {
 			await pingServer(target);
 			await saveConfig(target);
+			mobileTelemetry()?.capture(MOBILE_EVENTS.paired, { method: "qr", from_onboarding: fromOnboarding });
+			if (fromOnboarding) mobileTelemetry()?.capture(MOBILE_EVENTS.onboardingCompleted);
 			haptics.success();
 			await finish();
 		} catch (e) {

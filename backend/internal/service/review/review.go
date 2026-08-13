@@ -51,6 +51,11 @@ func reviewErrorKind(err error) string {
 type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
+	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
+	TeardownReviewerTerminal(ctx context.Context, workerID domain.SessionID) error
+	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
+	SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error)
+	ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ActivitySignal) error
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
@@ -69,8 +74,11 @@ var _ Manager = (*Service)(nil)
 
 // Store is the review_run persistence surface owned by the service submit path.
 type Store interface {
+	GetReviewByID(ctx context.Context, id string) (domain.Review, bool, error)
+	UpdateReviewAgentSessionID(ctx context.Context, id, agentSessionID string) (bool, error)
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
-	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
+	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, autoInjectReview bool) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 }
@@ -178,6 +186,63 @@ func (s *Service) Cancel(ctx context.Context, workerID domain.SessionID) (review
 	return result, nil
 }
 
+// TerminateReviewer hard-destroys the reviewer pane for worker lifecycle
+// teardown and marks any running review runs as cancelled.
+func (s *Service) TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error {
+	_, err := s.engine.TerminateReviewer(ctx, workerID, body)
+	return err
+}
+
+// TeardownReviewerTerminal removes reviewer panes during recovery-oriented
+// worker shutdown while preserving review rows and native reviewer session ids.
+func (s *Service) TeardownReviewerTerminal(ctx context.Context, workerID domain.SessionID) error {
+	return s.engine.TeardownReviewerTerminal(ctx, workerID)
+}
+
+// RestoreReviewer relaunches an idle reviewer pane after its worker has been restored.
+func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID) error {
+	_, err := s.engine.RestoreReviewer(ctx, workerID)
+	return err
+}
+
+// SwitchReviewer atomically persists a worker's reviewer preference and returns
+// the authoritative post-switch review state.
+func (s *Service) SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error) {
+	return s.engine.SwitchReviewer(ctx, workerID, harness)
+}
+
+// ActivitySignal is reviewer-owned hook metadata. It deliberately does not
+// model activity state for session/Kanban display; for now hooks only keep the
+// reviewer native conversation id up to date for restore.
+type ActivitySignal struct {
+	Event          string
+	AgentSessionID string
+}
+
+// ApplyReviewActivitySignal records reviewer-owned hook facts without touching
+// the worker session lifecycle row.
+func (s *Service) ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ActivitySignal) error {
+	if reviewSessionID == "" {
+		return fmt.Errorf("%w: review session id is required", ErrInvalid)
+	}
+	if _, ok, err := s.store.GetReviewByID(ctx, reviewSessionID); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%w: review session %q", ErrNotFound, reviewSessionID)
+	}
+	if signal.AgentSessionID == "" {
+		return nil
+	}
+	updated, err := s.store.UpdateReviewAgentSessionID(ctx, reviewSessionID, signal.AgentSessionID)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return fmt.Errorf("%w: review session %q", ErrNotFound, reviewSessionID)
+	}
+	return nil
+}
+
 // SubmittedReview is one review result supplied by the reviewer CLI.
 type SubmittedReview struct {
 	RunID          string
@@ -270,7 +335,14 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 
 	switch run.Status {
 	case domain.ReviewRunRunning:
-		updated, err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID)
+		session, found, err := s.store.GetSession(ctx, workerID)
+		if err != nil {
+			return domain.ReviewRun{}, err
+		}
+		if !found {
+			return domain.ReviewRun{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
+		}
+		updated, err := s.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunComplete, verdict, body, githubReviewID, session.AutoInjectReview)
 		if err != nil {
 			return domain.ReviewRun{}, err
 		}
@@ -281,6 +353,7 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		run.Verdict = verdict
 		run.Body = body
 		run.GithubReviewID = githubReviewID
+		run.AutoInjectReview = session.AutoInjectReview
 		// Only on the real running -> complete transition. Re-submitting an
 		// already-complete run returns early below, so telemetry stays idempotent
 		// the same way the store does.
@@ -347,7 +420,7 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 	}
 	deliverable := make([]domain.ReviewRun, 0, len(runs))
 	for _, run := range runs {
-		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
+		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil || !run.AutoInjectReview {
 			continue
 		}
 		if currentHeads[run.PRURL] != run.TargetSHA {

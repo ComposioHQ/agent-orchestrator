@@ -143,7 +143,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 		}
 		if (!hasConfiguredOrchestratorAgent(project)) {
 			if (project) {
-				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+				useUiStore.getState().openProjectSettings(projectId);
 			}
 			return;
 		}
@@ -281,7 +281,12 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 									<Plus className="size-icon-lg" aria-hidden="true" />
 									{t("shell.newTask")}
 								</TopbarButton>
-								<TopbarButton aria-label={t("shell.openKanban")} onClick={openBoard} style={noDragStyle} variant="primary">
+								<TopbarButton
+									aria-label={t("shell.openKanban")}
+									onClick={openBoard}
+									style={noDragStyle}
+									variant="primary"
+								>
 									<LayoutDashboard className="size-icon-lg" aria-hidden="true" />
 									{t("shell.kanban")}
 								</TopbarButton>

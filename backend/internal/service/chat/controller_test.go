@@ -57,7 +57,8 @@ func openStore(t *testing.T) *sqlite.Store {
 /* ---- a fake conversation the controller can drive ---------------------- */
 
 type fakeConversation struct {
-	events chan ports.ChatEvent
+	events                 chan ports.ChatEvent
+	providerConversationID string
 
 	mu        sync.Mutex
 	sent      []ports.ChatUserMessage
@@ -113,12 +114,13 @@ func (f *deferredConversation) DiscardDeferredTurn(string) {}
 
 func newFakeConversation() *fakeConversation {
 	return &fakeConversation{
-		events:   make(chan ports.ChatEvent, 64),
-		resolved: map[string]ports.ChatDecision{},
+		events:                 make(chan ports.ChatEvent, 64),
+		providerConversationID: "thread-1",
+		resolved:               map[string]ports.ChatDecision{},
 	}
 }
 
-func (f *fakeConversation) ProviderConversationID() string       { return "thread-1" }
+func (f *fakeConversation) ProviderConversationID() string       { return f.providerConversationID }
 func (f *fakeConversation) Capabilities() ports.ChatCapabilities { return productionCaps() }
 func (f *fakeConversation) Events() <-chan ports.ChatEvent       { return f.events }
 
@@ -143,6 +145,12 @@ func (f *fakeConversation) sentTexts() []string {
 		texts = append(texts, msg.Text)
 	}
 	return texts
+}
+
+func (f *fakeConversation) sentMessages() []ports.ChatUserMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ports.ChatUserMessage(nil), f.sent...)
 }
 
 func (f *fakeConversation) Interrupt(context.Context, string) error { return nil }
@@ -179,6 +187,34 @@ type fakeDriver struct {
 	conv      ports.ChatConversation
 	startCfg  *ports.ChatStartConfig
 	resumeCfg *ports.ChatResumeConfig
+	start     func(ports.ChatStartConfig) (ports.ChatConversation, error)
+	resume    func(ports.ChatResumeConfig) (ports.ChatConversation, error)
+}
+
+type sequenceDriver struct {
+	mu            sync.Mutex
+	conversations []ports.ChatConversation
+}
+
+func (d *sequenceDriver) Harness() domain.AgentHarness { return domain.HarnessCodex }
+func (d *sequenceDriver) Probe(context.Context) (ports.ChatCapabilities, error) {
+	return productionCaps(), nil
+}
+func (d *sequenceDriver) next() (ports.ChatConversation, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.conversations) == 0 {
+		return nil, errors.New("no conversation queued")
+	}
+	conversation := d.conversations[0]
+	d.conversations = d.conversations[1:]
+	return conversation, nil
+}
+func (d *sequenceDriver) Start(context.Context, ports.ChatStartConfig) (ports.ChatConversation, error) {
+	return d.next()
+}
+func (d *sequenceDriver) Resume(context.Context, ports.ChatResumeConfig) (ports.ChatConversation, error) {
+	return d.next()
 }
 
 func (d fakeDriver) Harness() domain.AgentHarness { return domain.HarnessCodex }
@@ -189,11 +225,17 @@ func (d fakeDriver) Start(_ context.Context, cfg ports.ChatStartConfig) (ports.C
 	if d.startCfg != nil {
 		*d.startCfg = cfg
 	}
+	if d.start != nil {
+		return d.start(cfg)
+	}
 	return d.conv, nil
 }
 func (d fakeDriver) Resume(_ context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
 	if d.resumeCfg != nil {
 		*d.resumeCfg = cfg
+	}
+	if d.resume != nil {
+		return d.resume(cfg)
 	}
 	return d.conv, nil
 }
@@ -202,6 +244,28 @@ type fakeRegistry struct{ driver ports.ChatDriver }
 
 func (r fakeRegistry) Driver(domain.AgentHarness) (ports.ChatDriver, error) { return r.driver, nil }
 func (r fakeRegistry) SupportsChat(domain.AgentHarness) bool                { return true }
+
+type recordingActivity struct {
+	mu      sync.Mutex
+	signals []ports.ActivitySignal
+}
+
+func (r *recordingActivity) ApplyActivitySignal(
+	_ context.Context,
+	_ domain.SessionID,
+	signal ports.ActivitySignal,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.signals = append(r.signals, signal)
+	return nil
+}
+
+func (r *recordingActivity) snapshot() []ports.ActivitySignal {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]ports.ActivitySignal(nil), r.signals...)
+}
 
 func productionCaps() ports.ChatCapabilities {
 	return ports.ChatCapabilities{
@@ -507,10 +571,11 @@ func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
 /* ---- harness ----------------------------------------------------------- */
 
 type harness struct {
-	svc  *chatsvc.Service
-	st   *sqlite.Store
-	conv *fakeConversation
-	ctrl *chatsvc.Controller
+	svc      *chatsvc.Service
+	st       *sqlite.Store
+	conv     *fakeConversation
+	ctrl     *chatsvc.Controller
+	activity *recordingActivity
 
 	clockMu sync.Mutex
 	clock   time.Time
@@ -549,7 +614,12 @@ func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harn
 	} else if recorder, ok := conv.(*historyRecorder); ok {
 		base = recorder.fakeConversation
 	}
-	h := &harness{st: st, conv: base, clock: time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)}
+	h := &harness{
+		st:       st,
+		conv:     base,
+		activity: &recordingActivity{},
+		clock:    time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC),
+	}
 
 	// Guarded because the id factory is called from both the projection goroutine and
 	// whichever goroutine a test drives commands from, and an unsynchronized counter
@@ -562,6 +632,7 @@ func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harn
 		Store:    st,
 		Sessions: st,
 		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
+		Activity: h.activity,
 		Log:      slog.New(slog.DiscardHandler),
 		NewID: func() string {
 			counterMu.Lock()
@@ -904,6 +975,69 @@ func TestControllerDeathSettlesInFlightWork(t *testing.T) {
 	}
 }
 
+func TestControllerStreamClosureReportsSessionExited(t *testing.T) {
+	h := newHarness(t)
+
+	// A provider can disappear without emitting a final controller-state event.
+	// Closing the stream is still authoritative proof that this controller ended.
+	if err := h.conv.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	h.ctrl.Wait()
+
+	for _, signal := range h.activity.snapshot() {
+		if signal.State == domain.ActivityExited && signal.Event == "chat.controller.stopped" {
+			return
+		}
+	}
+	t.Fatalf("controller stream ended without an exited lifecycle signal: %+v", h.activity.snapshot())
+}
+
+func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	if err := conv.Close(); err != nil {
+		t.Fatalf("close provider stream: %v", err)
+	}
+	activity := &recordingActivity{}
+	ready := false
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
+		Activity: activity,
+		Log:      slog.New(slog.DiscardHandler),
+		NewID:    func() string { return "controller-ready-id" },
+	})
+
+	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+		ControllerReady: func(started chatsvc.StartResult) error {
+			if signals := activity.snapshot(); len(signals) != 0 {
+				t.Fatalf("provider events projected before controller-ready commit: %+v", signals)
+			}
+			if started.ProviderConversationID == "" || started.ControllerGeneration == "" {
+				t.Fatalf("controller-ready result = %+v", started)
+			}
+			ready = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	controller.Wait()
+	if !ready {
+		t.Fatal("controller-ready callback was not called")
+	}
+	for _, signal := range activity.snapshot() {
+		if signal.State == domain.ActivityExited && signal.Event == "chat.controller.stopped" {
+			return
+		}
+	}
+	t.Fatalf("stream closure was not projected after controller-ready: %+v", activity.snapshot())
+}
+
 // Dispatch reads the persisted mode. A TUI session must be refused even if a
 // controller somehow exists, because the mode is the authority.
 func TestSendRefusedForTUISession(t *testing.T) {
@@ -1157,16 +1291,91 @@ func TestServiceStopRetainsControllerUntilItsEventStreamActuallyEnds(t *testing.
 	if _, err := h.svc.Controller(testSession); err != nil {
 		t.Fatalf("controller was forgotten while its stream was still live: %v", err)
 	}
+	if !h.svc.HasLiveChatController(testSession) {
+		t.Fatal("live-controller guard cleared before the provider stream ended")
+	}
 
 	base.closeOnce.Do(func() { close(base.events) })
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := h.svc.Controller(testSession); errors.Is(err, chatsvc.ErrNoController) {
+			if h.svc.HasLiveChatController(testSession) {
+				t.Fatal("live-controller guard remained set after registry release")
+			}
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("controller registry did not release the stopped stream")
+}
+
+func TestStartWaitsForStoppedControllerCleanupBeforeRelaunch(t *testing.T) {
+	st := openStore(t)
+	first := newFakeConversation()
+	second := newFakeConversation()
+	driver := &sequenceDriver{conversations: []ports.ChatConversation{first, second}}
+	var idMu sync.Mutex
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: driver},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			idMu.Lock()
+			defer idMu.Unlock()
+			nextID++
+			return fmt.Sprintf("relaunch-id-%d", nextID)
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	firstController, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	first.emit(ports.ChatEvent{
+		Kind:            ports.ChatEventControllerState,
+		ControllerState: ports.ChatControllerStopped,
+	})
+	deadline := time.Now().Add(time.Second)
+	for firstController.State() != ports.ChatControllerStopped && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := firstController.State(); got != ports.ChatControllerStopped {
+		t.Fatalf("first controller state = %q, want stopped", got)
+	}
+	if svc.HasLiveChatController(testSession) {
+		t.Fatal("stopped controller reported live")
+	}
+
+	replacementWorkspace := t.TempDir()
+	waitCtx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	controller, err := svc.Start(waitCtx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: replacementWorkspace, ProviderConversationID: "thread-1",
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Start while stopped controller was cleaning up = controller=%p err=%v, want deadline", controller, err)
+	}
+
+	if err := first.Close(); err != nil {
+		t.Fatalf("close first conversation: %v", err)
+	}
+	firstController.Wait()
+	replacement, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: replacementWorkspace, ProviderConversationID: "thread-1",
+	})
+	if err != nil {
+		t.Fatalf("relaunch: %v", err)
+	}
+	if replacement == firstController {
+		t.Fatal("relaunch returned the stopped controller")
+	}
 }
 
 // The cancellation belongs to the moment stop was pressed. A message typed after

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -65,20 +64,20 @@ func Run() error {
 	ignoreBrokenPipeSignal()
 
 	log := newLogger()
-	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
+	var browserRuntimeToken string
+	if os.Getenv(browserruntime.RuntimeTokenStdinEnv) == "1" {
+		browserRuntimeToken, err = browserruntime.ReadRuntimeToken(os.Stdin)
+		if err != nil {
+			return err
+		}
+	}
 	if browserRuntimeToken == "" {
 		browserRuntimeToken, err = browserruntime.NewToken()
 		if err != nil {
 			return err
 		}
-		if err := os.Setenv(browserruntime.RuntimeTokenEnv, browserRuntimeToken); err != nil {
-			return fmt.Errorf("set browser runtime token: %w", err)
-		}
 	}
-	browserAuthority, err := browsersvc.LoadAuthority(cfg.DataDir)
-	if err != nil {
-		return fmt.Errorf("load browser capability authority: %w", err)
-	}
+	browserAuthority := browsersvc.NewAuthority()
 	browserBroker := browserruntime.New(log, browserRuntimeToken)
 
 	// Fail fast only if a daemon is genuinely still serving the recorded port.
@@ -208,10 +207,12 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation: rows.Conversation,
-				Turns:        rows.Turns,
-				Messages:     rows.Messages,
-				Activities:   rows.Activities,
+				Conversation:               rows.Conversation,
+				Turns:                      rows.Turns,
+				Messages:                   rows.Messages,
+				Activities:                 rows.Activities,
+				BranchPoints:               rows.BranchPoints,
+				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
 			}, nil
 		}),
 		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
@@ -220,12 +221,14 @@ func Run() error {
 				return chatsvc.ConversationRows{}, err
 			}
 			return chatsvc.ConversationRows{
-				Conversation:   rows.Conversation,
-				Turns:          rows.Turns,
-				Messages:       rows.Messages,
-				Activities:     rows.Activities,
-				OldestSequence: rows.OldestSequence,
-				HasMoreBefore:  rows.HasMoreBefore,
+				Conversation:               rows.Conversation,
+				Turns:                      rows.Turns,
+				Messages:                   rows.Messages,
+				Activities:                 rows.Activities,
+				BranchPoints:               rows.BranchPoints,
+				BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+				OldestSequence:             rows.OldestSequence,
+				HasMoreBefore:              rows.HasMoreBefore,
 			}, nil
 		}),
 		Drivers: chatDrivers,
@@ -236,7 +239,7 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -246,8 +249,11 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	sessMgr.SetTerminalInputGate(termMgr)
-	lifecycleMessenger.Bind(sessMgr)
+	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
+	lcStack.LCM.SetSessionInputLease(sessMgr)
+	lcStack.LCM.SetSessionOperationGate(sessMgr)
+	termMgr.SetSessionInputLease(sessMgr)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -320,12 +326,32 @@ func Run() error {
 		})
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
 	var prActions prsvc.ActionManager
-	if mergeProvider, mergeErr := newGitHubSCMProvider(log); mergeErr != nil {
-		logSCMProviderDisabled(log, mergeErr)
+	prReader := newMultiSCMProvider(cfg.GitLab, log)
+	prMerger := newMultiSCMMerger(cfg.GitLab, log)
+	if prReader != nil && prMerger != nil {
+		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: prMerger, Reader: prReader})
 	} else {
-		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: mergeProvider, Reader: mergeProvider})
+		log.Warn("pr action service disabled: no usable SCM provider")
+	}
+
+	// Durable agent-switch reconciliation is a startup safety boundary. The
+	// in-memory input fence disappeared with the previous daemon; if AO cannot
+	// prove and recover every active saga, do not bind a usable API with user
+	// input accidentally reopened. This runs after session-scoped shell wiring
+	// (ordinary recovery may tear down a worktree) but before HTTP is bound.
+	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
+		stop()
+		managedPreview.Close()
+		lcStack.Stop()
+		if cdcErr := cdcPipe.Stop(); cdcErr != nil {
+			log.Error("cdc pipeline shutdown", "err", cdcErr)
+		}
+		return fmt.Errorf("reconcile sessions on boot: %w", reconcileErr)
+	}
+	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
+		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
@@ -417,26 +443,18 @@ func Run() error {
 
 	// Restore Connect Mobile across a daemon restart: if the bridge was left
 	// enabled, re-arm the listener on its last port with the same password
-	// hash so an already-paired phone keeps working with no new password.
+	// hash so an already-paired phone keeps working with no new password, and
+	// (via bs.RestoreOnBoot) re-apply the secure-pairing proxy against the
+	// port Start actually bound. Routed through bs, not lan directly, so the
+	// proxy never gets pinned to a dead port after an ephemeral fallback.
 	// Best-effort: never blocks boot.
-	if err := restoreMobileOnBoot(mobilebridge.Path(cfg.DataDir), lan); err != nil {
+	if err := restoreMobileOnBoot(mobilebridge.Path(cfg.DataDir), bs); err != nil {
 		log.Warn("restore mobile bridge on boot failed", "err", err)
 	}
 
-	// Reconcile sessions on boot: adopt crash-surviving runtimes, capture and
-	// terminate dead ones, reap leaked tmux, then restore shutdown-saved
-	// sessions. Best-effort: a failure is logged but never blocks boot. Placed
-	// before srv.Run so sessions are consistent before the server serves.
-	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
-		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
-	}
-	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
-		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
-	}
 	if usagePipeline != nil {
 		usageDone = usagePipeline.Start(ctx)
 	}
-
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second
 
@@ -479,6 +497,12 @@ func Run() error {
 		<-usageDone
 	}
 	lcStack.Stop()
+	// Tear the tailnet proxy down before the listener it fronts. `tailscale
+	// serve --bg` state lives in tailscaled and outlives this process, so
+	// leaving it would keep publishing a local port that no longer has the
+	// authenticated LAN listener behind it. Best-effort and never blocking:
+	// boot restore re-applies it against the next bound port.
+	bs.ShutdownServe()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
 	if err := lan.Stop(lanStopCtx); err != nil {

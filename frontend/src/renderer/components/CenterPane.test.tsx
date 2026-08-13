@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentSwitch } from "../hooks/useAgentSwitches";
+import type { SwitchAgentInput } from "../hooks/useSwitchAgent";
 import type { WorkspaceSession } from "../types/workspace";
 import { isMacPlatform } from "../lib/platform";
 import { CenterPane } from "./CenterPane";
@@ -12,6 +14,36 @@ const shortcutMocks = vi.hoisted(() => ({
 	nextTabListener: undefined as (() => void) | undefined,
 	previousTabListener: undefined as (() => void) | undefined,
 	closeableStates: [] as boolean[],
+}));
+
+const agentSwitchMocks = vi.hoisted(() => ({
+	refetch: vi.fn(),
+	switches: [] as AgentSwitch[],
+	mutation: {
+		error: null as string | null,
+		input: undefined as SwitchAgentInput | undefined,
+		isPending: false,
+	},
+}));
+
+vi.mock("../hooks/useAgentSwitches", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../hooks/useAgentSwitches")>();
+	return {
+		...actual,
+		useAgentSwitches: () => ({ data: agentSwitchMocks.switches, refetch: agentSwitchMocks.refetch }),
+	};
+});
+
+vi.mock("../hooks/useSwitchAgent", () => ({
+	useSwitchAgentState: () => agentSwitchMocks.mutation,
+}));
+
+vi.mock("./TerminalSwitchAgentButton", () => ({
+	TerminalSwitchAgentButton: ({ session }: { session: WorkspaceSession }) => (
+		<button aria-label="Switch agent" data-testid="terminal-switch-agent" type="button">
+			{session.provider}
+		</button>
+	),
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -42,7 +74,9 @@ vi.mock("../lib/bridge", () => ({
 
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
 vi.mock("./TerminalPane", () => ({
-	TerminalPane: () => <div>terminal body</div>,
+	TerminalPane: ({ focusRequested }: { focusRequested?: boolean }) => (
+		<div data-focus-requested={focusRequested ? "true" : "false"}>terminal body</div>
+	),
 }));
 
 const worker = {
@@ -72,6 +106,12 @@ beforeEach(() => {
 	shortcutMocks.nextTabListener = undefined;
 	shortcutMocks.previousTabListener = undefined;
 	shortcutMocks.closeableStates.length = 0;
+	agentSwitchMocks.switches.length = 0;
+	agentSwitchMocks.refetch.mockReset();
+	agentSwitchMocks.refetch.mockResolvedValue(undefined);
+	agentSwitchMocks.mutation.error = null;
+	agentSwitchMocks.mutation.input = undefined;
+	agentSwitchMocks.mutation.isPending = false;
 });
 
 describe("CenterPane toolbar session label", () => {
@@ -87,6 +127,87 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker });
 		expect(screen.getByText("do the thing")).toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+	});
+
+	it("locks only the terminal and shows the provider transfer as soon as a switch request starts", () => {
+		agentSwitchMocks.mutation.input = {
+			idempotencyKey: "switch-request-1",
+			note: "",
+			session: worker,
+			targetHarness: "codex",
+		};
+		agentSwitchMocks.mutation.isPending = true;
+
+		renderCenterPane({ session: worker });
+
+		const overlay = screen.getByRole("status", { name: "Switching from Claude Code to Codex" });
+		const terminalPanel = screen.getByRole("tabpanel", { name: "do the thing terminal" });
+		expect(terminalPanel).toContainElement(overlay);
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(within(overlay).getByText("Claude Code")).toBeInTheDocument();
+		expect(within(overlay).getByText("Codex")).toBeInTheDocument();
+		expect(document.activeElement).toBe(screen.getByTestId("agent-switch-terminal-overlay"));
+	});
+
+	it("reopens terminal input when the source handoff needs a permission decision", () => {
+		agentSwitchMocks.switches.push({
+			agentHandoffStatus: "requested",
+			fromHarness: "claude-code",
+			id: "switch-2",
+			requestedAt: "2026-06-10T00:00:00Z",
+			semanticHandoffIncluded: true,
+			sessionId: worker.id,
+			state: "preparing_handoff",
+			targetHarness: "codex",
+			updatedAt: "2026-06-10T00:00:01Z",
+		});
+
+		renderCenterPane({
+			session: {
+				...worker,
+				activity: { state: "waiting_input", lastActivityAt: "2026-06-10T00:00:02Z" },
+			},
+		});
+
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
+		expect(
+			screen.getByText(
+				"The source agent requires a permission decision. Review the terminal prompt to continue the handoff.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Cancel switch" })).not.toBeInTheDocument();
+	});
+
+	it("keeps input locked but replaces transfer animation with a recovery warning", () => {
+		agentSwitchMocks.switches.push({
+			agentHandoffStatus: "unavailable",
+			errorCode: "target_start_unconfirmed",
+			fromHarness: "claude-code",
+			id: "switch-recovery",
+			requestedAt: "2026-06-10T00:00:00Z",
+			semanticHandoffIncluded: true,
+			sessionId: worker.id,
+			state: "starting_target",
+			targetHarness: "codex",
+			updatedAt: "2026-06-10T00:00:01Z",
+		});
+
+		renderCenterPane({
+			session: {
+				...worker,
+				activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
+				status: "exited",
+			},
+		});
+
+		const overlay = screen.getByRole("alert", { name: "Agent switch needs recovery" });
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByTestId("agent-switch-terminal-overlay")).not.toHaveClass("cursor-wait");
+		expect(within(overlay).getByText("Target startup could not be confirmed")).toBeInTheDocument();
+		expect(overlay.querySelector(".agent-switch-transfer-pulse")).not.toBeInTheDocument();
 	});
 
 	it("renders only this session's own tab, never a sibling session", () => {
@@ -140,6 +261,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByRole("button", { name: `Close terminal ${shell.title}` })).toBeInTheDocument();
 		expect(mainTab.querySelector('[title="Working"]')).toHaveClass("self-center");
 		expect(mainTab.querySelector('[title="Working"]')).not.toHaveClass("-translate-y-px");
+		expect(within(mainContainer as HTMLElement).getByTestId("terminal-switch-agent")).toBeInTheDocument();
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
@@ -209,6 +331,31 @@ describe("CenterPane toolbar session label", () => {
 		expect(shortcutMocks.closeableStates.at(-1)).toBe(true);
 		view.unmount();
 		expect(shortcutMocks.closeableStates.at(-1)).toBe(false);
+	});
+
+	it("shows reviewer as its own active harness tab", () => {
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex", sessionId: worker.id },
+		});
+
+		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).not.toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
+		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
+	});
+
+	it("opens reviewer from the tab strip when a reviewer handle exists", () => {
+		const onSelectReviewerTerminal = vi.fn();
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			onSelectReviewerTerminal,
+		});
+
+		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
+		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
 	// The button used to open a dropdown that also listed every session across

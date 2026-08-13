@@ -12,14 +12,19 @@ import (
 )
 
 const (
-	interfaceTransitionPoll       = 150 * time.Millisecond
-	interfaceTransitionIdleSettle = 750 * time.Millisecond
-	interfaceInterruptSettle      = 2 * time.Second
-	interfaceTransitionStopLimit  = 15 * time.Second
-	interfaceTransitionStepLimit  = 45 * time.Second
-	interfaceDeliveryRetry        = 2 * time.Second
-	interfaceDeliveryIdlePoll     = 30 * time.Second
+	interfaceTransitionPoll             = 150 * time.Millisecond
+	interfaceTransitionIdleSettle       = 750 * time.Millisecond
+	interfaceTransitionStaleIdleSamples = 3
+	interfaceTransitionStaleIdleLimit   = 5 * time.Second
+	interfaceTransitionOutputLines      = 40
+	interfaceInterruptSettle            = 2 * time.Second
+	interfaceTransitionStopLimit        = 15 * time.Second
+	interfaceTransitionStepLimit        = 45 * time.Second
+	interfaceDeliveryRetry              = 2 * time.Second
+	interfaceDeliveryIdlePoll           = 30 * time.Second
 )
+
+var errDrainQuiescenceUnverified = errors.New("AO could not verify that the terminal was idle after the latest input. The source interface was left untouched; retry after the terminal settles")
 
 // interfaceTransitionStore is optional so the existing narrow Manager Store
 // port and its many focused fakes do not grow methods unrelated to their tests.
@@ -156,7 +161,7 @@ func (m *Manager) StartInterfaceTransition(
 		return domain.SessionInterfaceTransition{}, err
 	}
 	if !created {
-		return transition, ErrSwitchInProgress
+		return transition, ErrInterfaceTransitionInProgress
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -238,6 +243,7 @@ func (m *Manager) runInterfaceTransition(
 	sourcePrepared := false
 	sourceStopped := false
 	modeChanged := false
+	var sourceRuntimeHandle ports.RuntimeHandle
 	fail := func(code string, cause error) {
 		if sourcePrepared && !sourceStopped {
 			m.abortSourceHandoff(transition)
@@ -248,7 +254,7 @@ func (m *Manager) runInterfaceTransition(
 			return
 		}
 		if sourceStopped {
-			m.rollbackInterfaceTransition(transition, modeChanged, code, cause)
+			m.rollbackInterfaceTransition(transition, sourceRuntimeHandle, modeChanged, code, cause)
 			return
 		}
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
@@ -270,6 +276,7 @@ func (m *Manager) runInterfaceTransition(
 		fail("SESSION_CHANGED", fmt.Errorf("session changed before the interface switch could start"))
 		return
 	}
+	sourceRuntimeHandle = runtimeHandle(rec.Metadata)
 	// Claim the raw terminal input path before target preflight or the first idle
 	// observation. Without this gate a mux client can submit work after the TUI is
 	// observed idle but before Destroy, and that accepted work is then killed by
@@ -287,7 +294,11 @@ func (m *Manager) runInterfaceTransition(
 		return
 	}
 	if err := m.prepareSourceHandoff(ctx, rec, transition.Policy, lastTerminalInputAt); err != nil {
-		fail("SOURCE_QUIESCE_FAILED", err)
+		code := "SOURCE_QUIESCE_FAILED"
+		if errors.Is(err, errDrainQuiescenceUnverified) {
+			code = "DRAIN_QUIESCENCE_UNVERIFIED"
+		}
+		fail(code, err)
 		return
 	}
 	sourcePrepared = true
@@ -519,9 +530,15 @@ func (m *Manager) prepareSourceHandoff(
 		}
 	}
 
-	ticker := time.NewTicker(interfaceTransitionPoll)
+	var detector ports.TerminalActivityDetector
+	if agent, ok := m.agents.Agent(rec.Harness); ok {
+		detector, _ = agent.(ports.TerminalActivityDetector)
+	}
+	ticker := time.NewTicker(m.interfaceTransition.pollInterval)
 	defer ticker.Stop()
 	idleSince := time.Time{}
+	idleSamples := 0
+	staleIdleSince := time.Time{}
 	for {
 		current, ok, err := m.store.GetSession(ctx, rec.ID)
 		if err != nil {
@@ -533,18 +550,62 @@ func (m *Manager) prepareSourceHandoff(
 		if current.Activity.State == domain.ActivityExited {
 			return nil
 		}
-		if tuiIdleAfterInput(current, lastTerminalInputAt) {
+		now := time.Now()
+		idleProven := tuiIdleAfterInput(current, lastTerminalInputAt)
+		staleIdle := current.Activity.State == domain.ActivityIdle && !idleProven
+		probeCtx := ctx
+		var cancelProbe context.CancelFunc
+		if staleIdle {
+			if staleIdleSince.IsZero() {
+				staleIdleSince = now
+			}
+			probeCtx, cancelProbe = context.WithDeadline(ctx, staleIdleSince.Add(m.interfaceTransition.staleIdleLimit))
+			// A screen can still show the idle composer briefly after Enter was
+			// accepted. Give the last input a full settle window before treating
+			// adapter markers as evidence, then require repeated samples below.
+			inputQuiet := lastTerminalInputAt.IsZero() ||
+				!now.Before(lastTerminalInputAt.Add(m.interfaceTransition.idleSettle))
+			if detector != nil && inputQuiet {
+				output, outputErr := m.runtime.GetOutput(probeCtx, handle, interfaceTransitionOutputLines)
+				now = time.Now()
+				if outputErr == nil {
+					state, authoritative := detector.DetectTerminalActivity(output)
+					idleProven = authoritative && state == domain.ActivityIdle
+				}
+			}
+		} else {
+			// A reported active turn or user-paced decision is allowed to wait
+			// without a deadline. A real state change resets prior ambiguity.
+			staleIdleSince = time.Time{}
+		}
+		if idleProven {
+			idleSamples++
 			if idleSince.IsZero() {
-				idleSince = time.Now()
-			} else if time.Since(idleSince) >= interfaceTransitionIdleSettle {
+				idleSince = now
+			} else if now.Sub(idleSince) >= m.interfaceTransition.idleSettle &&
+				(!staleIdle || idleSamples >= interfaceTransitionStaleIdleSamples) {
+				if cancelProbe != nil {
+					cancelProbe()
+				}
 				return nil
 			}
 		} else {
 			idleSince = time.Time{}
+			idleSamples = 0
 		}
-		alive, probeErr := m.runtime.IsAlive(ctx, handle)
+		alive, probeErr := m.runtime.IsAlive(probeCtx, handle)
+		if cancelProbe != nil {
+			cancelProbe()
+		}
 		if probeErr == nil && !alive {
 			return nil
+		}
+		now = time.Now()
+		// Bound the whole contradictory stale-idle regime, not just consecutive
+		// unknown captures. Partial terminal redraws may alternate between idle
+		// and ambiguous forever; neither outcome is enough to stop the source.
+		if staleIdle && now.Sub(staleIdleSince) >= m.interfaceTransition.staleIdleLimit {
+			return errDrainQuiescenceUnverified
 		}
 		select {
 		case <-ctx.Done():
@@ -640,6 +701,7 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 
 func (m *Manager) rollbackInterfaceTransition(
 	transition domain.SessionInterfaceTransition,
+	sourceRuntimeHandle ports.RuntimeHandle,
 	modeChanged bool,
 	code string,
 	cause error,
@@ -667,6 +729,17 @@ func (m *Manager) rollbackInterfaceTransition(
 			}
 			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 				"RECOVERY_REQUIRED", detail)
+			return
+		}
+	}
+	// A conclusive liveness probe can prove the source process exited even when
+	// its first teardown timed out. Clear any stale runtime registration using
+	// the handle captured before the controller epoch erased it, or rollback can
+	// fail to recreate the TUI with "session already exists" on ConPTY.
+	if transition.SourceMode != domain.SessionModeChat && sourceRuntimeHandle.ID != "" {
+		if err := m.runtime.Destroy(ctx, sourceRuntimeHandle); err != nil {
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+				"RECOVERY_REQUIRED", cause.Error()+"; source runtime cleanup: "+err.Error())
 			return
 		}
 	}
