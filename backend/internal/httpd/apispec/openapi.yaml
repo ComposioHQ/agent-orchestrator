@@ -2007,6 +2007,57 @@ paths:
       summary: Set the auto-inject review setting for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/auto-review:
+    put:
+      operationId: setSessionAutoReview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSetSessionAutoReviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Enable or disable automatic review for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/conversation:
     get:
       operationId: getSessionConversation
@@ -5223,6 +5274,8 @@ components:
           type: boolean
         autoInjectReview:
           type: boolean
+        autoReviewEnabled:
+          type: boolean
         branch:
           type: string
         createdAt:
@@ -5330,6 +5383,7 @@ components:
       - id
       - projectId
       - kind
+      - autoReviewEnabled
       - mode
       - activity
       - isTerminated
@@ -5343,6 +5397,13 @@ components:
       - prs
       type: object
     ControllersSetSecurePairingRequest:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
+      type: object
+    ControllersSetSessionAutoReviewRequest:
       properties:
         enabled:
           type: boolean
@@ -7029,6 +7090,11 @@ components:
           type: string
         targetSha:
           type: string
+        triggerSource:
+          enum:
+          - manual
+          - auto
+          type: string
         verdict:
           type: string
       required:
@@ -7037,6 +7103,7 @@ components:
       - sessionId
       - batchId
       - harness
+      - triggerSource
       - prUrl
       - targetSha
       - status

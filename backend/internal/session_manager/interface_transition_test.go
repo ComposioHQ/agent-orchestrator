@@ -277,6 +277,11 @@ type transitionChat struct {
 	preflightRelease chan struct{}
 	relayMessages    []string
 	relayIDs         []string
+	supportsChat     bool
+}
+
+func (c *transitionChat) SupportsChat(_ domain.AgentHarness) bool {
+	return c.supportsChat
 }
 
 func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarness) error {
@@ -387,7 +392,7 @@ func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *tra
 	}
 	log := &[]string{}
 	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
-	chat := &transitionChat{log: log}
+	chat := &transitionChat{log: log, supportsChat: true}
 	messenger := &fakeMessenger{}
 	store.messenger = messenger
 	counter := 0
@@ -405,6 +410,41 @@ func useFastInterfaceTransitionTimings(manager *Manager) {
 		pollInterval:   time.Millisecond,
 		idleSettle:     5 * time.Millisecond,
 		staleIdleLimit: 60 * time.Millisecond,
+	}
+}
+
+func TestInterfaceTransitionStatusHidesSwitchWhenChatUnsupported(t *testing.T) {
+	manager, _, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	chat.supportsChat = false
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.TargetMode != domain.SessionModeChat {
+		t.Fatalf("target mode = %q, want chat", status.TargetMode)
+	}
+	if status.Supported {
+		t.Fatal("expected switch to be unsupported")
+	}
+	if status.ReasonCode != "CHAT_UNSUPPORTED" {
+		t.Fatalf("reasonCode = %q, want CHAT_UNSUPPORTED", status.ReasonCode)
+	}
+}
+
+func TestInterfaceTransitionStatusAllowsSwitchToTUIWhenChatUnsupported(t *testing.T) {
+	manager, _, _, chat, _ := newTransitionManager(t, domain.SessionModeChat)
+	chat.supportsChat = false
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.TargetMode != domain.SessionModeTUI {
+		t.Fatalf("target mode = %q, want tui", status.TargetMode)
+	}
+	if status.ReasonCode == "CHAT_UNSUPPORTED" {
+		t.Fatal("switching back to TUI should not report CHAT_UNSUPPORTED")
 	}
 }
 

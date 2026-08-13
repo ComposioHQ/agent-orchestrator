@@ -25,6 +25,8 @@ import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({
 	session,
+	reviewerTerminal,
+	onOpenReviewerTerminal,
 	onOpenShell,
 	openingShell,
 	shellError,
@@ -32,6 +34,8 @@ export function SessionChatSurface({
 	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
+	reviewerTerminal?: { handleId: string; harness: string };
+	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -119,6 +123,8 @@ export function SessionChatSurface({
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}
+			reviewerTerminal={reviewerTerminal}
+			onOpenReviewerTerminal={onOpenReviewerTerminal}
 			headerActions={headerActions}
 			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}
