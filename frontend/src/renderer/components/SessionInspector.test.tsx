@@ -394,6 +394,8 @@ describe("SessionInspector PR section", () => {
 	it("renders PRs and reviews before the stacked compact policy rows", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
+		expect(screen.getByText("Session controls")).toBeInTheDocument();
+
 		const policyRow = (name: string) =>
 			screen.getByRole("switch", { name }).closest("[data-slot='inspector-policy-row']") as HTMLElement;
 		const ciRow = policyRow("Automatically send CI failures");
@@ -421,7 +423,12 @@ describe("SessionInspector PR section", () => {
 		}
 		expect(
 			screen.getByRole("button", {
-				name: "When disabled, CI failures for newly created pull requests will not be sent to the worker agent but will still be displayed. Existing pull requests keep their original setting.",
+				name: "When enabled, CI failures are sent to the worker agent and displayed in the pull request summary.",
+			}),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "When enabled, AO terminates this session after all pull requests merge.",
 			}),
 		).toBeInTheDocument();
 	});
@@ -809,7 +816,7 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		for (const title of ["Pull request", "Completion", "Activity"]) {
+		for (const title of ["Pull request", "Session controls", "Activity"]) {
 			const heading = screen.getByText(title).parentElement;
 			expect(heading?.parentElement).toHaveAttribute("data-testid", "inspector-section");
 		}
