@@ -34,7 +34,7 @@ AO is a local desktop workspace built for that job. Add a repository and create 
 
 Behind the desktop app, AO's local daemon watches agent activity and source-control state. The result is a shared, live view of the project instead of a collection of disconnected terminals, branches, and browser tabs.
 
-<img src="docs/assets/readme/orchestrator.png" alt="Agent Orchestrator coordinating multiple workers and passing them focused project context" width="100%" />
+<img src="docs/assets/readme/tui.png" alt="Agent Orchestrator workspace showing a coding agent's native terminal UI" width="100%" />
 
 ## Workers execute focused tasks
 
@@ -52,7 +52,7 @@ Use the orchestrator to explore an idea before implementation, brainstorm produc
 
 When a plan becomes actionable, the orchestrator can break it into focused tasks, spawn or redirect workers, pass each worker the relevant context, follow their progress, and coordinate follow-up work. The orchestrator owns planning and delegation; workers own implementation, tests, commits, and pull requests.
 
-<img src="docs/assets/readme/tui.png" alt="Agent Orchestrator coordinating focused worker sessions from a project-level view" width="100%" />
+<img src="docs/assets/readme/orchestrator.png" alt="Agent Orchestrator coordinating multiple workers and passing them focused project context" width="100%" />
 
 ## The Kanban keeps the system legible
 
