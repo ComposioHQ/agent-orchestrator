@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, Plus, Trash2 } from "lucide-react";
+import { Menu, Plus, Share2, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { OrchestratorIcon } from "@/components/icons";
 
@@ -23,6 +23,7 @@ export function CloudTopbar({
   onOpenSidebar,
   onNewTask,
   onOrchestrator,
+  onShare,
   onDelete,
   showBoardActions = false,
 }: {
@@ -30,6 +31,7 @@ export function CloudTopbar({
   onOpenSidebar?: () => void;
   onNewTask?: () => void;
   onOrchestrator?: () => void;
+  onShare?: () => void;
   onDelete?: () => void;
   showBoardActions?: boolean;
 }) {
@@ -80,6 +82,16 @@ export function CloudTopbar({
               </button>
             ) : null}
           </>
+        ) : null}
+        {onShare ? (
+          <button
+            type="button"
+            aria-label="Share"
+            className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+            onClick={onShare}
+          >
+            <Share2 className="size-3.5" aria-hidden="true" />
+          </button>
         ) : null}
         {onDelete ? (
           <button

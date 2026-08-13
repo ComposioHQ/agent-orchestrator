@@ -11,6 +11,7 @@ import {
   FileCode2,
   Files,
   GitCompareArrows,
+  Share2,
   Terminal,
   Trash2,
 } from "lucide-react";
@@ -26,12 +27,14 @@ export function CloudSessionWorkspace({
   onClose,
   onDelete,
   onNewTask,
+  onShare,
   organizationId,
   session,
 }: {
   onClose: () => void;
   onDelete: () => void;
   onNewTask: () => void;
+  onShare: () => void;
   organizationId: string;
   session: Session;
 }) {
@@ -151,6 +154,14 @@ export function CloudSessionWorkspace({
             }`}
           />
           <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              aria-label="Share"
+              className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={onShare}
+            >
+              <Share2 className="size-3.5" aria-hidden="true" />
+            </button>
             <button
               type="button"
               aria-label="Kill session"

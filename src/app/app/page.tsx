@@ -792,6 +792,10 @@ export function CloudWorkspace() {
               onClose={() => setSelectedSessionId(null)}
               onDelete={() => { void deleteSession(selectedSession); setSelectedSessionId(null); }}
               onNewTask={() => setNewSessionProjectId(selectedSession.projectId)}
+              onShare={() => {
+                const project = projects.find((p) => p.id === selectedSession.projectId);
+                if (project) setShareProject(project);
+              }}
               organizationId={organizationId}
               session={selectedSession}
             />
@@ -803,6 +807,7 @@ export function CloudWorkspace() {
                 showBoardActions={!!selectedProjectId}
                 onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
                 onOrchestrator={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
+                onShare={selectedProject ? () => setShareProject(selectedProject) : undefined}
               />
               <div className="relative min-h-0 flex-1">
                 {error ? (
@@ -907,12 +912,11 @@ export function CloudWorkspace() {
         onClose={() => setNewSessionProjectId(null)}
         onCreate={(input) => createSessionInProject(newSessionProjectId!, input)}
       />
-      {shareProject ? (
-        <CloudShareDialog
-          onClose={() => setShareProject(null)}
-          project={shareProject}
-        />
-      ) : null}
+      <CloudShareDialog
+        onClose={() => setShareProject(null)}
+        open={shareProject !== null}
+        project={shareProject}
+      />
       {projectSettings ? (
         <CloudProjectSettingsDialog
           busy={projectSettingsBusy}

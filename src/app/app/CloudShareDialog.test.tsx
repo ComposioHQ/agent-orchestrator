@@ -16,7 +16,7 @@ const project = {
 
 it("uses sandbox policy as the only link permission control", () => {
   render(
-    <CloudShareDialog onClose={vi.fn()} project={project} />,
+    <CloudShareDialog onClose={vi.fn()} open={true} project={project} />,
   );
 
   expect(screen.queryByText("Permission")).not.toBeInTheDocument();
