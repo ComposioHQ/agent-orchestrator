@@ -433,10 +433,20 @@ describe("SessionInspector PR section", () => {
 		).toBeInTheDocument();
 	});
 
-	it("hides the CI injection toggle before a PR exists", () => {
+	it("persists the CI injection default before a PR exists", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
-		expect(screen.queryByRole("switch", { name: "Automatically send CI failures" })).not.toBeInTheDocument();
+		const toggle = screen.getByRole("switch", { name: "Automatically send CI failures" });
+		expect(toggle).toBeChecked();
+		await userEvent.click(toggle);
+
+		expect(toggle).not.toBeChecked();
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-inject-ci", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { autoInjectCI: false },
+			}),
+		);
 	});
 
 	it("restores the CI injection toggle and shows the API error when saving fails", async () => {

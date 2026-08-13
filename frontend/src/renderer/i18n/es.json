@@ -193,7 +193,7 @@
 	"inspector.aria": "Inspector de sesión",
 	"inspector.branch": "Rama",
 	"inspector.ci.autoInject": "Enviar automáticamente los fallos de CI",
-	"inspector.ci.autoInjectDescription": "When disabled, CI failures are not sent to the worker agent to fix.",
+	"inspector.ci.autoInjectDescription": "Cuando está desactivado, los fallos de CI no se envían al agente de trabajo para corregirlos.",
 	"inspector.ci.autoInjectError": "No se pudo actualizar la inyección automática de CI ({{status}})",
 	"inspector.ci.notInjected": "Fallos de CI no enviados",
 	"inspector.browser": "Navegador",

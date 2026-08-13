@@ -214,7 +214,7 @@ function SummaryView({
 				</>
 			}
 			activityTitle={t("inspector.activity")}
-			completion={<SessionControls hasPRs={hasPRs} session={session} />}
+			completion={<SessionControls session={session} />}
 			pullRequestCards={
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
@@ -454,7 +454,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function SessionControls({ hasPRs, session }: { hasPRs: boolean; session: WorkspaceSession }) {
+function SessionControls({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -506,7 +506,7 @@ function SessionControls({ hasPRs, session }: { hasPRs: boolean; session: Worksp
 
 	return (
 		<Section title={t("inspector.sessionControls")}>
-			{hasPRs ? <AutoInjectCIPolicyControl session={session} /> : null}
+			<AutoInjectCIPolicyControl session={session} />
 			<AutoInjectReviewPolicyControl session={session} />
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
