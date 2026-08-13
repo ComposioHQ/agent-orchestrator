@@ -189,6 +189,12 @@ The recommended way to report a bug is to ask your coding agent to follow the re
 Read and follow https://github.com/Untrivial-ai/agent-orchestrator/blob/main/.agents/skills/bug-triage/SKILL.md to investigate this bug and file or update the GitHub issue: <describe what happened>
 ```
 
+You can also report a bug in the [bug-triaging channel on Discord](https://discord.com/channels/1476302178913357958/1491735678156013588). Tag `@Aeobot`, describe what happened, and ask it to use the bug-triage skill.
+
+```text
+@Aeobot Please triage this bug using the bug-triage skill: <describe what happened>
+```
+
 ## Develop and contribute
 
 Contributions are welcome across code, docs, triage, examples, and tests.
