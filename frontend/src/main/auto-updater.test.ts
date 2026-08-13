@@ -816,6 +816,34 @@ describe("startAutoUpdates", () => {
     expect(module.getUpdateStatus()).toEqual({ state: "idle" });
   });
 
+  it("does not nudge when a non-net failure breaks the net:: streak", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    const netFail = () => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+      return Promise.resolve();
+    };
+    const httpFail = () => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("HttpError: 500"));
+      return Promise.resolve();
+    };
+
+    autoUpdater.checkForUpdates.mockImplementation(netFail);
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    autoUpdater.checkForUpdates.mockImplementation(httpFail);
+    await module.startAutoUpdates(stateDir);
+    autoUpdater.checkForUpdates.mockImplementation(netFail);
+    await module.startAutoUpdates(stateDir);
+
+    // net, net, non-net, net → the streak resets on the non-net failure, so the
+    // lone trailing net error stays below the threshold (#3526).
+    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+  });
+
   it("counts one failure when an automatic check both emits error and rejects", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { module, autoUpdater, updaterEvents } = await importAutoUpdater();

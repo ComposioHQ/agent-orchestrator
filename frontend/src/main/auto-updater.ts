@@ -412,6 +412,16 @@ function recordAutomaticNetFailure(): void {
   consecutiveAutomaticNetFailures += 1;
 }
 
+// recordAutomaticCheckFailure tallies one automatic-check failure against the
+// consecutive net:: streak. A net error extends it; any other failure (HTTP
+// status, manifest 404, signature error, …) proves the network stack reached a
+// server and so breaks the streak — otherwise a single interleaving non-net
+// error would let a stale streak still trip the nudge (#3526).
+function recordAutomaticCheckFailure(err: unknown): void {
+  if (isNetError(err)) recordAutomaticNetFailure();
+  else consecutiveAutomaticNetFailures = 0;
+}
+
 // updateRequestErrorMessage turns a Chromium network-stack failure into
 // restart guidance instead of the raw net:: string (#3526); the original
 // message stays appended for diagnostics.
@@ -529,7 +539,7 @@ function wireUpdaterEvents(): void {
     emitUpdateFailure(err);
     if (activeUpdaterOperation === "automatic-check") {
       console.error("auto-update check failed:", err);
-      if (isNetError(err)) recordAutomaticNetFailure();
+      recordAutomaticCheckFailure(err);
       restoreAutomaticCheckPreviousStatus();
       return;
     }
@@ -610,7 +620,7 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
         // pre-check status so the renderer is neither stuck on "checking" nor
         // denied the stale-check nudge once the streak crosses the threshold
         // (#3526). Record before restoring so the restore broadcast is stamped.
-        if (isNetError(err)) recordAutomaticNetFailure();
+        recordAutomaticCheckFailure(err);
         restoreAutomaticCheckPreviousStatus();
         throw err;
       }
