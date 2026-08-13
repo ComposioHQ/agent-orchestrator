@@ -46,7 +46,7 @@ const INSPECTOR_MIN_PX = 360;
 const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
-const INSPECTOR_MOTION_MS = 180;
+const INSPECTOR_MOTION_MS = 240;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
@@ -71,11 +71,6 @@ function initialInspectorSize(availableWidth?: number): string {
 		: INSPECTOR_DEFAULT_PX;
 	const maxWidth = inspectorMaxWidthPx(availableWidth);
 	return maxWidth === undefined ? `${requestedWidth}px` : `${Math.min(requestedWidth, maxWidth)}px`;
-}
-
-function inspectorMotionDuration(): number {
-	if (typeof window === "undefined" || typeof window.matchMedia !== "function") return INSPECTOR_MOTION_MS;
-	return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : INSPECTOR_MOTION_MS;
 }
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
@@ -112,8 +107,7 @@ type SessionViewProps = {
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector driven to 0% via the imperative API from the ui-store
-// (topbar button / ⌘⇧B). Panel sizing stays atomic to avoid continuously
-// retargeting the live xterm surface; only inspector chrome is animated.
+// (topbar button / ⌘⇧B), animated by the flex-grow transition in styles.css.
 // The panel is `collapsible` only while closed: rrp snaps a collapsible panel
 // to 0% when a drag crosses minSize, so an always-collapsible inspector let a
 // drag vanish the rail. While open the panel is non-collapsible and a drag
@@ -655,25 +649,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
 			return () => window.cancelAnimationFrame(frame);
 		}
-		// Keep the split stable while the inspector chrome exits. Collapsing here
-		// would remove the panel before its opacity/slide transition can render and
-		// would resize the live xterm surface on every attempted layout animation.
-		// Once the chrome is hidden, collapse the split atomically. Reduced-motion
-		// users skip the delay but still defer one frame so rrp can register the
-		// panel's newly-collapsible constraints.
+		// Closing flips `collapsible` back on in this same commit, but rrp only
+		// re-derives the group's constraints in the follow-up commit its
+		// registration effect schedules — so this first collapse() still sees the
+		// open panel's non-collapsible constraints and no-ops. Repeat it on the
+		// next frame, when the fresh constraints have landed; collapse() is
+		// idempotent, so the double call is safe wherever the derivation lands.
 		setInspectorMotionState("closing");
-		const finishClose = () => {
-			panel.collapse();
-			setInspectorMotionState("closed");
-		};
-		const duration = inspectorMotionDuration();
-		if (duration === 0) {
-			const frame = window.requestAnimationFrame(finishClose);
-			return () => window.cancelAnimationFrame(frame);
-		}
-		const timer = window.setTimeout(finishClose, duration);
+		panel.collapse();
+		const frame = window.requestAnimationFrame(() => panel.collapse());
+		const timer = window.setTimeout(() => setInspectorMotionState("closed"), INSPECTOR_MOTION_MS);
 		return () => {
 			window.clearTimeout(timer);
+			window.cancelAnimationFrame(frame);
 		};
 	}, [hasInspector, isInspectorOpen]);
 	useEffect(() => {

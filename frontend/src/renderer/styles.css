@@ -2459,23 +2459,26 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Keep split sizing atomic: the sibling is a live xterm WebGL surface, and
- * interpolating flex-grow continuously refits its grid and emits SIGWINCH.
- * The inspector chrome below supplies the visual reveal instead. */
-.session-split #inspector[data-panel] {
-	transition: none;
+/* Match the left sidebar's spring-like reveal while keeping direct separator
+ * drags under the pointer. Both panels participate so neither edge snaps. */
+.session-split > [data-panel] {
+	transition: flex-grow 240ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .session-split > .session-inspector-panel[data-panel] {
 	max-width: var(--session-inspector-max-width, 50%);
 }
 
+.session-split:has([data-separator="active"]) > [data-panel] {
+	transition: none;
+}
+
 .session-inspector-motion {
 	opacity: 1;
 	transform: translateX(0);
 	transition:
-		opacity 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
-		transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+		opacity 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
 	will-change: opacity, transform;
 }
 
@@ -3493,7 +3496,8 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 @media (prefers-reduced-motion: reduce) {
 	.notification-row-enter,
 	.session-inspector-motion,
-	.session-inspector__responsive-label {
+	.session-inspector__responsive-label,
+	.session-split > [data-panel] {
 		animation: none;
 		transition: none;
 	}
