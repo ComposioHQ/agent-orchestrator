@@ -55,7 +55,7 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao session handoff submit`         | `POST /api/v1/sessions/{id}/agent-switches/{switchId}/handoff` |
 | `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                  |
 | `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                |
-| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`          |
+| `ao session claim-pr [<id>] <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`        |
 | `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
 | `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
 | `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
@@ -106,6 +106,11 @@ AO_SESSION_ID=ao-7 ao session handoff submit \
 Switching preserves the AO worker session and worktree. It does not translate,
 clip, or rewrite provider transcript files; providers continue to own their
 native history and compaction.
+
+`ao session claim-pr <pr-ref>` attaches a PR to the current worker by reading
+`AO_SESSION_ID`. From an orchestrator or external shell, pass the target
+explicitly with `ao session claim-pr <session-id> <pr-ref>`. The explicit form
+remains supported for backward compatibility and cross-session coordination.
 
 If `--agent` / `--harness` is omitted, `ao spawn` uses the resolved project's
 `worker.agent` config. Before spawning, the CLI refreshes the advisory agent
