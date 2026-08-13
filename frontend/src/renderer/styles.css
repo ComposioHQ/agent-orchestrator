@@ -431,7 +431,7 @@
 }
 
 @utility center-panel-surface {
-	container-name: center-panel workspace-topbar;
+	container-name: center-panel;
 	container-type: inline-size;
 	display: flex;
 	min-height: 0;

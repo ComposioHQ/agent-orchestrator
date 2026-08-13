@@ -186,7 +186,7 @@ export function ShellTopbar({
 	return (
 		<LayoutGroup id="shell-topbar">
 		<motion.header
-			className={embedded ? "contents" : topbarHeaderClass}
+			className={embedded ? "contents" : cn(topbarHeaderClass, "workspace-topbar-container")}
 			style={embedded ? undefined : { ...dragStyle, paddingLeft }}
 		>
 			{!embedded ? (

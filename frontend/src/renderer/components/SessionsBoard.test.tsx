@@ -164,6 +164,9 @@ describe("SessionsBoard", () => {
 
 		expect(screen.getByTestId("board-topbar-label").textContent).toContain("Board");
 		expect(screen.queryByText("solkit-ui")).toBeNull();
+		expect(screen.getByRole("button", { name: "New task" }).closest(".center-panel-titlebar")).toHaveClass(
+			"workspace-topbar-container",
+		);
 		expect(
 			within(screen.getByRole("button", { name: "New task" })).getByText("Task").hasAttribute("data-compact-label"),
 		).toBe(true);

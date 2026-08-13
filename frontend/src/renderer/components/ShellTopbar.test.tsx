@@ -265,6 +265,13 @@ describe("ShellTopbar status pill", () => {
 });
 
 describe("ShellTopbar orchestrator actions", () => {
+	it("owns the responsive action container on the full board topbar", () => {
+		renderTopbarSessions([orchestrator], "");
+
+		const actions = screen.getByTestId("workspace-topbar-actions");
+		expect(actions.closest("header")).toHaveClass("workspace-topbar-container");
+	});
+
 	it.each([
 		["active", "Working", "bg-status-working", true],
 		["waiting_input", "Input Needed", "bg-status-needs-you", false],
