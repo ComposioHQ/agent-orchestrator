@@ -16,6 +16,10 @@ type fakeProvider struct {
 	credsErr       error
 	fetchCallCount int
 	fetchErr       error
+	// partialResults, when non-nil, overrides the default FetchPullRequests
+	// behavior. The provider returns these observations (as-is) plus fetchErr.
+	// This simulates a partial batch: some Fetched=true, some Fetched=false.
+	partialResults []ports.SCMObservation
 }
 
 func (f *fakeProvider) ParseRepository(remote string) (ports.SCMRepo, bool) {
@@ -39,6 +43,9 @@ func (f *fakeProvider) CommitChecksGuard(_ context.Context, _ ports.SCMRepo, _, 
 
 func (f *fakeProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	f.fetchCallCount++
+	if f.partialResults != nil {
+		return f.partialResults, f.fetchErr
+	}
 	if f.fetchErr != nil {
 		return nil, f.fetchErr
 	}
@@ -353,5 +360,102 @@ func TestFetchPullRequests_AllProvidersFail(t *testing.T) {
 	_, err := m.FetchPullRequests(context.Background(), refs)
 	if err == nil {
 		t.Fatal("expected error when all providers fail")
+	}
+}
+
+// TestFetchPullRequests_PartialBatchSingleProvider verifies that when a single
+// sub-provider returns partial results (some Fetched=true, some Fetched=false)
+// plus a non-nil error, the multi provider returns a nil top-level error (review
+// finding #5). The observer's chunk loop sees err == nil and processes each
+// observation individually — the Fetched=true one is persisted, the Fetched=false
+// one is routed via its .Error field. Without this fix, the single-group case
+// hits len(groupErrs) == len(groups) (1 == 1) and returns a top-level error,
+// causing the observer to discard ALL results including the Fetched=true one.
+func TestFetchPullRequests_PartialBatchSingleProvider(t *testing.T) {
+	fetchErr := errors.New("gitlab partial failure")
+	gl := &fakeProvider{
+		key:      "gitlab",
+		parseOK:  true,
+		fetchErr: fetchErr,
+		partialResults: []ports.SCMObservation{
+			{Fetched: true, Provider: "gitlab", PR: ports.SCMPRObservation{Number: 10}},
+			{Fetched: false, Provider: "gitlab", PR: ports.SCMPRObservation{Number: 20}},
+		},
+	}
+	m := New(NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 10},
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
+	}
+	obs, err := m.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("error = %v, want nil (partial batch with Fetched=true must not return top-level error)", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("got %d observations, want 2", len(obs))
+	}
+	// The successful observation must be present.
+	if !obs[0].Fetched || obs[0].Provider != "gitlab" || obs[0].PR.Number != 10 {
+		t.Errorf("obs[0] = %+v, want gitlab/10 Fetched=true", obs[0])
+	}
+	if obs[0].Error != nil {
+		t.Errorf("obs[0].Error = %v, want nil for successful observation", obs[0].Error)
+	}
+	// The failed observation must be present with Fetched=false and carry the error.
+	if obs[1].Fetched {
+		t.Errorf("obs[1].Fetched = true, want false for failed ref")
+	}
+	if !errors.Is(obs[1].Error, fetchErr) {
+		t.Errorf("obs[1].Error = %v, want gitlab failure %v", obs[1].Error, fetchErr)
+	}
+}
+
+// TestFetchPullRequests_SingleProviderAllFail verifies that when a single
+// sub-provider returns all Fetched=false observations plus a non-nil error,
+// the multi provider returns a top-level error so the observer's cooldown/retry
+// logic fires (review finding #5).
+func TestFetchPullRequests_SingleProviderAllFail(t *testing.T) {
+	fetchErr := errors.New("gitlab down")
+	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: fetchErr}
+	m := New(NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 10},
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
+	}
+	_, err := m.FetchPullRequests(context.Background(), refs)
+	if err == nil {
+		t.Fatal("expected top-level error when single provider fully fails with no Fetched=true")
+	}
+}
+
+// TestFetchPullRequests_TwoProvidersOneFailsOneSucceeds verifies that when two
+// providers are registered and one fully fails while the other fully succeeds,
+// the multi provider returns a nil top-level error and the healthy provider's
+// observations are present (review finding #5).
+func TestFetchPullRequests_TwoProvidersOneFailsOneSucceeds(t *testing.T) {
+	gh := &fakeProvider{key: "github", parseOK: true}
+	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: errors.New("gitlab down")}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "github"}, Number: 10},
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
+	}
+	obs, err := m.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("error = %v, want nil (one healthy provider)", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("got %d observations, want 2", len(obs))
+	}
+	// GitHub observation must be present and correct despite GitLab failure.
+	if !obs[0].Fetched || obs[0].Provider != "github" || obs[0].PR.Number != 10 {
+		t.Errorf("obs[0] = %+v, want github/10 Fetched=true", obs[0])
+	}
+	// GitLab slot: Fetched=false placeholder with the error attached.
+	if obs[1].Fetched {
+		t.Errorf("obs[1].Fetched = true, want false for failed gitlab fetch")
 	}
 }

@@ -142,18 +142,38 @@ func (m *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 			// per-provider cooldown and non-rate-limit errors to
 			// refresh-incomplete, without discarding the classification
 			// (review Item 7). The observer nils this out before persistence.
-			if err != nil {
+			// Only attach to Fetched=false observations — a partial batch may
+			// contain Fetched=true observations that must not carry the error.
+			if err != nil && !results[ir.idx].Fetched {
 				results[ir.idx].Error = err
 			}
 		}
 	}
 
-	// Return an error only if ALL groups failed; otherwise healthy-provider
-	// results are returned with a nil error so the observer can persist them.
-	if len(groupErrs) > 0 && len(groupErrs) == len(groups) {
-		// All groups failed — return the first group's error.
-		for _, err := range groupErrs {
-			return results, err
+	// Suppress the top-level error when any observation has Fetched=true,
+	// even if groupErrs is non-empty. This covers the partial-batch case:
+	// a single sub-provider returns some Fetched=true observations plus a
+	// non-nil error (e.g. one ref failed, one succeeded). If we returned the
+	// error, the observer's chunk loop would discard ALL results including
+	// the Fetched=true ones. By returning nil, the observer's existing
+	// per-observation routing handles the failed refs via their .Error field.
+	//
+	// The all-fail path (no Fetched=true in any group) still returns a
+	// top-level error so the observer's cooldown/retry logic fires.
+	if len(groupErrs) > 0 {
+		anyFetched := false
+		for i := range results {
+			if results[i].Fetched {
+				anyFetched = true
+				break
+			}
+		}
+		if !anyFetched {
+			// All groups failed with no successful observations — return the
+			// first group's error so the observer can mark repos as failed.
+			for _, err := range groupErrs {
+				return results, err
+			}
 		}
 	}
 	return results, nil
