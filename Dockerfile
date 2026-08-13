@@ -32,6 +32,7 @@ ARG CLAUDE_CODE_VERSION=2.1.228
 ARG CODEX_VERSION=0.147.0
 ARG CURSOR_AGENT_VERSION=2026.08.11-e8db854
 RUN apt-get update && \
+    apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
         bash \
         ca-certificates \
