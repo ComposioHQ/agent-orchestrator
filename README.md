@@ -168,7 +168,7 @@ AO works with the coding agents and source-control workflow you already use. Age
 
 ## Install
 
-Download the latest desktop build for your platform. The desktop app is the recommended, auto-updating install path.
+Download the latest AO desktop app for your platform. AO checks for updates automatically.
 
 | Platform              | Download                                                                                                                      |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
