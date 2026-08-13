@@ -1314,9 +1314,19 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             updatedAt: string;
+            /** @description The one-time raw redemption token. Only ever present in the
+             *     response to creating a link — build the actual shareable URL
+             *     from window.location.origin plus this token client-side; only
+             *     the browser reliably knows its own public-facing host.
+             *      */
+            token?: string;
             /**
              * Format: uri
-             * @description The one-time redeemable link. Only ever present in the response to creating it.
+             * @description Best-effort convenience link built server-side from this
+             *     request's own proxy chain. Prefer building the link from
+             *     token and window.location.origin instead — this is not
+             *     guaranteed correct in every deployment.
+             *
              */
             url?: string;
         };
