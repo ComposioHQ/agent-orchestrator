@@ -235,6 +235,48 @@ describe("annotate preload", () => {
 		expect(payload.selection.contexts.map((context) => context.classes)).toEqual([[], []]);
 	});
 
+	it("selects a Markdown table cell when hovering nested cell content", async () => {
+		const markdown = document.createElement("main");
+		markdown.className = "markdown-body";
+		const table = setElementBounds(document.createElement("table"), {
+			left: 20,
+			top: 30,
+			width: 600,
+			height: 240,
+		});
+		const body = document.createElement("tbody");
+		const row = document.createElement("tr");
+		const cell = setElementBounds(document.createElement("td"), {
+			left: 220,
+			top: 110,
+			width: 180,
+			height: 52,
+		});
+		const label = document.createElement("strong");
+		label.textContent = "Codex";
+		cell.appendChild(label);
+		row.appendChild(cell);
+		body.appendChild(row);
+		table.appendChild(body);
+		markdown.appendChild(table);
+		document.body.appendChild(markdown);
+
+		dispatchPageEvent(label, "pointermove");
+
+		expect(highlightStyle().left).toBe("220px");
+		expect(highlightStyle().top).toBe("110px");
+		expect(highlightStyle().width).toBe("180px");
+		expect(highlightStyle().height).toBe("52px");
+
+		dispatchPageEvent(label, "click");
+		const payload = await submitPrompt("Change this agent entry.");
+
+		expect(payload.selection.kind).toBe("element");
+		if (payload.selection.kind !== "element") throw new Error("expected an element selection");
+		expect(payload.selection.context.tag).toBe("td");
+		expect(payload.selection.context.visibleText).toBe("Codex");
+	});
+
 	it("keeps the nearest classed component target outside Markdown previews", async () => {
 		const card = setElementBounds(document.createElement("section"), {
 			left: 20,
