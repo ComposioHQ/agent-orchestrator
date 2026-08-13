@@ -34,9 +34,9 @@ func parseQwen(source domain.UsageSourceContext, records []jsonlRecord, result *
 		if native.SchemaVersion != 1 || model == "" || identity == "" ||
 			native.InputTokens < 0 || native.OutputTokens < 0 || native.CachedTokens < 0 ||
 			native.ThoughtsTokens < 0 ||
-			native.CachedTokens > native.InputTokens || native.ThoughtsTokens > native.OutputTokens ||
+			native.CachedTokens > native.InputTokens ||
 			native.TotalTokens != nil && (*native.TotalTokens < 0 ||
-				*native.TotalTokens != native.InputTokens+native.OutputTokens) {
+				*native.TotalTokens != native.InputTokens+native.OutputTokens+native.ThoughtsTokens) {
 			recordMalformed(result)
 			continue
 		}

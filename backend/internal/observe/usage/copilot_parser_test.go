@@ -87,6 +87,21 @@ func TestParseCopilotAssistantMessageOutputTokens(t *testing.T) {
 	}
 }
 
+func TestParseCopilotPrefersShutdownRollupOverAssistantMessages(t *testing.T) {
+	source := usageSource(domain.UsageSourceCopilotShutdown)
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"assistant.message","id":"message-1","data":{"model":"gpt-5-mini","outputTokens":17}}`)},
+		{Data: copilotShutdownLine("gpt-5-mini", 100, 60, 10, 17, 5)},
+	}
+	result := parseRecords(source, records, 200, time.Unix(1700000000, 0).UTC())
+	if result.err != nil || len(result.Events) != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if got := result.Events[0].Tokens; got.InputTokens != 100 || got.OutputTokens != 17 || got.ReasoningTokens == nil || *got.ReasoningTokens != 5 {
+		t.Fatalf("tokens = %+v", got)
+	}
+}
+
 // TestParseCopilotCounterRegressionResetsBaseline catches negative usage deltas
 // after Copilot starts a new cumulative epoch.
 func TestParseCopilotCounterRegressionResetsBaseline(t *testing.T) {

@@ -12,7 +12,7 @@ func TestParseQwenUsageForBoundSession(t *testing.T) {
 	source.NativeRootID = "qwen-session"
 	records := []jsonlRecord{
 		{Data: []byte(`{"schemaVersion":1,"id":"other","sessionId":"another","model":"qwen3","inputTokens":999,"outputTokens":999,"cachedTokens":0,"thoughtsTokens":0,"totalTokens":1998}`)},
-		{Offset: 100, Data: []byte(`{"schemaVersion":1,"id":"turn-1","sessionId":"qwen-session","model":"qwen3-coder","inputTokens":30,"outputTokens":12,"cachedTokens":9,"thoughtsTokens":4,"totalTokens":42}`)},
+		{Offset: 100, Data: []byte(`{"schemaVersion":1,"id":"turn-1","sessionId":"qwen-session","model":"qwen3-coder","inputTokens":30,"outputTokens":12,"cachedTokens":9,"thoughtsTokens":4,"totalTokens":46}`)},
 	}
 	result := parseRecords(source, records, 300, time.Unix(1700000000, 0).UTC())
 	if result.err != nil || len(result.Events) != 1 {

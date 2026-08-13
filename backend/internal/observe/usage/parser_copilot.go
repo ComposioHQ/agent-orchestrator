@@ -33,6 +33,14 @@ func parseCopilot(
 	state *copilotParserStateV1,
 	result *parseResult,
 ) {
+	hasShutdown := false
+	for _, record := range records {
+		var native copilotTranscriptRecord
+		if json.Unmarshal(record.Data, &native) == nil && native.Type == "session.shutdown" {
+			hasShutdown = true
+			break
+		}
+	}
 	for _, record := range records {
 		var native copilotTranscriptRecord
 		if err := json.Unmarshal(record.Data, &native); err != nil {
@@ -41,7 +49,9 @@ func parseCopilot(
 		}
 		switch native.Type {
 		case "assistant.message":
-			appendCopilotAssistantMessageUsage(source, record, native, result)
+			if !hasShutdown {
+				appendCopilotAssistantMessageUsage(source, record, native, result)
+			}
 		case "session.shutdown":
 			parseCopilotShutdownUsage(source, native, state, result)
 		default:
