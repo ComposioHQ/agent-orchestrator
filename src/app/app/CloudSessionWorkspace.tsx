@@ -130,7 +130,7 @@ export function CloudSessionWorkspace({
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(320px,38%)]">
-      <section className="flex min-h-0 min-w-0 flex-col bg-[#101317]">
+      <section className="flex min-h-0 min-w-0 flex-col bg-[var(--color-bg-terminal-opaque)]">
         <header className="flex h-10 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] pl-3 pr-2.5">
           <button
             aria-label="Back to project"

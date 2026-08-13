@@ -33,6 +33,7 @@ import { CloudWorkspaceSwitcher } from "./CloudWorkspaceSwitcher";
 
 export function CloudSidebar({
   account,
+  onCreateWorkspace,
   onNewProject,
   onNewSession,
   onOpenCommand,
@@ -54,6 +55,7 @@ export function CloudSidebar({
   parity = false,
 }: {
   account: CurrentAccount;
+  onCreateWorkspace: () => void;
   onNewProject: () => void;
   onNewSession: (projectId: string) => void;
   onOpenCommand: () => void;
@@ -107,6 +109,7 @@ export function CloudSidebar({
 
       <CloudWorkspaceSwitcher
         account={account}
+        onCreateWorkspace={onCreateWorkspace}
         onOpenSettings={onOpenSettings}
         onSelect={onSelectOrganization}
         selectedOrganizationId={selectedOrganizationId}

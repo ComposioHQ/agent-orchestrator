@@ -29,6 +29,7 @@ import {
   type LocalAgentInput,
   type ScratchProjectInput,
 } from "./CloudDialogs";
+import { CloudCreateWorkspaceDialog } from "./CloudCreateWorkspaceDialog";
 import { CloudNewSessionDialog } from "./CloudNewSessionDialog";
 import { CloudSettings } from "./CloudSettings";
 import { CloudProjectSettingsDialog } from "./CloudProjectSettingsDialog";
@@ -61,10 +62,11 @@ export function CloudWorkspace() {
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTarget, setSettingsTarget] = useState<
-    "general" | "organization" | "providers"
+    "general" | "workspaces" | "providers"
   >("general");
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [newSessionProjectId, setNewSessionProjectId] = useState<string | null>(null);
   const [projectSettings, setProjectSettings] = useState<Project | null>(null);
   const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
@@ -291,7 +293,7 @@ export function CloudWorkspace() {
         setAccount(value);
         const firstOrganization = value.organizations[0]?.id;
         if (!firstOrganization) {
-          setError("Your account has no active organization memberships.");
+          setError("Your account has no active workspace memberships.");
           setLoading(false);
           return;
         }
@@ -745,6 +747,7 @@ export function CloudWorkspace() {
         {previewUi && mobileNavOpen ? <button type="button" aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMobileNavOpen(false)} /> : null}
         <CloudSidebar
           account={account}
+          onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
           onDeleteProject={(project) => void deleteProject(project)}
           onDeleteSession={(session) => void deleteSession(session)}
           onNewProject={() => setNewProjectOpen(true)}
@@ -889,6 +892,11 @@ export function CloudWorkspace() {
           setSettingsOpen(true);
         }}
         open={newProjectOpen}
+      />
+      <CloudCreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onClose={() => setCreateWorkspaceOpen(false)}
+        onCreated={() => { setCreateWorkspaceOpen(false); window.location.reload(); }}
       />
       <CloudNewSessionDialog
         open={newSessionProjectId !== null}

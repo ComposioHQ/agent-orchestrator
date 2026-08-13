@@ -1,7 +1,7 @@
 "use client";
 
 import type { CurrentAccount } from "@aoagents/cloud-client";
-import { Check, ChevronsUpDown, LogOut, Settings } from "lucide-react";
+import { Check, ChevronsUpDown, LogOut, Plus, Settings } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
@@ -24,7 +24,7 @@ function hashString(str: string): number {
   return Math.abs(hash);
 }
 
-function WorkspaceAvatar({ name, id, size = 18 }: { name: string; id: string; size?: number }) {
+export function WorkspaceAvatar({ name, id, size = 18 }: { name: string; id: string; size?: number }) {
   const colors = PALETTE[hashString(id) % PALETTE.length]!;
   const initials = name.slice(0, 2).toUpperCase();
   const fontSize = size * 0.42;
@@ -54,11 +54,13 @@ const menuItemClass =
 
 export function CloudWorkspaceSwitcher({
   account,
+  onCreateWorkspace,
   onOpenSettings,
   onSelect,
   selectedOrganizationId,
 }: {
   account: CurrentAccount;
+  onCreateWorkspace: () => void;
   onOpenSettings: () => void;
   onSelect: (organizationId: string) => void;
   selectedOrganizationId: string;
@@ -110,7 +112,7 @@ export function CloudWorkspaceSwitcher({
           <WorkspaceAvatar name={selectedWorkspace.displayName} id={selectedWorkspace.id} />
         ) : null}
         <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-none">
-          {selectedWorkspace?.displayName ?? "No organization"}
+          {selectedWorkspace?.displayName ?? "No workspace"}
         </span>
         <motion.span
           animate={{ rotate: open ? 180 : 0 }}
@@ -132,7 +134,54 @@ export function CloudWorkspaceSwitcher({
             transition={menuTransition}
             className="absolute left-0 top-[calc(100%+6px)] z-50 w-[calc(100%+24px)] origin-top overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1"
           >
-            <div>
+            <div className="truncate px-2 py-1.5 text-[11px] leading-4 text-[var(--color-text-passive)]">
+              {account.user.email}
+            </div>
+            {account.organizations.map((workspace) => {
+              const selected = workspace.id === selectedOrganizationId;
+              return (
+                <button
+                  key={workspace.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={selected}
+                  className={`${menuItemClass} ${
+                    selected
+                      ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
+                      : ""
+                  }`}
+                  onClick={() => {
+                    onSelect(workspace.id);
+                    setOpen(false);
+                  }}
+                >
+                  <WorkspaceAvatar name={workspace.displayName} id={workspace.id} />
+                  <span className="min-w-0 flex-1 truncate">
+                    {workspace.displayName}
+                  </span>
+                  {selected ? (
+                    <Check
+                      className="size-3.5 shrink-0 text-[var(--muted-foreground)]"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </button>
+              );
+            })}
+
+            <div className="mt-1 border-t border-[var(--color-border-strong)] pt-1">
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItemClass}
+                onClick={() => {
+                  setOpen(false);
+                  onCreateWorkspace();
+                }}
+              >
+                <Plus className="size-3.5 shrink-0" aria-hidden="true" />
+                Create workspace
+              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -153,44 +202,6 @@ export function CloudWorkspaceSwitcher({
                 <LogOut className="size-3.5 shrink-0" aria-hidden="true" />
                 Sign out
               </a>
-            </div>
-
-            {/* Workspace list */}
-            <div className="border-t border-[var(--color-border-strong)] pt-1.5">
-              <div className="truncate px-2 py-1.5 text-[11px] leading-4 text-[var(--color-text-passive)]">
-                {account.user.email}
-              </div>
-              {account.organizations.map((workspace) => {
-                const selected = workspace.id === selectedOrganizationId;
-                return (
-                  <button
-                    key={workspace.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={selected}
-                    className={`${menuItemClass} ${
-                      selected
-                        ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                        : ""
-                    }`}
-                    onClick={() => {
-                      onSelect(workspace.id);
-                      setOpen(false);
-                    }}
-                  >
-                    <WorkspaceAvatar name={workspace.displayName} id={workspace.id} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {workspace.displayName}
-                    </span>
-                    {selected ? (
-                      <Check
-                        className="size-3.5 shrink-0 text-[var(--muted-foreground)]"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                  </button>
-                );
-              })}
             </div>
           </motion.div>
         ) : null}

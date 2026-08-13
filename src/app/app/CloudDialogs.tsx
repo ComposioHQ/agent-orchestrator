@@ -92,7 +92,7 @@ export function NewProjectDialog({
             <CreationOption
               description={
                 github.status === "available"
-                  ? "Choose a repository granted to this organization."
+                  ? "Choose a repository granted to this workspace."
                   : "Connect GitHub in Settings to import repositories."
               }
               disabled={github.status !== "available"}
@@ -148,7 +148,7 @@ export function NewProjectDialog({
             </label>
           ) : (
             <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-4 text-sm text-[var(--color-text-passive)]">
-              No active repositories are granted to this organization.
+              No active repositories are granted to this workspace.
             </div>
           )}
           <button className="text-left text-xs text-[var(--ring)] hover:underline" onClick={onOpenProviderSettings} type="button">
@@ -241,7 +241,7 @@ function LocalAgentForm({
             <label className="block">
               <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">GitHub owner</span>
               <select className={selectClass} disabled={busy} onChange={(e) => setInstallationId(e.target.value)} required value={installationId}>
-                <option value="">Choose account or organization</option>
+                <option value="">Choose account or workspace</option>
                 {githubUser.connection.installations.map((inst) => (
                   <option disabled={!inst.canCreateRepository} key={inst.githubInstallationId} value={inst.githubInstallationId}>
                     {inst.accountLogin}{inst.accountType.toLowerCase() === "user" ? " · personal" : " · org"}

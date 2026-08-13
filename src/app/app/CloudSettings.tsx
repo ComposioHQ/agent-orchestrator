@@ -46,8 +46,9 @@ import type {
   GitHubUserCapability,
   ProviderCapability,
 } from "./cloud-ui-types";
+import { WorkspaceAvatar } from "./CloudWorkspaceSwitcher";
 
-type SettingsPanel = "general" | "profile" | "notifications" | "organization" | "providers";
+type SettingsPanel = "general" | "profile" | "notifications" | "workspaces" | "providers";
 type AgentProvider = "claude-code" | "codex" | "cursor";
 
 export function CloudSettings({
@@ -93,9 +94,6 @@ export function CloudSettings({
   selectedOrganizationId: string;
 }) {
   const [panel, setPanel] = useState<SettingsPanel>(initialPanel);
-  const membership =
-    account.organizations.find(({ id }) => id === selectedOrganizationId) ??
-    account.organizations[0];
 
   const lastPanelRef = useRef<SettingsPanel>(panel);
   if (open) lastPanelRef.current = panel;
@@ -138,21 +136,12 @@ export function CloudSettings({
                 label="Notifications"
                 onClick={() => setPanel("notifications")}
               />
-              {account.organizations.map((organization) => (
-                <SettingsNavItem
-                  active={
-                    displayPanel === "organization" &&
-                    organization.id === selectedOrganizationId
-                  }
-                  icon={Building2}
-                  key={organization.id}
-                  label="Organization"
-                  onClick={() => {
-                    onSelectOrganization(organization.id);
-                    setPanel("organization");
-                  }}
-                />
-              ))}
+              <SettingsNavItem
+                active={displayPanel === "workspaces"}
+                icon={Building2}
+                label="Workspaces"
+                onClick={() => setPanel("workspaces")}
+              />
               <SettingsNavItem
                 active={displayPanel === "providers"}
                 icon={KeyRound}
@@ -203,18 +192,8 @@ export function CloudSettings({
                   </SettingsSection>
                 ) : null}
 
-                {displayPanel === "organization" ? (
-                  <SettingsSection title={membership?.displayName ?? "Organization"} titleHidden grouped>
-                    <SettingsRow label="Organization name">
-                      <span className="settings-row-value">{membership?.displayName ?? "—"}</span>
-                    </SettingsRow>
-                    <SettingsRow label="Role">
-                      <span className="settings-row-value">{membership?.role ?? "Unknown"}</span>
-                    </SettingsRow>
-                    <SettingsRow label="Credentials">
-                      <span className="settings-row-value">Organization managed</span>
-                    </SettingsRow>
-                  </SettingsSection>
+                {displayPanel === "workspaces" ? (
+                  <WorkspacesPanel account={account} onSelectOrganization={onSelectOrganization} />
                 ) : null}
 
                 {displayPanel === "providers" ? (
@@ -298,7 +277,7 @@ function CodingAgentSettings({
                     disabled={busy}
                     onClick={() => {
                       if (connection) {
-                        if (window.confirm(`Disconnect ${agent.label} credentials from this organization?`)) {
+                        if (window.confirm(`Disconnect ${agent.label} credentials from this workspace?`)) {
                           void onDisconnect(connection);
                         }
                         return;
@@ -507,7 +486,7 @@ function settingsTitle(panel: SettingsPanel) {
     case "providers":
       return "Providers";
     default:
-      return "Organization";
+      return "Workspaces";
   }
 }
 
@@ -522,7 +501,7 @@ function settingsDescription(panel: SettingsPanel) {
     case "providers":
       return "Manage GitHub and coding-agent connections.";
     default:
-      return "Review organization membership and workspace configuration.";
+      return "Manage your workspaces.";
   }
 }
 
@@ -573,6 +552,50 @@ function GeneralSettingsPanel() {
         />
       </SettingsRow>
     </SettingsSection>
+  );
+}
+
+function WorkspacesPanel({
+  account,
+  onSelectOrganization,
+}: {
+  account: CurrentAccount;
+  onSelectOrganization: (id: string) => void;
+}) {
+  return (
+    <div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-[var(--border)]">
+            <th className="pb-2 text-left text-xs font-medium text-[var(--muted-foreground)]">Name</th>
+            <th className="pb-2 text-left text-xs font-medium text-[var(--muted-foreground)]">Role</th>
+            <th className="pb-2 text-right text-xs font-medium text-[var(--muted-foreground)]" />
+          </tr>
+        </thead>
+        <tbody>
+          {account.organizations.map((org) => (
+            <tr key={org.id} className="group/org border-b border-[var(--border)]/40">
+              <td className="py-3 text-[var(--foreground)]">
+                <div className="flex items-center gap-2.5">
+                  <WorkspaceAvatar name={org.displayName} id={org.id} size={20} />
+                  {org.displayName}
+                </div>
+              </td>
+              <td className="py-3 text-[var(--muted-foreground)]">{org.role}</td>
+              <td className="py-3 text-right">
+                <button
+                  type="button"
+                  className="cursor-pointer text-xs text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover/org:opacity-100 hover:text-[var(--foreground)]"
+                  onClick={() => onSelectOrganization(org.id)}
+                >
+                  Switch
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

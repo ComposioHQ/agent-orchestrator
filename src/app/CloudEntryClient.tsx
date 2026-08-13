@@ -86,8 +86,8 @@ export function CloudEntryClient({
           {view === "create-account" ? (
             <>
               <AuthField autoComplete="name" label="Display name" name="displayName" required />
-              <AuthField autoComplete="organization" label="Organization name" name="orgName" required />
-              <AuthField autoComplete="off" label="Organization slug" name="orgSlug" pattern={"[a-z0-9][a-z0-9\\-]{1,62}"} placeholder="my-team" required />
+              <AuthField autoComplete="organization" label="Workspace name" name="orgName" required />
+              <AuthField autoComplete="off" label="Workspace slug" name="orgSlug" pattern={"[a-z0-9][a-z0-9\\-]{1,62}"} placeholder="my-team" required />
             </>
           ) : null}
           <AuthField autoComplete="email" label="Email" name="email" type="email" required />
@@ -163,13 +163,13 @@ export function CloudEntryClient({
                   />
                   <AuthField
                     autoComplete="organization"
-                    label="Organization name"
+                    label="Workspace name"
                     name="orgName"
                     required
                   />
                   <AuthField
                     autoComplete="off"
-                    label="Organization slug"
+                    label="Workspace slug"
                     name="orgSlug"
                     pattern={"[a-z0-9][a-z0-9\\-]{1,62}"}
                     placeholder="my-team"
