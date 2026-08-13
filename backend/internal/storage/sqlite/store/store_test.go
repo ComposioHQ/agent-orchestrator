@@ -38,6 +38,7 @@ func sampleRecord(project string) domain.SessionRecord {
 		Activity:         domain.Activity{State: domain.ActivityActive, LastActivityAt: now},
 		Metadata:         domain.SessionMetadata{Branch: "feat/x", WorkspacePath: "/ws"},
 		AutoInjectReview: true,
+		AutoInjectCI:     true,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -118,6 +119,101 @@ func TestSessionPersistsDiffBaseMetadata(t *testing.T) {
 	}
 	if updated.Metadata.DiffBaseSHA != "base-sha-2" || updated.Metadata.DiffBaseRef != "develop" {
 		t.Fatalf("updated diff base = sha:%q ref:%q", updated.Metadata.DiffBaseSHA, updated.Metadata.DiffBaseRef)
+	}
+}
+
+func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "handoff-inputs")
+	rec := sampleRecord("handoff-inputs")
+	rec.Metadata.LatestUserPrompt = "Please finish the duplicate-listener test."
+	rec.Metadata.LatestAssistantUpdate = "The generation fence is implemented; the test is unfinished."
+	rec.Metadata.NativeTranscriptPath = "/ao/transcripts/claude/session.jsonl"
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.LatestUserPrompt != rec.Metadata.LatestUserPrompt ||
+		got.Metadata.LatestAssistantUpdate != rec.Metadata.LatestAssistantUpdate ||
+		got.Metadata.NativeTranscriptPath != rec.Metadata.NativeTranscriptPath {
+		t.Fatalf("handoff inputs after create = %+v", got.Metadata)
+	}
+
+	got.Metadata.LatestUserPrompt = "Now run the focused tests."
+	got.Metadata.LatestAssistantUpdate = "The regression test has been added."
+	got.Metadata.NativeTranscriptPath = "/ao/transcripts/codex/session.jsonl"
+	got.UpdatedAt = got.UpdatedAt.Add(time.Second)
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update session: %v", err)
+	}
+	updated, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
+	}
+	if updated.Metadata.LatestUserPrompt != got.Metadata.LatestUserPrompt ||
+		updated.Metadata.LatestAssistantUpdate != got.Metadata.LatestAssistantUpdate ||
+		updated.Metadata.NativeTranscriptPath != got.Metadata.NativeTranscriptPath {
+		t.Fatalf("handoff inputs after update = %+v", updated.Metadata)
+	}
+	listed, err := s.ListSessions(ctx, created.ProjectID)
+	if err != nil || len(listed) != 1 || listed[0].Metadata.LatestUserPrompt != got.Metadata.LatestUserPrompt {
+		t.Fatalf("listed handoff inputs = %+v err=%v", listed, err)
+	}
+}
+
+func TestRecordSessionLatestUserPromptIsNarrowAndMonotonic(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "prompt-fence")
+	created, err := s.CreateSession(ctx, sampleRecord("prompt-fence"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	ownerAt := created.UpdatedAt.Add(2 * time.Second)
+	created.Harness = domain.HarnessCodex
+	created.Metadata.RuntimeLaunchID = "target-generation"
+	created.Metadata.LatestAssistantUpdate = "target already owns this row"
+	created.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: ownerAt}
+	created.UpdatedAt = ownerAt
+	if err := s.UpdateSession(ctx, created); err != nil {
+		t.Fatalf("record newer target owner: %v", err)
+	}
+
+	if changed, err := s.RecordSessionLatestUserPrompt(ctx, created.ID, "stale source prompt", ownerAt.Add(-time.Second)); err != nil || changed {
+		t.Fatalf("stale prompt write = changed %v, err %v", changed, err)
+	}
+	current, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get after stale write: ok=%v err=%v", ok, err)
+	}
+	if current.Harness != domain.HarnessCodex || current.Metadata.RuntimeLaunchID != "target-generation" || current.Metadata.LatestUserPrompt != "" {
+		t.Fatalf("stale prompt changed durable owner: %+v", current)
+	}
+
+	promptAt := ownerAt.Add(time.Second)
+	if changed, err := s.RecordSessionLatestUserPrompt(ctx, created.ID, "continue the target work", promptAt); err != nil || !changed {
+		t.Fatalf("fresh prompt write = changed %v, err %v", changed, err)
+	}
+	current, _, _ = s.GetSession(ctx, created.ID)
+	if current.Metadata.LatestUserPrompt != "continue the target work" || current.Harness != domain.HarnessCodex ||
+		current.Metadata.RuntimeLaunchID != "target-generation" || current.Metadata.LatestAssistantUpdate != "target already owns this row" {
+		t.Fatalf("narrow prompt write changed unrelated facts: %+v", current)
+	}
+
+	current.IsTerminated = true
+	current.UpdatedAt = promptAt.Add(time.Second)
+	if err := s.UpdateSession(ctx, current); err != nil {
+		t.Fatalf("terminate session: %v", err)
+	}
+	if changed, err := s.RecordSessionLatestUserPrompt(ctx, created.ID, "must not resurrect", promptAt.Add(2*time.Second)); err != nil || changed {
+		t.Fatalf("terminated prompt write = changed %v, err %v", changed, err)
 	}
 }
 
@@ -361,7 +457,6 @@ func TestDeleteSessionOnlyRemovesSeedRows(t *testing.T) {
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 
-	// Seed row: just CreateSession output, no metadata yet.
 	now := time.Now().UTC().Truncate(time.Second)
 	seed := domain.SessionRecord{
 		ProjectID: "mer",
@@ -371,53 +466,66 @@ func TestDeleteSessionOnlyRemovesSeedRows(t *testing.T) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	r1, err := s.CreateSession(ctx, seed)
-	if err != nil {
-		t.Fatalf("create seed: %v", err)
+	tests := []struct {
+		name        string
+		record      domain.SessionRecord
+		prepare     func(*domain.SessionRecord)
+		wantDeleted bool
+		wantPresent bool
+	}{
+		{
+			name:        "seed row",
+			record:      seed,
+			wantDeleted: true,
+		},
+		{
+			name:        "spawn output",
+			record:      sampleRecord("mer"),
+			wantPresent: true,
+		},
+		{
+			name:   "terminated row",
+			record: seed,
+			prepare: func(rec *domain.SessionRecord) {
+				rec.IsTerminated = true
+			},
+			wantPresent: true,
+		},
+		{
+			name:   "recorded user interaction",
+			record: sampleRecord("mer"),
+			prepare: func(rec *domain.SessionRecord) {
+				// Keep the legacy seed predicates empty; the durable interaction
+				// fact alone is observable progress and must prevent deletion.
+				rec.Metadata.WorkspacePath = ""
+				rec.Metadata.LatestUserPrompt = "Continue the task."
+			},
+			wantPresent: true,
+		},
 	}
-
-	deleted, err := s.DeleteSession(ctx, r1.ID)
-	if err != nil || !deleted {
-		t.Fatalf("delete seed = %v %v, want true nil", deleted, err)
-	}
-	if _, ok, _ := s.GetSession(ctx, r1.ID); ok {
-		t.Fatal("seed row still present after DeleteSession")
-	}
-
-	// A row with workspace_path populated must NOT be deleted — even if
-	// !is_terminated. This is the no-resurrection guarantee for live work.
-	r2, err := s.CreateSession(ctx, sampleRecord("mer"))
-	if err != nil {
-		t.Fatalf("create live: %v", err)
-	}
-	deleted, err = s.DeleteSession(ctx, r2.ID)
-	if err != nil {
-		t.Fatalf("delete live err = %v", err)
-	}
-	if deleted {
-		t.Fatal("DeleteSession must be a no-op for rows with spawn output")
-	}
-	if _, ok, _ := s.GetSession(ctx, r2.ID); !ok {
-		t.Fatal("live row was removed by DeleteSession")
-	}
-
-	// A terminated row is also out of scope: terminal-state rows hold cleanup
-	// metadata users may still inspect, so the gate refuses them too.
-	r3, err := s.CreateSession(ctx, seed)
-	if err != nil {
-		t.Fatalf("create extra seed: %v", err)
-	}
-	terminated := r3
-	terminated.IsTerminated = true
-	if err := s.UpdateSession(ctx, terminated); err != nil {
-		t.Fatalf("mark terminated: %v", err)
-	}
-	deleted, err = s.DeleteSession(ctx, r3.ID)
-	if err != nil {
-		t.Fatalf("delete terminated err = %v", err)
-	}
-	if deleted {
-		t.Fatal("DeleteSession must be a no-op for terminated rows")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			created, err := s.CreateSession(ctx, tt.record)
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			if tt.prepare != nil {
+				tt.prepare(&created)
+				if err := s.UpdateSession(ctx, created); err != nil {
+					t.Fatalf("prepare session: %v", err)
+				}
+			}
+			deleted, err := s.DeleteSession(ctx, created.ID)
+			if err != nil {
+				t.Fatalf("delete session: %v", err)
+			}
+			if deleted != tt.wantDeleted {
+				t.Fatalf("DeleteSession deleted=%v, want %v", deleted, tt.wantDeleted)
+			}
+			if _, ok, err := s.GetSession(ctx, created.ID); err != nil || ok != tt.wantPresent {
+				t.Fatalf("session after DeleteSession: ok=%v err=%v, want present=%v", ok, err, tt.wantPresent)
+			}
+		})
 	}
 }
 
@@ -628,6 +736,7 @@ func TestPRCRUD(t *testing.T) {
 	pr := domain.PullRequest{
 		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
 		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now, StateChangedAt: now,
+		AutoInjectCI: true,
 	}
 	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
@@ -638,6 +747,81 @@ func TestPRCRUD(t *testing.T) {
 	}
 	if list, _ := s.ListPRsBySession(ctx, r.ID); len(list) != 1 {
 		t.Fatalf("list prs = %d, want 1", len(list))
+	}
+}
+
+func TestPRAutoInjectCISnapshotsSessionDefaultAtCreation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	owner, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+	first := domain.PullRequest{URL: "https://github.com/o/r/pull/1", SessionID: owner.ID, Number: 1, CI: domain.CIFailing, UpdatedAt: now}
+
+	if err := s.WritePR(ctx, first, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GetPR(ctx, first.URL)
+	if err != nil || !found || !got.AutoInjectCI {
+		t.Fatalf("new PR policy = found:%v err:%v value:%v, want enabled", found, err, got.AutoInjectCI)
+	}
+
+	base, _ := s.LatestSeq(ctx)
+	changedAt := now.Add(time.Minute)
+	ok, err := s.SetSessionAutoInjectCI(ctx, owner.ID, false, changedAt)
+	if err != nil || !ok {
+		t.Fatalf("disable session CI default: ok=%v err=%v", ok, err)
+	}
+	session, found, err := s.GetSession(ctx, owner.ID)
+	if err != nil || !found || session.AutoInjectCI {
+		t.Fatalf("disabled session default = found:%v err:%v session:%+v", found, err, session)
+	}
+
+	events, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || string(events[0].Type) != "session_updated" {
+		t.Fatalf("policy change events = %+v, want one session_updated", events)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(events[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := payload["autoInjectCI"].(bool); !ok || enabled {
+		t.Fatalf("autoInjectCI payload = %#v, want false", payload["autoInjectCI"])
+	}
+
+	// Re-observing the first PR after changing the session default must preserve
+	// the value captured when that PR was first inserted.
+	first.UpdatedAt = changedAt.Add(time.Minute)
+	if err := s.WritePR(ctx, first, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = s.GetPR(ctx, first.URL)
+	if !got.AutoInjectCI {
+		t.Fatal("session toggle rewrote the first PR's enabled snapshot")
+	}
+
+	second := domain.PullRequest{URL: "https://github.com/o/r/pull/2", SessionID: owner.ID, Number: 2, UpdatedAt: changedAt}
+	if err := s.WritePR(ctx, second, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = s.GetPR(ctx, second.URL)
+	if got.AutoInjectCI {
+		t.Fatal("PR created while disabled did not capture the disabled default")
+	}
+
+	if ok, err := s.SetSessionAutoInjectCI(ctx, owner.ID, true, changedAt.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("enable session CI default: ok=%v err=%v", ok, err)
+	}
+	second.UpdatedAt = changedAt.Add(2 * time.Minute)
+	if err := s.WritePR(ctx, second, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ = s.GetPR(ctx, second.URL)
+	if got.AutoInjectCI {
+		t.Fatal("later session enable rewrote the second PR's disabled snapshot")
 	}
 }
 

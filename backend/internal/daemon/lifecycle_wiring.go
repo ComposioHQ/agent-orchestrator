@@ -123,17 +123,36 @@ type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
-	Send(ctx context.Context, id domain.SessionID, message string) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
 	// is built after Session Manager during boot (see startShellTerminals), so
 	// this cannot be a constructor argument.
 	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
+	// AcquireSessionInput holds direct terminal writes across the actual pane
+	// write while ownership may move between provider processes.
+	AcquireSessionInput(id domain.SessionID) (release func(), ok bool)
+	// SessionMutationInProgress suppresses observation-driven termination while
+	// Session Manager deliberately replaces or relaunches a provider process.
+	SessionMutationInProgress(id domain.SessionID) bool
 	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
 	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
 	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
 	// service, which is built alongside the controller-facing service below.
 	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
+}
+
+// sessionLifecycleMessenger adapts sessionLifecycle to ports.AgentMessenger so
+// the fully-wired manager can replace the boot-time pane messenger once ready.
+// None of the daemon-internal sends this feeds (interface-transition drains,
+// lifecycle nudges) carry an attachment, so it is always nil here; the
+// attachment-aware send path only exists at the HTTP /send endpoint.
+type sessionLifecycleMessenger struct {
+	sessionLifecycle
+}
+
+func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return m.sessionLifecycle.Send(ctx, id, message, nil)
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -180,22 +199,13 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		DataDir:             cfg.DataDir,
 		Logger:              log,
 	})
-	scmProvider, err := newGitHubSCMProvider(log)
-	if err != nil {
-		logSCMProviderDisabled(log, err)
-	}
-	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
-	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
-	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueContext and dereferences nil on the
-	// first issue lookup (issue #2685). Assigning the concrete value only on
-	// success leaves tracker as a real interface-nil otherwise.
-	var tracker ports.Tracker
-	if t, err := newGitHubTracker(); err != nil {
-		logTrackerDisabled(log, err)
-	} else {
-		tracker = t
-	}
+	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
+	// Build the multi-tracker dispatching to both GitHub and GitLab. The
+	// multi-tracker returns a true nil ports.Tracker when no provider has
+	// usable credentials, preserving the `s.tracker == nil` guard in
+	// withIssueContext (issue #2685). When one provider's token is missing,
+	// the other still serves issue lookups.
+	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,
 		Store:             store,
@@ -223,7 +233,9 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir, reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir,
+			reviewcore.WithRunFilePath(cfg.RunFilePath),
+			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store,
 		reviewsvc.WithLifecycleReducer(lcm),

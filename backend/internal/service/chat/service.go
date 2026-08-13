@@ -42,10 +42,11 @@ type Service struct {
 	newID      IDFactory
 	now        Clock
 
-	mu          sync.RWMutex
-	controllers map[domain.SessionID]*Controller
-	gateMu      sync.Mutex
-	gates       map[domain.SessionID]controllerGate
+	mu           sync.RWMutex
+	controllers  map[domain.SessionID]*Controller
+	startConfigs map[domain.SessionID]StartConfig
+	gateMu       sync.Mutex
+	gates        map[domain.SessionID]controllerGate
 }
 
 // controllerGate serializes start/stop for one session without making provider
@@ -90,17 +91,18 @@ func New(opts Options) *Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{
-		store:       opts.Store,
-		reader:      opts.Reader,
-		pageReader:  opts.PageReader,
-		sessions:    opts.Sessions,
-		drivers:     opts.Drivers,
-		activity:    opts.Activity,
-		log:         log,
-		newID:       opts.NewID,
-		now:         now,
-		controllers: make(map[domain.SessionID]*Controller),
-		gates:       make(map[domain.SessionID]controllerGate),
+		store:        opts.Store,
+		reader:       opts.Reader,
+		pageReader:   opts.PageReader,
+		sessions:     opts.Sessions,
+		drivers:      opts.Drivers,
+		activity:     opts.Activity,
+		log:          log,
+		newID:        opts.NewID,
+		now:          now,
+		controllers:  make(map[domain.SessionID]*Controller),
+		startConfigs: make(map[domain.SessionID]StartConfig),
+		gates:        make(map[domain.SessionID]controllerGate),
 	}
 }
 
@@ -153,6 +155,29 @@ func notifyControllerReady(cfg StartConfig, controller *Controller) error {
 		return fmt.Errorf("commit chat controller: %w", err)
 	}
 	return nil
+}
+
+func cloneStartConfig(cfg StartConfig) StartConfig {
+	cloned := cfg
+	cloned.Env = make(map[string]string, len(cfg.Env))
+	for key, value := range cfg.Env {
+		cloned.Env[key] = value
+	}
+	cloned.AdditionalDirectories = append([]string(nil), cfg.AdditionalDirectories...)
+	cloned.MCPServers = make([]ports.ChatMCPServerConfig, len(cfg.MCPServers))
+	for index, server := range cfg.MCPServers {
+		server.Args = append([]string(nil), server.Args...)
+		server.Env = make(map[string]string, len(cfg.MCPServers[index].Env))
+		for key, value := range cfg.MCPServers[index].Env {
+			server.Env[key] = value
+		}
+		server.Headers = make(map[string]string, len(cfg.MCPServers[index].Headers))
+		for key, value := range cfg.MCPServers[index].Headers {
+			server.Headers[key] = value
+		}
+		cloned.MCPServers[index] = server
+	}
+	return cloned
 }
 
 // settleOrphanedWork closes out anything a previous controller left behind.
@@ -340,6 +365,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
+	s.startConfigs[cfg.SessionID] = cloneStartConfig(cfg)
 	controller.start()
 	s.mu.Unlock()
 
@@ -501,6 +527,9 @@ func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 	controller, ok := s.controllers[id]
 	s.mu.RUnlock()
 	if !ok {
+		s.mu.Lock()
+		delete(s.startConfigs, id)
+		s.mu.Unlock()
 		return nil
 	}
 	err := controller.Close(ctx)
@@ -515,6 +544,7 @@ func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 		if current, found := s.controllers[id]; found && current == controller {
 			delete(s.controllers, id)
 		}
+		delete(s.startConfigs, id)
 		s.mu.Unlock()
 	default:
 	}
@@ -528,6 +558,7 @@ func (s *Service) StopAll(ctx context.Context) {
 	for id, controller := range s.controllers {
 		controllers = append(controllers, controller)
 		delete(s.controllers, id)
+		delete(s.startConfigs, id)
 	}
 	s.mu.Unlock()
 
@@ -540,16 +571,18 @@ func (s *Service) StopAll(ctx context.Context) {
 
 // Snapshot is the durable read model a client bootstraps from.
 type Snapshot struct {
-	Conversation   domain.ConversationRecord
-	SessionID      domain.SessionID
-	Harness        domain.AgentHarness
-	Mode           domain.SessionMode
-	Controller     ports.ChatControllerState
-	Turns          []domain.ConversationTurn
-	Messages       []domain.ConversationMessage
-	Activities     []domain.ConversationActivity
-	OldestSequence int64
-	HasMoreBefore  bool
+	Conversation               domain.ConversationRecord
+	SessionID                  domain.SessionID
+	Harness                    domain.AgentHarness
+	Mode                       domain.SessionMode
+	Controller                 ports.ChatControllerState
+	Turns                      []domain.ConversationTurn
+	Messages                   []domain.ConversationMessage
+	Activities                 []domain.ConversationActivity
+	BranchPoints               []domain.ConversationBranchPoint
+	BranchedFromEarlierMessage bool
+	OldestSequence             int64
+	HasMoreBefore              bool
 	// Usage and RateLimits are current state carried on the snapshot the client
 	// already polls, rather than timeline entries or a second request. Both are nil
 	// until the provider has reported, so a client can tell "not known yet" from a
@@ -583,12 +616,14 @@ type SnapshotPageReader interface {
 
 // ConversationRows is the raw durable read.
 type ConversationRows struct {
-	Conversation   domain.ConversationRecord
-	Turns          []domain.ConversationTurn
-	Messages       []domain.ConversationMessage
-	Activities     []domain.ConversationActivity
-	OldestSequence int64
-	HasMoreBefore  bool
+	Conversation               domain.ConversationRecord
+	Turns                      []domain.ConversationTurn
+	Messages                   []domain.ConversationMessage
+	Activities                 []domain.ConversationActivity
+	BranchPoints               []domain.ConversationBranchPoint
+	BranchedFromEarlierMessage bool
+	OldestSequence             int64
+	HasMoreBefore              bool
 }
 
 // Snapshot reads a session's conversation.
@@ -632,17 +667,19 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 	}
 
 	return Snapshot{
-		Conversation: rows.Conversation,
-		SessionID:    id,
-		Harness:      record.Harness,
-		Mode:         domain.NormalizeSessionMode(record.Mode),
-		Controller:   state,
-		Turns:        rows.Turns,
-		Messages:     rows.Messages,
-		Activities:   rows.Activities,
-		Capabilities: caps,
-		Usage:        rows.Conversation.Usage,
-		RateLimits:   rows.Conversation.RateLimits,
+		Conversation:               rows.Conversation,
+		SessionID:                  id,
+		Harness:                    record.Harness,
+		Mode:                       domain.NormalizeSessionMode(record.Mode),
+		Controller:                 state,
+		Turns:                      rows.Turns,
+		Messages:                   rows.Messages,
+		Activities:                 rows.Activities,
+		BranchPoints:               rows.BranchPoints,
+		BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+		Capabilities:               caps,
+		Usage:                      rows.Conversation.Usage,
+		RateLimits:                 rows.Conversation.RateLimits,
 	}, nil
 }
 
@@ -681,19 +718,21 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 		caps = controller.Capabilities()
 	}
 	return Snapshot{
-		Conversation:   rows.Conversation,
-		SessionID:      id,
-		Harness:        record.Harness,
-		Mode:           domain.NormalizeSessionMode(record.Mode),
-		Controller:     state,
-		Turns:          rows.Turns,
-		Messages:       rows.Messages,
-		Activities:     rows.Activities,
-		OldestSequence: rows.OldestSequence,
-		HasMoreBefore:  rows.HasMoreBefore,
-		Capabilities:   caps,
-		Usage:          rows.Conversation.Usage,
-		RateLimits:     rows.Conversation.RateLimits,
+		Conversation:               rows.Conversation,
+		SessionID:                  id,
+		Harness:                    record.Harness,
+		Mode:                       domain.NormalizeSessionMode(record.Mode),
+		Controller:                 state,
+		Turns:                      rows.Turns,
+		Messages:                   rows.Messages,
+		Activities:                 rows.Activities,
+		BranchPoints:               rows.BranchPoints,
+		BranchedFromEarlierMessage: rows.BranchedFromEarlierMessage,
+		OldestSequence:             rows.OldestSequence,
+		HasMoreBefore:              rows.HasMoreBefore,
+		Capabilities:               caps,
+		Usage:                      rows.Conversation.Usage,
+		RateLimits:                 rows.Conversation.RateLimits,
 	}, nil
 }
 

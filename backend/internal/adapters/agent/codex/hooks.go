@@ -12,6 +12,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
 )
 
 // Codex (0.136+) never loads hook config from AO's per-session worktrees, so
@@ -122,19 +123,7 @@ func shellQuoteHookExecutable(executable string) string {
 // by the canonicalized cwd first and the literal path second (on macOS the two
 // commonly differ, e.g. /tmp vs /private/tmp).
 func appendWorkspaceTrustFlag(cmd *[]string, workspacePath string) {
-	path := strings.TrimSpace(workspacePath)
-	if path == "" {
-		return
-	}
-	keys := []string{path}
-	if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
-		keys = append(keys, resolved)
-	}
-	entries := make([]string, 0, len(keys))
-	for _, key := range keys {
-		entries = append(entries, codexTOMLConfigString(key)+`={trust_level="trusted"}`)
-	}
-	*cmd = append(*cmd, "-c", "projects={"+strings.Join(entries, ",")+"}")
+	*cmd = append(*cmd, agentruntime.CodexWorkspaceTrustArgs(workspacePath)...)
 }
 
 func codexTOMLConfigString(s string) string {
@@ -179,11 +168,11 @@ func containsTOMLControl(s string) bool {
 	return false
 }
 
-// GetAgentHooks no longer installs workspace files — Codex never loads them
-// from AO's worktrees (see the package comment above); the hooks ride the
-// launch command instead. It still strips hook entries that older AO versions
-// wrote into the worktree-local .codex/hooks.json so reused or restored
-// worktrees don't keep dead AO config, preserving user-defined hooks.
+// GetAgentHooks installs no active workspace files — Codex never loads them
+// from AO's worktrees (see the package comment above); activity hooks ride the
+// launch command instead. It strips hook entries that older AO versions wrote
+// into the worktree-local .codex/hooks.json so reused or restored worktrees
+// don't keep dead AO config, preserving user-defined hooks.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err

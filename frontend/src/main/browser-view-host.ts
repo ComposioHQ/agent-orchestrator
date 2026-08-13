@@ -8,6 +8,7 @@ import type {
 	WebContents,
 	OpenDevToolsOptions,
 } from "electron";
+import { nativeImage } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -16,9 +17,11 @@ import type {
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSelection,
+	BrowserAnnotationSnapshot,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
+import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
@@ -30,25 +33,16 @@ function isValidAnnotationContext(value: unknown): value is BrowserAnnotationCon
 		tag?: unknown;
 		classes?: unknown;
 		selector?: unknown;
-		rect?: unknown;
-		nearbyText?: unknown;
+		size?: unknown;
 		computedStyle?: unknown;
 	};
 	if (typeof context.url !== "string") return false;
 	if (typeof context.tag !== "string") return false;
 	if (!Array.isArray(context.classes)) return false;
 	if (typeof context.selector !== "string") return false;
-	if (typeof context.rect !== "object" || context.rect === null) return false;
-	const rect = context.rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
-	if (
-		typeof rect.x !== "number" ||
-		typeof rect.y !== "number" ||
-		typeof rect.width !== "number" ||
-		typeof rect.height !== "number"
-	) {
-		return false;
-	}
-	if (!Array.isArray(context.nearbyText)) return false;
+	if (typeof context.size !== "object" || context.size === null) return false;
+	const size = context.size as { width?: unknown; height?: unknown };
+	if (typeof size.width !== "number" || typeof size.height !== "number") return false;
 	if (typeof context.computedStyle !== "object" || context.computedStyle === null) return false;
 	return true;
 }
@@ -86,6 +80,7 @@ export type BrowserTabState = {
 	url: string;
 	title: string;
 	active: boolean;
+	favicon?: string;
 };
 
 export type BrowserTabsState = {
@@ -139,11 +134,17 @@ type BrowserTabInput = {
 	tabId: string;
 };
 
+type BrowserOpenTabInput = {
+	viewId: string;
+	url?: string;
+};
+
 type BrowserWebContents = Pick<
 	WebContents,
 	| "id"
 	| "canGoBack"
 	| "canGoForward"
+	| "capturePage"
 	| "clearHistory"
 	| "debugger"
 	| "executeJavaScript"
@@ -228,6 +229,16 @@ type BrowserEntry = {
 	state: BrowserNavState;
 	annotationEnabled: boolean;
 	networkCapture?: BrowserNetworkCapture;
+	favicon?: string;
+	// URL of the favicon currently applied to `favicon` (fetch succeeded).
+	faviconSourceUrl?: string;
+	// URL of a favicon fetch currently in flight, so a duplicate event for the
+	// same URL doesn't start a second fetch while one is already pending.
+	faviconPendingUrl?: string;
+	// Origin `favicon` was captured for, so a same-tab navigation to a new
+	// origin can drop the (now-stale) favicon immediately instead of leaving
+	// the previous site's icon showing until the new one finishes loading.
+	faviconOrigin?: string;
 };
 
 type BrowserSessionEntry = {
@@ -308,13 +319,24 @@ type BrowserNetworkCapture = {
 // Hidden targets still need a real viewport for screenshots, responsive
 // layout, scrolling, and pointer automation before the panel is first shown.
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 1280, height: 720 };
-const BROWSER_VIEW_BORDER_RADIUS = 8;
+// Must match `--radius-lg` (tokens.css, 0.625rem = 10px) — `.browser-panel`'s own
+// `rounded-lg` corner. The native view isn't a DOM node, so CSS never clips it;
+// this is the only thing rounding its corners. A mismatch here leaves a sliver of
+// the page's own background peeking past the DOM panel's rounded corner curve.
+const BROWSER_VIEW_BORDER_RADIUS = 10;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
-const MAX_BROWSER_TABS = 16;
+const FAVICON_SIZE = 32;
+const MAX_FAVICON_BYTES = 256 * 1024;
 const DEFAULT_NATIVE_DEVTOOLS_PLACEMENT: BrowserDevToolsPlacement = "right";
 const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
+// Annotation submit must never feel laggy: capture is best-effort and bounded
+// so a slow/hung capturePage() can't delay the send past this ceiling.
+const ANNOTATION_SNAPSHOT_TIMEOUT_MS = 200;
+// Caps the longest edge so the encoded image stays small and matches Claude
+// vision's effective resolution — larger just costs more tokens for no gain.
+const ANNOTATION_SNAPSHOT_MAX_DIMENSION = 1568;
 const UNTRUSTED_BEGIN = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>";
 const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // Browser targets are shared with session automation after navigation. Keep
@@ -493,6 +515,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			() => applySessionBounds(session, entry),
 			() => pushTabsState(options, session),
 		);
+		wireFaviconEvents(view.webContents, entry, () => pushTabsState(options, session));
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
@@ -922,6 +945,36 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return pushNavState(options, entry);
 	};
 
+	// Best-effort full-viewport capture for a browser-annotation submit. Bounded
+	// by ANNOTATION_SNAPSHOT_TIMEOUT_MS so a slow/hung capturePage() can never
+	// delay the send — on timeout, error, or an empty frame this resolves
+	// undefined and the caller proceeds with a text-only message.
+	const captureAnnotationSnapshot = async (entry: BrowserEntry): Promise<BrowserAnnotationSnapshot | undefined> => {
+		try {
+			const timedOut = Symbol("annotation-snapshot-timeout");
+			const image = await Promise.race([
+				entry.view.webContents.capturePage(),
+				new Promise<typeof timedOut>((resolve) => {
+					setTimeout(() => resolve(timedOut), ANNOTATION_SNAPSHOT_TIMEOUT_MS);
+				}),
+			]);
+			if (image === timedOut || image.isEmpty()) return undefined;
+			const { width, height } = image.getSize();
+			const longestEdge = Math.max(width, height);
+			const resized =
+				longestEdge > ANNOTATION_SNAPSHOT_MAX_DIMENSION
+					? image.resize(
+							width >= height
+								? { width: ANNOTATION_SNAPSHOT_MAX_DIMENSION }
+								: { height: ANNOTATION_SNAPSHOT_MAX_DIMENSION },
+						)
+					: image;
+			return { mimeType: "image/png", data: resized.toPNG().toString("base64") };
+		} catch {
+			return undefined;
+		}
+	};
+
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
@@ -984,10 +1037,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (input.enabled) entry.view.webContents.focus();
 	};
 
-	const forwardAnnotationSubmit = (
-		event: IpcMainEvent,
+	const forwardAnnotationSubmit = async (
+		event: IpcMainInvokeEvent,
 		payload: BrowserAnnotationPageSubmitPayload | undefined,
-	): void => {
+	): Promise<void> => {
 		const entry = tabsByWebContentsId.get(event.sender.id);
 		const viewId = entry?.state.viewId;
 		if (
@@ -1000,10 +1053,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return;
 		}
 		entry.annotationEnabled = false;
+		// Captured now, before returning: the preload only tears down the
+		// highlight overlay after this handler resolves, so the frame we grab
+		// here still has the selection ring(s) on it and not the prompt box
+		// (the preload hides that synchronously before invoking).
+		const snapshot = await captureAnnotationSnapshot(entry);
 		const forwarded: BrowserAnnotationSubmitPayload = {
 			viewId,
 			instruction: payload.instruction,
 			selection: payload.selection,
+			...(snapshot ? { snapshot } : {}),
 		};
 		shellWebContents.send("browser:annotation:submitted", forwarded);
 	};
@@ -1110,11 +1169,17 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		return devtoolsAction(session, input.operation, input.placement);
 	});
+	handle("browser:openTab", async (event, input: BrowserOpenTabInput) => {
+		const session = entries.get(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		await openTab(session, input.url, true);
+		return listTabs(session);
+	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
 	});
-	on("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
+	handle("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
 		forwardAnnotationSubmit(event, payload),
 	);
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
@@ -1402,6 +1467,7 @@ function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { un
 		url: entry.view.webContents.getURL(),
 		title: entry.view.webContents.getTitle(),
 		active,
+		...(entry.favicon ? { favicon: entry.favicon } : {}),
 		untrustedExternalContent: true,
 	};
 }
@@ -1474,7 +1540,8 @@ function wireNavEvents(
 		syncTabs();
 		if (isActive()) pushNavState(options, entry);
 	};
-	contents.on("did-navigate", () => {
+	contents.on("did-navigate", (_event, url) => {
+		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
 		update();
 	});
@@ -1493,6 +1560,85 @@ function wireNavEvents(
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		if (isActive()) shellContents(options).send("browser:navState", entry.state);
 	});
+}
+
+// A same-tab navigation to a different site (search result, link, address bar)
+// keeps the previous site's favicon displayed until the new one has been
+// fetched and decoded — a real network round trip — which reads as a laggy
+// icon swap. Clear it as soon as the new origin is known (favicons are
+// near-always origin-scoped, so a same-origin navigation likely keeps the
+// same one and is left alone) so the rail falls back to the generic icon
+// immediately instead of showing the *wrong* one while it waits. Called from
+// wireNavEvents' own did-navigate handler rather than registering a second
+// listener for the same event.
+function clearStaleFavicon(entry: BrowserEntry, url: string): void {
+	const origin = originOf(url);
+	if (origin && origin === entry.faviconOrigin) return;
+	entry.favicon = undefined;
+	entry.faviconSourceUrl = undefined;
+	entry.faviconPendingUrl = undefined;
+	entry.faviconOrigin = undefined;
+}
+
+function wireFaviconEvents(contents: BrowserWebContents, entry: BrowserEntry, syncTabs: () => void): void {
+	contents.on("page-favicon-updated", (_event, favicons) => {
+		const url = favicons[0];
+		// Not yet applied (faviconSourceUrl) and not already in flight
+		// (faviconPendingUrl) — a page re-announcing the same favicon while a
+		// prior fetch for it is still pending must not start a duplicate.
+		if (!url || url === entry.faviconSourceUrl || url === entry.faviconPendingUrl) return;
+		entry.faviconPendingUrl = url;
+		void fetchFavicon(entry, url).then((dataUrl) => {
+			if (entry.faviconPendingUrl === url) entry.faviconPendingUrl = undefined;
+			// Leave faviconSourceUrl unset on failure (rather than marking the
+			// URL "seen") so a later page-favicon-updated event for the same
+			// URL — browsers re-fire these on soft/in-page navigations — gets a
+			// fresh attempt instead of being permanently stuck on the fallback
+			// icon from one transient fetch failure.
+			if (entry.faviconSourceUrl !== url && dataUrl) {
+				entry.faviconSourceUrl = url;
+				entry.favicon = dataUrl;
+				entry.faviconOrigin = originOf(url);
+				syncTabs();
+			}
+		});
+	});
+}
+
+function originOf(url: string): string | undefined {
+	try {
+		return new URL(url).origin;
+	} catch {
+		return undefined;
+	}
+}
+
+// Fetched through the tab's own isolated partition (not the shell session), so
+// it carries whatever cookies/proxy config that site's tab already has, and
+// resized/re-encoded like other browser-view thumbnail capture in this file.
+async function fetchFavicon(entry: BrowserEntry, url: string): Promise<string | undefined> {
+	try {
+		// Some sites inline a tiny favicon as a data: URI rather than serving a
+		// file — decode it directly instead of rejecting it as an unsupported
+		// scheme, still normalized/capped through the same resize path.
+		if (url.startsWith("data:")) {
+			const image = nativeImage.createFromDataURL(url);
+			if (image.isEmpty()) return undefined;
+			return image.resize({ width: FAVICON_SIZE, height: FAVICON_SIZE, quality: "good" }).toDataURL();
+		}
+		const parsed = new URL(url);
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+		const tabSession = (entry.view.webContents as unknown as WebContents).session;
+		const response = await tabSession.fetch(url);
+		if (!response.ok) return undefined;
+		const buffer = Buffer.from(await response.arrayBuffer());
+		if (buffer.byteLength === 0 || buffer.byteLength > MAX_FAVICON_BYTES) return undefined;
+		const image = nativeImage.createFromBuffer(buffer);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: FAVICON_SIZE, height: FAVICON_SIZE, quality: "good" }).toDataURL();
+	} catch {
+		return undefined;
+	}
 }
 
 function cancelAnnotation(

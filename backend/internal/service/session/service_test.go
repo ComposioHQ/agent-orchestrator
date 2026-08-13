@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -183,6 +184,17 @@ func (f *fakeStore) SetSessionAutoInjectReview(_ context.Context, id domain.Sess
 		return false, nil
 	}
 	r.AutoInjectReview = autoInject
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
+func (f *fakeStore) SetSessionAutoInjectCI(_ context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoInjectCI = autoInject
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -386,6 +398,25 @@ func TestSessionSetAutoInjectReviewUnknownSession(t *testing.T) {
 	}
 }
 
+func TestSessionSetAutoInjectCIPersistsDefault(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectCI: true}
+
+	sess, err := (&Service{store: st}).SetAutoInjectCI(context.Background(), "mer-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.AutoInjectCI || st.sessions["mer-1"].AutoInjectCI {
+		t.Fatalf("auto-inject CI default was not disabled: returned=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetAutoInjectCIUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetAutoInjectCI(context.Background(), "ghost-1", false); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
 func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
@@ -573,6 +604,77 @@ func TestWorkspaceFilesRecomputesRecordedRefAfterBaseMoves(t *testing.T) {
 	}
 }
 
+// TestWorkspaceFilesExcludeMainChangesMergedInAfterStaleOriginRef reproduces a
+// file-count inflation bug: AO never runs `git fetch` against a session
+// worktree, so its refs/remotes/origin/main tracking ref can go stale relative
+// to the real upstream. When the branch later merges a newer main in (e.g. to
+// resolve a merge conflict), recomputing the compare base from that stale ref
+// still "succeeds" but lands on an earlier commit than the branch's true
+// merge point, so unrelated commits that landed on main afterward leak into
+// the diff as if they were part of the PR.
+func TestWorkspaceFilesExcludeMainChangesMergedInAfterStaleOriginRef(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	// M1: a commit lands on main before the session spawns. AO records this
+	// as the session's origin/main tracking ref at spawn time.
+	writeWorkspaceFile(t, repo, "unrelated-1.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-1.go")
+	runGit(t, repo, "commit", "-m", "unrelated change 1")
+	m1 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", m1)
+
+	// The session's feature branch forks from here and makes its own change.
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	// M2: an unrelated PR merges into main after the session spawned. Nothing
+	// in AO refreshes refs/remotes/origin/main, so it still points at M1.
+	runGit(t, repo, "switch", "main")
+	writeWorkspaceFile(t, repo, "unrelated-2.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-2.go")
+	runGit(t, repo, "commit", "-m", "unrelated change 2")
+	m2 := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// The developer resolves a conflict by merging current main into their
+	// branch. HEAD gains M2 as an ancestor, but the stale tracking ref doesn't move.
+	runGit(t, repo, "switch", "ao/work")
+	runGit(t, repo, "merge", "main", "-m", "merge main to resolve conflict")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: repo,
+			DiffBaseRef:   "origin/main",
+		},
+	}
+	// AO's own PR sync has observed GitHub's current base tip (M2) even though
+	// the local origin/main tracking ref hasn't moved.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: m2},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	if got, ok := byPath["unrelated-2.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-2.go leaked into the diff via a stale origin/main tracking ref: %#v (compare base %q)", got, files.CompareBaseSHA)
+	}
+}
+
 func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	runGit(t, repo, "branch", "-M", "main")
@@ -611,6 +713,51 @@ func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
 	}
 	if byPath["lower.go"].Status != WorkspaceFileAdded || byPath["upper.go"].Status != WorkspaceFileAdded {
 		t.Fatalf("stack files = lower:%#v upper:%#v, want both visible from root PR base", byPath["lower.go"], byPath["upper.go"])
+	}
+}
+
+func TestWorkspaceFilesPRFallbackUsesMergeBaseWhenTargetBranchAdvances(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	forkBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "worker.go", "package main\n")
+	runGit(t, repo, "add", "worker.go")
+	runGit(t, repo, "commit", "-m", "worker change")
+	runGit(t, repo, "switch", "main")
+	writeWorkspaceFile(t, repo, "mainonly.go", "package main\n")
+	runGit(t, repo, "add", "mainonly.go")
+	runGit(t, repo, "commit", "-m", "main advanced independently")
+	prBaseSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "ao/work")
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "mer",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: prBaseSHA, UpdatedAt: time.Unix(100, 0)},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != forkBase || files.CompareBaseRef != "main" {
+		t.Fatalf("compare base = sha:%q ref:%q, want merge base %s main", files.CompareBaseSHA, files.CompareBaseRef, forkBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["worker.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("worker.go = %#v, want added", byPath["worker.go"])
+	}
+	if got, ok := byPath["mainonly.go"]; ok {
+		t.Fatalf("mainonly.go = %#v, want excluded once compare resolves to the merge base instead of the advanced target tip", got)
 	}
 }
 
@@ -1140,6 +1287,15 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
+func (*fakeCommander) SwitchAgent(context.Context, domain.SessionID, sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
+}
+func (*fakeCommander) ListAgentSwitches(context.Context, domain.SessionID) ([]domain.AgentSwitch, error) {
+	return nil, nil
+}
+func (*fakeCommander) SubmitAgentHandoff(context.Context, domain.SessionID, domain.AgentSwitchID, domain.AgentGenerationID, json.RawMessage) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
+}
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
@@ -1171,7 +1327,7 @@ func (f *fakeCommander) WaitForMessageDeliveryReady(_ context.Context, id domain
 	f.ready = append(f.ready, id)
 	return f.readyErr
 }
-func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string, _ *ports.SpawnAttachment) error {
 	if f.sendFunc != nil {
 		return f.sendFunc(id, message)
 	}
@@ -1535,6 +1691,141 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	}
 }
 
+// TestSpawnIssueContextRoutesGitLabProviderToGitLabTracker covers the
+// GitLab SCM-origin routing: when the project's SCM origin resolves to
+// GitLab, trackerIDForIssue constructs a GitLab TrackerID (not a GitHub one)
+// and the multi-tracker dispatches it to the GitLab adapter. The tracker IS
+// called — the old behavior (skip, no GitHub fallback) is replaced by
+// correct GitLab routing. fakeSCM.ParseRepository routes gitlab.com to
+// provider "gitlab" via providerKey.
+func TestSpawnIssueContextRoutesGitLabProviderToGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.com/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42"},
+		Title: "GitLab issue",
+		Body:  "This should appear in a GitLab project's prompt.",
+		State: domain.IssueOpen,
+		URL:   "https://gitlab.com/acme/repo/-/issues/42",
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	// The tracker must be called with a GitLab TrackerID — not skipped.
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1 (GitLab project must route to GitLab tracker)", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	// Issue context must be enriched with GitLab issue content.
+	if fc.spawnedCfg.IssueContext == "" {
+		t.Fatal("IssueContext empty, want GitLab issue enrichment")
+	}
+	for _, want := range []string{
+		"Issue: acme/repo#42",
+		"Title: GitLab issue",
+		"State: open",
+		"URL: https://gitlab.com/acme/repo/-/issues/42",
+		"Body:",
+	} {
+		if !strings.Contains(fc.spawnedCfg.IssueContext, want) {
+			t.Fatalf("IssueContext missing %q:\n%s", want, fc.spawnedCfg.IssueContext)
+		}
+	}
+}
+
+// TestSpawnIssueContextFromGitLabTracker verifies end-to-end enrichment when
+// the issue ID is a full GitLab issue URL
+// (https://gitlab.com/owner/repo/-/issues/N). The URL is parsed to the native
+// "owner/repo#N" form and dispatched to the GitLab tracker adapter.
+func TestSpawnIssueContextFromGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.com/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42"},
+		Title:     "Fix GitLab CI",
+		Body:      "Pipeline is broken.",
+		State:     domain.IssueInProgress,
+		URL:       "https://gitlab.com/acme/repo/-/issues/42",
+		Labels:    []string{"bug", "ci"},
+		Assignees: []string{"dev"},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "https://gitlab.com/acme/repo/-/issues/42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	if tracker.ids[0].Host != "" {
+		t.Fatalf("tracker id host = %q, want empty (gitlab.com zero value)", tracker.ids[0].Host)
+	}
+	issueContext := fc.spawnedCfg.IssueContext
+	for _, want := range []string{
+		"Issue: acme/repo#42",
+		"Title: Fix GitLab CI",
+		"State: in_progress",
+		"URL: https://gitlab.com/acme/repo/-/issues/42",
+		"Labels: bug, ci",
+		"Assignees: dev",
+		"Body:",
+		"Pipeline is broken.",
+	} {
+		if !strings.Contains(issueContext, want) {
+			t.Fatalf("IssueContext missing %q:\n%s", want, issueContext)
+		}
+	}
+}
+
+// TestSpawnIssueContextFromSelfManagedGitLabTracker verifies that a
+// self-managed GitLab URL (https://gitlab.internal/...) produces a
+// TrackerID with Host set to "gitlab.internal" and is dispatched to the
+// GitLab tracker.
+func TestSpawnIssueContextFromSelfManagedGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.internal/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42", Host: "gitlab.internal"},
+		Title: "Self-managed issue",
+		Body:  "Body text.",
+		State: domain.IssueOpen,
+		URL:   "https://gitlab.internal/acme/repo/-/issues/42",
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "https://gitlab.internal/acme/repo/-/issues/42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	if tracker.ids[0].Host != "gitlab.internal" {
+		t.Fatalf("tracker id host = %q, want %q", tracker.ids[0].Host, "gitlab.internal")
+	}
+}
+
 func TestSpawnFailedEmitsDuration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
@@ -1712,6 +2003,17 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
 		{"agent not exited", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrAgentNotExited), apierr.KindConflict, "AGENT_NOT_EXITED"},
 		{"resume in progress", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrResumeInProgress), apierr.KindConflict, "AGENT_RESUME_IN_PROGRESS"},
+		{"target agent unauthorized", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrTargetAgentUnauthorized), apierr.KindInvalid, "TARGET_AGENT_UNAUTHORIZED"},
+		{"worker session required", fmt.Errorf("switch agent mer-orchestrator: %w", sessionmanager.ErrUnsupportedSwitchKind), apierr.KindInvalid, "WORKER_SESSION_REQUIRED"},
+		{"unsupported switch harness", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrUnsupportedSwitchHarness), apierr.KindInvalid, "UNSUPPORTED_SWITCH_HARNESS"},
+		{"already using harness", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrAlreadyUsingHarness), apierr.KindConflict, "ALREADY_USING_HARNESS"},
+		{"switch not found", fmt.Errorf("get switch: %w", sessionmanager.ErrSwitchNotFound), apierr.KindNotFound, "AGENT_SWITCH_NOT_FOUND"},
+		{"stale handoff", fmt.Errorf("submit handoff: %w", sessionmanager.ErrStaleHandoff), apierr.KindConflict, "STALE_AGENT_HANDOFF"},
+		{"invalid handoff", fmt.Errorf("submit handoff: %w", sessionmanager.ErrInvalidAgentHandoff), apierr.KindInvalid, "INVALID_AGENT_HANDOFF"},
+		{"switch delivery unconfirmed", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchDeliveryUnconfirmed), apierr.KindConflict, "AGENT_SWITCH_DELIVERY_UNCONFIRMED"},
+		{"manager switch in progress", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
+		{"switch in progress", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
+		{"switch idempotency conflict", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchIdempotencyConflict), apierr.KindConflict, "AGENT_SWITCH_IDEMPOTENCY_CONFLICT"},
 		{"chat mode unsupported", fmt.Errorf("spawn: %w", ports.ErrChatUnsupported), apierr.KindConflict, "SESSION_MODE_UNSUPPORTED"},
 		{"chat driver unavailable", fmt.Errorf("spawn: %w", ports.ErrChatDriverUnavailable), apierr.KindConflict, "CHAT_DRIVER_UNAVAILABLE"},
 		{"chat driver incompatible", fmt.Errorf("spawn: %w", ports.ErrChatDriverIncompatible), apierr.KindConflict, "CHAT_DRIVER_INCOMPATIBLE"},
@@ -1725,6 +2027,26 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 				t.Fatalf("mapped = %v, want %s %s", mapped, tc.wantCode, e)
 			}
 		})
+	}
+}
+
+func TestToAPIErrorSwitchDeliveryUnconfirmedMessage(t *testing.T) {
+	err := fmt.Errorf("switch agent mer-1: confirm continuation: %w", sessionmanager.ErrSwitchDeliveryUnconfirmed)
+	mapped := toAPIError(err)
+
+	var apiError *apierr.Error
+	if !errors.As(mapped, &apiError) {
+		t.Fatalf("mapped = %v, want *apierr.Error", mapped)
+	}
+	if apiError.Kind != apierr.KindConflict {
+		t.Fatalf("kind = %v, want %v", apiError.Kind, apierr.KindConflict)
+	}
+	if apiError.Code != "AGENT_SWITCH_DELIVERY_UNCONFIRMED" {
+		t.Fatalf("code = %q, want AGENT_SWITCH_DELIVERY_UNCONFIRMED", apiError.Code)
+	}
+	const wantMessage = "The target agent started, but AO could not confirm that it accepted the continuation"
+	if apiError.Message != wantMessage {
+		t.Fatalf("message = %q, want %q", apiError.Message, wantMessage)
 	}
 }
 
@@ -2071,15 +2393,21 @@ func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
 }
 
 type fakePRClaimer struct {
-	out errorFreeClaimOutcome
-	err error
+	out        errorFreeClaimOutcome
+	err        error
+	gotMode    ports.ReviewWriteMode
+	gotThreads []domain.PullRequestReviewThread
+	called     bool
 }
 
 type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
+func (f *fakePRClaimer) ClaimPR(_ context.Context, _ domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, threads []domain.PullRequestReviewThread, _ []domain.PullRequestComment, mode ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+	f.gotMode = mode
+	f.gotThreads = threads
+	f.called = true
 	return f.out.ClaimOutcome, f.err
 }
 
@@ -2112,12 +2440,24 @@ func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
 	}
 }
 
+// noopSCMProvider implements scmProvider but always fails ParseRepository
+// to exercise the scmRepoForClaim fallback path.
+type noopSCMProvider struct{}
+
+func (noopSCMProvider) ParseRepository(string) (ports.SCMRepo, bool) { return ports.SCMRepo{}, false }
+func (noopSCMProvider) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	return nil, nil
+}
+func (noopSCMProvider) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
+	return ports.SCMReviewObservation{}, nil
+}
+
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
-	owner, repo, err := githubRepoFromURL(remote)
+	host, owner, repo, err := repoFromURL(remote)
 	if err != nil {
 		return ports.SCMRepo{}, false
 	}
-	return ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
+	return ports.SCMRepo{Provider: providerKey(host), Host: host, Owner: owner, Name: repo, Repo: owner + "/" + repo}, true
 }
 
 func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
@@ -2145,7 +2485,7 @@ func TestClaimPRRejectsScratchProject(t *testing.T) {
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
 	svc := NewWithDeps(Deps{
 		Store:     st,
-		PRClaimer: fakePRClaimer{},
+		PRClaimer: &fakePRClaimer{},
 		SCM: fakeSCM{
 			obs: ports.SCMObservation{
 				Fetched:  true,
@@ -2179,9 +2519,9 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		want error
 	}{
 		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
-		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
-		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
-		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
+		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
+		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2193,13 +2533,232 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 
 	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: now}
-	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
 	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{AllowTakeover: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.TakenOverFrom) != 1 || res.TakenOverFrom[0] != "mer-2" || len(res.PRs) != 1 || res.PRs[0].URL == "" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRGitLabMR(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["gl-1"] = domain.SessionRecord{ID: "gl-1", ProjectID: "gl", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["gl"] = domain.ProjectRecord{ID: "gl", RepoOriginURL: "https://gitlab.com/castai/ctxd"}
+	st.pr["gl-1"] = domain.PRFacts{URL: "https://gitlab.com/castai/ctxd/-/merge_requests/9", Number: 9, CI: domain.CIPassing, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}
+
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "gitlab",
+		Host:     "gitlab.com",
+		Repo:     "castai/ctxd",
+		PR:       ports.SCMPRObservation{URL: "https://gitlab.com/castai/ctxd/-/merge_requests/9", Number: 9},
+	}
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}, SCM: fakeSCM{obs: obs}})
+	res, err := svc.ClaimPR(context.Background(), "gl-1", "https://gitlab.com/castai/ctxd/-/merge_requests/9", ClaimPROptions{AllowTakeover: true})
+	if err != nil {
+		t.Fatalf("claim gitlab MR: %v", err)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
+		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRReviewFetchFailureProceedsWithPreserve(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github",
+		Host:     "github.com",
+		Repo:     "acme/repo",
+		PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+	}
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{
+			obs:       obs,
+			reviewErr: errors.New("review API down"),
+		},
+	})
+	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if err != nil {
+		t.Fatalf("claim should succeed when FetchReviewThreads fails: %v", err)
+	}
+	if !claimer.called {
+		t.Fatalf("ClaimPR was not called")
+	}
+	if claimer.gotMode != ports.ReviewWritePreserve {
+		t.Fatalf("review mode = %v, want ReviewWritePreserve", claimer.gotMode)
+	}
+	if len(claimer.gotThreads) != 0 {
+		t.Fatalf("no threads should be persisted on fetch failure, got %#v", claimer.gotThreads)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://github.com/acme/repo/pull/7" {
+		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRReviewFetchNotFoundErrors(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github",
+		Host:     "github.com",
+		Repo:     "acme/repo",
+		PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+	}
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{
+			obs:       obs,
+			reviewErr: ports.ErrSCMNotFound,
+		},
+	})
+	_, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if !errors.Is(err, ErrPRNotFound) {
+		t.Fatalf("err = %v, want ErrPRNotFound", err)
+	}
+	if claimer.called {
+		t.Fatalf("ClaimPR should not be called when PR was deleted")
+	}
+}
+
+func TestNormalizePRRefGitLab(t *testing.T) {
+	cases := []struct {
+		name       string
+		ref        string
+		repoOrigin string
+		wantURL    string
+		wantNum    int
+		wantErr    bool
+	}{
+		{
+			name:       "gitlab MR URL",
+			ref:        "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			repoOrigin: "https://gitlab.com/castai/ctxd",
+			wantURL:    "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			wantNum:    9,
+		},
+		{
+			name:       "gitlab MR URL with nested groups",
+			ref:        "https://gitlab.com/group/subgroup/repo/-/merge_requests/42",
+			repoOrigin: "https://gitlab.com/group/subgroup/repo",
+			wantURL:    "https://gitlab.com/group/subgroup/repo/-/merge_requests/42",
+			wantNum:    42,
+		},
+		{
+			name:       "numeric ref with gitlab repo",
+			ref:        "9",
+			repoOrigin: "https://gitlab.com/castai/ctxd",
+			wantURL:    "https://gitlab.com/castai/ctxd/-/merge_requests/9",
+			wantNum:    9,
+		},
+		{
+			name:       "github PR URL unchanged",
+			ref:        "https://github.com/owner/repo/pull/42",
+			repoOrigin: "https://github.com/owner/repo",
+			wantURL:    "https://github.com/owner/repo/pull/42",
+			wantNum:    42,
+		},
+		{
+			name:       "numeric ref with github repo unchanged",
+			ref:        "7",
+			repoOrigin: "https://github.com/acme/repo",
+			wantURL:    "https://github.com/acme/repo/pull/7",
+			wantNum:    7,
+		},
+		{
+			name:       "invalid URL",
+			ref:        "https://example.com/foo",
+			repoOrigin: "",
+			wantErr:    true,
+		},
+		{
+			name:       "empty ref",
+			ref:        "",
+			repoOrigin: "",
+			wantErr:    true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			url, n, err := normalizePRRef(tc.ref, tc.repoOrigin)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got url=%s n=%d", url, n)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if url != tc.wantURL || n != tc.wantNum {
+				t.Fatalf("got url=%s n=%d, want url=%s n=%d", url, n, tc.wantURL, tc.wantNum)
+			}
+		})
+	}
+}
+
+func TestRequireSameRepoGitLab(t *testing.T) {
+	cases := []struct {
+		name       string
+		prURL      string
+		repoOrigin string
+		wantErr    error
+	}{
+		{"matching gitlab", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/castai/ctxd", nil},
+		{"matching github", "https://github.com/owner/repo/pull/42", "https://github.com/owner/repo", nil},
+		{"empty origin allows any", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "", nil},
+		{"mismatch", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://github.com/other/repo", ErrProjectMismatch},
+		{"gitlab mismatch repo", "https://gitlab.com/castai/ctxd/-/merge_requests/9", "https://gitlab.com/other/repo", ErrProjectMismatch},
+		// Cross-provider mismatch: same owner/repo name on GitHub and GitLab
+		// must not validate
+		{"cross-provider github origin vs gitlab mr", "https://gitlab.com/owner/repo/-/merge_requests/1", "https://github.com/owner/repo.git", ErrProjectMismatch},
+		{"cross-provider gitlab origin vs github pr", "https://github.com/owner/repo/pull/1", "https://gitlab.com/owner/repo.git", ErrProjectMismatch},
+		// Cross-host mismatch: gitlab.com origin vs self-managed gitlab MR
+		// must not validate even though both are GitLab
+		{"cross-host gitlab.com origin vs self-managed mr", "https://gitlab.mycompany.com/owner/repo/-/merge_requests/1", "https://gitlab.com/owner/repo.git", ErrProjectMismatch},
+		{"matching self-managed gitlab", "https://gitlab.mycompany.com/eng/team/-/merge_requests/3", "https://gitlab.mycompany.com/eng/team.git", nil},
+		// Nested namespaces must match end-to-end
+		{"matching nested namespace gitlab", "https://gitlab.com/group/subgroup/repo/-/merge_requests/5", "https://gitlab.com/group/subgroup/repo.git", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := requireSameRepo(tc.prURL, tc.repoOrigin)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err=%v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestScmRepoForClaimGitLab(t *testing.T) {
+	// When the provider cannot parse the origin, the fallback should detect
+	// GitLab from the PR URL and set Provider="gitlab".
+	var noopProvider noopSCMProvider
+	repo, err := scmRepoForClaim(noopProvider, "", "https://gitlab.com/castai/ctxd/-/merge_requests/9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.Provider != "gitlab" || repo.Host != "gitlab.com" || repo.Owner != "castai" || repo.Name != "ctxd" {
+		t.Fatalf("repo = %+v", repo)
 	}
 }
 
@@ -2391,6 +2950,35 @@ func TestListPRSummariesSuppressesFailingChecksUnlessCIFailing(t *testing.T) {
 	}
 	if got[0].CI.State != domain.CIPassing || len(got[0].CI.FailingChecks) != 0 {
 		t.Fatalf("ci summary = %+v", got[0].CI)
+	}
+}
+
+func TestListPRSummariesExposesPerPRAutoInjectCIPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{URL: "enabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: true},
+		{URL: "disabled-failing", SessionID: "mer-1", CI: domain.CIFailing, AutoInjectCI: false},
+		{URL: "enabled-passing", SessionID: "mer-1", CI: domain.CIPassing, AutoInjectCI: true},
+		{URL: "enabled-merged", SessionID: "mer-1", CI: domain.CIPassing, Merged: true, AutoInjectCI: true},
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byURL := map[string]PRSummary{}
+	for _, pr := range got {
+		byURL[pr.URL] = pr
+	}
+	if !byURL["enabled-failing"].CI.AutoInjectCI || byURL["disabled-failing"].CI.AutoInjectCI {
+		t.Fatalf("failing CI policies = enabled:%v disabled:%v", byURL["enabled-failing"].CI.AutoInjectCI, byURL["disabled-failing"].CI.AutoInjectCI)
+	}
+	if !byURL["enabled-passing"].CI.AutoInjectCI {
+		t.Fatal("passing PR lost its enabled CI injection policy")
+	}
+	if !byURL["enabled-merged"].CI.AutoInjectCI {
+		t.Fatal("terminal PR lost its enabled CI injection policy")
 	}
 }
 

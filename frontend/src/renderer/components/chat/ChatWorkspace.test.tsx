@@ -29,6 +29,18 @@ function poll(snapshot: ConversationSnapshot): ConversationSnapshot {
 	return structuredClone(snapshot);
 }
 
+function idleSnapshot(snapshot: ConversationSnapshot = chatFixture): ConversationSnapshot {
+	return {
+		...snapshot,
+		controller: { state: "ready" },
+		turns: snapshot.turns.map((turn) =>
+			turn.state === "running"
+				? { ...turn, state: "completed" as const, completedAt: turn.requestedAt }
+				: turn,
+		),
+	};
+}
+
 /** jsdom has no layout, so the scroller's geometry has to be stated. */
 function stubGeometry(node: HTMLElement, { scrollHeight, clientHeight, scrollTop }: {
 	scrollHeight: number;
@@ -306,6 +318,33 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 	});
 
+	it("limits conversation minimap navigation to human prompts", () => {
+		const snapshot = structuredClone(chatFixtureLongHistory(2));
+		snapshot.items.splice(1, 0, {
+			kind: "activity",
+			id: "loose-status",
+			sequence: 1.5,
+			revision: 1,
+			activityKind: "system",
+			status: "completed",
+			summary: "Automatic compaction completed",
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 1800, clientHeight: 600, scrollTop: 0 });
+		stubGeometry(scrollbar, { scrollHeight: 600, clientHeight: 600, scrollTop: 0 });
+		fireEvent.scroll(log);
+
+		const markers = Array.from(
+			scrollbar.querySelectorAll<HTMLElement>("[data-chat-scroll-marker]"),
+		);
+		expect(markers).toHaveLength(2);
+		fireEvent.pointerEnter(markers[1]!);
+		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
+	});
+
 	it("explains itself instead of showing an empty scroller", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
 		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
@@ -431,6 +470,140 @@ describe("automation reports", () => {
 });
 
 describe("ChatWorkspace message actions", () => {
+	it("copies a human message as the exact text the user sent", async () => {
+		const user = userEvent.setup();
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		await user.click(screen.getAllByRole("button", { name: "Copy user message" })[0]!);
+
+		expect(writeText).toHaveBeenCalledTimes(1);
+		expect(writeText).toHaveBeenCalledWith(
+			"Check the worktree state and tell me what changed since the base commit.",
+		);
+	});
+
+	it("edits a human message through the branch endpoint without touching the composer", async () => {
+		const user = userEvent.setup();
+		const onRollback = vi.fn();
+		const onEditMessage = vi.fn(async () => undefined);
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				onRollback={onRollback}
+				onEditMessage={onEditMessage}
+			/>,
+		);
+		const composer = screen.getByLabelText("Message the agent");
+		await user.type(composer, "unsent composer draft");
+
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		expect(composer).toHaveValue("unsent composer draft");
+
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		expect(editor).toHaveFocus();
+		expect(editor).toHaveValue("Check the worktree state and tell me what changed since the base commit.");
+
+		await user.clear(editor);
+		await user.type(editor, "Check worktree state, including staged files.");
+		fireEvent.keyDown(editor, { key: "Enter", metaKey: true });
+
+		await waitFor(() =>
+			expect(onEditMessage).toHaveBeenCalledWith(
+				"turn-1",
+				"Check worktree state, including staged files.",
+			),
+		);
+		expect(onRollback).not.toHaveBeenCalled();
+		expect(composer).toHaveValue("unsent composer draft");
+	});
+
+	it("keeps edit available while another turn is active", async () => {
+		const user = userEvent.setup();
+		render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				onEditMessage={vi.fn(async () => undefined)}
+			/>,
+		);
+
+		const editButtons = screen.getAllByRole("button", { name: "Edit user message" });
+		expect(editButtons.length).toBeGreaterThan(0);
+
+		await user.click(editButtons[0]!);
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue(
+			"Check the worktree state and tell me what changed since the base commit.",
+		);
+		expect(screen.getByRole("button", { name: "Send edited message" })).toBeDisabled();
+		expect(screen.getByText("Stop the current turn before branching")).toBeVisible();
+	});
+
+	it("retains the inline draft when branch creation fails", async () => {
+		const user = userEvent.setup();
+		const onEditMessage = vi.fn(async () => {
+			throw new Error("branch failed");
+		});
+		const view = render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				onEditMessage={onEditMessage}
+				editMessageError="branch failed"
+			/>,
+		);
+
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "keep this draft");
+		fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true });
+
+		await waitFor(() => expect(onEditMessage).toHaveBeenCalledWith("turn-1", "keep this draft"));
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
+		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={{
+					...idleSnapshot(),
+					activeBranchId: "branch-failed",
+					branchedFromEarlierMessage: true,
+					items: [],
+					turns: [],
+				}}
+				onEditMessage={onEditMessage}
+				editMessageError="branch failed"
+			/>,
+		);
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toHaveValue("keep this draft");
+		expect(screen.getByRole("alert")).toHaveTextContent("branch failed");
+	});
+
+	it("navigates prompt branches and explains that files are unchanged", async () => {
+		const user = userEvent.setup();
+		const onActivateBranch = vi.fn(async () => undefined);
+		const snapshot = {
+			...idleSnapshot(),
+			activeBranchId: "branch-current",
+			branchedFromEarlierMessage: true,
+			branchPoints: [
+				{
+					turnId: "turn-1",
+					position: 2,
+					total: 3,
+					previousBranchId: "branch-previous",
+					nextBranchId: "branch-next",
+				},
+			],
+		};
+		render(<ChatWorkspace snapshot={snapshot} onActivateBranch={onActivateBranch} />);
+
+		expect(screen.getByText("2 / 3")).toBeVisible();
+		await user.click(screen.getByRole("button", { name: "Previous conversation branch" }));
+		expect(onActivateBranch).toHaveBeenCalledWith("branch-previous");
+		expect(
+			screen.getByText("Conversation branched; worktree files were left unchanged."),
+		).toBeVisible();
+	});
+
 	it("copies an assistant message as the markdown the agent wrote", async () => {
 		const user = userEvent.setup();
 		const snapshot = structuredClone(chatFixture);

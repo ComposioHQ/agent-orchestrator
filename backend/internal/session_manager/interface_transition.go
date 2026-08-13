@@ -161,7 +161,7 @@ func (m *Manager) StartInterfaceTransition(
 		return domain.SessionInterfaceTransition{}, err
 	}
 	if !created {
-		return transition, ErrSwitchInProgress
+		return transition, ErrInterfaceTransitionInProgress
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -243,6 +243,7 @@ func (m *Manager) runInterfaceTransition(
 	sourcePrepared := false
 	sourceStopped := false
 	modeChanged := false
+	var sourceRuntimeHandle ports.RuntimeHandle
 	fail := func(code string, cause error) {
 		if sourcePrepared && !sourceStopped {
 			m.abortSourceHandoff(transition)
@@ -253,7 +254,7 @@ func (m *Manager) runInterfaceTransition(
 			return
 		}
 		if sourceStopped {
-			m.rollbackInterfaceTransition(transition, modeChanged, code, cause)
+			m.rollbackInterfaceTransition(transition, sourceRuntimeHandle, modeChanged, code, cause)
 			return
 		}
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
@@ -275,6 +276,7 @@ func (m *Manager) runInterfaceTransition(
 		fail("SESSION_CHANGED", fmt.Errorf("session changed before the interface switch could start"))
 		return
 	}
+	sourceRuntimeHandle = runtimeHandle(rec.Metadata)
 	// Claim the raw terminal input path before target preflight or the first idle
 	// observation. Without this gate a mux client can submit work after the TUI is
 	// observed idle but before Destroy, and that accepted work is then killed by
@@ -699,6 +701,7 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 
 func (m *Manager) rollbackInterfaceTransition(
 	transition domain.SessionInterfaceTransition,
+	sourceRuntimeHandle ports.RuntimeHandle,
 	modeChanged bool,
 	code string,
 	cause error,
@@ -726,6 +729,17 @@ func (m *Manager) rollbackInterfaceTransition(
 			}
 			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 				"RECOVERY_REQUIRED", detail)
+			return
+		}
+	}
+	// A conclusive liveness probe can prove the source process exited even when
+	// its first teardown timed out. Clear any stale runtime registration using
+	// the handle captured before the controller epoch erased it, or rollback can
+	// fail to recreate the TUI with "session already exists" on ConPTY.
+	if transition.SourceMode != domain.SessionModeChat && sourceRuntimeHandle.ID != "" {
+		if err := m.runtime.Destroy(ctx, sourceRuntimeHandle); err != nil {
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+				"RECOVERY_REQUIRED", cause.Error()+"; source runtime cleanup: "+err.Error())
 			return
 		}
 	}

@@ -21,6 +21,44 @@ type AgentModelCatalog struct {
 	FetchedAt     time.Time
 }
 
+type AgentNativeSession struct {
+	ID               domain.AgentNativeSessionID
+	AoSessionID      domain.SessionID
+	Harness          domain.AgentHarness
+	ConfigDir        string
+	NativeSessionID  string
+	TranscriptPath   string
+	LastGenerationID domain.AgentGenerationID
+	CreatedAt        time.Time
+	LastUsedAt       time.Time
+}
+
+type AgentSwitch struct {
+	ID                      domain.AgentSwitchID
+	SessionID               domain.SessionID
+	IdempotencyKey          string
+	RequestFingerprint      domain.AgentSwitchRequestFingerprint
+	FromHarness             domain.AgentHarness
+	TargetHarness           domain.AgentHarness
+	TargetNativeSessionRef  *domain.AgentNativeSessionID
+	TargetStartMode         domain.AgentSwitchTargetStartMode
+	State                   domain.AgentSwitchState
+	AgentHandoffStatus      domain.AgentHandoffStatus
+	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus
+	SemanticHandoffIncluded bool
+	AgentHandoffPath        string
+	AgentHandoffHash        string
+	SourceGenerationID      domain.AgentGenerationID
+	TargetGenerationID      domain.AgentGenerationID
+	TargetRuntimeHandleID   string
+	TargetAcknowledgedAt    sql.NullTime
+	ErrorCode               string
+	RequestedAt             time.Time
+	UpdatedAt               time.Time
+	FinalHandoffPath        string
+	FinalHandoffHash        string
+}
+
 type AppSetting struct {
 	ID                 int64
 	DefaultSessionMode domain.SessionMode
@@ -68,6 +106,7 @@ type Conversation struct {
 	McpServersJson             sql.NullString
 	UsageCost                  sql.NullFloat64
 	UsageCurrency              sql.NullString
+	ActiveBranchID             string
 }
 
 type ConversationActivity struct {
@@ -88,6 +127,20 @@ type ConversationActivity struct {
 	CommandOutputTruncated int64
 	StreamedText           string
 	StreamedTextTruncated  int64
+	BranchID               string
+}
+
+type ConversationBranch struct {
+	ID                     string
+	ConversationID         string
+	SessionID              sql.NullString
+	ProviderConversationID string
+	ParentBranchID         sql.NullString
+	ForkAfterTurnID        sql.NullString
+	ReplacedTurnID         sql.NullString
+	ReplacementTurnID      sql.NullString
+	ForkAfterSequence      int64
+	CreatedAt              time.Time
 }
 
 type ConversationMessage struct {
@@ -105,6 +158,7 @@ type ConversationMessage struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	DeliveryContentJson string
+	BranchID            string
 }
 
 type ConversationProviderEvent struct {
@@ -115,6 +169,7 @@ type ConversationProviderEvent struct {
 	Method          string
 	PayloadJson     string
 	ReceivedAt      time.Time
+	BranchID        string
 }
 
 type ConversationTurn struct {
@@ -131,6 +186,7 @@ type ConversationTurn struct {
 	DiffJson             string
 	RolledBackAt         sql.NullTime
 	PlanJson             string
+	BranchID             string
 }
 
 type ModelUsageEvent struct {
@@ -201,6 +257,7 @@ type PR struct {
 	ReviewObservedAt         sql.NullTime
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
+	AutoInjectCI             bool
 }
 
 type PRCheck struct {
@@ -328,6 +385,10 @@ type Session struct {
 	ControllerGeneration      string
 	BrowserCapabilityVerifier string
 	AutoInjectReview          bool
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	AutoInjectCI              bool
 }
 
 type SessionCleanupFact struct {
@@ -451,4 +512,5 @@ type WorkspaceRepo struct {
 	RelativePath  string
 	RepoOriginURL string
 	RegisteredAt  time.Time
+	DefaultBranch string
 }

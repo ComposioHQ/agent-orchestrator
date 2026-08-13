@@ -64,6 +64,9 @@ manually; that is how the 28-29 Jul misdiagnosis happened.
 - Authenticated `gh` CLI for the notes/verify steps.
 - A release approver available (see "Who can approve" below); the build jobs
   wait on the `release` environment until someone approves.
+- Repository variable `VITE_WORKOS_CLIENT_ID` set to the public AuthKit client
+  ID. Release and artifact workflows fail before packaging when it is absent,
+  rather than silently shipping a desktop build with sign-in disabled.
 
 ## Cutting a stable release
 
@@ -182,12 +185,29 @@ always take the full-download path), the version-free aliases `ao start` fetches
 and the deb/rpm published under versioned names), and the electron-updater
 feeds `latest.yml`, `latest-mac.yml`, `latest-linux.yml`.
 
-Once the macOS dmg maker's output is published, each release additionally
-carries `Agent Orchestrator-X.Y.Z-{arm64,x64}.dmg` for first install. The dmg is
-purely additive: `MacUpdater` can only install an update from a zip
+**Stable releases only** additionally carry
+`agent-orchestrator-darwin-{arm64,x64}.dmg` for first install, and this is the
+artifact the download page and the README tables link to. Mounting it gives the
+drag-to-Applications window, so the app lands in `/Applications` rather than
+being unzipped into `~/Downloads` and launched from there (#3617, #3527).
+
+It is not built here. The release conductor assembles it around the app it has
+already signed and stapled, then signs, notarizes and staples the container
+separately, because an app's ticket does not propagate outward: a signed but
+unnotarized dmg is rejected with `source=Unnotarized Developer ID`. Building the
+image before the app is stapled would leave the nested bundle without a ticket,
+so the conductor's verification gate mounts the finished dmg and validates the
+`.app` inside it.
+
+Nightly and preview channels do not build one. The container costs a second
+notarization submission per architecture, and those channels publish far too
+often to pay for it; their users update in-app and never need a first-install
+container.
+
+The dmg is purely additive: `MacUpdater` can only install an update from a zip
 (`findFile(files, "zip", ["pkg", "dmg"])`), so the macOS zip and
-`latest-mac.yml` keep publishing permanently. See issue #3267 for the rollout
-order, including when the download-page and README links flip from zip to dmg.
+`latest-mac.yml` keep publishing permanently, and the dmg is deliberately absent
+from the feed manifests. See issue #3267 for the rollout order.
 
 If a platform leg fails, re-run the failed jobs from the Actions UI; the
 stable-alias upload steps use `--clobber`, so re-runs replace assets safely.

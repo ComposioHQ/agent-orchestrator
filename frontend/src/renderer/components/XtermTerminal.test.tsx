@@ -190,6 +190,14 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
 	});
 
+	it("focuses the terminal when human input is requested", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
 	it("updates the live terminal palette when the named color theme changes", () => {
 		const style = document.createElement("style");
 		style.textContent = `
@@ -218,6 +226,34 @@ describe("XtermTerminal", () => {
 				background: "#0d1117",
 				cursor: "#58a6ff",
 				foreground: "#ccd3d8",
+			});
+		} finally {
+			style.remove();
+			delete document.documentElement.dataset.styleTheme;
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("uses the terminal foreground for the light-mode block cursor", () => {
+		const style = document.createElement("style");
+		style.textContent = `
+			:root {
+				--color-bg-terminal-opaque: #f5f5f4;
+				--color-text-terminal: #24292f;
+				--color-working: #2563eb;
+			}
+		`;
+		document.head.appendChild(style);
+		delete document.documentElement.dataset.styleTheme;
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="light" />);
+			expect(state.lastTerminal!.options.theme).toMatchObject({
+				background: "#f5f5f4",
+				foreground: "#24292f",
+				cursor: "#24292f",
+				cursorAccent: "#f5f5f4",
 			});
 		} finally {
 			style.remove();

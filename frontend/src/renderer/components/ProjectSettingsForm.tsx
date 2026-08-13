@@ -1,25 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	ProjectAgentsSettingsView,
+	ProjectGeneralSettingsView,
+	ProjectSettingsFormView,
+	ProjectSettingsSection,
+	ProjectWorkflowSettingsView,
+	validateProjectSettings,
+} from "@aoagents/product-ui";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useEffect, useState } from "react";
-import {
-	Bot,
-	Fingerprint,
-	FolderGit2,
-	FolderOpen,
-	GitBranch,
-	Hash,
-	Layers,
-	Link,
-	Network,
-	RefreshCw,
-	ScanEye,
-	Shield,
-	Sparkles,
-	Tag,
-	TriangleAlert,
-	type LucideIcon,
-} from "lucide-react";
+import { Pencil, RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
 	agentModelsQueryKey,
@@ -36,13 +27,12 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
-import { SettingsSection } from "./settings/SettingsSection";
-import { Button } from "./ui/button";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -53,8 +43,24 @@ const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permi
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export type ProjectSettingsSection = "general" | "agents" | "workflow" | "intake";
+export interface ProjectSettingsSaveState {
+	isPending: boolean;
+	showSaving: boolean;
+	validationError: string | null;
+	mutationError: string | null;
+	saved: boolean;
+	replacementError: string | null;
+}
 
-export function ProjectSettingsForm({ projectId, section = "general" }: { projectId: string; section?: ProjectSettingsSection }) {
+export function ProjectSettingsForm({
+	projectId,
+	section = "general",
+	onSaveState,
+}: {
+	projectId: string;
+	section?: ProjectSettingsSection;
+	onSaveState?: (state: ProjectSettingsSaveState) => void;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 
@@ -85,13 +91,26 @@ export function ProjectSettingsForm({ projectId, section = "general" }: { projec
 					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
 					projectId={projectId}
 					section={section}
+					onSaveState={onSaveState}
 				/>
 			)}
 		</>
 	);
 }
 
-function SettingsBody({ project, projectId, onSaved, section = "general" }: { project: Project; projectId: string; onSaved: () => void; section?: ProjectSettingsSection }) {
+function SettingsBody({
+	project,
+	projectId,
+	onSaved,
+	section = "general",
+	onSaveState,
+}: {
+	project: Project;
+	projectId: string;
+	onSaved: () => void;
+	section?: ProjectSettingsSection;
+	onSaveState?: (state: ProjectSettingsSaveState) => void;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
@@ -117,6 +136,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		intakeAssignee: intake.assignee ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [showSaving, setShowSaving] = useState(false);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
@@ -141,7 +161,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
-	const intakeIncomplete = !isScratchProject && intakeNeedsRule(intakeForm);
+	const reviewerWarning = reviewerTrustWarning(form.reviewerHarness);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -232,187 +252,232 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		},
 	});
 
-	const saveFooter = (
-		<SaveChangesFooter
-			isPending={mutation.isPending}
-			validationError={validationError}
-			mutationError={mutation.isError ? mutation.error : null}
-			savedAt={savedAt}
-			replacementError={replacementError}
-		/>
-	);
+	useEffect(() => {
+		if (!mutation.isPending) {
+			setShowSaving(false);
+			return;
+		}
+		const timeout = window.setTimeout(() => setShowSaving(true), 200);
+		return () => window.clearTimeout(timeout);
+	}, [mutation.isPending]);
+
+	useEffect(() => {
+		onSaveState?.({
+			isPending: mutation.isPending,
+			showSaving,
+			validationError,
+			mutationError: mutation.isError
+				? mutation.error instanceof Error
+					? mutation.error.message
+					: t("settings.project.saveFailed")
+				: null,
+			saved: savedAt !== null && !mutation.isPending && !mutation.isError,
+			replacementError:
+				replacementError && !mutation.isPending && !mutation.isError ? replacementError : null,
+		});
+	}, [
+		mutation.error,
+		mutation.isError,
+		mutation.isPending,
+		onSaveState,
+		replacementError,
+		savedAt,
+		showSaving,
+		t,
+		validationError,
+	]);
+
+	useEffect(() => {
+		if (savedAt === null) return;
+		const timeout = window.setTimeout(() => setSavedAt(null), 1800);
+		return () => window.clearTimeout(timeout);
+	}, [savedAt]);
 
 	return (
-		<form
-			className="flex w-full flex-col gap-(--size-settings-section-gap)"
-			onSubmit={(event) => {
-				event.preventDefault();
+		<ProjectSettingsFormView
+			id="project-settings-form"
+			onSubmit={() => {
 				setSavedAt(null);
 				setReplacementError(null);
-				if (missingRequiredAgent) {
-					setValidationError(t("settings.project.agentsRequired"));
-					return;
-				}
-				if (form.displayName.trim() === "") {
-					setValidationError(t("settings.project.nameRequired"));
-					return;
-				}
-				if (intakeIncomplete) {
-					setValidationError(t("settings.project.intakeAssigneeRequired"));
+				const validation = validateProjectSettings(form, { validateIntake: !isScratchProject });
+				if (validation) {
+					setValidationError(
+						validation === "agents_required"
+							? t("settings.project.agentsRequired")
+							: validation === "name_required"
+								? t("settings.project.nameRequired")
+								: t("settings.project.intakeAssigneeRequired"),
+					);
 					return;
 				}
 				setValidationError(null);
 				mutation.mutate();
 			}}
 		>
-			{/* ── General: identity + workspace repos ───────────────────── */}
 			{section === "general" && (
 				<>
-					<SettingsSection title={t("settings.project.identity")}>
-						<SettingsInputRow
-							icon={Tag}
-							label={t("settings.project.name")}
-							id="projectName"
-							value={form.displayName}
-							onChange={(value) => setForm((f) => ({ ...f, displayName: value }))}
-						/>
-						<SettingsValueRow icon={Fingerprint} label={t("settings.project.id")} value={project.id} />
-						<SettingsValueRow icon={Layers} label={t("settings.project.kind")} value={projectKindLabel(project.kind, t)} />
-						<SettingsValueRow icon={FolderOpen} label={t("settings.project.path")} value={project.path} />
-						<SettingsValueRow icon={Link} label={t("settings.project.repo")} value={project.repo || "—"} />
-					</SettingsSection>
-					{project.kind === "workspace" && (
-						<SettingsSection title={t("settings.project.workspaceRepos")}>
-							{project.workspaceRepos?.length ? (
-								project.workspaceRepos.map((repo) => (
-									<SettingsRow key={repo.name} icon={FolderGit2} label={repo.name}>
-										<span className="settings-row-value">
-											{repo.relativePath}
-											{repo.repo ? ` · ${repo.repo}` : ""}
-										</span>
-									</SettingsRow>
-								))
-							) : (
-								<p className="px-1 text-xs text-settings-muted">{t("settings.project.childReposEmpty")}</p>
-							)}
-						</SettingsSection>
-					)}
-					{saveFooter}
+					<ProjectGeneralSettingsView
+						displayName={form.displayName}
+						externalLink={ProductExternalLink}
+						icons={{
+							edit: <Pencil className="settings-inline-edit-icon" aria-hidden="true" />,
+						}}
+						onDisplayNameChange={(displayName) => setForm((f) => ({ ...f, displayName }))}
+						labels={{
+							title: t("settings.project.identity"),
+							name: t("settings.project.name"),
+							id: t("settings.project.id"),
+							kind: t("settings.project.kind"),
+							path: t("settings.project.path"),
+							repo: t("settings.project.repo"),
+							workspaceRepos: t("settings.project.workspaceRepos"),
+							workspaceReposEmpty: t("settings.project.childReposEmpty"),
+							editName: t("settings.field.edit", { label: t("settings.project.name") }),
+						}}
+						project={{
+							id: project.id,
+							kindLabel: projectKindLabel(project.kind, t),
+							path: project.path,
+							pathHref: `file://${encodeURI(project.path)}`,
+							repo: project.repo,
+							repoHref: project.repo ? repositoryHref(project.repo) : undefined,
+							workspaceRepos: project.kind === "workspace" ? project.workspaceRepos ?? [] : undefined,
+						}}
+					/>
 				</>
 			)}
 
-			{/* ── Agents: worker, orchestrator, model, permissions ───────── */}
 			{section === "agents" && (
 				<>
-					<SettingsSection title={t("settings.project.agents")}>
-						<RequiredAgentField
-							id="workerAgent"
-							variant="settings-row"
-							icon={Bot}
-							value={form.workerAgent}
-							placeholder={t("settings.project.selectWorker")}
-							label={t("settings.project.defaultWorker")}
-							authorized={agentCatalog?.authorized}
-							installed={agentCatalog?.installed}
-							supported={agentCatalog?.supported}
-							disabled={agentsQuery.isFetching && agentCatalog === undefined}
-							invalid={validationError !== null && form.workerAgent === ""}
-							onChange={(v) =>
-								setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))
-							}
-						/>
-						<AgentModelField
-							role="worker"
-							agentId={form.workerAgent}
-							projectId={projectId}
-							model={form.workerModel}
-							mode={form.workerMode}
-							onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
-							onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
-						/>
-						<RequiredAgentField
-							id="orchestratorAgent"
-							variant="settings-row"
-							icon={Network}
-							value={form.orchestratorAgent}
-							placeholder={t("settings.project.selectOrchestrator")}
-							label={t("settings.project.defaultOrchestrator")}
-							authorized={agentCatalog?.authorized}
-							installed={agentCatalog?.installed}
-							supported={agentCatalog?.supported}
-							disabled={agentsQuery.isFetching && agentCatalog === undefined}
-							invalid={validationError !== null && form.orchestratorAgent === ""}
-							onChange={(v) =>
-								setForm((f) => ({ ...f, orchestratorAgent: v, orchestratorModel: "", orchestratorMode: "" }))
-							}
-						/>
-						<AgentModelField
-							role="orchestrator"
-							agentId={form.orchestratorAgent}
-							projectId={projectId}
-							model={form.orchestratorModel}
-							mode={form.orchestratorMode}
-							onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
-							onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
-						/>
-						<SettingsRow icon={Shield} label={t("settings.project.permissionMode")}>
-							<PermissionModeSelect
-								value={form.permissions}
-								onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
+					<ProjectAgentsSettingsView
+						title={t("settings.project.agents")}
+						workerArea={
+							<RequiredAgentField
+								id="workerAgent"
+								variant="settings-row"
+								value={form.workerAgent}
+								placeholder={t("settings.project.selectWorker")}
+								label={t("settings.project.defaultWorker")}
+								authorized={agentCatalog?.authorized}
+								installed={agentCatalog?.installed}
+								supported={agentCatalog?.supported}
+								disabled={agentsQuery.isFetching && agentCatalog === undefined}
+								invalid={validationError !== null && form.workerAgent === ""}
+								onChange={(v) =>
+									setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))
+								}
 							/>
-						</SettingsRow>
-						<SettingsRow icon={RefreshCw} label={t("settings.project.refreshAgents")}>
-							<button
-								type="button"
-								aria-label={t("settings.project.refreshAgents")}
-								className="settings-option-trigger inline-flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-50"
-								disabled={refreshAgentsMutation.isPending}
-								onClick={() => refreshAgentsMutation.mutate()}
-							>
-								<RefreshCw className={cn("size-icon-base", refreshAgentsMutation.isPending && "animate-spin")} aria-hidden="true" />
-								{refreshAgentsMutation.isPending ? t("settings.project.refreshing") : t("settings.project.refresh")}
-							</button>
-						</SettingsRow>
-						{refreshAgentsMutation.isError && (
-							<p className="px-1 text-xs leading-row text-error">
-								{refreshAgentsMutation.error instanceof Error
+						}
+						workerModelArea={
+							<AgentModelField
+								role="worker"
+								agentId={form.workerAgent}
+								projectId={projectId}
+								model={form.workerModel}
+								mode={form.workerMode}
+								onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
+								onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
+							/>
+						}
+						orchestratorArea={
+							<RequiredAgentField
+								id="orchestratorAgent"
+								variant="settings-row"
+								value={form.orchestratorAgent}
+								placeholder={t("settings.project.selectOrchestrator")}
+								label={t("settings.project.defaultOrchestrator")}
+								authorized={agentCatalog?.authorized}
+								installed={agentCatalog?.installed}
+								supported={agentCatalog?.supported}
+								disabled={agentsQuery.isFetching && agentCatalog === undefined}
+								invalid={validationError !== null && form.orchestratorAgent === ""}
+								onChange={(v) =>
+									setForm((f) => ({
+										...f,
+										orchestratorAgent: v,
+										orchestratorModel: "",
+										orchestratorMode: "",
+									}))
+								}
+							/>
+						}
+						orchestratorModelArea={
+							<AgentModelField
+								role="orchestrator"
+								agentId={form.orchestratorAgent}
+								projectId={projectId}
+								model={form.orchestratorModel}
+								mode={form.orchestratorMode}
+								onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
+								onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
+							/>
+						}
+						permissions={{
+							control: (
+								<PermissionModeSelect
+									value={form.permissions}
+									onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
+								/>
+							),
+							label: t("settings.project.permissionMode"),
+						}}
+						refresh={{
+							actionIcon: (
+								<RefreshCw
+									className={cn(
+										"size-icon-base",
+										refreshAgentsMutation.isPending && "animate-spin",
+									)}
+									aria-hidden="true"
+								/>
+							),
+							disabled: refreshAgentsMutation.isPending,
+							label: t("settings.project.refreshAgents"),
+							onClick: () => refreshAgentsMutation.mutate(),
+							value: refreshAgentsMutation.isPending
+								? t("settings.project.refreshing")
+								: t("settings.project.refresh"),
+						}}
+						error={
+							refreshAgentsMutation.isError
+								? refreshAgentsMutation.error instanceof Error
 									? refreshAgentsMutation.error.message
-									: t("settings.project.refreshFailed")}
-							</p>
-						)}
-						{missingRequiredAgent && (
-							<p className="px-1 text-xs leading-row text-error">{t("settings.project.agentsRequired")}</p>
-						)}
-					</SettingsSection>
-					{saveFooter}
+									: t("settings.project.refreshFailed")
+								: null
+						}
+						missingRequiredMessage={
+							missingRequiredAgent ? t("settings.project.agentsRequired") : null
+						}
+					/>
 				</>
 			)}
 
-			{/* ── Workflow: branch, prefix, reviewer ────────────────────── */}
 			{section === "workflow" && (
 				<>
 					{!isScratchProject ? (
 						<>
-							<SettingsSection title={t("settings.project.worktrees")}>
-								<SettingsInputRow
-									icon={GitBranch}
-									label={t("settings.project.defaultBranch")}
-									id="defaultBranch"
-									value={form.defaultBranch}
-									placeholder="main"
-									onChange={(value) => setForm((f) => ({ ...f, defaultBranch: value }))}
-								/>
-								<SettingsInputRow
-									icon={Hash}
-									label={t("settings.project.sessionPrefix")}
-									id="sessionPrefix"
-									value={form.sessionPrefix}
-									placeholder="ao"
-									onChange={(value) => setForm((f) => ({ ...f, sessionPrefix: value }))}
-								/>
-							</SettingsSection>
-							<SettingsSection title={t("settings.project.reviewers")}>
-								<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
+							<ProjectWorkflowSettingsView
+								branch={form.defaultBranch}
+								icons={{
+									edit: <Pencil className="settings-inline-edit-icon" aria-hidden="true" />,
+								}}
+								prefix={form.sessionPrefix}
+								onBranchChange={(defaultBranch) => setForm((f) => ({ ...f, defaultBranch }))}
+								onPrefixChange={(sessionPrefix) => setForm((f) => ({ ...f, sessionPrefix }))}
+								labels={{
+									worktrees: t("settings.project.worktrees"),
+									defaultBranch: t("settings.project.defaultBranch"),
+									sessionPrefix: t("settings.project.sessionPrefix"),
+									reviewers: t("settings.project.reviewers"),
+									defaultReviewer: t("settings.project.defaultReviewer"),
+									editDefaultBranch: t("settings.field.edit", {
+										label: t("settings.project.defaultBranch"),
+									}),
+									editSessionPrefix: t("settings.field.edit", {
+										label: t("settings.project.sessionPrefix"),
+									}),
+								}}
+								reviewerControl={
 									<ReviewerSelect
 										value={form.reviewerHarness}
 										onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
@@ -424,14 +489,9 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 										supported={agentCatalog?.supported}
 										disabled={agentsQuery.isFetching && agentCatalog === undefined}
 									/>
-								</SettingsRow>
-								{reviewerTrustWarning(form.reviewerHarness) ? (
-									<p className="px-1 text-xs leading-row text-warning" role="status">
-										{reviewerTrustWarning(form.reviewerHarness)}
-									</p>
-								) : null}
-							</SettingsSection>
-							{saveFooter}
+								}
+								reviewerWarning={reviewerWarning}
+							/>
 						</>
 					) : (
 						<p className="px-1 text-xs text-settings-muted">{t("settings.project.workflow")}</p>
@@ -439,65 +499,23 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 				</>
 			)}
 
-			{/* ── Intake: tracker intake ────────────────────────────────── */}
 			{section === "intake" && (
 				<>
 					{!isScratchProject ? (
-						<SettingsSection title={t("settings.project.trackerIntake")}>
+						<ProjectSettingsSection title={t("settings.project.trackerIntake")} grouped>
 							<IntakeFields
 								variant="settings"
 								form={intakeForm}
 								onChange={patchIntake}
 								repoPreview={{ value: effectiveIntakeRepo }}
 							/>
-						</SettingsSection>
+						</ProjectSettingsSection>
 					) : (
 						<p className="px-1 text-xs text-settings-muted">{t("settings.project.trackerIntake")}</p>
 					)}
-					{!isScratchProject && saveFooter}
 				</>
 			)}
-		</form>
-	);
-}
-
-function SaveChangesFooter({
-	isPending,
-	validationError,
-	mutationError,
-	savedAt,
-	replacementError,
-}: {
-	isPending: boolean;
-	validationError: string | null;
-	mutationError: unknown;
-	savedAt: number | null;
-	replacementError: string | null;
-}) {
-	const { t } = useTranslation();
-	return (
-		<div className="flex flex-col items-start">
-			<Button type="submit" variant="footer-primary" disabled={isPending}>
-				{isPending ? t("settings.project.saving") : t("settings.project.saveChanges")}
-			</Button>
-			{validationError && (
-				<span className="inline-flex items-center gap-1.5 text-xs text-error">
-					<TriangleAlert className="size-3 shrink-0 text-error" aria-hidden="true" />
-					{validationError}
-				</span>
-			)}
-			{mutationError != null && (
-				<span className="text-xs text-error">
-					{mutationError instanceof Error ? mutationError.message : t("settings.project.saveFailed")}
-				</span>
-			)}
-			{savedAt && !isPending && !mutationError && (
-				<span className="text-xs text-success">{t("settings.project.saved")}</span>
-			)}
-			{replacementError && !isPending && !mutationError && (
-				<span className="text-xs text-warning">{t("settings.project.restartFailed", { error: replacementError })}</span>
-			)}
-		</div>
+		</ProjectSettingsFormView>
 	);
 }
 
@@ -563,7 +581,7 @@ function AgentModelField({
 		];
 		return (
 			<>
-				<SettingsRow icon={Sparkles} label={label}>
+				<SettingsRow label={label}>
 					<div className="flex min-w-0 items-center gap-2">
 						<ModelRefreshButton
 							label={label}
@@ -603,7 +621,7 @@ function AgentModelField({
 	};
 	return (
 		<>
-			<SettingsRow icon={Sparkles} label={label}>
+			<SettingsRow label={label}>
 				<div className="flex min-w-0 items-center gap-2">
 					<ModelRefreshButton
 						label={label}
@@ -682,53 +700,6 @@ function ModelRefreshButton({
 	);
 }
 
-function SettingsInputRow({
-	icon,
-	label,
-	id,
-	value,
-	onChange,
-	placeholder,
-}: {
-	icon?: LucideIcon;
-	label: string;
-	id: string;
-	value: string;
-	onChange: (value: string) => void;
-	placeholder?: string;
-}) {
-	return (
-		<SettingsRow icon={icon} label={label}>
-			<input
-				id={id}
-				aria-label={label}
-				className="settings-inline-input"
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
-				placeholder={placeholder}
-			/>
-		</SettingsRow>
-	);
-}
-
-function SettingsValueRow({
-	icon,
-	label,
-	value,
-}: {
-	icon?: LucideIcon;
-	label: string;
-	value: string;
-}) {
-	return (
-		<SettingsRow icon={icon} label={label}>
-			<span className="settings-row-value" title={value}>
-				{value}
-			</span>
-		</SettingsRow>
-	);
-}
-
 function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
 	const { t } = useTranslation();
 	const options = [
@@ -767,6 +738,23 @@ function projectKindLabel(kind: string, t: TFunction): string {
 		default:
 			return kind || t("settings.project.kind.unknown");
 	}
+}
+
+function repositoryHref(repository: string): string {
+	if (/^https?:\/\//i.test(repository)) return repository;
+	if (repository.startsWith("git@")) {
+		const [host, path] = repository.slice(4).split(":", 2);
+		return `https://${host}/${path.replace(/\.git$/, "")}`;
+	}
+	if (repository.startsWith("ssh://")) {
+		try {
+			const parsed = new URL(repository);
+			return `https://${parsed.hostname}${parsed.pathname.replace(/\.git$/, "")}`;
+		} catch {
+			return repository;
+		}
+	}
+	return repository;
 }
 
 function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {

@@ -283,21 +283,43 @@ func (s *Service) workspaceComparePRs(ctx context.Context, id domain.SessionID) 
 func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef, defaultBranch string, prs []domain.PullRequest) workspaceCompareTarget {
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	recordedRef = strings.TrimSpace(recordedRef)
+	var refBased *workspaceCompareTarget
 	if recordedRef != "" && recordedRef != "HEAD" {
 		for _, ref := range workspaceBaseRefCandidates(recordedRef) {
 			if sha, ok := gitMergeBase(ctx, root, ref); ok {
-				return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
+				target := workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
+				refBased = &target
+				break
 			}
 		}
 	}
+	// A local remote-tracking ref (e.g. origin/main) can go stale: nothing in
+	// AO fetches a session worktree, so if the branch later merges a newer
+	// main in (e.g. to resolve a conflict) without that ref moving, the merge
+	// base above still resolves but lands earlier than the branch's true fork
+	// point, pulling unrelated main commits into the diff. Prefer the PR's
+	// own, independently-synced base commit whenever it's at least as
+	// advanced as the ref-based candidate.
+	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
+		if baseSHA := strings.TrimSpace(pr.BaseSHA); baseSHA != "" && gitCommitExists(ctx, root, baseSHA) {
+			// pr.BaseSHA is the target branch's current tip, not the commit the
+			// session forked from. If the target branch has advanced since, diff
+			// straight against it would also surface every base-only change
+			// (reversed) as if the session had touched it. Compare against the
+			// merge base instead so only the session's own changes show up.
+			if merged, ok := gitMergeBase(ctx, root, baseSHA); ok {
+				baseSHA = merged
+			}
+			if refBased == nil || gitIsAncestor(ctx, root, refBased.BaseSHA, baseSHA) {
+				return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
+			}
+		}
+	}
+	if refBased != nil {
+		return *refBased
+	}
 	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
 		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
-	}
-	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
-		baseSHA := strings.TrimSpace(pr.BaseSHA)
-		if gitCommitExists(ctx, root, baseSHA) {
-			return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
-		}
 	}
 	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
@@ -419,6 +441,13 @@ func gitMergeBase(ctx context.Context, root, ref string) (string, bool) {
 	}
 	sha := strings.TrimSpace(out)
 	return sha, sha != ""
+}
+
+// gitIsAncestor reports whether ancestor is reachable from descendant
+// (including ancestor == descendant).
+func gitIsAncestor(ctx context.Context, root, ancestor, descendant string) bool {
+	_, err := gitWorkspaceOutput(ctx, root, "merge-base", "--is-ancestor", ancestor, descendant)
+	return err == nil
 }
 
 func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord) (WorkspaceFiles, error) {

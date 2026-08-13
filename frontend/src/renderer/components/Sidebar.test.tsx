@@ -991,6 +991,7 @@ describe("Sidebar", () => {
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
 		await user.click(screen.getByRole("button", { name: /Search/ }));
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+		expect(screen.getByRole("button", { name: /Search/ })).toHaveTextContent(/(?:⌘ |Ctrl\+)K/);
 	});
 
 	it("defers opening the palette until the Search click has been dispatched", async () => {

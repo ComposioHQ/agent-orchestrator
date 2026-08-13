@@ -14,8 +14,9 @@ import (
 )
 
 const claimPRForSession = `-- name: ClaimPRForSession :exec
-INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO pr (url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at, auto_inject_ci)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
 ON CONFLICT (url) DO UPDATE SET
     session_id = excluded.session_id,
     state_changed_at = CASE
@@ -37,6 +38,7 @@ type ClaimPRForSessionParams struct {
 	Mergeability   domain.Mergeability
 	UpdatedAt      time.Time
 	StateChangedAt sql.NullTime
+	ID             domain.SessionID
 }
 
 func (q *Queries) ClaimPRForSession(ctx context.Context, arg ClaimPRForSessionParams) error {
@@ -50,6 +52,7 @@ func (q *Queries) ClaimPRForSession(ctx context.Context, arg ClaimPRForSessionPa
 		arg.Mergeability,
 		arg.UpdatedAt,
 		arg.StateChangedAt,
+		arg.ID,
 	)
 	return err
 }
@@ -109,7 +112,7 @@ func (q *Queries) GetDisplayPRFactsBySession(ctx context.Context, sessionID doma
 }
 
 const getPR = `-- name: GetPR :one
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at FROM pr WHERE url = ?
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci FROM pr WHERE url = ?
 `
 
 func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
@@ -156,6 +159,7 @@ func (q *Queries) GetPR(ctx context.Context, url string) (PR, error) {
 		&i.ReviewObservedAt,
 		&i.LastNudgeSignature,
 		&i.StateChangedAt,
+		&i.AutoInjectCI,
 	)
 	return i, err
 }
@@ -269,7 +273,7 @@ func (q *Queries) ListPRFactsBySession(ctx context.Context, sessionID domain.Ses
 }
 
 const listPRsBySession = `-- name: ListPRsBySession :many
-SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at FROM pr
+SELECT url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, provider, host, repo, source_branch, target_branch, head_sha, title, additions, deletions, changed_files, author, base_sha, merge_commit_sha, is_draft, is_merged, is_closed, provider_state, provider_mergeable, provider_merge_state_status, html_url, created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider, metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, last_nudge_signature, state_changed_at, auto_inject_ci FROM pr
 WHERE session_id = ?
 ORDER BY updated_at DESC
 `
@@ -324,6 +328,7 @@ func (q *Queries) ListPRsBySession(ctx context.Context, sessionID domain.Session
 			&i.ReviewObservedAt,
 			&i.LastNudgeSignature,
 			&i.StateChangedAt,
+			&i.AutoInjectCI,
 		); err != nil {
 			return nil, err
 		}
@@ -355,9 +360,10 @@ func (q *Queries) UpdatePRLastNudgeSignature(ctx context.Context, arg UpdatePRLa
 const upsertLegacyPR = `-- name: UpsertLegacyPR :exec
 INSERT INTO pr (
     url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at,
-    is_draft, is_merged, is_closed
+    is_draft, is_merged, is_closed, auto_inject_ci
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     state_changed_at = CASE
@@ -388,6 +394,7 @@ type UpsertLegacyPRParams struct {
 	IsDraft        int64
 	IsMerged       int64
 	IsClosed       int64
+	ID             domain.SessionID
 }
 
 func (q *Queries) UpsertLegacyPR(ctx context.Context, arg UpsertLegacyPRParams) error {
@@ -404,6 +411,7 @@ func (q *Queries) UpsertLegacyPR(ctx context.Context, arg UpsertLegacyPRParams) 
 		arg.IsDraft,
 		arg.IsMerged,
 		arg.IsClosed,
+		arg.ID,
 	)
 	return err
 }
@@ -416,9 +424,10 @@ INSERT INTO pr (
     is_draft, is_merged, is_closed,
     provider_state, provider_mergeable, provider_merge_state_status, html_url,
     created_at_provider, updated_at_provider, merged_at_provider, closed_at_provider,
-    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at
+    metadata_hash, ci_hash, review_hash, observed_at, ci_observed_at, review_observed_at, auto_inject_ci
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
 ON CONFLICT (url) DO UPDATE SET
     number = excluded.number,
     state_changed_at = CASE
@@ -508,6 +517,7 @@ type UpsertPRParams struct {
 	ObservedAt               sql.NullTime
 	CIObservedAt             sql.NullTime
 	ReviewObservedAt         sql.NullTime
+	ID                       domain.SessionID
 }
 
 func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
@@ -551,6 +561,7 @@ func (q *Queries) UpsertPR(ctx context.Context, arg UpsertPRParams) error {
 		arg.ObservedAt,
 		arg.CIObservedAt,
 		arg.ReviewObservedAt,
+		arg.ID,
 	)
 	return err
 }
