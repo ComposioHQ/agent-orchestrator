@@ -67,6 +67,36 @@
   --size-icon-xl: 18px;
   --size-branch-chip: 12rem;
   --tracking-wide-sm: 0.08em;
+  --space-8: 2rem;
+  --size-modal-padding: 1.5rem;
+  --size-settings-dialog: 575px;
+  --size-settings-dialog-wide: 920px;
+  --size-settings-dialog-height: 680px;
+  --size-settings-dialog-max-h: 680px;
+  --color-border-settings-dialog: var(--border);
+  --color-border-settings-dialog-header: color-mix(in oklch, var(--border) 70%, transparent);
+  --radius-settings-dialog-lg: 24px;
+  --shadow-settings-dialog: 0 24px 80px rgb(0 0 0 / 45%);
+  --color-border-settings-input: var(--input);
+  --color-bg-settings-input: var(--input);
+  --color-bg-settings-row: var(--card);
+  --color-text-settings-title: var(--foreground);
+  --color-text-settings-muted: var(--muted-foreground);
+  --color-text-settings-row: var(--foreground);
+  --radius-settings-row: 16px;
+  --size-settings-row: 52px;
+  --size-settings-action-height: 36px;
+  --size-settings-section-gap: 32px;
+  --size-settings-section-inner-gap: 12px;
+  --size-settings-row-padding: 16px;
+  --size-settings-row-icon-gap: 12px;
+  --size-settings-row-value-max: 420px;
+  --size-settings-row-value-max-percent: 55%;
+  --size-icon-lg: 18px;
+  --line-height-row: 1.25rem;
+  --z-overlay: 50;
+  --color-settings-label: var(--foreground);
+  --color-settings-muted: var(--muted-foreground);
 }
 
 @theme inline {
@@ -95,6 +125,8 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-error: var(--error);
+  --color-popover: var(--popover);
+  --color-settings-label: var(--foreground);
   --color-status-working: var(--status-working);
   --color-status-needs-you: var(--status-needs-you);
   --color-status-in-review: var(--status-in-review);

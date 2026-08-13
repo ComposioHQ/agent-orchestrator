@@ -36,8 +36,6 @@ import {
   type ProviderCapability,
 } from "./cloud-ui-types";
 
-type CloudView = "board" | "settings";
-
 export function CloudWorkspace() {
   const client = useMemo(browserCloudClient, []);
   const [account, setAccount] = useState<CurrentAccount | null>(null);
@@ -52,7 +50,7 @@ export function CloudWorkspace() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [view, setView] = useState<CloudView>("board");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTarget, setSettingsTarget] = useState<
     "organization" | "providers"
   >("organization");
@@ -345,7 +343,7 @@ export function CloudWorkspace() {
     const settings = new URLSearchParams(window.location.search).get("settings");
     if (settings === "providers") {
       setSettingsTarget("providers");
-      setView("settings");
+      setSettingsOpen(true);
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
@@ -720,7 +718,7 @@ export function CloudWorkspace() {
           onOpenCommand={() => setCommandOpen(true)}
           onOpenSettings={() => {
             setSettingsTarget("organization");
-            setView("settings");
+            setSettingsOpen(true);
             setSelectedSessionId(null);
           }}
           onSelectOrganization={(id) => {
@@ -730,12 +728,10 @@ export function CloudWorkspace() {
             void loadOrganization(id);
           }}
           onSelectProject={(id) => {
-            setView("board");
             setSelectedProjectId(id);
             setSelectedSessionId(null);
           }}
           onSelectSession={(id) => {
-            setView("board");
             const session = sessions.find((item) => item.id === id);
             if (session) setSelectedProjectId(session.projectId);
             setSelectedSessionId(id);
@@ -752,75 +748,63 @@ export function CloudWorkspace() {
           parity={previewUi}
         />
         <CloudMainShell parity={previewUi}>
-          {view === "settings" ? (
-            <div className="relative min-h-0 flex-1">
-              {error ? (
-                <div
-                  className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
-                  role="alert"
-                >
-                  {error}
-                </div>
-              ) : null}
-              <CloudSettings
-                account={account}
-                busy={githubBusy}
-                github={github}
-                githubUser={githubUser}
-                initialPanel={settingsTarget}
-                onConnectGitHub={connectGitHub}
-                onConnectAgent={connectAgentProvider}
-                onDisconnectAgent={disconnectAgentProvider}
-                onBack={() => setView("board")}
-                onDisconnectGitHub={disconnectGitHubInstallation}
-                onDisconnectGitHubUser={disconnectGitHubUser}
-                onSelectOrganization={(id) => {
-                  setOrganizationId(id);
-                  setSelectedProjectId(null);
-                  setSelectedSessionId(null);
-                  void loadOrganization(id);
-                }}
-                onSyncGitHub={syncGitHubInstallation}
-                providerBusy={providerBusy}
-                providers={providers}
-                selectedOrganizationId={organizationId}
-              />
-            </div>
+          {selectedSession ? (
+            <CloudSessionWorkspace
+              onClose={() => setSelectedSessionId(null)}
+              organizationId={organizationId}
+              session={selectedSession}
+            />
           ) : (
-            selectedSession ? (
-              <CloudSessionWorkspace
-                onClose={() => setSelectedSessionId(null)}
-                organizationId={organizationId}
-                session={selectedSession}
-              />
-            ) : (
-              <>
-                <CloudTopbar title={selectedProject?.displayName ?? "All projects"} onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined} />
-                <div className="relative min-h-0 flex-1">
-                  {error ? (
-                    <div
-                      className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
-                      role="alert"
-                    >
-                      {error}
-                    </div>
-                  ) : null}
-                  {loading ? (
-                    <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
-                      Loading workspace…
-                    </div>
-                  ) : (
-                    <CloudBoard
-                      onSelectSession={setSelectedSessionId}
-                      sessions={visibleSessions}
-                    />
-                  )}
-                </div>
-              </>
-            )
+            <>
+              <CloudTopbar title={selectedProject?.displayName ?? "All projects"} onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined} />
+              <div className="relative min-h-0 flex-1">
+                {error ? (
+                  <div
+                    className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
+                    role="alert"
+                  >
+                    {error}
+                  </div>
+                ) : null}
+                {loading ? (
+                  <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
+                    Loading workspace…
+                  </div>
+                ) : (
+                  <CloudBoard
+                    onSelectSession={setSelectedSessionId}
+                    sessions={visibleSessions}
+                  />
+                )}
+              </div>
+            </>
           )}
         </CloudMainShell>
       </div>
+      <CloudSettings
+          account={account}
+          busy={githubBusy}
+          github={github}
+          githubUser={githubUser}
+          initialPanel={settingsTarget}
+          open={settingsOpen}
+          onConnectGitHub={connectGitHub}
+          onConnectAgent={connectAgentProvider}
+          onDisconnectAgent={disconnectAgentProvider}
+          onBack={() => setSettingsOpen(false)}
+          onDisconnectGitHub={disconnectGitHubInstallation}
+          onDisconnectGitHubUser={disconnectGitHubUser}
+          onSelectOrganization={(id) => {
+            setOrganizationId(id);
+            setSelectedProjectId(null);
+            setSelectedSessionId(null);
+            void loadOrganization(id);
+          }}
+          onSyncGitHub={syncGitHubInstallation}
+          providerBusy={providerBusy}
+          providers={providers}
+          selectedOrganizationId={organizationId}
+      />
       {commandOpen ? (
         <CloudSearch
           onClose={() => setCommandOpen(false)}
@@ -850,7 +834,7 @@ export function CloudWorkspace() {
           onOpenProviderSettings={() => {
             setNewProjectOpen(false);
             setSettingsTarget("providers");
-            setView("settings");
+            setSettingsOpen(true);
           }}
         />
       ) : null}

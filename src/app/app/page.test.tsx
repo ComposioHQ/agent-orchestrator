@@ -418,9 +418,10 @@ it("connects coding-agent credentials from provider settings", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Settings" }));
 
   expect(screen.getByRole("heading", { name: "Organization" })).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Add organization" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Dev Team" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 
   fireEvent.click(screen.getByRole("button", { name: "Provider connections" }));
   expect(screen.getByText("No GitHub installation")).toBeVisible();
