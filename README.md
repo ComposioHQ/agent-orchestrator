@@ -104,7 +104,7 @@ AO works with the coding agents and source-control workflow you already use. Age
       <p>Use structured Chat or the agent's native terminal UI while AO keeps task context, workspace state, and feedback in one place.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/session-terminal.png" alt="Agent terminal interface supervised inside Agent Orchestrator" width="100%" />
+      <img src="docs/assets/readme/tui.png" alt="Agent terminal interface supervised inside Agent Orchestrator" width="100%" />
     </td>
   </tr>
 </table>
