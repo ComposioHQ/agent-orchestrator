@@ -64,6 +64,12 @@ function setAnnotationMode(enabled: boolean): void {
 function elementWithBounds(id: string, bounds: Bounds): HTMLButtonElement {
 	const element = document.createElement("button");
 	element.id = id;
+	setElementBounds(element, bounds);
+	document.body.appendChild(element);
+	return element;
+}
+
+function setElementBounds<T extends Element>(element: T, bounds: Bounds): T {
 	Object.defineProperty(element, "getBoundingClientRect", {
 		configurable: true,
 		value: () =>
@@ -79,7 +85,6 @@ function elementWithBounds(id: string, bounds: Bounds): HTMLButtonElement {
 				toJSON: () => ({}),
 			}) as DOMRect,
 	});
-	document.body.appendChild(element);
 	return element;
 }
 
@@ -193,6 +198,63 @@ describe("annotate preload", () => {
 		expect(payload.selection.kind).toBe("element");
 		if (payload.selection.kind !== "element") throw new Error("expected an element selection");
 		expect(payload.selection.context.selector).toBe("button#first");
+	});
+
+	it("selects semantic Markdown blocks instead of the document wrapper", async () => {
+		const markdown = document.createElement("main");
+		markdown.className = "markdown-body";
+		const heading = setElementBounds(document.createElement("h2"), {
+			left: 24,
+			top: 32,
+			width: 320,
+			height: 40,
+		});
+		heading.textContent = "Install";
+		const paragraph = setElementBounds(document.createElement("p"), {
+			left: 24,
+			top: 88,
+			width: 560,
+			height: 56,
+		});
+		const emphasis = document.createElement("strong");
+		emphasis.textContent = "desktop app";
+		paragraph.append("Download the ", emphasis, ".");
+		markdown.append(heading, paragraph);
+		document.body.appendChild(markdown);
+
+		shiftKeyDown();
+		dispatchPageEvent(heading, "click");
+		dispatchPageEvent(emphasis, "click");
+		shiftKeyDown();
+
+		const payload = await submitPrompt("Revise these sections.");
+
+		expect(payload.selection.kind).toBe("elements");
+		if (payload.selection.kind !== "elements") throw new Error("expected an elements selection");
+		expect(payload.selection.contexts.map((context) => context.tag)).toEqual(["h2", "p"]);
+		expect(payload.selection.contexts.map((context) => context.classes)).toEqual([[], []]);
+	});
+
+	it("keeps the nearest classed component target outside Markdown previews", async () => {
+		const card = setElementBounds(document.createElement("section"), {
+			left: 20,
+			top: 30,
+			width: 400,
+			height: 180,
+		});
+		card.className = "settings-card";
+		const label = document.createElement("span");
+		label.textContent = "Updates";
+		card.appendChild(label);
+		document.body.appendChild(card);
+
+		dispatchPageEvent(label, "click");
+		const payload = await submitPrompt("Adjust this component.");
+
+		expect(payload.selection.kind).toBe("element");
+		if (payload.selection.kind !== "element") throw new Error("expected an element selection");
+		expect(payload.selection.context.tag).toBe("section");
+		expect(payload.selection.context.classes).toEqual(["settings-card"]);
 	});
 
 	it("renders a compact auto-growing prompt and submits from the embedded action", async () => {
