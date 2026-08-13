@@ -181,6 +181,14 @@ Download the latest AO desktop app for your platform. AO checks for updates auto
 
 Open Agent Orchestrator and point it at the repository you want AO to manage. The desktop app runs the daemon for you, so no CLI is required. See the [installation guide](https://aoagents.dev/docs/installation) for agent CLI setup and troubleshooting.
 
+## Report a bug
+
+The recommended way to report a bug is to ask your coding agent to follow the repository's [bug-triage skill](.agents/skills/bug-triage/SKILL.md). It guides the agent through reproducing the problem on current code, gathering diagnostics, tracing the relevant code path, checking for duplicates, and filing or updating a detailed GitHub issue.
+
+```text
+Use .agents/skills/bug-triage/SKILL.md to investigate this bug and file the issue: <describe what happened>
+```
+
 ## Develop and contribute
 
 Contributions are welcome across code, docs, triage, examples, and tests.
