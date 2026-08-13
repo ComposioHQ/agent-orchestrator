@@ -115,7 +115,7 @@ export async function setRpcSettings(settings: RpcSettings): Promise<void> {
 
 export function pickRepresentativeStatus(sessions: { status: string; isTerminated: boolean }[]): { label: string; count: number } | null {
 	const active = sessions.filter((s) => !s.isTerminated && !EXCLUDED_STATUSES.includes(s.status as SessionStatus));
-	if (active.length === 0) return null;
+	if (active.length === 0) return { label: "Idle", count: 0 };
 	for (const entry of STATUS_PRIORITY) {
 		const matching = active.filter((s) => s.status === entry.status);
 		if (matching.length > 0) {

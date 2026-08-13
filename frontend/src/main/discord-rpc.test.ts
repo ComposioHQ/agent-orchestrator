@@ -2,33 +2,41 @@ import { describe, it, expect } from "vitest";
 import { buildActivityPayload, pickRepresentativeStatus } from "./discord-rpc";
 
 describe("buildActivityPayload", () => {
-	it("returns null when no active sessions", () => {
+	it("returns idle with 0 agents when no sessions", () => {
 		const result = buildActivityPayload([], []);
-		expect(result).toBeNull();
+		expect(result).not.toBeNull();
+		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.state).toBe("Idle");
 	});
 
-	it("returns null when all sessions are terminated", () => {
+	it("returns idle with 0 agents when all sessions are terminated", () => {
 		const result = buildActivityPayload(
 			[{ status: "terminated", isTerminated: true, createdAt: "2026-01-01T00:00:00Z" }],
 			[],
 		);
-		expect(result).toBeNull();
+		expect(result).not.toBeNull();
+		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.state).toBe("Idle");
 	});
 
-	it("returns null when all sessions are exited", () => {
+	it("returns idle with 0 agents when all sessions are exited", () => {
 		const result = buildActivityPayload(
 			[{ status: "exited", isTerminated: true, createdAt: "2026-01-01T00:00:00Z" }],
 			[],
 		);
-		expect(result).toBeNull();
+		expect(result).not.toBeNull();
+		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.state).toBe("Idle");
 	});
 
-	it("returns null when all sessions are merged", () => {
+	it("returns idle with 0 agents when all sessions are merged", () => {
 		const result = buildActivityPayload(
 			[{ status: "merged", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 			[],
 		);
-		expect(result).toBeNull();
+		expect(result).not.toBeNull();
+		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.state).toBe("Idle");
 	});
 
 	it("returns 'Working' for a single working session", () => {
@@ -202,16 +210,20 @@ describe("buildActivityPayload", () => {
 });
 
 describe("pickRepresentativeStatus", () => {
-	it("returns null for empty array", () => {
-		expect(pickRepresentativeStatus([])).toBeNull();
+	it("returns idle with 0 count for empty array", () => {
+		const result = pickRepresentativeStatus([]);
+		expect(result!.label).toBe("Idle");
+		expect(result!.count).toBe(0);
 	});
 
-	it("returns null when all excluded", () => {
-		expect(pickRepresentativeStatus([
+	it("returns idle with 0 count when all excluded", () => {
+		const result = pickRepresentativeStatus([
 			{ status: "terminated", isTerminated: true },
 			{ status: "exited", isTerminated: true },
 			{ status: "merged", isTerminated: false },
-		])).toBeNull();
+		]);
+		expect(result!.label).toBe("Idle");
+		expect(result!.count).toBe(0);
 	});
 
 	it("picks highest priority across mixed statuses", () => {
