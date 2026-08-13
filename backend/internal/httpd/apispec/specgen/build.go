@@ -329,6 +329,7 @@ var schemaNames = map[string]string{
 	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
 	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
 	"ControllersInstallIDParam":        "InstallIDParam",
+	"ControllersPushPairingIDParam":    "PushPairingIDParam",
 	// devimport report
 	"DevimportReport":   "DevImportProjectsReport",
 	"DevimportConflict": "DevImportProjectsConflict",
@@ -1072,10 +1073,20 @@ func pushOperations() []operation {
 		},
 		{
 			method: http.MethodDelete, path: "/api/v1/push/devices/{token}", id: "unregisterPushDevice", tag: "push",
-			summary:    "Unregister a phone's Expo push token",
+			summary:    "Unregister a phone's Expo push token, leaving it paired",
 			pathParams: []any{controllers.PushDeviceTokenParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.UnregisterPushDeviceResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/push/pairings/{id}", id: "unpairPushDevice", tag: "push",
+			summary:    "Unpair this phone from the daemon, removing it from the roster",
+			pathParams: []any{controllers.PushPairingIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

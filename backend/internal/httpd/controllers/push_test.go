@@ -16,9 +16,10 @@ import (
 )
 
 type fakePushRegistry struct {
-	upserts []mobilebridge.PushDevice
-	deletes []string
-	err     error
+	unpaired []string
+	upserts  []mobilebridge.PushDevice
+	deletes  []string
+	err      error
 }
 
 func (f *fakePushRegistry) Upsert(dev mobilebridge.PushDevice) error {
@@ -26,6 +27,14 @@ func (f *fakePushRegistry) Upsert(dev mobilebridge.PushDevice) error {
 		return f.err
 	}
 	f.upserts = append(f.upserts, dev)
+	return nil
+}
+
+func (f *fakePushRegistry) Unpair(id string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.unpaired = append(f.unpaired, id)
 	return nil
 }
 
@@ -198,5 +207,47 @@ func TestPushRoutesNotImplementedWithoutRegistry(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusNotImplemented {
 		t.Fatalf("status = %d, want 501", res.StatusCode)
+	}
+}
+
+// A registration must identify a phone. Accepting an identity-less body would
+// mint a permanent row representing no device, and repeating the call would mint
+// another — the roster fills with phantoms nobody can act on.
+func TestRegisterPushDeviceRequiresAnIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		body     string
+		wantCode int
+	}{
+		{"neither installId nor token", `{}`, http.StatusBadRequest},
+		{"empty strings for both", `{"installId":"","token":""}`, http.StatusBadRequest},
+		{"platform only, still no identity", `{"platform":"android","deviceName":"Pixel"}`, http.StatusBadRequest},
+		{"installId alone is enough", `{"installId":"inst-1"}`, http.StatusOK},
+		{"token alone is enough (older client)", `{"token":"ExponentPushToken[abc]"}`, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := &fakePushRegistry{}
+			srv := newPushTestServer(t, reg)
+			res, err := http.Post(srv.URL+"/api/v1/push/devices", "application/json", strings.NewReader(tc.body))
+			if err != nil {
+				t.Fatalf("post: %v", err)
+			}
+			defer res.Body.Close()
+			if res.StatusCode != tc.wantCode {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tc.wantCode)
+			}
+			if tc.wantCode == http.StatusBadRequest {
+				if len(reg.upserts) != 0 {
+					t.Fatalf("a rejected registration still wrote a row: %+v", reg.upserts)
+				}
+				var env struct {
+					Code string `json:"code"`
+				}
+				_ = json.NewDecoder(res.Body).Decode(&env)
+				if env.Code != "MISSING_DEVICE_IDENTITY" {
+					t.Fatalf("code = %q, want MISSING_DEVICE_IDENTITY", env.Code)
+				}
+			}
+		})
 	}
 }

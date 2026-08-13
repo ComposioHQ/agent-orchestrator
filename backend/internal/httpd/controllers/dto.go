@@ -1158,6 +1158,13 @@ type SetSecurePairingRequest struct {
 	Enabled bool `json:"enabled"`
 }
 
+// PushPairingIDParam is the {id} path parameter for the unpair route. It accepts
+// either the phone's install ID or, from builds that predate install IDs, its
+// push token.
+type PushPairingIDParam struct {
+	ID string `path:"id" description:"The phone's install id, or its push token for older builds."`
+}
+
 // PushDeviceTokenParam is the {token} path parameter for push-device routes.
 type PushDeviceTokenParam struct {
 	Token string `path:"token" description:"Expo push token (URL-encoded) identifying the device."`

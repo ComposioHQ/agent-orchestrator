@@ -492,6 +492,18 @@ export async function unregisterPushDevice(cfg: ServerConfig, token: string): Pr
 	await req(cfg, `${API}/push/devices/${encodeURIComponent(token)}`, { method: "DELETE" });
 }
 
+// Tell a daemon this phone is no longer paired with it, so it drops the device
+// from its roster entirely. Distinct from unregisterPushDevice, which only
+// detaches the push token and leaves the phone listed as notifications-off —
+// correct when the user switches notifications off, wrong when they disconnect,
+// which would leave the old desktop showing a phone that has moved on.
+//
+// Prefers the install id and falls back to the token so the call still works
+// from a build that predates install ids.
+export async function unpairFromDaemon(cfg: ServerConfig, id: string): Promise<void> {
+	await req(cfg, `${API}/push/pairings/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 // Mark a notification read (best-effort on notification tap) so unread counts
 // stay consistent with the web dashboard.
 export async function markNotificationRead(cfg: ServerConfig, id: string): Promise<void> {

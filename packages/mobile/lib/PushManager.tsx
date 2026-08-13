@@ -10,7 +10,7 @@ import { AppState, Platform } from "react-native";
 import { announceDevice, markNotificationRead } from "./api";
 import { getInstallId } from "./installId";
 import { notificationTarget } from "./notificationView";
-import { configurePushHandler, ensureAndroidChannel, registerForPush, unregisterFromPush } from "./push";
+import { configurePushHandler, ensureAndroidChannel, registerForPush, unpairFromServer } from "./push";
 import { useApp } from "./store";
 import { MOBILE_EVENTS } from "./telemetry/events";
 import { mobileTelemetry } from "./telemetry/runtime";
@@ -39,12 +39,12 @@ export function PushManager(): null {
 		void ensureAndroidChannel();
 	}, []);
 
-	// When the user clears the server config (unpairs), unregister this device's
-	// token from the daemon it was registered with, so that daemon stops pushing
-	// to a phone that's no longer watching it. Uses the persisted daemon creds.
+	// When the user clears the server config, this phone has unpaired: tell that
+	// daemon to drop the row entirely, not merely clear the token, so the old
+	// desktop stops listing a phone that has moved on. Uses the persisted creds.
 	useEffect(() => {
 		if (wasConfigured.current && !configured) {
-			void unregisterFromPush();
+			void unpairFromServer();
 		}
 		wasConfigured.current = configured;
 	}, [configured]);

@@ -1444,7 +1444,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Unregister a phone's Expo push token
+      summary: Unregister a phone's Expo push token, leaving it paired
+      tags:
+      - push
+  /api/v1/push/pairings/{id}:
+    delete:
+      operationId: unpairPushDevice
+      parameters:
+      - description: The phone's install id, or its push token for older builds.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: The phone's install id, or its push token for older builds.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unpair this phone from the daemon, removing it from the roster
       tags:
       - push
   /api/v1/reviews/{reviewSessionID}/activity:

@@ -547,8 +547,25 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Unregister a phone's Expo push token */
+        /** Unregister a phone's Expo push token, leaving it paired */
         delete: operations["unregisterPushDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/pairings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unpair this phone from the daemon, removing it from the roster */
+        delete: operations["unpairPushDevice"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4759,6 +4776,45 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["UnregisterPushDeviceResponse"];
                 };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    unpairPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone's install id, or its push token for older builds. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Internal Server Error */
             500: {

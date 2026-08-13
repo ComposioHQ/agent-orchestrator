@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -178,21 +180,22 @@ func (r *DeviceRegistry) Upsert(dev PushDevice) error {
 	byInstall, hasInstall := r.devices[dev.InstallID]
 	tokenKey, byToken, hasToken := r.findByTokenLocked(dev.Token, dev.InstallID)
 
-	switch {
-	case hasInstall && hasToken:
-		// Same phone, two identities. Fold them together before writing, so the
-		// token is never left behind on the row being abandoned.
-		dev.CreatedAt, dev.Muted, dev.Token = carryOver(mergeIdentities(byInstall, byToken), dev)
-		delete(r.devices, tokenKey)
-	case hasInstall:
-		dev.CreatedAt, dev.Muted, dev.Token = carryOver(byInstall, dev)
-	case hasToken:
-		dev.CreatedAt, dev.Muted, dev.Token = carryOver(byToken, dev)
-		delete(r.devices, tokenKey) // re-key from the legacy/synthesized id
-	}
-	r.consumeTombstoneLocked(&dev)
-	r.devices[dev.InstallID] = dev
-	return r.persistLocked()
+	return r.commitLocked(func() {
+		switch {
+		case hasInstall && hasToken:
+			// Same phone, two identities. Fold them together before writing, so the
+			// token is never left behind on the row being abandoned.
+			dev.CreatedAt, dev.Muted, dev.Token = carryOver(mergeIdentities(byInstall, byToken), dev)
+			delete(r.devices, tokenKey)
+		case hasInstall:
+			dev.CreatedAt, dev.Muted, dev.Token = carryOver(byInstall, dev)
+		case hasToken:
+			dev.CreatedAt, dev.Muted, dev.Token = carryOver(byToken, dev)
+			delete(r.devices, tokenKey) // re-key from the legacy/synthesized id
+		}
+		r.consumeTombstoneLocked(&dev)
+		r.devices[dev.InstallID] = dev
+	})
 }
 
 // consumeTombstoneLocked mutes dev and removes the first matching tombstone
@@ -282,16 +285,17 @@ func (r *DeviceRegistry) Delete(installID string) error {
 	if !ok {
 		return nil
 	}
-	delete(r.devices, installID)
-	r.removed = append(r.removed, removedDevice{
-		InstallID: dev.InstallID,
-		Token:     dev.Token,
-		RemovedAt: time.Now().UTC(),
+	return r.commitLocked(func() {
+		delete(r.devices, installID)
+		r.removed = append(r.removed, removedDevice{
+			InstallID: dev.InstallID,
+			Token:     dev.Token,
+			RemovedAt: time.Now().UTC(),
+		})
+		if len(r.removed) > maxTombstones {
+			r.removed = r.removed[len(r.removed)-maxTombstones:]
+		}
 	})
-	if len(r.removed) > maxTombstones {
-		r.removed = r.removed[len(r.removed)-maxTombstones:]
-	}
-	return r.persistLocked()
 }
 
 // UnregisterToken detaches a push token from whichever row holds it. Used by the
@@ -320,12 +324,41 @@ func (r *DeviceRegistry) UnregisterToken(token string) error {
 			continue
 		}
 		if strings.HasPrefix(dev.InstallID, LegacyInstallIDPrefix) {
-			delete(r.devices, key)
-			return r.persistLocked()
+			return r.commitLocked(func() { delete(r.devices, key) })
 		}
 		dev.Token = ""
-		r.devices[key] = dev
-		return r.persistLocked()
+		return r.commitLocked(func() { r.devices[key] = dev })
+	}
+	return nil
+}
+
+// Unpair removes the phone's own row from this daemon, matching id against the
+// install ID first and then the push token so builds too old to know an install
+// ID can still unpair. Unknown ids are a no-op.
+//
+// This is deliberately distinct from UnregisterToken. Switching notifications
+// off leaves a phone paired — it still polls, still appears in the roster, just
+// without a token. Choosing "Disconnect & forget server", or pairing with a
+// different desktop, means the phone is genuinely gone: leaving the row behind
+// would have the old desktop listing a device that is no longer its own.
+//
+// Unlike the desktop's Delete this writes NO tombstone. A tombstone exists to
+// re-mute a device the user removed from the desktop against that device's
+// wishes; here the phone is the one asking, so a later deliberate re-pair should
+// come back clean rather than silently muted.
+func (r *DeviceRegistry) Unpair(id string) error {
+	if id == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.devices[id]; ok {
+		return r.commitLocked(func() { delete(r.devices, id) })
+	}
+	for key, dev := range r.devices {
+		if dev.Token == id {
+			return r.commitLocked(func() { delete(r.devices, key) })
+		}
 	}
 	return nil
 }
@@ -341,13 +374,7 @@ func (r *DeviceRegistry) SetMuted(installID string, muted bool) error {
 	}
 	after := before
 	after.Muted = muted
-	r.devices[installID] = after
-	if err := r.persistLocked(); err != nil {
-		// Roll back, so a device is never muted in memory but unmuted on disk.
-		// Mute is the one control whose whole job is to stop notifications
-		// arriving; silently honouring it until the next restart, while the
-		// caller was told the write failed, is worse than not applying it.
-		r.devices[installID] = before
+	if err := r.commitLocked(func() { r.devices[installID] = after }); err != nil {
 		return fmt.Errorf("persist mute: %w", err)
 	}
 	return nil
@@ -369,6 +396,27 @@ func (r *DeviceRegistry) List() []PushDevice {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out
+}
+
+// commitLocked applies mutate to the registry and saves the result, restoring
+// the previous state if the save fails. Every mutation goes through it, so an
+// unwritable registry can never leave memory and disk disagreeing: the API
+// reports the failure and the running daemon keeps behaving exactly as the file
+// on disk says it should. Without this a failed write would be silently honoured
+// until the next restart, then vanish — the worst of both.
+//
+// Snapshotting is O(n) in devices, which is a household's phones; correctness is
+// worth more than the copy. Callers must hold r.mu.
+func (r *DeviceRegistry) commitLocked(mutate func()) error {
+	devices := maps.Clone(r.devices)
+	removed := slices.Clone(r.removed)
+	mutate()
+	if err := r.persistLocked(); err != nil {
+		r.devices = devices
+		r.removed = removed
+		return err
+	}
+	return nil
 }
 
 // persistLocked writes the current device set to disk atomically (temp file +

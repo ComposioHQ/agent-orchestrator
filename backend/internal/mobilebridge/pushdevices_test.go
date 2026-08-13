@@ -962,3 +962,179 @@ func TestSetMutedDistinguishesUnknownDeviceFromPersistFailure(t *testing.T) {
 		t.Fatal("in-memory device is muted after the write failed; memory and disk have diverged")
 	}
 }
+
+// Every registry mutation must be all-or-nothing with the file write. If the
+// save fails, the running daemon has to keep behaving exactly as the file says —
+// otherwise the API reports failure while memory quietly diverges, and a restart
+// silently reverts whatever the user thought had happened.
+func TestEveryMutationRollsBackWhenTheWriteFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not block writes on Windows")
+	}
+	token := "ExponentPushToken[a]"
+
+	// setup seeds one device and returns the registry plus its directory.
+	setup := func(t *testing.T) (*DeviceRegistry, string) {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, "mobile", "push-devices.json")
+		reg, err := LoadRegistry(path)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		now := time.Now().UTC()
+		if err := reg.Upsert(PushDevice{InstallID: "real-id", Token: token, DeviceName: "Phone", CreatedAt: now, LastSeenAt: now}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		regDir := filepath.Dir(path)
+		if err := os.Chmod(regDir, 0o500); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(regDir, 0o700) })
+		return reg, regDir
+	}
+
+	t.Run("Upsert", func(t *testing.T) {
+		reg, _ := setup(t)
+		now := time.Now().UTC()
+		if err := reg.Upsert(PushDevice{InstallID: "second-id", Token: "ExponentPushToken[b]", CreatedAt: now, LastSeenAt: now}); err == nil {
+			t.Fatal("expected the write to fail")
+		}
+		if got := reg.List(); len(got) != 1 || got[0].InstallID != "real-id" {
+			t.Fatalf("memory kept a device the write never saved: %+v", got)
+		}
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		reg, _ := setup(t)
+		if err := reg.Delete("real-id"); err == nil {
+			t.Fatal("expected the write to fail")
+		}
+		if got := reg.List(); len(got) != 1 {
+			t.Fatalf("device removed from memory despite the failed write: %+v", got)
+		}
+	})
+
+	t.Run("Delete leaves no tombstone", func(t *testing.T) {
+		reg, regDir := setup(t)
+		_ = reg.Delete("real-id")
+		// Restore writability, then re-register: a tombstone from the failed
+		// delete would silently mute a device the user never successfully removed.
+		if err := os.Chmod(regDir, 0o700); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		now := time.Now().UTC()
+		if err := reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now}); err != nil {
+			t.Fatalf("re-upsert: %v", err)
+		}
+		if got := reg.List(); got[0].Muted {
+			t.Fatal("a tombstone survived a failed Delete and muted the device")
+		}
+	})
+
+	t.Run("UnregisterToken", func(t *testing.T) {
+		reg, _ := setup(t)
+		if err := reg.UnregisterToken(token); err == nil {
+			t.Fatal("expected the write to fail")
+		}
+		if got := reg.List(); len(got) != 1 || got[0].Token != token {
+			t.Fatalf("token cleared in memory despite the failed write: %+v", got)
+		}
+	})
+
+	t.Run("SetMuted", func(t *testing.T) {
+		reg, _ := setup(t)
+		if err := reg.SetMuted("real-id", true); err == nil {
+			t.Fatal("expected the write to fail")
+		}
+		if got := reg.List(); got[0].Muted {
+			t.Fatalf("device muted in memory despite the failed write: %+v", got)
+		}
+	})
+}
+
+// Unpairing and switching notifications off are different intents and must have
+// different outcomes: a phone that turns notifications off is still paired and
+// belongs in the roster; a phone that forgets this server is gone and must not
+// be left behind on the old desktop.
+func TestUnpairRemovesTheRowWhileUnregisterKeepsIt(t *testing.T) {
+	token := "ExponentPushToken[a]"
+
+	t.Run("notifications off keeps the phone", func(t *testing.T) {
+		reg, _ := LoadRegistry(filepath.Join(t.TempDir(), "d.json"))
+		now := time.Now().UTC()
+		_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+		if err := reg.UnregisterToken(token); err != nil {
+			t.Fatalf("unregister: %v", err)
+		}
+		got := reg.List()
+		if len(got) != 1 || got[0].Token != "" {
+			t.Fatalf("want the phone still paired with no token, got %+v", got)
+		}
+	})
+
+	t.Run("forget server removes the phone by install id", func(t *testing.T) {
+		reg, _ := LoadRegistry(filepath.Join(t.TempDir(), "d.json"))
+		now := time.Now().UTC()
+		_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+		if err := reg.Unpair("real-id"); err != nil {
+			t.Fatalf("unpair: %v", err)
+		}
+		if got := reg.List(); len(got) != 0 {
+			t.Fatalf("want the phone gone, got %+v", got)
+		}
+	})
+
+	t.Run("forget server works by token for older builds", func(t *testing.T) {
+		reg, _ := LoadRegistry(filepath.Join(t.TempDir(), "d.json"))
+		now := time.Now().UTC()
+		_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+		if err := reg.Unpair(token); err != nil {
+			t.Fatalf("unpair by token: %v", err)
+		}
+		if got := reg.List(); len(got) != 0 {
+			t.Fatalf("want the phone gone, got %+v", got)
+		}
+	})
+
+	t.Run("unpair touches only the matching phone", func(t *testing.T) {
+		reg, _ := LoadRegistry(filepath.Join(t.TempDir(), "d.json"))
+		now := time.Now().UTC()
+		_ = reg.Upsert(PushDevice{InstallID: "phone-a", Token: token, CreatedAt: now, LastSeenAt: now})
+		_ = reg.Upsert(PushDevice{InstallID: "phone-b", Token: "ExponentPushToken[b]", CreatedAt: now, LastSeenAt: now})
+		_ = reg.Unpair("phone-a")
+		got := reg.List()
+		if len(got) != 1 || got[0].InstallID != "phone-b" {
+			t.Fatalf("want only phone-b left, got %+v", got)
+		}
+	})
+
+	t.Run("unpair writes no tombstone", func(t *testing.T) {
+		// The phone asked to leave, so a deliberate re-pair should come back
+		// clean. Tombstones exist to re-mute a device the DESKTOP removed.
+		reg, _ := LoadRegistry(filepath.Join(t.TempDir(), "d.json"))
+		now := time.Now().UTC()
+		_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+		_ = reg.Unpair("real-id")
+		_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+		got := reg.List()
+		if len(got) != 1 || got[0].Muted {
+			t.Fatalf("a re-paired phone came back muted: %+v", got)
+		}
+	})
+
+	t.Run("unknown or empty id is a no-op", func(t *testing.T) {
+		reg, _ := LoadRegistry(filepath.Join(t.TempDir(), "d.json"))
+		now := time.Now().UTC()
+		_ = reg.Upsert(PushDevice{InstallID: "real-id", Token: token, CreatedAt: now, LastSeenAt: now})
+		if err := reg.Unpair("nobody"); err != nil {
+			t.Fatalf("unknown: %v", err)
+		}
+		if err := reg.Unpair(""); err != nil {
+			t.Fatalf("empty: %v", err)
+		}
+		if got := reg.List(); len(got) != 1 {
+			t.Fatalf("an unrelated row was touched: %+v", got)
+		}
+	})
+}
