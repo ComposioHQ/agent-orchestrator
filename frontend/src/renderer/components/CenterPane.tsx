@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Plus, TriangleAlert } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Plus, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
@@ -344,23 +344,6 @@ export function CenterPane({
 							</Tooltip>
 						) : null}
 					</div>
-					<div
-						aria-label={t("terminal.controlsAria")}
-						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
-						role="toolbar"
-					>
-						<TerminalControl
-							isPressed={isFullscreen}
-							label={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
-							onClick={() => void toggleFullscreen()}
-						>
-							{isFullscreen ? (
-								<Minimize2 aria-hidden="true" className="size-icon-md" />
-							) : (
-								<Maximize2 aria-hidden="true" className="size-icon-md" />
-							)}
-						</TerminalControl>
-					</div>
 				</div>
 				{isFullscreen ? null : (
 					<div
@@ -395,8 +378,10 @@ export function CenterPane({
 						daemonReady={daemonReady}
 						fontSize={fontSize}
 						focusRequested={switchPermissionRequired && target.kind === "worker"}
+						isFullscreen={isFullscreen}
 						inputDisabled={agentInputDisabled && target.kind === "worker"}
 						onChangeFontSize={updateFontSize}
+						onToggleFullscreen={toggleFullscreen}
 						session={session}
 						terminalTarget={target}
 						theme={theme}
@@ -574,35 +559,5 @@ function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: Ses
 			</button>
 			{session ? <TerminalSwitchAgentButton key={session.id} session={session} /> : null}
 		</span>
-	);
-}
-
-type TerminalControlProps = {
-	children: ReactNode;
-	disabled?: boolean;
-	isPressed?: boolean;
-	label: string;
-	onClick: () => void;
-};
-
-function TerminalControl({ children, disabled, isPressed, label, onClick }: TerminalControlProps) {
-	return (
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<Button
-					aria-label={label}
-					aria-pressed={isPressed}
-					className="size-control-sm p-0 text-passive"
-					disabled={disabled}
-					onClick={onClick}
-					size="icon-sm"
-					type="button"
-					variant="ghost"
-				>
-					{children}
-				</Button>
-			</TooltipTrigger>
-			<TooltipContent>{label}</TooltipContent>
-		</Tooltip>
 	);
 }

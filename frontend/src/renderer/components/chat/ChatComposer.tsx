@@ -92,6 +92,7 @@ export function ChatComposer({
 	steerRefusal,
 	draftSeed,
 	commandError,
+	attachedTop = false,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
@@ -129,6 +130,8 @@ export function ChatComposer({
 	draftSeed?: { id: string; text: string };
 	/** A failed send, approval, interrupt, or settings mutation. */
 	commandError?: string;
+	/** A queued-message dock owns the shared rounded top edge. */
+	attachedTop?: boolean;
 }) {
 	const [text, setText] = useState("");
 	const [caret, setCaret] = useState(0);
@@ -431,7 +434,8 @@ export function ChatComposer({
 			onDragLeave={() => setDragging(false)}
 			onDrop={onDrop}
 			className={cn(
-				"cursor-chat-composer relative flex flex-col gap-2 rounded-[10px] border p-2.5 transition-[background,border-color,box-shadow]",
+				"cursor-chat-composer relative flex flex-col gap-2 border p-2.5 transition-[background,border-color,box-shadow]",
+				attachedTop ? "rounded-b-[10px] rounded-t-none" : "rounded-[10px]",
 				dragging ? "border-logo-accent" : "border-border-strong",
 			)}
 		>

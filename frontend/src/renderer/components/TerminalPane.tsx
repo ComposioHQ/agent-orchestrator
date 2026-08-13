@@ -46,6 +46,9 @@ type TerminalPaneProps = {
 	fontSize: number;
 	/** Resize this terminal without changing application zoom. */
 	onChangeFontSize?: (delta: number) => void;
+	isFullscreen?: boolean;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
 	/** Refuse agent PTY input while a controller transition owns the source. */
 	inputDisabled?: boolean;
 	/** Focus the terminal when an in-flight controller asks for human input. */
@@ -109,6 +112,8 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
 		left.onChangeFontSize === right.onChangeFontSize &&
+		left.isFullscreen === right.isFullscreen &&
+		left.onToggleFullscreen === right.onToggleFullscreen &&
 		left.inputDisabled === right.inputDisabled &&
 		left.focusRequested === right.focusRequested &&
 		left.createMux === right.createMux &&
@@ -645,6 +650,8 @@ export function TerminalPane({
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
 	onChangeFontSize,
+	isFullscreen,
+	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
 }: TerminalPaneProps) {
@@ -717,6 +724,8 @@ export function TerminalPane({
 		terminalTarget,
 		fontSize,
 		onChangeFontSize,
+		isFullscreen,
+		onToggleFullscreen,
 		inputDisabled,
 		focusRequested,
 	};
@@ -732,8 +741,10 @@ export function TerminalPane({
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			isFullscreen={isFullscreen}
 			inputDisabled={inputDisabled}
 			onChangeFontSize={onChangeFontSize}
+			onToggleFullscreen={onToggleFullscreen}
 			focusRequested={focusRequested}
 			terminalTarget={terminalTarget}
 		/>
@@ -878,6 +889,8 @@ function AttachedTerminal({
 	terminalTarget,
 	fontSize,
 	onChangeFontSize,
+	isFullscreen,
+	onToggleFullscreen,
 	inputDisabled,
 	focusRequested,
 	createMux,
@@ -1054,11 +1067,13 @@ function AttachedTerminal({
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
 					focusRequested={focusRequested}
+					isFullscreen={isFullscreen}
 					isVisible={isVisible}
 					onChangeFontSize={onChangeFontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
+					onToggleFullscreen={onToggleFullscreen}
 					onVisibleSize={syncVisibleSize}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}

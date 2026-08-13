@@ -52,9 +52,12 @@ export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
 	fontSize?: number;
+	isFullscreen?: boolean;
 	theme: Theme;
 	/** Resize this terminal without changing application zoom. */
 	onChangeFontSize?: (delta: number) => void;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
 	/**
 	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
 	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
@@ -984,6 +987,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (term) callbacksRef.current.onVisibleSize?.(term.cols, term.rows);
 	}, [props.isVisible]);
 
+	const fullscreenElement = document.fullscreenElement;
+	const contextMenuPortalContainer =
+		props.isFullscreen &&
+		fullscreenElement instanceof HTMLElement &&
+		hostRef.current &&
+		fullscreenElement.contains(hostRef.current)
+			? fullscreenElement
+			: undefined;
+
 	return (
 		<>
 			<div
@@ -1020,6 +1032,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					align="start"
 					className="min-w-36"
 					onCloseAutoFocus={(event) => event.preventDefault()}
+					portalContainer={contextMenuPortalContainer}
 					side="right"
 					sideOffset={2}
 				>
@@ -1044,6 +1057,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
+					{props.onToggleFullscreen ? (
+						<DropdownMenuItem
+							onSelect={() => {
+								setContextMenuOpen(false);
+								callbacksRef.current.onToggleFullscreen?.();
+							}}
+						>
+							{props.isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
+						</DropdownMenuItem>
+					) : null}
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</>

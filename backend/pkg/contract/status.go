@@ -248,6 +248,8 @@ func prPipelineStatus(pr PRFacts) SessionStatus {
 		return StatusChangesRequested
 	case pr.Mergeability == MergeMergeable:
 		return StatusMergeable
+	case pr.Mergeability == MergeBlocked:
+		return StatusPROpen
 	case pr.Review == ReviewApproved:
 		return StatusApproved
 	case pr.Review == ReviewRequired:

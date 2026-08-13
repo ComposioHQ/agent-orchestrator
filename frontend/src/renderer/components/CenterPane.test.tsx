@@ -412,7 +412,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
-	it("keeps terminal controls in the measured terminal region and session actions outside it", () => {
+	it("keeps terminal tabs in the measured terminal region and session actions outside it", () => {
 		renderCenterPane({
 			session: worker,
 			onNewShellTerminal: vi.fn(),
@@ -425,7 +425,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(workspaceTopbar).toContainElement(terminalRegion);
 		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Open terminals" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
-		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
+		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
 		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
 		const actionRegion = screen.getByTestId("session-action-region");
 		expect(actionRegion).not.toHaveClass("border-l");
@@ -445,7 +445,7 @@ describe("CenterPane toolbar session label", () => {
 		act(() => document.dispatchEvent(new Event("fullscreenchange")));
 
 		expect(screen.queryByTestId("session-action-region")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Exit fullscreen" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Exit fullscreen" })).toBeNull();
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
@@ -475,14 +475,11 @@ describe("CenterPane toolbar session label", () => {
 		// jsdom reports no overflow, so no unavailable control reserves header space.
 		expect(screen.queryByRole("button", { name: "Scroll tabs right" })).not.toBeInTheDocument();
 
-		// The display controls now complete the top bar, but stay outside the
-		// flexible scroll region so a long tab list cannot overlap them.
+		// Both display actions live outside this topbar; the flexible scroll region
+		// can therefore consume the remaining terminal-region width.
 		const tabList = screen.getByRole("tablist", { name: "Open terminals" });
-		const toolbar = screen.getByRole("toolbar", {
-			name: "Terminal display controls",
-		});
-		expect(tabList.contains(toolbar)).toBe(false);
-		expect(toolbar).toContainElement(screen.getByRole("button", { name: "Fullscreen terminal" }));
+		expect(tabList.parentElement).toHaveClass("flex-1");
+		expect(screen.queryByRole("toolbar", { name: "Terminal display controls" })).not.toBeInTheDocument();
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {

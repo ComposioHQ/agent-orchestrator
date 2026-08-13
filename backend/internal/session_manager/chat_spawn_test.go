@@ -390,6 +390,31 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 	}
 }
 
+func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Model = "project-model"
+	store.projects[string(chatTestProject)] = project
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		AgentConfig:   ports.AgentConfig{Model: "request-model"},
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Model; got != "request-model" {
+		t.Fatalf("controller model = %q, want request-model", got)
+	}
+}
+
 // A controller that fails to start must leave nothing running and no live row.
 func TestChatSpawnRollsBackWhenControllerFailsToStart(t *testing.T) {
 	mgr, store, runtime := newChatManager(&recordingLauncher{startErr: errors.New("app-server exited")})

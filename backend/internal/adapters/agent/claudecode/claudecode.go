@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -478,20 +479,49 @@ func SessionUUID(aoSessionID string) string {
 var claudeBinarySpec = binaryutil.BinarySpec{
 	Label:         "claude",
 	Names:         []string{"claude"},
-	WinNames:      []string{"claude.cmd", "claude.exe", "claude"},
+	WinNames:      []string{"claude.exe", "claude.cmd", "claude"},
 	UnixPaths:     []string{"/usr/local/bin/claude", "/opt/homebrew/bin/claude"},
 	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("claude", []string{".claude", "local", "claude"}),
 	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
-		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.exe"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.cmd"}},
 	},
 }
 
 // ResolveClaudeBinary returns the path to the claude binary, or a wrapped
 // ports.ErrAgentBinaryNotFound when it is absent.
 func ResolveClaudeBinary(ctx context.Context) (string, error) {
-	return binaryutil.ResolveBinary(ctx, claudeBinarySpec)
+	binary, err := binaryutil.ResolveBinary(ctx, claudeBinarySpec)
+	if err != nil {
+		return "", err
+	}
+	return resolveNativeWindowsClaude(binary, runtime.GOOS), nil
+}
+
+// resolveNativeWindowsClaude unwraps the npm-generated command shim to the
+// native executable shipped by Claude Code. The ACP bridge passes this path to
+// Node child_process.spawn, which cannot execute .cmd files directly on current
+// Node releases.
+func resolveNativeWindowsClaude(path, goos string) string {
+	if goos != "windows" || !strings.EqualFold(filepath.Ext(path), ".cmd") {
+		return path
+	}
+	for _, candidate := range windowsNativeClaudeCandidatesForShim(path) {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return path
+}
+
+func windowsNativeClaudeCandidatesForShim(shim string) []string {
+	dir := filepath.Dir(shim)
+	return []string{
+		filepath.Join(dir, "claude.exe"),
+		filepath.Join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"),
+	}
 }
 
 func (p *Plugin) claudeBinary(ctx context.Context) (string, error) {
