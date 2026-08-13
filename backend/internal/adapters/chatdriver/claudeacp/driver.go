@@ -105,7 +105,7 @@ func validateClaudeACPExecutable(binary, goos string) error {
 	}
 	switch strings.ToLower(filepath.Ext(binary)) {
 	case ".cmd", ".bat":
-		return fmt.Errorf("Claude Code resolved to command shim %q, but Chat requires the native claude.exe; reinstall or update Claude Code", binary)
+		return fmt.Errorf("resolved Claude Code command shim %q, but chat requires the native claude.exe; reinstall or update Claude Code", binary)
 	default:
 		return nil
 	}
