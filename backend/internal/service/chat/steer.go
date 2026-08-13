@@ -157,9 +157,22 @@ func (c *Controller) PromoteQueuedTurn(
 		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %s: %w", ErrTurnNotQueued, turnID, err)
 	}
 	release := func() {
-		if releaseErr := c.store.ReleaseQueuedTurnPromotion(ctx, c.conversation.ID, turnID); releaseErr != nil {
+		if releaseErr := c.store.ReleaseQueuedTurnPromotion(
+			context.WithoutCancel(ctx), c.conversation.ID, turnID); releaseErr != nil {
 			c.log.Error("failed to release queued turn promotion", "turn", turnID, "error", releaseErr)
 		}
+	}
+	settleUncertain := func(cause error) (PromoteQueuedTurnResult, error) {
+		// A transport error commonly cancels the request context after the provider
+		// may already have accepted the steer. The durable safety transition must
+		// survive that cancellation or the source remains visibly queued forever.
+		settleCtx := context.WithoutCancel(ctx)
+		if settleErr := c.store.SettleTurnByID(
+			settleCtx, turnID, domain.TurnStateFailed, ErrPromotionUncertain.Error(), c.now()); settleErr != nil {
+			c.log.Error("failed to settle uncertain queued turn promotion",
+				"turn", turnID, "cause", cause, "error", settleErr)
+		}
+		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %w", ErrPromotionUncertain, cause)
 	}
 
 	var content []ports.ChatContent
@@ -175,16 +188,22 @@ func (c *Controller) PromoteQueuedTurn(
 	}
 	ref, err := steerer.Steer(ctx, target, msg)
 	if err != nil {
-		release()
+		classified := classify(err)
 		switch {
 		case errors.Is(err, ports.ErrChatNoSteerableTurn):
+			release()
 			return PromoteQueuedTurnResult{}, ErrNoActiveTurn
 		case errors.Is(err, ports.ErrChatTurnNotSteerable):
+			release()
 			return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %w", ErrTurnNotSteerable, err)
 		case errors.Is(err, ports.ErrChatSteerContentUnsupported):
+			release()
 			return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %w", ErrSteerContentUnsupported, err)
+		case errors.Is(classified, ErrProviderRefused):
+			release()
+			return PromoteQueuedTurnResult{}, classified
 		default:
-			return PromoteQueuedTurnResult{}, classify(fmt.Errorf("steer queued turn %s: %w", turnID, err))
+			return settleUncertain(fmt.Errorf("steer queued turn %s: %w", turnID, err))
 		}
 	}
 	landed := ref.ProviderTurnID
@@ -194,13 +213,11 @@ func (c *Controller) PromoteQueuedTurn(
 	activityID := c.newID()
 	activity, err := makeSteerActivity(activityID, msg, turnID)
 	if err != nil {
-		_ = c.store.SettleTurnByID(ctx, turnID, domain.TurnStateFailed, ErrPromotionUncertain.Error(), c.now())
-		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %w", ErrPromotionUncertain, err)
+		return settleUncertain(err)
 	}
 	if err := c.store.CompleteQueuedTurnPromotion(
 		ctx, c.conversation.ID, turnID, landed, activity, c.now()); err != nil {
-		_ = c.store.SettleTurnByID(ctx, turnID, domain.TurnStateFailed, ErrPromotionUncertain.Error(), c.now())
-		return PromoteQueuedTurnResult{}, fmt.Errorf("%w: %w", ErrPromotionUncertain, err)
+		return settleUncertain(err)
 	}
 	return PromoteQueuedTurnResult{
 		SourceTurnID: turnID, ProviderTurnID: landed, ActivityID: activityID,

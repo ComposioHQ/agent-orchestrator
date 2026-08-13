@@ -38,6 +38,21 @@ type steerRecorder struct {
 	landed string
 }
 
+type cancelAfterSteerRecorder struct {
+	*steerRecorder
+	cancel context.CancelFunc
+}
+
+func (s *cancelAfterSteerRecorder) Steer(
+	ctx context.Context,
+	providerTurnID string,
+	msg ports.ChatUserMessage,
+) (ports.ChatTurnRef, error) {
+	ref, err := s.steerRecorder.Steer(ctx, providerTurnID, msg)
+	s.cancel()
+	return ref, err
+}
+
 func newSteerRecorder() *steerRecorder {
 	return &steerRecorder{fakeConversation: newFakeConversation()}
 }
@@ -461,5 +476,67 @@ func TestPromoteQueuedTurnRefusalRestoresItsQueuePosition(t *testing.T) {
 	next, err := h.st.NextQueuedTurn(ctx, h.ctrl.ConversationID())
 	if err != nil || next.TurnID != queued.ID {
 		t.Fatalf("restored queue head = %+v, %v; want %s", next, err, queued.ID)
+	}
+}
+
+// A transport failure after the request leaves delivery unknowable. Returning the
+// source to the queue would let drain send guidance the provider may already have
+// accepted, so it must settle failed and require an explicit user decision.
+func TestPromoteQueuedTurnAmbiguousProviderFailureSettlesUncertainWithoutRedelivery(t *testing.T) {
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	t.Cleanup(cancelRequest)
+	provider := &cancelAfterSteerRecorder{steerRecorder: newSteerRecorder(), cancel: cancelRequest}
+	h := newHarnessWithConversation(t, provider)
+	storeCtx := context.Background()
+	if _, err := h.svc.Send(storeCtx, testSession, ports.ChatUserMessage{
+		Text: "do the long thing", ClientMessageID: "turn-1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("start running turn: %v", err)
+	}
+	provider.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	queued, err := h.svc.Send(storeCtx, testSession, ports.ChatUserMessage{
+		Text: "deliver me at most once", ClientMessageID: "queued-uncertain", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("queue: %v", err)
+	}
+	transportErr := errors.New("connection lost after request write")
+	provider.failWith(transportErr)
+
+	_, err = h.svc.PromoteQueuedTurn(requestCtx, testSession, queued.ID)
+	if !errors.Is(err, chatsvc.ErrPromotionUncertain) {
+		t.Fatalf("promotion error = %v, want ErrPromotionUncertain", err)
+	}
+	if !errors.Is(err, transportErr) {
+		t.Fatalf("promotion error = %v, want transport cause", err)
+	}
+
+	snapshot, err := h.st.LoadConversationSnapshot(storeCtx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	var source *domain.ConversationTurn
+	for index := range snapshot.Turns {
+		if snapshot.Turns[index].ID == queued.ID {
+			source = &snapshot.Turns[index]
+			break
+		}
+	}
+	if source == nil {
+		t.Fatalf("uncertain source turn %s is not visible", queued.ID)
+	}
+	if source.State != domain.TurnStateFailed || source.ErrorMessage != chatsvc.ErrPromotionUncertain.Error() {
+		t.Fatalf("uncertain source = %+v, want failed with promotion-uncertain error", *source)
+	}
+	if _, err := h.st.NextQueuedTurn(storeCtx, h.ctrl.ConversationID()); !errors.Is(err, domain.ErrNoQueuedTurn) {
+		t.Fatalf("uncertain source remained drainable: %v", err)
+	}
+
+	_, retryErr := h.svc.PromoteQueuedTurn(storeCtx, testSession, queued.ID)
+	if !errors.Is(retryErr, chatsvc.ErrTurnNotQueued) {
+		t.Fatalf("retry error = %v, want ErrTurnNotQueued", retryErr)
+	}
+	if calls := provider.steers(); len(calls) != 1 {
+		t.Fatalf("provider received %d steer attempts, want one", len(calls))
 	}
 }
