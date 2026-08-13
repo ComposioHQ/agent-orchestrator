@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,12 +16,15 @@ func TestTerminateNativeSessionStopsTheActiveOwnerOfTheTranscript(t *testing.T) 
 	var stopped string
 	p := &Plugin{
 		resolvedBinary: "prime-agent",
-		runCommand: func(ctx context.Context, binary, cwd string, args ...string) ([]byte, error) {
+		runCommand: func(ctx context.Context, binary, cwd string, env map[string]string, args ...string) ([]byte, error) {
 			if _, ok := ctx.Deadline(); !ok {
 				return nil, errors.New("command context has no deadline")
 			}
-			if binary != "prime-agent" || cwd != "/work" {
+			if binary != "prime-agent" || cwd != "/ao-data" {
 				return nil, fmt.Errorf("binary=%q cwd=%q", binary, cwd)
+			}
+			if env["PRIME_AGENT_CODING_AGENT_DIR"] != filepath.Join("/ao-data", "agent-runtime", "prime-agent", "prime-agent") {
+				return nil, fmt.Errorf("env=%v", env)
 			}
 			switch strings.Join(args, " ") {
 			case "list --json":
@@ -35,6 +39,7 @@ func TestTerminateNativeSessionStopsTheActiveOwnerOfTheTranscript(t *testing.T) 
 	}
 	err := p.TerminateNativeSession(context.Background(), ports.SessionRef{
 		WorkspacePath: "/work",
+		DataDir:       "/ao-data",
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: "native-7",
 		},
@@ -44,6 +49,14 @@ func TestTerminateNativeSessionStopsTheActiveOwnerOfTheTranscript(t *testing.T) 
 	}
 	if stopped != "active-7" {
 		t.Fatalf("stopped = %q, want active-7", stopped)
+	}
+}
+
+func TestAugmentRuntimeEnvUsesAOOwnedPrimeState(t *testing.T) {
+	env := map[string]string{}
+	New().AugmentRuntimeEnv(env, "/ao-data")
+	if got, want := env["PRIME_AGENT_CODING_AGENT_DIR"], filepath.Join("/ao-data", "agent-runtime", "prime-agent", "prime-agent"); got != want {
+		t.Fatalf("PRIME_AGENT_CODING_AGENT_DIR = %q, want %q", got, want)
 	}
 }
 
@@ -72,7 +85,7 @@ func TestTerminateNativeSessionSafety(t *testing.T) {
 			stopCalled := false
 			p := &Plugin{
 				resolvedBinary: "prime-agent",
-				runCommand: func(_ context.Context, _, _ string, args ...string) ([]byte, error) {
+				runCommand: func(_ context.Context, _, _ string, _ map[string]string, args ...string) ([]byte, error) {
 					switch strings.Join(args, " ") {
 					case "list --json":
 						listCalled = true
@@ -109,7 +122,7 @@ func TestTerminateNativeSessionHonorsCanceledContext(t *testing.T) {
 	cancel()
 	p := &Plugin{
 		resolvedBinary: "prime-agent",
-		runCommand: func(context.Context, string, string, ...string) ([]byte, error) {
+		runCommand: func(context.Context, string, string, map[string]string, ...string) ([]byte, error) {
 			return nil, errors.New("must not run")
 		},
 	}

@@ -431,13 +431,17 @@ func (fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionIn
 
 type nativeTerminatingAgent struct {
 	fakeAgent
-	wantID string
-	err    error
-	calls  int
+	wantID    string
+	err       error
+	calls     int
+	sharedLog *[]string
 }
 
 func (a *nativeTerminatingAgent) TerminateNativeSession(_ context.Context, session ports.SessionRef) error {
 	a.calls++
+	if a.sharedLog != nil {
+		*a.sharedLog = append(*a.sharedLog, "TerminateNativeSession")
+	}
 	if got := session.Metadata[ports.MetadataKeyAgentSessionID]; got != a.wantID {
 		return fmt.Errorf("native id = %q, want %q", got, a.wantID)
 	}
@@ -688,6 +692,7 @@ type fakeWorkspace struct {
 	forceDestroyErr error
 	// stashCalls counts StashUncommitted invocations.
 	stashCalls int
+	stashHook  func()
 	// excludePatterns records patterns passed to AddExclude; addExcludeErr, when
 	// set, is returned so best-effort handling can be exercised.
 	excludePatterns []string
@@ -790,6 +795,9 @@ func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo
 	return w.forceDestroyErr
 }
 func (w *fakeWorkspace) StashUncommitted(_ context.Context, info ports.WorkspaceInfo) (string, error) {
+	if w.stashHook != nil {
+		w.stashHook()
+	}
 	w.stashCalls++
 	entry := "StashUncommitted:" + string(info.SessionID)
 	if info.RepoPath != "" {
@@ -5071,6 +5079,27 @@ func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *test
 	}
 	if beginIdx >= forceIdx || forceIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
+	}
+}
+
+func TestSaveAndTeardownAll_QuiescesNativeAgentBeforeCapturingWork(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	ws.sharedLog = &sharedLog
+	native := &nativeTerminatingAgent{wantID: "native-7", sharedLog: &sharedLog}
+	m.agents = singleAgent{agent: native}
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	lateWriteObservedAtCapture := false
+	ws.stashHook = func() { lateWriteObservedAtCapture = native.calls == 1 }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "native-7"},
+	}
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if native.calls != 1 || !lateWriteObservedAtCapture || len(sharedLog) < 2 || sharedLog[0] != "TerminateNativeSession" || sharedLog[1] != "StashUncommitted:mer-1" {
+		t.Fatalf("native calls=%d shared log=%v; native termination must complete before capture", native.calls, sharedLog)
 	}
 }
 

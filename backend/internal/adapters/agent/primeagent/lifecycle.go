@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,7 +18,7 @@ const (
 	maxPrimeCommandOutput = 4 << 10
 )
 
-type primeCommandRunner func(ctx context.Context, binary, workingDir string, args ...string) ([]byte, error)
+type primeCommandRunner func(ctx context.Context, binary, workingDir string, env map[string]string, args ...string) ([]byte, error)
 
 type primeListResponse struct {
 	Sessions []primeSessionSummary `json:"sessions"`
@@ -27,10 +29,14 @@ type primeSessionSummary struct {
 	ActiveSessionID string `json:"activeSessionId"`
 }
 
-func runPrimeCommand(ctx context.Context, binary, workingDir string, args ...string) ([]byte, error) {
+func runPrimeCommand(ctx context.Context, binary, workingDir string, env map[string]string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // binary is adapter-resolved; args are adapter-owned
 	if strings.TrimSpace(workingDir) != "" {
 		cmd.Dir = workingDir
+	}
+	cmd.Env = os.Environ()
+	for key, value := range env {
+		cmd.Env = append(cmd.Env, key+"="+value)
 	}
 	return cmd.CombinedOutput()
 }
@@ -46,7 +52,11 @@ func (p *Plugin) executePrimeCommand(ctx context.Context, workingDir string, arg
 	}
 	runCtx, cancel := context.WithTimeout(ctx, primeCommandTimeout)
 	defer cancel()
-	return runner(runCtx, binary, workingDir, args...)
+	env := map[string]string{}
+	if strings.TrimSpace(workingDir) != "" && workingDir != "." {
+		env["PRIME_AGENT_CODING_AGENT_DIR"] = filepath.Join(workingDir, "agent-runtime", adapterID, "prime-agent")
+	}
+	return runner(runCtx, binary, workingDir, env, args...)
 }
 
 func activeSessionForTranscript(output []byte, nativeID string) (string, bool, error) {
@@ -86,7 +96,11 @@ func (p *Plugin) TerminateNativeSession(ctx context.Context, session ports.Sessi
 	if nativeID == "" {
 		return nil
 	}
-	output, err := p.executePrimeCommand(ctx, session.WorkspacePath, "list", "--json")
+	workingDir := strings.TrimSpace(session.DataDir)
+	if workingDir == "" {
+		workingDir = "."
+	}
+	output, err := p.executePrimeCommand(ctx, workingDir, "list", "--json")
 	if err != nil {
 		return fmt.Errorf("prime-agent: list live sessions: %w: %s", err, boundedPrimeOutput(output))
 	}
@@ -94,7 +108,7 @@ func (p *Plugin) TerminateNativeSession(ctx context.Context, session ports.Sessi
 	if err != nil || !ok {
 		return err
 	}
-	output, err = p.executePrimeCommand(ctx, session.WorkspacePath, "stop", activeID, "--json")
+	output, err = p.executePrimeCommand(ctx, workingDir, "stop", activeID, "--json")
 	if err != nil {
 		return fmt.Errorf("prime-agent: stop active session %q: %w: %s", activeID, err, boundedPrimeOutput(output))
 	}

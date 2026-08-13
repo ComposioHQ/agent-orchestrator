@@ -286,40 +286,6 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 }
 
 export function toAgentProvider(provider?: string): AgentProvider {
-<<<<<<< HEAD
-	switch (provider) {
-		case "claude-code":
-		case "opencode":
-		case "aider":
-		case "grok":
-		case "droid":
-		case "amp":
-		case "agy":
-		case "crush":
-		case "cursor":
-		case "qwen":
-		case "copilot":
-		case "goose":
-		case "auggie":
-		case "continue":
-		case "devin":
-		case "cline":
-		case "kimi":
-		case "muse":
-		case "kiro":
-		case "kilocode":
-		case "vibe":
-		case "pi":
-		case "kimchi":
-		case "prime-agent":
-		case "autohand":
-		case "fake":
-			return provider;
-		default:
-			return "codex";
-	}
-=======
 	if (provider === "fake") return provider;
 	return AGENT_OPTIONS.find((candidate) => candidate === provider) ?? "codex";
->>>>>>> upstream/main
 }

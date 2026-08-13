@@ -421,6 +421,9 @@ type SessionRef struct {
 	ID            string
 	Metadata      map[string]string
 	WorkspacePath string
+	// DataDir is AO's isolated state root. Native lifecycle commands must use it
+	// as their stable working/configuration root, never the session worktree.
+	DataDir string
 }
 
 // SessionInfo contains agent-owned session metadata.

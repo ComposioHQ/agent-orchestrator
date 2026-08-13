@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -30,6 +31,14 @@ type Plugin struct {
 // New returns a ready-to-register Prime Agent adapter.
 func New() *Plugin {
 	return &Plugin{}
+}
+
+// AugmentRuntimeEnv keeps Prime's persistent daemon/config state inside AO.
+func (p *Plugin) AugmentRuntimeEnv(env map[string]string, dataDir string) {
+	if strings.TrimSpace(dataDir) == "" {
+		return
+	}
+	env["PRIME_AGENT_CODING_AGENT_DIR"] = filepath.Join(dataDir, "agent-runtime", adapterID, "prime-agent")
 }
 
 var _ adapters.Adapter = (*Plugin)(nil)

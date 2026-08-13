@@ -1392,6 +1392,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if release != nil {
 		defer release()
 	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("retire replacement %s: native session: %w", id, err)
+	}
 
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return fmt.Errorf("retire replacement %s: workspace rows: %w", id, rowErr)
@@ -1407,9 +1410,6 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		}
 		staleWorkspace = true
 		m.logger.Warn("retire replacement: stale workspace; skipping preserve", "sessionID", id, "path", ws.Path, "error", err)
-	}
-	if err := m.terminateNativeSession(ctx, rec); err != nil {
-		return fmt.Errorf("retire replacement %s: native session: %w", id, err)
 	}
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
@@ -1460,6 +1460,7 @@ func (m *Manager) terminateNativeSession(ctx context.Context, rec domain.Session
 	return terminator.TerminateNativeSession(ctx, ports.SessionRef{
 		ID:            string(rec.ID),
 		WorkspacePath: rec.Metadata.WorkspacePath,
+		DataDir:       m.dataDir,
 		Metadata: map[string]string{
 			ports.MetadataKeyAgentSessionID: rec.Metadata.AgentSessionID,
 		},
@@ -1479,6 +1480,9 @@ func (m *Manager) destroyBrowserBestEffort(ctx context.Context, id domain.Sessio
 
 func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
 	staleRepos := make(map[string]bool)
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("retire replacement %s: native session: %w", rec.ID, err)
+	}
 	for _, row := range rows {
 		if _, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row)); err != nil {
 			if !errors.Is(err, ports.ErrWorkspaceStale) {
@@ -1487,9 +1491,6 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 			staleRepos[row.RepoName] = true
 			m.logger.Warn("retire replacement: stale workspace repo; skipping preserve", "sessionID", rec.ID, "repo", row.RepoName, "path", row.Path, "error", err)
 		}
-	}
-	if err := m.terminateNativeSession(ctx, rec); err != nil {
-		return fmt.Errorf("retire replacement %s: native session: %w", rec.ID, err)
 	}
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
@@ -1866,6 +1867,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	if release != nil {
 		defer release()
 	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
+	}
 
 	if rows, ok, err := m.workspaceProjectRows(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: workspace rows: %w", rec.ID, err)
@@ -1900,9 +1904,6 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	// not user intent to cancel review history.
 	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
-	}
-	if err := m.terminateNativeSession(ctx, rec); err != nil {
-		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
 	}
 
 	// 4. Mark terminal via the LCM (same path Kill uses).
@@ -2368,6 +2369,9 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 }
 
 func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo, destroyRuntime bool) error {
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
+	}
 	for _, row := range rows {
 		ref, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row))
 		if err != nil {
@@ -2387,9 +2391,6 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 	}
 	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
-	}
-	if err := m.terminateNativeSession(ctx, rec); err != nil {
-		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
