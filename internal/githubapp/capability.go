@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,51 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 )
+
+// repositoryVisibilityAttempts and repositoryVisibilityDelay bound how long
+// PrepareScratchCapability waits for a just-created repository to appear in
+// GitHub's own installation-repository listing before giving up. 5 attempts
+// at 500ms is a ~2s worst case — enough to absorb GitHub's typical
+// read-after-write lag without making a normal (already-consistent) request
+// noticeably slower, since the common case resolves on the first attempt.
+// repositoryVisibilityDelay is a var, not a const, so tests can shrink it and
+// exercise the retry loop without actually sleeping through it.
+const repositoryVisibilityAttempts = 5
+
+var repositoryVisibilityDelay = 500 * time.Millisecond
+
+// waitForRepositoryVisible polls the installation's repository listing until
+// repositoryID appears in it, or the retry budget is spent.
+func (s *Service) waitForRepositoryVisible(
+	ctx context.Context,
+	installationID, repositoryID int64,
+) error {
+	var lastErr error
+	for attempt := 0; attempt < repositoryVisibilityAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(repositoryVisibilityDelay):
+			}
+		}
+		repositories, err := s.client.ListRepositories(ctx, installationID)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		for _, repository := range repositories {
+			if repository.ID == repositoryID {
+				return nil
+			}
+		}
+		lastErr = fmt.Errorf(
+			"repository %d not yet visible on installation %d",
+			repositoryID, installationID,
+		)
+	}
+	return lastErr
+}
 
 type ScratchCapabilityGrant struct {
 	Capability string
@@ -166,6 +212,19 @@ func (s *Service) PrepareScratchCapability(
 		!strings.EqualFold(repository.Owner.Login, providerInstallation.Account.Login) ||
 		repository.Name != name {
 		return ScratchCapabilityGrant{}, postgres.ErrForbidden
+	}
+	// GitHub's repository-creation and installation-listing endpoints are not
+	// strictly read-after-write consistent: a repository just created via
+	// CreateRepositoryAsUser can take a moment before it appears in
+	// ListRepositories for the installation. sync() alone can race that gap
+	// and silently reconcile a repository set that omits the one just
+	// created, leaving no grant row for a repository that verifiably exists.
+	if err := s.waitForRepositoryVisible(
+		ctx, providerInstallation.ID, repository.ID,
+	); err != nil {
+		return ScratchCapabilityGrant{}, fmt.Errorf(
+			"repository created but not yet visible to sync: %w", err,
+		)
 	}
 	if err := s.sync(ctx, bound); err != nil {
 		return ScratchCapabilityGrant{}, err

@@ -476,7 +476,7 @@ func (s *Server) createEnvironmentScratchProject(
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"project":    toProjectResponse(project),
 		"repository": toGitHubRepositoryResponse(authority.Repository),
-		"session":    toSessionResponse(session),
+		"session":    toSessionResponse(session, nil),
 	})
 }
 

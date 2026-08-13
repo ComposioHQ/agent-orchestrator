@@ -172,6 +172,63 @@ func TestPrepareCheckoutRejectsMismatchedOriginBeforeCredentialUse(t *testing.T)
 	}
 }
 
+func TestPushBranchPushesWithoutPersistingCredential(t *testing.T) {
+	token := "github-write-secret"
+	workspace := filepath.Join(t.TempDir(), "repository")
+	if err := os.MkdirAll(filepath.Join(workspace, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingGitRunner{}
+	err := PushBranch(context.Background(), runner, workspace, "feat/my-change", CheckoutGrantResponse{
+		CloneURL: "https://github.com/acme/api.git", Token: token,
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 || runner.credentialCalls != 1 {
+		t.Fatalf("commands = %#v, credential calls = %d", runner.commands, runner.credentialCalls)
+	}
+	got := runner.commands[0]
+	if got[0] != "push" || got[len(got)-1] != "HEAD:refs/heads/feat/my-change" {
+		t.Fatalf("push command = %#v", got)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(strings.Join(command, "\x00"), token) {
+			t.Fatal("installation token entered git argv")
+		}
+	}
+	for _, body := range runner.askpassBodies {
+		if strings.Contains(body, token) {
+			t.Fatal("installation token was written into askpass")
+		}
+	}
+}
+
+func TestPushBranchRequiresABranchName(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "repository")
+	runner := &recordingGitRunner{}
+	err := PushBranch(context.Background(), runner, workspace, "  ", CheckoutGrantResponse{
+		CloneURL: "https://github.com/acme/api.git", Token: "token",
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err == nil || len(runner.commands) != 0 {
+		t.Fatalf("error = %v, commands = %#v", err, runner.commands)
+	}
+}
+
+func TestPushBranchRejectsAnExpiredGrant(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "repository")
+	runner := &recordingGitRunner{}
+	err := PushBranch(context.Background(), runner, workspace, "feat/my-change", CheckoutGrantResponse{
+		CloneURL: "https://github.com/acme/api.git", Token: "token",
+		ExpiresAt: time.Now().Add(-time.Minute),
+	})
+	if err == nil || len(runner.commands) != 0 {
+		t.Fatalf("error = %v, commands = %#v, want a rejected expired grant with no push attempted", err, runner.commands)
+	}
+}
+
 func TestExecGitRunnerRedactsCredentialFromErrors(t *testing.T) {
 	directory := t.TempDir()
 	if err := os.WriteFile(filepath.Join(directory, "git"),

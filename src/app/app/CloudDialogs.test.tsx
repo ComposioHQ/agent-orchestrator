@@ -172,7 +172,7 @@ it("creates a private GitHub-backed scratch project for the selected owner", asy
       name: /Create a GitHub repository for this project/,
     }),
   );
-  expect(screen.getByRole("option", { name: "acme · organization" })).toBeVisible();
+  expect(screen.getByRole("option", { name: "acme · org" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
   await waitFor(() =>

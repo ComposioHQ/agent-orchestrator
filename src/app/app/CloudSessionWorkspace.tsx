@@ -1,46 +1,76 @@
 "use client";
 
 import type {
+  PullRequestSummary,
   Session,
   WorkspaceDiff,
   WorkspaceEntry,
   WorkspaceFile,
 } from "@aoagents/cloud-client";
 import {
+  InspectorReviewsView,
+  PRSummaryMeta,
+  PRSummaryParts,
+  type InspectorReviewGroup,
+} from "@aoagents/product-ui";
+import {
   ChevronLeft,
   FileCode2,
   Files,
   GitCompareArrows,
+  GitPullRequest,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  RefreshCw,
   Share2,
   Terminal,
   Trash2,
 } from "lucide-react";
-import { OrchestratorIcon } from "@/components/icons";
 import { useEffect, useMemo, useState } from "react";
 
 import { browserCloudClient } from "@/lib/cloud-client";
+import { CloudExternalLink } from "./CloudBoard";
 import { CloudTerminal } from "./CloudTerminal";
+import { OrchestratorIcon } from "./OrchestratorIcon";
+import { pullRequestSummaryParts, toInspectorReviewGroups } from "./pr-display";
 
-type InspectorTab = "changes" | "files" | "terminal";
+type InspectorTab = "changes" | "files" | "reviews" | "terminal";
+
+const reviewLabels = {
+  aoSource: "AO",
+  bot: "Bot",
+  earlierPass: "Earlier pass",
+  githubSource: "GitHub",
+  loadingReviews: "Loading reviews…",
+  loadMoreReviews: (count: number) => `Show ${count} more`,
+  noPastReviewSummaries: "No earlier review passes.",
+  notInjected: "Not delivered",
+  openComments: "Open comments",
+  reviews: "Reviews",
+  showLatestReviewOnly: "Show latest only",
+  showLess: "Show less",
+  showMore: "Show more",
+  commentNumber: (number: number) => `Comment ${number}`,
+  unresolvedCount: (count: number) => `${count} unresolved`,
+  viewOnPR: "View on PR",
+};
 
 export function CloudSessionWorkspace({
   onClose,
-  onDelete,
-  onNewTask,
-  onShare,
+  onDelete = () => {},
+  onNewTask = () => {},
+  onShare = () => {},
   onToggleSidebar,
   sidebarOpen = true,
   organizationId,
   session,
 }: {
   onClose: () => void;
-  onDelete: () => void;
-  onNewTask: () => void;
-  onShare: () => void;
+  onDelete?: () => void;
+  onNewTask?: () => void;
+  onShare?: () => void;
   onToggleSidebar?: () => void;
   sidebarOpen?: boolean;
   organizationId: string;
@@ -56,6 +86,24 @@ export function CloudSessionWorkspace({
   const [fileContent, setFileContent] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [pullRequests, setPullRequests] = useState<PullRequestSummary[]>([]);
+  const [reviewGroups, setReviewGroups] = useState<InspectorReviewGroup[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+
+  const loadReviews = async () => {
+    try {
+      const [pullRequestPage, reviewPage] = await Promise.all([
+        client.listSessionPullRequests(organizationId, session.id),
+        client.getSessionReviewState(organizationId, session.id),
+      ]);
+      setPullRequests(pullRequestPage.pullRequests);
+      setReviewGroups(toInspectorReviewGroups(reviewPage.reviews));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load pull requests.");
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
 
   const loadDiff = async () => {
     if (!session.runtimeConnected) return;
@@ -140,6 +188,12 @@ export function CloudSessionWorkspace({
     }
   }, [tab, directory]);
 
+  useEffect(() => {
+    void loadReviews();
+    const timer = window.setInterval(() => void loadReviews(), 8_000);
+    return () => window.clearInterval(timer);
+  }, [organizationId, session.id]);
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-bg-terminal-opaque)]">
@@ -160,7 +214,7 @@ export function CloudSessionWorkspace({
           ) : null}
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-semibold leading-none tracking-[-0.02em]">
-              {session.displayName}
+              {session.kind === "orchestrator" ? "Orchestrator" : session.displayName}
             </h1>
           </div>
           <span
@@ -258,6 +312,29 @@ export function CloudSessionWorkspace({
           >
             <Terminal className="size-3.5" />
           </InspectorButton>
+          <InspectorButton
+            active={tab === "reviews"}
+            label={`Pull requests ${pullRequests.length}`}
+            onClick={() => setTab("reviews")}
+          >
+            <GitPullRequest className="size-3.5" />
+          </InspectorButton>
+          {tab !== "terminal" ? (
+            <button
+              aria-label="Refresh inspector"
+              className="ml-auto grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={() =>
+                tab === "changes"
+                  ? void loadDiff()
+                  : tab === "reviews"
+                    ? void loadReviews()
+                    : void loadDirectory(directory)
+              }
+              type="button"
+            >
+              <RefreshCw className="size-3.5" />
+            </button>
+          ) : null}
         </div>
         {error ? (
           <p className="border-b border-[var(--color-error)]/20 bg-[var(--color-error)]/8 px-3 py-2 text-[10px] text-[var(--color-error)]">
@@ -286,6 +363,12 @@ export function CloudSessionWorkspace({
             }
             onSave={() => void saveFile()}
             readOnly={session.mode === "read-only"}
+          />
+        ) : tab === "reviews" ? (
+          <PullRequestsView
+            isLoading={reviewsLoading}
+            pullRequests={pullRequests}
+            reviewGroups={reviewGroups}
           />
         ) : session.mode === "trusted" && session.runtimeConnected ? (
           <CloudTerminal
@@ -327,6 +410,68 @@ function InspectorButton({
       {children}
       {label}
     </button>
+  );
+}
+
+function PullRequestsView({
+  isLoading,
+  pullRequests,
+  reviewGroups,
+}: {
+  isLoading: boolean;
+  pullRequests: PullRequestSummary[];
+  reviewGroups: InspectorReviewGroup[];
+}) {
+  if (isLoading && pullRequests.length === 0) {
+    return (
+      <div className="grid min-h-0 flex-1 place-items-center text-xs text-[var(--color-text-passive)]">
+        Loading pull requests…
+      </div>
+    );
+  }
+  if (pullRequests.length === 0) {
+    return (
+      <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
+        No pull requests raised from this session yet.
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      <div className="flex flex-col gap-2">
+        {pullRequests.map((pr) => (
+          <article
+            className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2.5"
+            key={pr.url}
+          >
+            <CloudExternalLink
+              className="text-sm font-semibold leading-snug tracking-tight text-[var(--foreground)] underline-offset-2 hover:underline"
+              href={pr.htmlUrl || pr.url}
+            >
+              #{pr.number} {pr.title}
+            </CloudExternalLink>
+            <PRSummaryMeta className="mt-1.5" externalLink={CloudExternalLink} pr={pr} />
+            <PRSummaryParts
+              className="mt-2 border-t border-[var(--color-border-strong)] pt-2"
+              externalLink={CloudExternalLink}
+              parts={pullRequestSummaryParts(pr)}
+            />
+          </article>
+        ))}
+      </div>
+      <div className="mt-3">
+        <InspectorReviewsView
+          externalLink={CloudExternalLink}
+          groups={reviewGroups}
+          isLoading={isLoading}
+          labels={reviewLabels}
+          renderAvatar={() => <GitPullRequest className="size-3.5" />}
+          renderMarkdown={(body) => (
+            <p className="whitespace-pre-wrap text-xs leading-5">{body}</p>
+          )}
+        />
+      </div>
+    </div>
   );
 }
 

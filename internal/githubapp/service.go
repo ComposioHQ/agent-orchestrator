@@ -47,6 +47,31 @@ type Store interface {
 	GitHubInstallationByRoute(context.Context, string, string) (domain.GitHubInstallation, error)
 	ApplyGitHubInstallationEvent(context.Context, string, string, string) error
 	WorkerGitHubCheckoutContext(context.Context, string, string) (domain.GitHubCheckoutContext, error)
+	CreatePullRequestRecord(
+		ctx context.Context,
+		orgID, sessionID string,
+		provider, repository, author string,
+		number int,
+		url, sourceBranch, targetBranch, headSHA, title string,
+		additions, deletions, changedFiles int,
+	) (domain.PullRequest, error)
+	GitHubInstallationForRepository(ctx context.Context, orgID, repository string) (installationID, repositoryID int64, err error)
+	UpdatePullRequestObservation(
+		ctx context.Context,
+		orgID, pullRequestID string,
+		observation domain.PullRequestObservation,
+	) (domain.PullRequest, error)
+	CreateReviewRun(ctx context.Context, orgID, pullRequestID, reviewSessionID, targetSHA string) (domain.ReviewRun, bool, error)
+	OpenReviewTerminal(ctx context.Context, orgID, sessionID, reviewRunID, prompt string) error
+	CloseReviewTerminal(ctx context.Context, orgID, sessionID, reviewRunID string) error
+	ReviewRunPullRequest(ctx context.Context, orgID, reviewRunID string) (domain.ReviewRunPullRequest, error)
+	CompleteAndDeliverReviewRun(
+		ctx context.Context,
+		orgID, reviewRunID, reviewSessionID string,
+		result domain.SubmitReviewResult,
+		providerReviewID string,
+	) (domain.ReviewRun, error)
+	FailReviewRun(ctx context.Context, orgID, reviewRunID, reviewSessionID, lastError string) (domain.ReviewRun, error)
 	ReserveGitHubRepositoryCapability(context.Context, domain.Principal, string, string, string, []byte, int64) (domain.GitHubRepositoryCapability, bool, error)
 	ActivateGitHubRepositoryCapability(context.Context, domain.Principal, string, string, domain.GitHubRepository, []byte, []byte, []byte) (domain.GitHubRepositoryCapability, error)
 	GitHubRepositoryCapability(context.Context, []byte, string) (domain.GitHubRepositoryCapability, error)
@@ -321,23 +346,34 @@ func (s *Service) IssueCheckoutGrant(
 	ctx context.Context,
 	orgID, sessionID string,
 ) (CheckoutGrant, error) {
-	authorization, err := s.store.WorkerGitHubCheckoutContext(ctx, orgID, sessionID)
+	return s.issueGrant(ctx, orgID, sessionID, s.client.repositoryToken)
+}
+
+// IssuePushGrant is IssueCheckoutGrant's write-scoped counterpart: the token
+// it mints carries contents:write (and pull_requests:write, unused for a
+// push but harmless to request once rather than adding a third token
+// shape). Only ever handed to a worker immediately before a git push, never
+// cached — see repositoryWriteToken.
+func (s *Service) IssuePushGrant(
+	ctx context.Context,
+	orgID, sessionID string,
+) (CheckoutGrant, error) {
+	return s.issueGrant(ctx, orgID, sessionID, s.client.repositoryWriteToken)
+}
+
+// issueGrant is IssueCheckoutGrant and IssuePushGrant's shared authorization
+// and token-minting path; they differ only in which of the client's two
+// token-scope functions mints the access token.
+func (s *Service) issueGrant(
+	ctx context.Context,
+	orgID, sessionID string,
+	mintToken func(ctx context.Context, installationID, repositoryID int64) (installationAccessToken, error),
+) (CheckoutGrant, error) {
+	authorization, err := s.resolveWorkerCheckoutAuthorization(ctx, orgID, sessionID)
 	if err != nil {
 		return CheckoutGrant{}, err
 	}
-	if authorization.OrgID != orgID ||
-		authorization.SessionID != sessionID ||
-		authorization.ProjectID == "" ||
-		authorization.GitHubInstallationID <= 0 ||
-		authorization.GitHubRepositoryID <= 0 ||
-		!validGitHubCloneIdentity(authorization.CloneURL, authorization.FullName) {
-		return CheckoutGrant{}, postgres.ErrForbidden
-	}
-	access, err := s.client.repositoryToken(
-		ctx,
-		authorization.GitHubInstallationID,
-		authorization.GitHubRepositoryID,
-	)
+	access, err := mintToken(ctx, authorization.GitHubInstallationID, authorization.GitHubRepositoryID)
 	if err != nil {
 		return CheckoutGrant{}, err
 	}
@@ -349,6 +385,94 @@ func (s *Service) IssueCheckoutGrant(
 		Token:     access.Token,
 		ExpiresAt: access.ExpiresAt,
 	}, nil
+}
+
+// resolveWorkerCheckoutAuthorization loads and re-validates a session's
+// repository authorization. It is the one place that decides whether a
+// worker may touch a repository at all — every grant- or write-issuing path
+// goes through it first.
+func (s *Service) resolveWorkerCheckoutAuthorization(
+	ctx context.Context,
+	orgID, sessionID string,
+) (domain.GitHubCheckoutContext, error) {
+	authorization, err := s.store.WorkerGitHubCheckoutContext(ctx, orgID, sessionID)
+	if err != nil {
+		return domain.GitHubCheckoutContext{}, err
+	}
+	if authorization.OrgID != orgID ||
+		authorization.SessionID != sessionID ||
+		authorization.ProjectID == "" ||
+		authorization.GitHubInstallationID <= 0 ||
+		authorization.GitHubRepositoryID <= 0 ||
+		!validGitHubCloneIdentity(authorization.CloneURL, authorization.FullName) {
+		return domain.GitHubCheckoutContext{}, postgres.ErrForbidden
+	}
+	return authorization, nil
+}
+
+// RaisePullRequest opens a pull request for a session's already-pushed branch
+// and durably records it. The GitHub API call and the durable record are two
+// separate steps by necessity (GitHub doesn't offer an atomic "create and
+// confirm" primitive), but they happen back to back in this one call so
+// nothing else can observe a pull request that exists on GitHub with no
+// corresponding AO record, or vice versa.
+func (s *Service) RaisePullRequest(
+	ctx context.Context,
+	orgID, sessionID string,
+	input domain.RaisePullRequest,
+) (domain.PullRequest, error) {
+	title := strings.TrimSpace(input.Title)
+	head := strings.TrimSpace(input.HeadBranch)
+	if title == "" || head == "" {
+		return domain.PullRequest{}, postgres.ErrInvalid
+	}
+	authorization, err := s.resolveWorkerCheckoutAuthorization(ctx, orgID, sessionID)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	base := strings.TrimSpace(input.BaseBranch)
+	if base == "" {
+		base = strings.TrimSpace(authorization.DefaultBranch)
+	}
+	if base == "" {
+		return domain.PullRequest{}, fmt.Errorf(
+			"%w: no base branch given and the repository has none on record",
+			postgres.ErrInvalid,
+		)
+	}
+	owner, repo, ok := strings.Cut(authorization.FullName, "/")
+	if !ok || owner == "" || repo == "" {
+		return domain.PullRequest{}, postgres.ErrInvalid
+	}
+	access, err := s.client.repositoryWriteToken(
+		ctx,
+		authorization.GitHubInstallationID,
+		authorization.GitHubRepositoryID,
+	)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	pr, err := s.client.CreatePullRequest(ctx, access.Token, owner, repo, CreatePullRequestInput{
+		Title: title,
+		Body:  input.Body,
+		Head:  head,
+		Base:  base,
+	})
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	record, err := s.store.CreatePullRequestRecord(
+		ctx,
+		orgID, sessionID,
+		"github", authorization.FullName, pr.User.Login,
+		pr.Number, pr.HTMLURL, head, base, pr.Head.SHA, title,
+		pr.Additions, pr.Deletions, pr.ChangedFiles,
+	)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	s.triggerReview(ctx, orgID, sessionID, record)
+	return record, nil
 }
 
 func validGitHubCloneIdentity(cloneURL, fullName string) bool {

@@ -102,6 +102,7 @@ type GitHubCheckoutContext struct {
 	GitHubRepositoryID   int64
 	FullName             string
 	CloneURL             string
+	DefaultBranch        string
 }
 
 type GitHubRepositoryCapability struct {

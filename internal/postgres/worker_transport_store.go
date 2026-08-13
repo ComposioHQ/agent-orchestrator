@@ -27,9 +27,12 @@ func (s *Store) CreateWorkspaceRequest(
 	ttl time.Duration,
 ) (domain.WorkerRequest, error) {
 	var request domain.WorkerRequest
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, access sessionAccess) error {
+		if access.Role == "viewer" && kind == "workspace.write" {
+			return ErrForbidden
+		}
 		var err error
-		request, err = createWorkerRequest(ctx, tx, orgID, sessionID, kind, payload, ttl)
+		request, err = createWorkerRequest(ctx, tx, orgID, sessionID, kind, payload, ttl, access.ModeCap)
 		return err
 	})
 	return request, err
@@ -41,6 +44,7 @@ func createWorkerRequest(
 	orgID, sessionID, kind string,
 	payload json.RawMessage,
 	ttl time.Duration,
+	modeCap string,
 ) (domain.WorkerRequest, error) {
 	if ttl <= 0 {
 		return domain.WorkerRequest{}, ErrInvalid
@@ -69,7 +73,7 @@ func createWorkerRequest(
 	if terminated {
 		return domain.WorkerRequest{}, ErrWorkerUnavailable
 	}
-	if kind == "workspace.write" && mode == "read-only" {
+	if kind == "workspace.write" && effectiveMode(mode, modeCap) == "read-only" {
 		return domain.WorkerRequest{}, ErrWorkspaceReadOnly
 	}
 	var outstanding int
@@ -105,7 +109,13 @@ func (s *Store) GetWorkspaceRequest(
 	orgID, sessionID, requestID string,
 ) (domain.WorkerRequest, error) {
 	var request domain.WorkerRequest
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	// A workspace request created via CreateWorkspaceRequest (which grants
+	// access to share-grant holders, not just org members) must remain
+	// pollable by that same caller — withTenant would 403 a non-member
+	// recipient here even though they were the one who created the
+	// request, leaving it stuck "pending" forever and eventually tripping
+	// the outstanding-request cap below.
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		err := scanWorkerRequest(tx.QueryRow(ctx,
 			`SELECT id, org_id, session_id, worker_epoch, kind, payload, status,
 				response, error_code, error_message, attempt_count, expires_at
@@ -126,7 +136,7 @@ func (s *Store) CancelWorkspaceRequest(
 	principal domain.Principal,
 	orgID, sessionID, requestID string,
 ) error {
-	return s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	return s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		_, err := tx.Exec(ctx,
 			`UPDATE ao_worker_requests
 			SET status = 'cancelled', completed_at = now(), updated_at = now()
@@ -307,7 +317,7 @@ func (s *Store) IssueTerminalTicket(
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256([]byte(token))
 	var scopes []string
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, access sessionAccess) error {
 		var epoch int64
 		var mode string
 		var terminated bool
@@ -329,6 +339,8 @@ func (s *Store) IssueTerminalTicket(
 		if err != nil {
 			return err
 		}
+		mode = effectiveMode(mode, access.ModeCap)
+		deniedCommands = effectiveDeniedCommands(deniedCommands, access.DeniedCommands)
 		// A workspace shell is unrestricted. Agent TUIs can enforce their
 		// native standard/trusted approval mode, but neither surface can
 		// faithfully enforce AO's command-prefix deny rules.
@@ -337,7 +349,10 @@ func (s *Store) IssueTerminalTicket(
 			(kind == "agent" && mode == "read-only") {
 			return ErrForbidden
 		}
-		scopes = []string{"terminal:read", "terminal:operate"}
+		scopes = []string{"terminal:read"}
+		if access.Role != "viewer" {
+			scopes = append(scopes, "terminal:operate")
+		}
 		_, err = tx.Exec(ctx,
 			`INSERT INTO ao_access_tickets (
 				org_id, session_id, purpose, scopes, token_hash, worker_epoch, expires_at
@@ -494,7 +509,7 @@ func (s *Store) OpenTerminal(
 			"kind":       kind,
 		})
 		_, err = createWorkerRequest(
-			ctx, tx, ticket.OrgID, ticket.SessionID, "terminal.open", payload, 15*time.Second,
+			ctx, tx, ticket.OrgID, ticket.SessionID, "terminal.open", payload, 15*time.Second, "",
 		)
 		return err
 	})
@@ -554,7 +569,7 @@ func (s *Store) queueTerminalRequest(
 			return ErrWorkerUnavailable
 		}
 		_, err := createWorkerRequest(
-			ctx, tx, terminal.OrgID, terminal.SessionID, kind, payload, 15*time.Second,
+			ctx, tx, terminal.OrgID, terminal.SessionID, kind, payload, 15*time.Second, "",
 		)
 		return err
 	})

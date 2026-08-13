@@ -55,15 +55,24 @@ type Config struct {
 	SandboxStartupTimeout time.Duration
 	// WorkerHeartbeatTimeout is how long a silent worker is tolerated.
 	WorkerHeartbeatTimeout time.Duration
+	// IdlePauseInterval is how often the idle-pause scanner runs.
+	IdlePauseInterval time.Duration
+	// IdlePauseThreshold is how long a session must be quiet, with no turn in
+	// flight, before the control plane pauses its sandbox.
+	IdlePauseThreshold time.Duration
+	// PRStatusPollInterval is how often the pull-request status scanner
+	// refreshes CI, review, and mergeability state from GitHub.
+	PRStatusPollInterval time.Duration
 
-	NodeOpsBaseURL        string
-	NodeOpsAPIKey         string
-	NodeOpsDefaultShape   string
-	NodeOpsDefaultRootFS  string
-	NodeOpsIngress        string
-	NodeOpsSSHKeyPath     string
-	NodeOpsRegion         string
-	NodeOpsWorkerTokenTTL time.Duration
+	NodeOpsBaseURL          string
+	NodeOpsAPIKey           string
+	NodeOpsDefaultShape     string
+	NodeOpsDefaultRootFS    string
+	NodeOpsIngress          string
+	NodeOpsSSHKeyPath       string
+	NodeOpsRegion           string
+	NodeOpsWorkerTokenTTL   time.Duration
+	NodeOpsAutoPauseSeconds int
 
 	DockerHost           string
 	DockerWorkerImage    string
@@ -95,6 +104,32 @@ func (c GitHubConfig) Enabled() bool {
 // tokens. Short keys make the HMAC forgeable, and a forged worker token is a
 // grant to write onto someone else's session stream.
 const minWorkerSigningKeyLength = 32
+
+// defaultNodeOpsAutoPauseSeconds is the idle timeout stamped onto sandboxes when
+// AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS is unset. It defaults to 0 (disabled):
+// CreateOS only resets this timer on an `exec` call, and the worker sends
+// exactly one — at boot — so the provider's own clock cannot tell an actively
+// working agent from an abandoned one and would pause mid-turn. The
+// control-plane idle-pause scanner (internal/idlepause) is the mechanism that
+// actually understands session activity; this knob exists only for a
+// deployment that wants a redundant provider-side timer on top of it.
+const defaultNodeOpsAutoPauseSeconds = 0
+
+// defaultIdlePauseThreshold is how long a session must have had no user
+// message, with no turn in flight, before the control plane pauses its
+// sandbox. It matches the idle window the retired provider-side auto-pause
+// used, so this change does not itself shift the cost/latency tradeoff users
+// were already tuned around — it only fixes which signal decides.
+const defaultIdlePauseThreshold = 15 * time.Minute
+
+// defaultIdlePauseInterval is how often the idle-pause scanner looks for
+// sessions to pause.
+const defaultIdlePauseInterval = 30 * time.Second
+
+// defaultPRStatusPollInterval matches the local desktop app's fast
+// metadata/CI poll tick, so cloud sessions get the same status freshness the
+// local app already gives users.
+const defaultPRStatusPollInterval = 30 * time.Second
 
 func Load() (Config, error) {
 	environment := strings.ToLower(strings.TrimSpace(os.Getenv("AO_CLOUD_ENV")))
@@ -137,6 +172,9 @@ func Load() (Config, error) {
 		ReconcileInterval:      durationEnv("AO_CLOUD_SANDBOX_RECONCILE_INTERVAL", 2*time.Second),
 		SandboxStartupTimeout:  durationEnv("AO_CLOUD_SANDBOX_STARTUP_TIMEOUT", 3*time.Minute),
 		WorkerHeartbeatTimeout: durationEnv("AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT", time.Minute),
+		IdlePauseInterval:      durationEnv("AO_CLOUD_IDLE_PAUSE_INTERVAL", defaultIdlePauseInterval),
+		IdlePauseThreshold:     durationEnv("AO_CLOUD_IDLE_PAUSE_THRESHOLD", defaultIdlePauseThreshold),
+		PRStatusPollInterval:   durationEnv("AO_CLOUD_PR_STATUS_POLL_INTERVAL", defaultPRStatusPollInterval),
 
 		NodeOpsBaseURL:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_BASE_URL")),
 		NodeOpsAPIKey:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_API_KEY")),
@@ -145,6 +183,8 @@ func Load() (Config, error) {
 		NodeOpsIngress:       strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_INGRESS")),
 		NodeOpsSSHKeyPath:    strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_SSH_KEY_PATH")),
 		NodeOpsRegion:        strings.TrimSpace(os.Getenv("AO_CLOUD_NODEOPS_REGION")),
+		NodeOpsAutoPauseSeconds: intEnvOrDefault(
+			"AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS", defaultNodeOpsAutoPauseSeconds),
 		NodeOpsWorkerTokenTTL: durationEnv(
 			"AO_CLOUD_NODEOPS_WORKER_TOKEN_TTL", sandbox.DefaultWorkerTokenTTL,
 		),
@@ -272,13 +312,14 @@ func Load() (Config, error) {
 	}
 	if cfg.SandboxProvider == "nodeops" || cfg.Hosted() {
 		if err := (sandbox.NodeOpsConfig{
-			BaseURL:        cfg.NodeOpsBaseURL,
-			APIKey:         cfg.NodeOpsAPIKey,
-			DefaultShape:   cfg.NodeOpsDefaultShape,
-			DefaultRootFS:  cfg.NodeOpsDefaultRootFS,
-			Ingress:        cfg.NodeOpsIngress,
-			SSHKeyPath:     cfg.NodeOpsSSHKeyPath,
-			WorkerTokenTTL: cfg.NodeOpsWorkerTokenTTL,
+			BaseURL:          cfg.NodeOpsBaseURL,
+			APIKey:           cfg.NodeOpsAPIKey,
+			DefaultShape:     cfg.NodeOpsDefaultShape,
+			DefaultRootFS:    cfg.NodeOpsDefaultRootFS,
+			Ingress:          cfg.NodeOpsIngress,
+			SSHKeyPath:       cfg.NodeOpsSSHKeyPath,
+			WorkerTokenTTL:   cfg.NodeOpsWorkerTokenTTL,
+			AutoPauseSeconds: cfg.NodeOpsAutoPauseSeconds,
 		}).Validate(); err != nil {
 			return Config{}, err
 		}
@@ -326,6 +367,15 @@ func Load() (Config, error) {
 	}
 	if cfg.WorkerHeartbeatTimeout < 30*time.Second {
 		return Config{}, errors.New("AO_CLOUD_WORKER_HEARTBEAT_TIMEOUT must be at least 30s")
+	}
+	if cfg.IdlePauseInterval <= 0 {
+		return Config{}, errors.New("AO_CLOUD_IDLE_PAUSE_INTERVAL must be positive")
+	}
+	if cfg.IdlePauseThreshold < time.Minute {
+		return Config{}, errors.New("AO_CLOUD_IDLE_PAUSE_THRESHOLD must be at least 1m")
+	}
+	if cfg.PRStatusPollInterval <= 0 {
+		return Config{}, errors.New("AO_CLOUD_PR_STATUS_POLL_INTERVAL must be positive")
 	}
 	if cfg.MaxSandboxesPerOrg < 1 {
 		return Config{}, errors.New("AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG must be at least 1")

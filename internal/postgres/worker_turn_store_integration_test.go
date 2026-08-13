@@ -216,6 +216,72 @@ func TestWorkerCredentialIsSelectedBySessionHarness(t *testing.T) {
 	}
 }
 
+func TestWorkerCredentialFallsBackToTheSessionCreatorsPersonalConnection(t *testing.T) {
+	fixture := newSandboxFixture(t, "personal-credential")
+	ctx := context.Background()
+	workerID, epoch := registerTestWorker(t, fixture)
+
+	// No org-level connection for this harness exists — only the session
+	// creator's own personal one, connected once and meant to work in every
+	// org they belong to.
+	config, _ := json.Marshal(map[string]string{"credentialType": "oauth_token"})
+	if _, err := fixture.store.UpsertUserProviderConnection(
+		ctx, fixture.principal, "claude-code", "default",
+		[]byte("personal-encrypted"), []byte("personal-nonce"), config,
+	); err != nil {
+		t.Fatalf("upsert personal connection: %v", err)
+	}
+
+	credential, err := fixture.store.WorkerAgentCredential(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch,
+	)
+	if err != nil {
+		t.Fatalf("load worker credential: %v", err)
+	}
+	if credential.Provider != "claude-code" ||
+		credential.CredentialType != "oauth_token" ||
+		string(credential.EncryptedSecret) != "personal-encrypted" {
+		t.Fatalf("credential = %#v, want the personal fallback", credential)
+	}
+}
+
+func TestWorkerCredentialPrefersTheOrgConnectionOverAPersonalOne(t *testing.T) {
+	fixture := newSandboxFixture(t, "org-over-personal")
+	ctx := context.Background()
+	workerID, epoch := registerTestWorker(t, fixture)
+
+	config, _ := json.Marshal(map[string]string{"credentialType": "oauth_token"})
+	if _, err := fixture.store.UpsertUserProviderConnection(
+		ctx, fixture.principal, "claude-code", "default",
+		[]byte("personal-encrypted"), []byte("personal-nonce"), config,
+	); err != nil {
+		t.Fatalf("upsert personal connection: %v", err)
+	}
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			ctx,
+			`INSERT INTO ao_provider_connections (
+				org_id, provider, label, encrypted_secret, secret_nonce, config,
+				validation_state, validated_at
+			) VALUES ($1, 'claude-code', 'default', $2, $3, $4, 'valid', now())`,
+			fixture.orgID, []byte("org-encrypted"), []byte("org-nonce"), config,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("insert org connection: %v", err)
+	}
+
+	credential, err := fixture.store.WorkerAgentCredential(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch,
+	)
+	if err != nil {
+		t.Fatalf("load worker credential: %v", err)
+	}
+	if string(credential.EncryptedSecret) != "org-encrypted" {
+		t.Fatalf("credential = %#v, want the org connection to win", credential)
+	}
+}
+
 func registerTestWorker(t *testing.T, fixture sandboxFixture) (string, int64) {
 	t.Helper()
 	token, err := fixture.store.IssueAccessTicket(

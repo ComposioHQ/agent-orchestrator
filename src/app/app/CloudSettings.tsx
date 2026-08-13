@@ -44,8 +44,10 @@ import { SettingsOptionMenu } from "@/components/settings/SettingsOptionMenu";
 import type {
   GitHubCapability,
   GitHubUserCapability,
+  MembersCapability,
   ProviderCapability,
 } from "./cloud-ui-types";
+import type { CreateInvitationInput, OrganizationInvitation } from "./share-types";
 import { WorkspaceAvatar } from "./CloudWorkspaceSwitcher";
 
 type SettingsPanel = "general" | "profile" | "notifications" | "workspaces" | "providers";
@@ -57,6 +59,8 @@ export function CloudSettings({
   github,
   githubUser,
   initialPanel,
+  members,
+  membersBusy,
   open,
   onBack,
   onConnectGitHub,
@@ -64,17 +68,25 @@ export function CloudSettings({
   onDisconnectAgent,
   onDisconnectGitHub,
   onDisconnectGitHubUser,
+  onConnectUserAgent,
+  onDisconnectUserAgent,
+  onInviteMember,
+  onRevokeInvitation,
   onSelectOrganization,
   onSyncGitHub,
   providerBusy,
   providers,
   selectedOrganizationId,
+  userProviderBusy,
+  userProviders,
 }: {
   account: CurrentAccount;
   busy: boolean;
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
   initialPanel: SettingsPanel;
+  members: MembersCapability;
+  membersBusy: boolean;
   open: boolean;
   onBack: () => void;
   onConnectGitHub: () => Promise<void>;
@@ -87,11 +99,20 @@ export function CloudSettings({
   ) => Promise<void>;
   onDisconnectGitHub: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectGitHubUser: () => Promise<void>;
+  onConnectUserAgent: (
+    provider: AgentProvider,
+    input: PutAgentProviderConnectionInput,
+  ) => Promise<void>;
+  onDisconnectUserAgent: (connection: RedactedProviderConnection) => Promise<void>;
+  onInviteMember: (input: CreateInvitationInput) => Promise<void>;
+  onRevokeInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
   onSyncGitHub: (installation: GitHubInstallation) => Promise<void>;
   providerBusy: boolean;
   providers: ProviderCapability;
   selectedOrganizationId: string;
+  userProviderBusy: boolean;
+  userProviders: ProviderCapability;
 }) {
   const [panel, setPanel] = useState<SettingsPanel>(initialPanel);
 
@@ -110,6 +131,11 @@ export function CloudSettings({
           settingsDialogContentClass,
           "h-(--size-settings-dialog-height) w-(--size-settings-dialog-wide) max-h-none origin-center overflow-hidden p-0",
         )}
+        style={{
+          height: "min(680px, calc(100svh - 32px))",
+          width: "min(920px, calc(100vw - 32px))",
+          maxWidth: "calc(100vw - 32px)",
+        }}
         showCloseButton={false}
       >
         <div className="flex h-full min-h-0">
@@ -174,14 +200,23 @@ export function CloudSettings({
                 ) : null}
 
                 {displayPanel === "profile" ? (
-                  <SettingsSection title="Profile" titleHidden grouped>
-                    <SettingsRow label="Display name">
-                      <span className="settings-row-value">{account.user.displayName}</span>
-                    </SettingsRow>
-                    <SettingsRow label="Email">
-                      <span className="settings-row-value">{account.user.email}</span>
-                    </SettingsRow>
-                  </SettingsSection>
+                  <>
+                    <SettingsSection title="Profile" titleHidden grouped>
+                      <SettingsRow label="Display name">
+                        <span className="settings-row-value">{account.user.displayName}</span>
+                      </SettingsRow>
+                      <SettingsRow label="Email">
+                        <span className="settings-row-value">{account.user.email}</span>
+                      </SettingsRow>
+                    </SettingsSection>
+                    <CodingAgentSettings
+                      busy={userProviderBusy}
+                      onConnect={onConnectUserAgent}
+                      onDisconnect={onDisconnectUserAgent}
+                      providers={userProviders}
+                      title="Personal coding agents"
+                    />
+                  </>
                 ) : null}
 
                 {displayPanel === "notifications" ? (
@@ -193,7 +228,15 @@ export function CloudSettings({
                 ) : null}
 
                 {displayPanel === "workspaces" ? (
-                  <WorkspacesPanel account={account} onSelectOrganization={onSelectOrganization} />
+                  <div className="space-y-8">
+                    <WorkspacesPanel account={account} onSelectOrganization={onSelectOrganization} />
+                    <MembersSettings
+                      busy={membersBusy}
+                      members={members}
+                      onInvite={onInviteMember}
+                      onRevoke={onRevokeInvitation}
+                    />
+                  </div>
                 ) : null}
 
                 {displayPanel === "providers" ? (
@@ -229,6 +272,7 @@ function CodingAgentSettings({
   onConnect,
   onDisconnect,
   providers,
+  title = "Coding agents",
 }: {
   busy: boolean;
   onConnect: (
@@ -237,6 +281,7 @@ function CodingAgentSettings({
   ) => Promise<void>;
   onDisconnect: (connection: RedactedProviderConnection) => Promise<void>;
   providers: ProviderCapability;
+  title?: string;
 }) {
   const [editing, setEditing] = useState<AgentProvider | null>(null);
   const [credentialType, setCredentialType] =
@@ -250,7 +295,7 @@ function CodingAgentSettings({
   ];
 
   return (
-    <SettingsSection grouped title="Coding agents">
+    <SettingsSection grouped title={title}>
       {providers.status === "loading" ? (
         <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">
           Loading coding-agent connections…
@@ -596,6 +641,75 @@ function WorkspacesPanel({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function MembersSettings({
+  busy,
+  members,
+  onInvite,
+  onRevoke,
+}: {
+  busy: boolean;
+  members: MembersCapability;
+  onInvite: (input: CreateInvitationInput) => Promise<void>;
+  onRevoke: (invitation: OrganizationInvitation) => Promise<void>;
+}) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<CreateInvitationInput["role"]>("member");
+  const [error, setError] = useState("");
+
+  return (
+    <SettingsSection grouped title="Members">
+      {members.status === "loading" ? (
+        <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">Loading members…</p>
+      ) : members.status === "error" ? (
+        <p className="px-3 py-4 text-sm text-[var(--color-error)]">{members.message ?? "Members could not be loaded."}</p>
+      ) : (
+        <>
+          {members.members.map((member) => (
+            <SettingsRow key={member.userId} label={member.displayName || member.email}>
+              <span className="settings-row-value">{member.role}</span>
+            </SettingsRow>
+          ))}
+          {members.invitations.map((invitation) => (
+            <SettingsRow key={invitation.id} label={invitation.email}>
+              <div className="flex items-center gap-3">
+                <span className="settings-row-value">{invitation.status === "pending" ? "Invited" : invitation.status}</span>
+                {invitation.status === "pending" ? (
+                  <button className={buttonClass} disabled={busy} onClick={() => void onRevoke(invitation)} type="button">
+                    Revoke
+                  </button>
+                ) : null}
+              </div>
+            </SettingsRow>
+          ))}
+          <form
+            className="flex flex-wrap items-center gap-2 border-t border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setError("");
+              try {
+                await onInvite({ email, role });
+                setEmail("");
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "The invitation could not be sent.");
+              }
+            }}
+          >
+            <input className={`${fieldClass} h-8 min-w-40 flex-1`} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required type="email" value={email} />
+            <select className={`${fieldClass} h-8 w-28`} onChange={(event) => setRole(event.target.value as CreateInvitationInput["role"])} value={role}>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button className={`${primaryButtonClass} h-8`} disabled={busy || !email.trim()} type="submit">
+              Invite
+            </button>
+            {error ? <p className="w-full text-xs text-[var(--color-error)]" role="alert">{error}</p> : null}
+          </form>
+        </>
+      )}
+    </SettingsSection>
   );
 }
 

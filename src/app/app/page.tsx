@@ -22,7 +22,11 @@ import {
 } from "@/components/ui/command";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { browserCloudClient, newIdempotencyKey } from "@/lib/cloud-client";
+import {
+  browserCloudClient,
+  consumePendingShareRedemption,
+  newIdempotencyKey,
+} from "@/lib/cloud-client";
 import { CloudBoard } from "./CloudBoard";
 import {
   NewProjectDialog,
@@ -37,11 +41,20 @@ import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
 import { CloudSessionWorkspace } from "./CloudSessionWorkspace";
 import { CloudSidebar, isStandaloneProject } from "./CloudSidebar";
+import type {
+  CreateInvitationInput,
+  OrganizationInvitation,
+  ProjectShareLink,
+  ProjectShareModeCap,
+  SharedProject,
+} from "./share-types";
 import {
   initialGitHubCapability,
   initialGitHubUserCapability,
+  initialMembersCapability,
   type GitHubCapability,
   type GitHubUserCapability,
+  type MembersCapability,
   initialProviderCapability,
   type ProviderCapability,
 } from "./cloud-ui-types";
@@ -72,6 +85,13 @@ export function CloudWorkspace() {
   const [projectSettings, setProjectSettings] = useState<Project | null>(null);
   const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
   const [shareProject, setShareProject] = useState<Project | null>(null);
+  const [shareLinks, setShareLinks] = useState<ProjectShareLink[]>([]);
+  const [shareGrants, setShareGrants] = useState<SharedProject[]>([]);
+  const [shareLinksBusy, setShareLinksBusy] = useState(false);
+  const [sharedProjects, setSharedProjects] = useState<SharedProject[]>([]);
+  const [sharedProjectSessions, setSharedProjectSessions] = useState<Record<string, Session[]>>({});
+  const [sharedSession, setSharedSession] = useState<Session | null>(null);
+  const [sharedSessionOrgId, setSharedSessionOrgId] = useState("");
   const [github, setGitHub] = useState<GitHubCapability>(
     initialGitHubCapability,
   );
@@ -83,9 +103,16 @@ export function CloudWorkspace() {
     initialProviderCapability,
   );
   const [providerBusy, setProviderBusy] = useState(false);
+  const [userProviders, setUserProviders] = useState<ProviderCapability>(
+    initialProviderCapability,
+  );
+  const [userProviderBusy, setUserProviderBusy] = useState(false);
+  const [members, setMembers] = useState<MembersCapability>(initialMembersCapability);
+  const [membersBusy, setMembersBusy] = useState(false);
   const organizationRequest = useRef(0);
   const githubRequest = useRef(0);
   const providerRequest = useRef(0);
+  const membersRequest = useRef(0);
   const deletingSessionIds = useRef(new Set<string>());
   const [previewUi, setPreviewUi] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -271,7 +298,27 @@ export function CloudWorkspace() {
               message:
                 cause instanceof Error
                   ? cause.message
-                  : "Could not load provider connections.",
+                : "Could not load provider connections.",
+            });
+          });
+        const membersLoad = membersRequest.current + 1;
+        membersRequest.current = membersLoad;
+        setMembers(initialMembersCapability);
+        void Promise.all([
+          client.listOrgMembers(orgId),
+          client.listOrgInvitations(orgId).catch(() => []),
+        ])
+          .then(([orgMembers, invitations]) => {
+            if (membersRequest.current !== membersLoad) return;
+            setMembers({ status: "available", members: orgMembers, invitations });
+          })
+          .catch((cause) => {
+            if (membersRequest.current !== membersLoad) return;
+            setMembers({
+              status: "error",
+              members: [],
+              invitations: [],
+              message: cause instanceof Error ? cause.message : "Could not load workspace members.",
             });
           });
       } catch (cause) {
@@ -285,13 +332,45 @@ export function CloudWorkspace() {
     [client, loadGitHubCapabilities],
   );
 
+  const loadSharedProjects = useCallback(async () => {
+    try {
+      setSharedProjects(await client.listSharedProjects());
+    } catch {
+      // This section supplements the primary workspace and should never
+      // prevent it from loading.
+    }
+  }, [client]);
+
+  const loadUserProviders = useCallback(async () => {
+    try {
+      const connections = await client.listUserProviderConnections();
+      setUserProviders({ status: "available", connections });
+    } catch (cause) {
+      setUserProviders({
+        status: "error",
+        connections: [],
+        message: cause instanceof Error ? cause.message : "Could not load personal coding agents.",
+      });
+    }
+  }, [client]);
+
   useEffect(() => {
     let active = true;
     void client
       .getCurrentAccount()
-      .then((value) => {
+      .then(async (value) => {
         if (!active) return;
         setAccount(value);
+        const pending = consumePendingShareRedemption();
+        if (pending) {
+          try {
+            await client.redeemProjectShareLink(pending);
+          } catch {
+            // A failed deferred redemption simply does not add an item below.
+          }
+        }
+        void loadSharedProjects();
+        void loadUserProviders();
         const firstOrganization = value.organizations[0]?.id;
         if (!firstOrganization) {
           setError("Your account has no active workspace memberships.");
@@ -310,7 +389,7 @@ export function CloudWorkspace() {
     return () => {
       active = false;
     };
-  }, [client, loadOrganization]);
+  }, [client, loadOrganization, loadSharedProjects, loadUserProviders]);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -715,6 +794,103 @@ export function CloudWorkspace() {
     }
   };
 
+  const connectUserAgentProvider = async (
+    provider: "claude-code" | "codex" | "cursor",
+    input: PutAgentProviderConnectionInput,
+  ) => {
+    setUserProviderBusy(true);
+    setError("");
+    try {
+      const response = await client.putUserProviderConnection(provider, input);
+      setUserProviders((current) => ({
+        status: "available",
+        connections: [
+          ...current.connections.filter((connection) => connection.provider !== provider),
+          response.providerConnection,
+        ],
+      }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+      throw cause;
+    } finally {
+      setUserProviderBusy(false);
+    }
+  };
+
+  const disconnectUserAgentProvider = async (connection: RedactedProviderConnection) => {
+    const provider = connection.provider;
+    if (provider !== "claude-code" && provider !== "codex" && provider !== "cursor") return;
+    setUserProviderBusy(true);
+    setError("");
+    try {
+      await client.deleteUserProviderConnection(provider);
+      setUserProviders((current) => ({
+        ...current,
+        connections: current.connections.filter((item) => item.id !== connection.id),
+      }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setUserProviderBusy(false);
+    }
+  };
+
+  const inviteMember = async (input: CreateInvitationInput) => {
+    setMembersBusy(true);
+    setError("");
+    try {
+      const response = await client.createOrgInvitation(organizationId, input);
+      setMembers((current) => ({
+        ...current,
+        invitations: [response.invitation, ...current.invitations],
+      }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+      throw cause;
+    } finally {
+      setMembersBusy(false);
+    }
+  };
+
+  const revokeInvitation = async (invitation: OrganizationInvitation) => {
+    setMembersBusy(true);
+    setError("");
+    try {
+      await client.revokeOrgInvitation(organizationId, invitation.id);
+      setMembers((current) => ({
+        ...current,
+        invitations: current.invitations.map((item) =>
+          item.id === invitation.id ? { ...item, status: "revoked" } : item,
+        ),
+      }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setMembersBusy(false);
+    }
+  };
+
+  const expandSharedProject = async (shared: SharedProject) => {
+    if (sharedProjectSessions[shared.project.id]) return;
+    try {
+      const items = await client.listSharedProjectSessions(shared.project.orgId, shared.project.id);
+      setSharedProjectSessions((current) => ({ ...current, [shared.project.id]: items }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    }
+  };
+
+  const selectSharedSession = async (shared: SharedProject, sessionId: string) => {
+    setSelectedSessionId(null);
+    try {
+      const response = await client.getSession(shared.project.orgId, sessionId);
+      setSharedSessionOrgId(shared.project.orgId);
+      setSharedSession(response.session);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    }
+  };
+
   const deleteSession = async (session: Session) => {
     setError("");
     try {
@@ -724,6 +900,73 @@ export function CloudWorkspace() {
       if (selectedSessionId === session.id) setSelectedSessionId(null);
     } catch (cause) {
       handleLoadError(cause, setError);
+    }
+  };
+
+  const openShareDialog = async (project: Project) => {
+    setShareProject(project);
+    setShareLinks([]);
+    setShareGrants([]);
+    try {
+      const [links, grants] = await Promise.all([
+        client.listProjectShareLinks(organizationId, project.id),
+        client.listProjectShareGrants(organizationId, project.id),
+      ]);
+      setShareLinks(links);
+      setShareGrants(grants);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    }
+  };
+
+  const createShareLink = async (input: {
+    accessScope: "anyone" | "restricted";
+    recipients: string[];
+    modeCap: ProjectShareModeCap;
+  }): Promise<ProjectShareLink> => {
+    if (!shareProject) throw new Error("No project selected to share.");
+    setShareLinksBusy(true);
+    try {
+      const readOnly = input.modeCap === "read-only";
+      const response = await client.createProjectShareLink(
+        organizationId,
+        shareProject.id,
+        {
+          role: readOnly ? "viewer" : "editor",
+          interaction: readOnly ? "view" : "interact",
+          accessScope: input.accessScope,
+          recipients: input.recipients,
+          modeCap: input.modeCap,
+        },
+      );
+      setShareLinks((current) => [response.link, ...current]);
+      return response.link;
+    } finally {
+      setShareLinksBusy(false);
+    }
+  };
+
+  const revokeShareLink = async (link: ProjectShareLink) => {
+    if (!shareProject) return;
+    setShareLinksBusy(true);
+    try {
+      await client.revokeProjectShareLink(organizationId, shareProject.id, link.id);
+      setShareLinks((current) =>
+        current.map((item) => item.id === link.id ? { ...item, status: "revoked" } : item),
+      );
+    } finally {
+      setShareLinksBusy(false);
+    }
+  };
+
+  const revokeShareGrant = async (grant: SharedProject) => {
+    if (!shareProject) return;
+    setShareLinksBusy(true);
+    try {
+      await client.revokeProjectShareGrant(organizationId, shareProject.id, grant.grant.id);
+      setShareGrants((current) => current.filter((item) => item.grant.id !== grant.grant.id));
+    } finally {
+      setShareLinksBusy(false);
     }
   };
 
@@ -738,6 +981,8 @@ export function CloudWorkspace() {
     : sessions;
   const selectedSession =
     sessions.find(({ id }) => id === selectedSessionId) ?? null;
+  const activeSession = sharedSession ?? selectedSession;
+  const activeSessionOrgId = sharedSession ? sharedSessionOrgId : organizationId;
 
   return (
     <main
@@ -760,47 +1005,55 @@ export function CloudWorkspace() {
             setSettingsTarget("general");
             setSettingsOpen(true);
             setSelectedSessionId(null);
+            setSharedSession(null);
           }}
           onSelectOrganization={(id) => {
             setOrganizationId(id);
             setSelectedProjectId(null);
             setSelectedSessionId(null);
+            setSharedSession(null);
             void loadOrganization(id);
           }}
           onSelectProject={(id) => {
             setSelectedProjectId(id);
             setSelectedSessionId(null);
+            setSharedSession(null);
           }}
           onSelectSession={(id) => {
             const session = sessions.find((item) => item.id === id);
             if (session) setSelectedProjectId(session.projectId);
             setSelectedSessionId(id);
+            setSharedSession(null);
           }}
+          onExpandSharedProject={(shared) => void expandSharedProject(shared)}
+          onSelectSharedSession={(shared, sessionId) => void selectSharedSession(shared, sessionId)}
           onProjectSettings={setProjectSettings}
-          onShareProject={setShareProject}
+          onShareProject={(project) => void openShareDialog(project)}
           projects={projects}
           selectedOrganizationId={organizationId}
           selectedProjectId={selectedProjectId}
-          selectedSessionId={selectedSessionId}
+          selectedSessionId={activeSession?.id ?? null}
           sessions={sessions}
+          sharedProjectSessions={sharedProjectSessions}
+          sharedProjects={sharedProjects}
           mobileOpen={mobileNavOpen}
           onCloseMobile={() => setMobileNavOpen(false)}
           parity={previewUi}
         />
         <CloudMainShell parity={previewUi} sidebarCollapsed={sidebarCollapsed}>
-          {selectedSession ? (
+          {activeSession ? (
             <CloudSessionWorkspace
-              onClose={() => setSelectedSessionId(null)}
-              onDelete={() => { void deleteSession(selectedSession); setSelectedSessionId(null); }}
-              onNewTask={() => setNewSessionProjectId(selectedSession.projectId)}
+              onClose={() => { setSelectedSessionId(null); setSharedSession(null); }}
+              onDelete={() => { if (!sharedSession) void deleteSession(activeSession); setSelectedSessionId(null); setSharedSession(null); }}
+              onNewTask={() => { if (!sharedSession) setNewSessionProjectId(activeSession.projectId); }}
               onShare={() => {
-                const project = projects.find((p) => p.id === selectedSession.projectId);
-                if (project) setShareProject(project);
+                const project = projects.find((p) => p.id === activeSession.projectId);
+                if (project) void openShareDialog(project);
               }}
               onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
               sidebarOpen={!sidebarCollapsed}
-              organizationId={organizationId}
-              session={selectedSession}
+              organizationId={activeSessionOrgId}
+              session={activeSession}
             />
           ) : (
             <>
@@ -812,7 +1065,7 @@ export function CloudWorkspace() {
                 showBoardActions={!!selectedProjectId}
                 onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
                 onOrchestrator={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
-                onShare={selectedProject ? () => setShareProject(selectedProject) : undefined}
+                onShare={selectedProject ? () => void openShareDialog(selectedProject) : undefined}
               />
               <div className="relative min-h-0 flex-1">
                 {error ? (
@@ -832,6 +1085,7 @@ export function CloudWorkspace() {
                     onDeleteSession={(session) => void deleteSession(session)}
                     onPinSession={() => {}}
                     onSelectSession={setSelectedSessionId}
+                    organizationId={organizationId}
                     sessions={visibleSessions}
                   />
                 )}
@@ -849,10 +1103,14 @@ export function CloudWorkspace() {
           open={settingsOpen}
           onConnectGitHub={connectGitHub}
           onConnectAgent={connectAgentProvider}
+          onConnectUserAgent={connectUserAgentProvider}
           onDisconnectAgent={disconnectAgentProvider}
+          onDisconnectUserAgent={disconnectUserAgentProvider}
           onBack={() => setSettingsOpen(false)}
           onDisconnectGitHub={disconnectGitHubInstallation}
           onDisconnectGitHubUser={disconnectGitHubUser}
+          onInviteMember={inviteMember}
+          onRevokeInvitation={revokeInvitation}
           onSelectOrganization={(id) => {
             setOrganizationId(id);
             setSelectedProjectId(null);
@@ -862,7 +1120,11 @@ export function CloudWorkspace() {
           onSyncGitHub={syncGitHubInstallation}
           providerBusy={providerBusy}
           providers={providers}
+          members={members}
+          membersBusy={membersBusy}
           selectedOrganizationId={organizationId}
+          userProviderBusy={userProviderBusy}
+          userProviders={userProviders}
       />
       <CloudSearch
         open={commandOpen}
@@ -917,11 +1179,18 @@ export function CloudWorkspace() {
         onClose={() => setNewSessionProjectId(null)}
         onCreate={(input) => createSessionInProject(newSessionProjectId!, input)}
       />
-      <CloudShareDialog
-        onClose={() => setShareProject(null)}
-        open={shareProject !== null}
-        project={shareProject}
-      />
+      {shareProject ? (
+        <CloudShareDialog
+          busy={shareLinksBusy}
+          grants={shareGrants}
+          links={shareLinks}
+          onClose={() => setShareProject(null)}
+          onCreate={createShareLink}
+          onRevoke={revokeShareLink}
+          onRevokeGrant={revokeShareGrant}
+          project={shareProject}
+        />
+      ) : null}
       {projectSettings ? (
         <CloudProjectSettingsDialog
           busy={projectSettingsBusy}

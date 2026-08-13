@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import type { ProjectShareLink } from "./share-types";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 import { CloudShareDialog } from "./CloudShareDialog";
@@ -16,7 +17,16 @@ const project = {
 
 it("uses sandbox policy as the only link permission control", () => {
   render(
-    <CloudShareDialog onClose={vi.fn()} open={true} project={project} />,
+    <CloudShareDialog
+      busy={false}
+      grants={[]}
+      links={[]}
+      onClose={vi.fn()}
+      onCreate={vi.fn()}
+      onRevoke={vi.fn()}
+      onRevokeGrant={vi.fn()}
+      project={project}
+    />,
   );
 
   expect(screen.queryByText("Permission")).not.toBeInTheDocument();
@@ -27,10 +37,86 @@ it("uses sandbox policy as the only link permission control", () => {
     "aria-pressed",
     "true",
   );
-  expect(screen.queryByText("Worker access")).not.toBeInTheDocument();
-  expect(screen.queryByText("Enforce command guard")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Create link" })).toBeDisabled();
-  expect(
-    screen.getByText(/Sharing routes are not implemented/),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Create link" })).toBeEnabled();
+});
+
+it("creates a link and shows its one-time url", async () => {
+  const link = {
+    id: "link-1",
+    orgId: "org-1",
+    projectId: "project-1",
+    role: "editor",
+    status: "active",
+    accessScope: "anyone",
+    recipients: [],
+    interaction: "interact",
+    deniedCommands: [],
+    createdAt: "2026-08-13T00:00:00Z",
+    updatedAt: "2026-08-13T00:00:00Z",
+    token: "tok_abc123",
+    url: "https://wrong-internal-host.example/share/org-1/tok_abc123",
+  } as ProjectShareLink;
+  const onCreate = vi.fn().mockResolvedValue(link);
+  render(
+    <CloudShareDialog
+      busy={false}
+      grants={[]}
+      links={[]}
+      onClose={vi.fn()}
+      onCreate={onCreate}
+      onRevoke={vi.fn()}
+      onRevokeGrant={vi.fn()}
+      project={project}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Create link" }));
+
+  expect(onCreate).toHaveBeenCalledWith({
+    accessScope: "anyone",
+    recipients: [],
+    modeCap: "standard",
+  });
+  // Built from window.location.origin, not the server-provided url — the
+  // server only sees whatever internal host this request happened to be
+  // proxied through, which the browser must never trust for a link it will
+  // open later.
+  const expectedURL = `${window.location.origin}/share/${project.orgId}/${link.token}`;
+  await waitFor(() =>
+    expect(screen.getByDisplayValue(expectedURL)).toBeVisible(),
+  );
+});
+
+it("lists active links and revokes them", async () => {
+  const activeLink = {
+    id: "link-1",
+    orgId: "org-1",
+    projectId: "project-1",
+    role: "viewer",
+    status: "active",
+    accessScope: "anyone",
+    recipients: [],
+    interaction: "view",
+    modeCap: "read-only",
+    deniedCommands: [],
+    createdAt: "2026-08-13T00:00:00Z",
+    updatedAt: "2026-08-13T00:00:00Z",
+  } as ProjectShareLink;
+  const onRevoke = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CloudShareDialog
+      busy={false}
+      grants={[]}
+      links={[activeLink]}
+      onClose={vi.fn()}
+      onCreate={vi.fn()}
+      onRevoke={onRevoke}
+      onRevokeGrant={vi.fn()}
+      project={project}
+    />,
+  );
+
+  expect(screen.getByText("Whole project · read-only")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Revoke link" }));
+  expect(onRevoke).toHaveBeenCalledWith(activeLink);
 });

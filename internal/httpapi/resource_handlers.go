@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -265,7 +266,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			s.writeStoreError(w, r, err)
 			return
 		}
-		if !agentConnectionAvailable(connections, request.Harness) {
+		available := agentConnectionAvailable(connections, request.Harness)
+		if !available {
+			if userStore, ok := s.store.(userProviderCredentialStore); ok {
+				available, err = userStore.UserAgentCredentialAvailable(
+					r.Context(), principalFrom(r).UserID, request.Harness,
+				)
+				if err != nil {
+					s.writeStoreError(w, r, err)
+					return
+				}
+			}
+		}
+		if !available {
 			writeError(
 				w, r, http.StatusUnprocessableEntity,
 				"agent_provider_required",
@@ -311,7 +324,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"session": toSessionResponse(session)})
+	writeJSON(w, http.StatusCreated, map[string]any{"session": toSessionResponse(session, nil)})
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
@@ -347,9 +360,18 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
+	sessionIDs := make([]string, len(sessions))
+	for i, session := range sessions {
+		sessionIDs[i] = session.ID
+	}
+	prFacts, err := s.store.PRFactsBySession(r.Context(), orgID, sessionIDs)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
 	items := make([]sessionResponse, 0, len(sessions))
 	for _, session := range sessions {
-		items = append(items, toSessionResponse(session))
+		items = append(items, toSessionResponse(session, prFacts[session.ID]))
 	}
 	page := pageInfo{HasMore: hasMore}
 	if hasMore && len(sessions) > 0 {
@@ -376,7 +398,12 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"session": toSessionResponse(session)})
+	prFacts, err := s.store.PRFactsBySession(r.Context(), orgID, []string{sessionID})
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": toSessionResponse(session, prFacts[sessionID])})
 }
 
 // deleteSession records the intent to tear a session's sandbox down. It does
@@ -461,7 +488,10 @@ func toProjectResponse(project domain.Project) projectResponse {
 	}
 }
 
-func toSessionResponse(session domain.Session) sessionResponse {
+// toSessionResponse renders one session. prs is that session's pull-request
+// facts, used to derive PR-lifecycle status (pr_open, ci_failed, ...) —
+// pass nil only for a session that provably has none yet (just created).
+func toSessionResponse(session domain.Session, prs []contract.PRFacts) sessionResponse {
 	return sessionResponse{
 		ID:               session.ID,
 		OrgID:            session.OrgID,
@@ -473,7 +503,7 @@ func toSessionResponse(session domain.Session) sessionResponse {
 		Mode:             session.Mode,
 		DeniedCommands:   nonNilStrings(session.DeniedCommands),
 		ActivityState:    string(session.ActivityState),
-		Status:           string(session.Status(time.Now().UTC())),
+		Status:           string(session.Status(time.Now().UTC(), prs)),
 		RuntimeConnected: session.RuntimeConnected,
 		RuntimeState:     session.RuntimeState,
 		RuntimeError:     session.RuntimeError,

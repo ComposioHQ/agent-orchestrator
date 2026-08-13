@@ -4,6 +4,7 @@ import type {
   GitHubUserConnection,
   RedactedProviderConnection,
 } from "@aoagents/cloud-client";
+import type { OrganizationInvitation, OrganizationMember } from "./share-types";
 
 export type GitHubCapabilityStatus =
   | "loading"
@@ -48,4 +49,17 @@ export type ProviderCapability = {
 export const initialProviderCapability: ProviderCapability = {
   status: "loading",
   connections: [],
+};
+
+export type MembersCapability = {
+  status: "loading" | "available" | "error";
+  members: OrganizationMember[];
+  invitations: OrganizationInvitation[];
+  message?: string;
+};
+
+export const initialMembersCapability: MembersCapability = {
+  status: "loading",
+  members: [],
+  invitations: [],
 };

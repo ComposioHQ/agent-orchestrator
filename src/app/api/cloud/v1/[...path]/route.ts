@@ -146,6 +146,7 @@ async function forward(request: NextRequest, context: RouteContext) {
   if (environmentAccessToken) {
     headers.set("Authorization", `Bearer ${environmentAccessToken}`);
   }
+  setForwardedOrigin(headers, request);
 
   let upstream: Response;
   try {
@@ -222,6 +223,26 @@ async function forward(request: NextRequest, context: RouteContext) {
     response.cookies.delete(localAuthCookie);
   }
   return response;
+}
+
+// setForwardedOrigin tells the Go backend the browser-facing host/scheme it
+// was actually reached through, since this fetch to it is a separate
+// server-to-server call — Go otherwise sees only cloudApiBaseUrl()'s
+// internal address (e.g. the backend's own bind address in local dev, or an
+// internal service address in hosted deployments), which is wrong for
+// anything the backend needs to embed in a link a browser will later open
+// (see shareLinkURL in the Go handler). Respects an existing
+// x-forwarded-host on THIS request first, in case Next.js itself sits
+// behind another proxy.
+function setForwardedOrigin(headers: Headers, request: NextRequest): void {
+  const host =
+    request.headers.get("x-forwarded-host")?.trim() ||
+    request.headers.get("host")?.trim();
+  if (host) headers.set("X-Forwarded-Host", host);
+  const protocol =
+    request.headers.get("x-forwarded-proto")?.split(",", 1)[0]?.trim() ||
+    request.nextUrl.protocol.slice(0, -1);
+  headers.set("X-Forwarded-Proto", protocol);
 }
 
 function isSameOrigin(request: NextRequest, origin: string): boolean {
@@ -479,7 +500,7 @@ type ScratchCapabilityResponse = {
   githubInstallationId: string;
   githubRepositoryId: string;
   userExternalId: string;
-  targetEnvironment: "development" | "staging";
+  targetEnvironment: "development" | "staging" | "production";
 };
 
 async function createSplitAuthorityScratchProject(

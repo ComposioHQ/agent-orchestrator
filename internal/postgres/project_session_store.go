@@ -620,10 +620,10 @@ func createSessionTx(
 		`WITH generated AS (SELECT gen_random_uuid() AS id)
 		INSERT INTO ao_sessions (
 			id, org_id, project_id, kind, harness, display_name, branch,
-			prompt, mode, denied_commands, parent_session_id
+			prompt, mode, denied_commands, parent_session_id, created_by_user_id
 		)
 		SELECT id, $1, $2, $3, $4, $5, 'ao/' || left(id::text, 8),
-			$6, $7, $8, NULLIF($9, '')::uuid
+			$6, $7, $8, NULLIF($9, '')::uuid, NULLIF($10, '')::uuid
 		FROM generated
 		RETURNING id, org_id, project_id, kind, harness, display_name, branch,
 			mode, denied_commands, activity_state, is_terminated,
@@ -637,6 +637,7 @@ func createSessionTx(
 		input.Mode,
 		input.DeniedCommands,
 		parentSessionID,
+		actorUserID,
 	), &session)
 	if err != nil {
 		return domain.Session{}, normalizeConstraintError(err)
@@ -819,7 +820,7 @@ func (s *Store) GetSession(
 	sessionID string,
 ) (domain.Session, error) {
 	var session domain.Session
-	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+	err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		return getSession(ctx, tx, orgID, sessionID, &session)
 	})
 	return session, err

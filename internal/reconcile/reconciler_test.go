@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -194,6 +195,7 @@ type fakeStore struct {
 	ticketScopes [][]string
 	events       []string
 	completed    []string
+	disconnected []string
 	renewals     int
 	renewErr     error
 	ticketErr    error
@@ -226,6 +228,19 @@ func (s *fakeStore) UpdateSandboxObservation(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.observations = append(s.observations, observation{providerEnvironmentID, observedState, lastError})
+	return nil
+}
+
+func (s *fakeStore) RecordSandboxFailure(
+	_ context.Context,
+	_, _, _ string,
+	providerEnvironmentID, lastError string,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observations = append(
+		s.observations, observation{providerEnvironmentID, domain.SandboxObservedFailed, lastError},
+	)
 	return nil
 }
 
@@ -265,6 +280,13 @@ func (s *fakeStore) CompleteSandboxDeletion(_ context.Context, _, _, sessionID s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.completed = append(s.completed, sessionID)
+	return nil
+}
+
+func (s *fakeStore) DisconnectSessionWorkers(_ context.Context, _, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.disconnected = append(s.disconnected, sessionID)
 	return nil
 }
 
@@ -735,6 +757,14 @@ func TestStoppedDockerWorkerIsRecreatedWithFreshBootstrapTicket(t *testing.T) {
 	record.Provider = sandbox.ProviderDocker
 	record.ProviderEnvironmentID = "container-1"
 	record.ObservedState = domain.SandboxObservedStopped
+	// This attempt has been alive well past the boot-crash window, so it had
+	// time to actually run before unexpectedly stopping (a one-off crash) —
+	// which is what should get the fast, unconditional repair below, as
+	// opposed to a worker that dies within the window on every attempt,
+	// covered by TestDockerWorkerThatNeverBecomesReadyBacksOffInsteadOfLoopingForever.
+	record.UpdatedAt = time.Now().Add(-time.Minute)
+	seenAt := time.Now().Add(-time.Minute)
+	record.WorkerLastSeenAt = &seenAt
 	store := &fakeStore{pending: []domain.Sandbox{record}}
 	provider := &recreatingProvider{newFakeProvider()}
 	provider.setState("container-1", sandbox.StateStopped)
@@ -754,6 +784,47 @@ func TestStoppedDockerWorkerIsRecreatedWithFreshBootstrapTicket(t *testing.T) {
 	}
 	if len(store.tickets) != 1 {
 		t.Fatalf("issued %d tickets, want one fresh ticket", len(store.tickets))
+	}
+}
+
+func TestDockerWorkerThatNeverBecomesReadyBacksOffInsteadOfLoopingForever(t *testing.T) {
+	record := runningSandbox()
+	record.Provider = sandbox.ProviderDocker
+	record.ProviderEnvironmentID = "container-1"
+	record.ObservedState = domain.SandboxObservedStopped
+	record.LastError = "load coding-agent credential: /worker/credential returned 404"
+	// UpdatedAt (left at runningSandbox()'s time.Now()) models the recreate
+	// that started this attempt landing just moments ago. The worker
+	// deliberately heartbeats before doing anything that can fail — loading
+	// its credential, launching the harness — specifically so a repaired
+	// worker isn't mistaken for one that never started; that means
+	// WorkerLastSeenAt gets set even on this deterministic, every-attempt
+	// failure, and can't be the signal. Recreating on every tick regardless
+	// would hammer the provider and reset the terminal's backlog forever for
+	// no gain — an attempt that dies this fast after being (re)created
+	// should back off like any other failure instead.
+	seenAt := time.Now()
+	record.WorkerLastSeenAt = &seenAt
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := &recreatingProvider{newFakeProvider()}
+	provider.setState("container-1", sandbox.StateStopped)
+	reconciler := newReconciler(store, provider)
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.recreated) != 0 {
+		t.Fatalf("Recreate called %d times, want 0 — a never-ready worker must back off, not loop", len(provider.recreated))
+	}
+	got := store.lastObservation(t)
+	if got.state != domain.SandboxObservedFailed {
+		t.Fatalf("observed state = %q, want failed so the exponential backoff applies", got.state)
+	}
+	if len(store.disconnected) != 1 || store.disconnected[0] != record.SessionID {
+		t.Fatalf(
+			"disconnected sessions = %v, want [%s] so the UI stops claiming a connection that no longer exists",
+			store.disconnected, record.SessionID,
+		)
 	}
 }
 
@@ -814,5 +885,23 @@ func TestWorkerSpecReadsShapeFromTheStoredProfile(t *testing.T) {
 		if !gotScopes[required] {
 			t.Errorf("worker bootstrap ticket lacks %q", required)
 		}
+	}
+}
+
+func TestCreateAtCapacityRetriesInsteadOfFailing(t *testing.T) {
+	store := &fakeStore{pending: []domain.Sandbox{runningSandbox()}}
+	provider := newFakeProvider()
+	// A quota rejection, wrapped so errors.Is finds the capacity sentinel.
+	provider.createErr = fmt.Errorf("%w: concurrent quota reached", sandbox.ErrAtCapacity)
+	reconciler := newReconciler(store, provider)
+
+	_ = reconciler.ReconcileOnce(context.Background())
+
+	got := store.lastObservation(t)
+	if got.state == domain.SandboxObservedFailed {
+		t.Fatal("a capacity rejection failed the session; it must stay provisioning and retry")
+	}
+	if got.state != domain.SandboxObservedProvisioning {
+		t.Errorf("observed state = %q, want provisioning (queued for capacity)", got.state)
 	}
 }

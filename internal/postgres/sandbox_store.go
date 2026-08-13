@@ -142,6 +142,11 @@ func (s *Store) UpdateSandboxObservation(
 				reconcile_after = $6,
 				reconcile_lease_owner = '',
 				reconcile_lease_until = NULL,
+				-- Any non-failed observation is forward progress: reset the
+				-- backoff counter RecordSandboxFailure grows, so a sandbox
+				-- that recovers doesn't carry a stale long backoff into its
+				-- next unrelated failure.
+				consecutive_failures = CASE WHEN $4 = 'failed' THEN consecutive_failures ELSE 0 END,
 				worker_last_seen_at = CASE
 					WHEN $4 IN ('requested', 'provisioning', 'bootstrapping')
 						AND (
@@ -172,6 +177,65 @@ func (s *Store) UpdateSandboxObservation(
 		)
 		if err != nil {
 			return fmt.Errorf("update sandbox observation: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrSandboxLeaseLost
+		}
+		return nil
+	})
+}
+
+// Failure backoff bounds for RecordSandboxFailure: base * 2^min(failures,
+// failureBackoffMaxShift), capped at failureBackoffCapSeconds — 15s, 30s,
+// 60s, 120s, 240s, then held at the 5-minute cap. A persistently broken
+// provider integration is retried periodically rather than essentially
+// never, while a transient blip still gets its very next retry quickly.
+const (
+	failureBackoffBaseSeconds = 15
+	failureBackoffMaxShift    = 5
+	failureBackoffCapSeconds  = 300
+)
+
+// RecordSandboxFailure marks a sandbox's most recent reconcile attempt as
+// failed and schedules the next retry with exponential backoff based on how
+// many consecutive failures it's had. The backoff is computed server-side
+// from the row's pre-update consecutive_failures value, so incrementing the
+// counter and scheduling the matching retry happen atomically. A later
+// non-failed observation (UpdateSandboxObservation) resets the counter.
+func (s *Store) RecordSandboxFailure(
+	ctx context.Context,
+	owner, orgID, sessionID string,
+	providerEnvironmentID, lastError string,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET provider_environment_id = NULLIF($3, ''),
+				observed_state = 'failed',
+				last_error = $4,
+				consecutive_failures = consecutive_failures + 1,
+				reconcile_after = now() + make_interval(secs =>
+					LEAST($5::float8 * power(2, LEAST(consecutive_failures, $6::int)), $7::float8)
+				),
+				reconcile_lease_owner = '',
+				reconcile_lease_until = NULL,
+				updated_at = now()
+			WHERE session_id = $1
+				AND org_id = $8
+				AND reconcile_lease_owner = $2
+				AND reconcile_lease_until > now()`,
+			sessionID,
+			owner,
+			providerEnvironmentID,
+			lastError,
+			failureBackoffBaseSeconds,
+			failureBackoffMaxShift,
+			failureBackoffCapSeconds,
+			orgID,
+		)
+		if err != nil {
+			return fmt.Errorf("record sandbox failure: %w", err)
 		}
 		if tag.RowsAffected() == 0 {
 			return ErrSandboxLeaseLost
@@ -238,6 +302,87 @@ func (s *Store) SetSandboxDesiredState(
 	})
 }
 
+// RunningSandboxSessions lists every session whose sandbox is fully up
+// (desired and observed both `running`) across every organization, for the
+// idle-pause scanner. Only ao_sandboxes grants withService a cross-tenant
+// view, so this reads nothing else — a caller must re-enter a specific org's
+// tenant context (withOrg) before it can act on what it finds here.
+func (s *Store) RunningSandboxSessions(ctx context.Context) ([]domain.SandboxRef, error) {
+	var refs []domain.SandboxRef
+	err := s.withService(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(
+			ctx,
+			`SELECT session_id, org_id FROM ao_sandboxes
+			WHERE desired_state = 'running' AND observed_state = 'running'`,
+		)
+		if err != nil {
+			return fmt.Errorf("list running sandbox sessions: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ref domain.SandboxRef
+			if err := rows.Scan(&ref.SessionID, &ref.OrgID); err != nil {
+				return err
+			}
+			refs = append(refs, ref)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return refs, nil
+}
+
+// PauseIfIdle pauses one session's sandbox when the user has been silent for
+// at least idleThreshold and the agent has no active turn. The idle check and
+// the state flip are one statement, so a user message or a turn claim that
+// lands mid-scan simply fails the WHERE clause instead of racing it — the next
+// scan tick re-evaluates from scratch. Reports whether it paused.
+func (s *Store) PauseIfIdle(
+	ctx context.Context,
+	orgID, sessionID string,
+	idleThreshold time.Duration,
+) (bool, error) {
+	var paused bool
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes
+			SET desired_state = 'paused', reconcile_after = now(), updated_at = now()
+			WHERE session_id = $1
+				AND org_id = $2
+				AND desired_state = 'running'
+				AND observed_state = 'running'
+				AND EXISTS (
+					SELECT 1 FROM ao_sessions
+					WHERE ao_sessions.id = $1
+						AND ao_sessions.org_id = $2
+						AND ao_sessions.last_user_message_at IS NOT NULL
+						AND ao_sessions.last_user_message_at <= now() - $3::interval
+				)
+				AND NOT EXISTS (
+					SELECT 1 FROM ao_turns
+					WHERE ao_turns.session_id = $1
+						AND ao_turns.org_id = $2
+						AND ao_turns.state IN ('queued', 'provisioning', 'running', 'cancel_requested')
+				)`,
+			sessionID,
+			orgID,
+			intervalString(idleThreshold),
+		)
+		if err != nil {
+			return fmt.Errorf("pause idle sandbox: %w", err)
+		}
+		paused = tag.RowsAffected() > 0
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return paused, nil
+}
+
 // CountActiveSandboxes counts sandboxes whose provider deletion has not yet
 // been observed. Delete intent alone does not release paid capacity.
 func (s *Store) CountActiveSandboxes(
@@ -255,6 +400,33 @@ func (s *Store) CountActiveSandboxes(
 		).Scan(&count)
 	})
 	return count, err
+}
+
+// DisconnectSessionWorkers marks every still-connected worker connection for
+// a session as disconnected without touching the sandbox's own observed
+// state. A session's runtimeConnected flag (what the frontend uses to decide
+// whether the terminal and workspace are usable) is read straight off these
+// rows, so a worker process that exits on its own — as opposed to being
+// superseded by a fresh bootstrap ticket, which already fences the old
+// connection — leaves a stale "connected" row behind unless something calls
+// this. The reconciler uses it when it backs off a Docker worker that keeps
+// crashing before becoming ready, so the UI stops claiming a connection that
+// no longer exists for the length of the backoff.
+func (s *Store) DisconnectSessionWorkers(
+	ctx context.Context,
+	orgID, sessionID string,
+) error {
+	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			ctx,
+			`UPDATE ao_worker_connections
+			SET disconnected_at = now()
+			WHERE org_id = $1 AND session_id = $2 AND disconnected_at IS NULL`,
+			orgID,
+			sessionID,
+		)
+		return err
+	})
 }
 
 // CompleteSandboxDeletion records confirmed provider absence, releases quota,
@@ -704,6 +876,29 @@ func upsertWorkerConnection(
 		orgID,
 	); err != nil {
 		return fmt.Errorf("retire superseded worker connections: %w", err)
+	}
+	// A request created against a prior epoch can never be claimed or
+	// completed once that worker is retired — the new worker only ever
+	// claims rows stamped with its own epoch. Left alone, an orphaned row
+	// sits "pending"/"claimed" until its TTL passes, and every request the
+	// client keeps polling with in the meantime (e.g. the diff panel's
+	// 2s refresh) piles up a fresh row on top of it, which can trip the
+	// per-session outstanding-request cap right after a restart. Failing
+	// them immediately here, in the same transaction as the epoch bump,
+	// frees that headroom right away instead of waiting out the TTL.
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE ao_worker_requests
+		SET status = 'failed', error_code = 'TRANSPORT_TIMEOUT',
+			error_message = 'The worker restarted before this request completed.',
+			completed_at = now(), updated_at = now()
+		WHERE org_id = $1 AND session_id = $2 AND worker_epoch < $3
+		  AND status IN ('pending', 'claimed')`,
+		orgID,
+		sessionID,
+		epoch,
+	); err != nil {
+		return fmt.Errorf("fail worker requests from superseded epochs: %w", err)
 	}
 	tag, err := tx.Exec(
 		ctx,

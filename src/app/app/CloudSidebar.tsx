@@ -16,6 +16,7 @@ import {
   Settings,
   Share2,
   Trash2,
+  Users,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -30,6 +31,7 @@ import {
 } from "@/components/ui/context-menu";
 
 import { CloudWorkspaceSwitcher } from "./CloudWorkspaceSwitcher";
+import type { SharedProject } from "./share-types";
 
 export function CloudSidebar({
   account,
@@ -50,6 +52,10 @@ export function CloudSidebar({
   selectedProjectId,
   selectedSessionId,
   sessions,
+  sharedProjects = [],
+  sharedProjectSessions = {},
+  onExpandSharedProject,
+  onSelectSharedSession,
   mobileOpen = false,
   onCloseMobile,
   parity = false,
@@ -72,12 +78,17 @@ export function CloudSidebar({
   selectedProjectId: string | null;
   selectedSessionId: string | null;
   sessions: Session[];
+  sharedProjects?: SharedProject[];
+  sharedProjectSessions?: Record<string, Session[]>;
+  onExpandSharedProject?: (shared: SharedProject) => void;
+  onSelectSharedSession?: (shared: SharedProject, sessionId: string) => void;
   mobileOpen?: boolean;
   onCloseMobile?: () => void;
   parity?: boolean;
 }) {
   const prefersReducedMotion = useReducedMotion();
   const [closedProjects, setClosedProjects] = useState<Set<string>>(new Set());
+  const [openSharedProjects, setOpenSharedProjects] = useState<Set<string>>(new Set());
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem("ao.pinned-sessions");
@@ -176,6 +187,61 @@ export function CloudSidebar({
             ))}
           </div>
         </>
+      ) : null}
+
+      {sharedProjects.length > 0 ? (
+        <div className="shrink-0 px-2 pb-2">
+          <div className="flex h-8 items-center gap-2 px-2 text-sm font-medium text-[var(--color-text-passive)]">
+            <Users className="size-3.5" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">Shared with me</span>
+          </div>
+          <div className="flex flex-col gap-px">
+            {sharedProjects.map((shared) => {
+              const open = openSharedProjects.has(shared.project.id);
+              const sharedSessions = sharedProjectSessions[shared.project.id] ?? [];
+              const selectDirect = shared.sessionId && onSelectSharedSession;
+              return (
+                <div key={shared.grant.id}>
+                  <button
+                    type="button"
+                    className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+                    onClick={() => {
+                      if (selectDirect) {
+                        onSelectSharedSession(shared, shared.sessionId!);
+                        return;
+                      }
+                      setOpenSharedProjects((current) => {
+                        const next = new Set(current);
+                        if (next.has(shared.project.id)) next.delete(shared.project.id);
+                        else next.add(shared.project.id);
+                        return next;
+                      });
+                      if (!open) onExpandSharedProject?.(shared);
+                    }}
+                  >
+                    {open ? <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" /> : <Folder className="size-3.5 shrink-0" aria-hidden="true" />}
+                    <span className="min-w-0 flex-1 truncate">{shared.sessionName ?? shared.project.displayName}</span>
+                  </button>
+                  {open ? (
+                    <div className="ml-3.5 py-1">
+                      {sharedSessions.map((session) => (
+                        <button
+                          key={session.id}
+                          type="button"
+                          className={`flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 text-left text-sm ${selectedSessionId === session.id ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]" : "text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"}`}
+                          onClick={() => onSelectSharedSession?.(shared, session.id)}
+                        >
+                          <span className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`} aria-hidden="true" />
+                          <span className="min-w-0 flex-1 truncate">{session.displayName}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       ) : null}
 
       <div className="flex h-8 shrink-0 items-center gap-2 px-4 text-sm font-medium text-[var(--color-text-passive)]">

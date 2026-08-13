@@ -95,6 +95,37 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 	return validateOrigin(ctx, runner, workspace, expected)
 }
 
+// PushBranch pushes the current HEAD to a remote branch using a fresh
+// write-scoped grant. It never force-pushes: git push refuses non-fast-
+// forward updates by default, so a branch that already has commits this
+// workspace doesn't have fails loudly instead of silently discarding them.
+func PushBranch(
+	ctx context.Context,
+	runner GitRunner,
+	workspace, branch string,
+	grant CheckoutGrantResponse,
+) error {
+	if runner == nil {
+		return errors.New("git runner is required")
+	}
+	workspace = filepath.Clean(strings.TrimSpace(workspace))
+	if !filepath.IsAbs(workspace) || workspace == string(filepath.Separator) {
+		return errors.New("workspace path must be an absolute non-root directory")
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return errors.New("branch name is required")
+	}
+	if grant.Token != "" && !grant.ExpiresAt.After(time.Now().Add(30*time.Second)) {
+		return errors.New("push grant is expired")
+	}
+	return withGitCredential(grant.Token, func(env map[string]string) error {
+		_, err := runner.Run(ctx, workspace, env,
+			"push", "--", "origin", "HEAD:refs/heads/"+branch)
+		return err
+	})
+}
+
 // IsScratchRepositoryURL identifies AO's non-network repository sentinel.
 func IsScratchRepositoryURL(raw string) bool {
 	parsed, err := url.Parse(strings.TrimSpace(raw))

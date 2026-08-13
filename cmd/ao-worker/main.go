@@ -44,6 +44,15 @@ const (
 	maxResponseBody      = 1 << 20
 )
 
+// checkoutGrant is fetched exactly once, at bootstrap, and PrepareCheckout
+// never touches it again on its own — a session running longer than the
+// grant's GitHub-issued lifetime (~1h) would otherwise have no path back to
+// working git credentials. This interval re-fetches a fresh grant and
+// re-runs the checkout's fetch step comfortably inside that lifetime. It's a
+// var, not a const, so a test can shrink it and exercise the loop without
+// actually waiting through it.
+var checkoutRenewalInterval = 45 * time.Minute
+
 var workerCapabilities = []string{
 	"worker.heartbeat",
 	"worker.events",
@@ -176,6 +185,26 @@ func run(logger *slog.Logger) error {
 	agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
 	agentCommand.Env["AO_PROJECT_ID"] = bootstrap.Launch.ProjectID
 	agentCommand.Env["AO_SESSION_KIND"] = bootstrap.Launch.Kind
+	// The agent never receives a GitHub credential directly (see
+	// PushBranch/checkout.go) — to push a branch and open a pull request it
+	// posts to this local Unix socket instead, and the worker process does
+	// the actual push+API-call using a token it fetches and discards itself.
+	pullRequestSocketPath := filepath.Join(dataDir, "ao-pull-request.sock")
+	agentCommand.Env["AO_PULL_REQUEST_SOCKET"] = pullRequestSocketPath
+	agentCommand.Env["AO_PULL_REQUEST_HELP"] = "curl --unix-socket $AO_PULL_REQUEST_SOCKET " +
+		`-X POST http://localhost/pull-request -H 'Content-Type: application/json' ` +
+		`-d '{"branch":"<pushed branch name>","title":"<PR title>","body":"<PR body>"}' ` +
+		"to push the current branch and open a pull request against the repository's default branch."
+	// Set unconditionally, like the pull-request socket above: a review is
+	// only ever requested after this session raises a pull request, but the
+	// agent doesn't know that in advance, so the socket must already be live
+	// for the whole session's lifetime.
+	reviewSocketPath := filepath.Join(dataDir, "ao-review.sock")
+	agentCommand.Env["AO_REVIEW_SOCKET"] = reviewSocketPath
+	agentCommand.Env["AO_REVIEW_HELP"] = "curl --unix-socket $AO_REVIEW_SOCKET " +
+		`-X POST http://localhost/review -H 'Content-Type: application/json' ` +
+		`-d '{"reviewRunId":"<review run id from the prompt>","verdict":"approved|changes_requested","body":"<your findings>"}' ` +
+		"to submit an AO-triggered review verdict."
 	agentTerminal, err := client.ensureAgentTerminal(ctx)
 	if err != nil {
 		agentCommand.Cleanup()
@@ -190,11 +219,23 @@ func run(logger *slog.Logger) error {
 		AgentCommand: agentCommand, AgentTerminalID: agentTerminal.TerminalID,
 		Started: started,
 	}
-	results := make(chan error, 2)
+	results := make(chan error, 5)
 	go func() { results <- client.heartbeatLoop(runCtx, logger) }()
 	go func() { results <- transportSupervisor.Run(runCtx) }()
+	go func() {
+		results <- client.checkoutRenewalLoop(runCtx, logger, workspace, bootstrap.Launch.RepositoryURL)
+	}()
+	go func() {
+		results <- runPullRequestBridge(runCtx, pullRequestSocketPath, client, workspace, logger)
+	}()
+	go func() {
+		results <- runReviewBridge(runCtx, reviewSocketPath, client, logger)
+	}()
 	if err := <-started; err != nil {
 		cancel()
+		<-results
+		<-results
+		<-results
 		<-results
 		<-results
 		return fmt.Errorf("start interactive coding-agent terminal: %w", err)
@@ -209,6 +250,9 @@ func run(logger *slog.Logger) error {
 	}
 	first := <-results
 	cancel()
+	<-results
+	<-results
+	<-results
 	<-results
 	if ctx.Err() != nil {
 		logger.Info("worker shutting down")
@@ -287,6 +331,45 @@ func (c *client) heartbeatLoop(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
+// checkoutRenewalLoop keeps the workspace's git credentials from silently
+// going stale in a long-running session. Scratch workspaces have no real git
+// remote to refresh, so they idle for the session's lifetime instead of
+// ticking — this keeps the goroutine/results bookkeeping in run() uniform
+// regardless of session kind.
+func (c *client) checkoutRenewalLoop(
+	ctx context.Context, logger *slog.Logger, workspace, repositoryURL string,
+) error {
+	if worker.IsScratchRepositoryURL(repositoryURL) {
+		<-ctx.Done()
+		return nil
+	}
+	ticker := time.NewTicker(checkoutRenewalInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			c.renewCheckout(ctx, logger, workspace)
+		}
+	}
+}
+
+// renewCheckout fetches a fresh checkout grant and re-runs the checkout's
+// fetch step. A failure here is not fatal to the worker — losing a moment of
+// git freshness is far less severe than losing worker liveness, which is what
+// the heartbeat loop guards — so it logs and lets the next tick retry.
+func (c *client) renewCheckout(ctx context.Context, logger *slog.Logger, workspace string) {
+	grant, err := c.checkoutGrant(ctx)
+	if err != nil {
+		logger.Warn("renew checkout grant failed", "error", err)
+		return
+	}
+	if err := worker.PrepareCheckout(ctx, worker.ExecGitRunner{}, workspace, grant); err != nil {
+		logger.Warn("refresh repository checkout failed", "error", err)
+	}
+}
+
 func (c *client) ClaimTurn(ctx context.Context) (*worker.Turn, error) {
 	var response worker.ClaimTurnResponse
 	if err := c.do(ctx, "/worker/turns/claim", worker.ClaimTurnRequest{}, &response); err != nil {
@@ -315,6 +398,46 @@ func (c *client) checkoutGrant(ctx context.Context) (worker.CheckoutGrantRespons
 	if response.CloneURL == "" ||
 		(response.Token != "" && !response.ExpiresAt.After(time.Now())) {
 		return worker.CheckoutGrantResponse{}, errors.New("control plane returned an invalid checkout grant")
+	}
+	return response, nil
+}
+
+func (c *client) pushGrant(ctx context.Context) (worker.CheckoutGrantResponse, error) {
+	var response worker.CheckoutGrantResponse
+	if err := c.do(ctx, "/worker/push-grant", struct{}{}, &response); err != nil {
+		return worker.CheckoutGrantResponse{}, err
+	}
+	if response.CloneURL == "" || response.Token == "" || !response.ExpiresAt.After(time.Now()) {
+		return worker.CheckoutGrantResponse{}, errors.New("control plane returned an invalid push grant")
+	}
+	return response, nil
+}
+
+func (c *client) raisePullRequest(
+	ctx context.Context,
+	input worker.RaisePullRequestRequest,
+) (worker.RaisePullRequestResponse, error) {
+	var response worker.RaisePullRequestResponse
+	if err := c.do(ctx, "/worker/pull-requests", input, &response); err != nil {
+		return worker.RaisePullRequestResponse{}, err
+	}
+	if response.HTMLURL == "" || response.Number <= 0 {
+		return worker.RaisePullRequestResponse{}, errors.New("control plane returned an incomplete pull request response")
+	}
+	return response, nil
+}
+
+func (c *client) submitReview(
+	ctx context.Context,
+	reviewRunID string,
+	input worker.SubmitReviewRequest,
+) (worker.SubmitReviewResponse, error) {
+	var response worker.SubmitReviewResponse
+	if err := c.do(ctx, "/worker/reviews/"+url.PathEscape(reviewRunID)+"/submit", input, &response); err != nil {
+		return worker.SubmitReviewResponse{}, err
+	}
+	if response.ID == "" {
+		return worker.SubmitReviewResponse{}, errors.New("control plane returned an incomplete review response")
 	}
 	return response, nil
 }

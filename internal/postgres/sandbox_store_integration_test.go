@@ -785,3 +785,76 @@ func TestAppendSessionEventIsVisibleOnTheSessionStream(t *testing.T) {
 		t.Fatalf("session events = %v, want the two lifecycle events in order", types)
 	}
 }
+
+// grantTestLease hands a fresh lease directly to owner, bypassing
+// ClaimSandboxes's reconcile_after gate — RecordSandboxFailure schedules the
+// next retry well into the future, and this test asserts on successive
+// calls without actually waiting out that backoff.
+func grantTestLease(t *testing.T, fixture sandboxFixture, owner string) {
+	t.Helper()
+	if err := fixture.store.withService(context.Background(), func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			context.Background(),
+			`UPDATE ao_sandboxes
+			SET reconcile_lease_owner = $2, reconcile_lease_until = now() + interval '1 minute'
+			WHERE session_id = $1`,
+			fixture.sessionID, owner,
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("grant test lease: %v", err)
+	}
+}
+
+func sandboxFailureState(t *testing.T, fixture sandboxFixture) (consecutiveFailures int, reconcileAfter time.Time) {
+	t.Helper()
+	if err := fixture.store.withOrg(context.Background(), fixture.orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(
+			context.Background(),
+			`SELECT consecutive_failures, reconcile_after FROM ao_sandboxes WHERE session_id = $1`,
+			fixture.sessionID,
+		).Scan(&consecutiveFailures, &reconcileAfter)
+	}); err != nil {
+		t.Fatalf("read sandbox failure state: %v", err)
+	}
+	return consecutiveFailures, reconcileAfter
+}
+
+func TestRecordSandboxFailureBacksOffExponentiallyAndCapsAtFiveMinutes(t *testing.T) {
+	t.Parallel()
+	fixture := newSandboxFixture(t, "sbx-failure-backoff")
+	ctx := context.Background()
+	owner := "reconciler-" + fixture.unique
+
+	wantBackoffSeconds := []float64{15, 30, 60, 120, 240, 300, 300}
+	for attempt, wantSeconds := range wantBackoffSeconds {
+		grantTestLease(t, fixture, owner)
+		before := time.Now()
+		if err := fixture.store.RecordSandboxFailure(
+			ctx, owner, fixture.orgID, fixture.sessionID, "env-x", "provider unavailable",
+		); err != nil {
+			t.Fatalf("attempt %d: record sandbox failure: %v", attempt+1, err)
+		}
+		consecutiveFailures, reconcileAfter := sandboxFailureState(t, fixture)
+		if consecutiveFailures != attempt+1 {
+			t.Fatalf("attempt %d: consecutive_failures = %d, want %d", attempt+1, consecutiveFailures, attempt+1)
+		}
+		gotSeconds := reconcileAfter.Sub(before).Seconds()
+		if gotSeconds < wantSeconds-2 || gotSeconds > wantSeconds+2 {
+			t.Fatalf("attempt %d: backoff = %.1fs, want ~%.0fs", attempt+1, gotSeconds, wantSeconds)
+		}
+	}
+
+	// A successful observation resets the counter so a later, unrelated
+	// failure starts the backoff over rather than inheriting the 5-minute cap.
+	grantTestLease(t, fixture, owner)
+	if err := fixture.store.UpdateSandboxObservation(
+		ctx, owner, fixture.orgID, fixture.sessionID, "env-x", "running", "", time.Now().Add(time.Minute),
+	); err != nil {
+		t.Fatalf("update sandbox observation: %v", err)
+	}
+	consecutiveFailures, _ := sandboxFailureState(t, fixture)
+	if consecutiveFailures != 0 {
+		t.Fatalf("consecutive_failures after recovery = %d, want 0", consecutiveFailures)
+	}
+}

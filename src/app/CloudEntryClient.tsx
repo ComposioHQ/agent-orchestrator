@@ -13,7 +13,7 @@ export function CloudEntryClient({
   mode,
   nextUi = false,
 }: {
-  mode: "local" | "staging";
+  mode: "local" | "staging" | "production";
   nextUi?: boolean;
 }) {
   const [view, setView] = useState<LocalAuthView>("sign-in");
@@ -135,10 +135,10 @@ export function CloudEntryClient({
             One workspace.
           </h1>
 
-          {mode === "staging" ? (
+          {mode !== "local" ? (
             <>
               <p className="mt-5 max-w-sm text-sm leading-6 text-[#9ba1aa]">
-                Sign in securely with WorkOS to open the hosted staging board.
+                Sign in securely with WorkOS to open your AO Cloud workspace.
               </p>
               <a
                 className="mt-10 inline-flex h-11 w-full items-center justify-center rounded-md bg-[#f4f5f7] px-4 text-sm font-medium text-[#0a0b0d] transition-[background-color,transform] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8bb5ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0b0d] active:scale-[0.99] motion-reduce:transform-none"
