@@ -98,6 +98,19 @@ export class CloudApiError extends Error {
   }
 }
 
+// CloudStreamProtocolError marks an SSE payload as structurally invalid: bad
+// JSON, or valid JSON missing the envelope fields every ClientEvent variant
+// requires. This is distinct from a transport failure (a dropped connection,
+// a 5xx) — retrying the same request will not fix a payload the server
+// actually sent, so streamEvents must never retry on this error, only on
+// CloudApiError with a retryable status or a genuine network failure.
+export class CloudStreamProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CloudStreamProtocolError";
+  }
+}
+
 export class CloudClient {
   readonly baseUrl: string;
 
@@ -1048,10 +1061,45 @@ function parseSSEBlock(block: string): ClientEvent | undefined {
     .filter((line) => line.startsWith("data:"))
     .map((line) => line.slice(5).trimStart())
     .join("\n");
-  return data ? (JSON.parse(data) as ClientEvent) : undefined;
+  if (!data) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(data);
+  } catch (cause) {
+    throw new CloudStreamProtocolError(
+      `Cloud event stream sent a malformed SSE payload: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    );
+  }
+  if (!isClientEventEnvelope(parsed)) {
+    throw new CloudStreamProtocolError(
+      "Cloud event stream sent an event missing its required envelope fields.",
+    );
+  }
+  return parsed;
+}
+
+// isClientEventEnvelope checks the fields every ClientEvent variant shares
+// (sequence, type, sessionId) rather than the full discriminated union, so it
+// doesn't need to track every event type the schema adds. It exists so a
+// server bug or transport corruption produces a clear, non-retryable error
+// instead of a value that merely satisfies the type checker at compile time
+// but crashes (or worse, silently misbehaves) wherever it's used.
+function isClientEventEnvelope(value: unknown): value is ClientEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.sequence === "number" &&
+    Number.isFinite(candidate.sequence) &&
+    typeof candidate.type === "string" &&
+    candidate.type.length > 0 &&
+    typeof candidate.sessionId === "string"
+  );
 }
 
 function isRetryableStreamError(error: unknown): boolean {
+  if (error instanceof CloudStreamProtocolError) return false;
   if (!(error instanceof CloudApiError)) return true;
   return (
     error.status === 408 ||
