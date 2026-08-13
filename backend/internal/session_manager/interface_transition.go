@@ -385,6 +385,9 @@ func (m *Manager) nativeConversationID(
 	}
 	id = strings.TrimSpace(id)
 	if !ok || id == "" {
+		if _, hasProbe := handoff.(ports.AgentInterfaceHandoffHistoryProbe); hasProbe {
+			return "", handoff, nil
+		}
 		return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
 	}
 	return id, handoff, nil
