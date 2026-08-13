@@ -408,7 +408,13 @@ it("creates a standalone scratch project and worker session", async () => {
   expect(screen.getByText("Standalone Agents")).toBeVisible();
 });
 
-it("uses an agent name instead of an orchestrator name for local scratch projects", async () => {
+it("treats a repo-less local scratch project as standalone, not orchestrator/worker", async () => {
+  // A scratch project created without a GitHub repo has nothing for an
+  // orchestrator to check workers out of, so it must not get the
+  // orchestrator/worker-VM treatment — it should behave exactly like the
+  // "Create a Standalone Agent" flow (config.standalone: true, kind:
+  // "worker"), which is also what lets more agents be added into the same
+  // project afterward without implying a fleet under one orchestrator.
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
@@ -421,15 +427,23 @@ it("uses an agent name instead of an orchestrator name for local scratch project
   fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
   await waitFor(() =>
-    expect(mocks.createSession).toHaveBeenCalledWith(
+    expect(mocks.createProject).toHaveBeenCalledWith(
       "org-1",
       expect.objectContaining({
-        kind: "orchestrator",
-        harness: "claude-code",
-        displayName: "Claude agent",
+        displayName: "Local scratch",
+        config: expect.objectContaining({ standalone: true }),
       }),
       { idempotencyKey: "test-key" },
     ),
+  );
+  expect(mocks.createSession).toHaveBeenCalledWith(
+    "org-1",
+    expect.objectContaining({
+      kind: "worker",
+      harness: "claude-code",
+      displayName: "Local scratch",
+    }),
+    { idempotencyKey: "test-key" },
   );
 });
 

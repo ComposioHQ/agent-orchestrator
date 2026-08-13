@@ -248,6 +248,7 @@ const sharedProjectFrom = `
 	FROM ao_project_share_grants grant_row
 	JOIN ao_projects project
 		ON project.org_id = grant_row.org_id AND project.id = grant_row.project_id
+		AND project.archived_at IS NULL
 	LEFT JOIN ao_sessions session_row
 		ON session_row.org_id = grant_row.org_id AND session_row.id = grant_row.session_id
 	JOIN ao_users sharer ON sharer.id = grant_row.shared_by_user_id
@@ -358,6 +359,12 @@ func (s *Store) RedeemProjectShareLink(
 		  AND grant_row.session_id `+nullEqualsClause("$4"),
 		orgID, link.ProjectID, principal.UserID, link.SessionID,
 	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// sharedProjectFrom excludes archived projects, so this is reachable
+		// if the project was archived between the link being created and it
+		// being redeemed — treat it the same as the link not existing.
+		return domain.SharedProject{}, ErrNotFound
+	}
 	if err != nil {
 		return domain.SharedProject{}, fmt.Errorf("load redeemed share grant: %w", err)
 	}

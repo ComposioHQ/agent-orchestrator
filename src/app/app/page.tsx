@@ -503,7 +503,12 @@ export function CloudWorkspace() {
 
   const createScratchProject = async (input: ScratchProjectInput) => {
     if (!input.githubInstallationId) {
-      await createScratchWork(input, "orchestrator");
+      // No repo means there's nothing for an orchestrator to check workers
+      // out of, so the orchestrator/worker-VM model doesn't apply here —
+      // treat it the same as a standalone agent (config.standalone: true),
+      // which is exactly what lets more agents be added into the same
+      // project afterward without implying a fleet under one orchestrator.
+      await createScratchWork(input, "worker");
       return;
     }
     const response = await client.createGitHubScratchProject(
