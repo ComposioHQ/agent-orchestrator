@@ -170,6 +170,15 @@ func (t *Tracker) configForHost(host string) (hostEntry, error) {
 	return hostEntry{}, fmt.Errorf("gitlab tracker: host %q not in allowlist: %w", host, ErrHostNotAllowed)
 }
 
+// ConfigForHost returns nil if the given host is allowed by the tracker
+// (gitlab.com or in AllowedHosts), or ErrHostNotAllowed otherwise. No
+// network call is made — this is safe for use in wiring tests that need to
+// assert host routing without DNS resolution.
+func (t *Tracker) ConfigForHost(host string) error {
+	_, err := t.configForHost(host)
+	return err
+}
+
 // Statically assert Tracker satisfies the port. If this stops compiling, the
 // port shape changed and the adapter needs to follow.
 var _ ports.Tracker = (*Tracker)(nil)

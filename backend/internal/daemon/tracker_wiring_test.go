@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	trackergitlab "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/gitlab"
+	trackermulti "github.com/aoagents/agent-orchestrator/backend/internal/adapters/tracker/multi"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -16,6 +17,8 @@ import (
 // GitLabConfig flows into the tracker's Options. A self-managed host in
 // AllowedHosts should be accepted by the tracker; one not in the list should
 // be rejected with ErrHostNotAllowed.
+//
+// Uses ConfigForHost (no network I/O) instead of Get to avoid real DNS/HTTP.
 func TestNewGitLabTracker_PassesAllowedHosts(t *testing.T) {
 	t.Setenv("AO_GITLAB_TOKEN", "default-token")
 
@@ -34,33 +37,20 @@ func TestNewGitLabTracker_PassesAllowedHosts(t *testing.T) {
 		t.Fatalf("expected *trackergitlab.Tracker, got %T", tracker)
 	}
 
-	// The allowlisted host should be accepted (not rejected as
-	// ErrHostNotAllowed). It will fail with a network error (no real host),
-	// but that proves the host was accepted by the allowlist check.
-	_, err = glTracker.Get(context.Background(), domain.TrackerID{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project#1",
-		Host:     selfHost,
-	})
-	if errors.Is(err, trackergitlab.ErrHostNotAllowed) {
+	// The allowlisted host should be accepted (not ErrHostNotAllowed).
+	if err := glTracker.ConfigForHost(selfHost); err != nil {
 		t.Fatalf("allowlisted host %q was rejected by the tracker: %v", selfHost, err)
 	}
 
 	// An unconfigured host should be rejected with ErrHostNotAllowed.
-	_, err = glTracker.Get(context.Background(), domain.TrackerID{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project#1",
-		Host:     "gitlab.evil.example",
-	})
+	err = glTracker.ConfigForHost("gitlab.evil.example")
 	if !errors.Is(err, trackergitlab.ErrHostNotAllowed) {
 		t.Fatalf("unconfigured host should be rejected with ErrHostNotAllowed, got: %v", err)
 	}
 }
 
 // TestNewGitLabTracker_GitLabComStillWorks verifies that the zero-value host
-// (gitlab.com) still works after wiring — backward compatibility. The host
-// check should pass (not ErrHostNotAllowed); the request will fail with a
-// network error since there's no real gitlab.com, but that's expected.
+// (gitlab.com) still works after wiring — backward compatibility.
 func TestNewGitLabTracker_GitLabComStillWorks(t *testing.T) {
 	t.Setenv("AO_GITLAB_TOKEN", "default-token")
 
@@ -75,14 +65,8 @@ func TestNewGitLabTracker_GitLabComStillWorks(t *testing.T) {
 		t.Fatalf("expected *trackergitlab.Tracker, got %T", tracker)
 	}
 
-	// A zero-value Host (gitlab.com) should NOT be rejected with
-	// ErrHostNotAllowed.
-	_, err = glTracker.Get(context.Background(), domain.TrackerID{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project#1",
-		Host:     "", // gitlab.com
-	})
-	if errors.Is(err, trackergitlab.ErrHostNotAllowed) {
+	// A zero-value Host (gitlab.com) should NOT be rejected.
+	if err := glTracker.ConfigForHost(""); err != nil {
 		t.Fatalf("gitlab.com (Host: \"\") should not be rejected: %v", err)
 	}
 }
@@ -92,7 +76,8 @@ func TestNewGitLabTracker_GitLabComStillWorks(t *testing.T) {
 // correct host. We construct the tracker through the wiring function, then
 // verify the wiring by testing that:
 //   - The tracker was constructed without error (host tokens flowed through).
-//   - The default host uses the default token.
+//   - The self-managed host is accepted (not ErrHostNotAllowed).
+//   - The default host (gitlab.com) is accepted.
 //   - An unconfigured host is still rejected.
 //
 // For full end-to-end token routing, the tracker_test.go in the adapter
@@ -113,31 +98,24 @@ func TestNewGitLabTracker_HostTokensRoutedCorrectly(t *testing.T) {
 		t.Fatalf("newGitLabTracker: %v", err)
 	}
 
-	// The tracker constructed successfully, meaning HostTokens flowed through
-	// without error. Verify the host is accepted (not ErrHostNotAllowed).
 	glTracker, ok := tracker.(*trackergitlab.Tracker)
 	if !ok {
 		t.Fatalf("expected *trackergitlab.Tracker, got %T", tracker)
 	}
 
 	// Self-managed host should be accepted.
-	_, err = glTracker.Get(context.Background(), domain.TrackerID{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project#1",
-		Host:     selfHost,
-	})
-	if errors.Is(err, trackergitlab.ErrHostNotAllowed) {
+	if err := glTracker.ConfigForHost(selfHost); err != nil {
 		t.Fatalf("self-managed host %q with HostTokens was rejected: %v", selfHost, err)
 	}
 
 	// Default host (gitlab.com) should also be accepted.
-	_, err = glTracker.Get(context.Background(), domain.TrackerID{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project#1",
-		Host:     "",
-	})
-	if errors.Is(err, trackergitlab.ErrHostNotAllowed) {
+	if err := glTracker.ConfigForHost(""); err != nil {
 		t.Fatalf("gitlab.com should not be rejected: %v", err)
+	}
+
+	// Unconfigured host should be rejected.
+	if err := glTracker.ConfigForHost("gitlab.attacker.example"); err == nil {
+		t.Fatalf("unconfigured host should be rejected")
 	}
 }
 
@@ -169,19 +147,15 @@ func TestNewGitLabTracker_HostTokensCaseInsensitive(t *testing.T) {
 	// The tracker lowercases AllowedHosts internally. newGitLabTracker must
 	// also lowercase HostTokens keys so they match. If the host is accepted
 	// (not ErrHostNotAllowed), the token was found in the map.
-	_, err = glTracker.Get(context.Background(), domain.TrackerID{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project#1",
-		Host:     "gitlab.internal.example", // lowercase lookup
-	})
-	if errors.Is(err, trackergitlab.ErrHostNotAllowed) {
+	if err := glTracker.ConfigForHost("gitlab.internal.example"); err != nil {
 		t.Fatalf("mixed-case config host should be accepted after lowercasing: %v", err)
 	}
 }
 
 // TestNewGitLabTracker_UnconfiguredHostRejected verifies that a host not in
 // AllowedHosts (and not gitlab.com) is rejected by the tracker before any
-// credential is attached — both via Get and via List.
+// credential is attached — both for Get-style and List-style host lookups
+// (both go through configForHost).
 func TestNewGitLabTracker_UnconfiguredHostRejected(t *testing.T) {
 	t.Setenv("AO_GITLAB_TOKEN", "default-token")
 
@@ -198,24 +172,21 @@ func TestNewGitLabTracker_UnconfiguredHostRejected(t *testing.T) {
 		t.Fatalf("expected *trackergitlab.Tracker, got %T", tracker)
 	}
 
-	// Unconfigured host via Get.
-	_, err = glTracker.Get(context.Background(), domain.TrackerID{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project#1",
-		Host:     "gitlab.attacker.example",
-	})
+	// Unconfigured host via ConfigForHost (covers both Get and List paths,
+	// since both call configForHost before any HTTP).
+	err = glTracker.ConfigForHost("gitlab.attacker.example")
 	if !errors.Is(err, trackergitlab.ErrHostNotAllowed) {
-		t.Fatalf("Get with unconfigured host: err = %v, want ErrHostNotAllowed", err)
+		t.Fatalf("unconfigured host should be rejected with ErrHostNotAllowed, got: %v", err)
 	}
 
-	// Unconfigured host via List.
-	_, err = glTracker.List(context.Background(), domain.TrackerRepo{
-		Provider: domain.TrackerProviderGitLab,
-		Native:   "group/project",
-		Host:     "gitlab.attacker.example",
-	}, domain.ListFilter{})
-	if !errors.Is(err, trackergitlab.ErrHostNotAllowed) {
-		t.Fatalf("List with unconfigured host: err = %v, want ErrHostNotAllowed", err)
+	// Configured host should still pass.
+	if err := glTracker.ConfigForHost("gitlab.internal.example"); err != nil {
+		t.Fatalf("configured host should be accepted: %v", err)
+	}
+
+	// gitlab.com (zero value) should always pass.
+	if err := glTracker.ConfigForHost(""); err != nil {
+		t.Fatalf("gitlab.com should not be rejected: %v", err)
 	}
 }
 
@@ -223,6 +194,15 @@ func TestNewGitLabTracker_UnconfiguredHostRejected(t *testing.T) {
 // GitLabConfig through to newGitLabTracker — a self-managed host configured
 // in GitLabConfig should produce a tracker that accepts that host, and the
 // multi-tracker should be non-nil when the GitLab token is available.
+//
+// To avoid network calls, we verify the multi-tracker is non-nil and that
+// dispatching a Get to the GitLab provider with an unconfigured host
+// returns ErrHostNotAllowed (not ErrUnknownProvider), proving the GitLab
+// sub-tracker is wired with the host allowlist. For an allowlisted host,
+// Get returns ErrHostNotAllowed only when the host is NOT in the allowlist;
+// when it IS allowlisted, Get proceeds to HTTP. To avoid that HTTP call we
+// instead call Get with a deliberately unconfigured host and assert
+// ErrHostNotAllowed, which fires before any network I/O.
 func TestNewMultiTracker_WithGitLabConfig(t *testing.T) {
 	t.Setenv("AO_GITLAB_TOKEN", "default-token")
 	t.Setenv("AO_GITHUB_TOKEN", "")
@@ -241,12 +221,24 @@ func TestNewMultiTracker_WithGitLabConfig(t *testing.T) {
 		t.Fatal("newMultiTracker = nil, want non-nil when GitLab token is available")
 	}
 
-	// The multi-tracker should route GitLab issue lookups. Preflight checks
-	// the default (gitlab.com) token — it may fail due to no real gitlab.com,
-	// but should never return ErrHostNotAllowed.
-	if err := tracker.Preflight(context.Background()); err != nil {
-		if errors.Is(err, trackergitlab.ErrHostNotAllowed) {
-			t.Fatalf("Preflight should not return ErrHostNotAllowed: %v", err)
-		}
+	// Verify the GitLab sub-tracker is registered and wired with the
+	// allowlist by dispatching a Get to a known-unconfigured host. The
+	// tracker rejects it with ErrHostNotAllowed before any HTTP call — no
+	// network I/O occurs.
+	_, err := tracker.Get(context.Background(), domain.TrackerID{
+		Provider: domain.TrackerProviderGitLab,
+		Native:   "group/project#1",
+		Host:     "gitlab.attacker.example",
+	})
+	if !errors.Is(err, trackergitlab.ErrHostNotAllowed) {
+		t.Fatalf("multi-tracker Get with unconfigured host: err = %v, want ErrHostNotAllowed", err)
 	}
+
+	// Also verify the multi-tracker is the concrete multi.Tracker type so
+	// that we know both GitHub and GitLab sub-trackers were considered.
+	mt, ok := tracker.(*trackermulti.Tracker)
+	if !ok {
+		t.Fatalf("expected *trackermulti.Tracker, got %T", tracker)
+	}
+	_ = mt // multi-tracker is non-nil and correctly typed
 }
