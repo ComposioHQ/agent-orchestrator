@@ -920,6 +920,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			Name:         repo.Name,
 			RelativePath: repo.RelativePath,
 			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
+			BaseBranch:   repo.DefaultBranch,
 		})
 	}
 	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
@@ -2888,6 +2889,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		// statement that can change it afterwards.
 		Mode:             domain.NormalizeSessionMode(cfg.RequestedMode),
 		AutoInjectReview: true,
+		AutoInjectCI:     true,
 	}
 }
 

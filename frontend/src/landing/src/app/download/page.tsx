@@ -94,17 +94,48 @@ export default async function DownloadPage() {
     {
       name: "macOS",
       icon: FaApple,
+      // Prefer the .dmg. Mounting it gives the drag-to-Applications window, so
+      // the app lands in /Applications instead of being unzipped into
+      // ~/Downloads and launched from there, which is what leaves macOS running
+      // it translocated or as a stale copy (#3617, #3527).
+      //
+      // Only the STABLE channel builds one. The container costs its own
+      // notarization submission per architecture and nightly publishes far too
+      // often to pay for it, so the nightly rows resolve to their zip
+      // permanently, not just until some later rollout step.
+      //
+      // Every row falls back to the zip FROM THE SAME RELEASE before it falls
+      // back to a DOWNLOAD_URL_* constant. That ordering is load-bearing: those
+      // constants now point at the dmg too, so they are not a safe fallback on
+      // their own. Reading the live release list is what lets this page serve a
+      // real asset rather than a 404 in the window before the first stable dmg
+      // ships, and if the GitHub call fails outright the constant is a guess of
+      // last resort.
       builds: available([
-        build("Mac (Apple silicon)", DOWNLOAD_URL_MAC_ARM64, "Stable"),
-        build("Mac (Intel)", DOWNLOAD_URL_MAC_X64, "Stable"),
         build(
           "Mac (Apple silicon)",
-          assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
+          assetUrl(stable, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-arm64.zip") ??
+            DOWNLOAD_URL_MAC_ARM64,
+          "Stable",
+        ),
+        build(
+          "Mac (Intel)",
+          assetUrl(stable, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-x64.zip") ??
+            DOWNLOAD_URL_MAC_X64,
+          "Stable",
+        ),
+        build(
+          "Mac (Apple silicon)",
+          assetUrl(nightly, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
           "Nightly",
         ),
         build(
           "Mac (Intel)",
-          assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
+          assetUrl(nightly, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
           "Nightly",
         ),
       ]),

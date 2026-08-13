@@ -191,6 +191,22 @@ func (s *Store) SetSessionAutoInjectReview(ctx context.Context, id domain.Sessio
 	return rows > 0, nil
 }
 
+// SetSessionAutoInjectCI persists the default CI-failure injection policy that
+// newly created PRs snapshot. Existing PR rows retain their original value.
+func (s *Store) SetSessionAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionAutoInjectCI(ctx, gen.SetSessionAutoInjectCIParams{
+		ID:           id,
+		AutoInjectCI: autoInject,
+		UpdatedAt:    updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set auto-inject CI for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // SetSessionReviewerHarness persists the reviewer preference for one session.
 func (s *Store) SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
@@ -349,6 +365,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		AutoInjectReview:   row.AutoInjectReview,
+		AutoInjectCI:       row.AutoInjectCI,
 		Metadata: domain.SessionMetadata{
 			Branch:                    row.Branch,
 			WorkspacePath:             row.WorkspacePath,
@@ -419,6 +436,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewRevision:           rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge:        rec.TerminateOnPRMerge,
 		AutoInjectReview:          rec.AutoInjectReview,
+		AutoInjectCI:              rec.AutoInjectCI,
 		CleanupGeneration:         rec.CleanupGeneration,
 		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 		SessionMode:               domain.NormalizeSessionMode(rec.Mode),
@@ -460,6 +478,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewRevision:           rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge:        rec.TerminateOnPRMerge,
 		AutoInjectReview:          rec.AutoInjectReview,
+		AutoInjectCI:              rec.AutoInjectCI,
 		CleanupGeneration:         rec.CleanupGeneration,
 		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 		ProviderConversationID:    rec.Metadata.ProviderConversationID,

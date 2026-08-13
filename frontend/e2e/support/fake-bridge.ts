@@ -127,6 +127,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					openTab: async ({ viewId }: { viewId: string; url?: string }) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -181,6 +186,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				featureBuilds: {
 					list: async () => [],
 					getActive: async () => null,
+				},
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
@@ -540,6 +551,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
 					}),
+					openTab: async ({ viewId }: { viewId: string; url?: string }) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
 					devtools: async (input: { viewId: string }) => ({ viewId: input.viewId, open: false, activeTabId: "" }),
 					destroy: () => undefined,
 					// Annotation contract (mirrors src/preload.ts): useBrowserView subscribes
@@ -588,6 +604,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				featureBuilds: {
 					list: async () => [],
 					getActive: async () => null,
+				},
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
