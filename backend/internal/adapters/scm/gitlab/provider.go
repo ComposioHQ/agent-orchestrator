@@ -73,11 +73,11 @@ type Provider struct {
 	// FetchReviewThreads, ListPRsByRepo, and the fork-resolution path.
 	cache *cache
 
-	// identity caches the authenticated account so it is resolved at most
-	// once for the provider's lifetime.
-	identityMu       sync.Mutex
-	identity         ports.SCMIdentity
-	identityResolved bool
+	// hostIdentities caches the authenticated account per-host so each host
+	// is resolved at most once for the provider's lifetime. The key is the
+	// normalized host string (empty string = gitlab.com).
+	hostIdentities map[string]ports.SCMIdentity
+	identityMu     sync.Mutex
 }
 
 // NewProvider creates a GitLab SCM provider. If SkipTokenPreflight is false
@@ -235,13 +235,34 @@ func (p *Provider) clientForRepoErr(repo ports.SCMRepo) (*Client, error) {
 // classification reuses the existing isBotAuthor heuristic (project/group
 // bot username patterns, [bot] suffixes, known bot accounts).
 func (p *Provider) AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity, error) {
+	return p.AuthenticatedIdentityForHost(ctx, "")
+}
+
+// AuthenticatedIdentityForHost resolves the account associated with the
+// GitLab token for the given host. For gitlab.com (or empty string) it uses
+// the default client; for self-managed hosts it uses clientForHost to select
+// the correct client and token. Successful results are cached per-host for
+// the provider's lifetime — a second call for the same host does not hit the
+// API.
+//
+// A host that is neither gitlab.com nor in the allowlist returns an error.
+func (p *Provider) AuthenticatedIdentityForHost(ctx context.Context, host string) (ports.SCMIdentity, error) {
+	key := NormalizeHost(host)
 	p.identityMu.Lock()
 	defer p.identityMu.Unlock()
-	if p.identityResolved {
-		return p.identity, nil
+	if p.hostIdentities == nil {
+		p.hostIdentities = make(map[string]ports.SCMIdentity)
+	}
+	if ident, ok := p.hostIdentities[key]; ok {
+		return ident, nil
 	}
 
-	resp, err := p.client.doGET(ctx, "/user", nil)
+	client := p.clientForHost(host)
+	if client == nil {
+		return ports.SCMIdentity{}, fmt.Errorf("gitlab scm: host %q not in allowlist: %w", host, ErrHostNotAllowed)
+	}
+
+	resp, err := client.doGET(ctx, "/user", nil)
 	if err != nil {
 		return ports.SCMIdentity{}, err
 	}
@@ -254,12 +275,12 @@ func (p *Provider) AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity
 	}
 
 	login := strings.TrimSpace(user.Username)
-	p.identity = ports.SCMIdentity{
+	ident := ports.SCMIdentity{
 		Login: login,
 		Human: !isBotAuthor(login),
 	}
-	p.identityResolved = true
-	return p.identity, nil
+	p.hostIdentities[key] = ident
+	return ident, nil
 }
 
 // SCMCredentialsAvailable reports whether usable GitLab credentials exist.

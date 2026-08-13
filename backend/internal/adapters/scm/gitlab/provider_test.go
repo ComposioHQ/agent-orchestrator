@@ -2872,6 +2872,231 @@ func TestAuthenticatedIdentityAuthErrorNotCached(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// AuthenticatedIdentityForHost tests (ticket 04 — per-host identity)
+// ---------------------------------------------------------------------------
+
+// TestAuthenticatedIdentityForHost_TwoHostsDifferentIdentities verifies that
+// AuthenticatedIdentityForHost resolves the correct identity per host. Two
+// hosts with different tokens must return different identities — the GitLab
+// provider uses clientForHost(host) to select the correct client, so a
+// self-managed GitLab instance with a different token resolves its own
+// identity rather than the gitlab.com default.
+func TestAuthenticatedIdentityForHost_TwoHostsDifferentIdentities(t *testing.T) {
+	// Two test servers: one for gitlab.com (default), one for self-managed.
+	// Each returns a different /user response.
+	defaultSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "alice-dotcom"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(defaultSrv.Close)
+
+	selfManagedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "bob-internal"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(selfManagedSrv.Close)
+
+	// Build a provider whose default client points at defaultSrv, and whose
+	// hostClientCfg uses a rewriteTransport that routes self-managed host
+	// requests to selfManagedSrv.
+	p, err := NewProvider(ProviderOptions{
+		Token:              StaticTokenSource("dotcom-token"),
+		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.internal"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.client = NewClient(ClientOptions{
+		Token:    StaticTokenSource("dotcom-token"),
+		RESTBase: defaultSrv.URL + "/api/v4",
+	})
+	p.hostClientCfg = ClientOptions{
+		Token: StaticTokenSource("internal-token"),
+		HTTPClient: &http.Client{
+			Transport: &rewriteTransport{target: selfManagedSrv.URL},
+		},
+	}
+
+	// gitlab.com (empty host) → alice-dotcom
+	identDefault, err := p.AuthenticatedIdentityForHost(context.Background(), "")
+	if err != nil {
+		t.Fatalf("AuthenticatedIdentityForHost empty host: %v", err)
+	}
+	if identDefault.Login != "alice-dotcom" {
+		t.Errorf("default host identity = %q, want %q", identDefault.Login, "alice-dotcom")
+	}
+	if !identDefault.Human {
+		t.Errorf("default host identity Human = false, want true")
+	}
+
+	// self-managed host → bob-internal
+	identSelf, err := p.AuthenticatedIdentityForHost(context.Background(), "gitlab.internal")
+	if err != nil {
+		t.Fatalf("AuthenticatedIdentityForHost(gitlab.internal): %v", err)
+	}
+	if identSelf.Login != "bob-internal" {
+		t.Errorf("self-managed host identity = %q, want %q", identSelf.Login, "bob-internal")
+	}
+	if !identSelf.Human {
+		t.Errorf("self-managed host identity Human = false, want true")
+	}
+
+	// The two identities must differ — this is the core bug the ticket fixes:
+	// the old code always used p.client (gitlab.com) for /user, so a self-managed
+	// host with a different token resolved the wrong identity.
+	if identDefault.Login == identSelf.Login {
+		t.Errorf("both hosts returned the same identity %q — per-host identity not working", identDefault.Login)
+	}
+}
+
+// TestAuthenticatedIdentityForHost_PerHostCaching verifies that a second call
+// for the same host does not hit the API — the identity is cached per-host for
+// the provider's lifetime.
+func TestAuthenticatedIdentityForHost_PerHostCaching(t *testing.T) {
+	var defaultCalls atomic.Int32
+	var selfManagedCalls atomic.Int32
+
+	defaultSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			defaultCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "alice-dotcom"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(defaultSrv.Close)
+
+	selfManagedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			selfManagedCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "bob-internal"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(selfManagedSrv.Close)
+
+	p, err := NewProvider(ProviderOptions{
+		Token:              StaticTokenSource("dotcom-token"),
+		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.internal"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.client = NewClient(ClientOptions{
+		Token:    StaticTokenSource("dotcom-token"),
+		RESTBase: defaultSrv.URL + "/api/v4",
+	})
+	p.hostClientCfg = ClientOptions{
+		Token: StaticTokenSource("internal-token"),
+		HTTPClient: &http.Client{
+			Transport: &rewriteTransport{target: selfManagedSrv.URL},
+		},
+	}
+
+	// First call for each host — should hit the respective API.
+	if _, err := p.AuthenticatedIdentityForHost(context.Background(), ""); err != nil {
+		t.Fatalf("first default call: %v", err)
+	}
+	if _, err := p.AuthenticatedIdentityForHost(context.Background(), "gitlab.internal"); err != nil {
+		t.Fatalf("first self-managed call: %v", err)
+	}
+	if got := defaultCalls.Load(); got != 1 {
+		t.Fatalf("default /user calls after first round = %d, want 1", got)
+	}
+	if got := selfManagedCalls.Load(); got != 1 {
+		t.Fatalf("self-managed /user calls after first round = %d, want 1", got)
+	}
+
+	// Second call for each host — must be served from cache (no API hit).
+	identDefault2, err := p.AuthenticatedIdentityForHost(context.Background(), "")
+	if err != nil {
+		t.Fatalf("second default call: %v", err)
+	}
+	identSelf2, err := p.AuthenticatedIdentityForHost(context.Background(), "gitlab.internal")
+	if err != nil {
+		t.Fatalf("second self-managed call: %v", err)
+	}
+	if got := defaultCalls.Load(); got != 1 {
+		t.Errorf("default /user calls after second round = %d, want 1 (cached)", got)
+	}
+	if got := selfManagedCalls.Load(); got != 1 {
+		t.Errorf("self-managed /user calls after second round = %d, want 1 (cached)", got)
+	}
+
+	// Cached identities must still be correct.
+	if identDefault2.Login != "alice-dotcom" {
+		t.Errorf("cached default identity = %q, want %q", identDefault2.Login, "alice-dotcom")
+	}
+	if identSelf2.Login != "bob-internal" {
+		t.Errorf("cached self-managed identity = %q, want %q", identSelf2.Login, "bob-internal")
+	}
+}
+
+// TestAuthenticatedIdentityDelegatesToForHost verifies that the existing
+// AuthenticatedIdentity(ctx) method delegates to AuthenticatedIdentityForHost
+// with the default host (empty string = gitlab.com).
+func TestAuthenticatedIdentityDelegatesToForHost(t *testing.T) {
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			calls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "alice"})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	_, p := testServer(t, handler)
+
+	// AuthenticatedIdentity should produce the same result as
+	// AuthenticatedIdentityForHost with empty host.
+	ident1, err := p.AuthenticatedIdentity(context.Background())
+	if err != nil {
+		t.Fatalf("AuthenticatedIdentity: %v", err)
+	}
+	ident2, err := p.AuthenticatedIdentityForHost(context.Background(), "")
+	if err != nil {
+		t.Fatalf("AuthenticatedIdentityForHost empty host: %v", err)
+	}
+	if ident1 != ident2 {
+		t.Errorf("AuthenticatedIdentity = %#v, AuthenticatedIdentityForHost empty host = %#v — must be identical", ident1, ident2)
+	}
+	// Both calls share the same per-host cache entry for "", so only one API hit.
+	if got := calls.Load(); got != 1 {
+		t.Errorf("GET /user calls = %d, want 1 (AuthenticatedIdentity must share cache with AuthenticatedIdentityForHost)", got)
+	}
+}
+
+// TestAuthenticatedIdentityForHost_RejectedHost verifies that a host not in
+// the allowlist is rejected before any credential is attached.
+func TestAuthenticatedIdentityForHost_RejectedHost(t *testing.T) {
+	p, err := NewProvider(ProviderOptions{
+		Token:              StaticTokenSource("tok"),
+		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.internal"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = p.AuthenticatedIdentityForHost(context.Background(), "gitlab.evil.example")
+	if err == nil {
+		t.Fatal("expected error for non-allowlisted host, got nil")
+	}
+	if !errors.Is(err, ErrHostNotAllowed) {
+		t.Fatalf("expected ErrHostNotAllowed, got %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // requested_changes → ReviewChangesRequest override tests
 // ---------------------------------------------------------------------------
 
