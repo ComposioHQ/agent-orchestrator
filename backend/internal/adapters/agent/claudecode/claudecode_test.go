@@ -1033,6 +1033,20 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerDraft,
 		},
 		{
+			name: "permission wording in completed response is not current chrome",
+			output: "The command asked: Do you want to proceed?\n" +
+				"It then said: Press enter to confirm.\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "interrupt wording in completed response is not active chrome",
+			output: "The status previously read esc to interrupt while the command ran.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
 			name: "transcript marker is outside current surface",
 			output: "Earlier output mentioned esc to interrupt\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n" +
 				"❯\u00a0",

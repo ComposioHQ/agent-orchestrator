@@ -215,6 +215,15 @@ func (transitionSurfaceAgent) InspectTerminalSurface(output string) ports.Termin
 	}
 }
 
+type transitionSurfaceDetectorAgent struct{ transitionSurfaceAgent }
+
+func (transitionSurfaceDetectorAgent) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
+	if output == idleTerminalOutput {
+		return domain.ActivityIdle, true
+	}
+	return "", false
+}
+
 const (
 	idleTerminalOutput      = "idle"
 	draftTerminalOutput     = "draft"
@@ -713,28 +722,57 @@ func TestInterfaceTransitionTUIToChatFailsClosedWhenStaleIdleCannotBeVerified(t 
 	}
 }
 
-func TestInterfaceTransitionTUIToChatRequiresStyledOutputForSurfaceProof(t *testing.T) {
-	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
-	useFastInterfaceTransitionTimings(manager)
-	manager.agents = singleAgent{agent: transitionSurfaceAgent{}}
-	manager.runtime = &unstyledTransitionRuntime{runtime: runtime}
-	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
-	runtime.outputs = []string{idleTerminalOutput}
+func TestInterfaceTransitionTUIToChatFallsBackWhenStyledOutputIsUnavailable(t *testing.T) {
+	tests := []struct {
+		name         string
+		agent        ports.Agent
+		activityAt   func(time.Time) time.Time
+		wantCaptures bool
+	}{
+		{
+			name:       "causally fresh durable idle",
+			agent:      transitionSurfaceAgent{},
+			activityAt: func(inputAt time.Time) time.Time { return inputAt },
+		},
+		{
+			name:         "stale idle verified by legacy detector",
+			agent:        transitionSurfaceDetectorAgent{},
+			activityAt:   func(inputAt time.Time) time.Time { return inputAt.Add(-time.Minute) },
+			wantCaptures: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+			useFastInterfaceTransitionTimings(manager)
+			manager.agents = singleAgent{agent: tt.agent}
+			manager.runtime = &unstyledTransitionRuntime{runtime: runtime}
+			runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+			runtime.outputs = []string{idleTerminalOutput}
+			inputAt := time.Now()
+			rec := store.sessions["session-1"]
+			rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: tt.activityAt(inputAt)}
+			store.sessions["session-1"] = rec
+			manager.SetTerminalInputGate(&transitionInputGate{
+				acquired: make(chan string, 1), released: make(chan string, 1), lastInputAt: inputAt,
+			})
 
-	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
-		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	settled := awaitTransition(t, store, transition.ID)
-	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "DRAIN_QUIESCENCE_UNVERIFIED" {
-		t.Fatalf("transition = %+v, want fail-closed styled-capture error", settled)
-	}
-	if runtime.outputCalls != 0 {
-		t.Fatalf("plain terminal captures = %d, want none for a styled safety proof", runtime.outputCalls)
-	}
-	if runtime.destroyed != 0 {
-		t.Fatalf("source runtime destroyed %d times without styled proof", runtime.destroyed)
+			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+				domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settled := awaitTransition(t, store, transition.ID)
+			if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+				t.Fatalf("transition = %+v, want completed fallback drain", settled)
+			}
+			if tt.wantCaptures && runtime.outputCalls == 0 {
+				t.Fatal("legacy terminal detector was not consulted")
+			}
+			if !tt.wantCaptures && runtime.outputCalls != 0 {
+				t.Fatalf("plain terminal captures = %d, want fresh durable idle to avoid capture", runtime.outputCalls)
+			}
+		})
 	}
 }
 

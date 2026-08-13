@@ -543,7 +543,11 @@ func (m *Manager) prepareSourceHandoff(
 		surfaceInspector, _ = agent.(ports.TerminalSurfaceInspector)
 	}
 	styledOutput, _ := m.runtime.(ports.StyledTerminalOutputReader)
-	requiresSurfaceProof := surfaceInspector != nil
+	// Surface proof is a joint capability: the adapter must understand its TUI
+	// and the runtime must preserve the styling that distinguishes provider chrome
+	// from human-authored text. ConPTY intentionally lacks styled capture, so it
+	// retains the causally-fresh idle / legacy detector fallback below.
+	requiresSurfaceProof := surfaceInspector != nil && styledOutput != nil
 	ticker := time.NewTicker(m.interfaceTransition.pollInterval)
 	defer ticker.Stop()
 	idleSince := time.Time{}
