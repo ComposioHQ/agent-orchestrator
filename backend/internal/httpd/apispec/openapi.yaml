@@ -1782,6 +1782,57 @@ paths:
       summary: Write images into a running session's worktree and return their paths
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/auto-inject-ci:
+    patch:
+      operationId: setSessionAutoInjectCI
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionAutoInjectCIRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionAutoInjectCIResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the automatic CI-failure injection default for new session PRs
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/auto-inject-review:
     patch:
       operationId: setSessionAutoInjectReview
@@ -4980,6 +5031,8 @@ components:
       properties:
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        autoInjectCI:
+          type: boolean
         autoInjectReview:
           type: boolean
         branch:
@@ -5094,6 +5147,7 @@ components:
       - isTerminated
       - terminateOnPrMerge
       - autoInjectReview
+      - autoInjectCI
       - createdAt
       - updatedAt
       - isPinned
@@ -6927,6 +6981,8 @@ components:
       type: object
     SessionPRCISummary:
       properties:
+        autoInjectCI:
+          type: boolean
         failingChecks:
           items:
             $ref: '#/components/schemas/SessionPRFailingCheck'
@@ -6941,6 +6997,7 @@ components:
       required:
       - state
       - failingChecks
+      - autoInjectCI
       type: object
     SessionPRConflictFile:
       properties:
@@ -7143,6 +7200,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
@@ -7366,6 +7424,29 @@ components:
       - ok
       - reviewSessionId
       type: object
+    SetSessionAutoInjectCIRequest:
+      properties:
+        autoInjectCI:
+          type: boolean
+      required:
+      - autoInjectCI
+      type: object
+    SetSessionAutoInjectCIResponse:
+      properties:
+        autoInjectCI:
+          type: boolean
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - autoInjectCI
+      - session
+      type: object
     SetSessionAutoInjectReviewRequest:
       properties:
         autoInjectReview:
@@ -7572,6 +7653,11 @@ components:
         prompt:
           maxLength: 4096
           type: string
+        trackerProvider:
+          enum:
+          - github
+          - gitlab
+          type: string
       required:
       - projectId
       type: object
@@ -7741,6 +7827,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
