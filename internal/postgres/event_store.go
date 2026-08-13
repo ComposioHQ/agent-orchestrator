@@ -71,6 +71,20 @@ func sendMessageTx(
 	if err != nil {
 		return domain.ClientEvent{}, err
 	}
+	// A user message is proof of life: wake a sandbox the idle-pause scanner
+	// paused for silence. No-op (0 rows) for a sandbox that was never paused,
+	// or paused for another reason (deleted, user-stopped) — this only ever
+	// widens desired_state from 'paused' to 'running', never overrides a
+	// desired 'stopped' or 'deleted' set explicitly elsewhere.
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE ao_sandboxes
+		SET desired_state = 'running', reconcile_after = now(), updated_at = now()
+		WHERE session_id = $1 AND org_id = $2 AND desired_state = 'paused'`,
+		sessionID, orgID,
+	); err != nil {
+		return domain.ClientEvent{}, err
+	}
 	if _, err := tx.Exec(
 		ctx,
 		`UPDATE ao_commands
@@ -263,7 +277,7 @@ func appendUserMessageEvent(
 	err := tx.QueryRow(
 		ctx,
 		`UPDATE ao_sessions
-		SET next_sequence = next_sequence + 1, updated_at = now()
+		SET next_sequence = next_sequence + 1, updated_at = now(), last_user_message_at = now()
 		WHERE org_id = $1 AND id = $2 AND is_terminated = false
 		RETURNING next_sequence - 1`,
 		orgID,

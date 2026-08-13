@@ -62,6 +62,17 @@ type Sandbox struct {
 	UpdatedAt        time.Time
 }
 
+// SandboxRef identifies one session's sandbox across organizations. It carries
+// nothing but the two keys other tenant-scoped stores need, because the
+// control-plane-wide scan that produces it (RunningSandboxSessions) runs under
+// a service context that only ao_sandboxes grants — a caller must re-enter a
+// specific org's tenant context before reading or writing anything else about
+// that session.
+type SandboxRef struct {
+	OrgID     string
+	SessionID string
+}
+
 // AccessTicket is a one-time, capability-scoped grant. Only its SHA-256 hash is
 // stored; the plaintext is handed to a sandbox once and never persisted.
 type AccessTicket struct {

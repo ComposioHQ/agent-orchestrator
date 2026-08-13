@@ -16,6 +16,7 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/config"
 	"github.com/Untrivial-ai/ao-cloud/internal/githubapp"
 	"github.com/Untrivial-ai/ao-cloud/internal/httpapi"
+	"github.com/Untrivial-ai/ao-cloud/internal/idlepause"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
 	"github.com/Untrivial-ai/ao-cloud/internal/reconcile"
 	"github.com/Untrivial-ai/ao-cloud/internal/sandbox"
@@ -258,6 +259,15 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// The scanner only has anything to do where sandboxes exist to pause.
+	var idlePauseScanner *idlepause.Scanner
+	if reconciler != nil {
+		idlePauseScanner = idlepause.New(store, idlepause.Options{
+			Interval:      cfg.IdlePauseInterval,
+			IdleThreshold: cfg.IdlePauseThreshold,
+			Logger:        logger,
+		})
+	}
 	// Worker tokens are only issued where sandboxes are provisioned. Leaving
 	// this nil elsewhere is what makes the worker routes 404 instead of
 	// accepting credentials no sandbox could have been given.
@@ -316,6 +326,18 @@ func run(logger *slog.Logger) error {
 			)
 			if err := reconciler.Run(ctx); err != nil {
 				logger.Error("sandbox reconciler stopped", "error", err)
+			}
+		}()
+	}
+
+	if idlePauseScanner != nil {
+		go func() {
+			logger.Info("idle-pause scanner started",
+				"interval", cfg.IdlePauseInterval,
+				"idle_threshold", cfg.IdlePauseThreshold,
+			)
+			if err := idlePauseScanner.Run(ctx); err != nil {
+				logger.Error("idle-pause scanner stopped", "error", err)
 			}
 		}()
 	}
