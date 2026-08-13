@@ -1,27 +1,30 @@
 import "server-only";
 
-export type CloudWebMode = "local" | "staging";
+export type CloudWebMode = "local" | "staging" | "production";
 
 export function cloudWebMode(): CloudWebMode {
   const value = process.env.AO_CLOUD_WEB_MODE?.trim() || "local";
-  if (value !== "local" && value !== "staging") {
-    throw new Error("AO_CLOUD_WEB_MODE must be local or staging.");
+  if (value !== "local" && value !== "staging" && value !== "production") {
+    throw new Error("AO_CLOUD_WEB_MODE must be local, staging, or production.");
   }
   return value;
 }
 
 export function cloudApiBaseUrl(): string {
+  const mode = cloudWebMode();
   const fallback =
-    cloudWebMode() === "local"
+    mode === "local"
       ? "http://127.0.0.1:8081"
-      : "https://staging-api.aoagents.dev";
+      : mode === "production"
+        ? "https://api.aoagents.dev"
+        : "https://staging-api.aoagents.dev";
   const value = process.env.AO_CLOUD_WEB_API_BASE_URL?.trim() || fallback;
   const url = new URL(value);
   if (url.search || url.hash || url.pathname !== "/") {
     throw new Error("AO_CLOUD_WEB_API_BASE_URL must be an origin.");
   }
-  if (cloudWebMode() === "staging" && url.protocol !== "https:") {
-    throw new Error("Staging Cloud UI requires an HTTPS API origin.");
+  if (mode !== "local" && url.protocol !== "https:") {
+    throw new Error("Hosted Cloud UI requires an HTTPS API origin.");
   }
   return url.origin;
 }
@@ -66,16 +69,41 @@ export function repositoryBrokerToken(): string {
   return value;
 }
 
-export function cloudControlEnvironment(): "development" | "staging" {
-  return cloudWebMode() === "local" ? "development" : "staging";
+export function cloudControlEnvironment(): "development" | "staging" | "production" {
+  const mode = cloudWebMode();
+  return mode === "local" ? "development" : mode;
 }
 
+// workosRedirectUri validates by mode because the two shapes are not just
+// different values, they are different threat models. local/staging always
+// run on a developer's own machine (see scripts/cloud-web-staging.sh), so a
+// loopback HTTP URL is the correct, tighter constraint there — accepting a
+// real hostname would let a misconfigured environment variable silently send
+// WorkOS auth codes to somewhere other than the machine running the server.
+// production is the one shape meant to be reached at a real public hostname.
 export function workosRedirectUri(): string {
   const value = process.env.WORKOS_REDIRECT_URI?.trim();
   if (!value) {
     throw new Error("WORKOS_REDIRECT_URI is required for WorkOS sign-in.");
   }
   const url = new URL(value);
+  if (cloudWebMode() === "production") {
+    if (
+      url.protocol !== "https:" ||
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.pathname !== "/callback" ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    ) {
+      throw new Error(
+        "WORKOS_REDIRECT_URI must be a public HTTPS /callback URL for production.",
+      );
+    }
+    return url.href;
+  }
   if (
     url.protocol !== "http:" ||
     (url.hostname !== "localhost" && url.hostname !== "127.0.0.1") ||

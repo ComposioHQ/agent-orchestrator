@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  mode: vi.fn<() => "local" | "staging">(),
+  mode: vi.fn<() => "local" | "staging" | "production">(),
   withAuth: vi.fn(),
 }));
 

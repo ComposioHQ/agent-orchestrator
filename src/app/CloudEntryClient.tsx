@@ -8,7 +8,11 @@ import { PrismLogoGrid } from "./auth/PrismLogoGrid";
 
 type LocalAuthView = "sign-in" | "create-account";
 
-export function CloudEntryClient({ mode }: { mode: "local" | "staging" }) {
+export function CloudEntryClient({
+  mode,
+}: {
+  mode: "local" | "staging" | "production";
+}) {
   const [view, setView] = useState<LocalAuthView>("sign-in");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -65,7 +69,13 @@ export function CloudEntryClient({ mode }: { mode: "local" | "staging" }) {
           <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-[#646a73]">
             <span>AO Cloud</span>
             <span aria-hidden="true">/</span>
-            <span>{mode === "local" ? "Local development" : "Staging"}</span>
+            <span>
+              {mode === "local"
+                ? "Local development"
+                : mode === "production"
+                  ? "Production"
+                  : "Staging"}
+            </span>
           </div>
           <h1 className="mt-3 text-[clamp(2rem,4vw,3.25rem)] font-medium leading-none tracking-[-0.055em]">
             Your agents.
@@ -73,10 +83,10 @@ export function CloudEntryClient({ mode }: { mode: "local" | "staging" }) {
             One workspace.
           </h1>
 
-          {mode === "staging" ? (
+          {mode !== "local" ? (
             <>
               <p className="mt-5 max-w-sm text-sm leading-6 text-[#9ba1aa]">
-                Sign in securely with WorkOS to open the hosted staging board.
+                Sign in securely with WorkOS to open your AO Cloud workspace.
               </p>
               <a
                 className="mt-10 inline-flex h-11 w-full items-center justify-center rounded-md bg-[#f4f5f7] px-4 text-sm font-medium text-[#0a0b0d] transition-[background-color,transform] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8bb5ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0b0d] active:scale-[0.99] motion-reduce:transform-none"

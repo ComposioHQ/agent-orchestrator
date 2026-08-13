@@ -8,7 +8,7 @@ import {
 } from "@/lib/cloud-config";
 
 export async function GET(request: NextRequest) {
-  if (cloudWebMode() === "staging") {
+  if (cloudWebMode() !== "local") {
     await signOut({ returnTo: "/" });
     return new NextResponse(null, { status: 204 });
   }

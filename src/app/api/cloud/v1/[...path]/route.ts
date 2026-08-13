@@ -479,7 +479,7 @@ type ScratchCapabilityResponse = {
   githubInstallationId: string;
   githubRepositoryId: string;
   userExternalId: string;
-  targetEnvironment: "development" | "staging";
+  targetEnvironment: "development" | "staging" | "production";
 };
 
 async function createSplitAuthorityScratchProject(
