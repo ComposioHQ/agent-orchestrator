@@ -18,9 +18,15 @@ const (
 // TrackerID identifies one issue. Native is the provider's own canonical form
 // ("owner/repo#123" for GitHub, "group/project#123" for GitLab) and is
 // parsed by the adapter.
+//
+// Host is the GitLab instance host (e.g. "gitlab.example.com"). The zero value
+// "" means the default host gitlab.com, so all existing call sites that
+// construct TrackerID without setting Host continue to work unchanged.
 type TrackerID struct {
 	Provider TrackerProvider `json:"provider"`
 	Native   string          `json:"native"`
+	// Host is the GitLab instance host; "" means gitlab.com.
+	Host string `json:"host,omitempty"`
 }
 
 // NormalizedIssueState is the cross-provider issue-state vocabulary every
@@ -52,9 +58,15 @@ type Issue struct {
 // TrackerRepo identifies a repository for cross-issue queries like Tracker.List.
 // Native is the provider's canonical owner/project form, e.g. "owner/repo"
 // for GitHub or "group/project" for GitLab.
+//
+// Host is the GitLab instance host (e.g. "gitlab.example.com"). The zero value
+// "" means the default host gitlab.com, so all existing call sites that
+// construct TrackerRepo without setting Host continue to work unchanged.
 type TrackerRepo struct {
 	Provider TrackerProvider `json:"provider"`
 	Native   string          `json:"native"`
+	// Host is the GitLab instance host; "" means gitlab.com.
+	Host string `json:"host,omitempty"`
 }
 
 // ListStateFilter narrows Tracker.List results by the provider's coarse
