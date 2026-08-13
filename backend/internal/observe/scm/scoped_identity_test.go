@@ -120,7 +120,7 @@ func TestPoll_TwoGitLabHostsIdentityResolution(t *testing.T) {
 	}}
 	scoped := &fakeScopedIdentityResolver{
 		identities: map[string]ports.SCMIdentity{
-			identityKey("gitlab", "gitlab.com"):     {Login: "comuser", Human: true},
+			identityKey("gitlab", "gitlab.com"):      {Login: "comuser", Human: true},
 			identityKey("gitlab", "gitlab.internal"): {Login: "internaluser", Human: true},
 		},
 	}
@@ -182,7 +182,7 @@ func TestPoll_PerProviderIdentityResolution(t *testing.T) {
 	}}
 	scoped := &fakeScopedIdentityResolver{
 		identities: map[string]ports.SCMIdentity{
-			identityKey("github", "github.com"):   {Login: "octocat", Human: true},
+			identityKey("github", "github.com"): {Login: "octocat", Human: true},
 			identityKey("gitlab", "gitlab.com"): {Login: "gitlabuser", Human: true},
 		},
 	}

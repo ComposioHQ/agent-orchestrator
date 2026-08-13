@@ -2940,7 +2940,7 @@ func TestPoll_RepoRefreshMonotonicity_ListingFailsButPRSucceeds(t *testing.T) {
 		listErr: errors.New("gitlab 502"),
 		// A changed commit-check ETag promotes the PR to a refresh candidate
 		// even though the listing failed.
-		checkGuards: map[string]ports.SCMGuardResult{commitKey(testRepo, local.HeadSHA): {ETag: "checks2"}},
+		checkGuards:  map[string]ports.SCMGuardResult{commitKey(testRepo, local.HeadSHA): {ETag: "checks2"}},
 		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): successObs},
 	}
 	lc := &fakeLifecycle{}
