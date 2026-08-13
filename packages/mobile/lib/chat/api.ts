@@ -288,6 +288,7 @@ export async function streamGlobalConversationEvents(
 	after: number,
 	signal: AbortSignal,
 	onEvent: (event: ConversationEvent) => void,
+	onCursorReset?: (cursor: number) => void,
 ): Promise<number> {
 	const res = await expoFetch(`${httpBase(cfg)}${API}/events?after=${Math.max(0, after)}`, {
 		headers: { ...authHeaders(cfg), Accept: "text/event-stream" },
@@ -295,11 +296,17 @@ export async function streamGlobalConversationEvents(
 	});
 	if (!res.ok) throw await streamError(res);
 	if (!res.body) throw new Error("The mobile network stack did not provide an event stream");
+	const advertisedAfterHeader = res.headers.get("X-AO-Event-After");
+	const advertisedAfter = advertisedAfterHeader === null ? Number.NaN : Number(advertisedAfterHeader);
+	const effectiveAfter = Number.isSafeInteger(advertisedAfter) && advertisedAfter >= 0
+		? advertisedAfter
+		: after;
+	if (effectiveAfter !== after) onCursorReset?.(effectiveAfter);
 
 	const decoder = new TextDecoder();
 	const reader = res.body.getReader();
 	let buffer = "";
-	let cursor = after;
+	let cursor = effectiveAfter;
 	try {
 		while (!signal.aborted) {
 			const { done, value } = await reader.read();

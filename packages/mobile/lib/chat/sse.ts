@@ -35,27 +35,37 @@ const CURSOR_PERSIST_DELAY_MS = 500;
 
 export function createCursorPersister(
 	persist: (cursor: number) => void | Promise<void>,
-): { update(cursor: number): void; flush(): void } {
+): { update(cursor: number): void; replace(cursor: number): void; flush(): void } {
 	let latest = 0;
 	let persisted = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 
-	const commit = () => {
-		timer = undefined;
-		if (latest <= persisted) return;
-		persisted = latest;
+	const save = (cursor: number) => {
 		try {
-			const result = persist(latest);
+			const result = persist(cursor);
 			if (result) void result.catch(() => {});
 		} catch {
 			// Cursor persistence is an optimization. Durable replay remains authoritative.
 		}
+	};
+	const commit = () => {
+		timer = undefined;
+		if (latest <= persisted) return;
+		persisted = latest;
+		save(latest);
 	};
 
 	return {
 		update(cursor) {
 			latest = Math.max(latest, cursor);
 			if (!timer) timer = setTimeout(commit, CURSOR_PERSIST_DELAY_MS);
+		},
+		replace(cursor) {
+			if (timer) clearTimeout(timer);
+			timer = undefined;
+			latest = cursor;
+			persisted = cursor;
+			save(cursor);
 		},
 		flush() {
 			if (timer) clearTimeout(timer);

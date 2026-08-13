@@ -1,11 +1,11 @@
-import type { RankedSuggestion } from "./composerSuggestions";
+import type { ComposerPickerCatalog } from "./composerSuggestions";
 import type { ConversationMarker } from "./timelineModel";
 import type { ChatConfigOption, ChatModel, ConversationSnapshot, TurnSettings } from "./types";
 
 export type ChatSheetEntry =
 	| { kind: "turn-settings"; snapshot: ConversationSnapshot; models: ChatModel[]; options: ChatConfigOption[]; disabled?: boolean; error?: string; onSettings(settings: TurnSettings): Promise<void>; onOption(id: string, value: { value: string } | { enabled: boolean }): Promise<ChatConfigOption[]>; onRefresh(): Promise<{ models: ChatModel[]; configOptions: ChatConfigOption[] }> }
 	| { kind: "conversation-map"; markers: ConversationMarker[]; onSelect(sequence: number): void }
-	| { kind: "composer-picker"; pickerKind: "skills" | "files"; choices: RankedSuggestion[]; truncated?: boolean; onSelect(value: string): void };
+	| { kind: "composer-picker"; catalog: ComposerPickerCatalog; initialQuery?: string; truncated?: boolean; onSelect(value: string): void };
 
 const entries = new Map<string, ChatSheetEntry>();
 let sequence = 0;

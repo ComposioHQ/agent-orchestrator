@@ -14,8 +14,6 @@ import type { ChatConfigOption, ChatImage, ChatResource, ChatSkill, Conversation
 import {
 	composerSuggestionKey,
 	findComposerSuggestion,
-	rankComposerFiles,
-	rankComposerSkills,
 	replaceComposerSuggestion,
 	type ComposerSuggestion,
 } from "./composerSuggestions";
@@ -176,8 +174,10 @@ export function ChatComposer({
 			const currentTrigger = findComposerSuggestion(latestText.current, latestCursor.current);
 			if (!currentTrigger || composerSuggestionKey(currentTrigger) !== composerSuggestionKey(activeTrigger)) return;
 		}
-		const choices = kind === "skills" ? rankComposerSkills(loadedSkills, activeTrigger?.query ?? "") : rankComposerFiles(loadedFiles.paths, activeTrigger?.query ?? "");
-		router.push(chatSheetRoute({ kind: "composer-picker", pickerKind: kind, choices, truncated: kind === "files" ? loadedFiles.truncated : undefined, onSelect: (value) => {
+		const pickerCatalog = kind === "skills"
+			? { kind, skills: loadedSkills } as const
+			: { kind, paths: loadedFiles.paths } as const;
+		router.push(chatSheetRoute({ kind: "composer-picker", catalog: pickerCatalog, initialQuery: activeTrigger?.query, truncated: kind === "files" ? loadedFiles.truncated : undefined, onSelect: (value) => {
 			setText((old) => {
 				const next = activeTrigger ? replaceComposerSuggestion(old, activeTrigger, value) : `${old}${old && !/\s$/.test(old) ? " " : ""}${kind === "skills" ? `/${value}` : (/\s/.test(value) ? `"${value}"` : value)} `;
 				setCursor(next.length);

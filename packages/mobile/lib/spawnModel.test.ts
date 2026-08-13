@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { modelOverride, resolveSpawnModel, spawnModelSourceChanged } from "./spawnModel";
+import { modelOverride, resolveSpawnAgent, resolveSpawnModel, spawnModelSourceChanged } from "./spawnModel";
+
+describe("spawn agent resolution", () => {
+	it("prefers the project's worker agent when it is available", () => {
+		expect(resolveSpawnAgent({
+			projectWorkerAgent: "codex",
+			projectAgent: "claude-code",
+			availableAgents: ["claude-code", "codex"],
+		})).toBe("codex");
+	});
+
+	it("falls back through the project agent and catalog order", () => {
+		expect(resolveSpawnAgent({
+			projectWorkerAgent: "missing",
+			projectAgent: "claude-code",
+			availableAgents: ["codex", "claude-code"],
+		})).toBe("claude-code");
+		expect(resolveSpawnAgent({
+			availableAgents: ["codex", "claude-code"],
+		})).toBe("codex");
+	});
+});
 
 describe("spawn model resolution", () => {
 	it("prefers the project worker model for its configured worker agent", () => {

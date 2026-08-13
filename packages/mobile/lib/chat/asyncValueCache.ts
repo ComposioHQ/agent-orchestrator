@@ -7,6 +7,10 @@ export type AsyncValueCache<K, V> = {
 	delete(key: K): void;
 };
 
+// This stays local intentionally: Chat needs only a bounded TTL map with
+// in-flight request sharing and explicit invalidation. Pulling in a query-cache
+// framework for those four semantics would add app-wide lifecycle behavior the
+// callers neither configure nor use.
 export function createAsyncValueCache<K, V>(
 	maxEntries: number,
 	ttlMs: number,

@@ -63,6 +63,20 @@ describe("conversation cursor persistence", () => {
 		vi.runAllTimers();
 		expect(persisted).toEqual([7]);
 	});
+
+	it("replaces a higher persisted cursor when the daemon reports a reset", () => {
+		vi.useFakeTimers();
+		const persisted: number[] = [];
+		const persister = sse.createCursorPersister((cursor) => { persisted.push(cursor); });
+
+		persister.update(100);
+		vi.advanceTimersByTime(500);
+		persister.replace(0);
+		persister.update(1);
+		vi.advanceTimersByTime(500);
+
+		expect(persisted).toEqual([100, 0, 1]);
+	});
 });
 
 describe("conversation event subscriptions", () => {

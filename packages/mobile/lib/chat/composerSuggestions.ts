@@ -15,6 +15,16 @@ export type RankedSuggestion = {
 
 const MAX_SUGGESTIONS = 80;
 
+export type ComposerPickerCatalog =
+	| { kind: "skills"; skills: readonly ChatSkill[] }
+	| { kind: "files"; paths: readonly string[] };
+
+export function rankComposerCatalog(catalog: ComposerPickerCatalog, query: string): RankedSuggestion[] {
+	return catalog.kind === "skills"
+		? rankComposerSkills(catalog.skills, query)
+		: rankComposerFiles(catalog.paths, query);
+}
+
 /**
  * Match the desktop composer's text contract exactly.
  *

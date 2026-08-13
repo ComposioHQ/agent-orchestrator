@@ -35,11 +35,20 @@ export function useConversationEventTransport(cfg: ServerConfig | null): void {
 			while (!stopped) {
 				controller = new AbortController();
 				try {
-					cursor = await streamGlobalConversationEvents(cfg, cursor, controller.signal, (event) => {
-						cursor = Math.max(cursor, event.seq);
-						cursorPersister.update(cursor);
-						registry.publish(event);
-					});
+					cursor = await streamGlobalConversationEvents(
+						cfg,
+						cursor,
+						controller.signal,
+						(event) => {
+							cursor = Math.max(cursor, event.seq);
+							cursorPersister.update(cursor);
+							registry.publish(event);
+						},
+						(resetCursor) => {
+							cursor = resetCursor;
+							cursorPersister.replace(resetCursor);
+						},
+					);
 					delay = RECONNECT_MIN_MS;
 				} catch {
 					if (stopped || controller.signal.aborted) return;

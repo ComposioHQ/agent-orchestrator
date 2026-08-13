@@ -23,7 +23,7 @@ import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
 import { agentSheetRoute, modelSheetRoute, projectSheetRoute } from "../lib/sheetResult";
 import { screenKeyboardAvoidance } from "../lib/session/keyboardInset";
-import { modelOverride, resolveSpawnModel, spawnModelSourceChanged } from "../lib/spawnModel";
+import { modelOverride, resolveSpawnAgent, resolveSpawnModel, spawnModelSourceChanged } from "../lib/spawnModel";
 import { useApp } from "../lib/store";
 import type { Theme } from "../lib/theme";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
@@ -37,6 +37,7 @@ export default function SpawnModal() {
 
 	const [projectId, setProjectId] = useState<string | null>(null);
 	const [harness, setHarness] = useState("");
+	const [agentTouched, setAgentTouched] = useState(false);
 	const [mode, setMode] = useState<SessionMode>("chat");
 	const [chatHarnesses, setChatHarnesses] = useState<string[]>([]);
 	const [prompt, setPrompt] = useState("");
@@ -44,6 +45,7 @@ export default function SpawnModal() {
 	const [modelTouched, setModelTouched] = useState(false);
 	const [modelCatalog, setModelCatalog] = useState<AgentModelCatalog>();
 	const [projectDetail, setProjectDetail] = useState<ProjectDetail>();
+	const [projectDetailLoadedFor, setProjectDetailLoadedFor] = useState<string | null>(null);
 	const [modelLoading, setModelLoading] = useState(false);
 	const [modelError, setModelError] = useState<string>();
 	const [busy, setBusy] = useState(false);
@@ -95,8 +97,6 @@ export default function SpawnModal() {
 				setCatalog(c);
 				setChatHarnesses(settings.chatHarnesses);
 				setCatalogError(null);
-				const ranked = rankAgents(c).filter((agent) => settings.chatHarnesses.includes(agent.id));
-				setHarness((h) => (h && settings.chatHarnesses.includes(h) ? h : (defaultAgent(ranked) ?? "")));
 			})
 			.catch((e) => {
 				// Previously swallowed into `catalog = null`, which left an empty
@@ -125,26 +125,52 @@ export default function SpawnModal() {
 	const displayedModelLabel = displayedModel ? modelCatalog?.models.find((item) => item.id === displayedModel)?.label ?? displayedModel : "Auto";
 
 	useEffect(() => {
-		if (!config || !projectId || !harness) { setProjectDetail(undefined); setModelCatalog(undefined); return; }
+		if (!config || !projectId) { setProjectDetail(undefined); setProjectDetailLoadedFor(null); return; }
+		let cancelled = false;
+		setProjectDetailLoadedFor(null);
+		getProject(config, projectId)
+			.then((nextProject) => { if (!cancelled) setProjectDetail(nextProject); })
+			.catch((cause) => { if (!cancelled) setModelError(cause instanceof Error ? cause.message : String(cause)); })
+			.finally(() => { if (!cancelled) setProjectDetailLoadedFor(projectId); });
+		return () => { cancelled = true; };
+	}, [config, projectId]);
+
+	useEffect(() => {
+		if (agentTouched || loading || !catalog) return;
+		if (projectId && projectDetailLoadedFor !== projectId) return;
+		const nextHarness = resolveSpawnAgent({
+			projectWorkerAgent: projectDetail?.config?.worker?.agent,
+			projectAgent: projectDetail?.agent,
+			availableAgents: agents.filter((agent) => agent.selectable).map((agent) => agent.id),
+		});
+		setHarness((current) => current === nextHarness ? current : nextHarness);
+	}, [agentTouched, agents, catalog, loading, projectDetail, projectDetailLoadedFor, projectId]);
+
+	useEffect(() => {
+		if (!config || !projectId || !harness) { setModelCatalog(undefined); return; }
 		let cancelled = false;
 		setModelLoading(true);
-		Promise.all([getProject(config, projectId), getAgentModels(config, harness, projectId)])
-			.then(([nextProject, nextCatalog]) => { if (!cancelled) { setProjectDetail(nextProject); setModelCatalog(nextCatalog); setModelError(nextCatalog.warning); } })
+		getAgentModels(config, harness, projectId)
+			.then((nextCatalog) => { if (!cancelled) { setModelCatalog(nextCatalog); setModelError(nextCatalog.warning); } })
 			.catch((cause) => { if (!cancelled) setModelError(cause instanceof Error ? cause.message : String(cause)); })
 			.finally(() => { if (!cancelled) setModelLoading(false); });
 		return () => { cancelled = true; };
 	}, [config, harness, projectId]);
 
 	const clearModelOverride = () => { setModel(""); setModelTouched(false); };
-	const resetModelSource = () => { clearModelOverride(); setModelCatalog(undefined); setProjectDetail(undefined); setModelError(undefined); };
+	const resetModelSource = () => { clearModelOverride(); setModelCatalog(undefined); setModelError(undefined); };
 	const selectProject = (nextProjectId: string) => {
 		if (!spawnModelSourceChanged({ projectId, agentId: harness }, { projectId: nextProjectId, agentId: harness })) return;
 		resetModelSource();
+		setProjectDetail(undefined);
+		setProjectDetailLoadedFor(null);
+		setAgentTouched(false);
 		setProjectId(nextProjectId);
 	};
 	const selectAgent = (nextHarness: string) => {
 		if (!spawnModelSourceChanged({ projectId, agentId: harness }, { projectId, agentId: nextHarness })) return;
 		resetModelSource();
+		setAgentTouched(true);
 		setHarness(nextHarness);
 	};
 	const selectMode = (nextMode: SessionMode) => {
@@ -152,8 +178,10 @@ export default function SpawnModal() {
 		const nextHarness = nextMode === "chat"
 			? (chatHarnesses.includes(harness) ? harness : (defaultAgent(allAgents.filter((agent) => chatHarnesses.includes(agent.id))) ?? ""))
 			: (harness || (defaultAgent(allAgents) ?? ""));
-		if (spawnModelSourceChanged({ projectId, agentId: harness }, { projectId, agentId: nextHarness })) resetModelSource();
-		else clearModelOverride();
+		if (spawnModelSourceChanged({ projectId, agentId: harness }, { projectId, agentId: nextHarness })) {
+			resetModelSource();
+			setAgentTouched(false);
+		}
 		setMode(nextMode);
 		setHarness(nextHarness);
 	};

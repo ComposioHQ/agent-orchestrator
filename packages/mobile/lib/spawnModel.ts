@@ -7,6 +7,19 @@ export type SpawnModelDefaults = {
 
 export type SpawnModelSource = { projectId: string | null; agentId: string };
 
+export type SpawnAgentDefaults = {
+	projectWorkerAgent?: string;
+	projectAgent?: string;
+	availableAgents: readonly string[];
+};
+
+export function resolveSpawnAgent(input: SpawnAgentDefaults): string {
+	for (const candidate of [input.projectWorkerAgent, input.projectAgent]) {
+		if (candidate && input.availableAgents.includes(candidate)) return candidate;
+	}
+	return input.availableAgents[0] ?? "";
+}
+
 export function spawnModelSourceChanged(current: SpawnModelSource, next: SpawnModelSource): boolean {
 	return current.projectId !== next.projectId || current.agentId !== next.agentId;
 }

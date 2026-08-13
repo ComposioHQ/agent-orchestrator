@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	findComposerSuggestion,
 	composerSuggestionKey,
+	rankComposerCatalog,
 	rankComposerFiles,
 	rankComposerSkills,
 	replaceComposerSuggestion,
@@ -44,5 +45,14 @@ describe("mobile Chat composer suggestions", () => {
 			.toBe("files:8:12:src");
 		expect(composerSuggestionKey({ kind: "files", query: "src/a", start: 8, end: 14 }))
 			.not.toBe("files:8:12:src");
+	});
+
+	it("searches the full catalog before limiting visible picker results", () => {
+		const files = Array.from({ length: 100 }, (_, index) => `src/common-${index}.ts`);
+		files.push("deep/only-target.ts");
+
+		expect(rankComposerCatalog({ kind: "files", paths: files }, "only-target")).toEqual([
+			{ value: "deep/only-target.ts", label: "only-target.ts", detail: "deep" },
+		]);
 	});
 });
