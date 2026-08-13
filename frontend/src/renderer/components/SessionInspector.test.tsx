@@ -423,12 +423,12 @@ describe("SessionInspector PR section", () => {
 		}
 		expect(
 			screen.getByRole("button", {
-				name: "When enabled, CI failures are sent to the worker agent and displayed in the pull request summary.",
+				name: "When disabled, CI failures are only displayed in the pull request summary and are not sent to the worker agent.",
 			}),
 		).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", {
-				name: "When enabled, AO terminates this session after all pull requests merge.",
+				name: "When disabled, AO keeps this session open after all pull requests merge.",
 			}),
 		).toBeInTheDocument();
 	});
