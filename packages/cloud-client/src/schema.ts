@@ -794,6 +794,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cloud/v1/me/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The caller's own personal coding-agent connections — usable in
+         *     every organization they belong to, not just one. Distinct from an
+         *     organization's shared connections at .../provider-connections.
+         *      */
+        get: operations["listUserProviderConnections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cloud/v1/me/providers/{provider}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: "claude-code" | "codex" | "cursor";
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Creates or replaces the caller's own personal connection for one provider. */
+        put: operations["putUserProviderConnection"];
+        post?: never;
+        delete: operations["deleteUserProviderConnection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cloud/v1/worker/bootstrap": {
         parameters: {
             query?: never;
@@ -3680,6 +3719,79 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description The coding-agent credential was disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listUserProviderConnections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redacted personal provider connection metadata. Secrets are never returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        providerConnections: components["schemas"]["RedactedProviderConnection"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    putUserProviderConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: "claude-code" | "codex" | "cursor";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutAgentProviderConnectionInput"];
+            };
+        };
+        responses: {
+            /** @description The validated coding-agent credential was encrypted and stored. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        providerConnection: components["schemas"]["RedactedProviderConnection"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteUserProviderConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: "claude-code" | "codex" | "cursor";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The personal coding-agent credential was disconnected. */
             204: {
                 headers: {
                     [name: string]: unknown;

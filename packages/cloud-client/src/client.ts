@@ -846,6 +846,36 @@ export class CloudClient {
     await this.throwIfError(response);
   }
 
+  async listUserProviderConnections(
+    options: RequestOptions = {},
+  ): Promise<RedactedProviderConnection[]> {
+    const response = await this.request<{
+      providerConnections: RedactedProviderConnection[];
+    }>("/api/cloud/v1/me/providers", options);
+    return response.providerConnections;
+  }
+
+  putUserProviderConnection(
+    provider: "claude-code" | "codex" | "cursor",
+    input: PutAgentProviderConnectionInput,
+    options: RequestOptions = {},
+  ): Promise<{ providerConnection: RedactedProviderConnection }> {
+    return this.request(
+      `/api/cloud/v1/me/providers/${encodeURIComponent(provider)}`,
+      { method: "PUT", body: input, signal: options.signal },
+    );
+  }
+
+  deleteUserProviderConnection(
+    provider: "claude-code" | "codex" | "cursor",
+    options: RequestOptions = {},
+  ): Promise<void> {
+    return this.request(
+      `/api/cloud/v1/me/providers/${encodeURIComponent(provider)}`,
+      { method: "DELETE", signal: options.signal },
+    );
+  }
+
   private orgPath(orgId: string, path: string): string {
     return `/api/cloud/v1/orgs/${encodeURIComponent(orgId)}${path}`;
   }

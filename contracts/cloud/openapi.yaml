@@ -1066,6 +1066,68 @@ paths:
           description: The coding-agent credential was disconnected.
         default:
           $ref: "#/components/responses/Error"
+  /api/cloud/v1/me/providers:
+    get:
+      operationId: listUserProviderConnections
+      tags: [Providers]
+      description: |
+        The caller's own personal coding-agent connections — usable in
+        every organization they belong to, not just one. Distinct from an
+        organization's shared connections at .../provider-connections.
+      responses:
+        "200":
+          description: Redacted personal provider connection metadata. Secrets are never returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [providerConnections]
+                properties:
+                  providerConnections:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RedactedProviderConnection"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/cloud/v1/me/providers/{provider}:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [claude-code, codex, cursor]
+    put:
+      operationId: putUserProviderConnection
+      tags: [Providers]
+      description: Creates or replaces the caller's own personal connection for one provider.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutAgentProviderConnectionInput"
+      responses:
+        "200":
+          description: The validated coding-agent credential was encrypted and stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [providerConnection]
+                properties:
+                  providerConnection:
+                    $ref: "#/components/schemas/RedactedProviderConnection"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteUserProviderConnection
+      tags: [Providers]
+      responses:
+        "204":
+          description: The personal coding-agent credential was disconnected.
+        default:
+          $ref: "#/components/responses/Error"
   /api/cloud/v1/worker/bootstrap:
     post:
       operationId: bootstrapWorker
