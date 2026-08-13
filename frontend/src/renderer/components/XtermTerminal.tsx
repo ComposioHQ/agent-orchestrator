@@ -50,7 +50,10 @@ export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
 	fontSize?: number;
+	isFullscreen?: boolean;
 	theme: Theme;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
 	/**
 	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
 	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
@@ -66,6 +69,8 @@ export type XtermTerminalProps = {
 	onVisibleSize?: (cols: number, rows: number) => void;
 	/** Hidden retained terminals keep parsing output but expose no UI overlays. */
 	isVisible?: boolean;
+	/** Move keyboard focus into xterm when a controller needs human input. */
+	focusRequested?: boolean;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
 	 * handle stays valid until unmount; cols/rows are live getters.
@@ -909,6 +914,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		};
 	}, []);
 
+	useEffect(() => {
+		if (!props.focusRequested || props.isVisible === false) return undefined;
+		try {
+			termRef.current?.focus();
+		} catch {
+			// The retained terminal may have been parked during this effect.
+		}
+		return undefined;
+	}, [props.focusRequested, props.isVisible]);
+
 	useLayoutEffect(() => {
 		if (props.isVisible === false) setContextMenuOpen(false);
 	}, [props.isVisible, setContextMenuOpen]);
@@ -924,6 +939,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const term = termRef.current;
 		if (term) callbacksRef.current.onVisibleSize?.(term.cols, term.rows);
 	}, [props.isVisible]);
+
+	const fullscreenElement = document.fullscreenElement;
+	const contextMenuPortalContainer =
+		props.isFullscreen &&
+		fullscreenElement instanceof HTMLElement &&
+		hostRef.current &&
+		fullscreenElement.contains(hostRef.current)
+			? fullscreenElement
+			: undefined;
 
 	return (
 		<>
@@ -961,6 +985,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					align="start"
 					className="min-w-36"
 					onCloseAutoFocus={(event) => event.preventDefault()}
+					portalContainer={contextMenuPortalContainer}
 					side="right"
 					sideOffset={2}
 				>
@@ -985,6 +1010,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
+					{props.onToggleFullscreen ? (
+						<DropdownMenuItem
+							onSelect={() => {
+								setContextMenuOpen(false);
+								callbacksRef.current.onToggleFullscreen?.();
+							}}
+						>
+							{props.isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
+						</DropdownMenuItem>
+					) : null}
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</>

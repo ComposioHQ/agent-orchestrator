@@ -90,6 +90,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						issueId: session.issueId,
 						provider: toAgentProvider(session.harness),
 						reviewerHarness: toReviewerHarnessId(session.reviewerHarness),
+						autoReviewEnabled: session.autoReviewEnabled ?? false,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
 						// Carried through verbatim: the session surface must render from
 						// the mode this session was created with, not from whatever the
@@ -100,6 +101,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						scmStatus,
 						isTerminated: session.isTerminated,
 						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
+						autoInjectReview: session.autoInjectReview ?? true,
+						autoInjectCI: session.autoInjectCI ?? true,
 						createdAt: session.createdAt,
 						updatedAt: session.updatedAt,
 						activity,

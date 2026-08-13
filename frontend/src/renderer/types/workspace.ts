@@ -1,96 +1,20 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
+import {
+	AGENT_OPTIONS,
+	toSessionActivity,
+	toSessionStatus,
+	type AgentId,
+	type SessionActivity,
+	type SessionActivityState,
+	type SessionStatus,
+} from "@aoagents/product-ui";
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
-export type SessionStatus =
-	| "working"
-	| "pr_open"
-	| "draft"
-	| "ci_failed"
-	| "review_pending"
-	| "changes_requested"
-	| "approved"
-	| "mergeable"
-	| "merged"
-	| "needs_input"
-	| "exited"
-	| "no_signal"
-	| "idle"
-	| "terminated"
-	| "unknown";
+export { toSessionActivity, toSessionStatus };
+export type { SessionActivity, SessionActivityState, SessionStatus };
 
-const sessionStatuses = new Set<SessionStatus>([
-	"working",
-	"pr_open",
-	"draft",
-	"ci_failed",
-	"review_pending",
-	"changes_requested",
-	"approved",
-	"mergeable",
-	"merged",
-	"needs_input",
-	"exited",
-	"no_signal",
-	"idle",
-	"terminated",
-]);
-
-export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
-	if (status && sessionStatuses.has(status as SessionStatus)) return status as SessionStatus;
-	return isTerminated ? "terminated" : "unknown";
-}
-
-export type SessionActivityState = "active" | "idle" | "waiting_input" | "blocked" | "exited" | "unknown";
-
-const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "blocked", "exited"]);
-
-export type SessionActivity = {
-	state: SessionActivityState;
-	lastActivityAt: string;
-};
-
-export function toSessionActivity(
-	activity?: { state?: string; lastActivityAt?: string } | null,
-): SessionActivity | undefined {
-	if (!activity) return undefined;
-	const state = sessionActivityStates.has(activity.state as SessionActivityState)
-		? (activity.state as SessionActivityState)
-		: "unknown";
-	return {
-		state,
-		lastActivityAt: activity.lastActivityAt ?? "",
-	};
-}
-
-export type AgentProvider =
-	| "codex"
-	| "claude-code"
-	| "opencode"
-	| "aider"
-	| "grok"
-	| "droid"
-	| "amp"
-	| "agy"
-	| "crush"
-	| "cursor"
-	| "qwen"
-	| "copilot"
-	| "goose"
-	| "auggie"
-	| "continue"
-	| "devin"
-	| "cline"
-	| "kimi"
-	| "muse"
-	| "kiro"
-	| "kilocode"
-	| "vibe"
-	| "pi"
-	| "kimchi"
-	| "prime-agent"
-	| "autohand"
-	| "fake";
+export type AgentProvider = AgentId | "fake";
 
 /** A file changed in a worker workspace (drives the review rail). */
 export type ChangedFile = {
@@ -136,6 +60,8 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: ReviewerHarnessId;
+	/** Whether the daemon may automatically review this session after it becomes idle. */
+	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session
@@ -151,6 +77,10 @@ export type WorkspaceSession = {
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
+	/** Whether SCM review feedback is automatically injected into the worker. */
+	autoInjectReview?: boolean;
+	/** Default captured by newly created PRs for automatic CI-failure injection. */
+	autoInjectCI?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
@@ -356,6 +286,7 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 }
 
 export function toAgentProvider(provider?: string): AgentProvider {
+<<<<<<< HEAD
 	switch (provider) {
 		case "claude-code":
 		case "opencode":
@@ -387,4 +318,8 @@ export function toAgentProvider(provider?: string): AgentProvider {
 		default:
 			return "codex";
 	}
+=======
+	if (provider === "fake") return provider;
+	return AGENT_OPTIONS.find((candidate) => candidate === provider) ?? "codex";
+>>>>>>> upstream/main
 }

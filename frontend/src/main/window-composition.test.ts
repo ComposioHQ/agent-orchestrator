@@ -3,8 +3,10 @@ import { createWindowComposition } from "./window-composition";
 
 function setup() {
 	let bounds = { x: 0, y: 0, width: 900, height: 640 };
+	let boundsChanged: (() => void) | undefined;
 	const addChildView = vi.fn();
 	const removeChildView = vi.fn();
+	const removeListener = vi.fn();
 	const close = vi.fn();
 	const view = {
 		webContents: { close },
@@ -13,10 +15,16 @@ function setup() {
 		setVisible: vi.fn(),
 	};
 	const mainWindow = {
-		contentView: { addChildView, removeChildView },
-		getContentBounds: () => bounds,
+		contentView: {
+			addChildView,
+			getBounds: () => bounds,
+			on: vi.fn((event: string, listener: () => void) => {
+				if (event === "bounds-changed") boundsChanged = listener;
+			}),
+			removeChildView,
+			removeListener,
+		},
 		isDestroyed: () => false,
-		on: vi.fn(),
 	};
 	function FakeWebContentsView() {
 		return view;
@@ -26,7 +34,20 @@ function setup() {
 		WebContentsView: FakeWebContentsView as never,
 		preload: "/preload.js",
 	});
-	return { addChildView, bounds: () => bounds, close, composition, mainWindow, removeChildView, view };
+	return {
+		addChildView,
+		bounds: () => bounds,
+		close,
+		composition,
+		emitBoundsChanged: () => boundsChanged?.(),
+		mainWindow,
+		removeChildView,
+		removeListener,
+		setBounds: (next: typeof bounds) => {
+			bounds = next;
+		},
+		view,
+	};
 }
 
 describe("createWindowComposition", () => {
@@ -44,14 +65,16 @@ describe("createWindowComposition", () => {
 	});
 
 	it("resizes and disposes the explicit shell without recreating it", () => {
-		const { bounds, close, composition, removeChildView, view } = setup();
+		const { bounds, close, composition, emitBoundsChanged, removeChildView, removeListener, setBounds, view } = setup();
 
 		(view.setBounds as ReturnType<typeof vi.fn>).mockClear();
-		composition.resize();
-		expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 900, height: 640 });
-		expect(bounds()).toEqual({ x: 0, y: 0, width: 900, height: 640 });
+		setBounds({ x: 0, y: 0, width: 1920, height: 1080 });
+		emitBoundsChanged();
+		expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 1920, height: 1080 });
+		expect(bounds()).toEqual({ x: 0, y: 0, width: 1920, height: 1080 });
 
 		composition.dispose();
+		expect(removeListener).toHaveBeenCalledWith("bounds-changed", composition.resize);
 		expect(removeChildView).toHaveBeenCalledWith(view);
 		expect(close).toHaveBeenCalledOnce();
 	});

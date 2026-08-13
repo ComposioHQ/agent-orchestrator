@@ -390,6 +390,31 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 	}
 }
 
+func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Model = "project-model"
+	store.projects[string(chatTestProject)] = project
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		AgentConfig:   ports.AgentConfig{Model: "request-model"},
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Model; got != "request-model" {
+		t.Fatalf("controller model = %q, want request-model", got)
+	}
+}
+
 // A controller that fails to start must leave nothing running and no live row.
 func TestChatSpawnRollsBackWhenControllerFailsToStart(t *testing.T) {
 	mgr, store, runtime := newChatManager(&recordingLauncher{startErr: errors.New("app-server exited")})
@@ -524,7 +549,7 @@ func TestSendRoutesIntoTheChatConversation(t *testing.T) {
 		t.Fatalf("Spawn: %v", err)
 	}
 
-	if err := mgr.Send(ctx, rec.ID, "relayed from an orchestrator"); err != nil {
+	if err := mgr.Send(ctx, rec.ID, "relayed from an orchestrator", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(launcher.relayed) != 1 || launcher.relayed[0] != "relayed from an orchestrator" {
@@ -563,7 +588,7 @@ func TestSendRefusedForTerminatedChatSession(t *testing.T) {
 		t.Fatalf("Kill: %v", err)
 	}
 
-	err = mgr.Send(ctx, rec.ID, "too late")
+	err = mgr.Send(ctx, rec.ID, "too late", nil)
 	if !errors.Is(err, ErrTerminated) {
 		t.Fatalf("err = %v, want ErrTerminated", err)
 	}

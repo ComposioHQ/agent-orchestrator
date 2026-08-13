@@ -23,9 +23,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
 )
 
 // Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
@@ -71,6 +73,14 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
 var _ ports.TerminalActivityDetector = (*Plugin)(nil)
+var _ ports.EmptyComposerDetector = (*Plugin)(nil)
+
+// ComposerIsEmpty recognizes Codex's blank composer or its dim placeholder.
+// Normal text after the prompt marker is treated as a human draft and causes
+// optional semantic handoff collection to fail closed.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	return terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "›")
+}
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -112,29 +122,22 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	cmd = []string{binary}
-	appendNoUpdateCheckFlag(&cmd)
-	appendHideRateLimitNudgeFlag(&cmd)
-	appendHookTrustBypassFlag(&cmd)
-	appendApprovalFlags(&cmd, cfg.Permissions)
-	if err := appendSessionHookFlags(&cmd); err != nil {
+	var providerArgs []string
+	if err := appendSessionHookFlags(&providerArgs); err != nil {
 		return nil, err
 	}
-	appendTerminalCompatibilityFlags(&cmd)
-	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
-	appendModelFlag(&cmd, cfg.Config)
-
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
-	}
-
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
-	}
-
-	return cmd, nil
+	appendTerminalCompatibilityFlags(&providerArgs)
+	return agentruntime.BuildLaunchCommand(agentruntime.LaunchConfig{
+		Harness:          agentruntime.HarnessCodex,
+		Binary:           binary,
+		WorkspacePath:    cfg.WorkspacePath,
+		Model:            cfg.Config.Model,
+		Prompt:           cfg.Prompt,
+		SystemPrompt:     cfg.SystemPrompt,
+		SystemPromptFile: cfg.SystemPromptFile,
+		Permission:       agentruntime.PermissionPolicy(cfg.Permissions),
+		ProviderArgs:     providerArgs,
+	})
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing Codex
@@ -145,35 +148,36 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
-	if agentSessionID == "" {
+	if _, ok := agentruntime.RestoreIdentity(
+		agentruntime.HarnessCodex,
+		cfg.Session.ID,
+		cfg.Session.Metadata,
+	); !ok {
 		return nil, false, nil
 	}
-
 	binary, err := p.codexBinary(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 24)
-	cmd = append(cmd, binary, "resume")
-	appendNoUpdateCheckFlag(&cmd)
-	appendHideRateLimitNudgeFlag(&cmd)
-	appendHookTrustBypassFlag(&cmd)
-	appendApprovalFlags(&cmd, cfg.Permissions)
-	if err := appendSessionHookFlags(&cmd); err != nil {
+	var providerArgs []string
+	if err := appendSessionHookFlags(&providerArgs); err != nil {
 		return nil, false, err
 	}
-	appendTerminalCompatibilityFlags(&cmd)
-	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
-	appendModelFlag(&cmd, cfg.Config)
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
-	}
-	cmd = append(cmd, agentSessionID)
-	return cmd, true, nil
+	appendTerminalCompatibilityFlags(&providerArgs)
+	return agentruntime.BuildRestoreCommand(agentruntime.RestoreConfig{
+		Harness:          agentruntime.HarnessCodex,
+		Binary:           binary,
+		SessionID:        cfg.Session.ID,
+		Metadata:         cfg.Session.Metadata,
+		WorkspacePath:    cfg.Session.WorkspacePath,
+		Model:            cfg.Config.Model,
+		Prompt:           cfg.Prompt,
+		SystemPrompt:     cfg.SystemPrompt,
+		SystemPromptFile: cfg.SystemPromptFile,
+		Permission:       agentruntime.PermissionPolicy(cfg.Permissions),
+		ProviderArgs:     providerArgs,
+	})
 }
 
 // SessionInfo surfaces Codex hook-derived metadata. Metadata is intentionally
@@ -300,17 +304,25 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
+	if status, ok := codexAuthStatusFromOutput(out); ok {
+		return status, nil
+	}
+	// The probe is advisory. Version skew, transient startup failures, and
+	// unfamiliar output are not proof that credentials are invalid; the actual
+	// launch remains the authoritative check.
+	_ = err
+	return ports.AgentAuthStatusUnknown, nil
+}
+
+func codexAuthStatusFromOutput(out []byte) (ports.AgentAuthStatus, bool) {
 	text := strings.ToLower(string(out))
 	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnauthorized, true
 	}
 	if strings.Contains(text, "logged in") {
-		return ports.AgentAuthStatusAuthorized, nil
+		return ports.AgentAuthStatusAuthorized, true
 	}
-	if err != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
-	return ports.AgentAuthStatusUnknown, nil
+	return ports.AgentAuthStatusUnknown, false
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,
@@ -487,28 +499,6 @@ func appendHookTrustBypassFlag(cmd *[]string) {
 func appendTerminalCompatibilityFlags(cmd *[]string) {
 	if runtime.GOOS == "windows" {
 		*cmd = append(*cmd, "--no-alt-screen")
-	}
-}
-
-func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
-	if model := strings.TrimSpace(cfg.Model); model != "" {
-		*cmd = append(*cmd, "--model", model)
-	}
-}
-
-func appendApprovalFlags(cmd *[]string, permissions ports.PermissionMode) {
-	switch ports.NormalizePermissionMode(permissions) {
-	case ports.PermissionModeDefault:
-		// Codex sessions are AO-managed and run headlessly inside a terminal
-		// mux pane; default to no approval prompts unless project settings
-		// explicitly choose a more restrictive mode.
-		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
-	case ports.PermissionModeAcceptEdits:
-		*cmd = append(*cmd, "--ask-for-approval", "on-request")
-	case ports.PermissionModeAuto:
-		*cmd = append(*cmd, "--ask-for-approval", "on-request", "-c", `approvals_reviewer="auto_review"`)
-	case ports.PermissionModeBypassPermissions:
-		*cmd = append(*cmd, "--dangerously-bypass-approvals-and-sandbox")
 	}
 }
 

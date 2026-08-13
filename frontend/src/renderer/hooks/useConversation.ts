@@ -303,6 +303,18 @@ export function useConversationCommands(sessionId: string | undefined) {
 		onSuccess: invalidate,
 	});
 
+	const promoteQueuedTurn = useMutation({
+		mutationFn: async (turnId: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer",
+				{ params: { path: { sessionId: sessionId as string, turnId } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	/**
 	 * Restart the tool servers.
 	 *
@@ -333,6 +345,33 @@ export function useConversationCommands(sessionId: string | undefined) {
 			return data;
 		},
 		onSuccess: invalidate,
+	});
+
+	const editMessage = useMutation({
+		mutationFn: async ({ turnId, text }: { turnId: string; text: string }) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit",
+				{
+					params: { path: { sessionId: sessionId as string, turnId } },
+					body: { text, clientMessageId: crypto.randomUUID() },
+				},
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSettled: invalidate,
+	});
+
+	const activateBranch = useMutation({
+		mutationFn: async (branchId: string) => {
+			const { data, error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate",
+				{ params: { path: { sessionId: sessionId as string, branchId } } },
+			);
+			if (error) throw error;
+			return data;
+		},
+		onSettled: invalidate,
 	});
 
 	return {
@@ -368,7 +407,16 @@ export function useConversationCommands(sessionId: string | undefined) {
 		rollback: (turnId: string) => rollback.mutateAsync(turnId),
 		rollbackPending: rollback.isPending,
 		rollbackError: rollback.error ? apiErrorMessage(rollback.error) : undefined,
+		editMessage: (turnId: string, text: string) => editMessage.mutateAsync({ turnId, text }),
+		editMessagePending: editMessage.isPending,
+		editMessageError: editMessage.error ? apiErrorMessage(editMessage.error) : undefined,
+		activateBranch: (branchId: string) => activateBranch.mutateAsync(branchId),
+		activateBranchPending: activateBranch.isPending,
+		activateBranchError: activateBranch.error
+			? apiErrorMessage(activateBranch.error)
+			: undefined,
 		steer: (text: string) => steer.mutateAsync(text),
+		promoteQueuedTurn: (turnId: string) => promoteQueuedTurn.mutateAsync(turnId),
 		steerPending: steer.isPending,
 		/**
 		 * Why the last steer was refused, or undefined. Only the retryable and
@@ -690,6 +738,15 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 				)
 			: undefined,
 		capabilities: wire.capabilities?.length ? wire.capabilities : undefined,
+		activeBranchId: wire.activeBranchId || undefined,
+		branchedFromEarlierMessage: wire.branchedFromEarlierMessage ?? undefined,
+		branchPoints: (wire.branchPoints ?? []).map((point) => ({
+			turnId: point.turnId,
+			position: point.position,
+			total: point.total,
+			previousBranchId: point.previousBranchId || undefined,
+			nextBranchId: point.nextBranchId || undefined,
+		})),
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,
@@ -768,6 +825,13 @@ function toMessage(wire: WireMessage): ConversationMessage {
 		role: wire.role as MessageRole,
 		origin: wire.origin as MessageOrigin,
 		text: wire.text,
+		content: (wire.content ?? []).map((item) => ({
+			type: item.type,
+			mimeType: item.mimeType || undefined,
+			uri: item.uri || undefined,
+			name: item.name || undefined,
+		})),
+		editAvailable: wire.editAvailable ?? undefined,
 		streaming: wire.streaming,
 		createdAt: wire.createdAt,
 	};

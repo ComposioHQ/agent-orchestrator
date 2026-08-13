@@ -26,6 +26,8 @@ const PROMPT_MAX_HEIGHT = 360;
 const PROMPT_COMPACT_CHROME_HEIGHT = 48;
 const PROMPT_EXPANDED_CHROME_HEIGHT = 48;
 const TEXTAREA_MIN_HEIGHT = 32;
+const MARKDOWN_ANNOTATION_TARGETS =
+	"h1, h2, h3, h4, h5, h6, p, ul, ol, li, blockquote, pre, table, th, td, figure, figcaption, img, hr, details, summary";
 
 ipcRenderer.on("browser:annotation:setMode", (_event, input: { enabled?: boolean }) => {
 	setEnabled(Boolean(input?.enabled), "disabled");
@@ -190,10 +192,19 @@ function annotationTarget(target: EventTarget | null): Element | null {
 	if (!(target instanceof Element)) return null;
 	const element =
 		target.closest("button, a, input, textarea, select, [role]") ??
+		markdownAnnotationTarget(target) ??
 		target.closest("[data-testid], [id], [class]") ??
 		target;
 	if (element === document.documentElement || element === document.body) return null;
 	return element;
+}
+
+function markdownAnnotationTarget(target: Element): Element | null {
+	// Goldmark emits semantic nodes without classes inside one classed layout
+	// wrapper. Prefer the content block before the generic component heuristic
+	// promotes every Markdown annotation to the full document wrapper.
+	if (!target.closest(".markdown-body")) return null;
+	return target.closest(MARKDOWN_ANNOTATION_TARGETS);
 }
 
 // Registered as FontFace objects from decoded bytes rather than an @font-face
@@ -538,15 +549,24 @@ function openPrompt(
 		const current = currentPromptRect();
 		if (current) repositionPrompt(current);
 	};
-	const submitAnnotation = (): boolean => {
+	let submitting = false;
+	const submitAnnotation = (): void => {
+		if (submitting) return;
 		const instruction = textarea.value.trim();
 		if (!instruction) {
 			textarea.focus();
-			return false;
+			return;
 		}
-		ipcRenderer.send("browser:annotation:submit", buildPayload(instruction));
-		setEnabled(false, "disabled");
-		return true;
+		submitting = true;
+		// Hide the input chrome but leave the highlight/selection boxes up, then
+		// wait a paint before invoking so the main process captures a clean
+		// snapshot of the picked element(s) — not the annotation popup itself.
+		// invoke (not send) so the overlay teardown below cannot race the
+		// snapshot capture in the main process.
+		mount.innerHTML = "";
+		void waitForPaint()
+			.then(() => ipcRenderer.invoke("browser:annotation:submit", buildPayload(instruction)))
+			.then(() => setEnabled(false, "disabled"));
 	};
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
@@ -630,6 +650,14 @@ function promptPosition(
 		promptHeight,
 		gutter: PROMPT_GUTTER,
 		gap: PROMPT_GAP,
+	});
+}
+
+// Resolves after the DOM mutation made just before calling this has been
+// painted, so a capture taken right after is guaranteed to reflect it.
+function waitForPaint(): Promise<void> {
+	return new Promise((resolve) => {
+		requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 	});
 }
 

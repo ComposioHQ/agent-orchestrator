@@ -190,6 +190,14 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
 	});
 
+	it("focuses the terminal when human input is requested", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
 	it("updates the live terminal palette when the named color theme changes", () => {
 		const style = document.createElement("style");
 		style.textContent = `
@@ -218,6 +226,34 @@ describe("XtermTerminal", () => {
 				background: "#0d1117",
 				cursor: "#58a6ff",
 				foreground: "#ccd3d8",
+			});
+		} finally {
+			style.remove();
+			delete document.documentElement.dataset.styleTheme;
+			act(() => useUiStore.setState({ themeStyle: "orchestrate" }));
+		}
+	});
+
+	it("uses the terminal foreground for the light-mode block cursor", () => {
+		const style = document.createElement("style");
+		style.textContent = `
+			:root {
+				--color-bg-terminal-opaque: #f5f5f4;
+				--color-text-terminal: #24292f;
+				--color-working: #2563eb;
+			}
+		`;
+		document.head.appendChild(style);
+		delete document.documentElement.dataset.styleTheme;
+		useUiStore.setState({ themeStyle: "orchestrate" });
+
+		try {
+			render(<XtermTerminal theme="light" />);
+			expect(state.lastTerminal!.options.theme).toMatchObject({
+				background: "#f5f5f4",
+				foreground: "#24292f",
+				cursor: "#24292f",
+				cursorAccent: "#f5f5f4",
 			});
 		} finally {
 			style.remove();
@@ -295,6 +331,31 @@ describe("XtermTerminal", () => {
 		const trigger = container.querySelector("button[aria-hidden='true']") as HTMLButtonElement;
 		expect(trigger.style.left).toBe("120px");
 		expect(trigger.style.top).toBe("88px");
+	});
+
+	it("toggles terminal fullscreen from the right-click menu", async () => {
+		const onToggleFullscreen = vi.fn();
+		const { container, rerender } = render(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen={false} onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+
+		fireEvent.contextMenu(container.querySelector(".terminal-pane-frame")!.firstElementChild!);
+		fireEvent.click(await screen.findByText("Fullscreen terminal"));
+		expect(onToggleFullscreen).toHaveBeenCalledOnce();
+
+		const pane = container.querySelector(".terminal-pane-frame") as HTMLElement;
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: pane });
+		rerender(
+			<div className="terminal-pane-frame">
+				<XtermTerminal isFullscreen onToggleFullscreen={onToggleFullscreen} theme="dark" />
+			</div>,
+		);
+		fireEvent.contextMenu(pane.firstElementChild!);
+		const exitFullscreenItem = await screen.findByText("Exit fullscreen");
+		expect(pane.contains(exitFullscreenItem.closest<HTMLElement>("[role='menu']"))).toBe(true);
+		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
 	it("runs context menu copy, select all, and clear against the xterm instance", async () => {

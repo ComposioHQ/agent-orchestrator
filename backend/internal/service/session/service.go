@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,8 +27,11 @@ type Store interface {
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
+	SetSessionAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error)
+	SetSessionAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error)
 	SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error)
 	SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
+	SetSessionAutoReview(ctx context.Context, id domain.SessionID, enabled bool, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
@@ -51,12 +55,15 @@ type ListFilter struct {
 // *sessionmanager.Manager in production, a fake in tests.
 type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error)
+	SwitchAgent(ctx context.Context, id domain.SessionID, cfg sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error)
+	ListAgentSwitches(ctx context.Context, id domain.SessionID) ([]domain.AgentSwitch, error)
+	SubmitAgentHandoff(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID, sourceGenerationID domain.AgentGenerationID, handoff json.RawMessage) (domain.AgentSwitch, error)
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	WaitForMessageDeliveryReady(ctx context.Context, id domain.SessionID) error
-	Send(ctx context.Context, id domain.SessionID, message string) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
@@ -428,7 +435,7 @@ func (s *Service) activeOrchestrators(ctx context.Context, projectID domain.Proj
 const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over in a new workspace."
 
 func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) error {
-	if err := s.manager.Send(ctx, id, orchestratorRetireNotice); err != nil {
+	if err := s.manager.Send(ctx, id, orchestratorRetireNotice, nil); err != nil {
 		return fmt.Errorf("send retire notice to %s: %w", id, err)
 	}
 	return nil
@@ -610,9 +617,11 @@ func (s *Service) RollbackSpawn(ctx context.Context, id domain.SessionID) (Rollb
 	return RollbackOutcome{Deleted: deleted, Killed: killed}, nil
 }
 
-// Send delegates agent messaging to the internal manager.
-func (s *Service) Send(ctx context.Context, id domain.SessionID, message string) error {
-	return toAPIError(s.manager.Send(ctx, id, message))
+// Send delegates agent messaging to the internal manager. attachment is an
+// optional inline image (e.g. a browser-annotation snapshot) written into the
+// session worktree and referenced from the delivered message.
+func (s *Service) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
+	return toAPIError(s.manager.Send(ctx, id, message, attachment))
 }
 
 // Rename updates the user-facing session display name.
@@ -661,6 +670,31 @@ func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID
 	return s.Get(ctx, id)
 }
 
+// SetAutoInjectReview persists whether new SCM and AO review feedback should be sent to the session.
+func (s *Service) SetAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	updated, err := s.store.SetSessionAutoInjectReview(ctx, id, autoInject, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set auto-inject review %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetAutoInjectCI persists the default automatic CI-failure injection policy
+// for PRs created after this update. Existing PRs keep their captured policy.
+func (s *Service) SetAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	updated, err := s.store.SetSessionAutoInjectCI(ctx, id, autoInject, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set auto-inject CI %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
 // Pin marks a session as pinned and returns the refreshed read model.
 func (s *Service) Pin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
 	now := s.now()
@@ -696,6 +730,18 @@ func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, h
 	updated, err := s.store.SetSessionReviewerHarness(ctx, id, harness, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set reviewer harness %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetAutoReview enables or disables daemon-side review automation for a session.
+func (s *Service) SetAutoReview(ctx context.Context, id domain.SessionID, enabled bool) (domain.Session, error) {
+	updated, err := s.store.SetSessionAutoReview(ctx, id, enabled, s.now())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set auto review %s: %w", id, err)
 	}
 	if !updated {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
@@ -822,7 +868,7 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrResumeInProgress):
 		return apierr.Conflict("AGENT_RESUME_IN_PROGRESS",
 			"The agent is already being resumed", nil)
-	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
+	case errors.Is(err, sessionmanager.ErrInterfaceTransitionInProgress):
 		return apierr.Conflict("INTERFACE_TRANSITION_IN_PROGRESS",
 			"This session is already switching interfaces", nil)
 	case errors.Is(err, sessionmanager.ErrInterfaceHandoffUnsupported):
@@ -852,6 +898,38 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrTargetAgentUnauthorized):
+		return apierr.Invalid("TARGET_AGENT_UNAUTHORIZED",
+			"The target agent is not authenticated; authenticate it before switching", nil)
+	case errors.Is(err, sessionmanager.ErrUnsupportedSwitchKind):
+		return apierr.Invalid("WORKER_SESSION_REQUIRED",
+			"Only worker sessions support agent switching", nil)
+	case errors.Is(err, sessionmanager.ErrUnsupportedSwitchHarness):
+		return apierr.Invalid("UNSUPPORTED_SWITCH_HARNESS",
+			"Agent switching is not supported for the requested harness", nil)
+	case errors.Is(err, sessionmanager.ErrAlreadyUsingHarness):
+		return apierr.Conflict("ALREADY_USING_HARNESS",
+			"The session is already using the requested harness", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchNotFound):
+		return apierr.NotFound("AGENT_SWITCH_NOT_FOUND", "Unknown agent switch")
+	case errors.Is(err, sessionmanager.ErrStaleHandoff):
+		return apierr.Conflict("STALE_AGENT_HANDOFF",
+			"The handoff is stale or its collection window has closed", nil)
+	case errors.Is(err, sessionmanager.ErrInvalidAgentHandoff):
+		return apierr.Invalid("INVALID_AGENT_HANDOFF",
+			"The handoff does not satisfy AO's semantic handoff schema", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchDeliveryUnconfirmed):
+		return apierr.Conflict("AGENT_SWITCH_DELIVERY_UNCONFIRMED",
+			"The target agent started, but AO could not confirm that it accepted the continuation", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
+		return apierr.Conflict("AGENT_SWITCH_IN_PROGRESS",
+			"This session already has an agent switch in progress", nil)
+	case errors.Is(err, domain.ErrAgentSwitchIdempotencyConflict):
+		return apierr.Conflict("AGENT_SWITCH_IDEMPOTENCY_CONFLICT",
+			"The idempotency key is already associated with a different agent switch", nil)
+	case errors.Is(err, domain.ErrAgentSwitchInProgress):
+		return apierr.Conflict("AGENT_SWITCH_IN_PROGRESS",
+			"This session already has an agent switch in progress", nil)
 	case errors.Is(err, sessionmanager.ErrScratchBranchUnsupported):
 		return apierr.Invalid("SCRATCH_BRANCH_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
