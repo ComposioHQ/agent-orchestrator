@@ -2,6 +2,8 @@ package integration
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -84,10 +86,23 @@ type stubAgents struct{}
 
 func (stubAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return stubAgent{}, true }
 
-type stubWorkspace struct{ destroyed int }
+type stubWorkspace struct {
+	destroyed int
+	// root, when set, backs each workspace with a real directory under it so
+	// tests can observe worktree leftovers on disk (ForceDestroy removes it).
+	root           string
+	forceDestroyed []string
+}
 
 func (s *stubWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
-	return ports.WorkspaceInfo{Path: "/ws/" + string(cfg.SessionID), Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	path := "/ws/" + string(cfg.SessionID)
+	if s.root != "" {
+		path = filepath.Join(s.root, string(cfg.SessionID))
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return ports.WorkspaceInfo{}, err
+		}
+	}
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
 func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 	s.destroyed++
@@ -96,7 +111,13 @@ func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
 func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	return s.Create(ctx, cfg)
 }
-func (s *stubWorkspace) ForceDestroy(context.Context, ports.WorkspaceInfo) error { return nil }
+func (s *stubWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo) error {
+	s.forceDestroyed = append(s.forceDestroyed, info.Path)
+	if s.root != "" {
+		return os.RemoveAll(info.Path)
+	}
+	return nil
+}
 func (s *stubWorkspace) StashUncommitted(_ context.Context, _ ports.WorkspaceInfo) (string, error) {
 	return "", nil
 }
@@ -152,6 +173,7 @@ func newStack(t *testing.T) *stack {
 	ws := &stubWorkspace{}
 	mgr := sessionmanager.New(sessionmanager.Deps{Runtime: rt, Agents: stubAgents{}, Workspace: ws, Store: store, Messenger: msg, Lifecycle: lcm, LookPath: func(string) (string, error) { return "/usr/bin/true", nil }})
 	lcm.SetCompletionTerminator(mgr)
+	lcm.SetCrashFinalizer(mgr)
 	sm := sessionsvc.New(mgr, store)
 	return &stack{store: store, sm: sm, mgr: mgr, lcm: lcm, prm: prm, rt: rt, ws: ws, msg: msg}
 }

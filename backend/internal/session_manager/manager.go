@@ -1523,6 +1523,97 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	return nil
 }
 
+// ReleaseTerminatedOrchestratorWorkspaces frees the worktrees (and with them
+// the canonical orchestrator branch) still held by terminated orchestrator
+// sessions of a project, capturing uncommitted work first. SpawnOrchestrator
+// runs it before spawning a replacement: a dead orchestrator whose teardown
+// failed or never ran keeps the canonical branch checked out in its leftover
+// worktree, so every replacement spawn fails and the only "fix" was deleting
+// the whole project (#3921). It also consumes the terminated orchestrators'
+// restore markers — a replacement supersedes any shutdown-saved orchestrator,
+// exactly as RetireForReplacement decides for live ones — so the next boot
+// cannot resurrect an old orchestrator onto the branch the replacement now
+// owns. Per-session failures are logged and skipped: recovery of the branch
+// must not be blocked by one unreleasable leftover, and the spawn surfaces
+// the real error if the blocking worktree could not be freed.
+func (m *Manager) ReleaseTerminatedOrchestratorWorkspaces(ctx context.Context, projectID domain.ProjectID) error {
+	recs, err := m.store.ListSessions(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("release terminated orchestrators %s: %w", projectID, err)
+	}
+	for _, rec := range recs {
+		if rec.Kind != domain.KindOrchestrator || !rec.IsTerminated {
+			continue
+		}
+		hasWorktree := rec.Metadata.WorkspacePath != "" && rec.Metadata.Branch != ""
+		if hasWorktree {
+			if _, statErr := os.Stat(rec.Metadata.WorkspacePath); statErr != nil {
+				hasWorktree = false // already reclaimed
+			}
+		}
+		if hasWorktree {
+			// Release before touching the markers: the workspace-project teardown
+			// resolves its per-repo worktrees from those same rows.
+			if err := m.releaseTerminatedWorkspace(ctx, rec); err != nil {
+				m.logger.Warn("release terminated orchestrator: worktree release failed", "sessionID", rec.ID, "error", err)
+				continue
+			}
+		}
+		// Superseded either way: drop restore markers even when the worktree is
+		// already gone (crash-finalized), so RestoreAll cannot resurrect an old
+		// orchestrator onto the branch the replacement now owns.
+		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+			m.logger.Warn("release terminated orchestrator: clear restore markers failed", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return nil
+}
+
+// releaseTerminatedWorkspace captures and force-removes one terminated
+// session's leftover worktree(s), mirroring RetireForReplacement's
+// capture-then-force sequence for sessions that are already terminated.
+func (m *Manager) releaseTerminatedWorkspace(ctx context.Context, rec domain.SessionRecord) error {
+	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+	if closeErr != nil {
+		return fmt.Errorf("shell terminal: %w", closeErr)
+	}
+	if release != nil {
+		defer release()
+	}
+	if handle := runtimeHandle(rec.Metadata); handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			m.logger.Warn("release terminated workspace: runtime destroy failed", "sessionID", rec.ID, "error", err)
+		}
+	}
+	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		return fmt.Errorf("workspace rows: %w", rowErr)
+	} else if ok {
+		for _, row := range rows {
+			if _, err := m.workspace.StashUncommitted(ctx, workspaceInfoFromRepoInfo(row)); err != nil && !errors.Is(err, ports.ErrWorkspaceStale) {
+				return fmt.Errorf("repo %s: stash: %w", row.RepoName, err)
+			}
+		}
+		for i := len(rows) - 1; i >= 0; i-- {
+			if err := m.workspace.ForceDestroy(ctx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
+				return fmt.Errorf("repo %s: force destroy: %w", rows[i].RepoName, err)
+			}
+		}
+		m.cleanupAgentWorkspace(ctx, rec, rec.Metadata.WorkspacePath)
+		m.cleanupSystemPromptDir(rec.ID)
+		return nil
+	}
+	ws := workspaceInfo(rec)
+	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil && !errors.Is(err, ports.ErrWorkspaceStale) {
+		return fmt.Errorf("stash: %w", err)
+	}
+	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+		return fmt.Errorf("force destroy: %w", err)
+	}
+	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	m.cleanupSystemPromptDir(rec.ID)
+	return nil
+}
+
 func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID) {
 	if m.preview == nil {
 		return
