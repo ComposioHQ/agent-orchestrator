@@ -193,28 +193,21 @@ describe("ChatWorkspace timeline", () => {
 		);
 	});
 
-	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
+	it("leaves new-terminal and display controls out of the chat strip, like the terminal session", () => {
+		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-
-		expect(menuAction).not.toHaveBeenCalled();
+		const terminalRegion = screen.getByTestId("session-terminal-region");
+		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Chat tabs" }));
+		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
+		expect(screen.queryByRole("toolbar", { name: "Chat display controls" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Decrease font size" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Fullscreen" })).not.toBeInTheDocument();
 	});
 
-	it("starts chat text at 12px and updates its scoped font size with the controls", () => {
+	it("starts chat text at 12px without a topbar font control", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const chat = screen.getByLabelText("Chat");
 
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-		expect(screen.getByLabelText("Chat font size: 13 pixels")).toHaveTextContent("13px");
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("13px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
 		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
 	});
 
