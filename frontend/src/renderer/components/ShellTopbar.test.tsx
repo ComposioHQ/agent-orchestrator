@@ -308,6 +308,15 @@ describe("ShellTopbar orchestrator actions", () => {
 		});
 	});
 
+	it("matches the Kanban feature style for Open orchestrator on worker sessions", async () => {
+		renderTopbar(worker);
+
+		const orchestratorButton = screen.getByRole("button", { name: "Open orchestrator" });
+		expect(orchestratorButton).toHaveTextContent("Open orchestrator");
+		expect(orchestratorButton).toHaveClass("topbar-control--feature");
+		expect(orchestratorButton.querySelector("svg")).not.toBeNull();
+	});
+
 	it("opens the board from the Kanban button on the full orchestrator topbar", async () => {
 		renderTopbar(orchestrator);
 

@@ -358,10 +358,10 @@ export function ShellTopbar({
 											data-priority="secondary"
 											disabled={isSpawning || isProjectRestarting}
 											onClick={() => void openOrchestrator()}
-											variant="primary"
+											variant="feature"
 										>
 											<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-											<span data-compact-label>{t("shell.orchestrator")}</span>
+											<span data-compact-label>{t("shell.openOrchestrator")}</span>
 										</TopbarButton>
 									</span>
 								</TooltipTrigger>
