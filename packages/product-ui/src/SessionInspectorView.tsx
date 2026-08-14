@@ -129,7 +129,7 @@ export function SessionInspectorShellView({
 										</span>
 									) : null}
 								</span>
-								<span className="session-inspector__responsive-label truncate whitespace-nowrap text-2xs @max-[350px]/inspector:hidden">
+								<span className="session-inspector__responsive-label truncate whitespace-nowrap text-2xs">
 									{tab.displayLabel ?? tab.label}
 								</span>
 							</button>

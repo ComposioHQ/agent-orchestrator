@@ -2578,7 +2578,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 /* Match the left sidebar's spring-like reveal while keeping direct separator
  * drags under the pointer. Both panels participate so neither edge snaps. */
 .session-split > [data-panel] {
-	transition: flex-grow var(--session-inspector-motion-duration, 240ms)
+	transition: flex-grow var(--session-inspector-motion-duration, 320ms)
 		var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
 }
 
@@ -2594,9 +2594,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	opacity: 1;
 	transform: translateX(0);
 	transition:
-		opacity var(--session-inspector-motion-duration, 240ms)
+		opacity var(--session-inspector-motion-duration, 320ms)
 			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
-		transform var(--session-inspector-motion-duration, 240ms)
+		transform var(--session-inspector-motion-duration, 320ms)
 			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
 	will-change: opacity, transform;
 }
@@ -2645,6 +2645,25 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		opacity: 0;
 		transform: translateX(-4px);
 	}
+}
+
+/* Keep one label layout for the full automatic panel transition. Without this
+ * lock, crossing the compact container threshold near the end of the resize
+ * makes the tab text reflow after the inspector itself has nearly settled. */
+.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
+	.session-inspector__responsive-label {
+	max-width: 5.5rem;
+	margin-left: var(--space-1);
+	opacity: 1;
+	transform: translateX(0);
+}
+
+.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="compact"]
+	.session-inspector__responsive-label {
+	max-width: 0;
+	margin-left: 0;
+	opacity: 0;
+	transform: translateX(-4px);
 }
 
 .session-inspector__toggle {

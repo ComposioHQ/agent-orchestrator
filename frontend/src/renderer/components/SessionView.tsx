@@ -50,8 +50,9 @@ const INSPECTOR_MIN_PX = 360;
 const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
-const INSPECTOR_MOTION_MS = 240;
+const INSPECTOR_MOTION_MS = 320;
 const INSPECTOR_MOTION_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
+const INSPECTOR_COMPACT_MAX_PX = 359;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 const isMac = isMacPlatform();
@@ -159,16 +160,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			terminalLiveResizeTimerRef.current = null;
 		}
 		sessionSplitRef.current?.removeAttribute("data-terminal-live-resize");
+		sessionSplitRef.current?.removeAttribute("data-inspector-label-mode");
 	}, []);
-	const startTerminalLiveResize = useCallback(() => {
+	const startTerminalLiveResize = useCallback((labelMode: "compact" | "expanded") => {
 		const split = sessionSplitRef.current;
 		if (!split) return;
 		if (terminalLiveResizeTimerRef.current !== null) {
 			window.clearTimeout(terminalLiveResizeTimerRef.current);
 		}
 		split.setAttribute("data-terminal-live-resize", "true");
+		split.setAttribute("data-inspector-label-mode", labelMode);
 		terminalLiveResizeTimerRef.current = window.setTimeout(() => {
 			split.removeAttribute("data-terminal-live-resize");
+			split.removeAttribute("data-inspector-label-mode");
 			terminalLiveResizeTimerRef.current = null;
 		}, INSPECTOR_MOTION_MS);
 	}, []);
@@ -688,9 +692,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (!panel) return;
 		if (isInspectorOpen) {
 			setInspectorMotionState("opening");
-			startTerminalLiveResize();
 			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
-			panel.resize(initialInspectorSize(Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX)));
+			const targetSize = initialInspectorSize(Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX));
+			startTerminalLiveResize(
+				Number.parseFloat(targetSize) <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
+			);
+			panel.resize(targetSize);
 			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
 			return () => window.cancelAnimationFrame(frame);
 		}
@@ -701,7 +708,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		// next frame, when the fresh constraints have landed; collapse() is
 		// idempotent, so the double call is safe wherever the derivation lands.
 		setInspectorMotionState("closing");
-		startTerminalLiveResize();
+		startTerminalLiveResize(
+			panel.getSize().inPixels <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
+		);
 		panel.collapse();
 		const frame = window.requestAnimationFrame(() => panel.collapse());
 		const timer = window.setTimeout(() => setInspectorMotionState("closed"), INSPECTOR_MOTION_MS);
@@ -742,7 +751,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		},
 		[],
 	);
-	const inspectorPanelVisible = inspectorMotionState !== "closed";
+	const inspectorPanelVisible = isInspectorOpen || inspectorMotionState !== "closed";
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (

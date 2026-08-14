@@ -23,6 +23,7 @@ const interfaceTransitionState = vi.hoisted(() => ({
 		| undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
+const inspectorVisibilityRenders = vi.hoisted(() => [] as boolean[]);
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -299,6 +300,7 @@ vi.mock("../hooks/useBrowserView", () => ({
 vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({
 		filesView,
+		isInspectorVisible = true,
 		notificationAction,
 		onOpenFiles,
 		onToggleBrowserPopOut,
@@ -306,26 +308,30 @@ vi.mock("./SessionInspector", () => ({
 		view,
 	}: {
 		filesView?: ReactNode;
+		isInspectorVisible?: boolean;
 		notificationAction?: ReactNode;
 		onOpenFiles?: () => void;
 		onToggleBrowserPopOut?: () => void;
 		onToggleVisibility?: () => void;
 		view?: string;
-	}) => (
-		<div>
-			{notificationAction}
-			<button type="button" onClick={onToggleVisibility}>
-				close inspector
-			</button>
-			<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
-				pop browser
-			</button>
-			<button type="button" onClick={onOpenFiles}>
-				open files
-			</button>
-			{view === "files" ? filesView : null}
-		</div>
-	),
+	}) => {
+		inspectorVisibilityRenders.push(isInspectorVisible);
+		return (
+			<div>
+				{notificationAction}
+				<button type="button" onClick={onToggleVisibility}>
+					close inspector
+				</button>
+				<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
+					pop browser
+				</button>
+				<button type="button" onClick={onOpenFiles}>
+					open files
+				</button>
+				{view === "files" ? filesView : null}
+			</div>
+		);
+	},
 }));
 vi.mock("../lib/shell-context", () => ({
 	useShell: () => ({ daemonStatus: { state: "ready" } }),
@@ -488,6 +494,7 @@ function render(ui: ReactNode) {
 
 describe("SessionView", () => {
 	beforeEach(() => {
+		inspectorVisibilityRenders.length = 0;
 		nativeFullScreenMock.mockReturnValue(false);
 		window.localStorage.clear();
 		for (const session of workspaces.flatMap((workspace) => workspace.sessions)) {
@@ -922,7 +929,7 @@ describe("SessionView", () => {
 		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
 		expect(panelSizes("inspector")).toEqual(["360px", "360px", "50%"]);
 		expect(screen.getByTestId("panel-group")).toHaveStyle({
-			"--session-inspector-motion-duration": "240ms",
+			"--session-inspector-motion-duration": "320ms",
 			"--session-inspector-motion-easing": "cubic-bezier(0.16, 1, 0.3, 1)",
 		});
 		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
@@ -995,6 +1002,18 @@ describe("SessionView", () => {
 		expect(panels.get("inspector")!.handle.collapse).not.toHaveBeenCalled();
 	});
 
+	it("keeps inspector chrome visible from the first render of the opening transition", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
+		render(<SessionView sessionId="sess-1" />);
+		const renderCountBeforeOpening = inspectorVisibilityRenders.length;
+
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+
+		const openingRenders = inspectorVisibilityRenders.slice(renderCountBeforeOpening);
+		expect(openingRenders.length).toBeGreaterThan(0);
+		expect(openingRenders).not.toContain(false);
+	});
+
 	it("keeps StrictMode mount imperative-free and collapses on the first user toggle", () => {
 		render(
 			<StrictMode>
@@ -1021,12 +1040,54 @@ describe("SessionView", () => {
 			fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-terminal-live-resize", "true");
 
-			act(() => vi.advanceTimersByTime(239));
+			act(() => vi.advanceTimersByTime(319));
 			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-terminal-live-resize", "true");
 
 			act(() => vi.advanceTimersByTime(1));
 			expect(screen.getByTestId("panel-group")).not.toHaveAttribute("data-terminal-live-resize");
 		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("locks responsive inspector labels to the opening target throughout the transition", () => {
+		vi.useFakeTimers();
+		try {
+			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
+			render(<SessionView sessionId="sess-1" />);
+
+			act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+
+			const split = screen.getByTestId("panel-group");
+			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
+			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
+
+			act(() => vi.advanceTimersByTime(319));
+			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
+
+			act(() => vi.advanceTimersByTime(1));
+			expect(split).not.toHaveAttribute("data-inspector-label-mode");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("locks responsive inspector labels compact when the opening target is narrow", () => {
+		vi.useFakeTimers();
+		const clientWidth = vi
+			.spyOn(HTMLElement.prototype, "clientWidth", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				return this.dataset.testid === "resize-handle" ? 8 : 640;
+			});
+		try {
+			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
+			render(<SessionView sessionId="sess-1" />);
+
+			act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+
+			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-inspector-label-mode", "compact");
+		} finally {
+			clientWidth.mockRestore();
 			vi.useRealTimers();
 		}
 	});
