@@ -80,6 +80,14 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 	terminal, err := s.store.OpenTerminal(r.Context(), token, kind, ttl)
 	if errors.Is(err, postgres.ErrInvalidTicket) {
+		if s.logger != nil {
+			s.logger.Warn(
+				"terminal ticket rejected",
+				"reason", err,
+				"kind", kind,
+				"request_id", requestID(r),
+			)
+		}
 		writeError(w, r, http.StatusUnauthorized, "INVALID_TERMINAL_TICKET", "The terminal ticket is invalid, expired, or already used.")
 		return
 	}

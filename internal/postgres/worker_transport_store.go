@@ -439,7 +439,7 @@ func (s *Store) OpenTerminal(
 			&ticket.Scopes, &ticket.WorkerEpoch, &ticket.ExpiresAt,
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrInvalidTicket
+			return classifyInvalidTerminalTicket(ctx, tx, hash[:], "terminal:"+kind)
 		}
 		return err
 	})
@@ -515,6 +515,39 @@ func (s *Store) OpenTerminal(
 		return err
 	})
 	return terminal, err
+}
+
+func classifyInvalidTerminalTicket(
+	ctx context.Context,
+	tx pgx.Tx,
+	tokenHash []byte,
+	expectedPurpose string,
+) error {
+	var purpose string
+	var consumedAt *time.Time
+	var expiresAt time.Time
+	err := tx.QueryRow(ctx,
+		`SELECT purpose, consumed_at, expires_at
+		FROM ao_access_tickets
+		WHERE token_hash = $1`,
+		tokenHash,
+	).Scan(&purpose, &consumedAt, &expiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: not_found", ErrInvalidTicket)
+	}
+	if err != nil {
+		return err
+	}
+	if purpose != expectedPurpose {
+		return fmt.Errorf("%w: purpose_mismatch", ErrInvalidTicket)
+	}
+	if consumedAt != nil {
+		return fmt.Errorf("%w: already_consumed", ErrInvalidTicket)
+	}
+	if !expiresAt.After(time.Now()) {
+		return fmt.Errorf("%w: expired", ErrInvalidTicket)
+	}
+	return fmt.Errorf("%w: predicate_mismatch", ErrInvalidTicket)
 }
 
 func (s *Store) QueueTerminalInput(
