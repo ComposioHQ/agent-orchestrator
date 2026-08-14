@@ -57,6 +57,9 @@ type Store interface {
 	RecordRateLimits(ctx context.Context, conversationID string, limits domain.ConversationRateLimits) error
 
 	NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error)
+	ReserveQueuedTurnForPromotion(ctx context.Context, conversationID, turnID string, now time.Time) (domain.QueuedTurn, error)
+	ReleaseQueuedTurnPromotion(ctx context.Context, conversationID, turnID string) error
+	CompleteQueuedTurnPromotion(ctx context.Context, conversationID, sourceTurnID, providerTurnID string, activity domain.ConversationActivity, now time.Time) error
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
 	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
 
@@ -876,14 +879,13 @@ func (c *Controller) drain(ctx context.Context) {
 }
 
 // ArmHandoff is the linearization point for an interface transition. It closes
-// source intake synchronously and, for interrupt policy, settles the durable
-// queue while sendMu makes promotion impossible. Once this method returns, no
-// queued turn accepted before the transition can cross the provider seam.
+// source intake and queue dispatch synchronously while sendMu makes promotion
+// impossible. Once this method returns, no queued turn accepted before the
+// transition can cross the provider seam.
 //
-// Provider I/O deliberately does not happen here. ACP may emit turn completion
-// as part of its cancellation handshake, and Codex may deliver turn/completed on
-// either side of the interrupt response. Calling either adapter while holding
-// sendMu would couple their event backpressure to AO's dispatch lock.
+// This phase is deliberately reversible and performs no provider or durable
+// queue mutation: target preflight can still fail. BeginHandoff settles the queue
+// only after that preflight has succeeded.
 func (c *Controller) ArmHandoff(
 	ctx context.Context,
 	policy domain.SessionInterfaceTransitionPolicy,
@@ -895,6 +897,9 @@ func (c *Controller) ArmHandoff(
 
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	c.mu.Lock()
 	if c.handoff == want {
@@ -906,21 +911,7 @@ func (c *Controller) ArmHandoff(
 		return ErrControllerHandoff
 	}
 	c.handoff = want
-	// The state is installed before the store write while sendMu prevents both
-	// new intake and completion-driven promotion.
-	cancelQueue := want == controllerHandoffInterfaceInterrupt
 	c.mu.Unlock()
-
-	if cancelQueue {
-		if err := c.store.CancelAllQueuedTurns(ctx, c.conversation.ID, c.now()); err != nil {
-			c.mu.Lock()
-			if c.handoff == want {
-				c.handoff = controllerHandoffNone
-			}
-			c.mu.Unlock()
-			return fmt.Errorf("arm interrupt handoff: cancel queued turns: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -936,11 +927,20 @@ func (c *Controller) BeginHandoff(
 		return err
 	}
 
-	c.mu.Lock()
-	active := c.pendingTurnID != ""
-	c.mu.Unlock()
-
 	if policy == domain.SessionInterfaceTransitionInterrupt {
+		// Target preflight has succeeded. Settle every accepted queue row while
+		// sendMu and the armed gate make dispatch and explicit promotion impossible.
+		// Local durable state is committed before the external provider side effect.
+		c.sendMu.Lock()
+		c.mu.Lock()
+		active := c.pendingTurnID != ""
+		c.mu.Unlock()
+		err := c.store.CancelAllQueuedTurns(ctx, c.conversation.ID, c.now())
+		c.sendMu.Unlock()
+		if err != nil {
+			c.AbortHandoff()
+			return fmt.Errorf("prepare interrupt handoff: cancel queued turns: %w", err)
+		}
 		if active {
 			if err := c.interruptForHandoff(ctx); err != nil {
 				c.AbortHandoff()
@@ -951,7 +951,12 @@ func (c *Controller) BeginHandoff(
 		// adapters never report turn/completed for a killed long-running tool, so
 		// waiting for that notification would make Terminal unreachable again.
 		return nil
-	} else if !active {
+	}
+
+	c.mu.Lock()
+	active := c.pendingTurnID != ""
+	c.mu.Unlock()
+	if !active {
 		// A queued row can exist in the narrow gap after a completion was
 		// projected and before its drain ran. Claim it now so drain mode cannot
 		// report quiescent while accepted work is still waiting.
@@ -1016,10 +1021,11 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 // controller is stopped. Any queued work resumes through the ordinary drain.
 func (c *Controller) AbortHandoff() {
 	c.mu.Lock()
-	wasDraining := c.handoff == controllerHandoffInterfaceDrain
+	resumeDispatch := c.handoff == controllerHandoffInterfaceDrain ||
+		c.handoff == controllerHandoffInterfaceInterrupt
 	c.handoff = controllerHandoffNone
 	c.mu.Unlock()
-	if wasDraining {
+	if resumeDispatch {
 		go c.drain(context.WithoutCancel(context.Background()))
 	}
 }
@@ -1124,9 +1130,9 @@ func (c *Controller) Compact(ctx context.Context) (ports.ChatCompactionResult, e
 // the wrong thing.
 const turnAckWait = 3 * time.Second
 
-// interruptForHandoff cancels only the provider turn. ArmHandoff has already
-// cancelled the durable queue under the dispatch lock, so reusing Interrupt
-// here would reintroduce a second, callback-ordered cancellation path.
+// interruptForHandoff cancels only the provider turn. BeginHandoff has already
+// cancelled the durable queue under the dispatch lock, so reusing Interrupt here
+// would reintroduce a second, callback-ordered cancellation path.
 func (c *Controller) interruptForHandoff(ctx context.Context) error {
 	turn, ok := c.awaitAcknowledgedTurn(ctx)
 	if !ok {

@@ -210,10 +210,11 @@ describe("SessionInspector tabs", () => {
 	it("gives the Browser viewport the full inspector body without the default content gutter", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
-		const tablist = screen.getByRole("tablist");
 		await userEvent.click(screen.getByRole("tab", { name: "Browser" }));
 
-		const body = tablist.nextElementSibling;
+		const body = screen.getByRole("complementary", { name: "Session inspector" }).querySelector(
+			".session-inspector__body--browser",
+		);
 		expect(body).toHaveClass("session-inspector__body--browser", "p-0", "overflow-hidden");
 		expect(body).not.toHaveClass("p-3", "pb-4", "@max-[300px]/inspector:px-2.5");
 	});
@@ -226,7 +227,6 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).not.toHaveClass("flex-1");
 		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
-		expect(within(summaryTab).getByText("Summary")).toHaveClass("@max-[350px]/inspector:hidden");
 	});
 
 	it("shows the glow only while real browser activity is unseen", () => {
@@ -296,6 +296,14 @@ describe("SessionInspector tabs", () => {
 
 		const filesTab = screen.getByRole("tab", { name: "Files" });
 		expect(within(filesTab).getByText("0 Files")).toBeInTheDocument();
+	});
+
+	it("keeps collapsed inspector content hidden and inert", () => {
+		renderWithQuery(<SessionInspector isInspectorVisible={false} session={session([])} />);
+
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
+		expect(document.querySelector("[aria-hidden='true'][inert]")).toBeInTheDocument();
 	});
 });
 
@@ -391,39 +399,42 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 
-	it("renders PRs and reviews before the stacked compact policy rows", async () => {
+	it("keeps PR and session policies in Summary while review policies live in Reviews", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+
+		expect(screen.getByText("Session controls")).toBeInTheDocument();
 
 		const policyRow = (name: string) =>
 			screen.getByRole("switch", { name }).closest("[data-slot='inspector-policy-row']") as HTMLElement;
 		const ciRow = policyRow("Automatically send CI failures");
-		const reviewRow = policyRow("Automatically send reviews");
 		const terminateRow = policyRow("Terminate session when pull requests merge");
 		const prCard = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
-		const runReview = await screen.findByRole("button", { name: "Run review" });
 		const appearsBefore = (first: HTMLElement, second: HTMLElement) =>
 			Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-		expect(ciRow.nextElementSibling).toBe(reviewRow);
 		expect(appearsBefore(prCard, ciRow)).toBe(true);
-		expect(appearsBefore(runReview, ciRow)).toBe(true);
 		expect(ciRow.className).toBe(terminateRow.className);
-		expect(reviewRow.className).toBe(terminateRow.className);
 		expect(ciRow.parentElement).not.toHaveClass("rounded-lg", "border", "bg-surface");
-		for (const name of [
-			"Automatically send CI failures",
-			"Automatically send reviews",
-			"Terminate session when pull requests merge",
-		]) {
+		expect(screen.queryByRole("switch", { name: "Automatically send reviews" })).not.toBeInTheDocument();
+		for (const name of ["Automatically send CI failures", "Terminate session when pull requests merge"]) {
 			const toggle = screen.getByRole("switch", { name });
 			expect(toggle).toHaveClass("h-4", "w-8", "rounded-full");
 			expect(toggle.querySelector("[data-slot='switch-thumb']")).toHaveClass("size-3", "rounded-full");
 		}
 		expect(
 			screen.getByRole("button", {
-				name: "When disabled, CI failures for newly created pull requests will not be sent to the worker agent but will still be displayed. Existing pull requests keep their original setting.",
+				name: "Sets the default for newly created pull requests. When disabled, CI failures are not sent to the worker agent to fix.",
 			}),
 		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "When disabled, AO keeps this session open after all pull requests merge.",
+			}),
+		).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(screen.getByRole("switch", { name: "Automatically send reviews" })).toBeInTheDocument();
 	});
 
 	it("persists the CI injection default before a PR exists", async () => {
@@ -444,7 +455,7 @@ describe("SessionInspector PR section", () => {
 
 	it("restores the CI injection toggle and shows the API error when saving fails", async () => {
 		patchMock.mockResolvedValueOnce({ error: new Error("CI policy unavailable"), response: { status: 500 } });
-		renderWithQuery(<SessionInspector session={session([])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		const toggle = screen.getByRole("switch", { name: "Automatically send CI failures" });
 		await userEvent.click(toggle);
@@ -612,6 +623,26 @@ describe("SessionInspector Activity section", () => {
 				})}
 			/>,
 		);
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+	});
+
+	it("does not offer agent resume while an agent switch owns the exited source", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+					activeAgentSwitch: {
+						id: "switch-1",
+						fromHarness: "claude-code",
+						targetHarness: "codex",
+						state: "source_stopped",
+						agentHandoffStatus: "received",
+					},
+				})}
+			/>,
+		);
+
 		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
 	});
 
@@ -809,7 +840,7 @@ describe("SessionInspector Activity section", () => {
 			/>,
 		);
 
-		for (const title of ["Pull request", "Completion", "Activity"]) {
+		for (const title of ["Pull request", "Session controls", "Activity"]) {
 			const heading = screen.getByText(title).parentElement;
 			expect(heading?.parentElement).toHaveAttribute("data-testid", "inspector-section");
 		}
@@ -941,11 +972,17 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector tabs", () => {
-	it("exposes Summary, Browser, and Files as inspector tabs", () => {
+	it("exposes Reviews after Summary and keeps review content out of Summary", async () => {
+		mockCommonGets([], "", [reviewState(1, "needs_review")]);
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
-		expect(tabs).toEqual(["Summary", "Browser", "Files"]);
-		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
+		expect(screen.queryByText("Review controls")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+
+		expect(await screen.findByText("Review controls")).toBeInTheDocument();
+		expect(screen.queryByText("Pull request")).not.toBeInTheDocument();
 	});
 
 	it("does not render the overview card in the summary", () => {
@@ -959,9 +996,10 @@ describe("SessionInspector tabs", () => {
 });
 
 describe("SessionInspector summary reviews", () => {
-	// PR rows start collapsed, so opening the Summary tab alone shows only their titles.
-	// Reveal every row, since these tests are about what a review says.
+	// Review rows start collapsed. Open the Reviews tab and reveal every row,
+	// since these tests are about what a review says.
 	const openReviewsSection = async () => {
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
 		// Rows arrive with the reviews query, so wait for them before expanding.
 		const rows = await screen.findAllByTestId("review-pr-row").catch(() => []);
 		for (const row of rows) {
@@ -1027,6 +1065,105 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
+	it("configures session auto-review and disables manual controls", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [reviewState(3, "needs_review")] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }] },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("button", { name: "Run review" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Select reviewer agent" })).toBeDisabled();
+		const toggle = screen.getByRole("switch", { name: "Auto review" });
+		expect(toggle).toBeChecked();
+		await userEvent.click(toggle);
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { enabled: false },
+			}),
+		);
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+	});
+
+	it("enables auto-review for the current session", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review")]);
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		const toggle = screen.getByRole("switch", { name: "Auto review" });
+		expect(toggle).not.toBeChecked();
+		await userEvent.click(toggle);
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { enabled: true },
+			}),
+		);
+	});
+
+	it("shows reviewing status and cancel action while auto-review is running", async () => {
+		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "reviewer-pane", reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }] },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("button", { name: "Stop review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill review session" })).toBeDisabled();
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
+	});
+
 	it("hides review summary sections when no review data exists", async () => {
 		mockCommonGets([], "", []);
 
@@ -1067,10 +1204,11 @@ describe("SessionInspector summary reviews", () => {
 		mockCommonGets([], "reviewer-pane", [running]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
 		await screen.findByText("Review in progress · codex");
 
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
-		expect(screen.queryByText("Reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("Review summary")).not.toBeInTheDocument();
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -1623,7 +1761,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
-	it("shows cancelled review runs without marking them failed", async () => {
+	it("does not list a cancelled run as a reviewed outcome", async () => {
 		mockCommonGets([], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: { ...failedReview, status: "cancelled" } },
 		]);
@@ -1631,7 +1769,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findAllByText("Cancelled")).toHaveLength(1);
+		expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.queryByText("reviewer crashed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
@@ -1655,7 +1793,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("shows failed latest runs as failed and still allows rerun", async () => {
+	it("does not list a failed run without a verdict and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
 		]);
@@ -1663,15 +1801,35 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findAllByText("Failed")).not.toHaveLength(0);
+		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
-	it("does not expose the Reviews tab when the session has no PRs", async () => {
+	it("surfaces the latest automatic review failure while auto review is enabled", async () => {
+		const failedAutoReview = {
+			...failedReview,
+			triggerSource: "auto",
+			body: 'reviewer preflight: reviewer harness "kimi" is unauthorized',
+		};
+		mockCommonGets([], "", [
+			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedAutoReview },
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
+		await openReviewsSection();
+
+		expect(screen.getByRole("status")).toHaveTextContent(
+			'Auto review Failed: reviewer preflight: reviewer harness "kimi" is unauthorized',
+		);
+	});
+
+	it("keeps the Reviews tab available when the session has no PRs", async () => {
 		mockCommonGets();
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		await screen.findByRole("tab", { name: /Summary/ });
-		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+		expect(screen.getByRole("switch", { name: "Automatically send reviews" })).toBeInTheDocument();
+		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 });

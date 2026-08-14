@@ -758,7 +758,13 @@ function repositoryHref(repository: string): string {
 }
 
 function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
-	const { defaultBranch: _defaultBranch, reviewers: _reviewers, trackerIntake: _trackerIntake, ...supported } = config;
+	const {
+		defaultBranch: _defaultBranch,
+		reviewers: _reviewers,
+		autoReview: _legacyAutoReview,
+		trackerIntake: _trackerIntake,
+		...supported
+	} = config as ProjectConfig & { autoReview?: unknown };
 	return supported;
 }
 

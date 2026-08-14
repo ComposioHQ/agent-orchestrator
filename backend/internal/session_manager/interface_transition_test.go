@@ -289,6 +289,11 @@ type transitionChat struct {
 	preflightRelease chan struct{}
 	relayMessages    []string
 	relayIDs         []string
+	supportsChat     bool
+}
+
+func (c *transitionChat) SupportsChat(_ domain.AgentHarness) bool {
+	return c.supportsChat
 }
 
 func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarness) error {
@@ -412,7 +417,8 @@ func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *tra
 	log := &[]string{}
 	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
 	chat := &transitionChat{
-		log: log, armed: make(chan domain.SessionInterfaceTransitionPolicy, 1),
+		log: log, supportsChat: true,
+		armed:   make(chan domain.SessionInterfaceTransitionPolicy, 1),
 		aborted: make(chan struct{}, 1),
 	}
 	messenger := &fakeMessenger{}
@@ -432,6 +438,41 @@ func useFastInterfaceTransitionTimings(manager *Manager) {
 		pollInterval:   time.Millisecond,
 		idleSettle:     5 * time.Millisecond,
 		staleIdleLimit: 60 * time.Millisecond,
+	}
+}
+
+func TestInterfaceTransitionStatusHidesSwitchWhenChatUnsupported(t *testing.T) {
+	manager, _, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	chat.supportsChat = false
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.TargetMode != domain.SessionModeChat {
+		t.Fatalf("target mode = %q, want chat", status.TargetMode)
+	}
+	if status.Supported {
+		t.Fatal("expected switch to be unsupported")
+	}
+	if status.ReasonCode != "CHAT_UNSUPPORTED" {
+		t.Fatalf("reasonCode = %q, want CHAT_UNSUPPORTED", status.ReasonCode)
+	}
+}
+
+func TestInterfaceTransitionStatusAllowsSwitchToTUIWhenChatUnsupported(t *testing.T) {
+	manager, _, _, chat, _ := newTransitionManager(t, domain.SessionModeChat)
+	chat.supportsChat = false
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.TargetMode != domain.SessionModeTUI {
+		t.Fatalf("target mode = %q, want tui", status.TargetMode)
+	}
+	if status.ReasonCode == "CHAT_UNSUPPORTED" {
+		t.Fatal("switching back to TUI should not report CHAT_UNSUPPORTED")
 	}
 }
 
@@ -997,13 +1038,13 @@ func TestInterfaceTransitionChatToTUIArmsInterruptBeforeReturning(t *testing.T) 
 
 func TestInterfaceTransitionChatToTUIFailsBeforeBackgroundWorkWhenArmFails(t *testing.T) {
 	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeChat)
-	chat.armErr = errors.New("cancel durable Chat queue: database unavailable")
+	chat.armErr = errors.New("arm Chat dispatch gate: controller unavailable")
 
 	_, err := manager.StartInterfaceTransition(
 		context.Background(), "session-1", domain.SessionModeTUI,
 		domain.SessionInterfaceTransitionInterrupt,
 	)
-	if err == nil || !strings.Contains(err.Error(), "database unavailable") {
+	if err == nil || !strings.Contains(err.Error(), "controller unavailable") {
 		t.Fatalf("start transition error = %v, want source-fence failure", err)
 	}
 	latest, found, getErr := store.GetLatestSessionInterfaceTransition(context.Background(), "session-1")

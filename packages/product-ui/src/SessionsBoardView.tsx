@@ -23,9 +23,16 @@ export type BoardSessionPresentation = {
 	id: string;
 	provider: string;
 	status: SessionStatus;
+	statusPresentation?: BoardSessionStatusPresentation;
 	title: string;
 	trackerIssueId?: string;
 	updatedAt: string;
+};
+
+export type BoardSessionStatusPresentation = {
+	className: string;
+	indicatorClassName: string;
+	label: string;
 };
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
@@ -416,6 +423,7 @@ export function SessionCardView({
 	const badge = getSessionStatusView(session.status, translate);
 	const activity = getAgentActivityView(session.activity, translate);
 	const showLiveActivity = session.status === "working" && activity.state === "active";
+	const statusPresentation = session.statusPresentation;
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 
@@ -466,17 +474,21 @@ export function SessionCardView({
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center gap-2">
 					<span
-						className={cn("inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium", badge.className)}
-						style={showLiveActivity ? { color: activity.tone } : undefined}
+						className={cn(
+							"inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium",
+							statusPresentation?.className ?? badge.className,
+						)}
+						style={!statusPresentation && showLiveActivity ? { color: activity.tone } : undefined}
 					>
 						<span
 							aria-hidden="true"
 							className={cn(
 								"size-dot-sm shrink-0 rounded-full",
-								showLiveActivity ? activity.indicatorClassName : "bg-current",
+								statusPresentation?.indicatorClassName ??
+									(showLiveActivity ? activity.indicatorClassName : "bg-current"),
 							)}
 						/>
-						<span className="min-w-0 truncate">{badge.label}</span>
+						<span className="min-w-0 truncate">{statusPresentation?.label ?? badge.label}</span>
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						{usage ? renderUsage(usage) : null}

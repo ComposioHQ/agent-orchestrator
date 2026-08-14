@@ -1294,14 +1294,14 @@ func TestChatHandoffInterruptArmBlocksCompletionFromPromotingQueue(t *testing.T)
 	}); err != nil {
 		t.Fatalf("queue second turn: %v", err)
 	}
-	// Once intake is fenced, cancellation must cover the whole queue rather than
-	// trusting wall-clock ordering. A host clock correction cannot make an older
-	// accepted command look newer than the handoff cutoff.
+	// Once intake is fenced, eventual cancellation must cover the whole queue
+	// rather than trusting wall-clock ordering. A host clock correction cannot
+	// make an older accepted command look newer than the handoff cutoff.
 	h.advance(-time.Hour)
 
 	// Session Manager performs this fast step before returning the accepted
-	// transition and before target preflight. The active provider turn can finish
-	// anywhere after this point, but its completion must never release the queue.
+	// transition and before target preflight. It is a reversible dispatch fence:
+	// the active turn can finish, but its completion must not release the queue.
 	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
 		t.Fatalf("arm interrupt handoff: %v", err)
 	}
@@ -1309,6 +1309,19 @@ func TestChatHandoffInterruptArmBlocksCompletionFromPromotingQueue(t *testing.T)
 		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
 		TurnState: domain.TurnStateInterrupted,
 	})
+	fenced := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["run the dev server"].Terminal()
+	})
+	if got := turnStateByText(t, fenced)["touch /tmp/ao3945-queued-ran"]; got != domain.TurnStateQueued {
+		t.Fatalf("queued command while target preflights = %q, want reversibly fenced", got)
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v before handoff preparation; armed completion released the queue", got)
+	}
+
+	// Target preflight has now succeeded. Preparation makes the fence durable
+	// before touching the provider and remains independent of clock movement.
 	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
 		t.Fatalf("prepare armed handoff: %v", err)
 	}
@@ -1325,6 +1338,53 @@ func TestChatHandoffInterruptArmBlocksCompletionFromPromotingQueue(t *testing.T)
 	}
 	if got := turnStateByText(t, snapshot)["touch /tmp/ao3945-queued-ran"]; got != domain.TurnStateInterrupted {
 		t.Fatalf("queued command = %q, want interrupted without provider dispatch", got)
+	}
+}
+
+func TestChatHandoffInterruptAbortAfterPreflightFailureResumesFencedQueue(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "run the dev server", ClientMessageID: "handoff-abort-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued work survives preflight", ClientMessageID: "handoff-abort-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("arm interrupt handoff: %v", err)
+	}
+
+	// Completion while target preflight is running cannot dispatch the queue.
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["run the dev server"] == domain.TurnStateCompleted &&
+			states["queued work survives preflight"] == domain.TurnStateQueued
+	})
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v while target preflight was fenced", got)
+	}
+
+	// A failed target preflight reopens the source and explicitly resumes the
+	// queue; there may be no later completion event to trigger this drain.
+	h.svc.AbortChatHandoff(testSession)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["queued work survives preflight"] == domain.TurnStateRunning
+	})
+	if got := h.conv.sentTexts(); len(got) != 2 || got[1] != "queued work survives preflight" {
+		t.Fatalf("provider received %v after abort, want preserved queue to resume", got)
 	}
 }
 
@@ -1484,17 +1544,24 @@ func TestChatHandoffInterruptDoesNotReachProviderUntilQueueCancellationSucceeds(
 		t.Fatalf("queue second turn: %v", err)
 	}
 
-	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err == nil {
-		t.Fatal("first handoff arm error = nil, want injected queue cancellation failure")
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("arm reversible handoff fence: %v", err)
+	}
+	if got := flakyStore.callCount(); got != 0 {
+		t.Fatalf("queue cancellation calls during reversible arm = %d, want 0", got)
+	}
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err == nil {
+		t.Fatal("first handoff preparation error = nil, want injected queue cancellation failure")
 	}
 	if got := provider.attemptCount(); got != 0 {
 		t.Fatalf("provider interrupt attempts = %d before durable queue cancellation, want 0", got)
 	}
 
-	// A caller may retry the fast, idempotent arm after a transient local-store
-	// failure. Only after the durable queue is terminal may provider I/O begin.
+	// Preparation aborts the reversible fence after a local-store failure. A
+	// caller may re-arm and retry; provider I/O begins only after the durable queue
+	// is terminal.
 	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
-		t.Fatalf("retry handoff arm: %v", err)
+		t.Fatalf("re-arm handoff after preparation failure: %v", err)
 	}
 	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
 		t.Fatalf("prepare armed interrupt handoff: %v", err)

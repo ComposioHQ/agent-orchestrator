@@ -115,7 +115,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled
 FROM sessions WHERE id = ?
 `
 
@@ -158,6 +158,7 @@ type GetSessionRow struct {
 	NativeTranscriptPath      string
 	AutoInjectReview          bool
 	AutoInjectCI              bool
+	AutoReviewEnabled         bool
 }
 
 func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessionRow, error) {
@@ -202,13 +203,14 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.NativeTranscriptPath,
 		&i.AutoInjectReview,
 		&i.AutoInjectCI,
+		&i.AutoReviewEnabled,
 	)
 	return i, err
 }
 
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
-    id, project_id, num, issue_id, kind, harness, reviewer_harness, display_name,
+    id, project_id, num, issue_id, kind, harness, reviewer_harness, auto_review_enabled, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
@@ -220,7 +222,7 @@ INSERT INTO sessions (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -232,6 +234,7 @@ type InsertSessionParams struct {
 	Kind                      domain.SessionKind
 	Harness                   domain.AgentHarness
 	ReviewerHarness           domain.ReviewerHarness
+	AutoReviewEnabled         bool
 	DisplayName               string
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
@@ -274,6 +277,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.Kind,
 		arg.Harness,
 		arg.ReviewerHarness,
+		arg.AutoReviewEnabled,
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
@@ -318,7 +322,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled
 FROM sessions ORDER BY project_id, num
 `
 
@@ -361,6 +365,7 @@ type ListAllSessionsRow struct {
 	NativeTranscriptPath      string
 	AutoInjectReview          bool
 	AutoInjectCI              bool
+	AutoReviewEnabled         bool
 }
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, error) {
@@ -411,6 +416,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.NativeTranscriptPath,
 			&i.AutoInjectReview,
 			&i.AutoInjectCI,
+			&i.AutoReviewEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -434,7 +440,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
     session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
-    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci
+    latest_user_prompt, latest_assistant_update, native_transcript_path, auto_inject_review, auto_inject_ci, auto_review_enabled
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -477,6 +483,7 @@ type ListSessionsByProjectRow struct {
 	NativeTranscriptPath      string
 	AutoInjectReview          bool
 	AutoInjectCI              bool
+	AutoReviewEnabled         bool
 }
 
 func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]ListSessionsByProjectRow, error) {
@@ -527,6 +534,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.NativeTranscriptPath,
 			&i.AutoInjectReview,
 			&i.AutoInjectCI,
+			&i.AutoReviewEnabled,
 		); err != nil {
 			return nil, err
 		}
@@ -656,6 +664,24 @@ func (q *Queries) SetSessionAutoInjectReview(ctx context.Context, arg SetSession
 	return result.RowsAffected()
 }
 
+const setSessionAutoReview = `-- name: SetSessionAutoReview :execrows
+UPDATE sessions SET auto_review_enabled = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionAutoReviewParams struct {
+	AutoReviewEnabled bool
+	UpdatedAt         time.Time
+	ID                domain.SessionID
+}
+
+func (q *Queries) SetSessionAutoReview(ctx context.Context, arg SetSessionAutoReviewParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionAutoReview, arg.AutoReviewEnabled, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setSessionPinned = `-- name: SetSessionPinned :execrows
 UPDATE sessions SET is_pinned = ?, pinned_at = ?, updated_at = ? WHERE id = ?
 `
@@ -739,7 +765,7 @@ func (q *Queries) SetSessionTerminateOnPRMerge(ctx context.Context, arg SetSessi
 
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
-    issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, display_name = ?,
+    issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, auto_review_enabled = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
@@ -756,6 +782,7 @@ type UpdateSessionParams struct {
 	Kind                      domain.SessionKind
 	Harness                   domain.AgentHarness
 	ReviewerHarness           domain.ReviewerHarness
+	AutoReviewEnabled         bool
 	DisplayName               string
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
@@ -794,6 +821,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.Kind,
 		arg.Harness,
 		arg.ReviewerHarness,
+		arg.AutoReviewEnabled,
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
