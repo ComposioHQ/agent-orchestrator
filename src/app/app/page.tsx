@@ -41,6 +41,7 @@ import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
 import { CloudSessionWorkspace } from "./CloudSessionWorkspace";
 import { CloudSidebar, isStandaloneProject } from "./CloudSidebar";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import type {
   CreateInvitationInput,
   OrganizationInvitation,
@@ -1188,6 +1189,7 @@ export function CloudWorkspace() {
           onCreate={createShareLink}
           onRevoke={revokeShareLink}
           onRevokeGrant={revokeShareGrant}
+          open
           project={shareProject}
         />
       ) : null}
@@ -1204,7 +1206,17 @@ export function CloudWorkspace() {
   );
 }
 
-export default CloudWorkspace;
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+
+function CloudWorkspaceWithConfirm() {
+  return (
+    <ConfirmProvider>
+      <CloudWorkspace />
+    </ConfirmProvider>
+  );
+}
+
+export default CloudWorkspaceWithConfirm;
 
 function LoadingState({
   error,

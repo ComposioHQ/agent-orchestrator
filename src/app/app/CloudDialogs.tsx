@@ -3,7 +3,7 @@
 import type { GitHubRepository } from "@aoagents/cloud-client";
 import { Bot, ChevronDown, FolderGit2, GitFork, X } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,10 @@ export function NewProjectDialog({
   const [mode, setMode] = useState<
     "choose" | "project" | "github" | "scratch" | "standalone"
   >("choose");
+
+  useEffect(() => {
+    if (open) { setMode("choose"); setError(""); setBusy(false); }
+  }, [open]);
   const activeRepositories = github.repositories.filter(
     ({ access, isArchived }) => access === "active" && !isArchived,
   );
