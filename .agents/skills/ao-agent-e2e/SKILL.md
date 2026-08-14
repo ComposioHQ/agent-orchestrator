@@ -39,10 +39,10 @@ Use `--stages all` for the full flow. Use a comma-separated list to run parts in
 node .agents/skills/ao-agent-e2e/scripts/run_agent_e2e.mjs \
   --project agent-orchestrator \
   --harness codex \
-  --stages preflight,orchestrator
+  --stages preflight,roles
 ```
 
-Supported stages are `preflight`, `orchestrator`, `delegation`, `work-pr`, and `reviewer`. Preflight always runs because later stages need daemon/project metadata.
+Supported stages are `preflight`, `roles`, `kanban-activity`, `reviewer-testing`, and `lifecycle`. The default `all` expands to `preflight,roles,kanban-activity,reviewer-testing`; it intentionally excludes `lifecycle` because kill/restore mutates a live session. Older stage names are accepted as aliases: `orchestrator` and `delegation` map to `roles`, `work-pr` maps to `kanban-activity`, `reviewer` maps to `reviewer-testing`, and `kill-restore` maps to `lifecycle`.
 
 To resume or test later stages against existing sessions:
 
@@ -50,19 +50,31 @@ To resume or test later stages against existing sessions:
 node .agents/skills/ao-agent-e2e/scripts/run_agent_e2e.mjs \
   --project agent-orchestrator \
   --harness codex \
-  --stages work-pr,reviewer \
+  --stages kanban-activity,reviewer-testing \
   --worker-session <worker-session-id>
 ```
 
 Use `--orchestrator-session`, `--worker-session`, and `--reviewer-session` to inspect known sessions instead of requiring the runner to create every session in the same process.
 
+To test session kill/restore explicitly:
+
+```bash
+node .agents/skills/ao-agent-e2e/scripts/run_agent_e2e.mjs \
+  --project agent-orchestrator \
+  --harness codex \
+  --stages lifecycle \
+  --lifecycle-session <session-id>
+```
+
+Use `--lifecycle-session` for the exact target. If omitted, lifecycle falls back to `--worker-session`, then a worker created by the `roles` stage, then `--orchestrator-session`.
+
 ## What the runner checks
 
 - Preflight: AO binary, daemon, project, and harness configuration.
-- Orchestrator: real role spawn, live session, prompt/system-prompt byte evidence, prompt artifact evidence under the AO data dir, and exact task visibility when exposed.
-- Delegation: a new non-orchestrator worker appears in the target project after the run's baseline and remains inspectable through CLI or API detail.
-- Work/Kanban/PR: worker activity/status changes are sampled, branch and PR facts are detected from API session detail when available, and missing worktree/tracker/PR facts are recorded as non-passing observation gaps.
-- Reviewer: review records are polled until a completed reviewer run with session, status, and verdict evidence is visible.
+- Roles: real orchestrator spawn, system-prompt byte evidence, prompt artifact evidence, task visibility, worker delegation, worker role prompt marker, and live worker session state.
+- Kanban activity: worker activity/status changes are sampled, branch and PR facts are detected from API session detail when available, and missing worktree/tracker/PR facts are recorded as non-passing observation gaps.
+- Reviewer testing: review records are polled until a completed reviewer run with session, status, and verdict evidence is visible.
+- Lifecycle: a selected session is killed, observed as terminated, restored, observed as live again, and checked through tmux diagnostics.
 - Tmux diagnostics: for each observed orchestrator, worker, worker-work, and reviewer session, the runner checks the tmux session, captures recent pane output, and flags visible blocking prompts. It records this as evidence only; it does not send keys or approve prompts.
 
 Keep the report. It records commands, exit codes, stdout/stderr, timestamps, IDs, observations, the first failed stage, and cleanup results.
@@ -98,5 +110,14 @@ For prompt delivery, prefer observed role behavior and AO-generated prompt artif
 - `delegation-and-worker`: orchestrator did not produce an inspectable worker in the project before timeout.
 - `work-kanban-and-pr`: observable activity/status mismatch, missing PR evidence, or branch/worktree/tracker evidence unavailable through the CLI.
 - `reviewer`: review run, reviewer session, or submitted verdict evidence missing before timeout.
+- `lifecycle`: session kill did not terminate, restore did not bring the session back, or restored tmux/session evidence is missing.
 
 Do not auto-retry externally visible actions. Do not kill or delete sessions unless the user explicitly selected cleanup. Escalate with the JSON report and the exact failed stage.
+
+## Useful next modules
+
+The current split covers the major path. The next valuable modules would be:
+
+- Artifact/diff verification: inspect the worker worktree and assert the requested code change plus relevant checks, instead of stopping at PR/session evidence.
+- Failure bundle export: collect the JSON report, tmux panes, session detail, review detail, branch, PR URL, and recent daemon logs into one directory for debugging.
+- Recovery-after-review: verify changes-requested comments create a follow-up worker action and an updated PR/check state.
