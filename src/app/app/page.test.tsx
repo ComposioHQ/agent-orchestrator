@@ -1002,7 +1002,8 @@ it("opens project actions and creates a real share link", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
-  fireEvent.click(await screen.findByRole("button", { name: "Share project" }));
+  fireEvent.pointerDown(await screen.findByRole("button", { name: "Actions for Cloud platform" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Share project" }));
 
   const dialog = await screen.findByRole("dialog", {
     name: "Share Cloud platform",

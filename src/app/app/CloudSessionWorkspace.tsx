@@ -8,16 +8,19 @@ import type {
   WorkspaceFile,
 } from "@aoagents/cloud-client";
 import {
+  AgentAvatar,
   InspectorReviewsView,
   PRSummaryMeta,
   PRSummaryParts,
+  SessionInspectorShellView,
+  SessionWorkspaceTopbarView,
+  type InspectorTab,
   type InspectorReviewGroup,
 } from "@aoagents/product-ui";
 import {
   ChevronLeft,
   FileCode2,
   Files,
-  GitCompareArrows,
   GitPullRequest,
   CircleAlert,
   Loader2,
@@ -38,7 +41,7 @@ import { CloudTerminal } from "./CloudTerminal";
 import { OrchestratorIcon } from "./OrchestratorIcon";
 import { pullRequestSummaryParts, toInspectorReviewGroups } from "./pr-display";
 
-type InspectorTab = "changes" | "files" | "reviews" | "terminal";
+type CloudInspectorTab = "summary" | "files" | "terminal";
 
 const reviewLabels = {
   aoSource: "AO",
@@ -80,7 +83,7 @@ export function CloudSessionWorkspace({
 }) {
   const client = useMemo(browserCloudClient, []);
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [tab, setTab] = useState<InspectorTab>("terminal");
+  const [tab, setTab] = useState<CloudInspectorTab>("terminal");
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
   const [directory, setDirectory] = useState("");
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
@@ -200,11 +203,50 @@ export function CloudSessionWorkspace({
     return () => window.clearInterval(timer);
   }, [organizationId, session.id]);
 
+  const inspectorTabs: InspectorTab<CloudInspectorTab>[] = [
+    {
+      id: "summary",
+      label: "Summary",
+      displayLabel: `Summary ${diff?.files.length ?? 0}`,
+      icon: <SummaryIcon />,
+    },
+    {
+      id: "terminal",
+      label: "Terminal",
+      icon: <Terminal aria-hidden="true" />,
+    },
+    {
+      id: "files",
+      label: "Files",
+      icon: <Files aria-hidden="true" />,
+    },
+  ];
+
   return (
-    <div className="flex min-h-0 flex-1 overflow-hidden">
+    <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--color-bg-primary)]">
       <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-bg-terminal-opaque)]">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] pl-1.5 pr-2.5">
-          {onToggleSidebar ? (
+        <SessionWorkspaceTopbarView
+          terminalTabs={(
+            <div className="group relative inline-flex min-w-36 self-stretch items-center gap-1.5 border-r border-[var(--border)] bg-[var(--color-bg-secondary)] px-3 text-[var(--foreground)] after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-[var(--foreground)]/80">
+              {session.kind === "orchestrator" ? (
+                <OrchestratorIcon className="size-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <AgentAvatar className="size-4 shrink-0" decorative provider={session.harness} />
+              )}
+              <span className="min-w-0 truncate text-xs font-medium leading-none">
+                {session.kind === "orchestrator" ? "Orchestrator" : session.displayName}
+              </span>
+              <span
+                aria-hidden="true"
+                className={`size-1.5 shrink-0 rounded-full ${
+                  session.runtimeConnected ? "bg-[var(--color-status-working)]" : "bg-[var(--color-status-idle)]"
+                }`}
+              />
+            </div>
+          )}
+          actions={(
+            <div className="flex shrink-0 items-center gap-1.5">
+              {onToggleSidebar ? (
             <button
               type="button"
               aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
@@ -217,18 +259,7 @@ export function CloudSessionWorkspace({
                 <PanelLeftOpen className="size-4" aria-hidden="true" />
               )}
             </button>
-          ) : null}
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold leading-none tracking-[-0.02em]">
-              {session.kind === "orchestrator" ? "Orchestrator" : session.displayName}
-            </h1>
-          </div>
-          <span
-            className={`size-1.5 rounded-full ${
-              session.runtimeConnected ? "bg-[var(--color-status-working)]" : "bg-[var(--color-status-idle)]"
-            }`}
-          />
-          <div className="flex shrink-0 items-center gap-1.5">
+              ) : null}
             <button
               type="button"
               aria-label="Share"
@@ -260,16 +291,8 @@ export function CloudSessionWorkspace({
               )}
             </button>
           </div>
-        </header>
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3">
-          <Terminal className="size-3.5 text-[var(--color-accent)]" />
-          <span className="text-[11px] text-[var(--foreground)]">
-            {session.harness}
-          </span>
-          <span className="font-mono text-[9px] text-[var(--color-text-passive)]">
-            /workspace/repository
-          </span>
-        </div>
+          )}
+        />
         {session.runtimeConnected ? (
           <CloudTerminal
             kind="agent"
@@ -286,61 +309,22 @@ export function CloudSessionWorkspace({
         className="flex min-h-0 flex-col overflow-hidden border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] transition-[width] duration-200 ease-out"
         style={{ width: inspectorOpen ? "38%" : 0, minWidth: inspectorOpen ? 320 : 0 }}
       >
-        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
-          <InspectorButton
-            active={tab === "changes"}
-            label={`Changes ${diff?.files.filter((f) => !f.path.split("/").some((s) => s.startsWith("."))).length ?? 0}`}
-            onClick={() => setTab("changes")}
-          >
-            <GitCompareArrows className="size-3.5" />
-          </InspectorButton>
-          <InspectorButton
-            active={tab === "files"}
-            label="Files"
-            onClick={() => setTab("files")}
-          >
-            <Files className="size-3.5" />
-          </InspectorButton>
-          <InspectorButton
-            active={tab === "terminal"}
-            label="Terminal"
-            onClick={() => setTab("terminal")}
-          >
-            <Terminal className="size-3.5" />
-          </InspectorButton>
-          <InspectorButton
-            active={tab === "reviews"}
-            label={`Pull requests ${pullRequests.length}`}
-            onClick={() => setTab("reviews")}
-          >
-            <GitPullRequest className="size-3.5" />
-          </InspectorButton>
-          {tab !== "terminal" ? (
-            <button
-              aria-label="Refresh inspector"
-              className="ml-auto grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-              onClick={() =>
-                tab === "changes"
-                  ? void loadDiff()
-                  : tab === "reviews"
-                    ? void loadReviews()
-                    : void loadDirectory(directory)
-              }
-              type="button"
-            >
-              <RefreshCw className="size-3.5" />
-            </button>
-          ) : null}
-        </div>
-        {error ? (
-          <p className="border-b border-[var(--color-error)]/20 bg-[var(--color-error)]/8 px-3 py-2 text-[10px] text-[var(--color-error)]">
-            {error}
-          </p>
-        ) : null}
-        {tab === "changes" ? (
-          <ChangesView diff={diff} onOpenFile={(path) => void openFile(path)} />
-        ) : tab === "files" ? (
-          <FileBrowser
+        <SessionInspectorShellView<CloudInspectorTab>
+          activeView={tab}
+          ariaLabel="Session inspector"
+          browserPoppedOut={false}
+          onViewChange={setTab}
+          tabs={inspectorTabs}
+          summaryView={(
+            <div className="space-y-5">
+              {error ? <p className="text-xs text-[var(--color-error)]">{error}</p> : null}
+              <InspectorSectionHeader label="Changes" onRefresh={() => void loadDiff()} />
+              <ChangesView diff={diff} onOpenFile={(path) => void openFile(path)} />
+              <InspectorSectionHeader label="Pull requests" onRefresh={() => void loadReviews()} />
+              <PullRequestsView isLoading={reviewsLoading} pullRequests={pullRequests} reviewGroups={reviewGroups} />
+            </div>
+          )}
+          filesView={<FileBrowser
             busy={busy}
             content={fileContent}
             directory={directory}
@@ -359,23 +343,14 @@ export function CloudSessionWorkspace({
             }
             onSave={() => void saveFile()}
             readOnly={session.mode === "read-only"}
-          />
-        ) : tab === "reviews" ? (
-          <PullRequestsView
-            isLoading={reviewsLoading}
-            pullRequests={pullRequests}
-            reviewGroups={reviewGroups}
-          />
-        ) : session.runtimeConnected ? (
-          <CloudTerminal
+          />}
+          terminalView={session.runtimeConnected ? <CloudTerminal
             kind="workspace"
             layoutKey={`${inspectorOpen ? "inspector-open" : "inspector-closed"}:${tab}`}
             organizationId={organizationId}
             sessionId={session.id}
-          />
-        ) : (
-          <ProvisioningState session={session} terminal="workspace" />
-        )}
+          /> : <ProvisioningState session={session} terminal="workspace" />}
+        />
       </aside>
     </div>
   );
@@ -433,30 +408,27 @@ function provisioningLabel(
   }
 }
 
-function InspectorButton({
-  active,
-  children,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  children: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
+function SummaryIcon() {
   return (
-    <button
-      className={`flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] ${
-        active
-          ? "bg-[var(--color-interactive-hover)] text-[var(--foreground)]"
-          : "text-[var(--color-text-passive)]"
-      }`}
-      onClick={onClick}
-      type="button"
-    >
-      {children}
-      {label}
-    </button>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+      <line x1="8" y1="7" x2="20" y2="7" />
+      <line x1="8" y1="12" x2="20" y2="12" />
+      <line x1="8" y1="17" x2="16" y2="17" />
+      <circle cx="4" cy="7" r="1" />
+      <circle cx="4" cy="12" r="1" />
+      <circle cx="4" cy="17" r="1" />
+    </svg>
+  );
+}
+
+function InspectorSectionHeader({ label, onRefresh }: { label: string; onRefresh: () => void }) {
+  return (
+    <div className="flex items-center justify-between text-[10px] font-bold uppercase text-[var(--color-text-passive)]">
+      <span>{label}</span>
+      <button type="button" aria-label={`Refresh ${label.toLowerCase()}`} className="grid size-7 place-items-center rounded-md hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]" onClick={onRefresh}>
+        <RefreshCw className="size-3.5" aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 

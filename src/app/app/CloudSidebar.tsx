@@ -6,6 +6,7 @@ import type {
   Session,
 } from "@aoagents/cloud-client";
 import {
+  ChevronRight,
   Folder,
   FolderOpen,
   MoreHorizontal,
@@ -296,7 +297,7 @@ export function CloudSidebar({
                   aria-expanded={open}
                   whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
                   transition={{ duration: 0.06, ease: "easeOut" }}
-                  className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 pr-8 text-left text-sm font-medium ${
+                  className={`flex h-9 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 pr-16 text-left text-sm font-medium ${
                     selectedProjectId === project.id && !selectedSessionId
                       ? "text-[var(--foreground)]"
                       : "text-[var(--muted-foreground)]"
@@ -314,35 +315,27 @@ export function CloudSidebar({
                   }}
                 >
                   <span className="relative grid size-4 shrink-0 place-items-center">
-                    {open ? (
-                      <FolderOpen className="size-4" aria-hidden="true" />
-                    ) : (
-                      <Folder className="size-4" aria-hidden="true" />
-                    )}
+                    <ChevronRight
+                      className={`size-4 transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+                      aria-hidden="true"
+                    />
                   </span>
                   <span className="min-w-0 flex-1 truncate">
                     {project.displayName}
                   </span>
+                </motion.button>
+                <div className="absolute inset-y-0 right-1.5 z-10 flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
                   {hasOrchestrator ? (
                     <OrchestratorIcon
                       aria-label="Orchestrator project"
                       className="size-3.5 shrink-0 text-[var(--color-text-passive)]"
                     />
                   ) : null}
-                </motion.button>
-                <button
-                  aria-label="Share project"
-                  className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
-                  onClick={(e) => { e.stopPropagation(); onShareProject(project); }}
-                  type="button"
-                >
-                  <Share2 aria-hidden="true" />
-                </button>
                 <DropdownMenuPrimitive.Root>
                   <DropdownMenuPrimitive.Trigger asChild>
                     <button
                       aria-label={`Actions for ${project.displayName}`}
-                      className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,margin,opacity,color] group-hover:mr-1.5 group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] focus-visible:w-5 focus-visible:opacity-100 data-[state=open]:mr-1.5 data-[state=open]:w-5 data-[state=open]:opacity-100 [&_svg]:size-3"
+                      className="grid size-6 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] [&_svg]:size-3.5"
                       type="button"
                     >
                       <MoreHorizontal aria-hidden="true" />
@@ -365,6 +358,7 @@ export function CloudSidebar({
                     </DropdownMenuPrimitive.Content>
                   </DropdownMenuPrimitive.Portal>
                 </DropdownMenuPrimitive.Root>
+                </div>
               </div>
               </ContextMenuTrigger>
               <ContextMenuContent className="min-w-44">

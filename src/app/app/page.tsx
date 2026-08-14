@@ -11,6 +11,7 @@ import {
   type Session,
   type UpdateProjectInput,
 } from "@aoagents/cloud-client";
+import { StartupLoaderView } from "@aoagents/product-ui";
 import { Folder, Menu, Plus, Search, Settings, X } from "lucide-react";
 import {
   CommandDialog,
@@ -69,6 +70,23 @@ import {
 } from "./cloud-ui-types";
 
 type AgentProvider = "claude-code" | "codex" | "cursor";
+
+const CLOUD_STARTUP_PHRASES = [
+  "Connecting to AO Cloud",
+  "Loading workspaces",
+  "Preparing your board",
+] as const;
+
+function CloudStartupLoader() {
+  return (
+    <StartupLoaderView
+      ariaLabel="Agent Orchestrator is loading"
+      brand="Agent Orchestrator"
+      logo={<img alt="" className="ao-startup-logo h-[88px] w-[100px] object-contain" src="/ao-logo.svg" />}
+      phrases={CLOUD_STARTUP_PHRASES}
+    />
+  );
+}
 
 export function CloudWorkspace() {
   const client = useMemo(browserCloudClient, []);
@@ -1394,9 +1412,7 @@ export function CloudWorkspace() {
                   </div>
                 ) : null}
                 {loading ? (
-                  <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
-                    Loading workspace…
-                  </div>
+                  <CloudStartupLoader />
                 ) : (
                   <CloudBoard
                     onDeleteSession={(session) => void deleteSession(session)}
@@ -1556,19 +1572,19 @@ function LoadingState({
 }) {
   return (
     <main className="grid min-h-dvh place-items-center bg-[var(--color-bg-primary)] p-6 text-[var(--foreground)]">
-      <div className="max-w-sm text-center">
-        <p className="text-sm">
-          {loading ? "Loading your Cloud workspace…" : error}
-        </p>
-        {!loading && error ? (
+      {loading ? (
+        <CloudStartupLoader />
+      ) : (
+        <div className="max-w-sm text-center">
+          <p className="text-sm">{error}</p>
           <a
             className="mt-4 inline-block text-xs text-[#8bb5ff] hover:underline"
             href="/"
           >
             Return to sign in
           </a>
-        ) : null}
-      </div>
+        </div>
+      )}
     </main>
   );
 }

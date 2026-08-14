@@ -14,7 +14,6 @@ import {
   LoaderCircle,
   RefreshCw,
   Settings2,
-  Unplug,
   User,
   X,
   type LucideIcon,
@@ -255,10 +254,7 @@ export function CloudSettings({
                       githubUser={githubUser}
                       onConnect={onConnectGitHub}
                       onConnectOrganization={onConnectGitHubOrganization}
-                      onClaimOrganization={onClaimGitHubOrganization}
-                      onDisconnect={onDisconnectGitHub}
                       onDisconnectUser={onDisconnectGitHubUser}
-                      onSync={onSyncGitHub}
                       onSyncUser={onSyncGitHubUser}
                     />
                     <CodingAgentSettings
@@ -396,10 +392,7 @@ function GitHubSettings({
   githubUser,
   onConnect,
   onConnectOrganization,
-  onClaimOrganization,
-  onDisconnect,
   onDisconnectUser,
-  onSync,
   onSyncUser,
 }: {
   busy: boolean;
@@ -407,10 +400,7 @@ function GitHubSettings({
   githubUser: GitHubUserCapability;
   onConnect: () => Promise<void>;
   onConnectOrganization: () => Promise<void>;
-  onClaimOrganization: (githubInstallationId: string) => Promise<void>;
-  onDisconnect: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectUser: () => Promise<void>;
-  onSync: (installation: GitHubInstallation) => Promise<void>;
   onSyncUser: () => Promise<void>;
 }) {
   const hostedAuthRequired =
@@ -423,17 +413,6 @@ function GitHubSettings({
         )
       : [];
   const hasOrgAccess = orgInstallations.length > 0;
-  const creationOwners = githubUser.connection.installations.filter(
-    (installation) => installation.canCreateRepository,
-  );
-  const connectedInstallationIds = new Set(
-    orgInstallations.map(({ githubInstallationId }) => githubInstallationId),
-  );
-  const availableOrganizations = githubUser.connection.installations.filter(
-    (installation) =>
-      installation.accountType === "Organization" &&
-      !connectedInstallationIds.has(installation.githubInstallationId),
-  );
   return (
     <SettingsSection grouped title="GitHub">
       <SettingsRow label="GitHub account">
@@ -465,70 +444,26 @@ function GitHubSettings({
       {github.status === "loading" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">Loading GitHub connection…</p> : null}
       {github.status === "unavailable" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">{github.message ?? "GitHub is disabled for this environment."}</p> : null}
       {github.status === "error" ? <p className="px-3 py-4 text-sm text-[var(--color-error)]">{github.message ?? "GitHub connection could not be loaded."}</p> : null}
-      {accountConnected && creationOwners.length > 0 ? (
-        <SettingsRow label="Repository creation">
-          <span className="settings-row-value">
-            {creationOwners.map((installation) => installation.accountLogin).join(", ")}
-          </span>
-        </SettingsRow>
-      ) : null}
-      {hasOrgAccess ? (
-        <>
-          <SettingsRow label="Organization repository access">
+      {accountConnected && github.status === "available" ? (
+        <SettingsRow label="Organization repository access">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-3">
+            <span className="settings-row-value truncate">
+              {hasOrgAccess
+                ? orgInstallations.map(({ accountLogin }) => accountLogin).join(", ")
+                : "Not connected"}
+            </span>
             <button
-              aria-label="Manage organization repository access"
-              className={buttonClass}
+              aria-label={hasOrgAccess ? "Manage organization repository access" : undefined}
+              className={hasOrgAccess ? buttonClass : primaryButtonClass}
               disabled={busy}
               onClick={() => void onConnectOrganization()}
               type="button"
             >
               {busy ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : null}
-              {busy ? "Waiting for GitHub…" : "Manage"}
+              {busy ? "Waiting for GitHub…" : hasOrgAccess ? "Manage" : "Connect organization"}
             </button>
-          </SettingsRow>
-          {orgInstallations.map((installation) => (
-            <SettingsRow key={installation.id} label={installation.accountLogin}>
-              <div className="flex items-center gap-2">
-                <span className="settings-row-value">
-                  {installation.accountType} · {installation.repositorySelection === "all" ? "all repositories" : "selected repositories"}
-                </span>
-                <button aria-label={`Sync ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => void onSync(installation)} title="Sync repositories" type="button"><RefreshCw className="size-3.5" /></button>
-                <button aria-label={`Disconnect ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => {
-                  if (window.confirm(`Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`)) void onDisconnect(installation);
-                }} title="Disconnect GitHub" type="button"><Unplug className="size-3.5" /></button>
-              </div>
-            </SettingsRow>
-          ))}
-        </>
-      ) : accountConnected && github.status === "available" ? (
-        <>
-          <SettingsRow label="Organization repository access">
-            <div className="flex items-center gap-3">
-              <span className="settings-row-value">Not connected</span>
-              <button className={primaryButtonClass} disabled={busy} onClick={() => void onConnectOrganization()} type="button">
-                {busy ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : null}
-                {busy ? "Waiting for GitHub…" : "Connect organization"}
-              </button>
-            </div>
-          </SettingsRow>
-          {availableOrganizations.map((installation) => (
-            <SettingsRow key={installation.githubInstallationId} label={installation.accountLogin}>
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="settings-row-value truncate">
-                  {installation.repositorySelection === "all" ? "All repositories" : "Selected repositories"}
-                </span>
-                <button
-                  className={buttonClass}
-                  disabled={busy}
-                  onClick={() => void onClaimOrganization(installation.githubInstallationId)}
-                  type="button"
-                >
-                  Connect
-                </button>
-              </div>
-            </SettingsRow>
-          ))}
-        </>
+          </div>
+        </SettingsRow>
       ) : null}
     </SettingsSection>
   );

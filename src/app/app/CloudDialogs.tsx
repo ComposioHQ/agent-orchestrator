@@ -358,9 +358,9 @@ function LocalAgentForm({
               <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">GitHub owner</span>
               <select className={selectClass} disabled={busy} onChange={(e) => setInstallationId(e.target.value)} required value={installationId}>
                 <option value="">Choose account or workspace</option>
-                {githubUser.connection.installations.map((inst) => (
-                  <option disabled={!inst.canCreateRepository} key={inst.githubInstallationId} value={inst.githubInstallationId}>
-                    {inst.accountLogin}{inst.accountType.toLowerCase() === "user" ? " · personal" : " · org"}{inst.unavailableReason ? ` · ${inst.unavailableReason}` : ""}
+                {eligibleInstallations.map((inst) => (
+                  <option key={inst.githubInstallationId} value={inst.githubInstallationId}>
+                    {inst.accountLogin}{inst.accountType.toLowerCase() === "user" ? " · personal" : " · org"}
                   </option>
                 ))}
               </select>

@@ -105,10 +105,10 @@ it("uses the interactive agent terminal as the primary session surface", async (
   expect(screen.getByText("Interactive agent terminal")).toBeVisible();
   expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
 
-  fireEvent.click(await screen.findByRole("button", { name: "Changes 1" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Summary" }));
   expect(await screen.findByText("diff --git a/README.md b/README.md")).toBeVisible();
 
-  fireEvent.click(screen.getByRole("button", { name: "Files" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Files" }));
   expect(await screen.findByText("README.md")).toBeVisible();
 });
 
@@ -121,7 +121,7 @@ it("opens and edits repository files in the right inspector", async () => {
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Files" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Files" }));
   fireEvent.click(await screen.findByText("README.md"));
   const editor = await screen.findByLabelText("Edit README.md");
   fireEvent.change(editor, { target: { value: "updated\n" } });
@@ -145,7 +145,7 @@ it("opens a separate trusted workspace shell in the right inspector", () => {
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Terminal" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
   expect(screen.getByText("Interactive agent terminal")).toBeVisible();
   expect(screen.getByText("Interactive workspace terminal")).toBeVisible();
 });
@@ -260,7 +260,7 @@ it("shows a pull request's status and AO's review verdict in the pull requests t
     />,
   );
 
-  fireEvent.click(await screen.findByRole("button", { name: "Pull requests 1" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Summary" }));
 
   expect(await screen.findByText("#7 Fix the transport bug")).toBeVisible();
   expect(screen.getByText("Failing")).toBeVisible();
