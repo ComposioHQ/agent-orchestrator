@@ -1101,6 +1101,10 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 		return preparedTargetActivation{}, fmt.Errorf("system prompt file: %w", err)
 	}
 	config := effectiveAgentConfig(rec.Kind, project.Config)
+	if roleOverride(rec.Kind, project.Config).Harness != harness {
+		config.Model = ""
+		config.Mode = ""
+	}
 	if model := strings.TrimSpace(modelOverride); model != "" {
 		config.Model = model
 	}

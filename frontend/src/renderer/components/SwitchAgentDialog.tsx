@@ -156,6 +156,12 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	const [refreshingRecovery, setRefreshingRecovery] = useState(false);
 	const operationPending = admissionPending || recoverAgentSwitch.isPending;
 	useEffect(() => {
+		setTargetHarness(session.provider === "claude-code" ? "codex" : "claude-code");
+		setModel("");
+		setMode("");
+		setModelWarning(undefined);
+	}, [session.provider]);
+	useEffect(() => {
 		if (open && durableSwitching) onOpenChange(false);
 	}, [durableSwitching, onOpenChange, open]);
 	const clearFailedAttempt = () => {

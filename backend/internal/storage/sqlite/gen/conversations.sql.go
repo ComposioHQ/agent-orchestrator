@@ -918,6 +918,24 @@ func (q *Queries) ReserveQueuedConversationTurnForPromotion(ctx context.Context,
 	return result.RowsAffected()
 }
 
+const resetConversationAgentOverridesForSession = `-- name: ResetConversationAgentOverridesForSession :exec
+UPDATE conversations
+SET model = NULL, reasoning_effort = NULL, updated_at = ?
+WHERE current_session_id = ?
+`
+
+type ResetConversationAgentOverridesForSessionParams struct {
+	UpdatedAt        time.Time
+	CurrentSessionID *domain.SessionID
+}
+
+// An agent switch starts a new provider/model scope. Clear only the source
+// harness choices; approval posture is AO-owned and remains applicable.
+func (q *Queries) ResetConversationAgentOverridesForSession(ctx context.Context, arg ResetConversationAgentOverridesForSessionParams) error {
+	_, err := q.db.ExecContext(ctx, resetConversationAgentOverridesForSession, arg.UpdatedAt, arg.CurrentSessionID)
+	return err
+}
+
 const resolveConversationApproval = `-- name: ResolveConversationApproval :exec
 UPDATE conversation_activities
 SET status = 'resolved', detail_json = ?, revision = revision + 1, updated_at = ?
