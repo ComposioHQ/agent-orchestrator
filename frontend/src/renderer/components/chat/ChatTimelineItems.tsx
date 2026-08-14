@@ -1305,18 +1305,36 @@ export function providerErrorCopy(activity: ConversationActivity): {
 
 function unwrapProviderErrorJson(raw: string): { headline: string; detail?: string } | undefined {
 	const parsed = parseJsonObjectSuffix(raw);
-	if (!parsed) return undefined;
-	const err =
-		parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
+	const err = parsed
+		? parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
 			? (parsed.error as Record<string, unknown>)
-			: parsed;
-	const message = typeof err.message === "string" ? err.message.trim() : "";
-	const additional = typeof err.additionalDetails === "string" ? err.additionalDetails.trim() : "";
+			: parsed
+		: undefined;
+	const message =
+		typeof err?.message === "string"
+			? err.message.trim()
+			: readJsonStringField(raw, "message");
+	const additional =
+		typeof err?.additionalDetails === "string"
+			? err.additionalDetails.trim()
+			: readJsonStringField(raw, "additionalDetails");
 	if (!message && !additional) return undefined;
 	if (message && additional && additional !== message) {
 		return { headline: message, detail: additional };
 	}
 	return { headline: message || additional };
+}
+
+/** Read a complete string field from an envelope whose trailing JSON was truncated. */
+function readJsonStringField(raw: string, field: "message" | "additionalDetails"): string {
+	const match = new RegExp(`"${field}"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")`).exec(raw);
+	if (!match?.[1]) return "";
+	try {
+		const value = JSON.parse(match[1]) as unknown;
+		return typeof value === "string" ? value.trim() : "";
+	} catch {
+		return "";
+	}
 }
 
 /** AO used to persist `provider error: {…}`; parse the JSON object even when prefixed. */

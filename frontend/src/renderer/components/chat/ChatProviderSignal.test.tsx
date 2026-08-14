@@ -299,14 +299,15 @@ describe("provider error", () => {
 			additionalDetails:
 				"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
 		},
-		threadId: "019fc430",
-		turnId: "turn_1",
+		threadId: "019feb6c-42f9-7411-b296-fc694ae7c69e",
+		turnId: "019ffd9d-714c-7d31-932f-4e7c10cf5a82",
 		willRetry: true,
 	});
 	// What AO persists: the Codex envelope, prefixed, in summary and detail.error.
-	const stored = `provider error: ${envelope}`;
+	const stored = `provider error: ${envelope.length > 400 ? `${envelope.slice(0, 400)}…` : envelope}`;
 
-	it("unwraps the prefixed payload AO actually stores", () => {
+	it("unwraps the truncated prefixed payload AO actually stores", () => {
+		expect(envelope.length).toBeGreaterThan(400);
 		render(
 			<ActivityRow
 				activity={activity({
