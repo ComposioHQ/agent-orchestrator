@@ -74,6 +74,13 @@ type nativeHistoryConversation struct {
 	err    error
 }
 
+type convergingHistoryConversation struct {
+	*fakeConversation
+	mu       sync.Mutex
+	attempts int
+	events   []ports.ChatEvent
+}
+
 type blockingHistoryConversation struct {
 	*fakeConversation
 	started chan struct{}
@@ -92,6 +99,22 @@ func (c *blockingHistoryConversation) ReadHistory(ctx context.Context) ([]ports.
 
 func (c *nativeHistoryConversation) ReadHistory(context.Context) ([]ports.ChatEvent, error) {
 	return c.events, c.err
+}
+
+func (c *convergingHistoryConversation) ReadHistory(context.Context) ([]ports.ChatEvent, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.attempts++
+	if c.attempts == 1 {
+		return nil, ports.ErrChatHistoryUnsettled
+	}
+	return append([]ports.ChatEvent(nil), c.events...), nil
+}
+
+func (c *convergingHistoryConversation) readAttempts() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.attempts
 }
 
 type deferredConversation struct {
@@ -432,6 +455,127 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	}
 	if snapshot.Turns[0].CompletedAt == nil || !snapshot.Turns[0].CompletedAt.Equal(now) {
 		t.Fatalf("replayed completion = %v, want original %s", snapshot.Turns[0].CompletedAt, now)
+	}
+}
+
+func TestInterfaceHandoffWaitsForNativeHistoryToSettleBeforeStartingChat(t *testing.T) {
+	st := openStore(t)
+	conv := &convergingHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "native-turn-1"},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-answer-1", Text: "Settled answer.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-complete",
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateCompleted,
+			},
+		},
+	}
+	var idMu sync.Mutex
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			idMu.Lock()
+			defer idMu.Unlock()
+			nextID++
+			return fmt.Sprintf("converging-history-%d", nextID)
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if err != nil {
+		t.Fatalf("Start handoff: %v", err)
+	}
+	if got := conv.readAttempts(); got != 2 {
+		t.Fatalf("ReadHistory attempts = %d, want one unsettled read followed by convergence", got)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if len(snapshot.Messages) != 1 || snapshot.Messages[0].Text != "Settled answer." {
+		t.Fatalf("messages = %#v, want settled native answer", snapshot.Messages)
+	}
+	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateCompleted {
+		t.Fatalf("turns = %#v, want one completed native turn", snapshot.Turns)
+	}
+}
+
+func TestInterfaceHandoffRejectsAProviderWithoutNativeHistoryReplay(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("no-history-%d", time.Now().UnixNano()) },
+	})
+
+	_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnavailable) {
+		t.Fatalf("Start error = %v, want ErrChatHistoryUnavailable", err)
+	}
+	if _, controllerErr := svc.Controller(testSession); !errors.Is(controllerErr, chatsvc.ErrNoController) {
+		t.Fatalf("Controller error = %v, want no target controller after failed replay", controllerErr)
+	}
+}
+
+func TestOrdinaryResumeAllowsACPContextWithoutHistoryReplay(t *testing.T) {
+	st := openStore(t)
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		err:              ports.ErrChatHistoryUnavailable,
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("context-only-%d", time.Now().UnixNano()) },
+	})
+
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+	}); err != nil {
+		t.Fatalf("ordinary resume with provider context: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+}
+
+func TestInterfaceHandoffReportsUnsettledHistoryWhenConvergenceTimesOut(t *testing.T) {
+	st := openStore(t)
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		err:              ports.ErrChatHistoryUnsettled,
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("unsettled-%d", time.Now().UnixNano()) },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want ErrChatHistoryUnsettled", err)
 	}
 }
 

@@ -94,6 +94,19 @@ func TestInspectTerminalSurfaceSeparatesCodexWorkFromComposer(t *testing.T) {
 			wantWork:   ports.TerminalSurfaceWorkWaitingInput,
 			wantEditor: ports.TerminalComposerUnknown,
 		},
+		{
+			name:       "approval picker with a non-first selected option",
+			output:     "Run this command?\n  1. Approve once\n› 2. Deny\nPress enter to confirm or esc to go back\n",
+			wantWork:   ports.TerminalSurfaceWorkWaitingInput,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "completed approval picker above the current composer is idle",
+			output: "Run this command?\n› 1. Approve once\n  2. Deny\nPress enter to confirm or esc to go back\n" +
+				"› \x1b[2mAdd tests\x1b[0m\n\ngpt-5.6-sol low · ~/project\n",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

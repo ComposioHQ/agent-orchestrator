@@ -562,6 +562,12 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	if !ok || prompt["append"] != "Recomputed AO instructions" {
 		t.Fatalf("session/resume metadata = %#v, want recomputed system prompt", resumeMeta)
 	}
+	if conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("resume-only ACP conversation advertised replayable history")
+	}
+	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnavailable) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnavailable after session/resume", err)
+	}
 }
 
 func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
@@ -661,6 +667,9 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	}
 	if history[0].ProviderTurnID == history[6].ProviderTurnID {
 		t.Fatalf("both native turns share provider id %q", history[0].ProviderTurnID)
+	}
+	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("session/load conversation did not advertise replayable history")
 	}
 
 	ready := nextEvent(t, conv.Events())

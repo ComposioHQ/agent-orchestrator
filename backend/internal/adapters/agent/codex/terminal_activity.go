@@ -53,10 +53,16 @@ func codexConfirmationFrame(lines []string, start int) bool {
 	selection := -1
 	for i := len(lines) - 1; i >= start; i-- {
 		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "›") && codexNumberedOption(strings.TrimSpace(strings.TrimPrefix(line, "›"))) {
-			selection = i
-			break
+		if !strings.HasPrefix(line, "›") {
+			continue
 		}
+		// An ordinary composer below a completed picker makes the picker
+		// transcript. Only the current, last prompt-shaped row can be selected.
+		if !codexNumberedOption(strings.TrimSpace(strings.TrimPrefix(line, "›"))) {
+			return false
+		}
+		selection = i
+		break
 	}
 	if selection < 0 {
 		return false

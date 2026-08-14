@@ -111,6 +111,27 @@ describe("SessionInterfaceTransitionNotice", () => {
 		expect(onSwitchWithInterrupt).toHaveBeenCalledOnce();
 	});
 
+	it("offers an explicit cancellation action when a provider decision blocks drain", () => {
+		const onSwitchWithInterrupt = vi.fn();
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("failed"),
+					errorCode: "DRAIN_DECISION_PENDING",
+					errorDetail: "AO found a provider decision waiting in Terminal.",
+				}}
+				onDismiss={vi.fn()}
+				onSwitchWithInterrupt={onSwitchWithInterrupt}
+			/>,
+		);
+
+		const action = screen.getByRole("button", {
+			name: "Cancel request and switch",
+		});
+		fireEvent.click(action);
+		expect(onSwitchWithInterrupt).toHaveBeenCalledOnce();
+	});
+
 	it("does not offer a destructive retry for unrelated failures", () => {
 		render(
 			<SessionInterfaceTransitionNotice

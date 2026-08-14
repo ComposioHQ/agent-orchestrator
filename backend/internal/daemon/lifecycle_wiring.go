@@ -463,6 +463,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SystemPrompt:           cfg.SystemPrompt,
 		AdditionalDirectories:  cfg.AdditionalDirectories,
 		ProviderConversationID: cfg.ProviderConversationID,
+		RequireNativeHistory:   cfg.RequireNativeHistory,
 		ControllerReady: func(out chatsvc.StartResult) error {
 			if cfg.ControllerReady == nil {
 				return nil

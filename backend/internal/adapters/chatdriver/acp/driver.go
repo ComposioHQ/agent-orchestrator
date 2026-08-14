@@ -166,7 +166,8 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 
 // Resume reconnects to the stored ACP session. When the agent advertises
 // session/load, AO uses it to recover both provider context and the normalized
-// transcript; newer resume-only agents still recover context without a replay.
+// transcript; resume-only agents recover context but explicitly report that no
+// typed history replay is available.
 func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
 	if cfg.ProviderConversationID == "" {
 		return nil, fmt.Errorf("%w: no stored ACP session id", ports.ErrChatResumeFailed)
@@ -317,6 +318,7 @@ func conversationCapabilities(
 	if init.AgentCapabilities.SessionCapabilities.Resume == nil {
 		caps[ports.ChatCapabilityResume] = false
 	}
+	caps[ports.ChatCapabilityHistory] = init.AgentCapabilities.LoadSession
 	if extensionSupported(init.Meta, "steering") {
 		caps[ports.ChatCapabilitySteer] = true
 	}

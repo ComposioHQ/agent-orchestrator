@@ -27,6 +27,7 @@ const (
 var (
 	errDrainQuiescenceUnverified = errors.New("AO could not verify that the terminal was idle after the latest input. The source interface was left untouched; retry after the terminal settles")
 	errDrainDraftPresent         = errors.New("AO found unsent text in the terminal composer. The source interface was left untouched; submit or clear the draft and retry, or choose Discard draft and switch")
+	errDrainDecisionPending      = errors.New("AO found a provider decision waiting in Terminal. The source interface was left untouched; answer it in Terminal and retry, or choose Cancel request and switch")
 )
 
 // interfaceTransitionStore is optional so the existing narrow Manager Store
@@ -306,6 +307,8 @@ func (m *Manager) runInterfaceTransition(
 			code = "DRAIN_QUIESCENCE_UNVERIFIED"
 		case errors.Is(err, errDrainDraftPresent):
 			code = "DRAIN_DRAFT_PRESENT"
+		case errors.Is(err, errDrainDecisionPending):
+			code = "DRAIN_DECISION_PENDING"
 		}
 		fail(code, err)
 		return
@@ -350,8 +353,15 @@ func (m *Manager) runInterfaceTransition(
 		fail("TRANSITION_STATE_FAILED", err)
 		return
 	}
-	if err := m.startTransitionTarget(ctx, rec.ID, transition.NativeConversationID == ""); err != nil {
-		fail("TARGET_RESUME_FAILED", err)
+	if err := m.startTransitionTarget(ctx, rec.ID, transition.NativeConversationID == "", true); err != nil {
+		code := "TARGET_RESUME_FAILED"
+		switch {
+		case errors.Is(err, ports.ErrChatHistoryUnavailable):
+			code = "TARGET_HISTORY_UNAVAILABLE"
+		case errors.Is(err, ports.ErrChatHistoryUnsettled):
+			code = "TARGET_HISTORY_UNSETTLED"
+		}
+		fail(code, err)
 		return
 	}
 	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionActivating, "", ""); err != nil {
@@ -502,14 +512,24 @@ func (m *Manager) prepareSourceHandoff(
 		if rec.Activity.State == domain.ActivityExited {
 			return nil
 		}
-		if !tuiIdleAfterInput(rec, lastTerminalInputAt) {
-			interrupter, ok := m.runtime.(runtimeInterrupter)
-			if !ok {
-				return fmt.Errorf("runtime cannot interrupt a live terminal controller")
-			}
-			if err := interrupter.Interrupt(ctx, handle); err != nil {
-				return err
-			}
+		interrupter, ok := m.runtime.(runtimeInterrupter)
+		if !ok {
+			return fmt.Errorf("runtime cannot interrupt a live terminal controller")
+		}
+		// Explicit Stop now is authoritative even when the durable activity row
+		// says idle: approval screens can be user-blocked while that row is idle.
+		// Sending the interrupt is what makes “Cancel request and switch” true.
+		if err := interrupter.Interrupt(ctx, handle); err != nil {
+			return err
+		}
+		// Let the provider observe Ctrl-C and begin flushing its native history
+		// before an already-idle activity row can end the loop immediately.
+		initialSettle := time.NewTimer(m.interfaceTransition.pollInterval)
+		select {
+		case <-ctx.Done():
+			initialSettle.Stop()
+			return ctx.Err()
+		case <-initialSettle.C:
 		}
 		// Give the provider a short, bounded window to flush its native transcript
 		// after Ctrl-C. The subsequent Destroy is still authoritative, so a stale
@@ -601,6 +621,16 @@ func (m *Manager) prepareSourceHandoff(
 			} else if outputErr == nil {
 				observation := surfaceInspector.InspectTerminalSurface(output)
 				switch {
+				case observation.Work == ports.TerminalSurfaceWorkWaitingInput,
+					observation.Work == ports.TerminalSurfaceWorkBlocked:
+					// Provider-owned approval and input requests are not composer
+					// drafts. The terminal input gate is closed while draining, so
+					// waiting here would also make the request impossible to answer.
+					// Abort the drain and return control to the source interface.
+					if cancelProbe != nil {
+						cancelProbe()
+					}
+					return errDrainDecisionPending
 				case observation.Composer == ports.TerminalComposerDraft &&
 					current.Activity.State == domain.ActivityIdle:
 					// A positively identified draft is sufficient to preserve the
@@ -615,9 +645,7 @@ func (m *Manager) prepareSourceHandoff(
 					observation.Work == ports.TerminalSurfaceWorkIdle &&
 					observation.Composer == ports.TerminalComposerEmpty:
 					idleProven = true
-				case observation.Work == ports.TerminalSurfaceWorkActive,
-					observation.Work == ports.TerminalSurfaceWorkWaitingInput,
-					observation.Work == ports.TerminalSurfaceWorkBlocked:
+				case observation.Work == ports.TerminalSurfaceWorkActive:
 					surfaceKnownBusy = true
 				}
 			}
@@ -638,8 +666,9 @@ func (m *Manager) prepareSourceHandoff(
 			}
 		}
 		if current.Activity.State != domain.ActivityIdle || surfaceKnownBusy {
-			// Active work and user-paced decisions may wait without a deadline.
-			// A recognized current-screen state resets prior ambiguity.
+			// Active work may wait without a deadline. A recognized current-screen
+			// state resets prior ambiguity; decisions returned above instead because
+			// the closed input gate would prevent the user from answering them.
 			unverifiedIdleSince = time.Time{}
 			if surfaceKnownBusy && cancelProbe != nil {
 				cancelProbe()
@@ -748,7 +777,9 @@ func (m *Manager) stopSourceControllerConclusive(rec domain.SessionRecord) error
 	return fmt.Errorf("could not prove the source controller stopped after retry: %w", errors.Join(failures...))
 }
 
-func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID, fresh bool) error {
+func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID, fresh, requireNativeHistory bool) error {
+	ctx, cancel := context.WithTimeout(ctx, interfaceTransitionStepLimit)
+	defer cancel()
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return err
@@ -761,7 +792,9 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 		return err
 	}
 	ws := workspaceInfo(rec)
-	if fresh {
+	if requireNativeHistory {
+		_, err = m.relaunchSessionForInterfaceTransition(ctx, "switch interface", rec, project, ws, nil, fresh)
+	} else if fresh {
 		_, err = m.relaunchSessionFresh(ctx, "switch interface", rec, project, ws, nil)
 	} else {
 		_, err = m.relaunchSession(ctx, "switch interface", rec, project, ws, nil)
@@ -813,7 +846,7 @@ func (m *Manager) rollbackInterfaceTransition(
 			return
 		}
 	}
-	if err := m.startTransitionTarget(ctx, transition.SessionID, transition.NativeConversationID == ""); err != nil {
+	if err := m.startTransitionTarget(ctx, transition.SessionID, transition.NativeConversationID == "", false); err != nil {
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 			"RECOVERY_REQUIRED", cause.Error()+"; source restore: "+err.Error())
 		return

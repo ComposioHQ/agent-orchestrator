@@ -240,7 +240,9 @@ export function SessionInterfaceTransitionNotice({
 					{transition.errorDetail || "The original interface remains available. You can retry the switch."}
 				</p>
 				{transition.phase === "failed" &&
-				(transition.errorCode === "DRAIN_DRAFT_PRESENT" || transition.errorCode === "DRAIN_QUIESCENCE_UNVERIFIED") &&
+				(transition.errorCode === "DRAIN_DRAFT_PRESENT" ||
+					transition.errorCode === "DRAIN_DECISION_PENDING" ||
+					transition.errorCode === "DRAIN_QUIESCENCE_UNVERIFIED") &&
 				onSwitchWithInterrupt ? (
 					<Button
 						type="button"
@@ -251,7 +253,11 @@ export function SessionInterfaceTransitionNotice({
 						onClick={onSwitchWithInterrupt}
 					>
 						{interrupting ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : null}
-						{transition.errorCode === "DRAIN_DRAFT_PRESENT" ? "Discard draft and switch" : "Stop now and switch"}
+						{transition.errorCode === "DRAIN_DRAFT_PRESENT"
+							? "Discard draft and switch"
+							: transition.errorCode === "DRAIN_DECISION_PENDING"
+								? "Cancel request and switch"
+								: "Stop now and switch"}
 					</Button>
 				) : null}
 			</div>

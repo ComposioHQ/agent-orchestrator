@@ -133,6 +133,10 @@ type StartConfig struct {
 	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes an existing provider conversation when set.
 	ProviderConversationID string
+	// RequireNativeHistory makes a missing typed provider replay fatal. Interface
+	// handoff sets it because provider context without a visible transcript would
+	// make completed Terminal work disappear from Chat.
+	RequireNativeHistory bool
 	// ControllerReady commits the controller's durable generation before event
 	// consumption starts. A controller that exits immediately must report after
 	// the launch has been marked live, so its exited signal cannot be overwritten
@@ -353,7 +357,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			}
 		}
 		if err := controller.importNativeHistory(
-			ctx, existing.Turns, existing.Messages, existing.Activities,
+			ctx, existing.Turns, existing.Messages, existing.Activities, cfg.RequireNativeHistory,
 		); err != nil {
 			_ = conv.Close()
 			return nil, err
@@ -819,6 +823,7 @@ type StartRequest struct {
 	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
 	ProviderConversationID string
+	RequireNativeHistory   bool
 	// ControllerReady runs after the provider and generation exist but before
 	// live event projection starts.
 	ControllerReady func(StartResult) error

@@ -1039,6 +1039,33 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerUnknown,
 		},
 		{
+			name: "permission dialog with provider-specific question and modern footer",
+			output: "Claude wants to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permission dialog with a non-first selected option",
+			output: "Claude wants to run Bash\n" +
+				"  1. Yes\n" +
+				"❯ 2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "completed permission menu above the current composer is not blocked",
+			output: "Claude wanted to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
 			name: "permission wording in completed response is not current chrome",
 			output: "The command asked: Do you want to proceed?\n" +
 				"It then said: Press enter to confirm.\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",

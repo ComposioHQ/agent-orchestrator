@@ -35,10 +35,37 @@ const discardDraftRecovery: TerminalInterfaceFailureRecovery = {
 	},
 };
 
-// Only a positively identified draft may advertise this destructive recovery.
-// Other failures need their own remediation and must not silently become Stop.
+const cancelDecisionRecovery: TerminalInterfaceFailureRecovery = {
+	actionLabel: "Cancel request and switch",
+	policy: "interrupt",
+	confirmationTitle: "Cancel request and switch?",
+	confirmationMessage:
+		"Stopping now cancels the pending provider request and its current turn before switching to Chat. Unfinished work from that turn stops. Completed conversation history and worktree files are preserved.",
+	confirmationAction: "Cancel request and switch",
+	confirmStyle: "destructive",
+	confirm: (onConfirm) => {
+		Alert.alert(
+			"Cancel request and switch?",
+			"Stopping now cancels the pending provider request and its current turn before switching to Chat. Unfinished work from that turn stops. Completed conversation history and worktree files are preserved.",
+			[
+				{ text: "Keep request", style: "cancel" },
+				{
+					text: "Cancel request and switch",
+					style: "destructive",
+					onPress: () => onConfirm("interrupt"),
+				},
+			],
+		);
+	},
+};
+
+// Only a positively identified draft or provider request may advertise a
+// destructive recovery, with copy that names exactly what interruption loses.
+// Other failures must not silently become Stop.
 export function terminalInterfaceFailureRecovery(
 	transition?: Pick<SessionInterfaceTransition, "errorCode">,
 ): TerminalInterfaceFailureRecovery | undefined {
-	return transition?.errorCode === "DRAIN_DRAFT_PRESENT" ? discardDraftRecovery : undefined;
+	if (transition?.errorCode === "DRAIN_DRAFT_PRESENT") return discardDraftRecovery;
+	if (transition?.errorCode === "DRAIN_DECISION_PENDING") return cancelDecisionRecovery;
+	return undefined;
 }

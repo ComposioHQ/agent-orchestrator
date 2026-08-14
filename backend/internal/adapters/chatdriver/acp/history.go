@@ -45,6 +45,7 @@ func (c *conversation) beginHistoryReplay(sessionID string) {
 		occurrences: make(map[string]int),
 	}
 	c.historyEvents = nil
+	c.historyLoaded = false
 	c.historyMu.Unlock()
 }
 
@@ -52,6 +53,7 @@ func (c *conversation) abortHistoryReplay() {
 	c.historyMu.Lock()
 	c.history = nil
 	c.historyEvents = nil
+	c.historyLoaded = false
 	c.historyMu.Unlock()
 
 	c.mu.Lock()
@@ -68,6 +70,7 @@ func (c *conversation) finishHistoryReplay() {
 	c.historyMu.Lock()
 	if c.history != nil {
 		c.historyEvents = append([]ports.ChatEvent(nil), c.history.events...)
+		c.historyLoaded = true
 	}
 	c.history = nil
 	c.historyMu.Unlock()
@@ -86,6 +89,10 @@ func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, erro
 	}
 	c.historyMu.Lock()
 	defer c.historyMu.Unlock()
+	if !c.historyLoaded {
+		return nil, fmt.Errorf("%w: ACP session/resume does not replay prior updates; session/load is required",
+			ports.ErrChatHistoryUnavailable)
+	}
 	return append([]ports.ChatEvent(nil), c.historyEvents...), nil
 }
 

@@ -96,25 +96,79 @@ func claudeHorizontalRule(line string) bool {
 	return true
 }
 
-// A Claude confirmation menu has a question before its selected prompt row and
-// the keyboard instruction after it. Transcript prose may contain either phrase
-// (or even quote both), but it sits wholly before the current composer.
+// A Claude confirmation menu has a provider-owned numbered selection row, at
+// least one sibling option, and keyboard instructions beneath it. The question
+// text and footer wording change between Claude releases and between command,
+// file-edit, and user-question prompts, so structure is the stable boundary.
+// Transcript prose may quote any of these words, but it does not form this
+// current selection frame around the last prompt marker.
 func claudeConfirmationFrameVisible(output string) bool {
-	lines := terminalSurfaceLines(output)
+	lines := terminalui.PlainTerminalLines(output)
 	selection := -1
 	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.Contains(lines[i], "❯") {
-			selection = i
-			break
+		line := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(line, "❯") {
+			continue
 		}
+		// The selected option must be Claude's last prompt-shaped row. If a
+		// normal composer appears below an old menu, that menu is transcript,
+		// not a request that is still waiting.
+		if !claudeNumberedOption(strings.TrimSpace(strings.TrimPrefix(line, "❯"))) {
+			return false
+		}
+		selection = i
+		break
 	}
 	if selection < 0 {
 		return false
 	}
-	before := strings.ToLower(strings.Join(lines[:selection], "\n"))
-	after := strings.ToLower(strings.Join(lines[selection+1:], "\n"))
-	return strings.Contains(before, "do you want to proceed?") &&
-		strings.Contains(after, "press enter to confirm")
+
+	hasHeader := false
+	optionCount := 1
+	for i := selection - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if claudeNumberedOption(line) {
+			optionCount++
+			continue
+		}
+		hasHeader = true
+		break
+	}
+	if !hasHeader {
+		return false
+	}
+
+	hasHint := false
+	for i := selection + 1; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if claudeNumberedOption(line) {
+			optionCount++
+		}
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "press enter to confirm") ||
+			strings.Contains(lower, "enter to select") ||
+			strings.Contains(lower, "esc to cancel") ||
+			strings.Contains(lower, "tab to amend") {
+			hasHint = true
+		}
+	}
+	return optionCount >= 2 && hasHint
+}
+
+func claudeNumberedOption(line string) bool {
+	dot := strings.IndexByte(line, '.')
+	if dot <= 0 {
+		return false
+	}
+	for _, r := range line[:dot] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func terminalSurfaceTail(output string, lines int) string {

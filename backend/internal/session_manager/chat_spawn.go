@@ -74,6 +74,9 @@ type ChatStart struct {
 	// ProviderConversationID resumes a stored conversation instead of opening a
 	// new one. Empty means start fresh.
 	ProviderConversationID string
+	// RequireNativeHistory is set only for a TUI -> Chat handoff. The target must
+	// replay the provider transcript before it can become the committed UI.
+	RequireNativeHistory bool
 	// ControllerReady commits the durable controller facts before the provider
 	// event stream is consumed. This prevents an immediate exit from racing a
 	// later MarkSpawned write back to idle.
@@ -274,6 +277,7 @@ func (m *Manager) resumeChatController(
 	rec domain.SessionRecord,
 	project domain.ProjectRecord,
 	ws ports.WorkspaceInfo,
+	requireNativeHistory bool,
 ) (RestoreResult, error) {
 	if m.chat == nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w: chat mode is not available in this build",
@@ -307,6 +311,7 @@ func (m *Manager) resumeChatController(
 		AdditionalDirectories: additionalDirectories,
 		// The handle that makes this a resume rather than a new conversation.
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		RequireNativeHistory:   requireNativeHistory,
 		ControllerReady: func(started ChatStarted) error {
 			metadata := rec.Metadata
 			metadata.WorkspacePath = ws.Path

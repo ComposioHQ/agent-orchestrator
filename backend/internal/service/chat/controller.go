@@ -27,6 +27,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+const (
+	nativeHistorySettlePoll  = 100 * time.Millisecond
+	nativeHistorySettleLimit = 45 * time.Second
+)
+
 // Store is the durable conversation surface the controller needs. Implemented by
 // the SQLite store.
 type Store interface {
@@ -248,14 +253,46 @@ func (c *Controller) importNativeHistory(
 	existingTurns []domain.ConversationTurn,
 	existingMessages []domain.ConversationMessage,
 	existingActivities []domain.ConversationActivity,
+	required bool,
 ) error {
 	reader, ok := c.conv.(ports.ChatHistoryReader)
 	if !ok {
+		if required {
+			return fmt.Errorf("%w: provider does not implement typed history replay",
+				ports.ErrChatHistoryUnavailable)
+		}
 		return nil
 	}
-	events, err := reader.ReadHistory(ctx)
-	if err != nil {
-		return fmt.Errorf("read native conversation history: %w", err)
+	historyCtx, cancel := context.WithTimeout(ctx, nativeHistorySettleLimit)
+	defer cancel()
+	var events []ports.ChatEvent
+	sawUnsettled := false
+	for {
+		var err error
+		events, err = reader.ReadHistory(historyCtx)
+		if err == nil {
+			break
+		}
+		if errors.Is(err, ports.ErrChatHistoryUnavailable) && !required {
+			return nil
+		}
+		if sawUnsettled && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+				ports.ErrChatHistoryUnsettled, err)
+		}
+		if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+			return fmt.Errorf("read native conversation history: %w", err)
+		}
+		sawUnsettled = true
+
+		timer := time.NewTimer(nativeHistorySettlePoll)
+		select {
+		case <-historyCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+				ports.ErrChatHistoryUnsettled, historyCtx.Err())
+		case <-timer.C:
+		}
 	}
 	events = reconcileNativeHistory(
 		events, existingTurns, existingMessages, existingActivities,

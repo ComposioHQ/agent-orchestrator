@@ -212,6 +212,10 @@ func (transitionSurfaceAgent) InspectTerminalSurface(output string) ports.Termin
 		return ports.TerminalSurfaceObservation{
 			Work: ports.TerminalSurfaceWorkActive, Composer: ports.TerminalComposerDraft,
 		}
+	case decisionTerminalOutput:
+		return ports.TerminalSurfaceObservation{
+			Work: ports.TerminalSurfaceWorkBlocked, Composer: ports.TerminalComposerDraft,
+		}
 	case activeTerminalOutput:
 		return ports.TerminalSurfaceObservation{Work: ports.TerminalSurfaceWorkActive}
 	default:
@@ -236,6 +240,7 @@ const (
 	idleTerminalOutput        = "idle"
 	draftTerminalOutput       = "draft"
 	activeDraftTerminalOutput = "active-draft"
+	decisionTerminalOutput    = "decision"
 	activeTerminalOutput      = "active"
 	ambiguousTerminalOutput   = "ambiguous"
 )
@@ -557,6 +562,9 @@ func TestInterfaceTransitionTUIToChatStopsBeforeStartingAndReusesNativeConversat
 	if chat.start.ProviderConversationID != "native-1" {
 		t.Fatalf("provider conversation = %q, want native-1", chat.start.ProviderConversationID)
 	}
+	if !chat.start.RequireNativeHistory {
+		t.Fatal("TUI to Chat handoff did not require native history replay")
+	}
 	if runtime.created != 0 {
 		t.Fatalf("terminal runtime created %d times while switching to Chat", runtime.created)
 	}
@@ -590,6 +598,37 @@ func TestInterfaceTransitionRollbackClearsStaleTUIRuntimeBeforeRestore(t *testin
 	wantLog := "[stop:tui:runtime-1 start:chat stop:chat stop:tui:runtime-1 start:tui]"
 	if got := fmt.Sprint(*log); got != wantLog {
 		t.Fatalf("controller order = %s, want %s", got, wantLog)
+	}
+}
+
+func TestInterfaceTransitionReportsNativeHistoryReplayFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "unavailable", err: ports.ErrChatHistoryUnavailable, code: "TARGET_HISTORY_UNAVAILABLE"},
+		{name: "unsettled", err: ports.ErrChatHistoryUnsettled, code: "TARGET_HISTORY_UNSETTLED"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+			runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+			chat.startErr = tt.err
+
+			transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+				domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			settled := awaitTransition(t, store, transition.ID)
+			if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != tt.code {
+				t.Fatalf("transition = %+v, want failed %s", settled, tt.code)
+			}
+			if got := store.sessions["session-1"].Mode; got != domain.SessionModeTUI {
+				t.Fatalf("mode = %s, want restored TUI", got)
+			}
+		})
 	}
 }
 
@@ -702,6 +741,60 @@ func TestInterfaceTransitionTUIToChatPreservesDraftWhenSurfaceAlsoLooksActive(t 
 	case <-gate.released:
 	case <-time.After(time.Second):
 		t.Fatal("terminal input gate remained closed after draft detection")
+	}
+}
+
+func TestInterfaceTransitionTUIToChatReportsAPendingDecisionBeforeComposerDraft(t *testing.T) {
+	manager, store, runtime, _, log := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: transitionSurfaceAgent{}}
+	now := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	store.sessions["session-1"] = rec
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.outputs = []string{decisionTerminalOutput}
+	gate := &transitionInputGate{
+		acquired: make(chan string, 2),
+		released: make(chan string, 2),
+	}
+	manager.SetTerminalInputGate(gate)
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "DRAIN_DECISION_PENDING" {
+		t.Fatalf("transition = %+v, want failed DRAIN_DECISION_PENDING", settled)
+	}
+	if !strings.Contains(settled.ErrorDetail, "decision") || !strings.Contains(settled.ErrorDetail, "Terminal") {
+		t.Fatalf("error detail = %q, want guidance to answer the decision in Terminal", settled.ErrorDetail)
+	}
+	if strings.Contains(settled.ErrorDetail, "unsent text") {
+		t.Fatalf("error detail = %q, pending decision was misreported as a draft", settled.ErrorDetail)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("source runtime destroyed %d times with a pending decision", runtime.destroyed)
+	}
+	select {
+	case <-gate.released:
+	case <-time.After(time.Second):
+		t.Fatal("terminal input gate remained closed after decision detection")
+	}
+
+	recovery, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionInterrupt)
+	if err != nil {
+		t.Fatalf("start decision cancellation: %v", err)
+	}
+	completed := awaitTransition(t, store, recovery.ID)
+	if completed.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("decision cancellation = %+v, want completed", completed)
+	}
+	if !strings.Contains(fmt.Sprint(*log), "interrupt:tui:runtime-1") {
+		t.Fatalf("controller log = %v, explicit decision cancellation did not interrupt the provider", *log)
 	}
 }
 
