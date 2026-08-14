@@ -1006,7 +1006,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
-	it("shows claude-code as the default reviewer before a run exists", async () => {
+	it("shows the worker-compatible default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return { data: { reviewerHandleId: "", reviews: [] } };
@@ -1033,7 +1033,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
