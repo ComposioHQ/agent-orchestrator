@@ -138,8 +138,8 @@ function deriveReviewAttention(pr: SessionPRSummary, progress: PRReviewProgress)
 
 function deriveInjectionState(run?: ReviewRunFacts): ReviewInjectionState {
 	if (!run || run.status === "running" || run.status === "cancelled") return "not_applicable";
-	if (!run.autoInjectReview) return "disabled";
 	if (run.status === "failed") return "failed";
+	if (!run.autoInjectReview) return "disabled";
 	if (run.status === "delivered" || run.deliveredAt) return "delivered";
 	if (run.status === "complete") return "pending";
 	return "not_applicable";

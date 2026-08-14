@@ -214,6 +214,12 @@ describe("derivePRReviewPresentation", () => {
 			want: { progress: "approved", attention: "merge_blocked" },
 		},
 		{
+			name: "approved but provider blocked",
+			pr: prSummary({ mergeability: { state: "blocked", reasons: ["policy"], prUrl: "https://github.com/o/r/pull/1" } }),
+			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
+			want: { progress: "approved", attention: "merge_blocked" },
+		},
+		{
 			name: "approved but CI failing",
 			pr: prSummary({ ci: { state: "failing", failingChecks: [], autoInjectCI: true } }),
 			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
@@ -242,6 +248,15 @@ describe("derivePRReviewPresentation", () => {
 			pr: prSummary(),
 			ao: reviewState(1, "needs_review"),
 			want: { progress: "not_started", attention: "needs_review" },
+		},
+		{
+			name: "approved with unknown CI and unstable mergeability",
+			pr: prSummary({
+				ci: { state: "unknown", failingChecks: [], autoInjectCI: true },
+				mergeability: { state: "unstable", reasons: [], prUrl: "https://github.com/o/r/pull/1" },
+			}),
+			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
+			want: { progress: "approved", attention: "unknown", ci: "unknown", mergeability: "unstable" },
 		},
 	])("derives $name without collapsing independent facts", ({ pr: summary, ao, want }) => {
 		expect(derivePRReviewPresentation(summary, ao, [])).toMatchObject(want);
@@ -287,6 +302,7 @@ describe("derivePRReviewPresentation", () => {
 		{ name: "pending delivery", current: run({ status: "complete", deliveredAt: undefined }), want: "pending" },
 		{ name: "delivered", current: run({ status: "delivered" }), want: "delivered" },
 		{ name: "failed", current: run({ status: "failed" }), want: "failed" },
+		{ name: "failed while injection is disabled", current: run({ autoInjectReview: false, status: "failed" }), want: "failed" },
 	])("derives injection state for $name", ({ current, want }) => {
 		const presentation = derivePRReviewPresentation(
 			prSummary(),
@@ -296,16 +312,61 @@ describe("derivePRReviewPresentation", () => {
 		expect(presentation.injection).toBe(want);
 	});
 
+	it("uses each legacy run ID as a cycle when batch IDs are absent", () => {
+		const presentation = derivePRReviewPresentation(prSummary(), reviewState(1, "needs_review"), [
+			run({ id: "legacy-1", batchId: "" }),
+			run({ id: "legacy-2", batchId: "" }),
+		]);
+		expect(presentation.cycleCount).toBe(2);
+	});
+
+	it("preserves bot-only comments without turning approval into human changes requested", () => {
+		const presentation = derivePRReviewPresentation(
+			prSummary({
+				review: {
+					decision: "approved",
+					hasUnresolvedHumanComments: false,
+					unresolvedBy: [{ reviewerId: "review-bot", isBot: true, count: 2, links: [] }],
+				},
+			}),
+			{ ...reviewState(1, "up_to_date"), latestRun: run() },
+			[],
+		);
+		expect(presentation).toMatchObject({ progress: "approved", comments: { unresolved: 2 }, hasExternalReview: true });
+	});
+
+	it("is unchanged by duplicate normalized provider review entries", () => {
+		const externalReview = {
+			autoInjectReview: true,
+			body: "approved",
+			reviewerId: "lin",
+			reviewUrl: "https://github.com/o/r/pull/1#review",
+			submittedAt: "2026-06-10T00:00:00Z",
+			verdict: "approved" as const,
+		};
+		const once = derivePRReviewPresentation(
+			prSummary({ review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [], reviews: [externalReview] } }),
+			undefined,
+			[],
+		);
+		const twice = derivePRReviewPresentation(
+			prSummary({ review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [], reviews: [externalReview, externalReview] } }),
+			undefined,
+			[],
+		);
+		expect(twice).toEqual(once);
+	});
+
 	it("matches AO states and runs to PRs by canonical URL", () => {
-		const secondURL = "https://github.com/o/r/pull/2";
+		const secondURL = "https://github.com/another/repo/pull/1";
 		const presentations = deriveSessionReviewPresentations(
-			[prSummary(), prSummary({ number: 2, url: secondURL, headSha: "head-b" })],
-			[reviewState(1, "needs_review"), { ...reviewState(2, "up_to_date"), prUrl: secondURL, latestRun: run({ prUrl: secondURL, targetSha: "head-b" }) }],
+			[prSummary(), prSummary({ number: 1, url: secondURL, headSha: "head-b" })],
+			[reviewState(1, "needs_review"), { ...reviewState(1, "up_to_date"), prUrl: secondURL, latestRun: run({ prUrl: secondURL, targetSha: "head-b" }) }],
 			[run(), run({ id: "run-2", batchId: "batch-2", prUrl: secondURL, targetSha: "head-b" })],
 		);
 		expect(presentations.map(({ prNumber, progress, cycleCount }) => ({ prNumber, progress, cycleCount }))).toEqual([
 			{ prNumber: 1, progress: "not_started", cycleCount: 1 },
-			{ prNumber: 2, progress: "approved", cycleCount: 1 },
+			{ prNumber: 1, progress: "approved", cycleCount: 1 },
 		]);
 	});
 });
