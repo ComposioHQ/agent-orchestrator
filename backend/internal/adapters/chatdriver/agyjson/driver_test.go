@@ -7,6 +7,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -227,5 +228,50 @@ func TestEmitTurnCompletedReleasesActiveTurnBeforePublishing(t *testing.T) {
 		Text: "next turn",
 	}); err != nil {
 		t.Fatalf("next turn rejected after completion: %v", err)
+	}
+}
+
+func TestSendTurnProviderIDsRemainUniqueAcrossRestart(t *testing.T) {
+	newConversation := func() *conversation {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		return &conversation{
+			ctx:       ctx,
+			cancel:    cancel,
+			events:    make(chan ports.ChatEvent, 4),
+			deferred:  make(map[string]ports.ChatUserMessage),
+			approvals: make(map[string]chan ports.ChatDecision),
+		}
+	}
+
+	beforeRestart := newConversation()
+	first, err := beforeRestart.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "before restart",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	afterRestart := newConversation()
+	second, err := afterRestart.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "after restart",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first.ProviderTurnID == second.ProviderTurnID {
+		t.Fatalf(
+			"provider turn id reused across conversation restart: %q",
+			first.ProviderTurnID,
+		)
+	}
+
+	if !strings.HasPrefix(first.ProviderTurnID, "agy-turn-") {
+		t.Fatalf("first provider turn id = %q", first.ProviderTurnID)
+	}
+	if !strings.HasPrefix(second.ProviderTurnID, "agy-turn-") {
+		t.Fatalf("second provider turn id = %q", second.ProviderTurnID)
 	}
 }

@@ -44,7 +44,6 @@ type conversation struct {
 	closed                 bool
 
 	events      chan ports.ChatEvent
-	turnSeq     atomic.Uint64
 	eventSeq    atomic.Uint64
 	approvalSeq atomic.Uint64
 	wg          sync.WaitGroup
@@ -90,7 +89,12 @@ func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) 
 		return ports.ChatTurnRef{}, fmt.Errorf("%w: Agy stream-json chat does not expose a per-turn reasoning-effort control", ports.ErrChatConfigOptionInvalid)
 	}
 
-	turnID := fmt.Sprintf("agy-turn-%d", c.turnSeq.Add(1))
+	turnToken, err := randomToken()
+	if err != nil {
+		return ports.ChatTurnRef{}, fmt.Errorf("agy chat: create provider turn id: %w", err)
+	}
+	turnID := "agy-turn-" + turnToken
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
