@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { PanelRight, Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
 	useCallback,
@@ -19,6 +19,7 @@ import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shor
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
+import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
@@ -59,7 +60,10 @@ const INSPECTOR_DEFAULT_PX = 360;
 const INSPECTOR_MIN_PX = 360;
 const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
-const INSPECTOR_COMPACT_MAX_PX = 359;
+// The inspector tab labels respond to the tablist's remaining width, after the
+// 76px pinned-action reserve and 10px leading inset. Keep the animation lock on
+// the same side of that breakpoint so labels do not reflow as the rail settles.
+const INSPECTOR_COMPACT_MAX_PX = 445;
 const TOPBAR_SECONDARY_COMPACT_MAX_PX = 759;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const inspectorWidthVar = "--ao-inspector-w";
@@ -885,6 +889,22 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</SessionInspectorRail>
 				) : null}
 			</div>
+			{hasInspector ? (
+				<div className="session-pinned-actions" data-testid="session-pinned-actions" style={noDragStyle}>
+					<TopbarButton
+						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+						aria-pressed={isInspectorOpen}
+						onClick={() => toggleInspector(sessionId)}
+						style={noDragStyle}
+						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
+						variant="icon"
+					>
+						<PanelRight className="size-icon-md" aria-hidden="true" />
+					</TopbarButton>
+					{/* Keep the global notification action trailing at the window edge. */}
+					<NotificationCenter style={noDragStyle} />
+				</div>
+			) : null}
 			<SessionInterfaceSwitchDialog
 				open={interfaceSwitchDialogOpen}
 				target={interfaceTarget}

@@ -398,20 +398,15 @@ describe("ShellTopbar orchestrator actions", () => {
 });
 
 describe("ShellTopbar inspector state", () => {
-	it("keeps inspector controls in the center topbar with notifications trailing", () => {
+	it("keeps the expanded worker controls out of the center topbar", () => {
 		renderTopbarSessions([worker], "sess-1");
 
-		const actions = screen.getByTestId("workspace-topbar-actions");
-		const buttons = within(actions)
-			.getAllByRole("button")
-			.map((button) => button.getAttribute("aria-label"));
-		const inspectorIndex = buttons.indexOf("Close inspector panel");
-		const notificationsIndex = buttons.indexOf("Notifications");
-		expect(inspectorIndex).toBeGreaterThanOrEqual(0);
-		expect(notificationsIndex).toBeGreaterThan(inspectorIndex);
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toHaveAttribute("data-state", "collapsed");
+		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
 	});
 
-	it("routes aria-pressed to the current worker session", () => {
+	it("sizes the pinned-action reserve for the current worker inspector state", () => {
 		useUiStore.setState({
 			inspectorSessions: {
 				"sess-1": { isOpen: true, view: "summary" },
@@ -420,25 +415,25 @@ describe("ShellTopbar inspector state", () => {
 		});
 		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
 
-		expect(screen.getByRole("button", { name: "Close inspector panel" })).toHaveAttribute("aria-pressed", "true");
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toHaveAttribute("data-state", "collapsed");
 
 		paramsMock.sessionId = "sess-2";
 		view.rerenderTopbar();
 
-		expect(screen.getByRole("button", { name: "Open inspector panel" })).toHaveAttribute("aria-pressed", "false");
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toHaveAttribute("data-state", "expanded");
 	});
 
-	it("keeps the controls mounted while the inspector changes state", async () => {
+	it("keeps one reserve mounted while the inspector changes state", () => {
 		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: false, view: "summary" } } });
-		renderTopbarSessions([worker], "sess-1");
-		const toggle = screen.getByRole("button", { name: "Open inspector panel" });
-		const notification = screen.getByRole("button", { name: "Notifications" });
+		const view = renderTopbarSessions([worker], "sess-1");
+		const reserve = screen.getByTestId("session-pinned-actions-reserve");
 
-		await userEvent.click(toggle);
+		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: true, view: "summary" } } });
+		view.rerenderTopbar();
 
-		expect(useUiStore.getState().inspectorSessions["sess-1"]?.isOpen).toBe(true);
-		expect(screen.getByRole("button", { name: "Close inspector panel" })).toBe(toggle);
-		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toBe(reserve);
+		expect(reserve).toHaveAttribute("data-state", "collapsed");
+		expect(within(reserve).queryByRole("button")).not.toBeInTheDocument();
 	});
 });
 
