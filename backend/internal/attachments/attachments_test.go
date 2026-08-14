@@ -27,11 +27,11 @@ func TestRefNameOnlyAcceptsWorktreeAttachmentRefs(t *testing.T) {
 		t.Fatalf("RefName = %q/%v", name, ok)
 	}
 	for _, ref := range []string{
-		"attachment-ab.png",                 // no prefix
-		".ao/attachments/../secrets.txt",    // traversal
-		".ao/attachments/sub/file.png",      // nested
-		"src/.ao/attachments/file.png",      // wrong root
-		".ao/attachments/",                  // empty name
+		"attachment-ab.png",              // no prefix
+		".ao/attachments/../secrets.txt", // traversal
+		".ao/attachments/sub/file.png",   // nested
+		"src/.ao/attachments/file.png",   // wrong root
+		".ao/attachments/",               // empty name
 		".ao/attachmentsevil/attachment.png",
 	} {
 		if _, ok := RefName(ref); ok {
