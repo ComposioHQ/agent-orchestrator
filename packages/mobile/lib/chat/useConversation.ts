@@ -225,7 +225,12 @@ export function useMobileConversation(
 	}, [refresh]);
 
 	const runAction = useCallback(
-		async <T,>(kind: ConversationAction, action: () => Promise<T>, resetHistoricalPages = false): Promise<T> => {
+		async <T,>(
+			kind: ConversationAction,
+			action: () => Promise<T>,
+			resetHistoricalPages = false,
+			refreshOnError = false,
+		): Promise<T> => {
 			setPendingActions((old) => old.includes(kind) ? old : [...old, kind]);
 			setActionError(undefined);
 			setActionErrors((old) => ({ ...old, [kind]: undefined }));
@@ -240,6 +245,9 @@ export function useMobileConversation(
 				setActionError(message);
 				setActionErrors((old) => ({ ...old, [kind]: message }));
 				setActionCodes((old) => ({ ...old, [kind]: conversationErrorCode(cause) }));
+				// A failed stop can mean the cached turn state is stale; reload so
+				// the user is not stuck looking at a Working bar that is not real.
+				if (refreshOnError) void refresh();
 				throw new Error(message);
 			} finally {
 				setPendingActions((old) => old.filter((candidate) => candidate !== kind));
@@ -301,7 +309,7 @@ export function useMobileConversation(
 		[cfg, runAction, sessionId],
 	);
 	const interrupt = useCallback(
-		() => runAction("interrupt", () => requireConfig(cfg, (c) => interruptConversation(c, sessionId))),
+		() => runAction("interrupt", () => requireConfig(cfg, (c) => interruptConversation(c, sessionId)), false, true),
 		[cfg, runAction, sessionId],
 	);
 	const resolveApprovalAction = useCallback(

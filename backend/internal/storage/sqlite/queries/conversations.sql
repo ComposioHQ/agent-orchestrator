@@ -336,6 +336,15 @@ SET state = 'failed',
     completed_at = ?
 WHERE handled_by_session_id = ? AND state IN ('queued', 'running');
 
+-- The most recent turn SQLite still considers running. Interrupt uses it to
+-- recover when in-memory turn tracking has lost the turn the UI is showing:
+-- durable state is what the user sees, so it is what Stop must be able to act on.
+-- name: GetRunningTurnForConversation :one
+SELECT id, provider_turn_id FROM conversation_turns
+WHERE conversation_id = ? AND state = 'running'
+ORDER BY started_at DESC
+LIMIT 1;
+
 -- Overwrite the turn's changed-file summary. The provider re-sends the whole diff
 -- on every update, so the latest payload is the complete answer and there is
 -- nothing to merge with what was there before.

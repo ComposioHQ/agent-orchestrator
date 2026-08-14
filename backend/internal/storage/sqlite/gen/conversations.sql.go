@@ -496,6 +496,28 @@ func (q *Queries) FailRolledBackConversationApprovals(ctx context.Context, arg F
 	return err
 }
 
+const getRunningTurnForConversation = `-- name: GetRunningTurnForConversation :one
+SELECT id, provider_turn_id FROM conversation_turns
+WHERE conversation_id = ? AND state = 'running'
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+type GetRunningTurnForConversationRow struct {
+	ID             string
+	ProviderTurnID string
+}
+
+// The most recent turn SQLite still considers running. Interrupt uses it to
+// recover when in-memory turn tracking has lost the turn the UI is showing:
+// durable state is what the user sees, so it is what Stop must be able to act on.
+func (q *Queries) GetRunningTurnForConversation(ctx context.Context, conversationID string) (GetRunningTurnForConversationRow, error) {
+	row := q.db.QueryRowContext(ctx, getRunningTurnForConversation, conversationID)
+	var i GetRunningTurnForConversationRow
+	err := row.Scan(&i.ID, &i.ProviderTurnID)
+	return i, err
+}
+
 const insertConversation = `-- name: InsertConversation :exec
 
 INSERT INTO conversations (
