@@ -398,6 +398,8 @@ type switchTestAgent struct {
 	launchPrompt        string
 	launchNativeID      string
 	launchModel         string
+	launchMode          string
+	launchPermissions   ports.PermissionMode
 	restorePrompt       string
 	restoreModel        string
 	launchSystemPrompt  string
@@ -576,6 +578,8 @@ func (a *switchTestAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchCo
 	a.launchPrompt = cfg.Prompt
 	a.launchNativeID = cfg.NativeSessionID
 	a.launchModel = cfg.Config.Model
+	a.launchMode = cfg.Config.Mode
+	a.launchPermissions = cfg.Config.Permissions
 	a.launchSystemPrompt = cfg.SystemPrompt
 	a.launchSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "fresh", cfg.Prompt}, nil
@@ -1887,11 +1891,14 @@ func TestSwitchAgentModelCodexToClaudeDropsSourceOverride(t *testing.T) {
 	rec := store.sessions["proj-1"]
 	rec.Harness = domain.HarnessCodex
 	store.sessions[rec.ID] = rec
+	project := store.projects[string(rec.ProjectID)]
+	project.Config.Worker.Harness = domain.HarnessCodex
+	project.Config.Worker.AgentConfig.Model = "gpt-5.4-mini"
+	store.projects[project.ID] = project
 	target := manager.agents.(switchTestAgents)[domain.HarnessClaudeCode].(*switchTestAgent)
 
 	switchRecord, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
 		TargetHarness:  domain.HarnessClaudeCode,
-		Model:          "gpt-5.4-mini",
 		IdempotencyKey: "codex-to-claude-drops-model",
 	})
 	if err != nil {
@@ -1907,12 +1914,15 @@ func TestSwitchAgentModelCodexToClaudeDropsSourceOverride(t *testing.T) {
 
 func TestSwitchAgentModelClaudeToCodexDropsSourceOverride(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
-	manager, _, _ := newSwitchTestManager(t, runtime)
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	project := store.projects["proj"]
+	project.Config.Worker.Harness = domain.HarnessClaudeCode
+	project.Config.Worker.AgentConfig.Model = "opus"
+	store.projects[project.ID] = project
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 
 	switchRecord, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
-		Model:          "opus",
 		IdempotencyKey: "claude-to-codex-drops-model",
 	})
 	if err != nil {
@@ -1930,13 +1940,13 @@ func TestSwitchAgentModelUsesConfiguredTargetDefault(t *testing.T) {
 	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
 	manager, store, _ := newSwitchTestManager(t, runtime)
 	project := store.projects["proj"]
-	project.Config.AgentConfig.Model = "target-default"
+	project.Config.Worker.Harness = domain.HarnessCodex
+	project.Config.Worker.AgentConfig.Model = "target-default"
 	store.projects[project.ID] = project
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 
 	switchRecord, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
-		Model:          "opus",
 		IdempotencyKey: "configured-target-default",
 	})
 	if err != nil {
@@ -1947,6 +1957,59 @@ func TestSwitchAgentModelUsesConfiguredTargetDefault(t *testing.T) {
 	}
 	if target.launchModel != "target-default" {
 		t.Fatalf("Codex target launch model = %q, want configured target default", target.launchModel)
+	}
+}
+
+func TestSwitchAgentModelUsesExplicitTargetOverride(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	project := store.projects["proj"]
+	project.Config.Worker.Harness = domain.HarnessClaudeCode
+	project.Config.Worker.AgentConfig.Model = "opus"
+	store.projects[project.ID] = project
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+
+	switchRecord, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness:  domain.HarnessCodex,
+		Model:          "gpt-target",
+		IdempotencyKey: "explicit-target-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if switchRecord.State != domain.AgentSwitchCompleted {
+		t.Fatalf("switch state = %q, want completed", switchRecord.State)
+	}
+	if target.launchModel != "gpt-target" {
+		t.Fatalf("Codex target launch model = %q, want explicit target override", target.launchModel)
+	}
+}
+
+func TestSwitchAgentTargetConfigDropsSourceModeAndPreservesPermissions(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	project := store.projects["proj"]
+	project.Config.AgentConfig.Permissions = domain.PermissionModeAuto
+	project.Config.Worker.Harness = domain.HarnessClaudeCode
+	project.Config.Worker.AgentConfig.Mode = "high"
+	store.projects[project.ID] = project
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+
+	switchRecord, err := switchAgentSynchronously(context.Background(), manager, "proj-1", SwitchAgentConfig{
+		TargetHarness:  domain.HarnessCodex,
+		IdempotencyKey: "target-config-scope",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if switchRecord.State != domain.AgentSwitchCompleted {
+		t.Fatalf("switch state = %q, want completed", switchRecord.State)
+	}
+	if target.launchMode != "" {
+		t.Fatalf("Codex target launch mode = %q, want no source override", target.launchMode)
+	}
+	if target.launchPermissions != ports.PermissionModeAuto {
+		t.Fatalf("Codex target permissions = %q, want %q", target.launchPermissions, ports.PermissionModeAuto)
 	}
 }
 
@@ -1962,7 +2025,7 @@ func TestSwitchAgentLeavesFreshProviderAssignedNativeIDForTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := manager.prepareTargetActivation(context.Background(), store, rec, project, target, caps, domain.AgentSwitch{TargetHarness: domain.HarnessCodex}); err != nil {
+	if _, err := manager.prepareTargetActivation(context.Background(), store, rec, project, target, caps, domain.AgentSwitch{TargetHarness: domain.HarnessCodex}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if target.launchNativeID != "" {
