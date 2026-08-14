@@ -5,6 +5,7 @@ import { useUiStore } from "../stores/ui-store";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
+	fit: vi.fn(),
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
@@ -109,7 +110,9 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
 	FitAddon: class FakeFitAddon {
-		fit() {}
+		fit() {
+			state.fit();
+		}
 	},
 }));
 
@@ -153,6 +156,7 @@ function setNavigatorPlatform(platform: string) {
 
 describe("XtermTerminal", () => {
 	beforeEach(() => {
+		state.fit.mockReset();
 		state.lastTerminal = null;
 		state.linkHandler = null;
 		setNavigatorPlatform("Linux x86_64");
@@ -160,6 +164,42 @@ describe("XtermTerminal", () => {
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
 		window.ao!.terminal.setFocused = vi.fn();
 		window.ao!.terminal.onFontSizeShortcut = () => () => undefined;
+	});
+
+	it("fits on each observed frame while an ancestor requests live terminal resizing", () => {
+		const callbacks: ResizeObserverCallback[] = [];
+		const originalResizeObserver = window.ResizeObserver;
+		class CapturingResizeObserver implements ResizeObserver {
+			constructor(callback: ResizeObserverCallback) {
+				callbacks.push(callback);
+			}
+			disconnect() {}
+			observe() {}
+			unobserve() {}
+		}
+		Object.defineProperty(window, "ResizeObserver", {
+			configurable: true,
+			writable: true,
+			value: CapturingResizeObserver,
+		});
+		try {
+			render(
+				<div data-terminal-live-resize="true">
+					<XtermTerminal theme="dark" />
+				</div>,
+			);
+			state.fit.mockClear();
+
+			act(() => callbacks.at(-1)?.([], {} as ResizeObserver));
+
+			expect(state.fit).toHaveBeenCalledTimes(1);
+		} finally {
+			Object.defineProperty(window, "ResizeObserver", {
+				configurable: true,
+				writable: true,
+				value: originalResizeObserver,
+			});
+		}
 	});
 
 	it("finishes retained activation when xterm emits no render event", async () => {

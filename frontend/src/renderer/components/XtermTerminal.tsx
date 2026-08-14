@@ -622,9 +622,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		};
 		// ResizeObserver fires for every intermediate box during native fullscreen,
 		// sidebar drags and other animated application layout. Fitting on every
-		// callback repeatedly reallocates xterm's WebGL surface. Keep only the
-		// latest proposal and commit once the box has been quiet, with a cap so a
-		// continuously moving window cannot postpone the terminal forever.
+		// callback repeatedly reallocates xterm's WebGL surface, so those changes
+		// normally settle through the debounce below. A short, explicit live-resize
+		// marker lets controlled layout animations keep xterm visually in step.
 		const FIT_QUIET_MS = 120;
 		const FIT_CAP_MS = 500;
 		let fitQuietTimer: ReturnType<typeof setTimeout> | null = null;
@@ -681,7 +681,13 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (document.fonts?.ready) {
 			void document.fonts.ready.then(() => scheduleStableFit());
 		}
-		const observer = new ResizeObserver(scheduleVisibleFit);
+		const observer = new ResizeObserver(() => {
+			if (host.closest('[data-terminal-live-resize="true"]')) {
+				fitTerminal();
+				return;
+			}
+			scheduleVisibleFit();
+		});
 		observer.observe(host);
 
 		// Recovery re-fit that does NOT depend on the host box changing size.

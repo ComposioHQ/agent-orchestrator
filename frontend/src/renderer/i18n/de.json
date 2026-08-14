@@ -266,6 +266,7 @@
 	"inspector.earlierPass": "früherer Lauf",
 	"inspector.previousLabel": "Vorherig:",
 	"inspector.reviews": "Review-Zusammenfassung",
+	"inspector.reviewTab": "Reviews",
 	"inspector.session": "Sitzung",
 	"inspector.started": "Gestartet",
 	"inspector.startedFromPrompt": "Aus gespeichertem Prompt gestartet",
