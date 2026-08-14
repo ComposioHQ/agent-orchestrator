@@ -50,7 +50,6 @@ type ProjectConfig struct {
 	// triggered. It is configured independently of the Worker override; an empty
 	// list falls back to claude-code (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
-
 	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
@@ -85,15 +84,24 @@ type ReviewerConfig struct {
 const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins. Otherwise the worker's own harness is reused when it is itself
-// a supported reviewer (e.g. a codex worker is reviewed by codex); a worker
-// whose harness is not a reviewer (e.g. crush) falls back to claude-code.
+// reviewer wins. Otherwise only the original, unattended-safe reviewer set is
+// inherited from the worker. Every other reviewer requires explicit selection,
+// so adding an experimental adapter never silently changes an existing project.
 func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
 	}
-	if rh := ReviewerHarness(worker); rh.IsKnown() {
-		return rh
+	switch worker {
+	case HarnessClaudeCode:
+		return ReviewerClaudeCode
+	case HarnessCodex:
+		return ReviewerCodex
+	case HarnessOpenCode:
+		return ReviewerOpenCode
+	case HarnessMuse:
+		return ReviewerMuse
+	case HarnessKimchi:
+		return ReviewerKimchi
 	}
 	return FallbackReviewerHarness
 }

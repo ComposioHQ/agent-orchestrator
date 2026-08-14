@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { navigateMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -13,12 +13,13 @@ vi.mock("@tanstack/react-router", () => ({
 
 describe("WindowTitlebar", () => {
 	let actionMock: (action: string) => Promise<void>;
+	const platformDescriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
 
-	async function loadWindowTitlebar() {
+	async function loadWindowTitlebar(platform = "Win32") {
 		vi.resetModules();
 		Object.defineProperty(navigator, "platform", {
 			configurable: true,
-			value: "Win32",
+			value: platform,
 		});
 		return import("./WindowTitlebar");
 	}
@@ -28,6 +29,14 @@ describe("WindowTitlebar", () => {
 		actionMock = vi.fn(async (_action: string) => undefined);
 		window.ao!.menu.action = actionMock;
 		document.documentElement.removeAttribute("style");
+	});
+
+	afterEach(() => {
+		if (platformDescriptor) {
+			Object.defineProperty(navigator, "platform", platformDescriptor);
+		} else {
+			Reflect.deleteProperty(navigator, "platform");
+		}
 	});
 
 	it("renders custom Windows controls and dispatches window actions", async () => {
@@ -44,11 +53,34 @@ describe("WindowTitlebar", () => {
 		expect(actionMock).toHaveBeenNthCalledWith(3, "window.close");
 	});
 
-	it("keeps maximized overlays below the custom Windows titlebar", () => {
-		const css = readFileSync("src/renderer/styles.css", "utf8");
+	it.each(["Linux x86_64", "MacIntel"])("does not render Windows controls on %s", async (platform) => {
+		const { WindowTitlebar } = await loadWindowTitlebar(platform);
 
+		const { container } = render(<WindowTitlebar />);
+
+		expect(container).toBeEmptyDOMElement();
+		expect(actionMock).not.toHaveBeenCalled();
+	});
+
+	it("keeps Windows spacing and overlays scoped to Windows", () => {
+		const css = readFileSync("src/renderer/styles.css", "utf8");
+		const tokens = readFileSync("src/styles/tokens.css", "utf8");
+
+		expect(css).toContain(".platform-windows .window-titlebar__controls");
 		expect(css).toMatch(
-			/\.platform-windows \.browser-popout-overlay,\s*\.platform-windows \.files-popout-overlay\s*{\s*top: var\(--size-window-titlebar\);/s,
+			/html\[data-native-browser-composition="true"\]\[data-ao-platform="win32"\] \.browser-popout-overlay,\s*html\[data-native-browser-composition="true"\]\[data-ao-platform="win32"\] \.files-popout-overlay\s*{\s*top: var\(--size-window-titlebar\);/s,
+		);
+		expect(css).toMatch(
+			/body:has\(#root \.platform-windows\) > \.browser-popout-overlay,\s*body:has\(#root \.platform-windows\) > \.files-popout-overlay\s*{\s*top: var\(--size-window-titlebar\);/s,
+		);
+		expect(css).toMatch(
+			/\.platform-windows\s*{\s*--size-center-panel-inset: 8px;\s*--size-center-panel-inline-inset: 8px;\s*--size-center-panel-bottom-inset: 8px;/s,
+		);
+		expect(css).toMatch(
+			/\.platform-linux \.browser-popout-overlay,\s*\.platform-linux \.files-popout-overlay\s*{\s*top: var\(--size-shell-topbar\);/s,
+		);
+		expect(tokens).toMatch(
+			/--size-center-panel-inset: 24px;\s*--size-center-panel-inline-inset: 16px;\s*--size-center-panel-bottom-inset: 14px;/s,
 		);
 	});
 });

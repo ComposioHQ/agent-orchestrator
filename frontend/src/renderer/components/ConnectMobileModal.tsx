@@ -7,8 +7,19 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
-import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import { ConnectMobileSetup, type SetupMode } from "./settings/ConnectMobileSetup";
+import { MobileDevicesSection } from "./settings/MobileDevicesSection";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogHeaderClass,
+} from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 
@@ -20,9 +31,18 @@ const QR_CODE_SIZE = 204;
 interface MobileStatus {
 	enabled: boolean;
 	host: string;
+	tailscaleHost: string;
 	port: number;
 	password: string;
 	warning: string;
+	securePairing: {
+		enabled: boolean;
+		available: boolean;
+		active: boolean;
+		host: string;
+		port: number;
+		reason: string;
+	};
 }
 
 // pairingPayload is the QR code contents scanned by the mobile app to connect
@@ -30,8 +50,11 @@ interface MobileStatus {
 // autofills everything and connects with no typing. The bridge is a trusted-
 // home-network tool over plaintext HTTP, so a QR that grants access is an
 // acceptable trade-off; regenerating the password invalidates any old QR.
-export function pairingPayload(host: string, port: number, password: string): string {
-	return JSON.stringify({ v: 1, host, port, password });
+//
+// `secure` is omitted unless true so every plaintext QR stays byte-identical
+// to what older app builds already scan successfully.
+export function pairingPayload(host: string, port: number, password: string, secure?: boolean): string {
+	return JSON.stringify(secure ? { v: 1, host, port, password, secure: true } : { v: 1, host, port, password });
 }
 
 async function fetchMobileStatus(): Promise<MobileStatus> {
@@ -46,7 +69,7 @@ interface ConnectMobileModalProps {
 }
 
 // ConnectMobileModal lets a user pair the mobile app with this desktop over
-// the LAN bridge. A single "Enable mobile" toggle sits at the top; flipping it
+// the LAN bridge. A single "Allow mobile pairing" toggle sits at the top; flipping it
 // on starts the bridge and reveals the pairing details below the toggle row —
 // a QR code (host/port/password), the plaintext address + password with a copy
 // affordance, and a Regenerate action. Flipping it off tears the bridge down.
@@ -55,6 +78,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 	const queryClient = useQueryClient();
 	const [copied, setCopied] = useState(false);
 	const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const [mode, setMode] = useState<SetupMode>("lan");
 
 	useEffect(() => {
 		return () => {
@@ -76,6 +100,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 	useEffect(() => {
 		if (!open) {
 			reportedOpen.current = false;
+			setMode("lan");
 			return;
 		}
 		if (initialEnabled === undefined || reportedOpen.current) return;
@@ -114,14 +139,37 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 		onSuccess: invalidate,
 	});
 
+	const setSecure = useMutation({
+		mutationFn: async (secureEnabled: boolean) => {
+			const { data, error } = await apiClient.POST("/api/v1/mobile/secure-pairing", { body: { enabled: secureEnabled } });
+			if (error) throw new Error(apiErrorMessage(error));
+			return data;
+		},
+		onSuccess: invalidate,
+	});
+
 	const status = query.data;
 	const enabled = status?.enabled ?? false;
-	const busy = enable.isPending || disable.isPending || regenerate.isPending;
+	// The QR encodes whichever address matches the selected tab. Either can be
+	// empty — no LAN interface, or Tailscale not running — and an empty host
+	// would otherwise produce a QR the phone rejects outright.
+	const secureActive = mode === "tailscale" && (status?.securePairing?.active ?? false);
+	const activeHost = secureActive
+		? status!.securePairing.host
+		: mode === "tailscale"
+			? (status?.tailscaleHost ?? "")
+			: (status?.host ?? "");
+	const activePort = secureActive ? status!.securePairing.port : (status?.port ?? 0);
+	// Blocked = the user asked for secure pairing but it isn't usable yet. Show
+	// setup steps instead of a QR that cannot connect.
+	const secureBlocked = mode === "tailscale" && (status?.securePairing?.enabled ?? false) && !secureActive;
+	const busy = enable.isPending || disable.isPending || regenerate.isPending || setSecure.isPending;
 
 	const clearActionErrors = () => {
 		enable.reset();
 		disable.reset();
 		regenerate.reset();
+		setSecure.reset();
 	};
 
 	const copyPassword = async () => {
@@ -154,19 +202,14 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 		(enable.error instanceof Error && enable.error.message) ||
 		(disable.error instanceof Error && disable.error.message) ||
 		(regenerate.error instanceof Error && regenerate.error.message) ||
+		(setSecure.error instanceof Error && setSecure.error.message) ||
 		null;
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent
 				showCloseButton={false}
-				className={cn(
-					// Follow the app theme (same tokens as Report a problem) — do not force `dark`.
-					// Do not add `relative` (breaks fixed centering).
-					"flex w-(--size-settings-mobile-dialog) max-w-(--size-settings-mobile-dialog) flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-settings-dialog p-0 sm:rounded-(--radius-settings-dialog-lg)",
-					"shadow-[var(--shadow-settings-dialog)]",
-					"outline-none ring-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0",
-				)}
+				className={cn(settingsDialogContentClass, "w-[min(var(--size-settings-mobile-dialog),calc(100vw-var(--space-8)))]")}
 			>
 				<DialogClose asChild>
 					<button
@@ -179,14 +222,13 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 				</DialogClose>
 				{/* The get-app QR and setup steps can push this past a short window,
 				    so the body scrolls rather than clipping under the screen edges. */}
-				<div className="scrollbar-none flex max-h-[80vh] flex-col overflow-y-auto p-(--size-modal-padding)">
-					<DialogHeader className="items-center gap-1.5 text-center">
-						<DialogTitle className="settings-dialog-title text-center">{t("mobile.title")}</DialogTitle>
-						<DialogDescription className="max-w-(--size-settings-mobile-desc) text-center text-control font-normal leading-4 text-settings-muted">
-							{t("mobile.description")}
-						</DialogDescription>
-					</DialogHeader>
-
+				<DialogHeader className={cn(settingsDialogHeaderClass, "items-start text-left")}>
+					<DialogTitle className="settings-dialog-title text-left">{t("mobile.title")}</DialogTitle>
+					<DialogDescription className="max-w-(--size-settings-mobile-desc) text-left text-control font-normal leading-4 text-settings-muted">
+						{t("mobile.description")}
+					</DialogDescription>
+				</DialogHeader>
+				<div className={cn(settingsDialogBodyClass, "max-h-[80vh] gap-0 pt-6 scrollbar-none")}>
 					<ConnectMobileGetApp />
 
 					{query.isLoading ? (
@@ -196,9 +238,9 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 							{query.error instanceof Error ? query.error.message : t("mobile.loadFailed")}
 						</p>
 					) : status ? (
-						<div className="mt-6 flex flex-col">
+						<div className="mt-4 flex flex-col">
 							{/* Toggle row — always visible. Flipping it starts/stops the bridge. */}
-							<div className="relative flex items-start justify-between gap-3 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] px-3.5 py-2.5">
+							<div className="relative flex items-start justify-between gap-3 px-3 py-3">
 								<div className="flex min-w-0 flex-col gap-1 pr-2">
 									<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
 										{t("mobile.enable")}
@@ -214,14 +256,6 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 										onCheckedChange={onToggle}
 										disabled={busy}
 										aria-label={t("mobile.enable")}
-										className={cn(
-											"h-(--size-settings-mobile-switch-h) w-(--size-settings-mobile-switch-w) transition-colors duration-300 ease-out",
-											"data-[state=checked]:bg-settings-switch-on data-[state=unchecked]:bg-[var(--color-border-settings-input)]",
-											"focus-visible:ring-0 focus-visible:ring-offset-0",
-											"**:data-[slot=switch-thumb]:size-5 **:data-[slot=switch-thumb]:bg-white **:data-[slot=switch-thumb]:transition-transform **:data-[slot=switch-thumb]:duration-300 **:data-[slot=switch-thumb]:ease-out",
-											"data-[state=checked]:**:data-[slot=switch-thumb]:translate-x-(--size-settings-mobile-switch-travel)",
-											"data-[state=unchecked]:**:data-[slot=switch-thumb]:translate-x-0.5",
-										)}
 									/>
 								</div>
 							</div>
@@ -236,29 +270,53 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 								)}
 								aria-hidden={!enabled}
 							>
-								<div className="overflow-hidden">
+					<div className="overflow-hidden">
 									<div
 										className={cn(
-											"mt-6 flex flex-col items-center transition-opacity duration-300 ease-out",
+											"mt-4 flex flex-col items-center transition-opacity duration-300 ease-out",
 											enabled ? "opacity-100" : "opacity-0",
 										)}
 									>
 										{/* Steps sit above the QR so the LAN/Tailscale choice is on screen
 										    the moment the bridge turns on, with no scrolling. */}
-										<ConnectMobileSetup port={status.port} enabled={enabled} />
+										<ConnectMobileSetup
+											mode={mode}
+											onModeChange={setMode}
+											enabled={enabled}
+											busy={busy}
+											secure={{
+												enabled: status.securePairing?.enabled ?? false,
+												reason: status.securePairing?.reason ?? "",
+											}}
+											onSecureChange={(on) => {
+												clearActionErrors();
+												setSecure.mutate(on);
+											}}
+										/>
 
 										<div className="mt-6 flex w-(--size-settings-mobile-qr) flex-col items-center">
-											<div className="rounded-(--radius-settings-dialog-lg) bg-white p-2 shadow-[var(--shadow-settings-qr)]">
-												<QRCodeSVG
-													value={pairingPayload(status.host, status.port, status.password)}
-													size={QR_CODE_SIZE}
-													className="block size-(--size-settings-mobile-qr-code)"
-												/>
-											</div>
-											<p className="mt-4 text-sm leading-5 text-settings-muted">{t("mobile.scanToPair")}</p>
+											{activeHost && !secureBlocked ? (
+												<>
+													<div className="rounded-md border border-(--color-border-settings-input) bg-white p-2">
+														<QRCodeSVG
+															value={pairingPayload(activeHost, activePort, status.password, secureActive)}
+															data-qr-value={pairingPayload(activeHost, activePort, status.password, secureActive)}
+															size={QR_CODE_SIZE}
+															className="block size-(--size-settings-mobile-qr-code)"
+														/>
+													</div>
+													<p className="mt-4 text-sm leading-5 text-settings-muted">{t("mobile.scanToPair")}</p>
+												</>
+											) : (
+												<div className="flex size-(--size-settings-mobile-qr-code) items-center justify-center rounded-md border border-(--color-border-settings-input) bg-(--color-bg-settings-input) p-4">
+													<p className="text-center text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
+														{mode === "tailscale" ? t("mobile.noTailscaleHost") : t("mobile.noPairingHost")}
+													</p>
+												</div>
+											)}
 										</div>
 
-										{status.warning && (
+										{status.warning && !secureActive && (
 											<p className="mt-6 flex w-full max-w-(--size-settings-mobile-warning) items-start gap-2 text-caption leading-(--leading-settings-mobile-warning) text-warning">
 												<Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
 												<span>{status.warning}</span>
@@ -266,10 +324,10 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 										)}
 
 										<div className="mt-6 flex w-full flex-col gap-1 px-(--size-settings-mobile-details-pad-x)">
-											<div className="flex items-center gap-6 text-sm leading-5">
+											<div className="flex items-center gap-6 text-sm leading-5" data-testid="mobile-pairing-address">
 												<span className="w-(--size-settings-mobile-label) shrink-0 text-settings-muted">{t("mobile.address")}</span>
 												<span className="tracking-settings-mono text-settings-label">
-													{status.host}:{status.port}
+													{activeHost ? `${activeHost}:${activePort}` : "—"}
 												</span>
 											</div>
 											<div className="flex items-center gap-6 text-sm leading-5">
@@ -296,7 +354,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 										<Button
 											type="button"
 											variant="footer"
-											className="mt-5 w-(--size-settings-mobile-regen-width)"
+											className="mt-5 w-(--size-settings-mobile-regen-width) rounded-md"
 											onClick={() => {
 												clearActionErrors();
 												regenerate.mutate();
@@ -307,6 +365,12 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											{t("mobile.regenerate")}
 										</Button>
+
+										{/* Not just visually hidden with the rest of this wrapper: the roster's
+										    Switch/remove controls issue real PATCH/DELETE calls, so they must be
+										    absent from the DOM (not merely aria-hidden) while the bridge is off —
+										    otherwise they stay keyboard-focusable behind the collapse animation. */}
+										{enabled && <MobileDevicesSection />}
 									</div>
 								</div>
 							</div>

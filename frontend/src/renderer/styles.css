@@ -2,6 +2,7 @@
 @import "../styles/tokens.css";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
+@source "../../../packages/product-ui/src";
 
 @custom-variant dark (&:is(.dark *, :root:not([data-theme="light"]) *));
 
@@ -129,6 +130,10 @@
 	--color-settings-title: var(--color-text-settings-title);
 	--color-settings-muted: var(--color-text-settings-muted);
 	--color-settings-label: var(--color-text-settings-row);
+	--color-bg-settings-row-hover: color-mix(in oklch, var(--color-bg-settings-row) 94%, var(--color-text-settings-title));
+	--color-bg-settings-trigger: color-mix(in oklch, var(--color-bg-settings-row) 97%, var(--color-text-settings-title));
+	--color-bg-settings-trigger-hover: color-mix(in oklch, var(--color-bg-settings-row) 91%, var(--color-text-settings-title));
+	--color-text-settings-trigger: color-mix(in oklch, var(--color-text-settings-title) 80%, var(--color-text-settings-muted));
 	--radius-settings-row: var(--radius-settings-row);
 	--radius-settings-panel: var(--radius-settings-panel);
 
@@ -152,6 +157,7 @@
 	--size-icon-sm: var(--size-icon-sm);
 	--size-icon-md: var(--size-icon-md);
 	--size-icon-base: var(--size-icon-base);
+	--size-terminal-agent-icon: var(--size-terminal-agent-icon);
 	--size-icon-lg: var(--size-icon-lg);
 	--size-icon-xl: var(--size-icon-xl);
 
@@ -279,11 +285,13 @@
 	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 130ms var(--ease-out);
-	--animate-modal-in: modal-in 180ms var(--ease-out);
+	--animate-overlay-in: overlay-in 80ms var(--ease-out);
+	--animate-modal-in: modal-in 120ms var(--ease-out);
+	--animate-popover-in: popover-in 150ms var(--ease-out);
 	/* Exits are shorter than entries: the system is responding, not deciding. */
-	--animate-overlay-out: overlay-out 90ms ease-in;
-	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
+	--animate-overlay-out: overlay-out 60ms ease-in;
+	--animate-modal-out: modal-out 70ms cubic-bezier(0.4, 0, 1, 1);
+	--animate-popover-out: popover-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -294,6 +302,12 @@
 	background-color: var(--color-scrim);
 	-webkit-backdrop-filter: blur(var(--blur-overlay));
 	backdrop-filter: blur(var(--blur-overlay));
+}
+
+@utility agent-switch-terminal-scrim {
+	background-color: color-mix(in srgb, var(--color-terminal) 95%, transparent);
+	-webkit-backdrop-filter: blur(3px);
+	backdrop-filter: blur(3px);
 }
 
 @utility w-daemon-failure-toast {
@@ -424,6 +438,8 @@
 }
 
 @utility center-panel-surface {
+	container-name: center-panel;
+	container-type: inline-size;
 	display: flex;
 	min-height: 0;
 	flex: 1 1 0%;
@@ -441,14 +457,6 @@
  * the shared frame inset while transient hover previews overlay this surface. */
 .sidebar-hidden .center-panel-shell {
 	padding-left: var(--size-center-panel-inline-inset);
-}
-
-/* Windows/Linux already have top chrome above the framed panel, so avoid a
- * second vertical inset while preserving right/bottom frame spacing for the
- * rounded panel. */
-.platform-windows .center-panel-shell,
-.platform-linux .center-panel-shell {
-	padding-top: 0;
 }
 
 /* macOS + Linux: inset on all sides except left (flush with sidebar). */
@@ -492,6 +500,13 @@
 	border-radius: 0;
 }
 
+/* Session actions are portaled into the center pane. Make their responsive
+ * labels follow that pane's width instead of the full window width. */
+.workspace-topbar-container {
+	container-name: workspace-topbar;
+	container-type: inline-size;
+}
+
 /* When the sidebar is off-canvas, clear only the fixed navigation cluster.
  * Native macOS fullscreen removes the traffic lights, so the cluster moves to
  * the compact panel inset instead of retaining the windowed 79px reserve. */
@@ -525,8 +540,8 @@
 }
 
 .center-panel-shell--mac .center-panel-titlebar {
-	height: var(--size-traffic-light-clearance);
-	min-height: var(--size-traffic-light-clearance);
+	height: var(--size-toolbar);
+	min-height: var(--size-toolbar);
 }
 
 /* Sidebar chrome clearance: size tokens only — set by data-topbar-offset on the
@@ -564,6 +579,22 @@
 	);
 }
 
+/* Windows / Linux: a ShellTopbar already supplies the top chrome, so the
+ * framed panel needs no additional top inset. Windows uses its custom
+ * frameless titlebar; Linux uses the standard ShellTopbar. The right/bottom
+ * insets and the shared --radius-center-panel rounding are kept so the panel
+ * matches the macOS framed look. */
+.platform-windows {
+	--size-center-panel-inset: 8px;
+	--size-center-panel-inline-inset: 8px;
+	--size-center-panel-bottom-inset: 8px;
+}
+
+.platform-windows .center-panel-shell,
+.platform-linux .center-panel-shell {
+	padding-top: 0;
+}
+
 @utility settings-row-bar {
 	display: flex;
 	height: var(--size-settings-row);
@@ -573,12 +604,41 @@
 	gap: var(--size-settings-row-icon-gap);
 	border-radius: var(--radius-settings-row);
 	background-color: var(--color-bg-settings-row);
-	padding: var(--size-settings-row-padding);
+	padding-inline: var(--size-settings-row-padding);
+	padding-block: var(--size-settings-row-padding);
+}
+
+/* Helper copy belongs to the preceding settings row, not a separate divided row. */
+[data-section="updates"] .nightly-warning {
+	border-top: 0 !important;
+	border-block-start: 0 !important;
 }
 
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
 button.settings-row-bar {
 	background-color: var(--color-bg-settings-row);
+}
+
+button.settings-link-row:hover,
+button.settings-link-row:active {
+	background-color: var(--color-bg-settings-row-hover);
+	color: var(--color-text-settings-title);
+}
+
+/* Grouped rows size around the shared action control, keeping its top/bottom
+ * inset equal to the row's right and left inset. */
+.settings-grouped-rows .settings-row-bar {
+	height: auto;
+	min-height: calc(var(--size-settings-action-height) + (var(--space-2) * 2));
+	padding-block: var(--space-2);
+	padding-inline: var(--space-3);
+	border-radius: 0;
+}
+
+/* Button/link rows (e.g. Connect Mobile, Keyboard Shortcuts) keep rounded
+ * corners even though the shared group container lost its outer border. */
+.settings-grouped-rows .settings-link-row.settings-row-bar {
+	border-radius: var(--radius-md);
 }
 
 @utility settings-menu-item {
@@ -598,14 +658,14 @@ button.settings-row-bar {
 	display: inline-flex;
 	align-items: center;
 	gap: calc(var(--spacing) * 1.5);
-	border-radius: var(--radius-settings-row);
-	padding-inline: var(--space-1);
-	padding-block: var(--space-0_5);
+	border-radius: var(--radius-md);
+	padding-inline: var(--space-2);
+	padding-block: var(--space-1);
 	font-size: var(--font-size-base);
 	color: var(--color-text-settings-muted);
 	outline: none;
 	box-shadow: none;
-	transition-property: color;
+	transition-property: color, background-color;
 	transition-duration: var(--duration-fast);
 }
 
@@ -640,7 +700,7 @@ button.settings-row-bar {
 	background-color: var(--color-bg-settings-menu);
 	padding: var(--space-2);
 	gap: var(--space-1_5);
-	box-shadow: var(--elevation-md);
+	box-shadow: none;
 }
 
 @utility settings-agent-menu-surface {
@@ -682,6 +742,80 @@ button.settings-row-bar {
 	&:focus-visible {
 		border-color: var(--bridge-accent);
 		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+}
+
+@utility settings-inline-edit-trigger {
+	display: inline-flex;
+	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
+	min-width: 0;
+	flex: 0 1 auto;
+	align-items: center;
+	justify-content: flex-end;
+	gap: calc(var(--spacing) * 1.5);
+	border: 0;
+	background: transparent;
+	padding: 0;
+	color: var(--color-text-settings-muted);
+	outline: none;
+	cursor: pointer;
+	transition-property: color;
+	transition-duration: var(--duration-fast);
+
+	&:hover,
+	&:focus-visible {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-radius: var(--radius-md);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+	}
+
+	& .settings-row-value {
+		max-width: none;
+	}
+}
+
+@utility settings-inline-edit-icon {
+	width: var(--size-icon-sm);
+	height: var(--size-icon-sm);
+	flex-shrink: 0;
+	opacity: 0.7;
+}
+
+@utility settings-inline-edit-input {
+	width: var(--size-settings-inline-input-max);
+	max-width: var(--size-settings-inline-input-max);
+	min-width: 0;
+	flex: 0 1 auto;
+	height: var(--size-settings-inline-input-height);
+	border: 1px solid var(--color-border-settings-input);
+	border-radius: var(--radius-lg);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: calc(var(--spacing) * 2.5);
+	font-size: var(--font-size-base);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-input);
+	text-align: right;
+	outline: none;
+	box-shadow: none;
+	transition-property: border-color, box-shadow, color;
+	transition-duration: var(--duration-normal);
+
+	&::placeholder {
+		color: var(--color-text-settings-placeholder);
+	}
+
+	&:hover {
+		color: var(--color-text-settings-row);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		color: var(--color-text-settings-row);
+		outline: none;
 	}
 }
 
@@ -742,9 +876,6 @@ button.settings-row-bar {
 	min-width: 1rem;
 	align-items: center;
 	justify-content: center;
-	border-radius: var(--radius-xs);
-	background-color: color-mix(in oklab, currentcolor 14%, transparent);
-	padding-inline: calc(var(--spacing) * 1);
 	font-family: var(--font-mono);
 	font-size: var(--font-size-xs);
 	line-height: 1.1;
@@ -776,7 +907,13 @@ button.settings-row-bar {
 	min-width: 0;
 	grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
 	align-items: center;
-	column-gap: var(--space-2);
+	overflow: hidden;
+	border-radius: var(--radius-md);
+	/* Same mix formula as the settings-modal dropdown trigger, but anchored to
+	   --card (an opaque color) instead of --color-bg-settings-row (transparent
+	   by design there, since it always sits inside an already-painted dialog
+	   surface) — this pill floats on its own with nothing painted behind it. */
+	background-color: color-mix(in oklch, var(--card) 97%, var(--foreground));
 }
 
 .composer-toolbar-slot {
@@ -784,65 +921,32 @@ button.settings-row-bar {
 }
 
 .composer-toolbar-divider {
+	align-self: stretch;
 	width: 1px;
-	height: var(--space-4);
+	height: 100%;
 	background-color: var(--color-border);
 }
 
+/* The divider is the shared edge between the two segments — when either one
+   is focused, it becomes part of that segment's own border/focus ring
+   instead of staying a disconnected neutral line. */
+.composer-run-controls:has(.composer-toolbar-slot :focus-within) .composer-toolbar-divider {
+	background-color: var(--bridge-accent);
+}
+
 .composer-toolbar .composer-toolbar-option {
-	height: var(--size-control-md);
-	border-radius: var(--radius-md) !important;
+	height: var(--size-settings-action-height);
+	border-radius: 0 !important;
 	background-color: transparent !important;
 }
 
 .composer-toolbar .composer-toolbar-option:hover:not(:disabled),
 .composer-toolbar .composer-toolbar-option[data-state="open"] {
-	background-color: var(--color-bg-composer-chip-hover) !important;
+	background-color: color-mix(in oklch, var(--card) 88%, var(--foreground)) !important;
 }
 
 .composer-toolbar .composer-toolbar-option:focus-visible {
 	box-shadow: inset 0 0 0 2px var(--bridge-accent-weak);
-}
-
-.composer-value-swap {
-	display: inline-block;
-	animation: composer-value-in var(--duration-fast) ease-out;
-}
-
-.composer-model-skeleton {
-	width: var(--space-10);
-	height: var(--space-2);
-	border-radius: var(--radius-xs);
-	background-color: color-mix(in oklab, currentcolor 14%, transparent);
-	animation: composer-skeleton-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes composer-value-in {
-	from {
-		opacity: 0;
-		transform: translateY(2px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@keyframes composer-skeleton-pulse {
-	0%,
-	100% {
-		opacity: 0.45;
-	}
-	50% {
-		opacity: 0.9;
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.composer-value-swap,
-	.composer-model-skeleton {
-		animation: none;
-	}
 }
 
 /* Inline value control inside the task composer's bottom toolbar. Reads as a
@@ -852,15 +956,15 @@ button.settings-row-bar {
 	width: auto;
 	min-width: 0;
 	max-width: 100%;
-	height: var(--size-control-md);
+	height: var(--size-settings-action-height);
 	align-items: center;
 	gap: calc(var(--spacing) * 2);
 	border: 1px solid transparent;
 	/* SelectTrigger and settings-option-trigger bring different radii. The
-	   composer owns this shared surface, so both agent and model must resolve to
-	   the same geometry regardless of the primitive underneath. */
-	border-radius: var(--radius-md) !important;
-	background-color: var(--color-bg-composer-chip);
+	   shared container now owns the rounding, so each segment stays square and
+	   only the outer edge reads as one pill. */
+	border-radius: 0 !important;
+	background-color: transparent;
 	padding-inline: var(--space-2);
 	font-size: var(--font-size-base);
 	color: var(--color-foreground);
@@ -868,7 +972,7 @@ button.settings-row-bar {
 	transition-duration: var(--duration-fast);
 
 	&:hover:not(:disabled) {
-		background-color: var(--color-bg-composer-chip-hover);
+		background-color: color-mix(in oklch, var(--card) 88%, var(--foreground));
 	}
 
 	&:focus-visible {
@@ -878,8 +982,18 @@ button.settings-row-bar {
 	}
 
 	&[data-state="open"] {
-		background-color: var(--color-bg-composer-chip-hover);
+		background-color: color-mix(in oklch, var(--card) 88%, var(--foreground));
 		border-color: transparent;
+	}
+
+	/* The agent chip's SelectTrigger chevron has no rotation of its own — give
+	   it the same open-state flip as the settings dropdowns. */
+	& svg {
+		transition: transform var(--duration-normal) ease-out;
+	}
+
+	&[data-state="open"] svg {
+		transform: rotate(180deg);
 	}
 }
 
@@ -909,7 +1023,7 @@ button.settings-row-bar {
    its text, which reads as a stray half-width box once it sits in a menu. */
 @utility menu-search-input {
 	width: 100%;
-	height: var(--size-settings-inline-input-height);
+	height: var(--size-settings-action-height);
 	border: 1px solid var(--color-border-settings-input);
 	border-radius: var(--radius-md);
 	background-color: var(--color-bg-settings-input);
@@ -1064,7 +1178,7 @@ button.settings-row-bar {
 	transition-duration: var(--duration-normal);
 
 	&:hover {
-		background-color: var(--color-bg-settings-row);
+		background-color: var(--color-bg-settings-row-hover);
 		color: var(--color-text-settings-title);
 	}
 
@@ -1349,6 +1463,90 @@ textarea,
 	}
 }
 
+.agent-switch-transfer-pulse {
+	animation: agent-switch-transfer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.agent-switch-progress-step:not(:last-child)::before {
+	position: absolute;
+	top: 0.21875rem;
+	left: calc(50% + 0.25rem);
+	width: calc(100% - 0.5rem);
+	height: 1px;
+	background: var(--color-border-strong);
+	content: "";
+	transition: background-color 320ms var(--ease-out);
+}
+
+.agent-switch-progress-dot {
+	transition:
+		border-color 280ms var(--ease-out),
+		background-color 280ms var(--ease-out),
+		box-shadow 280ms var(--ease-out);
+}
+
+.agent-switch-progress-step.is-complete::before,
+.agent-switch-progress-step.is-complete .agent-switch-progress-dot,
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	border-color: var(--color-accent);
+	background: var(--color-accent);
+}
+
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	animation: agent-switch-step-pulse 1.4s ease-in-out infinite;
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+@keyframes agent-switch-step-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.55;
+		transform: scale(0.72);
+	}
+}
+
+@keyframes agent-switch-transfer {
+	0% {
+		left: -2.5rem;
+		opacity: 0;
+	}
+	18% {
+		opacity: 1;
+	}
+	82% {
+		opacity: 1;
+	}
+	100% {
+		left: 100%;
+		opacity: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.agent-switch-transfer-pulse {
+		left: calc(50% - 1.25rem);
+		opacity: 0.85;
+		animation: none;
+	}
+
+	.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+		animation: none;
+	}
+
+	.agent-switch-toolbar-spinner {
+		animation: none;
+	}
+
+	.agent-switch-progress-dot,
+	.agent-switch-progress-step::before {
+		transition: none;
+	}
+}
+
 @keyframes ao-startup-logo-breathe {
 	0%,
 	100% {
@@ -1461,6 +1659,28 @@ textarea,
 	}
 }
 
+@keyframes popover-in {
+	from {
+		opacity: 0;
+		scale: 0.98;
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
+}
+
+@keyframes popover-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.98;
+	}
+}
+
 /* ── Global resize state (sidebar drag) ─────────────────────────────────── */
 body.is-resizing-x {
 	cursor: col-resize;
@@ -1474,6 +1694,13 @@ body.is-resizing-x [data-slot="resize-handle"]::after {
 body.is-resizing-x [data-slot="sidebar-gap"],
 body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
+}
+
+/* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
+.sidebar-focusless :focus-visible {
+	background-color: var(--color-interactive-hover) !important;
+	outline: none !important;
+	box-shadow: none !important;
 }
 
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
@@ -1579,6 +1806,41 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-color: color-mix(in srgb, var(--color-logo-accent) 45%, var(--color-border-strong));
 	background: var(--color-bg-secondary);
 	box-shadow: var(--elevation-md);
+}
+
+/* The draft grows to seven lines before it becomes its own scroll surface. A
+   narrow inset thumb keeps long prompts legible without the platform scrollbar
+   competing with the composer controls. */
+.chat-composer-scrollbar {
+	scrollbar-width: thin;
+	scrollbar-color: var(--color-scrollbar-board) transparent;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar {
+	width: 8px;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-track,
+.chat-composer-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-thumb {
+	border: 2px solid transparent;
+	border-radius: var(--radius-full);
+	background: var(--color-scrollbar-board);
+	background-clip: content-box;
+}
+
+.chat-composer-scrollbar::-webkit-scrollbar-thumb:hover {
+	background: var(--color-scrollbar-board-hover);
+	background-clip: content-box;
 }
 
 .cursor-chat-human-message {
@@ -1759,6 +2021,210 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		animation: none;
 		opacity: 1;
 		transform: translate(-6px, -50%);
+	}
+}
+
+/* One compact, responsive action contract for Board, Orchestrator, and
+ * Session topbars. Labels collapse in priority order while their icons and
+ * accessible names remain available. */
+.workspace-topbar-actions {
+	display: flex;
+	min-width: 0;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.workspace-topbar__utility-separator,
+.workspace-topbar__identity-separator {
+	width: 1px;
+	flex: 0 0 1px;
+	background: color-mix(in srgb, var(--color-text-topbar) 28%, transparent);
+}
+
+.workspace-topbar__utility-separator {
+	height: calc(var(--size-topbar-control) - var(--space-3));
+}
+
+.workspace-topbar__identity-separator {
+	height: var(--space-4);
+}
+
+.workspace-topbar-actions .topbar-control {
+	-webkit-app-region: no-drag;
+	height: var(--size-topbar-control);
+	min-width: var(--size-topbar-control);
+	flex: 0 0 auto;
+	justify-content: center;
+	border-radius: var(--radius-topbar-control);
+	font-size: var(--font-size-sm-md);
+	transition:
+		background-color var(--duration-fast) ease,
+		border-color var(--duration-fast) ease,
+		color var(--duration-fast) ease,
+		filter var(--duration-fast) ease,
+		gap var(--duration-normal) ease,
+		padding-inline var(--duration-normal) ease;
+}
+
+.workspace-topbar-actions .topbar-control--labeled,
+.workspace-topbar-actions .topbar-control--feature {
+	padding-inline: var(--space-2_5);
+}
+
+.workspace-topbar-actions [data-compact-label] {
+	display: inline-block;
+	inline-size: max-content;
+	max-inline-size: 12rem;
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	white-space: nowrap;
+	interpolate-size: allow-keywords;
+	transition:
+		inline-size var(--duration-normal) ease,
+		opacity var(--duration-fast) ease,
+		transform var(--duration-normal) ease;
+}
+
+.workspace-topbar-actions .topbar-control--feature {
+	border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-topbar));
+	background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-topbar-raised));
+	color: color-mix(in srgb, var(--color-accent) 58%, var(--color-text-topbar));
+}
+
+.workspace-topbar-actions .topbar-control--feature:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-topbar-strong));
+	background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-topbar-raised));
+	color: var(--color-text-topbar);
+}
+
+.session-collapsed-inspector-actions {
+	display: flex;
+	width: 0;
+	min-width: 0;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: flex-end;
+	margin-left: calc(-1 * var(--space-2));
+	transition:
+		width var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
+		margin-left var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.session-collapsed-inspector-actions[data-state="expanded"] {
+	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
+	margin-left: 0;
+}
+
+.session-inspector-persistent-actions {
+	-webkit-app-region: no-drag;
+	position: absolute;
+	top: 0;
+	right: var(--space-3);
+	z-index: var(--z-index-chrome);
+	display: flex;
+	height: var(--size-inspector-tabs);
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.session-inspector-actions-spacer {
+	width: calc(
+		var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2) + var(--space-3)
+	);
+	flex: 0 0 auto;
+}
+
+@container workspace-topbar (max-width: 759px) {
+	.workspace-topbar-actions [data-priority="secondary"] [data-compact-label] {
+		inline-size: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.workspace-topbar-actions [data-priority="secondary"].topbar-control {
+		gap: 0;
+		padding-inline: 0;
+	}
+}
+
+@container workspace-topbar (max-width: 639px) {
+	.workspace-topbar-actions [data-priority] [data-compact-label] {
+		inline-size: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.workspace-topbar-actions [data-priority].topbar-control {
+		gap: 0;
+		padding-inline: 0;
+	}
+}
+
+/* The session topbar lives inside the panel that grows while the inspector
+ * moves. Lock the Orchestrator button's final responsive state for that motion
+ * so its label starts changing with the panel instead of at a late breakpoint. */
+.session-split[data-terminal-live-resize="true"]
+	.workspace-topbar-actions
+	[data-priority="secondary"]
+	[data-compact-label],
+.session-split[data-terminal-live-resize="true"]
+	.workspace-topbar-actions
+	[data-priority="secondary"].topbar-control {
+	transition-duration: var(--session-inspector-motion-duration);
+	transition-timing-function: var(
+		--session-inspector-motion-easing,
+		cubic-bezier(0.16, 1, 0.3, 1)
+	);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="expanded"]
+	.workspace-topbar-actions
+	[data-priority="secondary"]
+	[data-compact-label] {
+	inline-size: max-content;
+	opacity: 1;
+	transform: translateX(0);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="expanded"]
+	.workspace-topbar-actions
+	[data-priority="secondary"].topbar-control {
+	gap: var(--space-1_5);
+	padding-inline: var(--space-2_5);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="compact"]
+	.workspace-topbar-actions
+	[data-priority="secondary"]
+	[data-compact-label] {
+	inline-size: 0;
+	opacity: 0;
+	transform: translateX(-2px);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="compact"]
+	.workspace-topbar-actions
+	[data-priority="secondary"].topbar-control {
+	gap: 0;
+	padding-inline: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.workspace-topbar-actions .topbar-control,
+	.workspace-topbar-actions [data-compact-label],
+	.session-collapsed-inspector-actions,
+	.session-split[data-terminal-live-resize="true"]
+		.workspace-topbar-actions
+		[data-priority="secondary"].topbar-control,
+	.session-split[data-terminal-live-resize="true"]
+		.workspace-topbar-actions
+		[data-priority="secondary"]
+		[data-compact-label] {
+		transition: none;
 	}
 }
 
@@ -2029,13 +2495,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	min-width: 200px;
 }
 
-.window-titlebar__spacer {
+.platform-windows .window-titlebar__spacer {
 	min-width: 0;
 	flex: 1 1 auto;
 	align-self: stretch;
 }
 
-.window-titlebar__controls {
+.platform-windows .window-titlebar__controls {
 	display: flex;
 	height: 100%;
 	flex: 0 0 auto;
@@ -2043,7 +2509,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	-webkit-app-region: no-drag;
 }
 
-.window-titlebar__control {
+.platform-windows .window-titlebar__control {
 	display: grid;
 	width: 46px;
 	height: 100%;
@@ -2054,31 +2520,31 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		color 0.12s ease;
 }
 
-.window-titlebar__control:hover {
+.platform-windows .window-titlebar__control:hover {
 	background: color-mix(in srgb, var(--fg) 8%, transparent);
 	color: var(--fg);
 }
 
-.window-titlebar__control:active {
+.platform-windows .window-titlebar__control:active {
 	background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 
-.window-titlebar__control--close:hover {
+.platform-windows .window-titlebar__control--close:hover {
 	background: #c42b1c;
 	color: white;
 }
 
-.window-titlebar__control--close:active {
+.platform-windows .window-titlebar__control--close:active {
 	background: #a92015;
 	color: white;
 }
 
-.window-titlebar__control-icon {
+.platform-windows .window-titlebar__control-icon {
 	width: 14px;
 	height: 14px;
 }
 
-.window-titlebar__control-icon--maximize {
+.platform-windows .window-titlebar__control-icon--maximize {
 	width: 12px;
 	height: 12px;
 }
@@ -2322,13 +2788,106 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
- * surface: interpolating this value makes ResizeObserver fit the terminal at
- * every intermediate width, reallocating the renderer and eventually causing
- * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
- * direct separator drags remain interactive. */
-.session-split #inspector[data-panel] {
+/* Match the left sidebar's spring-like reveal while keeping direct separator
+ * drags under the pointer. Both panels participate so neither edge snaps. */
+.session-split > [data-panel] {
+	transition: flex-grow var(--session-inspector-motion-duration, 320ms)
+		var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.session-inspector-separator {
+	transition-duration: var(--session-inspector-motion-duration, 320ms);
+	transition-timing-function: var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.session-split > .session-inspector-panel[data-panel] {
+	max-width: var(--session-inspector-max-width, 50%);
+}
+
+.session-split:has([data-separator="active"]) > [data-panel] {
 	transition: none;
+}
+
+.session-inspector-motion {
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		opacity var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
+		transform var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+	will-change: opacity, transform;
+}
+
+.session-inspector-motion[data-motion-state="opening"],
+.session-inspector-motion[data-motion-state="closing"],
+.session-inspector-motion[data-motion-state="closed"] {
+	opacity: 0;
+	transform: translateX(12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-split > [data-panel],
+	.session-inspector-separator,
+	.session-inspector-motion {
+		transition: none;
+	}
+}
+
+.session-inspector__topbar {
+	background: var(--bg);
+	color: var(--fg);
+	user-select: none;
+}
+
+.session-inspector__tab-button {
+	gap: 0;
+}
+
+.session-inspector__responsive-label {
+	max-width: 5.5rem;
+	margin-left: var(--space-1);
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		max-width 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		margin-left 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		opacity 120ms ease-out,
+		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@container inspector (max-width: 359px) {
+	.session-inspector__responsive-label {
+		max-width: 0;
+		margin-left: 0;
+		opacity: 0;
+		transform: translateX(-4px);
+	}
+}
+
+/* Keep one label layout for the full automatic panel transition. Without this
+ * lock, crossing the compact container threshold near the end of the resize
+ * makes the tab text reflow after the inspector itself has nearly settled. */
+.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
+	.session-inspector__responsive-label {
+	max-width: 5.5rem;
+	margin-left: var(--space-1);
+	opacity: 1;
+	transform: translateX(0);
+}
+
+.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="compact"]
+	.session-inspector__responsive-label {
+	max-width: 0;
+	margin-left: 0;
+	opacity: 0;
+	transform: translateX(-4px);
+}
+
+.session-inspector__toggle {
+	-webkit-app-region: no-drag;
+	margin-right: var(--space-2);
 }
 
 .inspector-section {
@@ -2953,22 +3512,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		background var(--duration-normal) ease;
 }
 
-.browser-panel--agent-active {
-	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
-	box-shadow:
-		0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent),
-		0 0 28px color-mix(in srgb, var(--color-accent) 10%, transparent),
-		var(--elevation-sm);
-}
-
-/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
-   the sidebar + topbar too, not just the session area.
-   Windows owns the titlebar in renderer chrome, so the overlay starts below
-   the custom titlebar. macOS hides the shell topbar; windowed mode reserves
-   the native traffic-light band below, while native fullscreen keeps a 0px top
-   inset. Linux now shows a ShellTopbar, so the overlay must start below
-   --size-toolbar; env(titlebar-area-height) resolves to 0 there, so we override
-   the top with a platform class. */
+/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
+   <body>, so it covers the sidebar + topbar too, not just the session area).
+   Windows paints its own titlebar, so overlays start below that row. macOS
+   hides the shell topbar; windowed mode reserves the native traffic-light band,
+   while native fullscreen keeps a 0px top inset. Linux keeps its ShellTopbar
+   offset below. */
 .browser-popout-overlay,
 .files-popout-overlay {
 	position: fixed;
@@ -2979,6 +3528,20 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	   maximized browser surface interactive even if those regions overlap while
 	   the window is transitioning between layouts. */
 	-webkit-app-region: no-drag;
+}
+
+/* Keep native browser/files surfaces below the custom Windows titlebar. */
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
+	top: var(--size-window-titlebar);
+}
+
+/* Web preview has no preload platform attribute. The popouts are direct body
+   portals, so detect the Windows shell in #root instead of using a descendant
+   selector that cannot reach them. */
+body:has(#root .platform-windows) > .browser-popout-overlay,
+body:has(#root .platform-windows) > .files-popout-overlay {
+	top: var(--size-window-titlebar);
 }
 
 /* macOS keeps the native traffic lights visible while the window is not in
@@ -2998,11 +3561,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	top: var(--size-shell-topbar);
 }
 
-.platform-windows .browser-popout-overlay,
-.platform-windows .files-popout-overlay {
-	top: var(--size-window-titlebar);
-}
-
 .browser-popout-overlay .browser-panel {
 	border: 0;
 	border-radius: 0;
@@ -3012,11 +3570,17 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .browser-panel__toolbar {
 	display: flex;
 	align-items: center;
-	gap: 5px;
+	gap: 2px;
 	flex-shrink: 0;
 	min-width: 0;
-	min-height: 44px;
-	padding: 7px 8px;
+	/* Matches the 28px (--size-control-md) buttons + 3px top/bottom exactly, so
+	   this is the actual driver of the bar's height — a bigger min-height here
+	   would silently swallow any padding reduction above it (buttons would just
+	   stay centered in the leftover space instead of the bar getting shorter). */
+	min-height: 34px;
+	/* No right padding: the new-tab button's own column is flush against this
+	   edge so it lines up with the docked rail directly below it. */
+	padding: 3px 0 3px 4px;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
@@ -3111,12 +3675,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
 }
 
-.browser-panel__tabs-trigger {
-	min-width: 42px;
-	border: 1px solid color-mix(in srgb, var(--color-border) 56%, transparent);
-	background: color-mix(in srgb, var(--surface) 86%, var(--bg));
-}
-
 .browser-panel__content {
 	position: relative;
 	flex: 1;
@@ -3183,6 +3741,78 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	font-size: 12px;
 }
 
+/* Native composition keeps the browser page in an Electron
+ * WebContentsView below the transparent shell renderer. The normal renderer
+ * path remains available for web-only development; these rules remove the
+ * opaque paint layers that would otherwise hide the native page behind the
+ * shell. Toolbar and controls stay opaque so the app chrome remains readable. */
+html[data-native-browser-composition="true"] body:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay),
+html[data-native-browser-composition="true"] #root:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .platform-windows:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+/* A maximized BrowserPanel is portaled directly under <body>, outside the
+ * normal shell root. Clear the shell layers beneath that portal as well, or a
+ * sidebar/center surface can paint an opaque sheet over the live native page
+ * whenever the transparent shell is raised for its tabs/menu portals. */
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-windows,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .platform-linux,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-shell,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .center-panel-surface,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-testid="session-detail"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-split,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-inspector,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-inspector__body,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-container"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-inner"],
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .dashboard-app-header,
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root .session-topbar-surface {
+	background: transparent !important;
+}
+
+/* The popout is the only visible workspace while maximized. Hide the normal
+ * shell subtree instead of letting its terminal/sidebar controls show through
+ * the transparent compositor when the shell is raised for a menu portal. The
+ * BrowserPanel portal and the Windows titlebar remain outside this wrapper and
+ * stay interactive. */
+html[data-native-browser-composition="true"] body:has(.browser-popout-overlay) #root [data-slot="sidebar-wrapper"] {
+	visibility: hidden;
+}
+
+html[data-native-browser-composition="true"] .center-panel-shell--session:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .center-panel-shell--session:has(.browser-panel[data-browser-native-page="live"]) > .center-panel-surface,
+html[data-native-browser-composition="true"] [data-testid="session-detail"]:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .session-split:has(.browser-panel[data-browser-native-page="live"]) {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"],
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"] .browser-panel__content,
+html[data-native-browser-composition="true"] .browser-panel[data-browser-native-page="live"] .browser-panel__viewport {
+	background: transparent !important;
+	box-shadow: none;
+}
+
+/* The inspector rail paints its own opaque background. When its browser tab is
+ * active, clear only that containing rail so the native page remains visible
+ * when the transparent shell is raised for a menu. Other inspector tabs keep
+ * their existing surface unchanged. */
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]),
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body {
+	background: transparent;
+}
+
+html[data-native-browser-composition="true"] .browser-popout-overlay {
+	background: transparent;
+}
+
 @keyframes browser-popout-in {
 	from {
 		opacity: 0.94;
@@ -3231,8 +3861,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.notification-row-enter {
+	.notification-row-enter,
+	.session-inspector-motion,
+	.session-inspector__responsive-label,
+	.session-split > [data-panel] {
 		animation: none;
+		transition: none;
 	}
 }
 

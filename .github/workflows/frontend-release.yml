@@ -39,6 +39,9 @@ on:
         type: boolean
         default: false
 
+env:
+  VITE_WORKOS_CLIENT_ID: ${{ vars.VITE_WORKOS_CLIENT_ID }}
+
 jobs:
   release:
     strategy:
@@ -70,6 +73,13 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: npm ci
+      - name: Verify WorkOS build configuration
+        shell: bash
+        run: |
+          if [ -z "$VITE_WORKOS_CLIENT_ID" ]; then
+            echo "::error::Repository variable VITE_WORKOS_CLIENT_ID is required for desktop releases." >&2
+            exit 1
+          fi
       - name: macOS signing setup
         if: startsWith(matrix.os, 'macos')
         uses: ./.github/actions/macos-signing-setup
@@ -196,6 +206,13 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: npm ci
+      - name: Verify WorkOS build configuration
+        shell: bash
+        run: |
+          if [ -z "$VITE_WORKOS_CLIENT_ID" ]; then
+            echo "::error::Repository variable VITE_WORKOS_CLIENT_ID is required for desktop releases." >&2
+            exit 1
+          fi
       - name: macOS signing setup
         uses: ./.github/actions/macos-signing-setup
         with:

@@ -14,11 +14,11 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
-					{/* The composer is the dialog's complete visible surface. Keep the title
-					    and description in the accessibility tree without spending visual rows. */}
-					<Dialog.Title className="sr-only">{t("newTask.title")}</Dialog.Title>
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+					{/* One title line names the dialog, styled like every other settings-style
+					    modal; everything else stays the composer's surface, no bordered header. */}
+					<Dialog.Title className="settings-dialog-title px-4 pt-3">{t("newTask.title")}</Dialog.Title>
 					<Dialog.Description className="sr-only">{t("newTask.description")}</Dialog.Description>
 					<TaskComposer
 						projectId={projectId}

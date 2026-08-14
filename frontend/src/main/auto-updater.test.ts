@@ -1,5 +1,8 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
 
 type UpdateSettings = {
   enabled: boolean;
@@ -737,6 +740,202 @@ describe("startAutoUpdates", () => {
     });
   });
 
+  it("flags net errors on a rejected manual check", async () => {
+    const { module, autoUpdater } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("net::ERR_FAILED"));
+
+    await module.checkForUpdatesNow(stateDir);
+
+    expect(module.getUpdateStatus()).toEqual({
+      state: "error",
+      message: "net::ERR_FAILED",
+      netError: true,
+    });
+  });
+
+  it("flags net errors on a net:: error event during a manual check", async () => {
+    const { module, updaterEvents } = await importAutoUpdater();
+
+    await module.checkForUpdatesNow(stateDir);
+    updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+
+    expect(module.getUpdateStatus()).toEqual({
+      state: "error",
+      message: "net::ERR_FAILED",
+      netError: true,
+    });
+  });
+
+  it("keeps non-net manual check errors verbatim", async () => {
+    const { module, autoUpdater } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockRejectedValueOnce(new Error("boom"));
+
+    await module.checkForUpdatesNow(stateDir);
+
+    expect(module.getUpdateStatus()).toEqual({
+      state: "error",
+      message: "boom",
+    });
+  });
+
+  it("nudges a restart after three consecutive net:: automatic-check failures", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+      return Promise.resolve();
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    // Below the threshold the suppressed automatic failure stays fully silent.
+    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+
+    await module.startAutoUpdates(stateDir);
+
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      staleCheckNudge: true,
+    });
+  });
+
+  it("does not nudge for non-net automatic-check failures", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("HttpError: 500"));
+      return Promise.resolve();
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+
+    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+  });
+
+  it("does not nudge when a non-net failure breaks the net:: streak", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+
+    const netFail = () => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+      return Promise.resolve();
+    };
+    const httpFail = () => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("HttpError: 500"));
+      return Promise.resolve();
+    };
+
+    autoUpdater.checkForUpdates.mockImplementation(netFail);
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    autoUpdater.checkForUpdates.mockImplementation(httpFail);
+    await module.startAutoUpdates(stateDir);
+    autoUpdater.checkForUpdates.mockImplementation(netFail);
+    await module.startAutoUpdates(stateDir);
+
+    // net, net, non-net, net → the streak resets on the non-net failure, so the
+    // lone trailing net error stays below the threshold (#3526).
+    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+  });
+
+  it("counts one failure when an automatic check both emits error and rejects", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+      return Promise.reject(new Error("net::ERR_FAILED"));
+    });
+
+    // Two checks that each surface the failure twice must not reach the
+    // threshold of three.
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+
+    await module.startAutoUpdates(stateDir);
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      staleCheckNudge: true,
+    });
+  });
+
+  it("surfaces the nudge when automatic checks reject without an error event", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("checking-for-update")?.();
+      return Promise.reject(new Error("net::ERR_FAILED"));
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    // Restored to the pre-check status (not stuck on "checking"), and no nudge
+    // below the threshold.
+    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+
+    await module.startAutoUpdates(stateDir);
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      staleCheckNudge: true,
+    });
+  });
+
+  it("stamps the nudge on getUpdateStatus even when no broadcast carried it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+    // No checking-for-update: there is no prior status to restore, so the
+    // failures produce no status broadcast at all.
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+      return Promise.resolve();
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+
+    expect(statusMessages()).toEqual([]);
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      staleCheckNudge: true,
+    });
+  });
+
+  it("clears the nudge once a check succeeds again", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+      return Promise.resolve();
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      staleCheckNudge: true,
+    });
+
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("checking-for-update")?.();
+      updaterEvents.get("update-not-available")?.();
+      return Promise.resolve();
+    });
+    await module.startAutoUpdates(stateDir);
+
+    expect(module.getUpdateStatus()).toEqual({ state: "not-available" });
+  });
+
   it("logs settings failures during automatic checks and retries on later ticks", async () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
@@ -1229,5 +1428,226 @@ describe("returnToHome", () => {
 
     expect(updateUpdateSettings).not.toHaveBeenCalled();
     expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+});
+
+// stubProcess swaps process.platform/execPath for one test. The install
+// preflight reads both at call time, so no module re-import is needed after
+// the swap, but the restore MUST run even when the assertion throws.
+function stubProcess(platform: NodeJS.Platform, execPath: string): () => void {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const originalExecPath = Object.getOwnPropertyDescriptor(process, "execPath")!;
+  Object.defineProperty(process, "platform", { value: platform });
+  Object.defineProperty(process, "execPath", { value: execPath });
+  return () => {
+    Object.defineProperty(process, "platform", originalPlatform);
+    Object.defineProperty(process, "execPath", originalExecPath);
+  };
+}
+
+// Builds a real bundle-shaped tree so the writability checks run against the
+// filesystem rather than a stub. Returns the exec path inside it.
+function makeBundle(): { root: string; bundle: string; execPath: string } {
+  const root = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-perm-"));
+  const bundle = nodePath.join(root, "Agent Orchestrator.app");
+  mkdirSync(nodePath.join(bundle, "Contents", "MacOS"), { recursive: true });
+  return {
+    root,
+    bundle,
+    execPath: nodePath.join(bundle, "Contents", "MacOS", "agent-orchestrator"),
+  };
+}
+
+const TRANSLOCATED_EXEC_PATH =
+  "/private/var/folders/hg/vkmz93d1T/T/AppTranslocation/0AC4-11EE/d/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator";
+
+describe("quitAndInstallUpdate", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("shows an actionable dialog instead of installing when running translocated on macOS", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+      const box = dialog.showMessageBox.mock.calls[0][0] as {
+        message: string;
+        detail: string;
+      };
+      expect(box.detail).toContain("/Applications");
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows the dialog when the app bundle is not writable", async () => {
+    const { root, bundle, execPath } = makeBundle();
+    chmodSync(bundle, 0o555);
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+      chmodSync(bundle, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The correction to #3529's check: ShipIt swaps by moving the bundle aside
+  // and moving the new one in, so a writable bundle inside an unwritable
+  // PARENT still fails, silently, exactly like the case above.
+  it("shows the dialog when the enclosing directory is not writable", async () => {
+    const { root, bundle, execPath } = makeBundle();
+    chmodSync(root, 0o555);
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+      const box = dialog.showMessageBox.mock.calls[0][0] as { detail: string };
+      expect(box.detail).toContain(root);
+      // Must NOT tell a user already sitting in /Applications to move there.
+      expect(box.detail).not.toContain("move Agent Orchestrator.app into /Applications");
+    } finally {
+      restore();
+      chmodSync(root, 0o755);
+      chmodSync(bundle, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs when both the bundle and its parent are writable", async () => {
+    const { root, execPath } = makeBundle();
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails open and installs when the derived bundle path does not exist", async () => {
+    const restore = stubProcess(
+      "darwin",
+      "/nonexistent-ao-test/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator",
+    );
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  // Under `npm start` and in tests execPath is a bare node/electron binary, so
+  // the derived path is an unrelated ancestor dir. Its permissions must not
+  // decide anything.
+  it("fails open when execPath is not inside a .app bundle", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("never blocks off macOS, even for translocation-looking paths", async () => {
+    const restore = stubProcess("win32", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does nothing when the app is not packaged", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater({
+        enabled: true,
+        channel: "latest",
+        nightlyAck: false,
+        feature: null,
+      }, { isPackaged: false });
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+});
+
+// The other half of #3527: the button was guarded but install-on-quit was not,
+// so quitting stayed a silent dead end. Every check path must reflect the same
+// verdict the button does.
+describe("install-on-quit policy", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("disables install-on-quit when the location cannot be installed to", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater } = await importAutoUpdater();
+
+      await module.startAutoUpdates("/tmp/ao-state");
+
+      expect(autoUpdater.autoInstallOnAppQuit).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("leaves install-on-quit on for an installable location", async () => {
+    const { root, execPath } = makeBundle();
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater } = await importAutoUpdater();
+
+      await module.startAutoUpdates("/tmp/ao-state");
+
+      expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

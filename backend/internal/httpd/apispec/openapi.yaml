@@ -463,6 +463,106 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/mobile/devices:
+    get:
+      operationId: listMobileDevices
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileDevicesResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: List paired mobile devices with their live/muted status
+      tags:
+      - mobile
+  /api/v1/mobile/devices/{installId}:
+    delete:
+      operationId: removeMobileDevice
+      parameters:
+      - description: The device's stable install id.
+        in: path
+        name: installId
+        required: true
+        schema:
+          description: The device's stable install id.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Remove a paired device from the roster
+      tags:
+      - mobile
+    patch:
+      operationId: muteMobileDevice
+      parameters:
+      - description: The device's stable install id.
+        in: path
+        name: installId
+        required: true
+        schema:
+          description: The device's stable install id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MuteDeviceRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
+      summary: Mute or unmute push notifications for a paired device
+      tags:
+      - mobile
   /api/v1/mobile/disable:
     post:
       operationId: disableMobile
@@ -536,6 +636,43 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Rotate the Connect Mobile password, dropping any connected phone
+      tags:
+      - mobile
+  /api/v1/mobile/secure-pairing:
+    post:
+      operationId: setMobileSecurePairing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSetSecurePairingRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileStatusResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Turn TLS-over-Tailscale secure pairing on or off
       tags:
       - mobile
   /api/v1/mobile/status:
@@ -1307,7 +1444,36 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Unregister a phone's Expo push token
+      summary: Unregister a phone's Expo push token, leaving it paired
+      tags:
+      - push
+  /api/v1/push/pairings/{id}:
+    delete:
+      operationId: unpairPushDevice
+      parameters:
+      - description: The phone's install id, or its push token for older builds.
+        in: path
+        name: id
+        required: true
+        schema:
+          description: The phone's install id, or its push token for older builds.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unpair this phone from the daemon, removing it from the roster
       tags:
       - push
   /api/v1/reviews/{reviewSessionID}/activity:
@@ -1591,6 +1757,161 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/agent-switches:
+    get:
+      operationId: listSessionAgentSwitches
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAgentSwitchesResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List a session's durable agent-switch history
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff:
+    post:
+      operationId: submitSessionAgentHandoff
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable agent-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable agent-switch identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitAgentHandoffRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSwitchResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Submit a generation-fenced source-agent handoff
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover:
+    post:
+      operationId: recoverSessionAgentSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable agent-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable agent-switch identifier.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSwitchResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Retry safe source restoration for an agent switch
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/attachments:
     post:
       operationId: stageSessionAttachments
@@ -1640,6 +1961,153 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Write images into a running session's worktree and return their paths
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/auto-inject-ci:
+    patch:
+      operationId: setSessionAutoInjectCI
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionAutoInjectCIRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionAutoInjectCIResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the automatic CI-failure injection default for new session PRs
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/auto-inject-review:
+    patch:
+      operationId: setSessionAutoInjectReview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionAutoInjectReviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSessionAutoInjectReviewResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the auto-inject review setting for a session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/auto-review:
+    put:
+      operationId: setSessionAutoReview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSetSessionAutoReviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Enable or disable automatic review for a session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/conversation:
@@ -1769,6 +2237,60 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Answer a pending approval in a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate:
+    post:
+      operationId: activateSessionConversationBranch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Conversation branch identifier, from a snapshot branch navigation
+          point.
+        in: path
+        name: branchId
+        required: true
+        schema:
+          description: Conversation branch identifier, from a snapshot branch navigation
+            point.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivateConversationBranchResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resume a durable conversation branch without sending
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/conversation/compact:
@@ -2390,6 +2912,71 @@ paths:
       summary: Name the provider's conversation thread
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit:
+    post:
+      operationId: editSessionConversationMessage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditConversationMessageRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EditConversationMessageResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Branch before and replace an earlier human prompt
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
     post:
       operationId: rollbackSessionConversation
@@ -2441,6 +3028,65 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Discard a turn and everything after it from the agent's memory
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer:
+    post:
+      operationId: promoteQueuedSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoteQueuedTurnResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Promote a queued message into the in-flight turn
       tags:
       - conversations
   /api/v1/sessions/{sessionId}/interface-transition:
@@ -3757,6 +4403,63 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/switch-agent:
+    post:
+      operationId: switchSessionAgent
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwitchAgentRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSwitchResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Switch a logical AO session to another agent harness
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/workspace/events:
     get:
       operationId: streamSessionWorkspaceChanges
@@ -4231,6 +4934,13 @@ components:
       - code
       - message
       type: object
+    ActivateConversationBranchResponse:
+      properties:
+        activeBranchId:
+          type: string
+      required:
+      - activeBranchId
+      type: object
     AddProjectInput:
       properties:
         asWorkspace:
@@ -4331,6 +5041,104 @@ components:
       - source
       - fetchedAt
       - stale
+      type: object
+    AgentSwitch:
+      properties:
+        agentHandoffStatus:
+          enum:
+          - not_attempted
+          - requested
+          - received
+          - unavailable
+          - timed_out
+          - failed
+          - rejected
+          type: string
+        errorCode:
+          enum:
+          - daemon_restart_pre_stop
+          - daemon_restart_post_stop
+          - daemon_restart_unrecoverable_target
+          - daemon_restart_before_delivery
+          - delivery_unconfirmed
+          - source_session_terminated
+          - source_stop_unconfirmed
+          - target_binary_missing
+          - target_agent_unauthorized
+          - target_start_unconfirmed
+          - source_restore_unconfirmed
+          - request_cancelled
+          - source_blocked
+          - failed_pre_stop
+          - failed_post_stop
+          - target_ready_failed
+          - delivery_failed
+          - switch_failed
+          type: string
+        fromHarness:
+          type: string
+        id:
+          type: string
+        requestedAt:
+          format: date-time
+          type: string
+        semanticHandoffIncluded:
+          type: boolean
+        sessionId:
+          type: string
+        sourceTranscriptStatus:
+          enum:
+          - not_attempted
+          - available
+          - unavailable
+          type: string
+        state:
+          enum:
+          - preparing_handoff
+          - stopping_source
+          - source_stopped
+          - starting_target
+          - target_ready
+          - delivering_context
+          - completed
+          - failed
+          type: string
+        targetHarness:
+          type: string
+        targetStartMode:
+          enum:
+          - fresh
+          - resumed
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sessionId
+      - fromHarness
+      - targetHarness
+      - state
+      - agentHandoffStatus
+      - semanticHandoffIncluded
+      - requestedAt
+      - updatedAt
+      type: object
+    AgentSwitchResponse:
+      properties:
+        switch:
+          $ref: '#/components/schemas/AgentSwitch'
+      required:
+      - switch
+      type: object
+    AttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
       type: object
     BrowserCommandRequest:
       properties:
@@ -4489,10 +5297,40 @@ components:
         disabled:
           type: boolean
       type: object
+    ControllersSecurePairingStatus:
+      properties:
+        active:
+          type: boolean
+        available:
+          type: boolean
+        enabled:
+          type: boolean
+        host:
+          type: string
+        port:
+          type: integer
+        reason:
+          type: string
+      required:
+      - enabled
+      - available
+      - active
+      - host
+      - port
+      - reason
+      type: object
     ControllersSessionView:
       properties:
+        activeAgentSwitch:
+          $ref: '#/components/schemas/AgentSwitch'
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        autoInjectCI:
+          type: boolean
+        autoInjectReview:
+          type: boolean
+        autoReviewEnabled:
+          type: boolean
         branch:
           type: string
         createdAt:
@@ -4537,7 +5375,29 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - kimchi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
         scmStatus:
           enum:
@@ -4578,24 +5438,32 @@ components:
       - id
       - projectId
       - kind
+      - autoReviewEnabled
       - mode
       - activity
       - isTerminated
       - terminateOnPrMerge
+      - autoInjectReview
+      - autoInjectCI
       - createdAt
       - updatedAt
       - isPinned
       - status
       - prs
       type: object
-    ControllersSpawnAttachmentInput:
+    ControllersSetSecurePairingRequest:
       properties:
-        data:
-          type: string
-        mimeType:
-          type: string
+        enabled:
+          type: boolean
       required:
-      - data
+      - enabled
+      type: object
+    ControllersSetSessionAutoReviewRequest:
+      properties:
+        enabled:
+          type: boolean
+      required:
+      - enabled
       type: object
     ConversationAccountPayload:
       properties:
@@ -4670,6 +5538,23 @@ components:
       - summary
       - createdAt
       type: object
+    ConversationBranchPointResponse:
+      properties:
+        nextBranchId:
+          type: string
+        position:
+          type: integer
+        previousBranchId:
+          type: string
+        total:
+          type: integer
+        turnId:
+          type: string
+      required:
+      - turnId
+      - position
+      - total
+      type: object
     ConversationConfigChoiceResponse:
       properties:
         description:
@@ -4725,6 +5610,19 @@ components:
       required:
       - options
       type: object
+    ConversationContentSummaryResponse:
+      properties:
+        mimeType:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        uri:
+          type: string
+      required:
+      - type
+      type: object
     ConversationDiffFileResponse:
       properties:
         additions:
@@ -4776,8 +5674,14 @@ components:
       type: object
     ConversationMessageResponse:
       properties:
+        content:
+          items:
+            $ref: '#/components/schemas/ConversationContentSummaryResponse'
+          type: array
         createdAt:
           type: string
+        editAvailable:
+          type: boolean
         id:
           type: string
         kind:
@@ -4816,6 +5720,7 @@ components:
       - role
       - origin
       - text
+      - editAvailable
       - streaming
       - createdAt
       type: object
@@ -4960,10 +5865,18 @@ components:
       properties:
         account:
           $ref: '#/components/schemas/ConversationAccountPayload'
+        activeBranchId:
+          type: string
         activities:
           items:
             $ref: '#/components/schemas/ConversationActivityResponse'
           type: array
+        branchPoints:
+          items:
+            $ref: '#/components/schemas/ConversationBranchPointResponse'
+          type: array
+        branchedFromEarlierMessage:
+          type: boolean
         capabilities:
           items:
             type: string
@@ -5025,6 +5938,7 @@ components:
           $ref: '#/components/schemas/ConversationUsagePayload'
       required:
       - conversationId
+      - branchedFromEarlierMessage
       - sessionId
       - mode
       - controller
@@ -5204,12 +6118,14 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
+          - prime-agent
           - autohand
           - fake
           type: string
         attachments:
           items:
-            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+            $ref: '#/components/schemas/AttachmentInput'
           type: array
         brief:
           maxLength: 4096
@@ -5319,6 +6235,37 @@ components:
       required:
       - harness
       type: object
+    EditConversationMessageRequest:
+      properties:
+        clientMessageId:
+          type: string
+        text:
+          type: string
+      required:
+      - text
+      type: object
+    EditConversationMessageResponse:
+      properties:
+        activeBranchId:
+          type: string
+        providerTurnId:
+          type: string
+        sourceBranchId:
+          type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - interrupted
+          - failed
+          type: string
+        turnId:
+          type: string
+      required:
+      - sourceBranchId
+      - activeBranchId
+      type: object
     ImportReport:
       properties:
         dryRun:
@@ -5397,6 +6344,15 @@ components:
       required:
       - ok
       - sessionId
+      type: object
+    ListAgentSwitchesResponse:
+      properties:
+        switches:
+          items:
+            $ref: '#/components/schemas/AgentSwitch'
+          type: array
+      required:
+      - switches
       type: object
     ListAgentsResponse:
       properties:
@@ -5592,6 +6548,50 @@ components:
       - prNumber
       - method
       type: object
+    MobileDeviceResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        deviceName:
+          type: string
+        installId:
+          type: string
+        lastSeenAt:
+          format: date-time
+          type: string
+        live:
+          description: True when the phone's app is open and polling.
+          type: boolean
+        muted:
+          type: boolean
+        notificationsEnabled:
+          description: True when this device has a push token registered.
+          type: boolean
+        platform:
+          enum:
+          - ios
+          - android
+          type: string
+        token:
+          type: string
+      required:
+      - installId
+      - muted
+      - live
+      - notificationsEnabled
+      - createdAt
+      - lastSeenAt
+      type: object
+    MobileDevicesResponse:
+      properties:
+        devices:
+          items:
+            $ref: '#/components/schemas/MobileDeviceResponse'
+          type: array
+      required:
+      - devices
+      type: object
     MobileStatusResponse:
       properties:
         enabled:
@@ -5602,14 +6602,28 @@ components:
           type: string
         port:
           type: integer
+        securePairing:
+          $ref: '#/components/schemas/ControllersSecurePairingStatus'
+        tailscaleHost:
+          type: string
         warning:
           type: string
       required:
       - enabled
       - host
+      - tailscaleHost
       - port
       - password
       - warning
+      - securePairing
+      type: object
+    MuteDeviceRequest:
+      properties:
+        muted:
+          description: True to stop sending push notifications to this device.
+          type: boolean
+      required:
+      - muted
       type: object
     NotificationEnvelope:
       properties:
@@ -5910,6 +6924,19 @@ components:
       - kind
       - sessionPrefix
       type: object
+    PromoteQueuedTurnResponse:
+      properties:
+        activityId:
+          type: string
+        providerTurnId:
+          type: string
+        sourceTurnId:
+          type: string
+      required:
+      - sourceTurnId
+      - providerTurnId
+      - activityId
+      type: object
     PushDeviceEnvelope:
       properties:
         device:
@@ -5932,7 +6959,6 @@ components:
         token:
           type: string
       required:
-      - token
       - createdAt
       - lastSeenAt
       type: object
@@ -5941,6 +6967,11 @@ components:
         deviceName:
           description: Human-friendly device label.
           type: string
+        installId:
+          description: 'Stable per-install device id, keying the registry so a rotated
+            push token updates the same row. Optional: older app builds omit it and
+            the daemon synthesizes one.'
+          type: string
         platform:
           description: Device platform.
           enum:
@@ -5948,10 +6979,9 @@ components:
           - android
           type: string
         token:
-          description: Expo push token, e.g. ExponentPushToken[...].
+          description: 'Expo push token, e.g. ExponentPushToken[...]. Optional: omitted
+            when the phone has no push token yet.'
           type: string
-      required:
-      - token
       type: object
     ReloadConversationMCPServersResponse:
       properties:
@@ -6085,6 +7115,8 @@ components:
       type: object
     ReviewRun:
       properties:
+        autoInjectReview:
+          type: boolean
         batchId:
           type: string
         body:
@@ -6113,6 +7145,11 @@ components:
           type: string
         targetSha:
           type: string
+        triggerSource:
+          enum:
+          - manual
+          - auto
+          type: string
         verdict:
           type: string
       required:
@@ -6121,6 +7158,7 @@ components:
       - sessionId
       - batchId
       - harness
+      - triggerSource
       - prUrl
       - targetSha
       - status
@@ -6128,6 +7166,7 @@ components:
       - body
       - githubReviewId
       - createdAt
+      - autoInjectReview
       type: object
     ReviewRunResponse:
       properties:
@@ -6210,6 +7249,8 @@ components:
       type: object
     SendSessionMessageRequest:
       properties:
+        attachment:
+          $ref: '#/components/schemas/AttachmentInput'
         message:
           maxLength: 4096
           minLength: 1
@@ -6311,6 +7352,8 @@ components:
       type: object
     SessionPRCISummary:
       properties:
+        autoInjectCI:
+          type: boolean
         failingChecks:
           items:
             $ref: '#/components/schemas/SessionPRFailingCheck'
@@ -6325,6 +7368,7 @@ components:
       required:
       - state
       - failingChecks
+      - autoInjectCI
       type: object
     SessionPRConflictFile:
       properties:
@@ -6430,15 +7474,21 @@ components:
       type: object
     SessionPRReviewCommentLink:
       properties:
+        autoInjectReview:
+          type: boolean
         file:
           type: string
         line:
           type: integer
         url:
           type: string
+      required:
+      - autoInjectReview
       type: object
     SessionPRReviewEntry:
       properties:
+        autoInjectReview:
+          type: boolean
         body:
           type: string
         isBot:
@@ -6461,6 +7511,7 @@ components:
       - reviewerId
       - verdict
       - submittedAt
+      - autoInjectReview
       type: object
     SessionPRReviewSummary:
       properties:
@@ -6520,6 +7571,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
@@ -6633,6 +7685,14 @@ components:
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string
+        latestAssistantUpdate:
+          description: Latest assistant update exposed by the provider hook.
+          maxLength: 16384
+          type: string
+        latestUserPrompt:
+          description: Latest real user prompt exposed by the provider hook.
+          maxLength: 16384
+          type: string
         launchId:
           description: AO process generation that produced the signal.
           type: string
@@ -6651,6 +7711,10 @@ components:
           type: string
         toolUseId:
           description: Native tool-use id, for tool-use hook events.
+          type: string
+        transcriptPath:
+          description: Read-only provider-native transcript path exposed by the hook.
+          maxLength: 4096
           type: string
         usage:
           $ref: '#/components/schemas/UsageHookMetadata'
@@ -6731,6 +7795,52 @@ components:
       - ok
       - reviewSessionId
       type: object
+    SetSessionAutoInjectCIRequest:
+      properties:
+        autoInjectCI:
+          type: boolean
+      required:
+      - autoInjectCI
+      type: object
+    SetSessionAutoInjectCIResponse:
+      properties:
+        autoInjectCI:
+          type: boolean
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - autoInjectCI
+      - session
+      type: object
+    SetSessionAutoInjectReviewRequest:
+      properties:
+        autoInjectReview:
+          type: boolean
+      required:
+      - autoInjectReview
+      type: object
+    SetSessionAutoInjectReviewResponse:
+      properties:
+        autoInjectReview:
+          type: boolean
+        ok:
+          type: boolean
+        session:
+          $ref: '#/components/schemas/ControllersSessionView'
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      - autoInjectReview
+      - session
+      type: object
     SetSessionMergePolicyRequest:
       properties:
         terminateOnPrMerge:
@@ -6767,7 +7877,29 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - kimchi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
       type: object
     SettingsResponse:
@@ -6838,7 +7970,7 @@ components:
       properties:
         attachments:
           items:
-            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+            $ref: '#/components/schemas/AttachmentInput'
           type: array
         branch:
           type: string
@@ -6870,6 +8002,8 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
+          - prime-agent
           - autohand
           type: string
         issueId:
@@ -6888,6 +8022,11 @@ components:
           type: string
         prompt:
           maxLength: 4096
+          type: string
+        trackerProvider:
+          enum:
+          - github
+          - gitlab
           type: string
       required:
       - projectId
@@ -6909,7 +8048,7 @@ components:
       properties:
         attachments:
           items:
-            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+            $ref: '#/components/schemas/AttachmentInput'
           type: array
       required:
       - attachments
@@ -6980,6 +8119,17 @@ components:
       required:
       - providerTurnId
       type: object
+    SubmitAgentHandoffRequest:
+      properties:
+        handoff:
+          description: Structured, source-agent-authored handoff enrichment.
+        sourceGenerationId:
+          description: Source invocation generation that authored this handoff.
+          type: string
+      required:
+      - sourceGenerationId
+      - handoff
+      type: object
     SubmitReviewInput:
       properties:
         body:
@@ -7018,6 +8168,26 @@ components:
       - runId
       - verdict
       type: object
+    SwitchAgentRequest:
+      properties:
+        idempotencyKey:
+          description: Optional retry key. Reusing it with a different request is
+            rejected.
+          maxLength: 128
+          type: string
+        model:
+          description: Optional model override for the target agent launch or resume.
+          maxLength: 256
+          type: string
+        targetHarness:
+          description: Agent harness to continue the logical AO session with.
+          enum:
+          - claude-code
+          - codex
+          type: string
+      required:
+      - targetHarness
+      type: object
     TrackerIntakeConfig:
       properties:
         assignee:
@@ -7027,6 +8197,7 @@ components:
         provider:
           enum:
           - github
+          - gitlab
           type: string
         repo:
           type: string
@@ -7037,7 +8208,29 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - kimchi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
       type: object
     TriggerReviewResponse:
@@ -7270,6 +8463,8 @@ components:
       type: object
     WorkspaceRepo:
       properties:
+        gitStatus:
+          type: string
         name:
           type: string
         relativePath:

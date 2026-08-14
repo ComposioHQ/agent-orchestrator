@@ -8,17 +8,19 @@ export const DropdownMenuPortal = DropdownMenuPrimitive.Portal;
 
 export function DropdownMenuContent({
 	className,
+	portalContainer,
 	sideOffset = 6,
 	...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+	portalContainer?: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>["container"];
+}) {
 	return (
-		<DropdownMenuPrimitive.Portal>
+		<DropdownMenuPrimitive.Portal container={portalContainer}>
 			<DropdownMenuPrimitive.Content
 				sideOffset={sideOffset}
 				className={cn(
 					"z-overlay min-w-[10rem] overflow-hidden rounded-lg border border-border bg-card p-1 text-popover-foreground",
 					"flex flex-col gap-px",
-					"shadow-(--shadow-popover)",
 					"origin-(--radix-dropdown-menu-content-transform-origin)",
 					"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
 					className,

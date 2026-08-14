@@ -39,7 +39,7 @@ type Store interface {
 	ListReviewsBySession(ctx stdctx.Context, id domain.SessionID) ([]domain.Review, error)
 	ClearReviewerHandleByHarness(ctx stdctx.Context, id domain.SessionID, harness domain.ReviewerHarness) error
 	InsertReviewRun(ctx stdctx.Context, r domain.ReviewRun) error
-	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
+	UpdateReviewRunResult(ctx stdctx.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string, autoInjectReview bool) (bool, error)
 	SupersedeStaleRunningReviewRuns(ctx stdctx.Context, sessionID domain.SessionID, prURL, targetSHA, body string) (int64, error)
 	CancelRunningReviewRunsBySession(ctx stdctx.Context, sessionID domain.SessionID, body string) (int64, error)
 	CancelRunningReviewRunsBySessionAndHarness(ctx stdctx.Context, sessionID domain.SessionID, harness domain.ReviewerHarness, body string) (int64, error)
@@ -147,6 +147,9 @@ type TriggerResult struct {
 	Reviews          []PRReviewState
 	Runs             []domain.ReviewRun
 	CreatedRuns      []domain.ReviewRun
+	// SkipReason is set only for a normal automatic-trigger policy race, such
+	// as the worker becoming active after the coordinator's initial read.
+	SkipReason string
 }
 
 // SessionReviews is a worker's review state: the live reviewer handle plus its
@@ -188,11 +191,19 @@ type RestoreReviewerResult struct {
 // one session cannot change what any other session in the project runs. The
 // harness-change path below already handles the swap by respawning the pane.
 func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness) (TriggerResult, error) {
+	return e.TriggerWithSource(ctx, workerID, override, domain.ReviewTriggerManual)
+}
+
+// TriggerWithSource starts a review and records who initiated the pass.
+func (e *Engine) TriggerWithSource(ctx stdctx.Context, workerID domain.SessionID, override domain.ReviewerHarness, source domain.ReviewTriggerSource) (TriggerResult, error) {
 	if workerID == "" {
 		return TriggerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
 	if override != "" && !override.IsKnown() {
 		return TriggerResult{}, fmt.Errorf("%w: unknown reviewer harness %q", ErrInvalid, override)
+	}
+	if source != domain.ReviewTriggerManual && source != domain.ReviewTriggerAuto {
+		return TriggerResult{}, fmt.Errorf("%w: unknown review trigger source %q", ErrInvalid, source)
 	}
 
 	// Serialise concurrent triggers for this worker so the idempotency check
@@ -208,6 +219,11 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	}
 	if !ok {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
+	}
+	if source == domain.ReviewTriggerAuto {
+		if reason := autoReviewSessionReason(worker, e.clock()); reason != "" {
+			return TriggerResult{SkipReason: reason}, nil
+		}
 	}
 	if worker.IsTerminated {
 		return TriggerResult{}, fmt.Errorf("%w: worker session %q is terminated", ErrInvalid, workerID)
@@ -256,6 +272,22 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	}
 	hadRunningReviewer := reviewRunsContainRunningForHarness(runs, harness)
 	reviews := Plan(prs, runs)
+	if source == domain.ReviewTriggerAuto {
+		reviews = Plan(prs, reviewRunsForHarness(runs, harness))
+		// Automatic sweeps may discover another eligible PR while this harness is
+		// already reviewing one. Reconciliation above has proved the reviewer
+		// terminal is still alive, so do not append work to its active batch. A
+		// later sweep can start the remaining PR after the current run terminates.
+		if hadRunningReviewer {
+			return TriggerResult{
+				Run:              firstReusableRun(reviews),
+				ReviewerHandleID: reviewRow.ReviewerHandleID,
+				Created:          false,
+				Reviews:          reviews,
+				Runs:             runs,
+			}, nil
+		}
+	}
 
 	now := e.clock()
 	reviewRow, err = e.upsertReview(ctx, worker, harness, reviewRow.ReviewerHandleID, reviewRow.AgentSessionID, now)
@@ -271,7 +303,10 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		// another agent is precisely a request for a second opinion on this commit,
 		// so refusing it makes the reviewer choice inert exactly when it is most
 		// useful. Ineligible PRs stay excluded: nothing can review those.
-		eligible := reviewState.Status == ReviewStateNeedsReview || reviewState.Status == ReviewStateChangesRequested
+		eligible := reviewState.Status == ReviewStateNeedsReview || (source == domain.ReviewTriggerManual && reviewState.Status == ReviewStateChangesRequested)
+		if source == domain.ReviewTriggerAuto && autoReviewHeadBlocked(runs, reviewState.PRURL, reviewState.TargetSHA, harness) {
+			eligible = false
+		}
 		if !eligible && !secondOpinionWanted(reviewState, override, harness) {
 			continue
 		}
@@ -282,16 +317,20 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 			batchID = e.newID()
 		}
 		run := domain.ReviewRun{
-			ID:        e.newID(),
-			ReviewID:  reviewRow.ID,
-			SessionID: workerID,
-			BatchID:   batchID,
-			Harness:   harness,
-			PRURL:     reviewState.PRURL,
-			TargetSHA: reviewState.TargetSHA,
-			Status:    domain.ReviewRunRunning,
-			Verdict:   domain.VerdictNone,
-			CreatedAt: now,
+			ID:            e.newID(),
+			ReviewID:      reviewRow.ID,
+			SessionID:     workerID,
+			BatchID:       batchID,
+			Harness:       harness,
+			TriggerSource: source,
+			PRURL:         reviewState.PRURL,
+			TargetSHA:     reviewState.TargetSHA,
+			Status:        domain.ReviewRunRunning,
+			Verdict:       domain.VerdictNone,
+			CreatedAt:     now,
+			// Completion refreshes this snapshot before delivery. Keeping the
+			// trigger-time value also makes a running pass truthful in the API.
+			AutoInjectReview: worker.AutoInjectReview,
 		}
 		if err := e.store.InsertReviewRun(ctx, run); err != nil {
 			if errors.Is(err, domain.ErrDuplicateReviewRun) {
@@ -313,7 +352,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 
 	failRuns := func(start int, err error) error {
 		for _, run := range created[start:] {
-			if _, updateErr := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, err.Error(), ""); updateErr != nil {
+			if _, updateErr := e.store.UpdateReviewRunResult(ctx, run.ID, domain.ReviewRunFailed, domain.VerdictNone, err.Error(), "", run.AutoInjectReview); updateErr != nil {
 				return updateErr
 			}
 		}
@@ -360,6 +399,23 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	triggerRuns := append([]domain.ReviewRun{}, created...)
 	triggerRuns = append(triggerRuns, runs...)
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
+}
+
+func autoReviewSessionReason(worker domain.SessionRecord, now time.Time) string {
+	switch {
+	case !worker.AutoReviewEnabled:
+		return "disabled"
+	case worker.Kind != domain.KindWorker:
+		return "not_worker"
+	case worker.IsTerminated:
+		return "terminated"
+	case worker.Activity.State != domain.ActivityIdle:
+		return "not_idle"
+	case worker.Activity.LastActivityAt.IsZero() || now.Sub(worker.Activity.LastActivityAt) < time.Minute:
+		return "idle_threshold_not_met"
+	default:
+		return ""
+	}
 }
 
 // SwitchReviewer serializes reviewer preference changes with trigger/restore
@@ -554,6 +610,18 @@ func (e *Engine) TeardownReviewerTerminal(ctx stdctx.Context, workerID domain.Se
 	return nil
 }
 
+func autoReviewHeadBlocked(runs []domain.ReviewRun, prURL, targetSHA string, harness domain.ReviewerHarness) bool {
+	for _, run := range runs {
+		if run.PRURL != prURL || run.TargetSHA != targetSHA || (run.Harness != harness && run.Harness != "") {
+			continue
+		}
+		if run.Status == domain.ReviewRunRunning || run.Status == domain.ReviewRunCancelled || run.Verdict == domain.VerdictApproved || run.Verdict == domain.VerdictChangesRequested {
+			return true
+		}
+	}
+	return false
+}
+
 func reviewRunsForHarness(runs []domain.ReviewRun, harness domain.ReviewerHarness) []domain.ReviewRun {
 	out := make([]domain.ReviewRun, 0, len(runs))
 	for _, run := range runs {
@@ -727,6 +795,25 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	running, err := e.store.ListRunningReviewRunsBySession(ctx, workerID)
 	if err != nil {
 		return CancelResult{}, err
+	}
+	if len(running) == 0 {
+		review, ok, err := e.currentReviewForSession(ctx, workerID, harness)
+		if err != nil {
+			return CancelResult{}, err
+		}
+		handle := ""
+		if ok {
+			handle = review.ReviewerHandleID
+		}
+		prs, err := e.prs.ListPRsBySession(ctx, workerID)
+		if err != nil {
+			return CancelResult{}, err
+		}
+		runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
+		if err != nil {
+			return CancelResult{}, err
+		}
+		return CancelResult{ReviewerHandleID: handle, Reviews: Plan(prs, runs)}, nil
 	}
 	review, ok, err := e.currentReviewForCancel(ctx, workerID, harness, running)
 	if err != nil {

@@ -51,6 +51,10 @@ func (f *fakeReviewService) Trigger(
 	return reviewcore.TriggerResult{Run: domain.ReviewRun{ID: "run-1"}, Created: true}, nil
 }
 
+func (f *fakeReviewService) TriggerAuto(context.Context, domain.SessionID, domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
+	return reviewcore.TriggerResult{}, nil
+}
+
 func (f *fakeReviewService) Submit(context.Context, domain.SessionID, string, domain.ReviewVerdict, string, string) (domain.ReviewRun, error) {
 	return domain.ReviewRun{}, nil
 }
@@ -157,7 +161,7 @@ func TestReviewsListIncludesReviewStates(t *testing.T) {
 	srv := newReviewTestServer(t, &fakeReviewService{list: reviewcore.SessionReviews{
 		ReviewerHandleID: "review-mer-1",
 		ReviewerHarness:  domain.ReviewerCodex,
-		Runs:             []domain.ReviewRun{{ID: "run-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1"}},
+		Runs:             []domain.ReviewRun{{ID: "run-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", AutoInjectReview: false}},
 		Reviews:          []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateUpToDate}},
 	}})
 
@@ -168,6 +172,9 @@ func TestReviewsListIncludesReviewStates(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `"reviews"`) || !strings.Contains(string(body), `"up_to_date"`) || !strings.Contains(string(body), `"reviewerHandleId":"review-mer-1"`) || !strings.Contains(string(body), `"reviewerHarness":"codex"`) {
 		t.Fatalf("body missing review states/handle: %s", body)
+	}
+	if !strings.Contains(string(body), `"autoInjectReview":false`) {
+		t.Fatalf("body missing stored AO injection decision: %s", body)
 	}
 	if strings.Contains(string(body), `"items"`) || strings.Contains(string(body), `"reviewItems"`) || strings.Contains(string(body), `"reviewRuns"`) {
 		t.Fatalf("body contains deprecated review item aliases: %s", body)
