@@ -10,7 +10,7 @@ export default function middleware(request: NextRequest, event: NextFetchEvent) 
     redirectUri,
     middlewareAuth: {
       enabled: true,
-      unauthenticatedPaths: ["/", "/sign-in", "/callback"],
+      unauthenticatedPaths: ["/", "/sign-in", "/callback", "/share/:path*"],
     },
   })(request, event);
 }
@@ -23,6 +23,7 @@ export const config = {
     "/api/cloud/v1/:path*",
     "/sign-in",
     "/github-sign-in",
+    "/share/:path*",
     "/sign-out",
     "/callback",
   ],
