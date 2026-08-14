@@ -117,8 +117,8 @@ const (
 	// DefaultBranchAuto tells callers to infer the Git default branch for each
 	// repository instead of naming one branch for the whole project.
 	DefaultBranchAuto = "auto"
-	// DefaultBranchName is the last-resort branch used when Git exposes no
-	// repository default. It is also the branch used for repositories AO creates.
+	// DefaultBranchName is the branch AO selects when it creates a repository.
+	// Automatic resolution never uses it as a guess for existing repositories.
 	DefaultBranchName = "main"
 )
 
@@ -143,8 +143,8 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 }
 
 // WorktreeBaseBranch translates project configuration into the workspace
-// interface. An empty value tells the workspace adapter to infer origin/HEAD
-// independently for the repository it is materializing.
+// interface. An empty value tells the workspace adapter to resolve a remote
+// HEAD independently for the repository it is materializing.
 func (c ProjectConfig) WorktreeBaseBranch() string {
 	branch := c.WithDefaults().DefaultBranch
 	if branch == DefaultBranchAuto {

@@ -945,7 +945,10 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			Name:         repo.Name,
 			RelativePath: repo.RelativePath,
 			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
-			BaseBranch:   repo.DefaultBranch,
+			// Older rows may have captured the branch checked out during
+			// registration. Leave automatic resolution to the adapter so only
+			// remote-derived repository metadata can select a default.
+			BaseBranch: "",
 		})
 	}
 	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{

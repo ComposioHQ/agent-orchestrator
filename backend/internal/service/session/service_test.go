@@ -1020,8 +1020,8 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != childBase {
 		t.Fatalf("child detail compare = mode:%q sha:%q, want base %s", detail.CompareMode, detail.CompareBaseSHA, childBase)
 	}
-	if detail.CompareBaseRef != "main" {
-		t.Fatalf("child detail compare ref = %q, want main", detail.CompareBaseRef)
+	if detail.CompareBaseRef != "" {
+		t.Fatalf("child detail compare ref = %q, want empty when only the recorded SHA is authoritative", detail.CompareBaseRef)
 	}
 }
 
@@ -1152,8 +1152,8 @@ func TestWorkspaceBaseRefCandidatesPreferRemoteDefault(t *testing.T) {
 	}
 
 	got = workspaceBaseRefCandidates("")
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("empty workspace base candidates = %#v, want %#v", got, want)
+	if len(got) != 0 {
+		t.Fatalf("empty workspace base candidates = %#v, want none rather than a guessed main", got)
 	}
 }
 
@@ -2082,6 +2082,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		wantCode string
 	}{
 		{"checked out elsewhere", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" is checked out at \"/tmp\"", ports.ErrWorkspaceBranchCheckedOutElsewhere), apierr.KindConflict, "BRANCH_CHECKED_OUT_ELSEWHERE"},
+		{"default branch unresolved", fmt.Errorf("spawn mer-1: %w: configure defaultBranch", ports.ErrWorkspaceDefaultBranchUnresolved), apierr.KindInvalid, "DEFAULT_BRANCH_UNRESOLVED"},
 		{"not fetched", fmt.Errorf("spawn mer-1: workspace: %w: \"x\" has no local head", ports.ErrWorkspaceBranchNotFetched), apierr.KindInvalid, "BRANCH_NOT_FETCHED"},
 		{"invalid branch", fmt.Errorf("spawn mer-1: workspace: %w: \"bad!!\" (exit 1)", ports.ErrWorkspaceBranchInvalid), apierr.KindInvalid, "INVALID_BRANCH"},
 		{"agent binary not found", fmt.Errorf("spawn mer-1: %w", ports.ErrAgentBinaryNotFound), apierr.KindInvalid, "AGENT_BINARY_NOT_FOUND"},

@@ -420,15 +420,14 @@ func TestWorkspaceIntegrationAddNewBranchRecoversStaleRegistration(t *testing.T)
 	}
 }
 
-// TestWorkspaceIntegrationCreateInRemotelessRepo guards the BRANCH_NOT_FETCHED
-// regression: a repo with no remote configured must still spawn worktrees for
-// new branches by basing them on the local default-branch head
-// (refs/heads/main) once no origin/* candidate resolves.
-func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
+// TestWorkspaceIntegrationAutoRejectsUnmarkedRemotelessRepo proves automatic
+// selection never silently treats the active (or conventionally named) local
+// branch as the repository default.
+func TestWorkspaceIntegrationAutoRejectsUnmarkedRemotelessRepo(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()
-	repo := filepath.Join(tmp, "repo")
-	run(t, git, "init", repo)
+	repo := filepath.Join(tmp, "unmarked")
+	run(t, git, "init", "-b", "main", repo)
 	runGit(t, git, repo, "config", "core.autocrlf", "false")
 	runGit(t, git, repo, "config", "user.email", "ao@example.com")
 	runGit(t, git, repo, "config", "user.name", "Ao Agents")
@@ -437,7 +436,7 @@ func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
 	}
 	runGit(t, git, repo, "add", "README.md")
 	runGit(t, git, repo, "commit", "-m", "seed")
-	runGit(t, git, repo, "branch", "-M", "main")
+	runGit(t, git, repo, "switch", "-c", "feature/temporary")
 
 	root := filepath.Join(tmp, "managed")
 	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
@@ -445,12 +444,44 @@ func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	ctx := context.Background()
-	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/remoteless"})
-	if err != nil {
-		t.Fatalf("create in remoteless repo: %v", err)
+	_, err = ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "ao/proj-1"})
+	if !errors.Is(err, ports.ErrWorkspaceDefaultBranchUnresolved) {
+		t.Fatalf("Create error = %v, want ErrWorkspaceDefaultBranchUnresolved", err)
 	}
-	if _, err := os.Stat(filepath.Join(info.Path, "README.md")); err != nil {
-		t.Fatalf("created worktree missing seed file: %v", err)
+	if out, err := exec.Command(git, "-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/ao/proj-1").CombinedOutput(); err == nil {
+		t.Fatalf("unresolved auto selection leaked a session branch: %s", out)
+	}
+}
+
+func TestWorkspaceIntegrationAutoUsesAOInitializedRemotelessDefault(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	run(t, git, "init", "-b", "main", repo)
+	runGit(t, git, repo, "config", "core.autocrlf", "false")
+	runGit(t, git, repo, "config", "user.email", "ao@example.com")
+	runGit(t, git, repo, "config", "user.name", "Ao Agents")
+	runGit(t, git, repo, "config", "ao.defaultBranch", "main")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	runGit(t, git, repo, "add", "README.md")
+	runGit(t, git, repo, "commit", "-m", "seed")
+	runGit(t, git, repo, "switch", "-c", "feature/temporary")
+
+	ws, err := New(Options{
+		Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo},
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "ao/proj-1"})
+	if err != nil {
+		t.Fatalf("create in AO-initialized repo: %v", err)
+	}
+	if got := gitOutput(t, git, info.Path, "merge-base", "HEAD", "refs/heads/main"); got != gitOutput(t, git, repo, "rev-parse", "refs/heads/main") {
+		t.Fatalf("worktree base = %s, want AO-recorded main", got)
 	}
 	if err := ws.Destroy(ctx, info); err != nil {
 		t.Fatalf("destroy: %v", err)
@@ -545,6 +576,7 @@ func setupOriginClone(t *testing.T, git, tmp string) string {
 	runGit(t, git, seed, "branch", "-M", "main")
 	runGit(t, git, seed, "remote", "add", "origin", origin)
 	runGit(t, git, seed, "push", "-u", "origin", "main")
+	runGit(t, git, origin, "symbolic-ref", "HEAD", "refs/heads/main")
 	run(t, git, "clone", origin, repo)
 	runGit(t, git, repo, "config", "core.autocrlf", "false")
 	// A clone does not copy the seed's local identity, and CI runners have no
@@ -563,6 +595,8 @@ func setupOriginCloneOnBranch(t *testing.T, git, tmp, branch string) string {
 	repo := setupOriginClone(t, git, tmp)
 	runGit(t, git, repo, "branch", "-m", "main", branch)
 	runGit(t, git, repo, "push", "-u", "origin", branch)
+	origin := gitOutput(t, git, repo, "remote", "get-url", "origin")
+	runGit(t, git, origin, "symbolic-ref", "HEAD", "refs/heads/"+branch)
 	runGit(t, git, repo, "remote", "set-head", "origin", branch)
 	return repo
 }

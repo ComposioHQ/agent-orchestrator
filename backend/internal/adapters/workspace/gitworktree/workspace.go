@@ -9,17 +9,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/gitdefault"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 const (
-	defaultGitBinary = "git"
-	// defaultBranch is the last-resort base used when automatic per-repository
-	// inference and the adapter options both yield no branch.
-	defaultBranch = domain.DefaultBranchName
+	defaultGitBinary              = "git"
+	defaultBranchResolutionBudget = 5 * time.Second
 )
 
 // ErrUnsafePath is returned when a resolved worktree path escapes the managed
@@ -42,6 +42,7 @@ var (
 	ErrBranchCheckedOutElsewhere = ports.ErrWorkspaceBranchCheckedOutElsewhere
 	ErrBranchNotFetched          = ports.ErrWorkspaceBranchNotFetched
 	ErrBranchInvalid             = ports.ErrWorkspaceBranchInvalid
+	ErrDefaultBranchUnresolved   = ports.ErrWorkspaceDefaultBranchUnresolved
 	// ErrWorktreeLocked is an adapter-local alias of ports.ErrWorkspaceLocked,
 	// following the same aliasing convention as the branch sentinels above.
 	ErrWorktreeLocked = ports.ErrWorkspaceLocked
@@ -66,22 +67,20 @@ func (r StaticRepoResolver) RepoPath(projectID domain.ProjectID) (string, error)
 }
 
 // Options configures a gitworktree Workspace. ManagedRoot and RepoResolver are
-// required; Binary and the last-resort DefaultBranch fall back to defaults.
+// required; Binary falls back to git from PATH.
 type Options struct {
-	Binary        string
-	ManagedRoot   string
-	DefaultBranch string
-	RepoResolver  RepoResolver
+	Binary       string
+	ManagedRoot  string
+	RepoResolver RepoResolver
 }
 
 // Workspace creates per-session git worktrees under a managed root. It
 // implements ports.Workspace.
 type Workspace struct {
-	binary        string
-	managedRoot   string
-	defaultBranch string
-	repos         RepoResolver
-	run           commandRunner
+	binary      string
+	managedRoot string
+	repos       RepoResolver
+	run         commandRunner
 }
 
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
@@ -97,10 +96,6 @@ func New(opts Options) (*Workspace, error) {
 	if binary == "" {
 		binary = defaultGitBinary
 	}
-	branch := opts.DefaultBranch
-	if branch == "" {
-		branch = defaultBranch
-	}
 	if opts.ManagedRoot == "" {
 		return nil, errors.New("gitworktree: ManagedRoot is required")
 	}
@@ -112,11 +107,10 @@ func New(opts Options) (*Workspace, error) {
 		return nil, fmt.Errorf("gitworktree: managed root: %w", err)
 	}
 	return &Workspace{
-		binary:        binary,
-		managedRoot:   filepath.Clean(root),
-		defaultBranch: branch,
-		repos:         opts.RepoResolver,
-		run:           runCommand,
+		binary:      binary,
+		managedRoot: filepath.Clean(root),
+		repos:       opts.RepoResolver,
+		run:         runCommand,
 	}, nil
 }
 
@@ -202,6 +196,18 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 	branch, err := w.workspaceProjectBranch(ctx, repos, firstNonEmpty(cfg.Branch, defaultSessionBranchName(cfg.SessionID)))
 	if err != nil {
 		return ports.WorkspaceProjectInfo{}, err
+	}
+	// Resolve every repository base before creating the first worktree. Besides
+	// keeping remote probing within one aggregate budget, this prevents a later
+	// unresolved child from leaving session branches behind in earlier repos.
+	remoteCtx, cancelRemote := context.WithTimeout(ctx, defaultBranchResolutionBudget)
+	defer cancelRemote()
+	for i := range repos {
+		baseRef, err := w.resolveBaseRef(ctx, remoteCtx, repos[i].repoPath, branch, repos[i].baseBranch)
+		if err != nil {
+			return ports.WorkspaceProjectInfo{}, fmt.Errorf("gitworktree: resolve workspace repo %q base: %w", repos[i].name, err)
+		}
+		repos[i].baseRef = baseRef
 	}
 	created := make([]workspaceProjectRepo, 0, len(repos))
 	out := ports.WorkspaceProjectInfo{Worktrees: make([]ports.WorkspaceRepoInfo, 0, len(repos))}
@@ -896,7 +902,9 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	// neither origin/<branch>, the default branch, nor any tag is reachable,
 	// the branch genuinely has no base — surface ErrBranchNotFetched so callers
 	// can suggest `git fetch`.
-	baseRef, err := w.resolveBaseRef(ctx, repo, branch, baseBranch)
+	remoteCtx, cancelRemote := context.WithTimeout(ctx, defaultBranchResolutionBudget)
+	defer cancelRemote()
+	baseRef, err := w.resolveBaseRef(ctx, remoteCtx, repo, branch, baseBranch)
 	if err != nil {
 		if errors.Is(err, errNoBaseRef) {
 			return fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
@@ -987,6 +995,7 @@ type workspaceProjectRepo struct {
 	repoPath     string
 	outputPath   string
 	baseBranch   string
+	baseRef      string
 }
 
 func (w *Workspace) workspaceProjectBranch(ctx context.Context, repos []workspaceProjectRepo, requested string) (string, error) {
@@ -1034,12 +1043,9 @@ func (w *Workspace) workspaceProjectBranchFree(ctx context.Context, repos []work
 }
 
 func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspaceProjectRepo, branch string) (string, error) {
-	baseRef, err := w.resolveBaseRef(ctx, repo.repoPath, branch, repo.baseBranch)
-	if err != nil {
-		if errors.Is(err, errNoBaseRef) {
-			return "", fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
-		}
-		return "", err
+	baseRef := strings.TrimSpace(repo.baseRef)
+	if baseRef == "" {
+		return "", errors.New("gitworktree: workspace repository base was not resolved before creation")
 	}
 	baseSHA, err := w.revParse(ctx, repo.repoPath, baseRef)
 	if err != nil {
@@ -1113,12 +1119,45 @@ func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) err
 // addWorktree translates it into ErrBranchNotFetched.
 var errNoBaseRef = errors.New("gitworktree: no base ref found")
 
-func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch, baseBranch string) (string, error) {
+func (w *Workspace) resolveBaseRef(ctx, remoteCtx context.Context, repo, branch, baseBranch string) (string, error) {
 	if strings.TrimSpace(baseBranch) != "" {
 		return w.resolveBaseRefFromDefault(ctx, repo, branch, baseBranch)
 	}
-	defaultBranch := w.inferRepoDefaultBranch(ctx, repo)
-	return w.resolveBaseRefFromDefault(ctx, repo, branch, defaultBranch)
+	resolution, err := gitdefault.New(w.binary, gitdefault.Runner(w.run)).Resolve(ctx, remoteCtx, repo)
+	if err != nil {
+		if errors.Is(err, gitdefault.ErrUnresolved) {
+			return "", fmt.Errorf(
+				"%w: %s; set the project's defaultBranch to the intended branch and retry",
+				ErrDefaultBranchUnresolved, strings.TrimPrefix(err.Error(), gitdefault.ErrUnresolved.Error()+": "),
+			)
+		}
+		return "", fmt.Errorf("gitworktree: resolve repository default for %q: %w", repo, err)
+	}
+	slog.Debug("gitworktree: resolved automatic default branch",
+		"repo", repo,
+		"remote", resolution.Remote,
+		"branch", resolution.Branch,
+		"source", resolution.Source,
+	)
+
+	// Preserve the existing resume behavior: a fetched remote session branch
+	// wins over starting a fresh branch from the repository default. The remote
+	// comes from the same authoritative resolution, never from a hardcoded name.
+	remoteSessionRef := ""
+	if resolution.Remote != "" {
+		remoteSessionRef = "refs/remotes/" + resolution.Remote + "/" + branch
+		if exists, err := w.refExists(ctx, repo, remoteSessionRef); err != nil {
+			return "", err
+		} else if exists {
+			return remoteSessionRef, nil
+		}
+	}
+	if exists, err := w.refExists(ctx, repo, resolution.Ref); err != nil {
+		return "", err
+	} else if exists {
+		return resolution.Ref, nil
+	}
+	return "", fmt.Errorf("%w: resolved default branch %q from %q, but ref %q is unavailable", errNoBaseRef, resolution.Branch, resolution.Source, resolution.Ref)
 }
 
 func (w *Workspace) resolveBaseRefFromDefault(ctx context.Context, repo, branch, defaultBranch string) (string, error) {
@@ -1143,24 +1182,6 @@ func (w *Workspace) resolveBaseRefFromDefault(ctx context.Context, repo, branch,
 		return tagRef, nil
 	}
 	return "", fmt.Errorf("%w for branch %q (tried %s, %s)", errNoBaseRef, branch, strings.Join(candidates, ", "), tagRef)
-}
-
-func (w *Workspace) inferRepoDefaultBranch(ctx context.Context, repo string) string {
-	for _, args := range [][]string{
-		{"symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"},
-		{"branch", "--show-current"},
-	} {
-		out, err := w.run(ctx, w.binary, append([]string{"-C", repo}, args...)...)
-		if err != nil {
-			continue
-		}
-		branch := strings.TrimSpace(string(out))
-		branch = strings.TrimPrefix(branch, "origin/")
-		if branch != "" {
-			return branch
-		}
-	}
-	return w.defaultBranch
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {
@@ -1478,6 +1499,7 @@ func moveStrayPathAside(path string) (string, error) {
 
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, error) {
 	cmd := aoprocess.CommandContext(ctx, binary, args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=Never")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return out, commandError{args: append([]string{binary}, args...), output: string(out), err: err}

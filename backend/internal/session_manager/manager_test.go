@@ -2068,11 +2068,11 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	if want := filepath.Join(projectPath, "apps", "web"); ws.lastProjectCfg.Repos[1].RepoPath != want {
 		t.Fatalf("web repo path = %q, want %q", ws.lastProjectCfg.Repos[1].RepoPath, want)
 	}
-	if got := ws.lastProjectCfg.Repos[0].BaseBranch; got != "dev" {
-		t.Fatalf("api base branch = %q, want dev", got)
+	if got := ws.lastProjectCfg.Repos[0].BaseBranch; got != "" {
+		t.Fatalf("api base branch = %q, want empty so the adapter verifies the repo default", got)
 	}
-	if got := ws.lastProjectCfg.Repos[1].BaseBranch; got != "main" {
-		t.Fatalf("web base branch = %q, want main", got)
+	if got := ws.lastProjectCfg.Repos[1].BaseBranch; got != "" {
+		t.Fatalf("web base branch = %q, want empty so the adapter verifies the repo default", got)
 	}
 	rows := st.worktrees["mer-1"]
 	if len(rows) != 3 {

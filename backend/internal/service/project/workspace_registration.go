@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/gitdefault"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
@@ -187,7 +188,7 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 		}
 		if err := validateWorkspaceChild(ctx, child); err != nil {
 			var apiErr *apierr.Error
-			if errors.As(err, &apiErr) && (apiErr.Code == "WORKSPACE_CHILD_ORIGIN_REQUIRED" || apiErr.Code == "WORKSPACE_CHILD_UNBORN" || apiErr.Code == "WORKSPACE_CHILD_DEFAULT_BRANCH_UNKNOWN" || apiErr.Code == "WORKSPACE_CHILD_IS_WORKTREE") {
+			if errors.As(err, &apiErr) && (apiErr.Code == "WORKSPACE_CHILD_ORIGIN_REQUIRED" || apiErr.Code == "WORKSPACE_CHILD_UNBORN" || apiErr.Code == "WORKSPACE_CHILD_IS_WORKTREE") {
 				repos = append(repos, domain.WorkspaceRepoRecord{
 					ProjectID:     projectID,
 					Name:          name,
@@ -205,7 +206,10 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 			Name:          name,
 			RelativePath:  filepath.ToSlash(name),
 			RepoOriginURL: resolveGitOriginURL(child),
-			DefaultBranch: resolveDefaultBranch(child),
+			// This is display/import metadata only. Spawn resolves the selected
+			// remote again and never treats an unproven checked-out branch as a
+			// default.
+			DefaultBranch: resolveDefaultBranch(ctx, child),
 			RegisteredAt:  registeredAt,
 			GitStatus:     domain.GitStatusReady,
 		})
@@ -235,13 +239,6 @@ func validateWorkspaceChild(ctx context.Context, child string) error {
 		return apierr.Invalid("WORKSPACE_CHILD_UNBORN", "Workspace child repositories must have at least one commit", map[string]any{
 			"path":         child,
 			"suggestedFix": "Run `git init -b main`, add the initial files, and create the first commit before registering the workspace.",
-		})
-	}
-	branch, err := gitOutput(ctx, child, "symbolic-ref", "--quiet", "--short", "HEAD")
-	if err != nil || strings.TrimSpace(branch) == "" {
-		return apierr.Invalid("WORKSPACE_CHILD_DEFAULT_BRANCH_UNKNOWN", "Workspace child repositories must have an identifiable default branch", map[string]any{
-			"path":         child,
-			"suggestedFix": "Check out the repository's default branch (for example `main`) and retry.",
 		})
 	}
 	if origin := resolveGitOriginURL(child); origin == "" {
@@ -282,6 +279,9 @@ func initWorkspaceParent(ctx context.Context, parent string, repos []domain.Work
 
 	if _, err := gitOutput(ctx, parent, "init", "-b", domain.DefaultBranchName); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_INIT_FAILED", "Failed to initialize workspace parent git repository", map[string]any{"error": err.Error()})
+	}
+	if _, err := gitOutput(ctx, parent, "config", "--local", gitdefault.ManagedDefaultConfigKey, domain.DefaultBranchName); err != nil {
+		return apierr.Invalid("WORKSPACE_PARENT_INIT_FAILED", "Failed to record the workspace root default branch", map[string]any{"error": err.Error()})
 	}
 
 	// Rollback helper: remove the .git dir we just created and restore the

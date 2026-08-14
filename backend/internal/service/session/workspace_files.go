@@ -251,7 +251,7 @@ func (s *Service) sessionProject(ctx context.Context, rec domain.SessionRecord) 
 
 func defaultBranchForProject(project domain.ProjectRecord, ok bool) string {
 	if !ok {
-		return domain.DefaultBranchName
+		return ""
 	}
 	return project.Config.WorktreeBaseBranch()
 }
@@ -345,6 +345,9 @@ func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defa
 
 func workspaceBaseRefCandidates(defaultBranch string) []string {
 	defaultBranch = workspaceDefaultBranch(defaultBranch)
+	if defaultBranch == "" {
+		return nil
+	}
 	seen := map[string]struct{}{}
 	var refs []string
 	add := func(ref string) {
@@ -368,8 +371,8 @@ func workspaceBaseRefCandidates(defaultBranch string) []string {
 
 func workspaceDefaultBranch(defaultBranch string) string {
 	defaultBranch = strings.TrimSpace(defaultBranch)
-	if defaultBranch == "" || defaultBranch == domain.DefaultBranchAuto {
-		return domain.DefaultBranchName
+	if defaultBranch == domain.DefaultBranchAuto {
+		return ""
 	}
 	return defaultBranch
 }

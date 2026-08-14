@@ -113,15 +113,9 @@ async function resolveDefaultBranch(repoPath: string, options: ScanOptions = {})
 		const ref = await gitOutput(repoPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], options);
 		if (ref) return ref.replace(/^origin\//, "");
 	} catch {
-		// Fall back to the checked-out branch when origin/HEAD is unavailable.
+		// The current checkout may be temporary and is not a repository default.
 	}
-	try {
-		const branch = await gitOutput(repoPath, ["branch", "--show-current"], options);
-		if (branch) return branch;
-	} catch {
-		// Detached or unreadable HEAD is represented below.
-	}
-	return "HEAD";
+	return "auto";
 }
 
 async function scanGitRepo(

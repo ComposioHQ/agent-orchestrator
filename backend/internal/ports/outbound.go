@@ -263,6 +263,10 @@ var (
 	// ErrWorkspaceBranchNotFetched reports the requested branch exists nowhere
 	// reachable (no local head, no remote-tracking branch, no tag).
 	ErrWorkspaceBranchNotFetched = errors.New("workspace: branch is not fetched")
+	// ErrWorkspaceDefaultBranchUnresolved reports that automatic branch
+	// selection found no authoritative repository default. Callers should ask
+	// the user to configure a branch instead of guessing from the checkout.
+	ErrWorkspaceDefaultBranchUnresolved = errors.New("workspace: default branch is unresolved")
 	// ErrWorkspaceBranchInvalid reports the requested branch name is not a valid
 	// git ref (rejected by `git check-ref-format`).
 	ErrWorkspaceBranchInvalid = errors.New("workspace: invalid branch name")
@@ -319,8 +323,8 @@ type WorkspaceConfig struct {
 	SessionPrefix string
 	Branch        string
 	// BaseBranch is the explicitly configured branch new session branches are
-	// created from. Empty asks the workspace adapter to infer the repository's
-	// Git default before falling back to its own last-resort default.
+	// created from. Empty asks the workspace adapter to resolve an authoritative
+	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
@@ -350,7 +354,7 @@ type WorkspaceProjectConfig struct {
 	Branch        string
 	RootRepoPath  string
 	// BaseBranch applies only to RootRepoPath. Empty asks the workspace adapter
-	// to infer that repository's Git default independently from every child.
+	// to resolve that repository's default independently from every child.
 	BaseBranch string
 	Repos      []WorkspaceProjectRepoConfig
 }
@@ -362,7 +366,7 @@ type WorkspaceProjectRepoConfig struct {
 	RelativePath string
 	RepoPath     string
 	// BaseBranch applies only to RepoPath. Empty asks the workspace adapter to
-	// infer this repository's Git default independently from the workspace root.
+	// resolve this repository's default independently from the workspace root.
 	BaseBranch string
 }
 

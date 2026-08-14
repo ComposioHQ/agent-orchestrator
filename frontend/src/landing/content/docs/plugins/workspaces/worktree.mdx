@@ -5,6 +5,8 @@ description: Isolated branches and files for sessions in Git projects.
 
 Each Git-backed session receives an isolated worktree and branch. By default, AO resolves the repository's Git default automatically instead of assuming `main`; multi-repository workspaces resolve their root and children independently. Worktrees share each repository's object database while keeping checked-out files separate.
 
+Automatic resolution uses the selected remote's live symbolic `HEAD`, with its cached `HEAD` as an offline fallback. It does not use the branch currently checked out in the source repository. If Git does not expose a trustworthy default, AO asks for explicit `defaultBranch` configuration instead of guessing.
+
 ```bash
 ao project add --path /path/to/repo --worker-agent codex
 ao spawn --project my-repo --name fix-auth

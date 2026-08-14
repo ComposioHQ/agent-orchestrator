@@ -46,7 +46,9 @@ Project settings expose the fields that AO consumes at spawn time:
 
 `symlinks` and `agentRulesFile` must remain inside the repository. AO rejects absolute paths and traversal. Scratch rejects Git-only fields such as `defaultBranch` and symlinks.
 
-`defaultBranch: "auto"` resolves each repository's Git default independently. AO prefers `origin/HEAD`, then the checked-out branch, and uses `main` only as a last resort. Set an explicit branch when a project should remain pinned to that ref.
+`defaultBranch: "auto"` resolves each repository independently. AO selects the remote named by Git's `checkout.defaultRemote`, otherwise `origin`, otherwise the repository's only remote. It asks that remote for its symbolic `HEAD`, fetches the exact advertised branch, and can fall back to the same remote's cached `HEAD` while offline.
+
+AO never treats the currently checked-out branch, `main`, or `master` as an inferred default. If a repository has no authoritative remote default (or has ambiguous remotes), spawn returns `DEFAULT_BRANCH_UNRESOLVED`; set `defaultBranch` explicitly or configure `checkout.defaultRemote`. Repositories initialized by AO are the exception because AO records the `main` choice when it creates them.
 
 ## Worker and orchestrator roles
 
