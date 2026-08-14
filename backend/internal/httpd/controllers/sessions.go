@@ -21,7 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/attachments"
+	attachmentstore "github.com/aoagents/agent-orchestrator/backend/internal/attachments"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -432,7 +432,7 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 	// the worktree copy is gone: conversation history outlives the disposable
 	// worktree, so the URLs embedded in it must too (#3884). Ordinary preview
 	// files remain confined to the current workspace.
-	if name, ok := attachments.RefName(asset); ok {
+	if name, ok := attachmentstore.RefName(asset); ok {
 		if _, exists := previewutil.EntryAtPath(sess.Metadata.WorkspacePath, asset); !exists {
 			if c.serveDurableAttachment(w, r, sessionID(r), name) {
 				return
@@ -448,7 +448,7 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 func (c *SessionsController) serveDurableAttachment(
 	w http.ResponseWriter, r *http.Request, id domain.SessionID, name string,
 ) bool {
-	file, info, err := attachments.Open(c.DataDir, string(id), name)
+	file, info, err := attachmentstore.Open(c.DataDir, string(id), name)
 	if err != nil {
 		return false
 	}

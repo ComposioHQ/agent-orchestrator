@@ -19,7 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/attachments"
+	attachmentstore "github.com/aoagents/agent-orchestrator/backend/internal/attachments"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -1907,7 +1907,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	// last moment the bytes of a legacy worktree-only attachment exist (#3884).
 	// Best-effort with a loud log: a failed import must not block the teardown,
 	// but a silent one would hide data loss.
-	if imported, err := attachments.ImportWorktree(m.dataDir, string(rec.ID), ws.Path); err != nil {
+	if imported, err := attachmentstore.ImportWorktree(m.dataDir, string(rec.ID), ws.Path); err != nil {
 		m.logger.Error("save-teardown-all: import worktree attachments failed; attachment bytes may be lost",
 			"sessionID", rec.ID, "error", err)
 	} else if imported > 0 {
@@ -2178,7 +2178,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 		// Step 2b: project durable attachments back into the recreated worktree
 		// before the controller relaunches, so the resumed agent can read the
 		// same .ao/attachments/... paths its conversation history names (#3884).
-		if copied, matErr := attachments.Materialize(m.dataDir, string(rec.ID), ws.Path); matErr != nil {
+		if copied, matErr := attachmentstore.Materialize(m.dataDir, string(rec.ID), ws.Path); matErr != nil {
 			m.logger.Error("restore-all: rematerialize attachments failed", "sessionID", rec.ID, "error", matErr)
 		} else if copied > 0 {
 			if err := m.workspace.AddExclude(ctx, ws, "/"+attachmentsDir+"/"); err != nil {
