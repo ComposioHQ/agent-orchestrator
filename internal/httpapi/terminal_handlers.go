@@ -16,7 +16,13 @@ import (
 )
 
 const (
-	terminalTicketTTL    = 30 * time.Second
+	// Browsers can take far longer than the handshake itself to actually open
+	// the socket: a cold hostname costs a fresh TLS session, and Firefox burns
+	// tens of seconds probing HTTP/3 — which it cannot carry a WebSocket over —
+	// before falling back. A 30s ticket expired mid-fallback, so every upgrade
+	// arrived already dead and the client retried forever. The ticket stays
+	// single-use and session-scoped; only the window to redeem it is wider.
+	terminalTicketTTL    = 5 * time.Minute
 	terminalReadyTimeout = 5 * time.Second
 	terminalSessionTTL   = 30 * time.Minute
 	agentTerminalTTL     = 24 * time.Hour
