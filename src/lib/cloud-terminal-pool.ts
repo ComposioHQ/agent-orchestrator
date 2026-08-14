@@ -24,6 +24,8 @@ type Listener = (event: CloudTerminalEvent) => void;
 const maximumHistoryBytes = 4 << 20;
 const reconnectMaxDelayMs = 30_000;
 const idleCloseDelayMs = 60_000;
+const minimumTerminalColumns = 20;
+const minimumTerminalRows = 4;
 
 class CloudTerminalConnection {
   private socket: WebSocket | null = null;
@@ -74,6 +76,17 @@ class CloudTerminalConnection {
   }
 
   resize(rows: number, cols: number) {
+    // Collapsing tabs and animated panels briefly report near-zero geometry.
+    // Sending that transient size makes full-screen TUIs redraw one character
+    // per line even after the panel becomes visible again.
+    if (
+      !Number.isInteger(rows) ||
+      !Number.isInteger(cols) ||
+      rows < minimumTerminalRows ||
+      cols < minimumTerminalColumns
+    ) {
+      return;
+    }
     this.size = { rows, cols };
     this.sendResize();
   }
