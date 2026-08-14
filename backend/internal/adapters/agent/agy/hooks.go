@@ -14,42 +14,39 @@ import (
 )
 
 const (
-	agyHooksDirName  = ".gemini"
-	agyHooksFileName = "hooks.json"
-
+	agyHooksDirName     = ".agents"
+	agyHooksFileName    = "hooks.json"
+	agyManagedHookName  = "agent-orchestrator-tui"
 	agyHookCommandPrefix = "ao hooks agy "
+	agyHookTimeout       = 30
 )
 
-type agyHookFile struct {
-	Hooks map[string][]agyMatcherGroup `json:"hooks"`
+// Antigravity workspace hooks use a named hook-set at the top level of
+// <workspace>/.agents/hooks.json. Pre/PostToolUse use matcher groups; the
+// invocation and Stop events use a flat list of handlers.
+type agyHookFile map[string]json.RawMessage
+
+type agyHookDefinition struct {
+	PreInvocation []agyHookEntry       `json:"PreInvocation,omitempty"`
+	PostToolUse   []agyHookMatcherGroup `json:"PostToolUse,omitempty"`
+	Stop          []agyHookEntry       `json:"Stop,omitempty"`
 }
 
-type agyMatcherGroup struct {
-	Matcher *string        `json:"matcher,omitempty"`
+type agyHookMatcherGroup struct {
+	Matcher string         `json:"matcher"`
 	Hooks   []agyHookEntry `json:"hooks"`
 }
 
 type agyHookEntry struct {
-	Type    string `json:"type"`
+	Type    string `json:"type,omitempty"`
 	Command string `json:"command"`
+	Timeout int    `json:"timeout,omitempty"`
 }
 
-type agyHookSpec struct {
-	Event   string
-	Command string
-}
-
-var agyManagedHooks = []agyHookSpec{
-	{Event: "SessionStart", Command: agyHookCommandPrefix + "session-start"},
-	{Event: "SessionEnd", Command: agyHookCommandPrefix + "session-end"},
-	{Event: "BeforeAgent", Command: agyHookCommandPrefix + "before-agent"},
-	{Event: "AfterAgent", Command: agyHookCommandPrefix + "after-agent"},
-	{Event: "AfterTool", Command: agyHookCommandPrefix + "after-tool"},
-}
-
-// GetAgentHooks installs AO's Agy hooks into the worktree-local
-// .gemini/hooks.json file. Existing hook entries are preserved and duplicate
-// AO commands are not appended.
+// GetAgentHooks installs AO's Agy TUI hooks into the current Antigravity
+// workspace hook file. Existing named hook sets (including the Agy Chat
+// driver's agent-orchestrator-chat set) are preserved byte-for-byte at the
+// semantic JSON level.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -59,40 +56,42 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	}
 
 	hooksPath := agyHooksPath(cfg.WorkspacePath)
-	topLevel, rawHooks, err := readAgyHooks(hooksPath)
+	file, err := readAgyHookFile(hooksPath)
 	if err != nil {
 		return fmt.Errorf("agy.GetAgentHooks: %w", err)
 	}
 
-	for event, specs := range groupAgyHooksByEvent() {
-		var existingGroups []agyMatcherGroup
-		if err := parseAgyHookType(rawHooks, event, &existingGroups); err != nil {
-			return fmt.Errorf("agy.GetAgentHooks: %w", err)
-		}
-		for _, spec := range specs {
-			if !agyHookCommandExists(existingGroups, spec.Command) {
-				entry := agyHookEntry{Type: "command", Command: spec.Command}
-				existingGroups = addAgyHook(existingGroups, entry)
-			}
-		}
-		if err := marshalAgyHookType(rawHooks, event, existingGroups); err != nil {
-			return fmt.Errorf("agy.GetAgentHooks: %w", err)
-		}
+	definition := agyHookDefinition{
+		PreInvocation: []agyHookEntry{{
+			Type: "command", Command: agyHookCommandPrefix + "pre-invocation", Timeout: agyHookTimeout,
+		}},
+		PostToolUse: []agyHookMatcherGroup{{
+			Matcher: "*",
+			Hooks: []agyHookEntry{{
+				Type: "command", Command: agyHookCommandPrefix + "post-tool-use", Timeout: agyHookTimeout,
+			}},
+		}},
+		Stop: []agyHookEntry{{
+			Type: "command", Command: agyHookCommandPrefix + "stop", Timeout: agyHookTimeout,
+		}},
 	}
+	raw, err := json.Marshal(definition)
+	if err != nil {
+		return fmt.Errorf("agy.GetAgentHooks: encode managed hooks: %w", err)
+	}
+	file[agyManagedHookName] = raw
 
-	if err := writeAgyHooks(hooksPath, topLevel, rawHooks); err != nil {
+	if err := writeAgyHookFile(hooksPath, file); err != nil {
 		return fmt.Errorf("agy.GetAgentHooks: %w", err)
 	}
-
 	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(hooksPath), agyHooksFileName); err != nil {
 		return fmt.Errorf("agy.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
 }
 
-// UninstallHooks removes AO's Agy hooks from the workspace-local
-// .gemini/hooks.json file, leaving user-defined hooks untouched. A missing file
-// is a no-op.
+// UninstallHooks removes only AO's TUI hook set. Other Antigravity hook sets,
+// including user hooks and AO's independent Chat hook set, remain untouched.
 func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -105,30 +104,20 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 	if _, err := os.Stat(hooksPath); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	topLevel, rawHooks, err := readAgyHooks(hooksPath)
+	file, err := readAgyHookFile(hooksPath)
 	if err != nil {
 		return fmt.Errorf("agy.UninstallHooks: %w", err)
 	}
-
-	for _, event := range agyManagedEvents() {
-		var groups []agyMatcherGroup
-		if err := parseAgyHookType(rawHooks, event, &groups); err != nil {
-			return fmt.Errorf("agy.UninstallHooks: %w", err)
-		}
-		groups = removeAgyManagedHooks(groups)
-		if err := marshalAgyHookType(rawHooks, event, groups); err != nil {
-			return fmt.Errorf("agy.UninstallHooks: %w", err)
-		}
-	}
-
-	if err := writeAgyHooks(hooksPath, topLevel, rawHooks); err != nil {
+	delete(file, agyManagedHookName)
+	if err := writeAgyHookFile(hooksPath, file); err != nil {
 		return fmt.Errorf("agy.UninstallHooks: %w", err)
 	}
 	return nil
 }
 
-// AreHooksInstalled reports whether any AO Agy hook is present in the
-// workspace-local hooks file. A missing file means none are installed.
+// AreHooksInstalled reports whether the current Antigravity workspace file
+// contains AO's TUI hook set. Legacy .gemini/hooks.json entries deliberately do
+// not count: current Agy does not load that file as a workspace hook source.
 func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -141,76 +130,51 @@ func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (b
 	if _, err := os.Stat(hooksPath); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
-	_, rawHooks, err := readAgyHooks(hooksPath)
+	file, err := readAgyHookFile(hooksPath)
 	if err != nil {
 		return false, fmt.Errorf("agy.AreHooksInstalled: %w", err)
 	}
-
-	for _, event := range agyManagedEvents() {
-		var groups []agyMatcherGroup
-		if err := parseAgyHookType(rawHooks, event, &groups); err != nil {
-			return false, fmt.Errorf("agy.AreHooksInstalled: %w", err)
-		}
-		for _, group := range groups {
-			for _, hook := range group.Hooks {
-				if isAgyManagedHook(hook.Command) {
-					return true, nil
-				}
-			}
-		}
+	raw, ok := file[agyManagedHookName]
+	if !ok {
+		return false, nil
 	}
-	return false, nil
+	var definition agyHookDefinition
+	if err := json.Unmarshal(raw, &definition); err != nil {
+		return false, fmt.Errorf("agy.AreHooksInstalled: parse managed hook set: %w", err)
+	}
+	return agyDefinitionHasManagedHook(definition), nil
 }
 
 func agyHooksPath(workspacePath string) string {
 	return filepath.Join(workspacePath, agyHooksDirName, agyHooksFileName)
 }
 
-// readAgyHooks loads the hooks file into a top-level raw map plus the decoded
-// "hooks" sub-map, preserving keys AO doesn't manage. A missing or empty
-// file yields empty maps.
-func readAgyHooks(hooksPath string) (topLevel, rawHooks map[string]json.RawMessage, err error) {
-	topLevel = map[string]json.RawMessage{}
-	rawHooks = map[string]json.RawMessage{}
-
-	data, err := os.ReadFile(hooksPath) //nolint:gosec // path built from caller-owned workspace dir
+func readAgyHookFile(hooksPath string) (agyHookFile, error) {
+	file := agyHookFile{}
+	data, err := os.ReadFile(hooksPath) //nolint:gosec // path is rooted in caller-owned workspace
 	if errors.Is(err, os.ErrNotExist) {
-		return topLevel, rawHooks, nil
+		return file, nil
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("read %s: %w", hooksPath, err)
+		return nil, fmt.Errorf("read %s: %w", hooksPath, err)
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return topLevel, rawHooks, nil
+		return file, nil
 	}
-	if err := json.Unmarshal(data, &topLevel); err != nil {
-		return nil, nil, fmt.Errorf("parse %s: %w", hooksPath, err)
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", hooksPath, err)
 	}
-	if hooksRaw, ok := topLevel["hooks"]; ok {
-		if err := json.Unmarshal(hooksRaw, &rawHooks); err != nil {
-			return nil, nil, fmt.Errorf("parse hooks in %s: %w", hooksPath, err)
-		}
+	if file == nil {
+		file = agyHookFile{}
 	}
-	return topLevel, rawHooks, nil
+	return file, nil
 }
 
-// writeAgyHooks folds rawHooks back into topLevel and writes the file. An
-// empty hooks map drops the "hooks" key entirely.
-func writeAgyHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMessage) error {
-	if len(rawHooks) == 0 {
-		delete(topLevel, "hooks")
-	} else {
-		hooksJSON, err := json.Marshal(rawHooks)
-		if err != nil {
-			return fmt.Errorf("encode hooks: %w", err)
-		}
-		topLevel["hooks"] = hooksJSON
-	}
-
+func writeAgyHookFile(hooksPath string, file agyHookFile) error {
 	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o750); err != nil {
 		return fmt.Errorf("create hook dir: %w", err)
 	}
-	data, err := json.MarshalIndent(topLevel, "", "  ")
+	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", hooksPath, err)
 	}
@@ -221,88 +185,23 @@ func writeAgyHooks(hooksPath string, topLevel, rawHooks map[string]json.RawMessa
 	return nil
 }
 
-func groupAgyHooksByEvent() map[string][]agyHookSpec {
-	byEvent := map[string][]agyHookSpec{}
-	for _, spec := range agyManagedHooks {
-		byEvent[spec.Event] = append(byEvent[spec.Event], spec)
-	}
-	return byEvent
-}
-
-func agyManagedEvents() []string {
-	seen := map[string]bool{}
-	events := make([]string, 0, len(agyManagedHooks))
-	for _, spec := range agyManagedHooks {
-		if !seen[spec.Event] {
-			seen[spec.Event] = true
-			events = append(events, spec.Event)
+func agyDefinitionHasManagedHook(definition agyHookDefinition) bool {
+	for _, hook := range definition.PreInvocation {
+		if strings.HasPrefix(hook.Command, agyHookCommandPrefix) {
+			return true
 		}
 	}
-	return events
-}
-
-func isAgyManagedHook(command string) bool {
-	return strings.HasPrefix(command, agyHookCommandPrefix)
-}
-
-func removeAgyManagedHooks(groups []agyMatcherGroup) []agyMatcherGroup {
-	result := make([]agyMatcherGroup, 0, len(groups))
-	for _, group := range groups {
-		kept := make([]agyHookEntry, 0, len(group.Hooks))
+	for _, group := range definition.PostToolUse {
 		for _, hook := range group.Hooks {
-			if !isAgyManagedHook(hook.Command) {
-				kept = append(kept, hook)
-			}
-		}
-		if len(kept) > 0 {
-			group.Hooks = kept
-			result = append(result, group)
-		}
-	}
-	return result
-}
-
-func parseAgyHookType(rawHooks map[string]json.RawMessage, event string, target *[]agyMatcherGroup) error {
-	data, ok := rawHooks[event]
-	if !ok {
-		return nil
-	}
-	if err := json.Unmarshal(data, target); err != nil {
-		return fmt.Errorf("parse %s hooks: %w", event, err)
-	}
-	return nil
-}
-
-func marshalAgyHookType(rawHooks map[string]json.RawMessage, event string, groups []agyMatcherGroup) error {
-	if len(groups) == 0 {
-		delete(rawHooks, event)
-		return nil
-	}
-	data, err := json.Marshal(groups)
-	if err != nil {
-		return fmt.Errorf("encode %s hooks: %w", event, err)
-	}
-	rawHooks[event] = data
-	return nil
-}
-
-func agyHookCommandExists(groups []agyMatcherGroup, command string) bool {
-	for _, group := range groups {
-		for _, hook := range group.Hooks {
-			if hook.Command == command {
+			if strings.HasPrefix(hook.Command, agyHookCommandPrefix) {
 				return true
 			}
 		}
 	}
-	return false
-}
-
-func addAgyHook(groups []agyMatcherGroup, hook agyHookEntry) []agyMatcherGroup {
-	for i, group := range groups {
-		if group.Matcher == nil {
-			groups[i].Hooks = append(groups[i].Hooks, hook)
-			return groups
+	for _, hook := range definition.Stop {
+		if strings.HasPrefix(hook.Command, agyHookCommandPrefix) {
+			return true
 		}
 	}
-	return append(groups, agyMatcherGroup{Matcher: nil, Hooks: []agyHookEntry{hook}})
+	return false
 }
