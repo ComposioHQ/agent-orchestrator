@@ -1707,7 +1707,7 @@ export function TurnOutcome({
 
 	return (
 		<div className="group/turn flex items-center gap-2 pt-1">
-			<span aria-hidden="true" className="h-px flex-1 bg-border" />
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 			{onRollback ? (
 				// Revealed on hover or keyboard focus. Undo belongs on the turn it undoes,
 				// but a permanent button on every turn would compete with the conversation
@@ -1715,7 +1715,7 @@ export function TurnOutcome({
 				<button
 					type="button"
 					onClick={onRollback}
-					className="shrink-0 rounded px-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover/turn:opacity-100"
+					className="shrink-0 rounded px-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 opacity-0 transition-opacity hover:text-muted-foreground focus-visible:opacity-100 group-hover/turn:opacity-100"
 				>
 					Roll back to here
 				</button>
@@ -1729,10 +1729,11 @@ export function TurnOutcome({
 				</span>
 			) : null}
 			{error ? (
-				<span className="shrink-0 text-[10px] text-destructive" title={error}>
-					{error.slice(0, 60)}
+				<span className="max-w-[40%] shrink truncate text-[10px] text-destructive" title={error}>
+					{error}
 				</span>
 			) : null}
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 		</div>
 	);
 }
