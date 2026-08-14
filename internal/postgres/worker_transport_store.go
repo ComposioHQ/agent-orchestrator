@@ -487,8 +487,9 @@ func (s *Store) OpenTerminal(
 		if err := tx.QueryRow(ctx,
 			`SELECT count(*) FROM ao_terminal_sessions
 			WHERE org_id = $1 AND session_id = $2
+			  AND worker_epoch = $3
 			  AND state IN ('opening', 'open') AND expires_at > now()`,
-			ticket.OrgID, ticket.SessionID,
+			ticket.OrgID, ticket.SessionID, ticket.WorkerEpoch,
 		).Scan(&active); err != nil {
 			return err
 		}

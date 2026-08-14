@@ -308,6 +308,55 @@ func TestTerminalTicketAndFramesAreDurableAndEpochFenced(t *testing.T) {
 	}
 }
 
+func TestOpenTerminalIgnoresStaleEpochTerminalCapacity(t *testing.T) {
+	fixture := newSandboxFixture(t, "terminal-stale-capacity")
+	ctx := context.Background()
+	_, staleEpoch := registerTestWorker(t, fixture)
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sessions SET mode = 'trusted', denied_commands = '{}'
+			WHERE id = $1`,
+			fixture.sessionID,
+		)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO ao_terminal_sessions (
+				org_id, session_id, worker_epoch, kind, state, expires_at
+			) VALUES
+				($1, $2, $3, 'agent', 'open', now() + interval '1 hour'),
+				($1, $2, $3, 'workspace', 'open', now() + interval '1 hour')`,
+			fixture.orgID, fixture.sessionID, staleEpoch,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, currentEpoch := registerTestWorker(t, fixture)
+	if currentEpoch == staleEpoch {
+		t.Fatalf("worker epoch did not advance: %d", currentEpoch)
+	}
+	token, _, err := fixture.store.IssueTerminalTicket(
+		ctx,
+		fixture.principal,
+		fixture.orgID,
+		fixture.sessionID,
+		"workspace",
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("issue terminal ticket: %v", err)
+	}
+	terminal, err := fixture.store.OpenTerminal(ctx, token, "workspace", time.Minute)
+	if err != nil {
+		t.Fatalf("open terminal with stale epoch rows present: %v", err)
+	}
+	if terminal.WorkerEpoch != currentEpoch {
+		t.Fatalf("terminal epoch = %d, want %d", terminal.WorkerEpoch, currentEpoch)
+	}
+}
+
 func TestWorkerActivitySignalUpdatesSessionActivity(t *testing.T) {
 	fixture := newSandboxFixture(t, "worker-activity")
 	ctx := context.Background()

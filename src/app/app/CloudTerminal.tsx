@@ -47,6 +47,8 @@ export function CloudTerminal({
 
     let active = true;
     let reconnectTimer: number | undefined;
+    let connectSequence = 0;
+    let currentAbortController: AbortController | undefined;
     let socket: WebSocket | undefined;
 
     // Backs off exponentially (capped, with jitter) on repeated failures so a
@@ -57,16 +59,23 @@ export function CloudTerminal({
     // recovering.
     const MAX_RECONNECT_DELAY_MS = 30_000;
     const scheduleReconnect = () => {
+      if (reconnectTimer !== undefined) return;
       const attempt = attemptRef.current++;
       const backoff = Math.min(
         1_000 * 2 ** attempt,
         MAX_RECONNECT_DELAY_MS,
       );
       const jitter = backoff * (0.75 + Math.random() * 0.5);
-      reconnectTimer = window.setTimeout(() => void connect(), jitter);
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = undefined;
+        void connect();
+      }, jitter);
     };
 
     const connect = async () => {
+      const sequence = ++connectSequence;
+      currentAbortController?.abort();
+      currentAbortController = new AbortController();
       setConnection("connecting");
       setNotice("");
       // Every connection — including a reconnect after a network blip or a
@@ -79,8 +88,13 @@ export function CloudTerminal({
       terminal.reset();
       try {
         const [ticket, configResponse] = await Promise.all([
-          client.createTerminalTicket(organizationId, sessionId, kind),
-          fetch("/api/cloud/terminal-origin", { cache: "no-store" }),
+          client.createTerminalTicket(organizationId, sessionId, kind, {
+            signal: currentAbortController.signal,
+          }),
+          fetch("/api/cloud/terminal-origin", {
+            cache: "no-store",
+            signal: currentAbortController.signal,
+          }),
         ]);
         if (!configResponse.ok) {
           throw new Error("Could not resolve the terminal endpoint.");
@@ -91,14 +105,33 @@ export function CloudTerminal({
         url.searchParams.set("ticket", ticket.ticket);
         url.searchParams.set("after", "0");
         url.searchParams.set("kind", kind);
-        if (!active) return;
+        if (!active || sequence !== connectSequence) return;
 
-        socket = new WebSocket(url);
-        socket.binaryType = "arraybuffer";
-        socket.addEventListener("open", () => {
+        if (
+          socket &&
+          socket.readyState !== WebSocket.CLOSED &&
+          socket.readyState !== WebSocket.CLOSING
+        ) {
+          socket.close();
+        }
+        const nextSocket = new WebSocket(url);
+        socket = nextSocket;
+        let failureHandled = false;
+        const reconnectOnce = (state: ConnectionState) => {
+          if (!active || sequence !== connectSequence || failureHandled) return;
+          failureHandled = true;
+          setConnection(state);
+          scheduleReconnect();
+        };
+        nextSocket.binaryType = "arraybuffer";
+        nextSocket.addEventListener("open", () => {
+          if (!active || sequence !== connectSequence) {
+            nextSocket.close();
+            return;
+          }
           attemptRef.current = 0;
           setConnection("connected");
-          socket?.send(
+          nextSocket.send(
             JSON.stringify({
               type: "resize",
               columns: terminal.cols,
@@ -107,7 +140,8 @@ export function CloudTerminal({
           );
           terminal.focus();
         });
-        socket.addEventListener("message", async (event) => {
+        nextSocket.addEventListener("message", async (event) => {
+          if (!active || sequence !== connectSequence) return;
           if (typeof event.data === "string") {
             terminal.write(event.data);
           } else if (event.data instanceof ArrayBuffer) {
@@ -116,9 +150,8 @@ export function CloudTerminal({
             terminal.write(new Uint8Array(await event.data.arrayBuffer()));
           }
         });
-        socket.addEventListener("close", (event) => {
-          if (!active) return;
-          setConnection("disconnected");
+        nextSocket.addEventListener("close", (event) => {
+          if (!active || sequence !== connectSequence || failureHandled) return;
           if (event.code === 1000) {
             setNotice(
               kind === "agent"
@@ -126,15 +159,19 @@ export function CloudTerminal({
                 : "Terminal stream closed. Reconnecting…",
             );
           }
-          scheduleReconnect();
+          reconnectOnce("disconnected");
         });
-        socket.addEventListener("error", () => {
-          if (!active) return;
-          setConnection("error");
-          scheduleReconnect();
+        nextSocket.addEventListener("error", () => {
+          reconnectOnce("error");
         });
       } catch (cause) {
-        if (!active) return;
+        if (
+          !active ||
+          sequence !== connectSequence ||
+          currentAbortController.signal.aborted
+        ) {
+          return;
+        }
         setConnection("error");
         setNotice(
           cause instanceof Error ? cause.message : "Could not open terminal.",
@@ -170,6 +207,8 @@ export function CloudTerminal({
 
     return () => {
       active = false;
+      connectSequence++;
+      currentAbortController?.abort();
       termRef.current = null;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       themeObserver.disconnect();
