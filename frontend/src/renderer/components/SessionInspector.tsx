@@ -43,6 +43,7 @@ import {
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
+import { useSessionUsage } from "../hooks/useSessionUsageSummaries";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -62,6 +63,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
+import { formatCostNanos, formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import {
 	openReviewStatesFor,
 	reviewIsRunning,
@@ -242,7 +244,69 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 				</div>
 			}
 			pullRequestTitle={prSectionTitle}
+			usage={<EstimatedCostSection sessionId={session.id} />}
 		/>
+	);
+}
+
+function EstimatedCostSection({ sessionId }: { sessionId: string }) {
+	const { t } = useTranslation();
+	const query = useSessionUsage(sessionId);
+	const cost = query.data?.totals?.estimatedCost;
+	const total = formatEstimatedCost(cost);
+	const models =
+		query.data?.harnesses?.flatMap((harness) =>
+			harness.models.map((model) => ({ harness: harness.harness, model })),
+		) ?? [];
+
+	return (
+		<Section title={t("usage.estimatedCost")}>
+			{query.isPending ? (
+				<p className={inspectorEmptyClass}>{t("usage.loadingEstimatedCost")}</p>
+			) : query.isError ? (
+				<p className="text-xs text-error" role="status">
+					{t("usage.unableLoadEstimatedCost")}
+				</p>
+			) : (
+				<div className="space-y-2.5">
+					<div className="font-mono text-sm font-semibold tabular-nums text-settings-label">
+						{total ?? "—"}
+					</div>
+					<dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-xs">
+						<InspectorCostRow label={t("usage.input")} nanos={cost?.uncachedInputNanos ?? null} />
+						<InspectorCostRow label={t("usage.cacheRead")} nanos={cost?.cacheReadNanos ?? null} />
+						<InspectorCostRow label={t("usage.cacheWrite")} nanos={cost?.cacheWriteNanos ?? null} />
+						<InspectorCostRow label={t("usage.output")} nanos={cost?.outputNanos ?? null} />
+					</dl>
+					{models.length > 0 ? (
+						<div className="border-t border-border pt-2">
+							{models.map(({ harness, model }) => (
+								<div
+									className="flex min-w-0 items-center justify-between gap-3 py-0.5 text-2xs"
+									key={`${harness}:${model.providerId}:${model.modelId}`}
+								>
+									<span className="min-w-0 truncate font-mono text-muted-foreground">
+										{model.providerId} · {model.modelId}
+									</span>
+									<span className="shrink-0 font-mono tabular-nums text-settings-label">
+										{formatEstimatedCost(model.totals.estimatedCost) ?? "—"}
+									</span>
+								</div>
+							))}
+						</div>
+					) : null}
+				</div>
+			)}
+		</Section>
+	);
+}
+
+function InspectorCostRow({ label, nanos }: { label: string; nanos: EstimatedCost["totalNanos"] | null }) {
+	return (
+		<>
+			<dt className="text-muted-foreground">{label}</dt>
+			<dd className="text-right font-mono tabular-nums text-settings-label">{formatCostNanos(nanos) ?? "—"}</dd>
+		</>
 	);
 }
 

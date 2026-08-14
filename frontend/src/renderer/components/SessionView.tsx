@@ -584,9 +584,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// preview auto-opens Browser onto a view the hook has already torn down.
 	const hasBrowserContent = !terminated && Boolean(previewUrl || browserUrl);
 
-	// Entering a session always starts on Summary. Treat browser content that
-	// already existed when the route resolved as the baseline for that visit;
-	// only preview work arriving afterward may reveal Browser automatically.
+	// Entering a session always starts on Summary. Browser work may badge the
+	// rail after entry, but automated activity never changes this selection.
 	useLayoutEffect(() => {
 		if (!session || initializedInspectorSessionIdRef.current === sessionId) return;
 		initializedInspectorSessionIdRef.current = sessionId;
@@ -689,8 +688,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			setBrowserUnseen(sessionId, false);
 			return;
 		}
-		setInspectorViewForSession(sessionId, "browser");
-		setInspectorOpenForSession(sessionId, true);
+		setBrowserUnseen(sessionId, true);
 	}, [
 		browserPoppedOut,
 		hasInspector,
@@ -699,8 +697,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		setBrowserContentRevealed,
 		setBrowserUnseen,
-		setInspectorOpenForSession,
-		setInspectorViewForSession,
 	]);
 
 	// Agent browser commands are genuine browser activity even when they do not

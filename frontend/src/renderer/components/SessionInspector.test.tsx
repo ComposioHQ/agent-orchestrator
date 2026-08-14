@@ -137,6 +137,16 @@ function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", revi
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
 			return { data: { reviewerHandleId, reviews } };
 		}
+		if (path === "/api/v1/usage/sessions/{sessionId}") {
+			return {
+				data: {
+					harnesses: [],
+					incomplete: false,
+					sessionId: "sess-1",
+					totals: usageTotals(null),
+				},
+			};
+		}
 		if (path === "/api/v1/projects/{id}") {
 			return {
 				data: {
@@ -155,6 +165,26 @@ function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", revi
 		}
 		return { data: undefined };
 	});
+}
+
+function mockUsageGet(result: Promise<unknown> | unknown) {
+	const fallback = getMock.getMockImplementation();
+	getMock.mockImplementation((path: string, ...args: unknown[]) => {
+		if (path === "/api/v1/usage/sessions/{sessionId}") return result;
+		return fallback?.(path, ...args);
+	});
+}
+
+function usageTotals(estimatedCost: unknown) {
+	return {
+		cacheReadTokens: 200,
+		cacheWriteTokens: 100,
+		estimatedCost,
+		inputTokens: 1_300,
+		outputTokens: 500,
+		reasoningTokens: 50,
+		uncachedInputTokens: 1_000,
+	};
 }
 
 const approvedReview = {
@@ -304,6 +334,120 @@ describe("SessionInspector tabs", () => {
 		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
 		expect(document.querySelector("[aria-hidden='true'][inert]")).toBeInTheDocument();
+	});
+});
+
+describe("SessionInspector estimated cost", () => {
+	it("renders a complete total, components, and provider/model attribution in Summary", async () => {
+		mockUsageGet({
+			data: {
+				harnesses: [
+					{
+						harness: "claude-code",
+						models: [
+							{
+								modelId: "claude-sonnet-4",
+								providerId: "anthropic",
+								totals: usageTotals({
+									cacheReadNanos: 20_000_000,
+									cacheWriteNanos: 30_000_000,
+									coverage: "complete",
+									outputNanos: 250_000_000,
+									totalNanos: 600_000_000,
+									uncachedInputNanos: 300_000_000,
+								}),
+							},
+						],
+						totals: usageTotals(null),
+					},
+				],
+				incomplete: false,
+				sessionId: "sess-1",
+				totals: usageTotals({
+					cacheReadNanos: 100_000_000,
+					cacheWriteNanos: 140_000_000,
+					coverage: "complete",
+					outputNanos: 600_000_000,
+					totalNanos: 1_240_000_000,
+					uncachedInputNanos: 400_000_000,
+				}),
+			},
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		await screen.findByText("≈$1.24");
+		const section = screen.getByText("Estimated cost").closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		expect(within(section).getByText("≈$1.24")).toBeInTheDocument();
+		expect(within(section).getByText("Input").nextElementSibling).toHaveTextContent("$0.40");
+		expect(within(section).getByText("Cache read").nextElementSibling).toHaveTextContent("$0.10");
+		expect(within(section).getByText("Cache write").nextElementSibling).toHaveTextContent("$0.14");
+		expect(within(section).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
+		expect(within(section).getByText("anthropic · claude-sonnet-4")).toBeInTheDocument();
+		expect(within(section).getByText("≈$0.60")).toBeInTheDocument();
+		expect(section).not.toHaveTextContent(/lower bound/i);
+	});
+
+	it("uses partial coverage and dashes for unknown components", async () => {
+		mockUsageGet({
+			data: {
+				harnesses: [],
+				incomplete: false,
+				sessionId: "sess-1",
+				totals: usageTotals({
+					cacheReadNanos: null,
+					cacheWriteNanos: 2_000_000,
+					coverage: "partial",
+					outputNanos: 5_000_000,
+					totalNanos: 7_000_000,
+					uncachedInputNanos: null,
+				}),
+			},
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		await screen.findByText("≥$0.007");
+		const section = screen.getByText("Estimated cost").closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		expect(within(section).getByText("≥$0.007")).toBeInTheDocument();
+		expect(within(section).getAllByText("—")).toHaveLength(2);
+	});
+
+	it("shows no value when cost coverage is unavailable", async () => {
+		mockUsageGet({
+			data: {
+				harnesses: [],
+				incomplete: false,
+				sessionId: "sess-1",
+				totals: usageTotals(null),
+			},
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const section = screen.getByText("Estimated cost").closest(
+			"[data-testid='inspector-section']",
+		) as HTMLElement;
+		await waitFor(() => expect(within(section).getAllByText("—")).toHaveLength(5));
+		expect(section).not.toHaveTextContent(/[≈≥]\$/);
+	});
+
+	it("renders deterministic loading and error states", async () => {
+		let rejectUsage!: (reason: unknown) => void;
+		const usageRequest = new Promise((_resolve, reject) => {
+			rejectUsage = reject;
+		});
+		mockUsageGet(usageRequest);
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		expect(screen.getByText("Loading estimated cost…")).toBeInTheDocument();
+		rejectUsage(new Error("offline"));
+		expect(await screen.findByRole("status")).toHaveTextContent("Unable to load estimated cost.");
 	});
 });
 

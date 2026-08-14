@@ -1189,7 +1189,7 @@ describe("SessionView", () => {
 		expect(document.querySelector(".files-popout-overlay")).not.toHaveClass("files-popout-overlay--mac-windowed");
 	});
 
-	it("opens Browser for a new live `ao preview` target", () => {
+	it("marks Browser unseen without stealing focus for a new live `ao preview` target", () => {
 		const worker = workerSession("sess-1");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
@@ -1199,12 +1199,12 @@ describe("SessionView", () => {
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
-		expect(browserViewOptions.current).toMatchObject({ active: true });
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
+		expect(browserViewOptions.current).toMatchObject({ active: false });
 	});
 
-	it("opens a collapsed inspector when a new live preview arrives", () => {
+	it("keeps a collapsed inspector closed when a new live preview arrives", () => {
 		const worker = workerSession("sess-1");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
@@ -1213,14 +1213,14 @@ describe("SessionView", () => {
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
-		expect(browserViewOptions.current).toMatchObject({ active: true });
-		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-state", "expanded");
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
+		expect(browserViewOptions.current).toMatchObject({ active: false });
+		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-state", "collapsed");
 	});
 
-	it("keeps Summary on session entry and opens Browser for later preview work", () => {
+	it("resets a remembered tab to Summary on entry and badges later preview work", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";
 		secondWorker.previewRevision = 1;
@@ -1230,6 +1230,7 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-state", "expanded");
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		act(() => useUiStore.getState().setInspectorView("sess-2", "browser"));
 
 		rerender(<SessionView sessionId="sess-2" />);
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
@@ -1238,8 +1239,8 @@ describe("SessionView", () => {
 		secondWorker.previewRevision = 2;
 		rerender(<SessionView sessionId="sess-2" />);
 		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-2")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-2")).toBe(true);
 	});
 
 	it("keeps Summary selected when preview content arrives with the async workspace response", () => {
@@ -1332,8 +1333,8 @@ describe("SessionView", () => {
 		worker.previewUrl = "http://localhost:5173/";
 		worker.previewRevision = 1;
 		rerender(<SessionView sessionId="sess-1" />);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 
 		act(() => {
 			useUiStore.getState().setInspectorView("sess-1", "summary");
@@ -1352,9 +1353,9 @@ describe("SessionView", () => {
 		worker.previewRevision = 3;
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
-		expect(browserUnseen("sess-1")).toBe(false);
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+		expect(browserUnseen("sess-1")).toBe(true);
 	});
 
 	// Regression: a terminated session's `previewUrl` is a stale DB fact —

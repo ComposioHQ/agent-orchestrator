@@ -15,6 +15,7 @@ import { Check, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-
 import type { MessageKey } from "../i18n";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
+import { formatCostNanos, formatEstimatedCost, type EstimatedCost } from "../lib/format-cost";
 import { formatTokenCount } from "../lib/format-token-count";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import {
@@ -241,7 +242,9 @@ function DesktopSessionCard({
 				url: prBrowserUrl(pr),
 			}))}
 			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
-			renderUsage={(presentation) => <DesktopUsageMetric usage={presentation} />}
+			renderUsage={(presentation) => (
+				<DesktopUsageMetric estimatedCost={usage?.estimatedCost} usage={presentation} />
+			)}
 			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
 			usage={usagePresentation}
@@ -265,23 +268,60 @@ function toUsagePresentation(
 	usage: SessionUsageSummary | undefined,
 	t: TFunction,
 ): BoardUsagePresentation | undefined {
-	if (!usage || usage.totalTokens <= 0) return undefined;
+	if (!usage || (usage.totalTokens <= 0 && !usage.estimatedCost)) return undefined;
+	const cost = formatEstimatedCost(usage.estimatedCost);
+	const compactTokens = formatTokenCount(usage.totalTokens);
+	const accessibleTokens = t("shell.usageTokens", {
+		count: usage.totalTokens.toLocaleString("en-US"),
+	});
 	return {
-		accessibleLabel: t("shell.usageTokens", {
-			count: usage.totalTokens.toLocaleString("en-US"),
-		}),
-		compactLabel: formatTokenCount(usage.totalTokens),
+		accessibleLabel: cost ? `${cost} · ${accessibleTokens}` : accessibleTokens,
+		compactLabel: cost ? `${cost} · ${compactTokens}` : compactTokens,
 	};
 }
 
-function DesktopUsageMetric({ usage }: { usage: BoardUsagePresentation }) {
+function DesktopUsageMetric({
+	estimatedCost,
+	usage,
+}: {
+	estimatedCost?: EstimatedCost | null;
+	usage: BoardUsagePresentation;
+}) {
+	const { t } = useTranslation();
+	const total = formatEstimatedCost(estimatedCost);
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<SessionUsageMetricView usage={usage} />
 			</TooltipTrigger>
-			<TooltipContent side="top">{usage.accessibleLabel}</TooltipContent>
+			<TooltipContent side="top">
+				{estimatedCost && total ? (
+					<div className="w-44 space-y-1.5">
+						<div className="flex items-center justify-between gap-4 font-medium">
+							<span>{t("usage.estimatedCost")}</span>
+							<span className="font-mono tabular-nums">{total}</span>
+						</div>
+						<dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-2xs">
+							<CostComponentRow label={t("usage.input")} nanos={estimatedCost.uncachedInputNanos} />
+							<CostComponentRow label={t("usage.cacheRead")} nanos={estimatedCost.cacheReadNanos} />
+							<CostComponentRow label={t("usage.cacheWrite")} nanos={estimatedCost.cacheWriteNanos} />
+							<CostComponentRow label={t("usage.output")} nanos={estimatedCost.outputNanos} />
+						</dl>
+					</div>
+				) : (
+					usage.accessibleLabel
+				)}
+			</TooltipContent>
 		</Tooltip>
+	);
+}
+
+function CostComponentRow({ label, nanos }: { label: string; nanos: number | null }) {
+	return (
+		<>
+			<dt className="text-muted-foreground">{label}</dt>
+			<dd className="text-right font-mono tabular-nums">{formatCostNanos(nanos) ?? "—"}</dd>
+		</>
 	);
 }
 
