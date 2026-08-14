@@ -118,7 +118,7 @@ func (r *Refresher) run(ctx context.Context, cacheAvailable bool, pending []Prov
 		} else if ctx.Err() == nil && len(remoteActivations) > 0 {
 			r.config.OnActivate(ctx, remoteActivations)
 		}
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if err != nil && ctx.Err() == nil {
 			r.config.OnError(err)
 		}
 		if ctx.Err() != nil {

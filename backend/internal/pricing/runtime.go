@@ -449,10 +449,17 @@ func NewActivationFence() *ActivationFence {
 // Acquire waits for exclusive admission or returns the context error. The
 // returned release function is idempotent.
 func (f *ActivationFence) Acquire(ctx context.Context) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-f.token:
+		if err := ctx.Err(); err != nil {
+			f.token <- struct{}{}
+			return nil, err
+		}
 		var once sync.Once
 		return func() { once.Do(func() { f.token <- struct{}{} }) }, nil
 	}
@@ -471,10 +478,11 @@ type Manager struct {
 	current atomic.Pointer[Snapshot]
 }
 
-// NewManager creates a manager with an empty snapshot when initial is nil.
+// NewManager creates a manager with an empty snapshot unless initial is a
+// complete validated catalog snapshot.
 func NewManager(initial *Snapshot) *Manager {
 	manager := &Manager{fence: NewActivationFence()}
-	if initial == nil {
+	if !validSnapshot(initial) {
 		initial = &Snapshot{providers: map[string]providerSnapshot{}}
 	}
 	manager.current.Store(initial)

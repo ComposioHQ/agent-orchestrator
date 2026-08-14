@@ -149,6 +149,88 @@ func TestRefresherFailureReleasesCachedActivationsAndRetriesExponentially(t *tes
 	refresher.Wait()
 }
 
+func TestRefresherReportsInternalDeadlineWhileParentContextIsLive(t *testing.T) {
+	fetcher := &fakeCatalogFetcher{fetch: func(context.Context, string, bool) (FetchResult, error) {
+		return FetchResult{}, context.DeadlineExceeded
+	}}
+	errorsReported := make(chan error, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	refresher, err := NewRefresher(RefreshConfig{
+		Cache: NewCache(t.TempDir()), Fetcher: fetcher, Manager: NewManager(nil),
+		OnError: func(err error) { errorsReported <- err },
+		Wait:    blockUntilCanceled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := refresher.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case reported := <-errorsReported:
+		if !errors.Is(reported, context.DeadlineExceeded) {
+			t.Fatalf("reported error = %v, want deadline exceeded", reported)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("internal deadline was not reported")
+	}
+	cancel()
+	refresher.Wait()
+}
+
+func TestRefresherRetryCapsAndSuccessResetsBackoff(t *testing.T) {
+	var attempts atomic.Int64
+	fetcher := &fakeCatalogFetcher{fetch: func(context.Context, string, bool) (FetchResult, error) {
+		attempt := attempts.Add(1)
+		switch {
+		case attempt <= 8:
+			return FetchResult{}, errors.New("offline")
+		case attempt == 9:
+			return FetchResult{NotModified: true}, nil
+		default:
+			return FetchResult{}, errors.New("offline again")
+		}
+	}}
+	durations := make(chan time.Duration, 10)
+	var waits atomic.Int64
+	ctx, cancel := context.WithCancel(context.Background())
+	refresher, err := NewRefresher(RefreshConfig{
+		Cache: NewCache(t.TempDir()), Fetcher: fetcher, Manager: NewManager(nil),
+		Wait: func(ctx context.Context, duration time.Duration) error {
+			durations <- duration
+			if waits.Add(1) == 10 {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		},
+		Jitter: func(interval time.Duration) time.Duration { return interval },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := refresher.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	want := []time.Duration{
+		time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute,
+		16 * time.Minute, 32 * time.Minute, time.Hour, time.Hour,
+		RefreshInterval, time.Minute,
+	}
+	for _, expected := range want {
+		select {
+		case got := <-durations:
+			if got != expected {
+				t.Fatalf("wait = %s, want %s", got, expected)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("wait %s timed out", expected)
+		}
+	}
+	cancel()
+	refresher.Wait()
+}
+
 func TestRefresherNeverOverlapsAndStopsBlockedFetchOnShutdown(t *testing.T) {
 	var active, maximum atomic.Int64
 	started := make(chan struct{})

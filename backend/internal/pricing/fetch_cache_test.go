@@ -126,6 +126,30 @@ func TestFetcherRejectsOversizeAndCrossOriginRedirect(t *testing.T) {
 		}
 	})
 
+	t.Run("provider exceeds eight MiB", func(t *testing.T) {
+		fixture := testCandidate(t, testBaseModels("0.1"))
+		var providerRequests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/manifest.json") {
+				_, _ = w.Write(fixture.manifest)
+				return
+			}
+			providerRequests.Add(1)
+			_, _ = w.Write(make([]byte, ProviderMaxBytes+1))
+		}))
+		defer server.Close()
+		fetcher, err := NewFetcher(server.Client(), server.URL+"/catalog/v1/manifest.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fetcher.Fetch(context.Background(), "", false); err == nil {
+			t.Fatal("oversize provider Fetch error = nil")
+		}
+		if got := providerRequests.Load(); got != 1 {
+			t.Fatalf("provider requests = %d, want fetch to stop after first oversize body", got)
+		}
+	})
+
 	t.Run("redirect changes origin", func(t *testing.T) {
 		target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		defer target.Close()

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -170,6 +171,38 @@ func TestActivationFenceAdmissionHonorsContext(t *testing.T) {
 	second()
 }
 
+func TestActivationFenceNeverAdmitsAlreadyCanceledContext(t *testing.T) {
+	fence := NewActivationFence()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for attempt := 0; attempt < 1_000; attempt++ {
+		release, err := fence.Acquire(ctx)
+		if err == nil {
+			release()
+			t.Fatalf("Acquire admitted canceled context on attempt %d", attempt)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Acquire error = %v, want context canceled", err)
+		}
+	}
+}
+
+func TestActivationFenceReturnsTokenWhenCancellationWinsAfterAdmission(t *testing.T) {
+	fence := NewActivationFence()
+	ctx := &cancelAfterAdmissionContext{done: make(chan struct{})}
+	if release, err := fence.Acquire(ctx); !errors.Is(err, context.Canceled) {
+		if release != nil {
+			release()
+		}
+		t.Fatalf("Acquire = release %v, error %v; want context canceled", release != nil, err)
+	}
+	release, err := fence.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire after canceled admission: %v", err)
+	}
+	release()
+}
+
 func TestManagerActivatesOnlyChangedProviders(t *testing.T) {
 	first := decodeTestSnapshot(t, testBaseModels("0.1"))
 	secondModels := testBaseModels("0.1")
@@ -194,6 +227,43 @@ func TestManagerRejectsUnvalidatedSnapshot(t *testing.T) {
 	if _, err := manager.Activate(context.Background(), &Snapshot{}); err == nil {
 		t.Fatal("Activate unvalidated snapshot error = nil")
 	}
+}
+
+func TestNewManagerNeverPublishesUnvalidatedInitialSnapshot(t *testing.T) {
+	invalid := &Snapshot{}
+	manager := NewManager(invalid)
+	if manager.Snapshot() == invalid {
+		t.Fatal("NewManager published unvalidated initial snapshot")
+	}
+	if manager.Snapshot() == nil {
+		t.Fatal("NewManager fallback snapshot is nil")
+	}
+	valid := decodeTestSnapshot(t, testBaseModels("0.1"))
+	initialized := NewManager(valid)
+	if initialized.Snapshot() != valid {
+		t.Fatal("NewManager did not retain validated initial snapshot")
+	}
+}
+
+type cancelAfterAdmissionContext struct {
+	done   chan struct{}
+	calls  int
+	closed bool
+}
+
+func (c *cancelAfterAdmissionContext) Deadline() (time.Time, bool) { return time.Time{}, false }
+func (c *cancelAfterAdmissionContext) Done() <-chan struct{}       { return c.done }
+func (c *cancelAfterAdmissionContext) Value(any) any               { return nil }
+func (c *cancelAfterAdmissionContext) Err() error {
+	c.calls++
+	if c.calls == 1 {
+		return nil
+	}
+	if !c.closed {
+		close(c.done)
+		c.closed = true
+	}
+	return context.Canceled
 }
 
 type testModel struct {
