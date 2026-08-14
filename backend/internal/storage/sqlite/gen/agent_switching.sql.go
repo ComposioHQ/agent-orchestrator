@@ -516,6 +516,68 @@ func (q *Queries) InsertAgentSwitch(ctx context.Context, arg InsertAgentSwitchPa
 	return result.RowsAffected()
 }
 
+const listActiveAgentSwitches = `-- name: ListActiveAgentSwitches :many
+SELECT id, session_id, idempotency_key, request_fingerprint,
+       from_harness, target_harness,
+       target_native_session_ref, target_start_mode,
+       state, agent_handoff_status, source_transcript_status,
+       semantic_handoff_included,
+       agent_handoff_path, agent_handoff_hash,
+       source_generation_id, target_generation_id,
+       target_runtime_handle_id, target_acknowledged_at,
+       error_code, requested_at, updated_at,
+       final_handoff_path, final_handoff_hash
+FROM agent_switches
+WHERE state NOT IN ('completed', 'failed')
+`
+
+func (q *Queries) ListActiveAgentSwitches(ctx context.Context) ([]AgentSwitch, error) {
+	rows, err := q.db.QueryContext(ctx, listActiveAgentSwitches)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentSwitch{}
+	for rows.Next() {
+		var i AgentSwitch
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.IdempotencyKey,
+			&i.RequestFingerprint,
+			&i.FromHarness,
+			&i.TargetHarness,
+			&i.TargetNativeSessionRef,
+			&i.TargetStartMode,
+			&i.State,
+			&i.AgentHandoffStatus,
+			&i.SourceTranscriptStatus,
+			&i.SemanticHandoffIncluded,
+			&i.AgentHandoffPath,
+			&i.AgentHandoffHash,
+			&i.SourceGenerationID,
+			&i.TargetGenerationID,
+			&i.TargetRuntimeHandleID,
+			&i.TargetAcknowledgedAt,
+			&i.ErrorCode,
+			&i.RequestedAt,
+			&i.UpdatedAt,
+			&i.FinalHandoffPath,
+			&i.FinalHandoffHash,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentNativeSessions = `-- name: ListAgentNativeSessions :many
 SELECT id, ao_session_id, harness, config_dir,
     native_session_id, transcript_path,
@@ -652,6 +714,7 @@ func (q *Queries) MarkAgentHandoffUnavailable(ctx context.Context, arg MarkAgent
 const markAgentSwitchSourceStopped = `-- name: MarkAgentSwitchSourceStopped :execrows
 UPDATE agent_switches SET
     state = 'source_stopped',
+	error_code = '',
     updated_at = ?1
 WHERE id = ?2
   AND session_id = ?3
@@ -886,7 +949,16 @@ WHERE id = ?8
   AND state = ?10
   AND source_generation_id = ?11
   AND target_generation_id = ?12
-  AND (error_code = '' OR error_code = ?6)
+  AND (
+      error_code = ''
+      OR error_code = ?6
+      OR (
+		  error_code IN ('source_stop_unconfirmed', 'source_restore_unconfirmed')
+          AND ?3 = 'failed'
+          AND ?6 <> ''
+		  AND ?6 <> error_code
+      )
+  )
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = ?5

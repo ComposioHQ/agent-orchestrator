@@ -157,6 +157,7 @@
 	--size-icon-sm: var(--size-icon-sm);
 	--size-icon-md: var(--size-icon-md);
 	--size-icon-base: var(--size-icon-base);
+	--size-terminal-agent-icon: var(--size-terminal-agent-icon);
 	--size-icon-lg: var(--size-icon-lg);
 	--size-icon-xl: var(--size-icon-xl);
 
@@ -303,6 +304,12 @@
 	backdrop-filter: blur(var(--blur-overlay));
 }
 
+@utility agent-switch-terminal-scrim {
+	background-color: color-mix(in srgb, var(--color-terminal) 95%, transparent);
+	-webkit-backdrop-filter: blur(3px);
+	backdrop-filter: blur(3px);
+}
+
 @utility w-daemon-failure-toast {
 	width: min(var(--size-daemon-failure-toast), calc(100vw - var(--space-6)));
 }
@@ -431,6 +438,8 @@
 }
 
 @utility center-panel-surface {
+	container-name: center-panel;
+	container-type: inline-size;
 	display: flex;
 	min-height: 0;
 	flex: 1 1 0%;
@@ -491,6 +500,13 @@
 	border-radius: 0;
 }
 
+/* Session actions are portaled into the center pane. Make their responsive
+ * labels follow that pane's width instead of the full window width. */
+.workspace-topbar-container {
+	container-name: workspace-topbar;
+	container-type: inline-size;
+}
+
 /* When the sidebar is off-canvas, clear only the fixed navigation cluster.
  * Native macOS fullscreen removes the traffic lights, so the cluster moves to
  * the compact panel inset instead of retaining the windowed 79px reserve. */
@@ -524,8 +540,8 @@
 }
 
 .center-panel-shell--mac .center-panel-titlebar {
-	height: var(--size-traffic-light-clearance);
-	min-height: var(--size-traffic-light-clearance);
+	height: var(--size-toolbar);
+	min-height: var(--size-toolbar);
 }
 
 /* Sidebar chrome clearance: size tokens only — set by data-topbar-offset on the
@@ -1445,6 +1461,48 @@ textarea,
 	animation: agent-switch-transfer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+.agent-switch-progress-step:not(:last-child)::before {
+	position: absolute;
+	top: 0.21875rem;
+	left: calc(50% + 0.25rem);
+	width: calc(100% - 0.5rem);
+	height: 1px;
+	background: var(--color-border-strong);
+	content: "";
+	transition: background-color 320ms var(--ease-out);
+}
+
+.agent-switch-progress-dot {
+	transition:
+		border-color 280ms var(--ease-out),
+		background-color 280ms var(--ease-out),
+		box-shadow 280ms var(--ease-out);
+}
+
+.agent-switch-progress-step.is-complete::before,
+.agent-switch-progress-step.is-complete .agent-switch-progress-dot,
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	border-color: var(--color-accent);
+	background: var(--color-accent);
+}
+
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	animation: agent-switch-step-pulse 1.4s ease-in-out infinite;
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+@keyframes agent-switch-step-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.55;
+		transform: scale(0.72);
+	}
+}
+
 @keyframes agent-switch-transfer {
 	0% {
 		left: -2.5rem;
@@ -1467,6 +1525,19 @@ textarea,
 		left: calc(50% - 1.25rem);
 		opacity: 0.85;
 		animation: none;
+	}
+
+	.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+		animation: none;
+	}
+
+	.agent-switch-toolbar-spinner {
+		animation: none;
+	}
+
+	.agent-switch-progress-dot,
+	.agent-switch-progress-step::before {
+		transition: none;
 	}
 }
 
@@ -1944,6 +2015,210 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		animation: none;
 		opacity: 1;
 		transform: translate(-6px, -50%);
+	}
+}
+
+/* One compact, responsive action contract for Board, Orchestrator, and
+ * Session topbars. Labels collapse in priority order while their icons and
+ * accessible names remain available. */
+.workspace-topbar-actions {
+	display: flex;
+	min-width: 0;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.workspace-topbar__utility-separator,
+.workspace-topbar__identity-separator {
+	width: 1px;
+	flex: 0 0 1px;
+	background: color-mix(in srgb, var(--color-text-topbar) 28%, transparent);
+}
+
+.workspace-topbar__utility-separator {
+	height: calc(var(--size-topbar-control) - var(--space-3));
+}
+
+.workspace-topbar__identity-separator {
+	height: var(--space-4);
+}
+
+.workspace-topbar-actions .topbar-control {
+	-webkit-app-region: no-drag;
+	height: var(--size-topbar-control);
+	min-width: var(--size-topbar-control);
+	flex: 0 0 auto;
+	justify-content: center;
+	border-radius: var(--radius-topbar-control);
+	font-size: var(--font-size-sm-md);
+	transition:
+		background-color var(--duration-fast) ease,
+		border-color var(--duration-fast) ease,
+		color var(--duration-fast) ease,
+		filter var(--duration-fast) ease,
+		gap var(--duration-normal) ease,
+		padding-inline var(--duration-normal) ease;
+}
+
+.workspace-topbar-actions .topbar-control--labeled,
+.workspace-topbar-actions .topbar-control--feature {
+	padding-inline: var(--space-2_5);
+}
+
+.workspace-topbar-actions [data-compact-label] {
+	display: inline-block;
+	inline-size: max-content;
+	max-inline-size: 12rem;
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	white-space: nowrap;
+	interpolate-size: allow-keywords;
+	transition:
+		inline-size var(--duration-normal) ease,
+		opacity var(--duration-fast) ease,
+		transform var(--duration-normal) ease;
+}
+
+.workspace-topbar-actions .topbar-control--feature {
+	border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-topbar));
+	background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-topbar-raised));
+	color: color-mix(in srgb, var(--color-accent) 58%, var(--color-text-topbar));
+}
+
+.workspace-topbar-actions .topbar-control--feature:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-topbar-strong));
+	background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-topbar-raised));
+	color: var(--color-text-topbar);
+}
+
+.session-collapsed-inspector-actions {
+	display: flex;
+	width: 0;
+	min-width: 0;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: flex-end;
+	margin-left: calc(-1 * var(--space-2));
+	transition:
+		width var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
+		margin-left var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.session-collapsed-inspector-actions[data-state="expanded"] {
+	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
+	margin-left: 0;
+}
+
+.session-inspector-persistent-actions {
+	-webkit-app-region: no-drag;
+	position: absolute;
+	top: 0;
+	right: var(--space-3);
+	z-index: var(--z-index-chrome);
+	display: flex;
+	height: var(--size-inspector-tabs);
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.session-inspector-actions-spacer {
+	width: calc(
+		var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2) + var(--space-3)
+	);
+	flex: 0 0 auto;
+}
+
+@container workspace-topbar (max-width: 759px) {
+	.workspace-topbar-actions [data-priority="secondary"] [data-compact-label] {
+		inline-size: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.workspace-topbar-actions [data-priority="secondary"].topbar-control {
+		gap: 0;
+		padding-inline: 0;
+	}
+}
+
+@container workspace-topbar (max-width: 639px) {
+	.workspace-topbar-actions [data-priority] [data-compact-label] {
+		inline-size: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.workspace-topbar-actions [data-priority].topbar-control {
+		gap: 0;
+		padding-inline: 0;
+	}
+}
+
+/* The session topbar lives inside the panel that grows while the inspector
+ * moves. Lock the Orchestrator button's final responsive state for that motion
+ * so its label starts changing with the panel instead of at a late breakpoint. */
+.session-split[data-terminal-live-resize="true"]
+	.workspace-topbar-actions
+	[data-priority="secondary"]
+	[data-compact-label],
+.session-split[data-terminal-live-resize="true"]
+	.workspace-topbar-actions
+	[data-priority="secondary"].topbar-control {
+	transition-duration: var(--session-inspector-motion-duration);
+	transition-timing-function: var(
+		--session-inspector-motion-easing,
+		cubic-bezier(0.16, 1, 0.3, 1)
+	);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="expanded"]
+	.workspace-topbar-actions
+	[data-priority="secondary"]
+	[data-compact-label] {
+	inline-size: max-content;
+	opacity: 1;
+	transform: translateX(0);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="expanded"]
+	.workspace-topbar-actions
+	[data-priority="secondary"].topbar-control {
+	gap: var(--space-1_5);
+	padding-inline: var(--space-2_5);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="compact"]
+	.workspace-topbar-actions
+	[data-priority="secondary"]
+	[data-compact-label] {
+	inline-size: 0;
+	opacity: 0;
+	transform: translateX(-2px);
+}
+
+.session-split[data-terminal-live-resize="true"][data-topbar-secondary-label-mode="compact"]
+	.workspace-topbar-actions
+	[data-priority="secondary"].topbar-control {
+	gap: 0;
+	padding-inline: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.workspace-topbar-actions .topbar-control,
+	.workspace-topbar-actions [data-compact-label],
+	.session-collapsed-inspector-actions,
+	.session-split[data-terminal-live-resize="true"]
+		.workspace-topbar-actions
+		[data-priority="secondary"].topbar-control,
+	.session-split[data-terminal-live-resize="true"]
+		.workspace-topbar-actions
+		[data-priority="secondary"]
+		[data-compact-label] {
+		transition: none;
 	}
 }
 
@@ -2459,13 +2734,106 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
- * surface: interpolating this value makes ResizeObserver fit the terminal at
- * every intermediate width, reallocating the renderer and eventually causing
- * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
- * direct separator drags remain interactive. */
-.session-split #inspector[data-panel] {
+/* Match the left sidebar's spring-like reveal while keeping direct separator
+ * drags under the pointer. Both panels participate so neither edge snaps. */
+.session-split > [data-panel] {
+	transition: flex-grow var(--session-inspector-motion-duration, 320ms)
+		var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.session-inspector-separator {
+	transition-duration: var(--session-inspector-motion-duration, 320ms);
+	transition-timing-function: var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.session-split > .session-inspector-panel[data-panel] {
+	max-width: var(--session-inspector-max-width, 50%);
+}
+
+.session-split:has([data-separator="active"]) > [data-panel] {
 	transition: none;
+}
+
+.session-inspector-motion {
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		opacity var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
+		transform var(--session-inspector-motion-duration, 320ms)
+			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+	will-change: opacity, transform;
+}
+
+.session-inspector-motion[data-motion-state="opening"],
+.session-inspector-motion[data-motion-state="closing"],
+.session-inspector-motion[data-motion-state="closed"] {
+	opacity: 0;
+	transform: translateX(12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.session-split > [data-panel],
+	.session-inspector-separator,
+	.session-inspector-motion {
+		transition: none;
+	}
+}
+
+.session-inspector__topbar {
+	background: var(--bg);
+	color: var(--fg);
+	user-select: none;
+}
+
+.session-inspector__tab-button {
+	gap: 0;
+}
+
+.session-inspector__responsive-label {
+	max-width: 5.5rem;
+	margin-left: var(--space-1);
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		max-width 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		margin-left 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		opacity 120ms ease-out,
+		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@container inspector (max-width: 359px) {
+	.session-inspector__responsive-label {
+		max-width: 0;
+		margin-left: 0;
+		opacity: 0;
+		transform: translateX(-4px);
+	}
+}
+
+/* Keep one label layout for the full automatic panel transition. Without this
+ * lock, crossing the compact container threshold near the end of the resize
+ * makes the tab text reflow after the inspector itself has nearly settled. */
+.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
+	.session-inspector__responsive-label {
+	max-width: 5.5rem;
+	margin-left: var(--space-1);
+	opacity: 1;
+	transform: translateX(0);
+}
+
+.session-split[data-terminal-live-resize="true"][data-inspector-label-mode="compact"]
+	.session-inspector__responsive-label {
+	max-width: 0;
+	margin-left: 0;
+	opacity: 0;
+	transform: translateX(-4px);
+}
+
+.session-inspector__toggle {
+	-webkit-app-region: no-drag;
+	margin-right: var(--space-2);
 }
 
 .inspector-section {
@@ -3436,8 +3804,12 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.notification-row-enter {
+	.notification-row-enter,
+	.session-inspector-motion,
+	.session-inspector__responsive-label,
+	.session-split > [data-panel] {
 		animation: none;
+		transition: none;
 	}
 }
 

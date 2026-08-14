@@ -1,9 +1,13 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { createElement, type ComponentProps } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	ARCHIVE_TOGGLE_HEIGHT_PX,
 	SessionCardView,
 	SessionsArchiveView,
 	SessionsBoardGridView,
+	archiveToggleHeightClassName,
+	archiveToggleOffsetClassName,
 	type BoardSessionPresentation,
 	type BoardSplitLaneLabels,
 } from "./SessionsBoardView";
@@ -12,6 +16,24 @@ import {
 	getAttentionZoneViewForZone,
 } from "./session-presentation";
 import type { ExternalLinkProps } from "./external-link";
+
+const useReducedMotionMock = vi.hoisted(() => vi.fn(() => false));
+const lastArchiveMotionTransition = vi.hoisted(() => ({
+	current: undefined as { duration?: number } | undefined,
+}));
+
+vi.mock("motion/react", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("motion/react")>();
+	function MotionDiv(props: ComponentProps<typeof actual.motion.div>) {
+		lastArchiveMotionTransition.current = props.transition as { duration?: number } | undefined;
+		return createElement(actual.motion.div, props);
+	}
+	return {
+		...actual,
+		useReducedMotion: useReducedMotionMock,
+		motion: { ...actual.motion, div: MotionDiv },
+	};
+});
 
 function ExternalLink({ ariaLabel, children, stopPropagation, ...props }: ExternalLinkProps) {
 	return (
@@ -48,6 +70,11 @@ const baseSession: BoardSessionPresentation = {
 };
 
 describe("SessionsBoardView", () => {
+	beforeEach(() => {
+		useReducedMotionMock.mockReturnValue(false);
+		lastArchiveMotionTransition.current = undefined;
+	});
+
 	it("renders portable split lanes with one shared scroller", () => {
 		const sessions: BoardSessionPresentation[] = [
 			baseSession,
@@ -112,6 +139,40 @@ describe("SessionsBoardView", () => {
 		expect(onOpen).toHaveBeenCalledOnce();
 	});
 
+	it("truncates the status before card metrics can collide", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "1h ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, status: "review_pending" }}
+				usage={{ accessibleLabel: "24,600,000 tokens", compactLabel: "24.6M tok" }}
+			/>,
+		);
+
+		const statusLabel = screen.getByText("Review pending");
+		const status = statusLabel.parentElement;
+		const metadataRow = status?.parentElement;
+		expect(statusLabel).toHaveClass("min-w-0", "truncate");
+		expect(status).toHaveClass("min-w-0", "flex-1");
+		expect(metadataRow).toHaveClass("flex", "items-center", "gap-2");
+		expect(metadataRow).not.toHaveClass("flex-wrap");
+		expect(screen.getByText("24.6M tok").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
+	});
+
+	it("keeps archive toggle height and board offset classes in lockstep", () => {
+		expect(archiveToggleHeightClassName).toBe(`h-[${ARCHIVE_TOGGLE_HEIGHT_PX}px]`);
+		expect(archiveToggleOffsetClassName).toBe(`pb-[${ARCHIVE_TOGGLE_HEIGHT_PX}px]`);
+	});
+
 	it("overlays the archive, keeps cards mounted after collapse, and resets on resetKey", async () => {
 		const { rerender } = render(
 			<SessionsArchiveView
@@ -123,7 +184,7 @@ describe("SessionsBoardView", () => {
 		);
 
 		const archiveButton = screen.getByRole("button", { name: "Archive, 1 session" });
-		expect(archiveButton).toHaveClass("h-[58px]", "w-full", "py-0");
+		expect(archiveButton).toHaveClass(archiveToggleHeightClassName, "w-full", "py-0");
 		expect(archiveButton.parentElement).toHaveClass("absolute", "inset-x-0", "bottom-0", "bg-background");
 		expect(within(archiveButton).getByText("Archive")).toHaveClass("text-2xs", "font-medium");
 		expect(within(archiveButton).getByText("Archive")).not.toHaveClass("font-mono", "uppercase");
@@ -156,5 +217,24 @@ describe("SessionsBoardView", () => {
 		);
 		expect(screen.getByRole("button", { name: "Archive, 1 session" })).toHaveAttribute("aria-expanded", "false");
 		expect(screen.queryByRole("list", { name: "Archived sessions" })).not.toBeInTheDocument();
+	});
+
+	it("skips archive motion when the user prefers reduced motion", async () => {
+		useReducedMotionMock.mockReturnValue(true);
+		render(
+			<SessionsArchiveView
+				labels={{ archive: "Archive", archiveAria: "Archive, 1 session", archivedSessions: "Archived sessions" }}
+				renderSessionCard={(session) => <div role="listitem">{session.title}</div>}
+				sessions={[baseSession]}
+			/>,
+		);
+
+		const archiveButton = screen.getByRole("button", { name: "Archive, 1 session" });
+		expect(archiveButton.querySelector("svg")).toHaveClass("transition-none");
+
+		fireEvent.click(archiveButton);
+		await screen.findByRole("list", { name: "Archived sessions" });
+		expect(lastArchiveMotionTransition.current).toEqual({ duration: 0 });
+		expect(archiveButton.querySelector("svg")).toHaveClass("transition-none");
 	});
 });

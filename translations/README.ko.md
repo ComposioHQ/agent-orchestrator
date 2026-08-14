@@ -34,11 +34,15 @@ AO는 이 일을 위해 만든 로컬 데스크톱 워크스페이스입니다. 
 
 데스크톱 앱 뒤에서는 AO의 로컬 데몬이 에이전트 활동과 소스 제어 상태를 감시합니다. 그 결과, 서로 분리된 터미널과 브랜치, 브라우저 탭의 모음이 아니라 프로젝트 전체를 하나의 공유 실시간 뷰에서 볼 수 있습니다.
 
+<img src="../docs/assets/readme/tui.png" alt="Agent Orchestrator workspace with a supervised native agent interface" width="100%" />
+
 ## 워커가 명확한 작업을 실행합니다
 
 워커는 AO의 실행 단위입니다. 하나의 작업, 하나의 코딩 에이전트, 하나의 격리된 워크스페이스로 구성됩니다. 해야 할 일이 이미 명확하다면 **New task**를 사용하세요. 원하는 결과를 설명하고, 에이전트와 모델을 선택하고, 관련 파일을 첨부한 뒤 구조화된 Chat 또는 에이전트 고유의 터미널 UI에서 작업할 수 있습니다.
 
 언제든 워커를 열어 대화를 계속하거나, 터미널에 연결하거나, 변경 사항을 살펴보거나, 격리된 브라우저를 사용하거나, 풀 리퀘스트를 검토하거나, CI 및 리뷰 피드백을 같은 에이전트에게 돌려보낼 수 있습니다. 덕분에 각 작업을 독립적으로 이해할 수 있고, 병렬 작업이 하나의 공유 컨텍스트에 뒤섞이지 않습니다.
+
+<img src="../docs/assets/readme/new-task.png" alt="Creating a focused worker task in Agent Orchestrator" width="100%" />
 
 ## 오케스트레이터가 프로젝트 전체를 계획합니다
 
@@ -47,6 +51,8 @@ AO는 이 일을 위해 만든 로컬 데스크톱 워크스페이스입니다. 
 구현 전에 아이디어를 탐색하고, 제품 및 기술 접근 방식을 브레인스토밍하고, 트레이드오프를 검토하고, 영향력이 큰 작업을 찾고, 모호한 목표를 구체적인 계획으로 바꾸는 데 오케스트레이터를 사용할 수 있습니다. 프로젝트 단위의 대화에는 목표, 결정, 제약 조건, 이전 논의가 계속 보존됩니다. 오케스트레이터는 이 계획 기록을 저장소 컨텍스트 및 AO의 실시간 상태와 결합합니다. 여기에는 활성 워커, 담당 범위, 풀 리퀘스트, CI, 리뷰가 포함됩니다. 따라서 계획은 프로젝트 자체와 이미 진행 중인 작업 모두에 기반합니다.
 
 계획이 실행 가능한 상태가 되면 오케스트레이터는 이를 명확한 작업으로 나누고, 워커를 생성하거나 방향을 전환하고, 각 워커에 필요한 컨텍스트를 전달하고, 진행 상황을 추적하고, 후속 작업을 조정할 수 있습니다. 오케스트레이터는 계획과 위임을 맡고, 워커는 구현, 테스트, 커밋, 풀 리퀘스트를 맡습니다.
+
+<img src="../docs/assets/readme/orchestrator.png" alt="Agent Orchestrator coordinating multiple workers with project context" width="100%" />
 
 ## Kanban이 전체 시스템을 한눈에 보여줍니다
 
@@ -58,6 +64,8 @@ AO는 이 일을 위해 만든 로컬 데스크톱 워크스페이스입니다. 
 - **Ready to merge:** 승인되었거나 머지할 수 있는 작업. 머지된 세션도 보관 처리할 때까지 계속 표시됩니다
 
 각 카드에는 작업, 에이전트, 브랜치, 활동, 풀 리퀘스트, 상태가 함께 표시됩니다. 카드를 열어 대화 또는 터미널, 변경된 파일, PR 요약, 리뷰, 미리보기를 확인할 수 있습니다. 보드는 무엇이 진행 중인지, 무엇이 막혔는지, 어디에 집중해야 가장 큰 효과를 낼 수 있는지 보여줍니다.
+
+<img src="../docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban showing workers grouped by live status" width="100%" />
 
 ## 아이디어부터 머지까지 하나의 워크플로로
 
@@ -74,24 +82,6 @@ AO는 이미 사용 중인 코딩 에이전트와 소스 제어 워크플로와 
 <table>
   <tr>
     <td width="36%" valign="middle">
-      <h3>주의가 필요한 일을 먼저 보여주는 Kanban</h3>
-      <p>작업 중, 사용자 확인 필요, 리뷰 중, 머지 준비 완료 등 실시간 실행 및 풀 리퀘스트 상태별로 작업을 확인하세요.</p>
-    </td>
-    <td width="64%">
-      <img src="../docs/assets/readme/hero.png" alt="워커 세션을 작업 중, 사용자 확인 필요, 리뷰 중, 머지 준비 완료로 분류한 Agent Orchestrator Kanban" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>격리된 워커와 자유롭게 선택하는 에이전트</h3>
-      <p>각 Git 기반 워커에 전용 브랜치와 worktree를 제공하고, 작업에 맞는 코딩 에이전트를 선택하고, 구조화된 Chat 또는 에이전트 고유의 터미널 UI를 사용하세요.</p>
-    </td>
-    <td width="64%">
-      <img src="../docs/assets/readme/tui.png" alt="Agent Orchestrator 안에서 감독되는 코딩 에이전트 고유의 터미널 UI" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
       <h3>풀 리퀘스트와 에이전트 리뷰</h3>
       <p>CI, 머지 가능 여부, 리뷰어 상태, 대화형 에이전트 리뷰를 워커 옆에서 확인하고 요청된 변경 사항을 같은 담당 에이전트에게 돌려보내세요.</p>
     </td>
@@ -106,6 +96,15 @@ AO는 이미 사용 중인 코딩 에이전트와 소스 제어 워크플로와 
     </td>
     <td width="64%">
       <img src="../docs/assets/readme/browser.png" alt="격리된 인앱 브라우저 미리보기를 제어하는 워커" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td width="36%" valign="middle">
+      <h3>네이티브 인터페이스를 하나의 감독 화면에서</h3>
+      <p>구조화된 Chat 또는 에이전트의 네이티브 터미널 UI를 사용하면서 AO가 작업 컨텍스트, 워크스페이스 상태, 피드백을 한곳에서 관리합니다.</p>
+    </td>
+    <td width="64%">
+      <img src="../docs/assets/readme/tui.png" alt="Agent terminal interface supervised inside Agent Orchestrator" width="100%" />
     </td>
   </tr>
 </table>

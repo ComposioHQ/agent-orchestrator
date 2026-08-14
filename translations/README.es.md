@@ -34,11 +34,15 @@ AO es un espacio de trabajo local de escritorio creado para ese reto. Añade un 
 
 Detrás de la aplicación de escritorio, el daemon local de AO observa la actividad de los agentes y el estado del control de versiones. El resultado es una vista compartida y en vivo del proyecto, en lugar de una colección de terminales, ramas y pestañas del navegador desconectadas.
 
+<img src="../docs/assets/readme/tui.png" alt="Agent Orchestrator workspace with a supervised native agent interface" width="100%" />
+
 ## Los workers ejecutan tareas bien definidas
 
 Un worker es la unidad de ejecución de AO: una tarea, un agente de programación y un espacio de trabajo aislado. Usa **New task** cuando el trabajo ya esté claro. Describe el resultado, elige un agente y un modelo, adjunta los archivos pertinentes y trabaja con el agente desde el Chat estructurado o desde su interfaz de terminal nativa.
 
 Puedes abrir un worker en cualquier momento para continuar la conversación, conectarte a su terminal, inspeccionar sus cambios, usar su navegador aislado, revisar su pull request o devolver feedback de CI y revisión al mismo agente. Así, cada tarea se entiende por sí sola y el trabajo en paralelo no termina mezclado en un único contexto compartido.
+
+<img src="../docs/assets/readme/new-task.png" alt="Creating a focused worker task in Agent Orchestrator" width="100%" />
 
 ## El orquestador planifica a escala de proyecto
 
@@ -47,6 +51,8 @@ El orquestador del proyecto es el agente permanente de planificación y coordina
 Usa el orquestador para explorar una idea antes de implementarla, desarrollar enfoques de producto y técnicos, sopesar ventajas, costes y compromisos, detectar trabajo de alto impacto y convertir un objetivo ambiguo en un plan concreto. Su conversación, ligada al proyecto, conserva objetivos, decisiones, restricciones y razonamientos anteriores. Combina ese historial de planificación con el contexto del repositorio y el estado actual de AO, incluidos los workers activos, sus responsables, los pull requests, la CI y las revisiones. De este modo, la planificación se mantiene anclada tanto en el proyecto como en el trabajo que ya está en marcha.
 
 Cuando un plan está listo para ejecutarse, el orquestador puede dividirlo en tareas bien definidas, iniciar o redirigir workers, entregar a cada uno el contexto pertinente, seguir su progreso y coordinar el trabajo posterior. El orquestador se ocupa de la planificación y la delegación. Los workers se ocupan de la implementación, las pruebas, los commits y los pull requests.
+
+<img src="../docs/assets/readme/orchestrator.png" alt="Agent Orchestrator coordinating multiple workers with project context" width="100%" />
 
 ## El Kanban hace que el sistema sea comprensible
 
@@ -58,6 +64,8 @@ Cada worker aparece en el mismo tablero en vivo, tanto si lo iniciaste desde **N
 - **Ready to merge:** trabajo aprobado o listo para integrar; las sesiones ya integradas siguen visibles hasta que se archivan
 
 Cada tarjeta reúne la tarea, el agente, la rama, la actividad, el pull request y el estado. Ábrela para inspeccionar la conversación o el terminal, los archivos modificados, el resumen del PR, las revisiones y la vista previa. El tablero muestra qué avanza, qué está bloqueado y dónde tendrá más impacto tu atención.
+
+<img src="../docs/assets/readme/hero.png" alt="Agent Orchestrator Kanban showing workers grouped by live status" width="100%" />
 
 ## Un solo flujo de trabajo, de la idea a la integración
 
@@ -74,24 +82,6 @@ AO funciona con los agentes de programación y el flujo de control de versiones 
 <table>
   <tr>
     <td width="36%" valign="middle">
-      <h3>Kanban centrado en tu atención</h3>
-      <p>Consulta el trabajo agrupado por ejecución en vivo y estado del pull request: Working, Needs you, In review y Ready to merge.</p>
-    </td>
-    <td width="64%">
-      <img src="../docs/assets/readme/hero.png" alt="Kanban de Agent Orchestrator que agrupa sesiones de workers en Working, Needs you, In review y Ready to merge" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
-      <h3>Workers aislados con cualquier agente</h3>
-      <p>Asigna a cada worker respaldado por Git su propia rama y worktree, elige el agente adecuado para la tarea y usa el Chat estructurado o su interfaz de terminal nativa.</p>
-    </td>
-    <td width="64%">
-      <img src="../docs/assets/readme/tui.png" alt="Interfaz de terminal nativa de un agente de programación supervisada dentro de Agent Orchestrator" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="36%" valign="middle">
       <h3>Pull requests y revisiones con agentes</h3>
       <p>Mantén junto al worker la CI, la capacidad de integración, el estado de los revisores y las revisiones interactivas con agentes. Después, devuelve los cambios solicitados al mismo responsable.</p>
     </td>
@@ -106,6 +96,15 @@ AO funciona con los agentes de programación y el flujo de control de versiones 
     </td>
     <td width="64%">
       <img src="../docs/assets/readme/browser.png" alt="Un worker controla su vista previa aislada en el navegador integrado" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td width="36%" valign="middle">
+      <h3>Interfaces nativas, un solo supervisor</h3>
+      <p>Usa Chat estructurado o la interfaz de terminal nativa del agente mientras AO mantiene el contexto, el estado del workspace y el feedback en un solo lugar.</p>
+    </td>
+    <td width="64%">
+      <img src="../docs/assets/readme/tui.png" alt="Agent terminal interface supervised inside Agent Orchestrator" width="100%" />
     </td>
   </tr>
 </table>

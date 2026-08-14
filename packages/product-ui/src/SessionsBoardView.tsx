@@ -29,9 +29,16 @@ export type BoardSessionPresentation = {
 	id: string;
 	provider: string;
 	status: SessionStatus;
+	statusPresentation?: BoardSessionStatusPresentation;
 	title: string;
 	trackerIssueId?: string;
 	updatedAt: string;
+};
+
+export type BoardSessionStatusPresentation = {
+	className: string;
+	indicatorClassName: string;
+	label: string;
 };
 
 export type BoardPullRequestState = "closed" | "open" | "draft" | "merged";
@@ -422,6 +429,7 @@ export function SessionCardView({
 	const badge = getSessionStatusView(session.status, translate);
 	const activity = getAgentActivityView(session.activity, translate);
 	const showLiveActivity = session.status === "working" && activity.state === "active";
+	const statusPresentation = session.statusPresentation;
 	const branch = session.branch ?? "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
 
@@ -470,19 +478,23 @@ export function SessionCardView({
 			</div>
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
-				<div className="flex items-center justify-between gap-2">
+				<div className="flex items-center gap-2">
 					<span
-						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
-						style={showLiveActivity ? { color: activity.tone } : undefined}
+						className={cn(
+							"inline-flex min-w-0 flex-1 items-center gap-1.5 text-2xs font-medium",
+							statusPresentation?.className ?? badge.className,
+						)}
+						style={!statusPresentation && showLiveActivity ? { color: activity.tone } : undefined}
 					>
 						<span
 							aria-hidden="true"
 							className={cn(
 								"size-dot-sm shrink-0 rounded-full",
-								showLiveActivity ? activity.indicatorClassName : "bg-current",
+								statusPresentation?.indicatorClassName ??
+									(showLiveActivity ? activity.indicatorClassName : "bg-current"),
 							)}
 						/>
-						{badge.label}
+						<span className="min-w-0 truncate">{statusPresentation?.label ?? badge.label}</span>
 					</span>
 					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
 						{usage ? renderUsage(usage) : null}
@@ -603,6 +615,15 @@ function lifecycleClassName(state: BoardPullRequestState): string {
 }
 
 /**
+ * Collapsed archive toggle height. The overlay bar and the board's bottom
+ * padding must stay in lockstep so the archive neither overlaps lanes nor
+ * leaves a gap.
+ */
+export const ARCHIVE_TOGGLE_HEIGHT_PX = 58;
+export const archiveToggleHeightClassName = "h-[58px]";
+export const archiveToggleOffsetClassName = "pb-[58px]";
+
+/**
  * Archive lives in its own memo'd component so expand/collapse state does not
  * re-render the kanban columns. Card mount is deferred via startTransition on
  * first open; after that the sheet stays mounted and open/close only tweens
@@ -654,13 +675,15 @@ export const SessionsArchiveView = memo(function SessionsArchiveView<
 
 	return (
 		<div className="absolute inset-x-0 bottom-0 z-20 border-t border-border-strong bg-background px-3">
-			{/* Full-row hit target: the 58px control stretches edge-to-edge so
-			    empty space beside the label toggles archive too. */}
+			{/* Full-row hit target: the control stretches edge-to-edge so empty
+			    space beside the label toggles archive too. Height must match
+			    archiveToggleOffsetClassName on the board. */}
 			<button
 				aria-expanded={expanded}
 				aria-label={labels.archiveAria}
 				className={cn(
-					"group flex h-[58px] w-full min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground",
+					"group flex w-full min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground",
+					archiveToggleHeightClassName,
 					expanded ? "min-h-11" : "min-h-row-md",
 				)}
 				onClick={() => setExpanded((open) => !open)}

@@ -397,7 +397,7 @@ function CreateProjectFolderDialog({
 }) {
 	const { t } = useTranslation();
 	const isWorkspace = kind === "workspace";
-	const failedRepos = scan?.repos.filter((repo) => repo.status === "error" || !repo.hasRemote) ?? [];
+	const failedRepos = scan?.repos.filter((repo) => (repo.status === "error" || !repo.hasRemote) && !repo.needsGitInit) ?? [];
 	const hasScan = scan !== null;
 	const footerMessage =
 		failedRepos.length > 0
@@ -475,9 +475,9 @@ function CreateProjectFolderDialog({
 									</div>
 								)}
 
-								{scan.repos
-									.filter((repo) => repo.status !== "error" && repo.hasRemote)
-									.map((repo) => (
+							{scan.repos
+								.filter((repo) => (repo.status !== "error" && repo.hasRemote) || repo.needsGitInit)
+								.map((repo) => (
 										<div
 											key={repo.path}
 											className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)]"
@@ -550,7 +550,11 @@ function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: Impor
 				</div>
 			</div>
 			<div className="hidden max-w-[260px] shrink-0 truncate text-right font-mono text-[12px] text-[var(--color-text-import-muted)] sm:block">
-				{failed ? (repo.reason ?? t("createProject.repoCannotImport")) : `${repo.branch} ${remoteDisplay(repo.remote)}`}
+				{repo.needsGitInit
+					? "Needs git init"
+					: failed
+						? (repo.reason ?? t("createProject.repoCannotImport"))
+						: `${repo.branch} ${remoteDisplay(repo.remote)}`}
 			</div>
 		</div>
 	);

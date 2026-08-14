@@ -17,6 +17,10 @@ import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
 import { formatTokenCount } from "../lib/format-token-count";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import {
+	agentSwitchStatusVisual,
+	deriveSessionAgentSwitchPresentation,
+} from "../lib/agent-switch-presentation";
 import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId } from "../types/workspace";
 import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
@@ -31,13 +35,26 @@ import { ProductExternalLink } from "./ProductExternalLink";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
-export function toBoardSessionPresentation(session: WorkspaceSession): BoardSessionPresentation {
+export function toBoardSessionPresentation(
+	session: WorkspaceSession,
+	t?: TFunction,
+): BoardSessionPresentation {
+	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
+	const switchVisual = switchPresentation ? agentSwitchStatusVisual(switchPresentation) : undefined;
 	return {
 		activity: session.activity,
 		branch: session.branch,
 		id: session.id,
 		provider: session.provider,
 		status: session.status,
+		statusPresentation:
+			t && switchPresentation && switchVisual
+				? {
+						className: switchVisual.className,
+						indicatorClassName: `${switchVisual.indicatorClassName}${switchVisual.breathe ? " animate-status-pulse" : ""}`,
+						label: t(switchPresentation.compactLabelKey, switchPresentation.values),
+					}
+				: undefined,
 		title: session.title,
 		trackerIssueId: canonicalTrackerIssueId(session.issueId),
 		updatedAt: session.updatedAt,
@@ -225,7 +242,7 @@ function DesktopSessionCard({
 			}))}
 			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
 			renderUsage={(presentation) => <DesktopUsageMetric usage={presentation} />}
-			session={toBoardSessionPresentation(session)}
+			session={toBoardSessionPresentation(session, t)}
 			translate={translate}
 			usage={usagePresentation}
 		/>

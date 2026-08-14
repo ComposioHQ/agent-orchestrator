@@ -2,8 +2,12 @@ import { memo, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { SessionsArchiveView, SessionsBoardGridView } from "@aoagents/product-ui";
-import { AlertTriangle, Plus, RotateCw } from "lucide-react";
+import {
+	SessionsArchiveView,
+	SessionsBoardGridView,
+	archiveToggleOffsetClassName,
+} from "@aoagents/product-ui";
+import { AlertTriangle, LayoutDashboard, Plus, RotateCw } from "lucide-react";
 import {
 	type WorkspaceSession,
 	hasConfiguredOrchestratorAgent,
@@ -33,16 +37,17 @@ import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrat
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
-import { cn } from "../lib/utils";
 import {
 	ArchivedSessionCardAdapter,
 	BoardSessionCardAdapter,
 	sessionsBoardLabels,
 } from "./SessionsBoardAdapters";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -77,8 +82,8 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((workspace) => workspace.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
-	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
-	const boardLabel = workspace?.name ?? (projectId ? "" : t("shell.board"));
+	// Board chrome stays route-oriented; project context remains in the sidebar.
+	const boardLabel = t("shell.board");
 	const sessions = workspaces.flatMap((workspace) => workerSessions(workspace.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
@@ -208,36 +213,61 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{t("newTask.createAsTui")}
 				</TopbarButton>
 			) : null}
-			<TopbarButton
-				aria-label={t("shell.newTask")}
-				disabled={isProjectRestarting}
-				onClick={() => projectId && requestNewTask(projectId)}
-				variant="accent"
-			>
-				<Plus className="size-icon-md" aria-hidden="true" />
-				{t("shell.newTask")}
-			</TopbarButton>
-			<TopbarButton
-				aria-label={
-					orchestratorActivityLabel
-						? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
-						: t("shell.spawnOrchestrator")
-				}
-				disabled={isSpawning || isProjectRestarting}
-				onClick={() => void openOrchestrator()}
-				variant="primary"
-			>
-				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
-				{isProjectRestarting
-					? t("shell.restartingDots")
-					: isSpawning
-						? t("shell.spawningDots")
-						: orchestrator
-							? t("shell.orchestrator")
-							: t("shell.spawnOrchestrator")}
-			</TopbarButton>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<TopbarButton
+							aria-label={t("shell.newTask")}
+							className="topbar-control--labeled"
+							data-priority="primary"
+							disabled={isProjectRestarting}
+							onClick={() => projectId && requestNewTask(projectId)}
+							variant="accent"
+						>
+							<Plus className="size-icon-md" aria-hidden="true" />
+							<span data-compact-label>{t("newTask.task")}</span>
+						</TopbarButton>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
+			</Tooltip>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<TopbarButton
+							aria-label={
+								orchestratorActivityLabel
+									? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+									: t("shell.spawnOrchestrator")
+							}
+							className="topbar-control--labeled"
+							data-priority="secondary"
+							disabled={isSpawning || isProjectRestarting}
+							onClick={() => void openOrchestrator()}
+							variant="primary"
+						>
+							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+							<span data-compact-label>{t("shell.orchestrator")}</span>
+							{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
+						</TopbarButton>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">
+					{isProjectRestarting
+						? t("shell.restarting")
+						: isSpawning
+							? t("shell.spawning")
+							: orchestrator
+								? t("shell.openOrchestrator")
+								: t("shell.spawnOrchestrator")}
+				</TooltipContent>
+			</Tooltip>
+			{boardOwnsNotificationCenter ? (
+				<>
+					<span aria-hidden="true" className="workspace-topbar__utility-separator" />
+					<NotificationCenter />
+				</>
+			) : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />
@@ -252,13 +282,21 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
+					className="workspace-topbar-container center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
 					style={dragStyle}
 				>
-					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
+					{boardLabel ? (
+						<span
+							className={cn(topbarProjectLabelClass, "inline-flex items-center gap-1.5")}
+							data-testid="board-topbar-label"
+						>
+							<LayoutDashboard aria-hidden="true" className="size-icon-md" />
+							{boardLabel}
+						</span>
+					) : null}
 					<div className="min-w-0 flex-1" />
 					{actions ? (
-						<div className="flex shrink-0 items-center gap-2" style={noDragStyle}>
+						<div className="workspace-topbar-actions flex shrink-0 items-center" style={noDragStyle}>
 							{actions}
 						</div>
 					) : null}
@@ -267,7 +305,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 			{/* Reserve only the collapsed archive bar. Expanded archive overlays the
 			    board so lane height (and Needs You scrollbars) stay stable. */}
-			<div className={cn("min-h-0 flex-1 overflow-hidden", hasArchive && "pb-[58px]")}>
+			<div className={cn("min-h-0 flex-1 overflow-hidden", hasArchive && archiveToggleOffsetClassName)}>
 				{projectId && health.state !== "ok" ? (
 					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
