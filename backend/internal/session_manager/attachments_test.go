@@ -13,7 +13,7 @@ import (
 
 func TestWriteSpawnAttachments(t *testing.T) {
 	dir := t.TempDir()
-	m := New(Deps{})
+	m := New(Deps{DataDir: t.TempDir()})
 	refs, err := m.writeSpawnAttachments(context.Background(), "ao-1", dir, []ports.SpawnAttachment{
 		{Ext: ".html", Data: []byte("first")},
 		{Ext: ".png", Data: []byte("second")},

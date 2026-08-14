@@ -76,7 +76,7 @@ func (m *Manager) StageAttachments(
 	}
 
 	// Keep the directory out of git status. Best-effort for the same reason spawn
-	// treats it that way: the images are already written and usable, and a session
+	// treats it that way: the files are already written and usable, and a session
 	// the user cannot attach to is worse than a worktree that reads as dirty.
 	if err := m.workspace.AddExclude(ctx, workspaceInfo(rec), "/"+attachmentsDir+"/"); err != nil {
 		m.logger.Warn("stage attachments: exclude attachments dir", "sessionID", id, "error", err)
@@ -84,8 +84,7 @@ func (m *Manager) StageAttachments(
 	return refs, nil
 }
 
-// randomSuffix is a short collision-resistant name part. Short because it ends up
-// in a path the user reads in their own message text.
+// randomSuffix is a collision-resistant name part used in user-visible paths.
 func randomSuffix() (string, error) {
 	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {

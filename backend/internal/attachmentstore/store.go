@@ -31,22 +31,17 @@ const (
 
 var (
 	// ErrExists reports that the generated name is already owned by history.
-	ErrExists = errors.New("attachment already exists")
-	// ErrEmpty reports an attachment with no bytes.
-	ErrEmpty = errors.New("attachment is empty")
-	// ErrTooLarge reports an attachment above MaxFileBytes.
-	ErrTooLarge = errors.New("attachment is too large")
+	ErrExists   = errors.New("attachment already exists")
+	errEmpty    = errors.New("attachment is empty")
+	errTooLarge = errors.New("attachment is too large")
 )
 
 // Store persists canonical attachment bytes beneath an AO data directory.
-// An empty data directory disables canonical persistence for narrow unit tests
-// while retaining worktree projection behavior.
 type Store struct {
 	dataDir string
 }
 
-// New returns a store rooted at dataDir. An empty dataDir keeps only the
-// worktree projection behavior used by narrow embedders and tests.
+// New returns a store rooted at dataDir.
 func New(dataDir string) *Store {
 	if strings.TrimSpace(dataDir) == "" {
 		dataDir = ""
@@ -68,31 +63,28 @@ func (s *Store) Put(ctx context.Context, id domain.SessionID, workspacePath, nam
 		return err
 	}
 	if len(data) == 0 {
-		return ErrEmpty
+		return errEmpty
 	}
 	if len(data) > MaxFileBytes {
-		return ErrTooLarge
+		return errTooLarge
 	}
 	if strings.TrimSpace(workspacePath) == "" {
 		return errors.New("attachment workspace path is empty")
 	}
-	var canonicalRoot *os.Root
-	if s.dataDir != "" {
-		sessionRoot, err := s.openCanonicalSession(id, true)
-		if err != nil {
-			return fmt.Errorf("open canonical attachment directory: %w", err)
-		}
-		defer func() { _ = sessionRoot.Close() }()
-		if err := writeFileAtomicRoot(ctx, sessionRoot, ".", name, data); err != nil {
-			return fmt.Errorf("write canonical attachment: %w", err)
-		}
-		canonicalRoot = sessionRoot
+	if s.dataDir == "" {
+		return errors.New("attachment data directory is empty")
 	}
-	if err := writeFileAtomicUnder(ctx, workspacePath, filepath.FromSlash(WorkspaceDir), name, data); err != nil {
-		if canonicalRoot != nil {
-			if removeErr := canonicalRoot.Remove(name); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
-				return errors.Join(fmt.Errorf("write workspace attachment: %w", err), fmt.Errorf("rollback canonical attachment: %w", removeErr))
-			}
+	sessionRoot, err := s.openCanonicalSession(ctx, id, true)
+	if err != nil {
+		return fmt.Errorf("open canonical attachment directory: %w", err)
+	}
+	defer func() { _ = sessionRoot.Close() }()
+	if err := writeReaderAtomicRoot(ctx, sessionRoot, ".", name, bytes.NewReader(data), false); err != nil {
+		return fmt.Errorf("write canonical attachment: %w", err)
+	}
+	if err := writeReaderAtomicUnder(ctx, workspacePath, filepath.FromSlash(WorkspaceDir), name, bytes.NewReader(data), false); err != nil {
+		if removeErr := sessionRoot.Remove(name); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+			return errors.Join(fmt.Errorf("write workspace attachment: %w", err), fmt.Errorf("rollback canonical attachment: %w", removeErr))
 		}
 		return fmt.Errorf("write workspace attachment: %w", err)
 	}
@@ -105,9 +97,6 @@ func (s *Store) Put(ctx context.Context, id domain.SessionID, workspacePath, nam
 func (s *Store) ImportWorkspace(ctx context.Context, id domain.SessionID, workspacePath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if s.dataDir == "" {
-		return nil
 	}
 	if err := validateSessionID(id); err != nil {
 		return err
@@ -125,7 +114,7 @@ func (s *Store) ImportWorkspace(ctx context.Context, id domain.SessionID, worksp
 		return fmt.Errorf("open workspace root: %w", err)
 	}
 	defer func() { _ = workspaceRoot.Close() }()
-	aoRoot, err := openChildDir(workspaceRoot, ".ao", false, 0)
+	aoRoot, err := openChildDir(ctx, workspaceRoot, ".ao", false, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -133,7 +122,7 @@ func (s *Store) ImportWorkspace(ctx context.Context, id domain.SessionID, worksp
 		return fmt.Errorf("open workspace AO directory: %w", err)
 	}
 	defer func() { _ = aoRoot.Close() }()
-	sourceRoot, err := openChildDir(aoRoot, "attachments", false, 0)
+	sourceRoot, err := openChildDir(ctx, aoRoot, "attachments", false, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
@@ -145,33 +134,37 @@ func (s *Store) ImportWorkspace(ctx context.Context, id domain.SessionID, worksp
 	if err != nil {
 		return fmt.Errorf("list workspace attachments: %w", err)
 	}
-	sessionRoot, err := s.openCanonicalSession(id, true)
-	if err != nil {
-		return fmt.Errorf("open canonical attachment root: %w", err)
-	}
-	defer func() { _ = sessionRoot.Close() }()
+	var sessionRoot *os.Root
+	defer func() {
+		if sessionRoot != nil {
+			_ = sessionRoot.Close()
+		}
+	}()
 
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if temporaryName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 || validateName(entry.Name()) != nil {
+		if entry.Type()&os.ModeSymlink != 0 || validateName(entry.Name()) != nil {
 			continue
 		}
-		file, info, openErr := openRegularFile(ctx, sourceRoot, entry.Name())
+		file, _, openErr := openRegularFile(ctx, sourceRoot, entry.Name())
 		if errors.Is(openErr, fs.ErrNotExist) {
 			continue
 		}
 		if openErr != nil {
 			return fmt.Errorf("open workspace attachment %q: %w", entry.Name(), openErr)
 		}
-		if info.Size() == 0 || info.Size() > MaxFileBytes {
-			_ = file.Close()
-			continue
+		if sessionRoot == nil {
+			sessionRoot, err = s.openCanonicalSession(ctx, id, true)
+			if err != nil {
+				_ = file.Close()
+				return fmt.Errorf("open canonical attachment root: %w", err)
+			}
 		}
 		copyErr := writeReaderAtomicRoot(ctx, sessionRoot, ".", entry.Name(), file, false)
 		closeErr := file.Close()
-		if errors.Is(copyErr, ErrExists) || errors.Is(copyErr, ErrEmpty) || errors.Is(copyErr, ErrTooLarge) {
+		if errors.Is(copyErr, ErrExists) || errors.Is(copyErr, errEmpty) || errors.Is(copyErr, errTooLarge) {
 			continue
 		}
 		if copyErr != nil {
@@ -201,7 +194,7 @@ func (s *Store) MaterializeWorkspace(ctx context.Context, id domain.SessionID, w
 	if err := validateSessionID(id); err != nil {
 		return false, err
 	}
-	sessionRoot, err := s.openCanonicalSession(id, false)
+	sessionRoot, err := s.openCanonicalSession(ctx, id, false)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
@@ -219,17 +212,13 @@ func (s *Store) MaterializeWorkspace(ctx context.Context, id domain.SessionID, w
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		if temporaryName(entry.Name()) || entry.Type()&os.ModeSymlink != 0 || validateName(entry.Name()) != nil {
-			continue
-		}
-		entryInfo, infoErr := entry.Info()
-		if infoErr != nil {
-			return false, fmt.Errorf("inspect canonical attachment %q: %w", entry.Name(), infoErr)
-		}
-		if !entryInfo.Mode().IsRegular() {
+		if entry.Type()&os.ModeSymlink != 0 || validateName(entry.Name()) != nil {
 			continue
 		}
 		file, _, openErr := openRegularFile(ctx, sessionRoot, entry.Name())
+		if errors.Is(openErr, fs.ErrNotExist) {
+			continue
+		}
 		if openErr != nil {
 			return false, fmt.Errorf("open canonical attachment %q: %w", entry.Name(), openErr)
 		}
@@ -260,7 +249,7 @@ func (s *Store) Open(ctx context.Context, id domain.SessionID, name string) (*os
 	if err := validateName(name); err != nil {
 		return nil, nil, fs.ErrNotExist
 	}
-	sessionRoot, err := s.openCanonicalSession(id, false)
+	sessionRoot, err := s.openCanonicalSession(ctx, id, false)
 	if err != nil {
 		return nil, nil, fs.ErrNotExist
 	}
@@ -280,7 +269,7 @@ func (s *Store) RemoveSession(ctx context.Context, id domain.SessionID) error {
 	if err := validateSessionID(id); err != nil {
 		return err
 	}
-	root, err := s.openCanonicalRoot(false)
+	root, err := s.openCanonicalRoot(ctx, false)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -319,7 +308,10 @@ func NameFromWorkspacePath(raw string) (string, bool) {
 	return parts[2], true
 }
 
-func (s *Store) openCanonicalRoot(create bool) (*os.Root, error) {
+func (s *Store) openCanonicalRoot(ctx context.Context, create bool) (*os.Root, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if s.dataDir == "" {
 		return nil, fs.ErrNotExist
 	}
@@ -340,22 +332,25 @@ func (s *Store) openCanonicalRoot(create bool) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, err := openChildDir(dataRoot, durableDir, create, 0o700)
+	root, err := openChildDir(ctx, dataRoot, durableDir, create, 0o700)
 	_ = dataRoot.Close()
 	return root, err
 }
 
-func (s *Store) openCanonicalSession(id domain.SessionID, create bool) (*os.Root, error) {
-	root, err := s.openCanonicalRoot(create)
+func (s *Store) openCanonicalSession(ctx context.Context, id domain.SessionID, create bool) (*os.Root, error) {
+	root, err := s.openCanonicalRoot(ctx, create)
 	if err != nil {
 		return nil, err
 	}
-	sessionRoot, err := openChildDir(root, string(id), create, 0o700)
+	sessionRoot, err := openChildDir(ctx, root, string(id), create, 0o700)
 	_ = root.Close()
 	return sessionRoot, err
 }
 
-func openChildDir(parent *os.Root, name string, create bool, perm fs.FileMode) (*os.Root, error) {
+func openChildDir(ctx context.Context, parent *os.Root, name string, create bool, perm fs.FileMode) (*os.Root, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	info, err := parent.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) && create {
 		if err := parent.Mkdir(name, perm); err != nil && !errors.Is(err, fs.ErrExist) {
@@ -430,14 +425,6 @@ func validNamePart(part string, allowDot bool) bool {
 	return true
 }
 
-func temporaryName(name string) bool {
-	return strings.HasPrefix(name, ".attachment-")
-}
-
-func writeFileAtomicUnder(ctx context.Context, rootPath, dir, name string, data []byte) error {
-	return writeReaderAtomicUnder(ctx, rootPath, dir, name, bytes.NewReader(data), false)
-}
-
 func writeReaderAtomicUnder(ctx context.Context, rootPath, dir, name string, source io.Reader, replace bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -448,10 +435,6 @@ func writeReaderAtomicUnder(ctx context.Context, rootPath, dir, name string, sou
 	}
 	defer func() { _ = root.Close() }()
 	return writeReaderAtomicRoot(ctx, root, dir, name, source, replace)
-}
-
-func writeFileAtomicRoot(ctx context.Context, root *os.Root, dir, name string, data []byte) error {
-	return writeReaderAtomicRoot(ctx, root, dir, name, bytes.NewReader(data), false)
 }
 
 func writeReaderAtomicRoot(ctx context.Context, root *os.Root, dir, name string, source io.Reader, replace bool) error {
@@ -480,10 +463,10 @@ func writeReaderAtomicRoot(ctx context.Context, root *os.Root, dir, name string,
 		return err
 	}
 	if written == 0 {
-		return ErrEmpty
+		return errEmpty
 	}
 	if written > MaxFileBytes {
-		return ErrTooLarge
+		return errTooLarge
 	}
 	if err := tmp.Sync(); err != nil {
 		return err
@@ -499,9 +482,9 @@ func writeReaderAtomicRoot(ctx context.Context, root *os.Root, dir, name string,
 			}
 			return err
 		}
-		if err := root.Remove(tmpName); err != nil {
-			return err
-		}
+		// Linking atomically commits the no-replace target. Temporary-link
+		// cleanup is not part of that commit and the deferred removal retries it.
+		_ = root.Remove(tmpName)
 		return nil
 	}
 	if err := root.Rename(tmpName, target); err != nil {

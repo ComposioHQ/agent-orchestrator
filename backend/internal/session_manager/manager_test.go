@@ -936,7 +936,7 @@ func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 	}
 	msg := &fakeMessenger{}
 	ws := &fakeWorkspace{}
-	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws, DataDir: t.TempDir()})
 
 	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
 	if err := m.Send(ctx, "mer-1", "Make the button blue.", attachment); err != nil {

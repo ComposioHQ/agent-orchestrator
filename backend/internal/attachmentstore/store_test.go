@@ -74,6 +74,17 @@ func TestStorePutWritesCanonicalAndWorkspaceCopies(t *testing.T) {
 	}
 }
 
+func TestStorePutRequiresCanonicalDataDirectory(t *testing.T) {
+	workspace := t.TempDir()
+	name := "attachment-no-store.bin"
+	if err := New("").Put(context.Background(), "ao-1", workspace, name, []byte("bytes")); err == nil {
+		t.Fatal("Put succeeded without a canonical data directory")
+	}
+	if _, err := os.Stat(filepath.Join(workspace, filepath.FromSlash(WorkspaceDir), name)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Put without durable storage created a workspace-only attachment: %v", err)
+	}
+}
+
 func TestStorePutRejectsSymlinkedWorkspaceAttachmentDir(t *testing.T) {
 	dataDir := t.TempDir()
 	workspace := t.TempDir()
@@ -416,6 +427,23 @@ func TestStoreImportWorkspaceTreatsMissingWorktreeAsNothingToImport(t *testing.T
 	missing := filepath.Join(t.TempDir(), "already-removed")
 	if err := New(t.TempDir()).ImportWorkspace(context.Background(), "ao-1", missing); err != nil {
 		t.Fatalf("ImportWorkspace missing worktree: %v", err)
+	}
+}
+
+func TestStoreImportWorkspaceRequiresCanonicalStorageForLegacyBytes(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, filepath.FromSlash(WorkspaceDir), "attachment-legacy.bin")
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("only copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := New("").ImportWorkspace(context.Background(), "ao-1", workspace); err == nil {
+		t.Fatal("ImportWorkspace reported legacy bytes preserved without canonical storage")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "only copy" {
+		t.Fatalf("failed import changed the legacy attachment = %q, %v", got, err)
 	}
 }
 
