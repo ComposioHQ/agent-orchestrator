@@ -104,7 +104,7 @@ export function HumanMessageEditor({
 				disabled={sendDisabled}
 				aria-label={t("chat.edit.send")}
 				title={busyMessage ?? t("chat.edit.sendShortcut")}
-				className="size-7 rounded-full"
+				className="size-7 rounded-full border-transparent bg-raised text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
 			>
 				{pending ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <ArrowUp aria-hidden="true" className="size-3.5" />}
 			</Button>

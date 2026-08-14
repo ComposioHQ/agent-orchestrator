@@ -595,7 +595,7 @@ export function ChatComposer({
 						// the fact is not decoration, so it moves onto the control it
 						// describes rather than being dropped.
 						title={sendHint}
-						className="size-8 rounded-full border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
+						className="size-8 rounded-full border-transparent bg-raised text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:ring-ring/40"
 					>
 						{steerPending ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />

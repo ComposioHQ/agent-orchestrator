@@ -393,7 +393,11 @@ function Picker({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild disabled={disabled}>
-				<SettingsMenuTrigger aria-label={title} title={title} className="h-8 px-2.5">
+				<SettingsMenuTrigger
+					aria-label={title}
+					title={title}
+					className="h-8 gap-1 bg-transparent px-1.5 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=open]:bg-transparent data-[state=open]:text-foreground"
+				>
 					<span className="min-w-0 max-w-[16ch] truncate">{label}</span>
 					{badge}
 				</SettingsMenuTrigger>

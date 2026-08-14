@@ -78,14 +78,14 @@ describe("send keys", () => {
 		);
 	});
 
-	it("uses the AO logo palette for the send control", async () => {
+	it("uses a muted circular send control", async () => {
 		const { field } = renderComposer();
 		const send = screen.getByRole("button", { name: "Send message" });
-		expect(send).toHaveClass("bg-logo-accent", "text-logo-accent-foreground");
+		expect(send).toHaveClass("rounded-full", "bg-raised", "text-muted-foreground");
 
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
-		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
+		expect(send).toHaveClass("hover:bg-interactive-hover", "hover:text-foreground");
 	});
 
 	it("sends on Enter", async () => {
