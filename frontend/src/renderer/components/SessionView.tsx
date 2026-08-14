@@ -387,6 +387,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
+	const chatToTerminal = session?.mode === "chat" && interfaceTarget === "tui";
 	const interfaceBusy = Boolean(
 		session &&
 		(session.status === "working" ||
@@ -408,19 +409,28 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				setInterfaceSwitchDialogOpen(false);
 			} catch {
 				// The mutation owns the typed error. A policy dialog that was already
-				// open stays open; a direct idle switch must not open one on failure.
+				// open stays open; a direct switch must not open one on failure.
 			}
 		},
 		[interfaceSwitch, interfaceTarget],
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
+		// Terminal UI is the escape hatch for a runaway Chat turn. The session
+		// projection can briefly report idle while the Chat controller is busy, so
+		// this direction must always apply the explicit interrupt policy instead
+		// of relying on interfaceBusy. TUI -> Chat keeps the choice dialog because
+		// leaving a live terminal is not itself a recovery action.
+		if (chatToTerminal) {
+			void beginInterfaceSwitch("interrupt");
+			return;
+		}
 		if (!interfaceBusy) {
 			void beginInterfaceSwitch("drain");
 			return;
 		}
 		setInterfaceSwitchDialogOpen(true);
-	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+	}, [beginInterfaceSwitch, chatToTerminal, interfaceBusy, interfaceSwitch]);
 	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
 	// the button entirely rather than showing a permanently disabled control.
 	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";

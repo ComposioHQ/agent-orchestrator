@@ -659,8 +659,6 @@ describe("SessionView", () => {
 	it.each([
 		["Terminal UI worker", "sess-1", "tui", "chat", "Switch to chat UI"],
 		["Terminal UI orchestrator", "sess-orch", "tui", "chat", "Switch to chat UI"],
-		["Chat worker", "sess-1", "chat", "tui", "Switch to terminal UI"],
-		["Chat orchestrator", "sess-orch", "chat", "tui", "Switch to terminal UI"],
 	] as const)("switches an idle %s directly with drain", (_label, sessionId, mode, targetMode, buttonName) => {
 		interfaceTransitionState.status = { supported: true, targetMode };
 		const session = workerSession(sessionId);
@@ -674,6 +672,24 @@ describe("SessionView", () => {
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode, policy: "drain" });
+	});
+
+	it.each([
+		["worker", "sess-1"],
+		["orchestrator", "sess-orch"],
+	] as const)("uses interrupt for an idle Chat %s switching to Terminal UI", (_label, sessionId) => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession(sessionId);
+		session.mode = "chat";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId={sessionId} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
 	});
 
 	it("keeps the policy dialog closed when an idle direct switch fails", async () => {
@@ -692,11 +708,27 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
+	it("keeps the policy dialog closed when a busy Chat escape switch fails", async () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		session.status = "working";
+		session.activity = { state: "active", lastActivityAt: "2026-08-06T00:00:00Z" };
+		interfaceTransitionMock.start.mockRejectedValueOnce(new Error("switch failed"));
+
+		render(<SessionView sessionId="sess-1" />);
+
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+		});
+
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
+	});
+
 	it.each([
 		["working status", "sess-1", "tui", "chat", "Switch to chat UI", "working", "idle"],
 		["needs-input status", "sess-orch", "tui", "chat", "Switch to chat UI", "needs_input", "idle"],
-		["active activity", "sess-1", "chat", "tui", "Switch to terminal UI", "idle", "active"],
-		["waiting-input activity", "sess-orch", "chat", "tui", "Switch to terminal UI", "idle", "waiting_input"],
 		["blocked activity", "sess-1", "tui", "chat", "Switch to chat UI", "idle", "blocked"],
 	] as const)("opens the switch policy dialog for %s", (_label, sessionId, mode, targetMode, buttonName, status, activityState) => {
 		interfaceTransitionState.status = { supported: true, targetMode };
@@ -711,6 +743,27 @@ describe("SessionView", () => {
 
 		expect(screen.getByRole("dialog")).toBeInTheDocument();
 		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["working status", "sess-1", "working", "idle"],
+		["needs-input status", "sess-orch", "needs_input", "idle"],
+		["active activity", "sess-1", "idle", "active"],
+		["waiting-input activity", "sess-orch", "idle", "waiting_input"],
+		["blocked activity", "sess-1", "idle", "blocked"],
+	] as const)("interrupts a busy Chat session for %s and switches directly to Terminal UI", (_label, sessionId, status, activityState) => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession(sessionId);
+		session.mode = "chat";
+		session.status = status;
+		session.activity = { state: activityState, lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId={sessionId} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "tui", policy: "interrupt" });
 	});
 
 	it("checks only the selected session when deciding whether to show the policy dialog", () => {

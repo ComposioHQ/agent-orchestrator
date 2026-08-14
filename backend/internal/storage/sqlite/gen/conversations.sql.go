@@ -81,6 +81,7 @@ SET command_output = substr(command_output || ?1, 1, ?2),
 WHERE conversation_id = ?4
   AND provider_item_id = ?5
   AND status <> 'cancelled'
+  AND command_output_truncated = 0
 `
 
 type AppendConversationActivityOutputParams struct {
@@ -106,6 +107,9 @@ type AppendConversationActivityOutputParams struct {
 //
 // execrows so the caller can tell "appended" from "no such activity yet", which
 // is a real case: a delta can arrive before the item/started that creates the row.
+// Once truncation is recorded, later deltas are deliberate no-ops. Keeping the
+// revision stable prevents the activity CDC trigger from invalidating every live
+// conversation client for text the row can no longer retain.
 // NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 // offset, so a multi-byte character here silently corrupts later queries.
 func (q *Queries) AppendConversationActivityOutput(ctx context.Context, arg AppendConversationActivityOutputParams) (int64, error) {
@@ -134,6 +138,7 @@ SET streamed_text = substr(streamed_text || ?1, 1, ?2),
 WHERE conversation_id = ?4
   AND provider_item_id = ?5
   AND status <> 'cancelled'
+  AND streamed_text_truncated = 0
 `
 
 type AppendConversationActivityStreamedTextParams struct {
@@ -155,6 +160,8 @@ type AppendConversationActivityStreamedTextParams struct {
 // execrows so the caller can tell "appended" from "no such activity yet", which is
 // a real case: a reasoning delta can arrive before the item/started that creates
 // the row.
+// As with command output, a capped stream stays immutable so a provider that keeps
+// emitting cannot create a no-visible-change CDC storm.
 // NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 // offset, so a multi-byte character here silently corrupts later queries.
 func (q *Queries) AppendConversationActivityStreamedText(ctx context.Context, arg AppendConversationActivityStreamedTextParams) (int64, error) {
@@ -300,6 +307,26 @@ func (q *Queries) BindProjectConversationSession(ctx context.Context, arg BindPr
 	return err
 }
 
+const cancelAllQueuedConversationTurns = `-- name: CancelAllQueuedConversationTurns :exec
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE conversation_id = ? AND state = 'queued'
+`
+
+type CancelAllQueuedConversationTurnsParams struct {
+	CompletedAt    sql.NullTime
+	ConversationID string
+}
+
+// An interrupt interface handoff closes intake under the controller's dispatch
+// lock before this runs. There can be no later accepted row to preserve, so the
+// correct operation is independent of wall-clock ordering and cancels the whole
+// durable queue.
+func (q *Queries) CancelAllQueuedConversationTurns(ctx context.Context, arg CancelAllQueuedConversationTurnsParams) error {
+	_, err := q.db.ExecContext(ctx, cancelAllQueuedConversationTurns, arg.CompletedAt, arg.ConversationID)
+	return err
+}
+
 const cancelQueuedConversationTurns = `-- name: CancelQueuedConversationTurns :exec
 UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
@@ -354,6 +381,31 @@ func (q *Queries) CompleteQueuedConversationTurnPromotion(ctx context.Context, a
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const conversationActivityExistsForProviderItem = `-- name: ConversationActivityExistsForProviderItem :one
+SELECT EXISTS(
+    SELECT 1
+    FROM conversation_activities
+    WHERE conversation_id = ?1
+      AND provider_item_id = ?2
+      AND status <> 'cancelled'
+)
+`
+
+type ConversationActivityExistsForProviderItemParams struct {
+	ConversationID string
+	ProviderItemID string
+}
+
+// A capped delta is still associated with a real activity. Append callers use
+// this probe to distinguish that harmless no-op from the ordinary provider race
+// where output arrives before item/started creates the activity.
+func (q *Queries) ConversationActivityExistsForProviderItem(ctx context.Context, arg ConversationActivityExistsForProviderItemParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, conversationActivityExistsForProviderItem, arg.ConversationID, arg.ProviderItemID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const failOrphanedConversationActivities = `-- name: FailOrphanedConversationActivities :exec
