@@ -291,6 +291,61 @@ describe("steer message", () => {
 	});
 });
 
+describe("provider error", () => {
+	const envelope = JSON.stringify({
+		error: {
+			message: "Reconnecting... [1/5] ",
+			codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+			additionalDetails:
+				"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
+		},
+	});
+
+	it("unwraps a JSON envelope into a short headline and detail", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: envelope,
+					detail: { message: envelope },
+				})}
+			/>,
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent("Reconnecting... [1/5]");
+		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
+		// The raw envelope must not paint as the row label — that is what overflowed the column.
+		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
+	});
+
+	it("keeps plain-language errors readable without a JSON dump", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: "stream disconnected before completion: You have no credits remaining",
+				})}
+			/>,
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent(/no credits remaining/i);
+	});
+
+	it("stays inside the chat column instead of widening it", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: envelope,
+				})}
+			/>,
+		);
+		expect(screen.getByRole("alert").className).toMatch(/min-w-0/);
+		expect(screen.getByRole("alert").className).toMatch(/overflow-hidden/);
+	});
+});
+
 describe("command terminal input", () => {
 	it("shows what the agent typed apart from what the command printed", async () => {
 		render(

@@ -404,6 +404,7 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
 	if (activity.activityKind === "mcp_tool") return <McpToolRow activity={activity} />;
 	if (activity.activityKind === "auto_review") return <AutoReviewRow activity={activity} />;
 	if (activity.activityKind === "reasoning") return <ReasoningBlock activity={activity} />;
+	if (activity.activityKind === "error") return <ErrorActivityRow activity={activity} />;
 	if (activity.detail?.event === "model.rerouted") return <RerouteRow activity={activity} />;
 	if (activity.detail?.event === "auth.reauth_required") return <ReauthRow activity={activity} />;
 	return <GenericActivityRow activity={activity} />;
@@ -436,7 +437,12 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const open = override ?? streamingOutput;
 
 	return (
-		<div className={compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0"}>
+		<div
+			className={cn(
+				"min-w-0 max-w-full",
+				compactCommand ? "flex flex-col" : "group/activity border-t border-border first:border-t-0",
+			)}
+		>
 			<button
 				type="button"
 				onClick={() => setOverride(!open)}
@@ -445,7 +451,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				className={cn(
 					compactCommand
 						? ACTIVITY_SUMMARY_BUTTON_CLASS
-						: "flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
+						: "flex min-h-[35px] w-full min-w-0 items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
 					hasBody && !compactCommand && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
 				)}
@@ -462,13 +468,13 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				)}
 				<strong
 					className={cn(
-						"shrink-0",
 						compactCommand
-							? "text-[11.5px] font-normal text-muted-foreground"
-							: "font-medium",
+							? "shrink-0 text-[11.5px] font-normal text-muted-foreground"
+							: "min-w-0 truncate font-medium",
 						!compactCommand &&
 							(activity.status === "failed" ? "text-destructive" : "text-foreground"),
 					)}
+					title={compactCommand ? undefined : label}
 				>
 					{label}
 				</strong>
@@ -1242,6 +1248,75 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
 			</div>
 		</div>
 	);
+}
+
+/**
+ * A provider error item — reconnect storms, credit exhaustion, and similar.
+ *
+ * Codex (and peers) often put the whole JSON envelope in `message` / `summary`.
+ * Rendering that as a generic activity label made one long unbreakable line that
+ * widened the chat column under the sidebars, and five reconnect attempts painted
+ * five walls of red JSON. This row unwraps the human parts and always wraps inside
+ * the column.
+ */
+function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
+	const { headline, detail } = providerErrorCopy(activity);
+	return (
+		<div
+			role="alert"
+			className="flex min-w-0 max-w-full items-start gap-2.5 overflow-hidden rounded-md border border-destructive/40 bg-surface px-3 py-2"
+		>
+			<AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
+				<strong className="wrap-anywhere text-[11px] font-medium leading-snug text-destructive">
+					{headline}
+				</strong>
+				{detail ? (
+					<p className="wrap-anywhere text-[10.5px] leading-snug text-muted-foreground">{detail}</p>
+				) : null}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * Prefer the provider's short status line and `additionalDetails` over a raw JSON
+ * dump. Falls back to the stored text when it is already plain language.
+ */
+export function providerErrorCopy(activity: ConversationActivity): {
+	headline: string;
+	detail?: string;
+} {
+	const raw = String(activity.detail?.message ?? activity.summary ?? "").trim();
+	if (!raw) return { headline: "Provider error" };
+
+	const unwrapped = unwrapProviderErrorJson(raw);
+	if (unwrapped) return unwrapped;
+
+	return { headline: raw };
+}
+
+function unwrapProviderErrorJson(raw: string): { headline: string; detail?: string } | undefined {
+	if (!raw.startsWith("{")) return undefined;
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		if (!parsed || typeof parsed !== "object") return undefined;
+		const root = parsed as Record<string, unknown>;
+		const err =
+			root.error && typeof root.error === "object"
+				? (root.error as Record<string, unknown>)
+				: root;
+		const message = typeof err.message === "string" ? err.message.trim() : "";
+		const additional =
+			typeof err.additionalDetails === "string" ? err.additionalDetails.trim() : "";
+		if (!message && !additional) return undefined;
+		if (message && additional && additional !== message) {
+			return { headline: message, detail: additional };
+		}
+		return { headline: message || additional };
+	} catch {
+		return undefined;
+	}
 }
 
 /**
