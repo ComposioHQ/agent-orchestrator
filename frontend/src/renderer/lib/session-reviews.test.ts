@@ -2,13 +2,17 @@ import { describe, expect, it } from "vitest";
 import { appI18n } from "../i18n";
 import type { PullRequestFacts, WorkspaceSession } from "../types/workspace";
 import {
+	derivePRReviewPresentation,
+	deriveSessionReviewPresentations,
 	openReviewStatesFor,
 	reviewIsRunning,
 	reviewRunDisabled,
 	reviewSessionRunAction,
 	sessionReviewsQueryOptions,
 	type PRReviewState,
+	type ReviewRunFacts,
 } from "./session-reviews";
+import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 
 function session(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
 	return {
@@ -99,5 +103,209 @@ describe("shared review eligibility helpers", () => {
 		expect(reviewSessionRunAction([reviewState(1, "needs_review")], false)).toBe(
 			appI18n.t("inspector.review.run"),
 		);
+	});
+});
+
+const prSummary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
+	additions: 10,
+	author: "ada",
+	changedFiles: 2,
+	ci: { state: "passing", failingChecks: [], autoInjectCI: true },
+	deletions: 3,
+	headSha: "head-2",
+	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/o/r/pull/1" },
+	number: 1,
+	provider: "github",
+	repo: "o/r",
+	review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+	sourceBranch: "feature/reviews",
+	state: "open",
+	targetBranch: "main",
+	title: "Review state model",
+	updatedAt: "2026-06-10T00:00:00Z",
+	url: "https://github.com/o/r/pull/1",
+	...overrides,
+});
+
+const run = (overrides: Partial<ReviewRunFacts> = {}): ReviewRunFacts => ({
+	autoInjectReview: true,
+	batchId: "batch-1",
+	body: "review body",
+	createdAt: "2026-06-10T00:00:00Z",
+	githubReviewId: "review-1",
+	harness: "codex",
+	id: "run-1",
+	prUrl: "https://github.com/o/r/pull/1",
+	reviewId: "review-record-1",
+	sessionId: "session-1",
+	status: "delivered",
+	targetSha: "head-2",
+	triggerSource: "manual",
+	verdict: "approved",
+	...overrides,
+});
+
+describe("derivePRReviewPresentation", () => {
+	it.each([
+		{
+			name: "draft PR",
+			pr: prSummary({ state: "draft" }),
+			ao: reviewState(1, "ineligible"),
+			want: { progress: "ineligible", attention: "draft" },
+		},
+		{
+			name: "merged PR",
+			pr: prSummary({ state: "merged" }),
+			ao: reviewState(1, "ineligible"),
+			want: { progress: "ineligible", attention: "complete" },
+		},
+		{
+			name: "closed PR",
+			pr: prSummary({ state: "closed" }),
+			ao: reviewState(1, "ineligible"),
+			want: { progress: "ineligible", attention: "closed" },
+		},
+		{
+			name: "running AO review",
+			pr: prSummary(),
+			ao: { ...reviewState(1, "running"), latestRun: run({ status: "running", verdict: "" }) },
+			want: { progress: "running", attention: "review_running" },
+		},
+		{
+			name: "AO changes requested",
+			pr: prSummary(),
+			ao: { ...reviewState(1, "changes_requested"), latestRun: run({ verdict: "changes_requested" }) },
+			want: { progress: "changes_requested", attention: "changes_requested" },
+		},
+		{
+			name: "external unresolved comments",
+			pr: prSummary({
+				review: {
+					decision: "approved",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [{ reviewerId: "lin", count: 1, links: [{ file: "src/a.ts", line: 9, autoInjectReview: true }] }],
+				},
+			}),
+			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
+			want: { progress: "changes_requested", attention: "changes_requested" },
+		},
+		{
+			name: "stale earlier pass",
+			pr: prSummary(),
+			ao: { ...reviewState(1, "needs_review"), previousRun: run({ targetSha: "head-1" }) },
+			want: { progress: "stale", attention: "needs_review" },
+		},
+		{
+			name: "failed AO review",
+			pr: prSummary(),
+			ao: { ...reviewState(1, "needs_review"), latestRun: run({ status: "failed", verdict: "" }) },
+			want: { progress: "failed", attention: "needs_review" },
+		},
+		{
+			name: "cancelled AO review",
+			pr: prSummary(),
+			ao: { ...reviewState(1, "needs_review"), latestRun: run({ status: "cancelled", verdict: "" }) },
+			want: { progress: "cancelled", attention: "needs_review" },
+		},
+		{
+			name: "approved but conflicting",
+			pr: prSummary({ mergeability: { state: "conflicting", reasons: ["conflicts"], prUrl: "https://github.com/o/r/pull/1" } }),
+			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
+			want: { progress: "approved", attention: "merge_blocked" },
+		},
+		{
+			name: "approved but CI failing",
+			pr: prSummary({ ci: { state: "failing", failingChecks: [], autoInjectCI: true } }),
+			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
+			want: { progress: "approved", attention: "ci_failing" },
+		},
+		{
+			name: "approved but CI pending",
+			pr: prSummary({ ci: { state: "pending", failingChecks: [], autoInjectCI: true } }),
+			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
+			want: { progress: "approved", attention: "waiting_ci" },
+		},
+		{
+			name: "approved and mergeable",
+			pr: prSummary({ review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] } }),
+			ao: { ...reviewState(1, "up_to_date"), latestRun: run() },
+			want: { progress: "approved", attention: "ready_to_merge" },
+		},
+		{
+			name: "provider review required",
+			pr: prSummary({ review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] } }),
+			ao: reviewState(1, "needs_review"),
+			want: { progress: "review_required", attention: "needs_review" },
+		},
+		{
+			name: "not reviewed",
+			pr: prSummary(),
+			ao: reviewState(1, "needs_review"),
+			want: { progress: "not_started", attention: "needs_review" },
+		},
+	])("derives $name without collapsing independent facts", ({ pr: summary, ao, want }) => {
+		expect(derivePRReviewPresentation(summary, ao, [])).toMatchObject(want);
+	});
+
+	it("counts unresolved inline and general comments separately", () => {
+		const presentation = derivePRReviewPresentation(
+			prSummary({
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [{
+						reviewerId: "lin",
+						count: 3,
+						links: [
+							{ file: "src/a.ts", line: 9, autoInjectReview: true },
+							{ url: "https://github.com/o/r/pull/1#discussion", autoInjectReview: false },
+						],
+					}],
+				},
+			}),
+			reviewState(1, "needs_review"),
+			[],
+		);
+		expect(presentation.comments).toEqual({ unresolved: 3, inline: 1, general: 2 });
+	});
+
+	it("counts distinct trigger batches as cycles and derives delivery from the current run", () => {
+		const current = run({ batchId: "batch-2", deliveredAt: "2026-06-10T00:02:00Z" });
+		const presentation = derivePRReviewPresentation(
+			prSummary(),
+			{ ...reviewState(1, "up_to_date"), latestRun: current },
+			[run(), current, run({ id: "run-3", batchId: "batch-2", harness: "claude-code" })],
+		);
+		expect(presentation.cycleCount).toBe(2);
+		expect(presentation.injection).toBe("delivered");
+		expect(presentation.reviewedSha).toBe("head-2");
+	});
+
+	it.each([
+		{ name: "no run", current: undefined, want: "not_applicable" },
+		{ name: "disabled", current: run({ autoInjectReview: false, status: "complete" }), want: "disabled" },
+		{ name: "pending delivery", current: run({ status: "complete", deliveredAt: undefined }), want: "pending" },
+		{ name: "delivered", current: run({ status: "delivered" }), want: "delivered" },
+		{ name: "failed", current: run({ status: "failed" }), want: "failed" },
+	])("derives injection state for $name", ({ current, want }) => {
+		const presentation = derivePRReviewPresentation(
+			prSummary(),
+			current ? { ...reviewState(1, "up_to_date"), latestRun: current } : reviewState(1, "needs_review"),
+			[],
+		);
+		expect(presentation.injection).toBe(want);
+	});
+
+	it("matches AO states and runs to PRs by canonical URL", () => {
+		const secondURL = "https://github.com/o/r/pull/2";
+		const presentations = deriveSessionReviewPresentations(
+			[prSummary(), prSummary({ number: 2, url: secondURL, headSha: "head-b" })],
+			[reviewState(1, "needs_review"), { ...reviewState(2, "up_to_date"), prUrl: secondURL, latestRun: run({ prUrl: secondURL, targetSha: "head-b" }) }],
+			[run(), run({ id: "run-2", batchId: "batch-2", prUrl: secondURL, targetSha: "head-b" })],
+		);
+		expect(presentations.map(({ prNumber, progress, cycleCount }) => ({ prNumber, progress, cycleCount }))).toEqual([
+			{ prNumber: 1, progress: "not_started", cycleCount: 1 },
+			{ prNumber: 2, progress: "approved", cycleCount: 1 },
+		]);
 	});
 });

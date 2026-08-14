@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
+import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { appI18n } from "../i18n";
 import { sortedPRs, type WorkspaceSession } from "../types/workspace";
 import { apiClient, apiErrorMessage } from "./api-client";
@@ -8,6 +9,141 @@ import { usesPreviewWorkspaceData as usePreviewData } from "./preview-mode";
 export type PRReviewState = components["schemas"]["PRReviewState"];
 export type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 export type ReviewRunFacts = components["schemas"]["ReviewRun"];
+
+export type PRReviewProgress =
+	| "ineligible"
+	| "not_started"
+	| "running"
+	| "approved"
+	| "changes_requested"
+	| "review_required"
+	| "stale"
+	| "failed"
+	| "cancelled"
+	| "unknown";
+
+export type PRReviewAttention =
+	| "draft"
+	| "review_running"
+	| "changes_requested"
+	| "needs_review"
+	| "ci_failing"
+	| "waiting_ci"
+	| "merge_blocked"
+	| "ready_to_merge"
+	| "complete"
+	| "closed"
+	| "unknown";
+
+export type ReviewInjectionState = "not_applicable" | "disabled" | "pending" | "delivered" | "failed";
+
+export type PRReviewPresentation = {
+	attention: PRReviewAttention;
+	ci: SessionPRSummary["ci"]["state"];
+	comments: { unresolved: number; inline: number; general: number };
+	currentSha: string;
+	cycleCount: number;
+	hasExternalReview: boolean;
+	injection: ReviewInjectionState;
+	lifecycle: SessionPRSummary["state"];
+	mergeability: SessionPRSummary["mergeability"]["state"];
+	prNumber: number;
+	prUrl: string;
+	progress: PRReviewProgress;
+	reviewedSha?: string;
+};
+
+/**
+ * Derives the stable review presentation contract from durable SCM and AO-run
+ * facts. UI components consume these independent dimensions instead of
+ * inventing their own overloaded status or persisting display state.
+ */
+export function derivePRReviewPresentation(
+	pr: SessionPRSummary,
+	aoState: PRReviewState | undefined,
+	runs: ReviewRunFacts[],
+): PRReviewPresentation {
+	const commentLinks = pr.review.unresolvedBy.flatMap((reviewer) => reviewer.links);
+	const unresolved = pr.review.unresolvedBy.reduce((sum, reviewer) => sum + reviewer.count, 0);
+	const inline = commentLinks.filter((link) => Boolean(link.file && link.line)).length;
+	const currentRun = aoState?.latestRun;
+	const progress = deriveReviewProgress(pr, aoState);
+	const prRuns = runs.filter((candidate) => candidate.prUrl === pr.url);
+	const cycles = new Set(prRuns.map((candidate) => candidate.batchId || candidate.id));
+
+	return {
+		attention: deriveReviewAttention(pr, progress),
+		ci: pr.ci.state,
+		comments: { unresolved, inline, general: Math.max(0, unresolved - inline) },
+		currentSha: pr.headSha,
+		cycleCount: cycles.size,
+		hasExternalReview: Boolean((pr.review.reviews?.length ?? 0) > 0 || unresolved > 0),
+		injection: deriveInjectionState(currentRun),
+		lifecycle: pr.state,
+		mergeability: pr.mergeability.state,
+		prNumber: pr.number,
+		prUrl: pr.url,
+		progress,
+		...(currentRun?.targetSha || aoState?.previousRun?.targetSha
+			? { reviewedSha: currentRun?.targetSha || aoState?.previousRun?.targetSha }
+			: {}),
+	};
+}
+
+/** Builds every PR presentation with one URL-based join shared by all UI surfaces. */
+export function deriveSessionReviewPresentations(
+	prs: SessionPRSummary[],
+	states: PRReviewState[],
+	runs: ReviewRunFacts[],
+): PRReviewPresentation[] {
+	const statesByURL = new Map(states.map((state) => [state.prUrl, state]));
+	return prs.map((pr) => derivePRReviewPresentation(pr, statesByURL.get(pr.url), runs));
+}
+
+function deriveReviewProgress(pr: SessionPRSummary, state?: PRReviewState): PRReviewProgress {
+	if (pr.state !== "open") return "ineligible";
+	if (state?.status === "running") return "running";
+	if (
+		state?.status === "changes_requested" ||
+		pr.review.decision === "changes_requested" ||
+		pr.review.hasUnresolvedHumanComments
+	) {
+		return "changes_requested";
+	}
+	if (state?.latestRun?.status === "failed") return "failed";
+	if (state?.latestRun?.status === "cancelled") return "cancelled";
+	if (state?.status === "up_to_date" || pr.review.decision === "approved") return "approved";
+	if (pr.review.decision === "review_required") return "review_required";
+	if (state?.previousRun) return "stale";
+	if (!state || state.status === "needs_review") return "not_started";
+	if (state.status === "ineligible") return "ineligible";
+	return "unknown";
+}
+
+function deriveReviewAttention(pr: SessionPRSummary, progress: PRReviewProgress): PRReviewAttention {
+	if (pr.state === "merged") return "complete";
+	if (pr.state === "closed") return "closed";
+	if (pr.state === "draft") return "draft";
+	if (progress === "running") return "review_running";
+	if (progress === "changes_requested") return "changes_requested";
+	if (pr.mergeability.state === "conflicting" || pr.mergeability.state === "blocked") return "merge_blocked";
+	if (pr.ci.state === "failing") return "ci_failing";
+	if (pr.ci.state === "pending") return "waiting_ci";
+	if (progress === "approved" && pr.ci.state === "passing" && pr.mergeability.state === "mergeable") {
+		return "ready_to_merge";
+	}
+	if (["not_started", "review_required", "stale", "failed", "cancelled"].includes(progress)) return "needs_review";
+	return "unknown";
+}
+
+function deriveInjectionState(run?: ReviewRunFacts): ReviewInjectionState {
+	if (!run || run.status === "running" || run.status === "cancelled") return "not_applicable";
+	if (!run.autoInjectReview) return "disabled";
+	if (run.status === "failed") return "failed";
+	if (run.status === "delivered" || run.deliveredAt) return "delivered";
+	if (run.status === "complete") return "pending";
+	return "not_applicable";
+}
 
 /**
  * Shared query options for a session's AO review states. The query key is the
