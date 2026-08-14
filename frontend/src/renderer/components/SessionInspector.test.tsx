@@ -1565,6 +1565,38 @@ describe("SessionInspector summary reviews", () => {
 		});
 	});
 
+	it("keeps an explicit reviewer visible and lets it return to the resolved default", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
+		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
+		await openReviewsSection();
+
+		const picker = await screen.findByRole("button", { name: /Select reviewer agent/ });
+		await userEvent.click(picker);
+		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
+		expect(screen.getByRole("menuitem", { name: /opencode/ })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("menuitem", { name: /opencode/ }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { harness: "opencode" },
+			}),
+		);
+
+		await userEvent.click(picker);
+		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
+		await userEvent.click(screen.getByRole("menuitem", { name: /codex/ }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenLastCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { harness: undefined },
+			}),
+		);
+	});
+
 	it("names the reviewer that is actually running, not whichever PR comes first", async () => {
 		// One PR reviewed earlier by claude-code, another running under codex.
 		const done = {
