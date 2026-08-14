@@ -319,6 +319,12 @@ type GitHubRepositoryResponse = {
   access: "active" | "revoked";
 };
 
+type GitHubProjectInput = {
+  githubRepositoryId?: string;
+  displayName?: string;
+  config?: Record<string, unknown>;
+};
+
 function parseGitHubRoute(segments: string[]): GitHubRoute | null {
   if (
     segments.length < 4 ||
@@ -339,6 +345,23 @@ async function forwardGitHub(
   environmentAccessToken: string,
   workosAccessToken: string,
 ): Promise<Response> {
+  let projectInput: GitHubProjectInput | undefined;
+  if (request.method === "POST" && route.suffix === "projects") {
+    try {
+      projectInput = (await request.json()) as GitHubProjectInput;
+    } catch {
+      return NextResponse.json(
+        {
+          error: "Invalid request",
+          code: "INVALID_REQUEST",
+          message: "The request body is invalid.",
+          requestId: "",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   const productionOrganization = await resolveProductionOrganization(
     request,
     route.localOrganizationId,
@@ -355,9 +378,10 @@ async function forwardGitHub(
   );
   const headers = forwardedHeaders(request, workosAccessToken);
 
-  if (request.method === "POST" && route.suffix === "projects") {
+  if (projectInput) {
     return createEnvironmentProjectFromGitHub(
       request,
+      projectInput,
       route.localOrganizationId,
       productionOrganization,
       environmentAccessToken,
@@ -669,29 +693,12 @@ function brokerUserHeaders(
 
 async function createEnvironmentProjectFromGitHub(
   request: NextRequest,
+  input: GitHubProjectInput,
   localOrganizationId: string,
   productionOrganizationId: string,
   environmentAccessToken: string,
   workosAccessToken: string,
 ): Promise<Response> {
-  let input: {
-    githubRepositoryId?: string;
-    displayName?: string;
-    config?: Record<string, unknown>;
-  };
-  try {
-    input = (await request.json()) as typeof input;
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid request",
-        code: "INVALID_REQUEST",
-        message: "The request body is invalid.",
-        requestId: "",
-      },
-      { status: 400 },
-    );
-  }
   const repositoryID = input.githubRepositoryId?.trim();
   if (!repositoryID) {
     return NextResponse.json(

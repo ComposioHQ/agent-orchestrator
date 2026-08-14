@@ -128,13 +128,28 @@ it("forwards workspace writes through the authenticated gateway", async () => {
 });
 
 it("brokers GitHub repository imports through production", async () => {
+  const request = new NextRequest(
+    "http://localhost:3000/api/cloud/v1/orgs/staging-org/github/projects",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "project-key",
+        origin: "http://localhost:3000",
+      },
+      body: JSON.stringify({
+        githubRepositoryId: "9007199254740993",
+      }),
+    },
+  );
   const fetchMock = vi
     .spyOn(globalThis, "fetch")
-    .mockResolvedValueOnce(
-      Response.json({
+    .mockImplementationOnce(async () => {
+      expect(request.bodyUsed).toBe(true);
+      return Response.json({
         organizations: [{ id: "prod-org", slug: "workos-shared" }],
-      }),
-    )
+      });
+    })
     .mockResolvedValueOnce(
       Response.json({
         organizations: [{ id: "staging-org", slug: "workos-shared" }],
@@ -164,21 +179,6 @@ it("brokers GitHub repository imports through production", async () => {
         { status: 201 },
       ),
     );
-  const request = new NextRequest(
-    "http://localhost:3000/api/cloud/v1/orgs/staging-org/github/projects",
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": "project-key",
-        origin: "http://localhost:3000",
-      },
-      body: JSON.stringify({
-        githubRepositoryId: "9007199254740993",
-      }),
-    },
-  );
-
   const response = await POST(request, {
     params: Promise.resolve({
       path: ["orgs", "staging-org", "github", "projects"],
