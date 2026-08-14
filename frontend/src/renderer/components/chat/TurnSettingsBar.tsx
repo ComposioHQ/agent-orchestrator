@@ -15,7 +15,7 @@
  * only the grouping of the triggers changed.
  */
 
-import { Fragment, useCallback, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronRight, Shuffle } from "lucide-react";
 import {
 	DropdownMenu,
@@ -74,6 +74,7 @@ export function TurnSettingsBar({
 	configPending,
 	error,
 	disabled,
+	children,
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
@@ -94,6 +95,8 @@ export function TurnSettingsBar({
 	configPending?: boolean;
 	error?: string;
 	disabled?: boolean;
+	/** Inline controls that belong on the model row, such as queue vs steer. */
+	children?: ReactNode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
 	const fallback = models.find((model) => model.default);
@@ -131,6 +134,8 @@ export function TurnSettingsBar({
 							chosenLabel={chosenLabel}
 						/>
 					) : null}
+
+					{children}
 
 					{onChangeConfigOption
 						? (configOptions ?? []).map((option) => (

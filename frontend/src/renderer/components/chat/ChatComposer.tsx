@@ -95,8 +95,8 @@ export function ChatComposer({
 	attachedTop = false,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
-	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
-	settings?: ReactNode;
+	/** The next-turn controls, rendered inline. May wrap queue/steer onto the model row. */
+	settings?: ReactNode | ((addon: ReactNode) => ReactNode);
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -429,6 +429,17 @@ export function ChatComposer({
 	}
 
 	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
+	const deliveryChoice =
+		canSteer && onSteer ? (
+			<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
+		) : null;
+	const settingsNode =
+		typeof settings === "function" ? settings(deliveryChoice) : (
+			<>
+				{settings}
+				{deliveryChoice}
+			</>
+		);
 
 	return (
 		<form
@@ -538,10 +549,6 @@ export function ChatComposer({
 				</p>
 			) : null}
 
-			{canSteer && onSteer ? (
-				<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
-			) : null}
-
 			<div className="flex h-7 items-center gap-1.5">
 				<div
 					role="group"
@@ -575,7 +582,7 @@ export function ChatComposer({
 							</Button>
 						</>
 					) : null}
-					{settings}
+					{settingsNode}
 				</div>
 
 				<div
@@ -598,7 +605,7 @@ export function ChatComposer({
 							"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
 							canSend
 								? "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background"
-								: "bg-raised text-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-100",
+								: "bg-primary text-primary-foreground",
 						)}
 					>
 						{steerPending ? (
@@ -639,7 +646,7 @@ function DeliveryChoice({
 		<div
 			role="group"
 			aria-label="Where this message goes while the agent is working"
-			className="flex items-center gap-1 px-1.5"
+			className="flex h-7 shrink-0 items-center gap-1"
 		>
 			{(["queue", "steer"] as const).map((option) => (
 				<button
@@ -654,10 +661,10 @@ function DeliveryChoice({
 							: "Hold this until the turn ends, then send it as a new message."
 					}
 					className={cn(
-						"rounded px-1.5 py-0.5 text-[11px] transition-colors disabled:opacity-50",
+						"text-[11px] leading-none transition-colors disabled:opacity-50",
 						value === option
-							? "bg-raised text-foreground"
-							: "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+							? "h-7 rounded-lg border border-transparent bg-secondary px-2.5 text-foreground"
+							: "rounded px-1.5 py-0.5 text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
 					)}
 				>
 					{option === "steer" ? "Steer this turn" : "Queue for next"}

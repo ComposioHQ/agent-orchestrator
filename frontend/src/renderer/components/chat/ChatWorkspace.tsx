@@ -432,21 +432,25 @@ export function ChatWorkspace({
 						onSend={(text, attachments) => onSend?.(text, attachments)}
 						commandError={commandError}
 						settings={
-							onChooseSettings || onChooseConfigOption ? (
-								<TurnSettingsBar
-									models={models ?? []}
-									settings={snapshot.settings}
-									reroute={snapshot.modelReroute}
-									onChange={onChooseSettings}
-									configOptions={configOptions ?? []}
-									onChangeConfigOption={onChooseConfigOption}
-									configPending={configOptionPending}
-									error={configOptionError}
-									disabled={
-										snapshot.controller.state === "stopped" || configOptionPending
-									}
-								/>
-							) : null
+							onChooseSettings || onChooseConfigOption
+								? (addon) => (
+										<TurnSettingsBar
+											models={models ?? []}
+											settings={snapshot.settings}
+											reroute={snapshot.modelReroute}
+											onChange={onChooseSettings}
+											configOptions={configOptions ?? []}
+											onChangeConfigOption={onChooseConfigOption}
+											configPending={configOptionPending}
+											error={configOptionError}
+											disabled={
+												snapshot.controller.state === "stopped" || configOptionPending
+											}
+										>
+											{addon}
+										</TurnSettingsBar>
+									)
+								: undefined
 						}
 						busy={busy}
 						willQueue={Boolean(turn)}

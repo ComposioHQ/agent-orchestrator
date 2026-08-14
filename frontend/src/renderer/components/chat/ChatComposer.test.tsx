@@ -81,7 +81,7 @@ describe("send keys", () => {
 	it("uses a muted circular send control that lights up when armed", async () => {
 		const { field } = renderComposer();
 		const send = screen.getByRole("button", { name: "Send message" });
-		expect(send).toHaveClass("rounded-full", "bg-raised", "text-foreground");
+		expect(send).toHaveClass("rounded-full", "bg-primary", "text-primary-foreground");
 		expect(send).toBeDisabled();
 
 		await userEvent.type(field, "hello");

@@ -109,7 +109,7 @@ export function HumanMessageEditor({
 				className={cn(
 					"size-7 rounded-full border-transparent",
 					sendDisabled
-						? "bg-raised text-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-100"
+						? "bg-primary text-primary-foreground"
 						: "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background",
 				)}
 			>
