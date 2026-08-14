@@ -96,3 +96,16 @@ it("renders an empty board without fetching pull requests", () => {
   expect(screen.getByText("No sessions yet")).toBeVisible();
   expect(mocks.listSessionPullRequests).not.toHaveBeenCalled();
 });
+
+it("maps legacy Claude sessions to the current harness logo", () => {
+  const { container } = render(
+    <CloudBoard
+      onSelectSession={vi.fn()}
+      organizationId="org-1"
+      sessions={[{ ...session, harness: "claude" }]}
+    />,
+  );
+
+  expect(container.querySelector('img[src="/agents/claude-code.svg"]')).not.toBeNull();
+  expect(container.querySelector('img[src="/agents/claude.svg"]')).toBeNull();
+});

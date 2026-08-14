@@ -26,6 +26,18 @@ const columns = boardAttentionZoneOrder.map((zone) =>
   getAttentionZoneViewForZone(zone),
 );
 
+const harnessLogoNames: Readonly<Record<string, string>> = {
+  claude: "claude-code",
+  "claude-code": "claude-code",
+  codex: "codex",
+  cursor: "cursor",
+};
+
+function harnessLogoSource(provider: string) {
+  const logoName = harnessLogoNames[provider];
+  return logoName ? `/agents/${logoName}.svg` : undefined;
+}
+
 const boardLabels = {
   columnAria: (label: string) => `${label} sessions`,
   countSessions: (count: number, label: string) =>
@@ -164,7 +176,7 @@ export function CloudBoard({
                     <AgentAvatar
                       className="mt-0.5"
                       decorative
-                      logoSrc={`/agents/${provider}.svg`}
+                      logoSrc={harnessLogoSource(provider)}
                       provider={provider}
                     />
                   )}
