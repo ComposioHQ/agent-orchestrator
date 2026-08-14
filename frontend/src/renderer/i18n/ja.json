@@ -1040,5 +1040,9 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "例：不安定なチェックアウトテストを修正（任意）…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "エージェントのドキュメント",
+	"newTask.agentNotInstalled": "{{agent}} がインストールされていません。CLI をインストールしてから再試行してください。",
+	"shell.agentDocs": "エージェントのドキュメント",
+	"shell.agentNotInstalled": "{{agent}} がインストールされていません。CLI をインストールしてから再試行してください。"
 }

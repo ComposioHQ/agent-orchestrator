@@ -1,3 +1,4 @@
+import { assertAgentInstalled } from "./agent-install-preflight";
 import { apiClient, apiErrorCode, apiErrorMessage, apiErrorRequestId } from "./api-client";
 import type { OrchestratorSpawnSource } from "./orchestrator-spawn-sources";
 import { captureRendererEvent } from "./telemetry";
@@ -38,6 +39,23 @@ export function isChatPreflightError(error: unknown): error is OrchestratorSpawn
 	return error instanceof OrchestratorSpawnError && isChatPreflightCode(error.code);
 }
 
+/** The harness the daemon will launch this project's orchestrator with.
+ *  Undefined when it cannot be read or is unset — the daemon then answers with
+ *  its own AGENT_REQUIRED, which already says which config key to set. */
+async function orchestratorAgentId(projectId: string): Promise<string | undefined> {
+	try {
+		const { data, error } = await apiClient.GET("/api/v1/projects/{id}", {
+			params: { path: { id: projectId } },
+		});
+		if (error || data?.status !== "ok") return undefined;
+		const project = data.project as { config?: { orchestrator?: { agent?: string } } };
+		return project.config?.orchestrator?.agent;
+	} catch {
+		// Reading the config must never be what stops a spawn.
+		return undefined;
+	}
+}
+
 /** Spawn the project's orchestrator session via the daemon API. When clean is
  *  true the daemon first tears down any active orchestrator for the project, then
  *  re-spawns one on the canonical branch (reattaching the existing branch). */
@@ -49,6 +67,12 @@ export async function spawnOrchestrator(
 ): Promise<string> {
 	void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", { project_id: projectId, source });
 	try {
+		// Gated here rather than at each launcher for the same reason the telemetry
+		// triad lives here: the board, topbar, sidebar, palette, restore dialog,
+		// settings, restart, and project-add paths all reach the daemon through this
+		// function, and none of them has to remember to check.
+		await assertAgentInstalled(await orchestratorAgentId(projectId));
+
 		const { data, error, response } = await apiClient.POST("/api/v1/orchestrators", {
 			body: { projectId, clean, ...(mode ? { mode } : {}) },
 		});

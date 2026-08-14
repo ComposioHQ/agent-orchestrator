@@ -1055,5 +1055,9 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "ex.: Corrigir o teste de checkout instável (opcional)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "Documentação de agentes",
+	"newTask.agentNotInstalled": "{{agent}} não está instalado. Instale a CLI dele e tente novamente.",
+	"shell.agentDocs": "Documentação de agentes",
+	"shell.agentNotInstalled": "{{agent}} não está instalado. Instale a CLI dele e tente novamente."
 }

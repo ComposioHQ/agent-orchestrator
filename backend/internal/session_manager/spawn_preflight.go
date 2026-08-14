@@ -17,6 +17,11 @@ import (
 // probe cannot stall a spawn.
 const agentBinaryPreflightTimeout = 2 * time.Second
 
+// agentDocsURL documents every harness AO ships, including what each one's CLI
+// is. Only a handful of harnesses have their own page, so this stays the index
+// rather than a per-agent link that would 404 for most of them.
+const agentDocsURL = "https://aoagents.dev/docs/plugins/agents"
+
 // preflightSpawnEnvironment proves the local machine can actually launch the
 // requested harness BEFORE Spawn creates anything durable.
 //
@@ -65,7 +70,7 @@ func (m *Manager) preflightAgentBinary(ctx context.Context, harness domain.Agent
 	case err == nil:
 		return nil
 	case errors.Is(err, ports.ErrAgentBinaryNotFound):
-		return fmt.Errorf("%w: install the %s CLI and make sure its binary is on PATH", ports.ErrAgentBinaryNotFound, harness)
+		return fmt.Errorf("%w: install the %s CLI and make sure its binary is on PATH (%s)", ports.ErrAgentBinaryNotFound, harness, agentDocsURL)
 	default:
 		m.logger.Warn("spawn: agent binary preflight inconclusive", "harness", harness, "error", err)
 		return nil

@@ -1055,5 +1055,9 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "p. ex. Corriger le test de paiement instable (facultatif)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "Documentation des agents",
+	"newTask.agentNotInstalled": "{{agent}} n'est pas installé. Installez son CLI, puis réessayez.",
+	"shell.agentDocs": "Documentation des agents",
+	"shell.agentNotInstalled": "{{agent}} n'est pas installé. Installez son CLI, puis réessayez."
 }
