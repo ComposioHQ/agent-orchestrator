@@ -321,6 +321,11 @@ func (c *Client) BootstrapWorker(
 	if len(bootstrap.Binary) == 0 {
 		return errors.New("createos: worker binary is empty")
 	}
+	helperDestination := strings.TrimSpace(bootstrap.HelperDestination)
+	if len(bootstrap.HelperBinary) > 0 &&
+		(helperDestination == "" || !strings.HasPrefix(helperDestination, "/")) {
+		return fmt.Errorf("createos: worker helper destination %q must be an absolute path", bootstrap.HelperDestination)
+	}
 
 	// Guest paths must be absolute and their parents must already exist.
 	if _, slash := path(destination); slash != "" {
@@ -341,6 +346,21 @@ func (c *Client) BootstrapWorker(
 	if err := c.exec(ctx, id, "chmod", []string{"0755", staging}); err != nil {
 		return err
 	}
+	helperStaging := ""
+	if len(bootstrap.HelperBinary) > 0 {
+		if parent, _ := path(helperDestination); parent != "" {
+			if err := c.exec(ctx, id, "mkdir", []string{"-p", parent}); err != nil {
+				return err
+			}
+		}
+		helperStaging = helperDestination + ".new"
+		if err := c.uploadFile(ctx, id, helperStaging, bootstrap.HelperBinary); err != nil {
+			return err
+		}
+		if err := c.exec(ctx, id, "chmod", []string{"0755", helperStaging}); err != nil {
+			return err
+		}
+	}
 	// Stop the old worker before the swap so a repaired sandbox does not end up
 	// with two processes heartbeating under the same identity. The pattern is
 	// anchored at the start of the command line because an unanchored one also
@@ -354,12 +374,26 @@ func (c *Client) BootstrapWorker(
 	if err := c.exec(ctx, id, "mv", []string{"-f", staging, destination}); err != nil {
 		return err
 	}
+	if helperStaging != "" {
+		if err := c.exec(ctx, id, "mv", []string{"-f", helperStaging, helperDestination}); err != nil {
+			return err
+		}
+	}
 
 	// Repair issues a new one-time bootstrap ticket. Pass the complete fresh
 	// environment to this process instead of relying on the environment stored
 	// at sandbox creation, which contains a consumed ticket.
-	launch := "nohup " + launchEnvironment(bootstrap.Environment) +
-		shellQuote(destination) + " >> /var/log/ao-worker.log 2>&1 &"
+	command := launchEnvironment(bootstrap.Environment) + shellQuote(destination)
+	if user := strings.TrimSpace(bootstrap.User); user != "" {
+		quotedUser := shellQuote(user)
+		prepare := "id -u " + quotedUser + " >/dev/null && " +
+			"chown -R " + quotedUser + ":" + quotedUser + " /workspace"
+		if err := c.exec(ctx, id, "bash", []string{"-c", prepare}); err != nil {
+			return err
+		}
+		command = "runuser --user " + quotedUser + " -- " + command
+	}
+	launch := "nohup " + command + " >> /var/log/ao-worker.log 2>&1 &"
 	return c.exec(ctx, id, "bash", []string{"-c", launch})
 }
 

@@ -9,7 +9,8 @@ RUN apt-get update && \
         gnupg \
         openssh-client \
         procps \
-        tar && \
+        tar \
+        util-linux && \
     mkdir -p /etc/apt/keyrings && \
     curl --fail --location --silent --show-error \
         https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
@@ -21,6 +22,13 @@ RUN apt-get update && \
     npm install --global \
         @anthropic-ai/claude-code@2.1.228 \
         @openai/codex@0.147.0 && \
+    ln -sfn "$(npm root --global)/@anthropic-ai/claude-code/cli-wrapper.cjs" \
+        /usr/local/bin/claude && \
+    groupadd --gid 10001 ao-worker && \
+    useradd --uid 10001 --gid ao-worker --home-dir /workspace/.ao/home \
+        --shell /bin/bash ao-worker && \
+    mkdir -p /workspace/repository /workspace/.ao/home /workspace/.ao/worker && \
+    chown -R ao-worker:ao-worker /workspace && \
     rm -rf /var/lib/apt/lists/* /root/.npm && \
     claude --version && \
     codex --version

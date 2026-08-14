@@ -44,6 +44,12 @@ type Options struct {
 	WorkerBinary []byte
 	// WorkerDestination is where that binary lands inside the sandbox.
 	WorkerDestination string
+	// WorkerHelperBinary is the session-local AO CLI used by harness hooks.
+	WorkerHelperBinary []byte
+	// WorkerHelperDestination is where the AO CLI lands inside the sandbox.
+	WorkerHelperDestination string
+	// WorkerUser is the unprivileged account used to run hosted workers.
+	WorkerUser string
 	// Interval is the reconcile tick.
 	Interval time.Duration
 	// StartupTimeout is the budget from Create to the first worker heartbeat.
@@ -65,15 +71,17 @@ type Options struct {
 // Reconciler defaults, tuned for a decentralized provider whose provisioning
 // latency is variable by design.
 const (
-	DefaultInterval          = 2 * time.Second
-	DefaultStartupTimeout    = 180 * time.Second
-	DefaultHeartbeatTimeout  = time.Minute
-	DefaultBatchSize         = 20
-	defaultLease             = 30 * time.Second
-	defaultWorkerDestination = "/usr/local/bin/ao-worker"
-	bootstrapTicketTTL       = 10 * time.Minute
-	capacityRetryBackoff     = 15 * time.Second
-	dockerBootCrashWindow    = 20 * time.Second
+	DefaultInterval                = 2 * time.Second
+	DefaultStartupTimeout          = 180 * time.Second
+	DefaultHeartbeatTimeout        = time.Minute
+	DefaultBatchSize               = 20
+	defaultLease                   = 30 * time.Second
+	defaultWorkerDestination       = "/usr/local/bin/ao-worker"
+	defaultWorkerHelperDestination = "/usr/local/bin/ao"
+	defaultWorkerUser              = "ao-worker"
+	bootstrapTicketTTL             = 10 * time.Minute
+	capacityRetryBackoff           = 15 * time.Second
+	dockerBootCrashWindow          = 20 * time.Second
 )
 
 // Reconciler converges durable sandbox intent with provider state.
@@ -105,6 +113,12 @@ func New(store Store, providers Resolver, options Options) *Reconciler {
 	}
 	if strings.TrimSpace(options.WorkerDestination) == "" {
 		options.WorkerDestination = defaultWorkerDestination
+	}
+	if strings.TrimSpace(options.WorkerHelperDestination) == "" {
+		options.WorkerHelperDestination = defaultWorkerHelperDestination
+	}
+	if strings.TrimSpace(options.WorkerUser) == "" {
+		options.WorkerUser = defaultWorkerUser
 	}
 	options.PublicURL = strings.TrimRight(options.PublicURL, "/")
 	if options.Logger == nil {
@@ -413,9 +427,12 @@ func (r *Reconciler) superviseRunning(
 				"reason", repairReason(record, startupExpired, heartbeatExpired),
 			)
 			if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
-				Binary:      r.options.WorkerBinary,
-				Destination: r.options.WorkerDestination,
-				Environment: spec.Environment,
+				Binary:            r.options.WorkerBinary,
+				Destination:       r.options.WorkerDestination,
+				HelperBinary:      r.options.WorkerHelperBinary,
+				HelperDestination: r.options.WorkerHelperDestination,
+				User:              r.options.WorkerUser,
+				Environment:       spec.Environment,
 			}); err != nil {
 				return r.fail(ctx, record, err)
 			}
@@ -495,9 +512,12 @@ func (r *Reconciler) provision(
 
 	if bootstrapper, ok := provider.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
 		if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
-			Binary:      r.options.WorkerBinary,
-			Destination: r.options.WorkerDestination,
-			Environment: spec.Environment,
+			Binary:            r.options.WorkerBinary,
+			Destination:       r.options.WorkerDestination,
+			HelperBinary:      r.options.WorkerHelperBinary,
+			HelperDestination: r.options.WorkerHelperDestination,
+			User:              r.options.WorkerUser,
+			Environment:       spec.Environment,
 		}); err != nil {
 			return r.fail(ctx, record, err)
 		}
@@ -530,9 +550,12 @@ func (r *Reconciler) recreate(
 	}
 	if bootstrapper, ok := recreator.(sandbox.Bootstrapper); ok && len(r.options.WorkerBinary) > 0 {
 		if err := bootstrapper.BootstrapWorker(ctx, recreated.ID, sandbox.WorkerBootstrap{
-			Binary:      r.options.WorkerBinary,
-			Destination: r.options.WorkerDestination,
-			Environment: spec.Environment,
+			Binary:            r.options.WorkerBinary,
+			Destination:       r.options.WorkerDestination,
+			HelperBinary:      r.options.WorkerHelperBinary,
+			HelperDestination: r.options.WorkerHelperDestination,
+			User:              r.options.WorkerUser,
+			Environment:       spec.Environment,
 		}); err != nil {
 			return r.fail(ctx, record, err)
 		}
@@ -588,6 +611,7 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 		"HOME":                      "/workspace/.ao/home",
 		"CLAUDE_CONFIG_DIR":         "/workspace/.ao/home/.claude",
 		"CODEX_HOME":                "/workspace/.ao/home/.codex",
+		"DISABLE_AUTOUPDATER":       "1",
 	}
 	if record.Provider == sandbox.ProviderDocker {
 		workerEnvironment["AO_CLOUD_ALLOW_ANONYMOUS_GITHUB_CHECKOUT"] = "true"

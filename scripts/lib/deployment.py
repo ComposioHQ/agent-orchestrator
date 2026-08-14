@@ -45,6 +45,7 @@ WORKER_SECRET_ENV = {
 HOSTED_SECRET_ENV = NODEOPS_SECRET_ENV | WORKER_SECRET_ENV
 PROVIDER_AUTO_PAUSE_ENV = "AO_CLOUD_NODEOPS_AUTO_PAUSE_MINUTES"
 WORKER_BINARY_PATH = "/ao-worker"
+WORKER_HELPER_BINARY_PATH = "/ao"
 _DIGEST_IMAGE = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 _DURATION_PART = re.compile(r"(\d+)(ms|s|m|h)")
 
@@ -184,6 +185,7 @@ def build_task_definition(
                 "AO_CLOUD_MIGRATE_ON_STARTUP": "false",
                 "AO_CLOUD_SANDBOX_PROVIDER": "nodeops",
                 "AO_CLOUD_WORKER_BINARY_PATH": WORKER_BINARY_PATH,
+                "AO_CLOUD_WORKER_HELPER_BINARY_PATH": WORKER_HELPER_BINARY_PATH,
             }
         )
     elif container_name == "migration":
@@ -259,6 +261,11 @@ def validate_task_artifacts(
     }
     if environment.get("AO_CLOUD_WORKER_BINARY_PATH") != WORKER_BINARY_PATH:
         raise ValueError("task definition does not use packaged /ao-worker")
+    if (
+        environment.get("AO_CLOUD_WORKER_HELPER_BINARY_PATH")
+        != WORKER_HELPER_BINARY_PATH
+    ):
+        raise ValueError("task definition does not use packaged /ao helper")
     if PROVIDER_AUTO_PAUSE_ENV in environment:
         raise ValueError("task definition configures provider auto-pause")
     secrets = {

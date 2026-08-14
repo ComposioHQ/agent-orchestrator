@@ -46,9 +46,12 @@ type Environment struct {
 
 // WorkerBootstrap contains the worker executable and launch environment.
 type WorkerBootstrap struct {
-	Binary      []byte
-	Destination string
-	Environment map[string]string
+	Binary            []byte
+	Destination       string
+	HelperBinary      []byte
+	HelperDestination string
+	User              string
+	Environment       map[string]string
 }
 
 // Bootstrapper installs and starts an AO worker in an existing sandbox.

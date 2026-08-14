@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -439,6 +440,56 @@ func TestBootstrapWorkerRejectsARelativeDestination(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("BootstrapWorker() accepted a relative destination")
+	}
+}
+
+func TestBootstrapWorkerInstallsHelperAndLaunchesAsUnprivilegedUser(t *testing.T) {
+	var uploads []string
+	var execCommands []execRequest
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/files"):
+			uploads = append(uploads, r.URL.Query().Get("path"))
+			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+		case strings.HasSuffix(r.URL.Path, "/exec"):
+			var request execRequest
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			execCommands = append(execCommands, request)
+			writeJSON(w, http.StatusOK, map[string]any{"result": map[string]any{"exit_code": 0}})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	err := client.BootstrapWorker(context.Background(), "sbx-1", sandbox.WorkerBootstrap{
+		Binary:            []byte("ELF-worker"),
+		Destination:       "/usr/local/bin/ao-worker",
+		HelperBinary:      []byte("ELF-helper"),
+		HelperDestination: "/usr/local/bin/ao",
+		User:              "ao-worker",
+		Environment:       map[string]string{"HOME": "/workspace/.ao/home"},
+	})
+	if err != nil {
+		t.Fatalf("BootstrapWorker() error = %v", err)
+	}
+	if !slices.Equal(uploads, []string{
+		"/usr/local/bin/ao-worker.new",
+		"/usr/local/bin/ao.new",
+	}) {
+		t.Fatalf("uploads = %q", uploads)
+	}
+	if len(execCommands) != 9 {
+		t.Fatalf("exec called %d times, want 9", len(execCommands))
+	}
+	prepare := strings.Join(execCommands[7].Args, " ")
+	if execCommands[7].Cmd != "bash" ||
+		!strings.Contains(prepare, "chown -R 'ao-worker':'ao-worker' /workspace") {
+		t.Errorf("prepare command = %s %v", execCommands[7].Cmd, execCommands[7].Args)
+	}
+	launch := strings.Join(execCommands[8].Args, " ")
+	if !strings.Contains(launch, "runuser --user 'ao-worker' --") ||
+		!strings.Contains(launch, "'/usr/local/bin/ao-worker'") {
+		t.Errorf("launch command = %s %v", execCommands[8].Cmd, execCommands[8].Args)
 	}
 }
 

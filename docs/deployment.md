@@ -109,12 +109,16 @@ to the staging control plane. Neither value is exposed through a
 Both ECS execution roles need `secretsmanager:GetSecretValue` for this one
 secret in addition to their environment-scoped secrets.
 
-The configured NodeOps `default_rootfs` must provide `bash`, `git`, `claude`,
-`codex`, and `cursor-agent`. Build the versioned AO rootfs from
+The configured NodeOps `default_rootfs` must provide the unprivileged
+`ao-worker` account plus `bash`, `git`, `claude`, `codex`, `cursor-agent`, and
+`runuser`. Build the versioned AO rootfs from
 `nodeops/Sandbox.Dockerfile` with `scripts/publish-nodeops-template.sh`, verify
 it in staging, then set `default_rootfs` to that template name. The reconciler
-copies the release's fenced `ao-worker` binary into the rootfs. A missing
-harness disables that agent terminal but does not stop workspace transport.
+copies the release's fenced `ao-worker` and AO hook helper binaries into the
+rootfs, owns `/workspace` as `ao-worker`, and launches the worker under that
+account. Claude auto-update is disabled for worker-launched processes so a
+running VM cannot replace or remove its pinned executable. A missing harness
+disables that agent terminal but does not stop workspace transport.
 The separately scanned worker image is the canonical local/reference runtime,
 but CreateOS does not consume that OCI image directly.
 

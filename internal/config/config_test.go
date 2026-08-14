@@ -26,6 +26,7 @@ func nodeOpsEnvironment(t *testing.T) {
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
 	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
+	t.Setenv("AO_CLOUD_WORKER_HELPER_BINARY_PATH", "/srv/ao")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
 	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_URL", "https://api.aoagents.dev")
 	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_TOKEN", strings.Repeat("b", 48))
@@ -142,6 +143,7 @@ func TestLoadStagingConfiguration(t *testing.T) {
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com/")
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
 	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
+	t.Setenv("AO_CLOUD_WORKER_HELPER_BINARY_PATH", "/srv/ao")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-staging")
 	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_URL", "https://api.aoagents.dev")
 	t.Setenv("AO_CLOUD_REPOSITORY_BROKER_TOKEN", strings.Repeat("b", 48))
@@ -208,6 +210,7 @@ func TestLoadDerivesWorkOSJWKSURL(t *testing.T) {
 	t.Setenv("AO_CLOUD_PUBLIC_URL", "https://cloud.example.com")
 	t.Setenv("AO_CLOUD_WORKER_SIGNING_KEY", strings.Repeat("a", 64))
 	t.Setenv("AO_CLOUD_WORKER_BINARY_PATH", "/srv/ao-worker")
+	t.Setenv("AO_CLOUD_WORKER_HELPER_BINARY_PATH", "/srv/ao")
 	t.Setenv("AO_CLOUD_RELEASE", "sha-123")
 	setProviderSecretKey(t)
 

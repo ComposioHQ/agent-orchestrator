@@ -89,9 +89,10 @@ func newSandboxReconciler(
 		return nil, nil
 	}
 	var (
-		nodeOpsProvider sandbox.Provider
-		dockerProvider  sandbox.Provider
-		workerBinary    []byte
+		nodeOpsProvider    sandbox.Provider
+		dockerProvider     sandbox.Provider
+		workerBinary       []byte
+		workerHelperBinary []byte
 	)
 	switch cfg.SandboxProvider {
 	case sandbox.ProviderNodeOps:
@@ -104,6 +105,13 @@ func newSandboxReconciler(
 		}
 		if len(workerBinary) == 0 {
 			return nil, fmt.Errorf("worker binary %s is empty", cfg.WorkerBinaryPath)
+		}
+		workerHelperBinary, err = os.ReadFile(cfg.WorkerHelperBinaryPath)
+		if err != nil {
+			return nil, fmt.Errorf("read worker helper binary %s: %w", cfg.WorkerHelperBinaryPath, err)
+		}
+		if len(workerHelperBinary) == 0 {
+			return nil, fmt.Errorf("worker helper binary %s is empty", cfg.WorkerHelperBinaryPath)
 		}
 		sshPubKeys, err := readSSHPubKeys(cfg.NodeOpsSSHKeyPath)
 		if err != nil {
@@ -130,12 +138,13 @@ func newSandboxReconciler(
 		dockerProvider = provider
 	}
 	return reconcile.New(store, sandboxresolve.New(nodeOpsProvider, dockerProvider), reconcile.Options{
-		PublicURL:        cfg.PublicURL,
-		WorkerBinary:     workerBinary,
-		Interval:         cfg.ReconcileInterval,
-		StartupTimeout:   cfg.SandboxStartupTimeout,
-		HeartbeatTimeout: cfg.WorkerHeartbeatTimeout,
-		Logger:           logger,
+		PublicURL:          cfg.PublicURL,
+		WorkerBinary:       workerBinary,
+		WorkerHelperBinary: workerHelperBinary,
+		Interval:           cfg.ReconcileInterval,
+		StartupTimeout:     cfg.SandboxStartupTimeout,
+		HeartbeatTimeout:   cfg.WorkerHeartbeatTimeout,
+		Logger:             logger,
 	}), nil
 }
 

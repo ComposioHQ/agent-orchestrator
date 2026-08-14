@@ -73,5 +73,6 @@ COPY --from=build --chown=nonroot:nonroot /out/ao-cloud /ao-cloud
 COPY --from=build --chown=nonroot:nonroot /out/ao-cloud-migrate /ao-cloud-migrate
 COPY --from=build --chown=nonroot:nonroot /out/ao-cloud-healthcheck /ao-cloud-healthcheck
 COPY --from=build --chown=nonroot:nonroot /out/ao-worker /ao-worker
+COPY --from=build --chown=nonroot:nonroot /out/ao /ao
 EXPOSE 8080
 ENTRYPOINT ["/ao-cloud"]

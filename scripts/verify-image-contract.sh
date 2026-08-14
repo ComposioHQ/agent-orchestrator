@@ -46,10 +46,15 @@ PY
 control_container="$(docker create "$control_image")"
 worker_container="$(docker create "$worker_image")"
 docker cp "${control_container}:/ao-worker" "$work_dir/control-plane-ao-worker"
+docker cp "${control_container}:/ao" "$work_dir/control-plane-ao"
 docker cp "${worker_container}:/ao-worker" "$work_dir/worker-ao-worker"
 
 if [[ ! -x "$work_dir/control-plane-ao-worker" || ! -x "$work_dir/worker-ao-worker" ]]; then
 	echo "ao-worker must be executable in both images." >&2
+	exit 1
+fi
+if [[ ! -x "$work_dir/control-plane-ao" ]]; then
+	echo "Control-plane image must package the AO hook helper." >&2
 	exit 1
 fi
 if ! cmp -s "$work_dir/control-plane-ao-worker" "$work_dir/worker-ao-worker"; then

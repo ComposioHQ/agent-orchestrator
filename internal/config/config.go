@@ -46,6 +46,8 @@ type Config struct {
 	WorkerSigningKey string
 	// WorkerBinaryPath is the ao-worker executable uploaded into sandboxes.
 	WorkerBinaryPath string
+	// WorkerHelperBinaryPath is the AO CLI uploaded for harness activity hooks.
+	WorkerHelperBinaryPath string
 	// MaxSandboxesPerOrg caps how much provider capacity one organization can
 	// hold at once.
 	MaxSandboxesPerOrg int
@@ -151,6 +153,7 @@ func Load() (Config, error) {
 		PublicURL:              strings.TrimRight(strings.TrimSpace(os.Getenv("AO_CLOUD_PUBLIC_URL")), "/"),
 		WorkerSigningKey:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKER_SIGNING_KEY")),
 		WorkerBinaryPath:       strings.TrimSpace(os.Getenv("AO_CLOUD_WORKER_BINARY_PATH")),
+		WorkerHelperBinaryPath: strings.TrimSpace(os.Getenv("AO_CLOUD_WORKER_HELPER_BINARY_PATH")),
 		MaxSandboxesPerOrg:     intEnvOrDefault("AO_CLOUD_MAX_ACTIVE_SANDBOXES_PER_ORG", 10),
 		ReconcileInterval:      durationEnv("AO_CLOUD_SANDBOX_RECONCILE_INTERVAL", 2*time.Second),
 		SandboxStartupTimeout:  durationEnv("AO_CLOUD_SANDBOX_STARTUP_TIMEOUT", 3*time.Minute),
@@ -337,6 +340,9 @@ func Load() (Config, error) {
 	if cfg.SandboxProvider == "nodeops" {
 		if cfg.WorkerBinaryPath == "" {
 			return Config{}, errors.New("AO_CLOUD_WORKER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
+		}
+		if cfg.WorkerHelperBinaryPath == "" {
+			return Config{}, errors.New("AO_CLOUD_WORKER_HELPER_BINARY_PATH is required when AO_CLOUD_SANDBOX_PROVIDER=nodeops")
 		}
 	}
 	if cfg.ReconcileInterval <= 0 {
