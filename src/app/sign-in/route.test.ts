@@ -14,6 +14,12 @@ vi.mock("@/lib/cloud-config", () => ({
 
 import { GET } from "./route";
 
+function request(returnTo = "") {
+  const url = new URL("http://localhost:3000/sign-in");
+  if (returnTo) url.searchParams.set("returnTo", returnTo);
+  return { nextUrl: url } as never;
+}
+
 beforeEach(() => {
   getSignInUrl.mockReset();
   redirect.mockReset();
@@ -22,11 +28,33 @@ beforeEach(() => {
 it("binds the WorkOS authorization request to the configured callback", async () => {
   getSignInUrl.mockResolvedValue("https://api.workos.com/authorize");
 
-  await GET();
+  await GET(request());
 
   expect(getSignInUrl).toHaveBeenCalledWith({
     redirectUri: "http://localhost:3000/callback",
     returnTo: "/app",
   });
   expect(redirect).toHaveBeenCalledWith("https://api.workos.com/authorize");
+});
+
+it("preserves a same-origin shared-session return path", async () => {
+  getSignInUrl.mockResolvedValue("https://api.workos.com/authorize");
+
+  await GET(request("/app?shareOrg=org-1&share=secret-token"));
+
+  expect(getSignInUrl).toHaveBeenCalledWith({
+    redirectUri: "http://localhost:3000/callback",
+    returnTo: "/app?shareOrg=org-1&share=secret-token",
+  });
+});
+
+it("rejects an external return path", async () => {
+  getSignInUrl.mockResolvedValue("https://api.workos.com/authorize");
+
+  await GET(request("https://attacker.example/app"));
+
+  expect(getSignInUrl).toHaveBeenCalledWith({
+    redirectUri: "http://localhost:3000/callback",
+    returnTo: "/app",
+  });
 });

@@ -153,6 +153,66 @@ func (s *Service) DisconnectUser(
 	return deleteErr
 }
 
+// ClaimUserInstallation attaches an existing GitHub App installation after
+// proving that the connected GitHub user can administer it. GitHub does not
+// invoke the App setup callback when an existing installation is configured.
+func (s *Service) ClaimUserInstallation(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID string,
+	githubInstallationID int64,
+) (domain.GitHubInstallation, error) {
+	if principal.UserID == "" || githubInstallationID <= 0 {
+		return domain.GitHubInstallation{}, postgres.ErrInvalid
+	}
+	_, token, err := s.githubUserAccessToken(ctx, principal.UserID)
+	if err != nil {
+		return domain.GitHubInstallation{}, err
+	}
+	visible, err := s.client.UserHasInstallation(ctx, token, githubInstallationID)
+	if err != nil {
+		return domain.GitHubInstallation{}, err
+	}
+	if !visible {
+		return domain.GitHubInstallation{}, postgres.ErrForbidden
+	}
+	providerInstallation, err := s.client.GetInstallation(ctx, githubInstallationID)
+	if err != nil {
+		return domain.GitHubInstallation{}, err
+	}
+	if !InstallationSupportsAuthorityProof(providerInstallation) {
+		return domain.GitHubInstallation{}, postgres.ErrForbidden
+	}
+	authorized, err := s.client.UserCanAdministerInstallation(
+		ctx,
+		token,
+		providerInstallation,
+	)
+	if err != nil {
+		return domain.GitHubInstallation{}, err
+	}
+	if !authorized {
+		return domain.GitHubInstallation{}, postgres.ErrForbidden
+	}
+	installation, err := s.store.BindGitHubInstallation(
+		ctx,
+		principal,
+		orgID,
+		toDomainInstallation(providerInstallation),
+	)
+	if err != nil {
+		return domain.GitHubInstallation{}, err
+	}
+	if err := s.sync(ctx, installation); err != nil {
+		return domain.GitHubInstallation{}, err
+	}
+	installation.SyncStatus = "ready"
+	now := time.Now().UTC()
+	installation.LastSyncedAt = &now
+	installation.LastError = ""
+	return installation, nil
+}
+
 func (s *Service) RevokeUserByGitHubID(
 	ctx context.Context,
 	githubUserID int64,

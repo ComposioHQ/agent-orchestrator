@@ -380,9 +380,8 @@ func TestTerminalTicketScopesAndPolicyCapForSharedSessions(t *testing.T) {
 		projectID: f.projectID, sessionID: f.sessionID,
 	})
 
-	// A viewer grant caps the session down to read-only, so an agent-kind
-	// ticket must be refused outright — no scope split matters if no ticket
-	// issues at all.
+	// A viewer grant can observe the existing agent terminal, but cannot send
+	// input or resize the PTY.
 	_, viewerToken, err := f.store.CreateProjectShareLink(ctx, f.owner, f.ownerOrgID, f.projectID, domain.CreateShareLink{
 		SessionID: f.sessionID, Role: "viewer", ModeCap: "read-only",
 	})
@@ -392,8 +391,12 @@ func TestTerminalTicketScopesAndPolicyCapForSharedSessions(t *testing.T) {
 	if _, err := f.store.RedeemProjectShareLink(ctx, f.other, f.ownerOrgID, viewerToken); err != nil {
 		t.Fatalf("redeem viewer share link: %v", err)
 	}
-	if _, _, err := f.store.IssueTerminalTicket(ctx, f.other, f.ownerOrgID, f.sessionID, "agent", time.Minute); !errors.Is(err, ErrForbidden) {
-		t.Fatalf("viewer agent terminal ticket error = %v, want ErrForbidden", err)
+	_, viewerScopes, err := f.store.IssueTerminalTicket(ctx, f.other, f.ownerOrgID, f.sessionID, "agent", time.Minute)
+	if err != nil {
+		t.Fatalf("viewer agent terminal ticket: %v", err)
+	}
+	if !slices.Equal(viewerScopes, []string{"terminal:read"}) {
+		t.Fatalf("viewer scopes = %v, want terminal:read only", viewerScopes)
 	}
 
 	// An editor grant with no cap leaves the session's own trusted mode

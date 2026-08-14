@@ -23,7 +23,7 @@ func TestCompletionHTMLUsesBrandedSuccessPage(t *testing.T) {
 	html := string((&Service{}).CompletionHTML(true))
 	for _, expected := range []string{
 		"Agent Orchestrator",
-		"https://aoagents.dev/ao-logo.svg",
+		"brand-mark",
 		"GitHub connected",
 		"Close window",
 		"window.close()",
@@ -460,6 +460,86 @@ func TestPrepareScratchCapabilityIsOpaqueAndIdempotent(t *testing.T) {
 		first.Capability,
 	) {
 		t.Fatal("plaintext capability was stored in ciphertext")
+	}
+}
+
+func TestClaimUserInstallationVerifiesAdminAndSyncs(t *testing.T) {
+	const accessToken = "user-token"
+	github := httptest.NewServer(http.HandlerFunc(func(
+		w http.ResponseWriter,
+		r *http.Request,
+	) {
+		switch r.URL.Path {
+		case "/user/installations":
+			if r.Header.Get("Authorization") != "Bearer "+accessToken {
+				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"installations":[{"id":7}]}`))
+		case "/app/installations/7":
+			_, _ = w.Write([]byte(`{
+				"id":7,
+				"account":{"id":8,"login":"acme","type":"Organization"},
+				"repository_selection":"all",
+				"permissions":{"members":"read","contents":"write"}
+			}`))
+		case "/user":
+			_, _ = w.Write([]byte(`{"id":42}`))
+		case "/user/memberships/orgs/acme":
+			_, _ = w.Write([]byte(`{"state":"active","role":"admin"}`))
+		case "/app/installations/7/access_tokens":
+			_, _ = w.Write([]byte(`{
+				"token":"installation-token",
+				"expires_at":"2026-08-14T23:00:00Z"
+			}`))
+		case "/installation/repositories":
+			_, _ = w.Write([]byte(`{"repositories":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer github.Close()
+
+	credentialKey := bytes.Repeat([]byte{5}, 32)
+	ciphertext, nonce, err := Encrypt(
+		credentialKey,
+		[]byte(accessToken),
+		githubUserTokenAssociatedData("user-1", 42, "access"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &scratchRepositoryStore{connection: domain.GitHubUserConnection{
+		UserID:                "user-1",
+		GitHubUserID:          42,
+		AccessTokenCiphertext: ciphertext,
+		AccessTokenNonce:      nonce,
+	}}
+	service, err := NewService(
+		store,
+		testClient(t, github.URL),
+		bytes.Repeat([]byte{3}, 32),
+		credentialKey,
+		"webhook-secret",
+		time.Minute,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation, err := service.ClaimUserInstallation(
+		context.Background(),
+		domain.Principal{UserID: "user-1"},
+		"org-1",
+		7,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installation.ID != "bound-installation" ||
+		installation.OrgID != "org-1" ||
+		installation.SyncStatus != "ready" ||
+		store.reconciled != 1 {
+		t.Fatalf("installation = %#v, reconciled = %d", installation, store.reconciled)
 	}
 }
 

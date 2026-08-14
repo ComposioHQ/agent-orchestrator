@@ -359,12 +359,11 @@ func (s *Store) IssueTerminalTicket(
 		// native standard/trusted approval mode, but neither surface can
 		// faithfully enforce AO's command-prefix deny rules.
 		if len(deniedCommands) != 0 ||
-			(kind == "workspace" && mode != "trusted") ||
-			(kind == "agent" && mode == "read-only") {
+			(kind == "workspace" && mode != "trusted") {
 			return ErrForbidden
 		}
 		scopes = []string{"terminal:read"}
-		if access.Role != "viewer" {
+		if access.Role != "viewer" && mode != "read-only" {
 			scopes = append(scopes, "terminal:operate")
 		}
 		_, err = tx.Exec(ctx,

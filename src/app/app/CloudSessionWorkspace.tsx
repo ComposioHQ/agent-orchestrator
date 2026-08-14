@@ -68,6 +68,7 @@ export function CloudSessionWorkspace({
   sidebarOpen = true,
   organizationId,
   session,
+  workspaceTerminalDisabledReason = "",
 }: {
   onClose: () => void;
   onDelete?: () => void;
@@ -77,6 +78,7 @@ export function CloudSessionWorkspace({
   sidebarOpen?: boolean;
   organizationId: string;
   session: Session;
+  workspaceTerminalDisabledReason?: string;
 }) {
   const client = useMemo(browserCloudClient, []);
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -362,6 +364,10 @@ export function CloudSessionWorkspace({
             pullRequests={pullRequests}
             reviewGroups={reviewGroups}
           />
+        ) : workspaceTerminalDisabledReason ? (
+          <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
+            {workspaceTerminalDisabledReason}
+          </div>
         ) : session.mode !== "trusted" ? (
           <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
             Workspace shell access requires a trusted session.

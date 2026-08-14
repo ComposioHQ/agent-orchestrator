@@ -3,10 +3,11 @@
 import {
   CloudApiError,
   createCloudClient,
+  type GitHubInstallation,
+  type OrganizationMembership,
   type PutAgentProviderConnectionInput,
   type RedactedProviderConnection,
   type Session,
-  type OrganizationMembership,
 } from "@aoagents/cloud-client";
 import type {
   CreateInvitationInput,
@@ -17,6 +18,10 @@ import type {
 } from "@/app/app/share-types";
 
 type ShareClient = {
+  claimGitHubInstallation: (
+    orgId: string,
+    githubInstallationId: string,
+  ) => Promise<{ installation: GitHubInstallation }>;
   listProjectShareLinks: (orgId: string, projectId: string) => Promise<ProjectShareLink[]>;
   createProjectShareLink: (
     orgId: string,
@@ -94,6 +99,14 @@ export function browserCloudClient() {
   const orgPath = (orgId: string, suffix: string) =>
     `/api/cloud/v1/orgs/${encodeURIComponent(orgId)}${suffix}`;
   return Object.assign(client, {
+    claimGitHubInstallation: (orgId: string, githubInstallationId: string) =>
+      request<{ installation: GitHubInstallation }>(
+        orgPath(orgId, "/github/installations/claim"),
+        {
+          method: "POST",
+          body: JSON.stringify({ githubInstallationId }),
+        },
+      ),
     listProjectShareLinks: async (orgId: string, projectId: string) => {
       const response = await request<{ links: ProjectShareLink[] }>(
         orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares`),

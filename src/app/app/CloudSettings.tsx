@@ -11,6 +11,7 @@ import {
   Building2,
   GitFork,
   KeyRound,
+  LoaderCircle,
   RefreshCw,
   Settings2,
   Unplug,
@@ -68,6 +69,7 @@ export function CloudSettings({
   onDeclineInvitation,
   onConnectGitHub,
   onConnectGitHubOrganization,
+  onClaimGitHubOrganization,
   onDisconnectGitHub,
   onDisconnectGitHubUser,
   onConnectUserAgent,
@@ -96,6 +98,7 @@ export function CloudSettings({
   onDeclineInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onConnectGitHub: () => Promise<void>;
   onConnectGitHubOrganization: () => Promise<void>;
+  onClaimGitHubOrganization: (githubInstallationId: string) => Promise<void>;
   onDisconnectGitHub: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectGitHubUser: () => Promise<void>;
   onConnectUserAgent: (
@@ -252,6 +255,7 @@ export function CloudSettings({
                       githubUser={githubUser}
                       onConnect={onConnectGitHub}
                       onConnectOrganization={onConnectGitHubOrganization}
+                      onClaimOrganization={onClaimGitHubOrganization}
                       onDisconnect={onDisconnectGitHub}
                       onDisconnectUser={onDisconnectGitHubUser}
                       onSync={onSyncGitHub}
@@ -392,6 +396,7 @@ function GitHubSettings({
   githubUser,
   onConnect,
   onConnectOrganization,
+  onClaimOrganization,
   onDisconnect,
   onDisconnectUser,
   onSync,
@@ -402,6 +407,7 @@ function GitHubSettings({
   githubUser: GitHubUserCapability;
   onConnect: () => Promise<void>;
   onConnectOrganization: () => Promise<void>;
+  onClaimOrganization: (githubInstallationId: string) => Promise<void>;
   onDisconnect: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectUser: () => Promise<void>;
   onSync: (installation: GitHubInstallation) => Promise<void>;
@@ -419,6 +425,14 @@ function GitHubSettings({
   const hasOrgAccess = orgInstallations.length > 0;
   const creationOwners = githubUser.connection.installations.filter(
     (installation) => installation.canCreateRepository,
+  );
+  const connectedInstallationIds = new Set(
+    orgInstallations.map(({ githubInstallationId }) => githubInstallationId),
+  );
+  const availableOrganizations = githubUser.connection.installations.filter(
+    (installation) =>
+      installation.accountType === "Organization" &&
+      !connectedInstallationIds.has(installation.githubInstallationId),
   );
   return (
     <SettingsSection grouped title="GitHub">
@@ -468,7 +482,8 @@ function GitHubSettings({
               onClick={() => void onConnectOrganization()}
               type="button"
             >
-              Manage
+              {busy ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : null}
+              {busy ? "Waiting for GitHub…" : "Manage"}
             </button>
           </SettingsRow>
           {orgInstallations.map((installation) => (
@@ -486,14 +501,34 @@ function GitHubSettings({
           ))}
         </>
       ) : accountConnected && github.status === "available" ? (
-        <SettingsRow label="Organization repository access">
-          <div className="flex items-center gap-3">
-            <span className="settings-row-value">Not connected</span>
-            <button className={primaryButtonClass} disabled={busy} onClick={() => void onConnectOrganization()} type="button">
-              Connect organization
-            </button>
-          </div>
-        </SettingsRow>
+        <>
+          <SettingsRow label="Organization repository access">
+            <div className="flex items-center gap-3">
+              <span className="settings-row-value">Not connected</span>
+              <button className={primaryButtonClass} disabled={busy} onClick={() => void onConnectOrganization()} type="button">
+                {busy ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin" /> : null}
+                {busy ? "Waiting for GitHub…" : "Connect organization"}
+              </button>
+            </div>
+          </SettingsRow>
+          {availableOrganizations.map((installation) => (
+            <SettingsRow key={installation.githubInstallationId} label={installation.accountLogin}>
+              <div className="flex min-w-0 items-center gap-3">
+                <span className="settings-row-value truncate">
+                  {installation.repositorySelection === "all" ? "All repositories" : "Selected repositories"}
+                </span>
+                <button
+                  className={buttonClass}
+                  disabled={busy}
+                  onClick={() => void onClaimOrganization(installation.githubInstallationId)}
+                  type="button"
+                >
+                  Connect
+                </button>
+              </div>
+            </SettingsRow>
+          ))}
+        </>
       ) : null}
     </SettingsSection>
   );

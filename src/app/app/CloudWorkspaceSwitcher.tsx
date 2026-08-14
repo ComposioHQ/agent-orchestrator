@@ -4,6 +4,7 @@ import type { CurrentAccount } from "@aoagents/cloud-client";
 import { Check, ChevronsUpDown, LogOut, Plus, Settings } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 const PALETTE = [
   { bg: "oklch(0.35 0.12 250)", fg: "oklch(0.78 0.10 250)" },  // blue
@@ -67,7 +68,9 @@ export function CloudWorkspaceSwitcher({
 }) {
   const prefersReducedMotion = useReducedMotion();
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ left: 16, top: 56 });
   const selectedWorkspace =
     account.organizations.find(
       ({ id }) => id === selectedOrganizationId,
@@ -77,7 +80,13 @@ export function CloudWorkspaceSwitcher({
     if (!open) return;
 
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (
+        !rootRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        setOpen(false);
+      }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -89,6 +98,21 @@ export function CloudWorkspaceSwitcher({
       window.removeEventListener("pointerdown", closeOnOutsidePointer);
       window.removeEventListener("keydown", closeOnEscape);
     };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const positionMenu = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuPosition({
+        left: Math.max(16, Math.min(rect.left, window.innerWidth - 336)),
+        top: rect.bottom + 6,
+      });
+    };
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    return () => window.removeEventListener("resize", positionMenu);
   }, [open]);
 
   const menuTransition = prefersReducedMotion
@@ -124,16 +148,19 @@ export function CloudWorkspaceSwitcher({
         </motion.span>
       </motion.button>
 
+      {typeof document !== "undefined" ? createPortal(
       <AnimatePresence initial={false}>
         {open ? (
           <motion.div
+            ref={menuRef}
             role="menu"
             aria-label="Workspace menu"
             initial={{ opacity: 0, y: -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -3, scale: 0.99 }}
             transition={menuTransition}
-            className="absolute left-0 top-[calc(100%+6px)] z-50 w-[min(320px,calc(100vw-32px))] origin-top overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1"
+            className="fixed z-[200] w-[min(320px,calc(100vw-32px))] origin-top overflow-hidden rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1 shadow-xl"
+            style={menuPosition}
           >
             <div className="truncate px-2 py-1.5 text-[11px] leading-4 text-[var(--color-text-passive)]" title={account.user.email}>
               {account.user.email}
@@ -210,6 +237,7 @@ export function CloudWorkspaceSwitcher({
           </motion.div>
         ) : null}
       </AnimatePresence>
+      , document.body) : null}
     </div>
   );
 }

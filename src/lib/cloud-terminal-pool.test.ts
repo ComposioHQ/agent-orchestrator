@@ -64,3 +64,53 @@ it("does not forward transient collapsed-pane dimensions to the PTY", async () =
   );
   expect(FakeWebSocket.instance.send).toHaveBeenCalledTimes(2);
 });
+
+it("does not send input or resize frames for a read-only terminal ticket", async () => {
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static instance: FakeWebSocket;
+
+    readyState = FakeWebSocket.CONNECTING;
+    send = vi.fn();
+    close = vi.fn();
+    private readonly listeners = new Map<string, EventListener[]>();
+
+    constructor() {
+      FakeWebSocket.instance = this;
+    }
+
+    addEventListener(type: string, listener: EventListener) {
+      const listeners = this.listeners.get(type) ?? [];
+      listeners.push(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      for (const listener of this.listeners.get("open") ?? []) {
+        listener(new Event("open"));
+      }
+    }
+  }
+
+  vi.stubGlobal("WebSocket", FakeWebSocket);
+  const client = {
+    createTerminalTicket: vi.fn().mockResolvedValue({
+      ticket: "read-only-ticket",
+      scopes: ["terminal:read"],
+    }),
+  };
+  const connection = ensureCloudTerminalConnection(
+    client as never,
+    "shared-org",
+    "shared-session",
+  );
+
+  await vi.waitFor(() => expect(FakeWebSocket.instance).toBeDefined());
+  FakeWebSocket.instance.open();
+  connection.resize(40, 120);
+  connection.sendInput("whoami\n");
+
+  expect(FakeWebSocket.instance.send).not.toHaveBeenCalled();
+});

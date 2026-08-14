@@ -239,12 +239,8 @@ export function PrismLogoGrid({
       scene = createScene(canvas, image, compact);
       if (!scene) return;
       startedAt = performance.now();
-      lastProgress = compact && !reduceMotion ? 0 : 1;
-      if (compact && !reduceMotion) {
-        frame = window.requestAnimationFrame(animate);
-      } else {
-        paintScene(scene, lastProgress);
-      }
+      lastProgress = reduceMotion ? 1 : 0;
+      frame = window.requestAnimationFrame(animate);
     };
 
     image.addEventListener("load", reveal);
@@ -281,7 +277,7 @@ export function PrismLogoGrid({
   }
 
   return (
-    <div className="relative h-full min-h-0 overflow-hidden bg-[#08090b]">
+    <div className="auth-grid-enter relative h-full min-h-0 overflow-hidden bg-[#08090b]">
       <canvas
         ref={canvasRef}
         className="pointer-events-none block size-full"

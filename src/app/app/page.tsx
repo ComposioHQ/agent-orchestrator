@@ -384,11 +384,53 @@ export function CloudWorkspace() {
       .then(async (value) => {
         if (!active) return;
         setAccount(value);
-        const pending = consumePendingShareRedemption();
+        const shareParams = new URLSearchParams(window.location.search);
+        const shareOrg = shareParams.get("shareOrg");
+        const shareToken = shareParams.get("share");
+        if (shareOrg && shareToken) {
+          shareParams.delete("shareOrg");
+          shareParams.delete("share");
+          const query = shareParams.toString();
+          window.history.replaceState({}, "", `/app${query ? `?${query}` : ""}`);
+        }
+        const pending =
+          shareOrg && shareToken
+            ? { orgId: shareOrg, token: shareToken }
+            : consumePendingShareRedemption();
         if (pending) {
-          try {
-            await client.redeemProjectShareLink(pending);
-          } catch {}
+          void (async () => {
+            try {
+              const { shared } = await client.redeemProjectShareLink(pending);
+              const sharedSessions = await client.listSharedProjectSessions(
+                shared.project.orgId,
+                shared.project.id,
+              );
+              if (!active) return;
+              setSharedProjects((current) => [
+                shared,
+                ...current.filter(
+                  (item) => item.project.id !== shared.project.id,
+                ),
+              ]);
+              setSharedProjectSessions((current) => ({
+                ...current,
+                [shared.project.id]: sharedSessions,
+              }));
+              const targetSession =
+                sharedSessions.find(({ id }) => id === shared.sessionId) ??
+                sharedSessions[0];
+              if (targetSession) {
+                const response = await client.getSession(
+                  shared.project.orgId,
+                  targetSession.id,
+                );
+                if (!active) return;
+                setSelectedSessionId(null);
+                setSharedSessionOrgId(shared.project.orgId);
+                setSharedSession(response.session);
+              }
+            } catch {}
+          })();
         }
         void loadSharedProjects();
         void loadUserProviders();
@@ -752,6 +794,16 @@ export function CloudWorkspace() {
           ])
         : [],
     );
+    const beforeUserInstallations = new Map(
+      githubUser.connection.installations.map((installation) => [
+        installation.githubInstallationId,
+        [
+          installation.repositorySelection,
+          String(installation.canCreateRepository),
+          installation.unavailableReason ?? "",
+        ].join(":"),
+      ]),
+    );
     const attempt = await client.startGitHubInstallation(organizationId);
     let popup = existingPopup ?? null;
     if (popup && !popup.closed) {
@@ -771,6 +823,7 @@ export function CloudWorkspace() {
 
     const deadline = Date.now() + 2 * 60 * 1000;
     let connectedInstallation: GitHubInstallation | undefined;
+    let claimedExistingInstallation = false;
     while (Date.now() < deadline) {
       const installations = await client.listGitHubInstallations(organizationId);
       connectedInstallation = installations.find(
@@ -782,15 +835,40 @@ export function CloudWorkspace() {
       if (connectedInstallation) {
         break;
       }
+      const userConnection = await client.getGitHubUserConnection();
+      const changedExistingInstallation = userConnection.installations.find(
+        (installation) =>
+          installation.accountType === "Organization" &&
+          !before.has(installation.githubInstallationId) &&
+          beforeUserInstallations.has(installation.githubInstallationId) &&
+          beforeUserInstallations.get(installation.githubInstallationId) !==
+            [
+              installation.repositorySelection,
+              String(installation.canCreateRepository),
+              installation.unavailableReason ?? "",
+            ].join(":"),
+      );
+      if (changedExistingInstallation) {
+        const claimed = await client.claimGitHubInstallation(
+          organizationId,
+          changedExistingInstallation.githubInstallationId,
+        );
+        connectedInstallation = claimed.installation;
+        claimedExistingInstallation = true;
+        setGitHubUser({ status: "available", connection: userConnection });
+        break;
+      }
       await delay(500);
     }
     if (!connectedInstallation) {
       throw new Error("The AO GitHub App installation did not complete.");
     }
-    await client.syncGitHubInstallation(
-      organizationId,
-      connectedInstallation.id,
-    );
+    if (!claimedExistingInstallation) {
+      await client.syncGitHubInstallation(
+        organizationId,
+        connectedInstallation.id,
+      );
+    }
     popup.close();
     await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
   };
@@ -837,6 +915,22 @@ export function CloudWorkspace() {
     setError("");
     try {
       await connectGitHubOrganization();
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setGitHubBusy(false);
+    }
+  };
+
+  const claimGitHubOrganization = async (githubInstallationId: string) => {
+    setGitHubBusy(true);
+    setError("");
+    try {
+      await client.claimGitHubInstallation(
+        organizationId,
+        githubInstallationId,
+      );
+      await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
     } catch (cause) {
       handleLoadError(cause, setError);
     } finally {
@@ -1179,6 +1273,9 @@ export function CloudWorkspace() {
     sessions.find(({ id }) => id === selectedSessionId) ?? null;
   const activeSession = sharedSession ?? selectedSession;
   const activeSessionOrgId = sharedSession ? sharedSessionOrgId : organizationId;
+  const activeSharedProject = sharedSession
+    ? sharedProjects.find(({ project }) => project.id === sharedSession.projectId)
+    : undefined;
 
   return (
     <main
@@ -1251,6 +1348,11 @@ export function CloudWorkspace() {
               sidebarOpen={!sidebarCollapsed}
               organizationId={activeSessionOrgId}
               session={activeSession}
+              workspaceTerminalDisabledReason={
+                activeSharedProject?.grant.role === "viewer"
+                  ? "Workspace terminal access is not available for read-only shares."
+                  : ""
+              }
             />
           ) : (
             <>
@@ -1304,6 +1406,7 @@ export function CloudWorkspace() {
           open={settingsOpen}
           onConnectGitHub={connectGitHub}
           onConnectGitHubOrganization={startGitHubOrganizationInstall}
+          onClaimGitHubOrganization={claimGitHubOrganization}
           onConnectUserAgent={connectUserAgentProvider}
           onDisconnectUserAgent={disconnectUserAgentProvider}
           onBack={() => setSettingsOpen(false)}

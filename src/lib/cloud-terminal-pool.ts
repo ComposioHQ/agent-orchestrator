@@ -1,5 +1,6 @@
 "use client";
 
+import { CloudApiError } from "@aoagents/cloud-client";
 import {
   browserCloudClient,
   browserTerminalUrl,
@@ -40,6 +41,7 @@ class CloudTerminalConnection {
   private retryAttempt = 0;
   private pendingInput: string[] = [];
   private size = { rows: 24, cols: 80 };
+  private canOperate = true;
 
   constructor(
     private readonly client: CloudClient,
@@ -67,6 +69,7 @@ class CloudTerminalConnection {
   }
 
   sendInput(data: string) {
+    if (!this.canOperate) return;
     if (this.socket?.readyState !== WebSocket.OPEN) {
       if (this.pendingInput.length < 256) this.pendingInput.push(data);
       this.reconnectNow();
@@ -130,12 +133,13 @@ class CloudTerminalConnection {
     this.resetReplayBuffer();
     const abortController = new AbortController();
     try {
-      const { ticket } = await this.client.createTerminalTicket(
+      const { ticket, scopes } = await this.client.createTerminalTicket(
         this.organizationId,
         this.sessionId,
         this.kind,
         { signal: abortController.signal },
       );
+      this.canOperate = !scopes || scopes.includes("terminal:operate");
       if (this.closed) return;
 
       const socket = new WebSocket(browserTerminalUrl(ticket, 0, this.kind));
@@ -201,6 +205,12 @@ class CloudTerminalConnection {
           message:
             cause instanceof Error ? cause.message : "Could not open terminal.",
         });
+        if (
+          cause instanceof CloudApiError &&
+          (cause.status === 403 || cause.status === 404)
+        ) {
+          return;
+        }
         this.scheduleReconnect();
       }
     } finally {
@@ -232,7 +242,7 @@ class CloudTerminalConnection {
   };
 
   private sendResize() {
-    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    if (!this.canOperate || this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(
       JSON.stringify({
         type: "resize",

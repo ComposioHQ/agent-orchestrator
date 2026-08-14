@@ -313,6 +313,7 @@ func New(options Options) *Server {
 			if server.github != nil {
 				router.Get("/github/installations", server.listGitHubInstallations)
 				router.Post("/github/installations/start", server.startGitHubInstallation)
+				router.Post("/github/installations/claim", server.claimGitHubInstallation)
 				router.Post("/github/installations/{installationId}/sync", server.syncGitHubInstallation)
 				router.Post("/github/installations/{installationId}/disconnect", server.disconnectGitHubInstallation)
 				router.Get("/github/repositories", server.listGitHubRepositories)

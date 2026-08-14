@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   createGitHubScratchProject: vi.fn(),
   startGitHubUserAuthorization: vi.fn(),
   startGitHubInstallation: vi.fn(),
+  claimGitHubInstallation: vi.fn(),
   syncGitHubInstallation: vi.fn(),
   disconnectGitHubUser: vi.fn(),
   putAgentProviderConnection: vi.fn(),
@@ -73,6 +74,7 @@ vi.mock("@/lib/cloud-client", () => ({
     createGitHubScratchProject: mocks.createGitHubScratchProject,
     startGitHubUserAuthorization: mocks.startGitHubUserAuthorization,
     startGitHubInstallation: mocks.startGitHubInstallation,
+    claimGitHubInstallation: mocks.claimGitHubInstallation,
     syncGitHubInstallation: mocks.syncGitHubInstallation,
     disconnectGitHubUser: mocks.disconnectGitHubUser,
     putAgentProviderConnection: mocks.putAgentProviderConnection,
@@ -768,6 +770,78 @@ it("recognizes a reconfigured GitHub installation and closes the popup", async (
   fireEvent.click(screen.getByRole("button", { name: "Manage organization repository access" }));
 
   await waitFor(() => expect(mocks.syncGitHubInstallation).toHaveBeenCalledWith("org-1", "inst-1"));
+  expect(popup.close).toHaveBeenCalled();
+});
+
+it("claims an existing GitHub organization installation after it is configured", async () => {
+  const beforeConnection = {
+    connected: true,
+    login: "amoreX",
+    installations: [
+      {
+        githubInstallationId: "153693921",
+        accountLogin: "unordinarytech",
+        accountType: "Organization",
+        repositorySelection: "selected",
+        canCreateRepository: false,
+        unavailableReason: "Configure the GitHub App for all repositories first.",
+      },
+    ],
+  };
+  const afterConnection = {
+    ...beforeConnection,
+    installations: [
+      {
+        ...beforeConnection.installations[0],
+        repositorySelection: "all",
+        canCreateRepository: true,
+        unavailableReason: "",
+      },
+    ],
+  };
+  mocks.getGitHubUserConnection.mockResolvedValue(beforeConnection);
+  mocks.listGitHubInstallations.mockResolvedValue([]);
+  mocks.claimGitHubInstallation.mockResolvedValue({
+    installation: {
+      id: "inst-unordinarytech",
+      githubInstallationId: "153693921",
+      accountLogin: "unordinarytech",
+      accountType: "Organization",
+      status: "active",
+      repositorySelection: "all",
+      syncStatus: "ready",
+      createdAt: "2026-08-14T00:00:00Z",
+      updatedAt: "2026-08-14T00:00:00Z",
+    },
+  });
+  const popup = {
+    closed: false,
+    close: vi.fn(),
+    location: { assign: vi.fn() },
+  };
+  vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Command palette" })).getByRole(
+      "option",
+      { name: "Settings" },
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Providers" }));
+  mocks.getGitHubUserConnection.mockResolvedValue(afterConnection);
+  fireEvent.click(screen.getByRole("button", { name: "Connect organization" }));
+
+  expect(await screen.findByText("Waiting for GitHub…")).toBeVisible();
+  await waitFor(() =>
+    expect(mocks.claimGitHubInstallation).toHaveBeenCalledWith(
+      "org-1",
+      "153693921",
+    ),
+  );
+  expect(mocks.syncGitHubInstallation).not.toHaveBeenCalled();
   expect(popup.close).toHaveBeenCalled();
 });
 

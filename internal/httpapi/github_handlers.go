@@ -66,6 +66,10 @@ type githubUserInstallationResponse struct {
 	UnavailableReason    string `json:"unavailableReason,omitempty"`
 }
 
+type claimGitHubInstallationRequest struct {
+	GitHubInstallationID string `json:"githubInstallationId"`
+}
+
 type createGitHubScratchProjectRequest struct {
 	DisplayName          string `json:"displayName"`
 	GitHubInstallationID string `json:"githubInstallationId"`
@@ -145,6 +149,41 @@ func (s *Server) startGitHubInstallation(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"installationUrl": installationURL,
 		"expiresAt":       expiresAt,
+	})
+}
+
+func (s *Server) claimGitHubInstallation(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	if requireUUID(orgID, "orgId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId must be a UUID.")
+		return
+	}
+	var request claimGitHubInstallationRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	githubInstallationID, err := strconv.ParseInt(
+		strings.TrimSpace(request.GitHubInstallationID),
+		10,
+		64,
+	)
+	if err != nil || githubInstallationID <= 0 {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "githubInstallationId must be a positive integer string.")
+		return
+	}
+	installation, err := s.github.ClaimUserInstallation(
+		r.Context(),
+		principalFrom(r),
+		orgID,
+		githubInstallationID,
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"installation": toGitHubInstallationResponse(installation),
 	})
 }
 

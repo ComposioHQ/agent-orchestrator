@@ -715,34 +715,39 @@ func (s *Service) completionHTML(success, closeImmediately bool) []byte {
 <meta name="color-scheme" content="dark">
 <title>%s · AO</title>
 <style>
-:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0a0b0d;color:#f4f5f7}
+:root{color-scheme:dark;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090a0c;color:#f4f5f7}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;background:#0a0b0d}
+body{margin:0;min-height:100vh;background:#090a0c}
 main{min-height:100vh;display:grid;place-items:center;padding:32px}
-.content{width:min(100%%,420px)}
-.brand{display:flex;align-items:center;gap:10px;margin-bottom:44px;color:#9ba1aa;font-size:13px}
-.brand img{width:30px;height:30px;border-radius:7px}
-.status{display:grid;place-items:center;width:42px;height:42px;margin-bottom:20px;border:1px solid;font-size:20px;font-weight:600}
+.content{width:min(100%%,440px);border:1px solid #292c32;border-radius:8px;background:#111317;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,.32)}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:36px;color:#a7abb3;font-size:13px;font-weight:500}
+.brand-mark{display:grid;place-items:center;width:30px;height:30px;border:1px solid #353941;border-radius:7px;background:#1a1d22;color:#f4f5f7;font-size:12px;font-weight:700}
+.status{display:grid;place-items:center;width:44px;height:44px;margin-bottom:20px;border:1px solid;border-radius:50%%;font-size:20px;font-weight:600}
 .status.success{border-color:rgba(74,222,128,.38);background:rgba(74,222,128,.08);color:#4ade80}
 .status.error{border-color:rgba(212,84,79,.42);background:rgba(212,84,79,.09);color:#e16a65}
-h1{margin:0;font-size:25px;line-height:1.2;letter-spacing:-.025em;font-weight:600}
+h1{margin:0;font-size:24px;line-height:1.25;letter-spacing:0;font-weight:650}
 p{margin:10px 0 0;color:#9ba1aa;font-size:14px;line-height:1.6}
-.action{margin-top:30px;display:inline-flex;height:36px;align-items:center;justify-content:center;border:1px solid #3a3d44;border-radius:6px;background:#191b20;color:#f4f5f7;padding:0 14px;font:inherit;font-size:13px;cursor:pointer}
-.action:hover{background:#22252b;border-color:#4a4e58}
+.footer{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:30px;padding-top:22px;border-top:1px solid #292c32}
+.action{display:inline-flex;height:38px;align-items:center;justify-content:center;border:1px solid #d8dbe1;border-radius:6px;background:#e8eaf0;color:#17191d;padding:0 16px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.action:hover{background:#fff;border-color:#fff}
 .action:focus-visible{outline:2px solid #4d8dff;outline-offset:2px}
-.hint{margin-top:14px;color:#646a73;font-size:12px}
-@media(max-width:520px){main{place-items:start;padding:28px 22px}.brand{margin-bottom:64px}}
+.hint{display:flex;align-items:center;gap:7px;color:#777d87;font-size:12px}
+.hint::before{content:"";width:6px;height:6px;border-radius:50%%;background:#4ade80;box-shadow:0 0 0 3px rgba(74,222,128,.1)}
+.status.error~.footer .hint::before{background:#e16a65;box-shadow:0 0 0 3px rgba(225,106,101,.1)}
+@media(max-width:520px){main{place-items:start;padding:20px}.content{padding:24px}.footer{align-items:flex-start;flex-direction:column-reverse}}
 </style>
 </head>
 <body>
 <main>
 <section class="content" aria-labelledby="title">
-<div class="brand"><img src="https://aoagents.dev/ao-logo.svg" alt=""><span>Agent Orchestrator</span></div>
+<div class="brand"><span class="brand-mark" aria-hidden="true">AO</span><span>Agent Orchestrator</span></div>
 <div class="status %s" aria-hidden="true">%s</div>
 <h1 id="title">%s</h1>
 <p>%s</p>
-<button class="action" type="button" onclick="window.close()">%s</button>
+<div class="footer">
 <div class="hint">This window may close automatically.</div>
+<button class="action" type="button" onclick="window.close()">%s</button>
+</div>
 </section>
 </main>
 <script>%s</script>

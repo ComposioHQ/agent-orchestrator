@@ -33,6 +33,20 @@
   from { opacity: 1; scale: 1; }
   to { opacity: 0; scale: 0.98; }
 }
+@keyframes auth-grid-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.auth-grid-enter {
+  animation: auth-grid-enter 500ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-grid-enter {
+    animation: none;
+  }
+}
 
 /* ═══════════════════════════════════════════════════════════════
    UTILITIES — copied from the Electron renderer styles.css
