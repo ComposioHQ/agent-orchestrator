@@ -123,8 +123,11 @@ export function useImageAttachments() {
 					break;
 				}
 				if (total + a.bytes > MAX_ATTACHMENTS_BYTES) {
+					// Only this image is refused: the remaining budget cannot absorb
+					// it, but a later image in the same batch still can. Aborting here
+					// (break) would silently drop every smaller image staged after it.
 					errors.add(`Attachments must total under ${mb(MAX_ATTACHMENTS_BYTES)} MB.`);
-					break;
+					continue;
 				}
 				accepted.push(a);
 				total += a.bytes;
