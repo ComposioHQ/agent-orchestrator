@@ -1996,6 +1996,45 @@ type interruptRecorder struct {
 	attempts []string
 }
 
+// blockingDispatchConversation exposes the interval in which Send owns sendMu
+// but has not yet published pendingTurnID. Stop must wait for dispatch and then
+// retain the normal provider-ack grace period.
+type blockingDispatchConversation struct {
+	*interruptRecorder
+	sendStarted chan struct{}
+	releaseSend chan struct{}
+	attempted   chan struct{}
+	startOnce   sync.Once
+	attemptOnce sync.Once
+}
+
+func newBlockingDispatchConversation() *blockingDispatchConversation {
+	return &blockingDispatchConversation{
+		interruptRecorder: newInterruptRecorder(),
+		sendStarted:       make(chan struct{}),
+		releaseSend:       make(chan struct{}),
+		attempted:         make(chan struct{}),
+	}
+}
+
+func (c *blockingDispatchConversation) SendTurn(
+	ctx context.Context,
+	msg ports.ChatUserMessage,
+) (ports.ChatTurnRef, error) {
+	c.startOnce.Do(func() { close(c.sendStarted) })
+	select {
+	case <-c.releaseSend:
+		return c.fakeConversation.SendTurn(ctx, msg)
+	case <-ctx.Done():
+		return ports.ChatTurnRef{}, ctx.Err()
+	}
+}
+
+func (c *blockingDispatchConversation) Interrupt(ctx context.Context, turn string) error {
+	c.attemptOnce.Do(func() { close(c.attempted) })
+	return c.interruptRecorder.Interrupt(ctx, turn)
+}
+
 // blockingInterruptRefusalConversation holds the provider refusal open so a
 // message can arrive after Stop began but before reconciliation runs.
 type blockingInterruptRefusalConversation struct {
@@ -2120,6 +2159,46 @@ func TestInterruptWaitsForTheProviderToAcknowledgeTheTurn(t *testing.T) {
 	}
 }
 
+// Interrupt can begin while Send still owns the dispatch lock. Once dispatch
+// finishes, Stop must still wait for turn-started rather than treating the
+// provider's early refusal as proof that the new turn is stale.
+func TestInterruptWaitsForAcknowledgementAfterRacingDispatch(t *testing.T) {
+	conv := newBlockingDispatchConversation()
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	sendDone := make(chan error, 1)
+	go func() {
+		_, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+			Text: "go", ClientMessageID: "dispatch-race",
+		})
+		sendDone <- err
+	}()
+	select {
+	case <-conv.sendStarted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("Send did not enter provider dispatch")
+	}
+
+	interruptDone := make(chan error, 1)
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	close(conv.releaseSend)
+	if err := <-sendDone; err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case <-conv.attempted:
+		t.Fatal("Interrupt reached the provider before turn-started acknowledgement")
+	case <-time.After(100 * time.Millisecond):
+	}
+	conv.markActive("provider-turn-1")
+	conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt after acknowledgement: %v", err)
+	}
+}
+
 // A provider that refuses because the turn is genuinely gone must not strand the
 // user: the durable row still says running — that is what the UI renders — so
 // Interrupt reconciles it as interrupted instead of answering "nothing to stop"
@@ -2140,9 +2219,12 @@ func TestProviderRefusalReconcilesTheDurableTurnAsInterrupted(t *testing.T) {
 		t.Fatalf("Interrupt: %v", err)
 	}
 
-	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
 		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateInterrupted
 	})
+	if got := snapshot.Turns[0].ErrorMessage; got != "" {
+		t.Errorf("interrupted turn error message = %q, want empty", got)
+	}
 	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityIdle, "chat.interrupt.reconciled") {
 		t.Errorf("no idle signal after reconciliation; signals = %v", h.activity.snapshot())
 	}
@@ -2291,6 +2373,106 @@ func TestInterruptReconcilesStaleRunningTurnOnDisk(t *testing.T) {
 	})
 	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityIdle, "chat.interrupt.reconciled") {
 		t.Errorf("no idle signal after reconciliation; signals = %v", h.activity.snapshot())
+	}
+}
+
+// A root and a nested provider turn can both be durably running. The UI renders
+// the oldest visible row first, but clearing only that row would merely reveal a
+// second Working bar. Recovery cancels the visible root and settles the full
+// visible running set.
+func TestInterruptReconcilesAllVisibleRunningTurns(t *testing.T) {
+	conv := newInterruptRecorder()
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
+		h.ctrl.Generation(), "root-turn", "provider-root", h.now()); err != nil {
+		t.Fatalf("AdoptProviderTurn root: %v", err)
+	}
+	h.advance(time.Second)
+	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
+		h.ctrl.Generation(), "child-turn", "provider-child", h.now()); err != nil {
+		t.Fatalf("AdoptProviderTurn child: %v", err)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 2 && s.Turns[0].State == domain.TurnStateRunning &&
+			s.Turns[1].State == domain.TurnStateRunning
+	})
+
+	if err := h.svc.Interrupt(ctx, testSession); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 2 && s.Turns[0].State.Terminal() && s.Turns[1].State.Terminal()
+	})
+	for _, turn := range snapshot.Turns {
+		if turn.State != domain.TurnStateInterrupted {
+			t.Errorf("turn %s = %q, want interrupted", turn.ProviderTurnID, turn.State)
+		}
+	}
+	conv.activeMu.Lock()
+	attempts := append([]string(nil), conv.attempts...)
+	conv.activeMu.Unlock()
+	if len(attempts) != 1 || attempts[0] != "provider-root" {
+		t.Fatalf("provider interrupt attempts = %v, want visible root first", attempts)
+	}
+}
+
+// In the no-memory recovery path, provider cancellation happens under sendMu.
+// A prompt submitted after Stop therefore waits for stale settlement and then
+// starts as new work instead of replacing the recovery target.
+func TestInterruptDurableFallbackPreservesPostStopSend(t *testing.T) {
+	conv := newBlockingInterruptRefusalConversation()
+	t.Cleanup(conv.unblock)
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if err := h.st.AdoptProviderTurn(ctx, h.ctrl.ConversationID(), testSession,
+		h.ctrl.Generation(), "stale-turn", "provider-stale", h.now()); err != nil {
+		t.Fatalf("AdoptProviderTurn: %v", err)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	interruptDone := make(chan error, 1)
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	select {
+	case <-conv.started:
+	case <-time.After(4 * time.Second):
+		t.Fatal("durable fallback did not reach provider interrupt")
+	}
+
+	h.advance(time.Second)
+	sendDone := make(chan error, 1)
+	go func() {
+		_, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+			Text: "after stop", ClientMessageID: "post-stop-fallback",
+		})
+		sendDone <- err
+	}()
+	select {
+	case err := <-sendDone:
+		t.Fatalf("post-Stop Send crossed reconciliation lock early: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	conv.unblock()
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	if err := <-sendDone; err != nil {
+		t.Fatalf("post-Stop Send: %v", err)
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 2 && s.Turns[0].State == domain.TurnStateInterrupted &&
+			s.Turns[1].State == domain.TurnStateRunning
+	})
+	if snapshot.Turns[0].ProviderTurnID != "provider-stale" {
+		t.Fatalf("reconciled turn = %q, want provider-stale", snapshot.Turns[0].ProviderTurnID)
+	}
+	if got := conv.sentTexts(); len(got) != 1 || got[0] != "after stop" {
+		t.Fatalf("provider received %v, want only post-Stop work", got)
 	}
 }
 
@@ -2794,6 +2976,8 @@ func TestProviderStartedTurnIsAdoptedSoItsItemsCorrelate(t *testing.T) {
 type failingProjectStore struct {
 	chatsvc.Store
 	failMethod string
+	failed     chan struct{}
+	failOnce   sync.Once
 }
 
 func (s *failingProjectStore) ProjectProviderEvent(
@@ -2801,11 +2985,21 @@ func (s *failingProjectStore) ProjectProviderEvent(
 	generation, providerEventID, method, payloadJSON string, now time.Time,
 	project func(context.Context) error,
 ) (bool, error) {
-	if method == s.failMethod {
-		return false, errors.New("injected projection failure")
+	if method != s.failMethod {
+		return s.Store.ProjectProviderEvent(ctx, conversationID, session, generation,
+			providerEventID, method, payloadJSON, now, project)
 	}
-	return s.Store.ProjectProviderEvent(ctx, conversationID, session, generation,
-		providerEventID, method, payloadJSON, now, project)
+	projected, err := s.Store.ProjectProviderEvent(ctx, conversationID, session, generation,
+		providerEventID, method, payloadJSON, now, func(txCtx context.Context) error {
+			if err := project(txCtx); err != nil {
+				return err
+			}
+			// Fail after the projection callback so its SQLite writes roll back. This
+			// is the exact boundary that used to leak volatile state out of the tx.
+			return errors.New("injected projection failure")
+		})
+	s.failOnce.Do(func() { close(s.failed) })
+	return projected, err
 }
 
 // The exact #3749 sequence: the turn/completed projection fails (so the durable
@@ -2821,8 +3015,11 @@ func TestProjectionFailureThenStopStillStopsTheTurn(t *testing.T) {
 	counter := 0
 	activity := &recordingActivity{}
 	clock := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+	failingStore := &failingProjectStore{
+		Store: st, failMethod: string(ports.ChatEventTurnCompleted), failed: make(chan struct{}),
+	}
 	svc := chatsvc.New(chatsvc.Options{
-		Store:    &failingProjectStore{Store: st, failMethod: string(ports.ChatEventTurnCompleted)},
+		Store:    failingStore,
 		Sessions: st,
 		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
 		Activity: activity,
@@ -2871,7 +3068,11 @@ func TestProjectionFailureThenStopStillStopsTheTurn(t *testing.T) {
 		ProviderTurnID: "provider-turn-1",
 		TurnState:      domain.TurnStateCompleted,
 	})
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-failingStore.failed:
+	case <-time.After(4 * time.Second):
+		t.Fatal("completion projection did not reach the injected rollback")
+	}
 
 	if err := svc.Interrupt(ctx, testSession); err != nil {
 		t.Fatalf("Interrupt: %v", err)
@@ -2894,6 +3095,32 @@ func TestProjectionFailureThenStopStillStopsTheTurn(t *testing.T) {
 	}
 	if !hasActivitySignal(activity.snapshot(), domain.ActivityIdle, "chat.interrupt.reconciled") {
 		t.Errorf("no idle signal after reconciliation; signals = %v", activity.snapshot())
+	}
+}
+
+// Controller-state notifications perform durable cleanup before they change the
+// volatile controller state. If that transaction rolls back, memory must continue
+// reporting the last committed state rather than claiming the controller stopped.
+func TestControllerStateChangesOnlyAfterProjectionCommits(t *testing.T) {
+	var failingStore *failingProjectStore
+	h := newHarnessWithConversationAndStore(t, nil, func(st *sqlite.Store) chatsvc.Store {
+		failingStore = &failingProjectStore{
+			Store: st, failMethod: string(ports.ChatEventControllerState), failed: make(chan struct{}),
+		}
+		return failingStore
+	})
+	want := h.ctrl.State()
+
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerStopped,
+	})
+	select {
+	case <-failingStore.failed:
+	case <-time.After(4 * time.Second):
+		t.Fatal("controller-state projection did not reach the injected rollback")
+	}
+	if got := h.ctrl.State(); got != want {
+		t.Fatalf("controller state after rolled-back projection = %q, want committed %q", got, want)
 	}
 }
 

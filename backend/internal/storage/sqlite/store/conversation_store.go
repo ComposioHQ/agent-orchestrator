@@ -679,21 +679,19 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
-// GetRunningTurn returns the most recent turn SQLite still considers running.
-//
-// Interrupt uses it to recover from a desync where the in-memory controller has
-// lost track of a turn the durable state — and therefore the UI — still shows as
-// running. The durable row is what the user is looking at, so it is what Stop
-// must be able to act on.
-func (s *Store) GetRunningTurn(ctx context.Context, conversationID string) (id, providerTurnID string, ok bool, err error) {
-	row, err := s.qr.GetRunningTurnForConversation(ctx, conversationID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", false, nil
-	}
+// ListVisibleRunningTurnProviderIDs returns the same active-branch running turns,
+// in the same order, that a conversation snapshot exposes to clients. Interrupt
+// uses the full set because a root and nested provider turn may overlap; settling
+// only one would leave the UI's Working state behind.
+func (s *Store) ListVisibleRunningTurnProviderIDs(
+	ctx context.Context,
+	conversationID string,
+) ([]string, error) {
+	providerTurnIDs, err := s.qr.ListVisibleRunningTurnsForConversation(ctx, conversationID)
 	if err != nil {
-		return "", "", false, fmt.Errorf("get running turn for %s: %w", conversationID, err)
+		return nil, fmt.Errorf("list visible running turns for %s: %w", conversationID, err)
 	}
-	return row.ID, row.ProviderTurnID, true, nil
+	return providerTurnIDs, nil
 }
 
 // SetConversationSettings records the provider choices for the next turn.
