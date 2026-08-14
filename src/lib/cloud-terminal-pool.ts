@@ -23,10 +23,17 @@ type CloudClient = ReturnType<typeof browserCloudClient>;
 type Listener = (event: CloudTerminalEvent) => void;
 
 interface TerminalServerMessage {
-  type: "output" | "error" | "reset" | "replay_complete";
+  type: "output" | "error" | "reset" | "replay_complete" | "input_ack";
   data?: string;
   message?: string;
   sequence?: number;
+  inputId?: string;
+}
+
+interface PendingInput {
+  id: string;
+  data: string;
+  sentOn: WebSocket | null;
 }
 
 const maximumHistoryBytes = 4 << 20;
@@ -46,8 +53,11 @@ class CloudTerminalConnection {
   private idleCloseTimer: number | undefined;
   private connectInFlight = false;
   private closed = false;
+  private hasConnected = false;
+  private retained = false;
   private retryAttempt = 0;
-  private pendingInput: string[] = [];
+  private pendingInput: PendingInput[] = [];
+  private nextInputId = 0;
   private size = { rows: 24, cols: 80 };
   private canOperate = true;
 
@@ -76,14 +86,26 @@ class CloudTerminalConnection {
     };
   }
 
+  setRetained(retained: boolean) {
+    this.retained = retained;
+    if (retained && this.idleCloseTimer !== undefined) {
+      window.clearTimeout(this.idleCloseTimer);
+      this.idleCloseTimer = undefined;
+    }
+    if (!retained) this.scheduleIdleClose();
+  }
+
   sendInput(data: string) {
     if (!this.canOperate) return;
-    if (this.socket?.readyState !== WebSocket.OPEN) {
-      if (this.pendingInput.length < 256) this.pendingInput.push(data);
-      this.reconnectNow();
-      return;
-    }
-    this.socket.send(JSON.stringify({ type: "input", data }));
+    if (this.pendingInput.length >= 256) return;
+    const input: PendingInput = {
+      id: `${Date.now().toString(36)}-${++this.nextInputId}`,
+      data,
+      sentOn: null,
+    };
+    this.pendingInput.push(input);
+    this.flushPendingInput();
+    if (this.socket?.readyState !== WebSocket.OPEN) this.reconnectNow();
   }
 
   resize(rows: number, cols: number) {
@@ -122,6 +144,7 @@ class CloudTerminalConnection {
   }
 
   private setState(state: CloudTerminalConnectionState) {
+    if (this.hasConnected && state !== "connected") return;
     this.state = state;
     this.emit({ type: "state", state });
   }
@@ -166,12 +189,10 @@ class CloudTerminalConnection {
       socket.addEventListener("open", () => {
         if (this.socket !== socket || this.closed) return;
         this.retryAttempt = 0;
+        this.hasConnected = true;
         this.setState("connected");
         this.sendResize();
-        while (this.pendingInput.length > 0) {
-          const input = this.pendingInput.shift();
-          if (input) this.sendInput(input);
-        }
+        this.flushPendingInput();
       });
       socket.addEventListener("message", async (event) => {
         if (this.socket !== socket || this.closed) return;
@@ -183,6 +204,12 @@ class CloudTerminalConnection {
             return;
           }
           this.lastSequence = Math.max(this.lastSequence, message.sequence ?? 0);
+          if (message.type === "input_ack" && message.inputId) {
+            this.pendingInput = this.pendingInput.filter(
+              (input) => input.id !== message.inputId,
+            );
+            return;
+          }
           if (message.type === "reset") {
             this.lastSequence = 0;
             this.resetReplayBuffer();
@@ -219,6 +246,7 @@ class CloudTerminalConnection {
             message:
               event.reason || "Terminal process is unavailable in this VM.",
           });
+          this.scheduleReconnect();
           return;
         }
         if (event.code === 1000) {
@@ -245,7 +273,7 @@ class CloudTerminalConnection {
         });
         if (
           cause instanceof CloudApiError &&
-          (cause.status === 403 || cause.status === 404)
+          cause.status === 403
         ) {
           return;
         }
@@ -255,6 +283,18 @@ class CloudTerminalConnection {
       this.connectInFlight = false;
     }
   };
+
+  private flushPendingInput() {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    for (const input of this.pendingInput) {
+      if (input.sentOn === socket) continue;
+      socket.send(
+        JSON.stringify({ type: "input", inputId: input.id, data: input.data }),
+      );
+      input.sentOn = socket;
+    }
+  }
 
   private scheduleReconnect() {
     if (this.closed || this.reconnectTimer !== undefined) return;
@@ -305,10 +345,16 @@ class CloudTerminalConnection {
   }
 
   private scheduleIdleClose() {
-    if (this.listeners.size > 0 || this.idleCloseTimer !== undefined) return;
+    if (
+      this.retained ||
+      this.listeners.size > 0 ||
+      this.idleCloseTimer !== undefined
+    ) {
+      return;
+    }
     this.idleCloseTimer = window.setTimeout(() => {
       this.idleCloseTimer = undefined;
-      if (this.listeners.size === 0) {
+      if (!this.retained && this.listeners.size === 0) {
         deleteCloudTerminalConnection(
           this.organizationId,
           this.sessionId,
@@ -343,6 +389,30 @@ export function ensureCloudTerminalConnection(
 export function clearCloudTerminalConnections() {
   for (const connection of connections.values()) connection.close();
   connections.clear();
+}
+
+export function retainCloudSessionConnections(
+  client: CloudClient,
+  organizationId: string,
+  sessionIds: readonly string[],
+) {
+  const retainedKeys = new Set<string>();
+  for (const sessionId of sessionIds) {
+    for (const kind of ["agent", "workspace"] as const) {
+      const key = connectionKey(organizationId, sessionId, kind);
+      retainedKeys.add(key);
+      ensureCloudTerminalConnection(
+        client,
+        organizationId,
+        sessionId,
+        kind,
+      ).setRetained(true);
+    }
+  }
+
+  for (const [key, connection] of connections) {
+    connection.setRetained(retainedKeys.has(key));
+  }
 }
 
 function deleteCloudTerminalConnection(

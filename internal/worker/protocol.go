@@ -56,6 +56,13 @@ type CheckoutGrantResponse struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 
+// GitHubTokenResponse carries a fresh repository-scoped GitHub App token for
+// worker-side tooling such as git's credential helper and the gh wrapper.
+type GitHubTokenResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
 // RaisePullRequestRequest asks the control plane to open a pull request for
 // a branch the worker has already pushed. BaseBranch may be empty to fall
 // back to the repository's default branch.

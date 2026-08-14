@@ -15,6 +15,11 @@ import (
 
 const scratchRepositoryHost = "scratch.ao.local"
 
+const (
+	cloudGitAuthorName  = "AO Cloud Agent"
+	cloudGitAuthorEmail = "noreply@aoagents.com"
+)
+
 type GitRunner interface {
 	Run(context.Context, string, map[string]string, ...string) (string, error)
 }
@@ -93,6 +98,90 @@ func PrepareCheckout(ctx context.Context, runner GitRunner, workspace string, gr
 		return err
 	}
 	return validateOrigin(ctx, runner, workspace, expected)
+}
+
+// ConfigureWorkerGit prepares the assigned branch and a repo-local credential
+// helper that brokers a fresh scoped token for each GitHub network operation.
+// The helper stores only the rotating worker-token path, never a GitHub token.
+func ConfigureWorkerGit(
+	ctx context.Context,
+	runner GitRunner,
+	workspace, dataDir, publicURL, sessionID, branch string,
+) error {
+	if runner == nil {
+		return errors.New("git runner is required")
+	}
+	for label, value := range map[string]string{
+		"workspace": workspace, "data directory": dataDir, "public URL": publicURL,
+		"session ID": sessionID, "branch": branch,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", label)
+		}
+	}
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return fmt.Errorf("create worker Git credential directory: %w", err)
+	}
+	binDir := filepath.Join(dataDir, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		return fmt.Errorf("create worker tooling directory: %w", err)
+	}
+	helperPath := filepath.Join(dataDir, "git-credential-ao")
+	helper := fmt.Sprintf(`#!/bin/sh
+set -eu
+[ "${1:-}" = "get" ] || exit 0
+worker_token="$(tr -d '\r\n' < %s)"
+response="$(curl -fsS -X POST \
+  -H "Authorization: Worker ${worker_token}" \
+  -H "X-AO-Session-ID: %s" \
+  %s)"
+github_token="$(printf '%%s' "$response" | jq -er '.token | select(type == "string" and length > 0)')"
+printf 'username=x-access-token\npassword=%%s\n' "$github_token"
+`, shellQuote(filepath.Join(dataDir, "worker-token")), sessionID,
+		shellQuote(strings.TrimRight(publicURL, "/")+"/api/cloud/v1/worker/github-token"))
+	if err := os.WriteFile(helperPath, []byte(helper), 0o700); err != nil {
+		return fmt.Errorf("write worker Git credential helper: %w", err)
+	}
+	githubWrapper := fmt.Sprintf(`#!/bin/sh
+set -eu
+real_gh="${AO_GH_REAL_BINARY:-/usr/bin/gh}"
+if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
+  exec "$real_gh" "$@"
+fi
+worker_token="$(tr -d '\r\n' < %s)"
+response="$(curl -fsS -X POST \
+  -H "Authorization: Worker ${worker_token}" \
+  -H "X-AO-Session-ID: %s" \
+  %s)"
+github_token="$(printf '%%s' "$response" | jq -er '.token | select(type == "string" and length > 0)')"
+GH_TOKEN="$github_token" exec "$real_gh" "$@"
+`, shellQuote(filepath.Join(dataDir, "worker-token")), sessionID,
+		shellQuote(strings.TrimRight(publicURL, "/")+"/api/cloud/v1/worker/github-token"))
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(githubWrapper), 0o700); err != nil {
+		return fmt.Errorf("write worker GitHub CLI wrapper: %w", err)
+	}
+	commands := [][]string{
+		{"config", "--local", "--replace-all", "credential.helper", ""},
+		{"config", "--local", "--add", "credential.helper", helperPath},
+		{"config", "--local", "--replace-all", "credential.useHttpPath", "true"},
+		{"config", "--local", "--replace-all", "user.name", cloudGitAuthorName},
+		{"config", "--local", "--replace-all", "user.email", cloudGitAuthorEmail},
+		{"checkout", "-B", branch},
+	}
+	for _, command := range commands {
+		if _, err := runner.Run(ctx, workspace, nil, command...); err != nil {
+			return fmt.Errorf("configure worker Git repository: %w", err)
+		}
+	}
+	return nil
+}
+
+func ToolingBinDir(dataDir string) string {
+	return filepath.Join(dataDir, "bin")
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // PushBranch pushes the current HEAD to a remote branch using a fresh

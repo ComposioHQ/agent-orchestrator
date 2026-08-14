@@ -349,6 +349,37 @@ func TestWorkerPushGrantRequiresGitScope(t *testing.T) {
 	}
 }
 
+func TestWorkerGitHubTokenUsesFreshWriteGrant(t *testing.T) {
+	const githubToken = "fresh-installation-token"
+	tokens := worker.NewTokenManager([]byte("0123456789abcdef0123456789abcdef"))
+	credential, err := tokens.Issue(worker.Claims{
+		OrgID: "org", SessionID: "session", WorkerID: "session:7", Epoch: 7,
+		Scopes: []string{"worker:git"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(Options{
+		Store: checkoutEndpointStore{current: true}, WorkerTokens: tokens,
+	})
+	broker := &recordingCheckoutBroker{grant: githubapp.CheckoutGrant{
+		CloneURL: "https://github.com/acme/api.git", Token: githubToken,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}}
+	server.checkoutBroker = broker
+	request := httptest.NewRequest(http.MethodPost, "/api/cloud/v1/worker/github-token", nil)
+	request.Header.Set("Authorization", "Worker "+credential)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	var token worker.GitHubTokenResponse
+	_ = json.Unmarshal(response.Body.Bytes(), &token)
+	if response.Code != http.StatusOK || token.Token != githubToken ||
+		broker.calls != 1 || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status=%d token=%#v calls=%d cache=%q",
+			response.Code, token, broker.calls, response.Header().Get("Cache-Control"))
+	}
+}
+
 func TestWorkerRaisePullRequestReturnsCreatedRecord(t *testing.T) {
 	tokens := worker.NewTokenManager([]byte("0123456789abcdef0123456789abcdef"))
 	credential, err := tokens.Issue(worker.Claims{

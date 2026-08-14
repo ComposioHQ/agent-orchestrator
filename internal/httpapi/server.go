@@ -81,7 +81,7 @@ type Store interface {
 	FailWorkerRequest(context.Context, string, string, string, string, int64, int, string, string) error
 	IssueTerminalTicket(context.Context, domain.Principal, string, string, string, time.Duration) (string, []string, error)
 	OpenTerminal(context.Context, string, string, time.Duration) (domain.TerminalSession, error)
-	QueueTerminalInput(context.Context, domain.TerminalSession, []byte) error
+	QueueTerminalInput(context.Context, domain.TerminalSession, string, []byte) error
 	QueueTerminalResize(context.Context, domain.TerminalSession, uint16, uint16) error
 	CloseTerminal(context.Context, domain.TerminalSession) error
 	AppendTerminalOutput(context.Context, string, string, string, string, int64, []byte) (int64, error)
@@ -294,6 +294,7 @@ func New(options Options) *Server {
 			router.Get("/worker/credential", server.workerCredential)
 			router.Post("/worker/checkout-grant", server.workerCheckoutGrant)
 			router.Post("/worker/push-grant", server.workerPushGrant)
+			router.Post("/worker/github-token", server.workerGitHubToken)
 			router.Post("/worker/pull-requests", server.workerRaisePullRequest)
 			router.Post("/worker/reviews/{reviewRunId}/submit", server.workerSubmitReview)
 			router.Get("/worker/children", server.listWorkerChildren)

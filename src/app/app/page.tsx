@@ -31,6 +31,10 @@ import {
   consumePendingShareRedemption,
   newIdempotencyKey,
 } from "@/lib/cloud-client";
+import {
+  clearCloudTerminalConnections,
+  retainCloudSessionConnections,
+} from "@/lib/cloud-terminal-pool";
 import { CloudBoard } from "./CloudBoard";
 import {
   AddAgentToProjectDialog,
@@ -494,6 +498,17 @@ export function CloudWorkspace() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [client, organizationId]);
+
+  useEffect(() => {
+    if (!organizationId) return;
+    retainCloudSessionConnections(
+      client,
+      organizationId,
+      sessions.filter((session) => !session.isTerminated).map(({ id }) => id),
+    );
+  }, [client, organizationId, sessions]);
+
+  useEffect(() => () => clearCloudTerminalConnections(), []);
 
   useEffect(() => {
     let active = true;
@@ -1306,6 +1321,7 @@ export function CloudWorkspace() {
           }}
           onSelectOrganization={(id) => {
             setOrganizationId(id);
+            setSessions([]);
             setSelectedProjectId(null);
             setSelectedSessionId(null);
             setSharedSession(null);

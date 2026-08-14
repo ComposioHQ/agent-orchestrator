@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
@@ -129,12 +130,13 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	readResult := make(chan error, 1)
+	var writeMu sync.Mutex
 	go func() {
-		readResult <- s.readTerminalInput(ctx, connection, terminal)
+		readResult <- s.readTerminalInput(ctx, connection, terminal, &writeMu)
 	}()
 	writeResult := make(chan error, 1)
 	go func() {
-		writeResult <- s.writeTerminalOutput(ctx, connection, terminal, after, structured)
+		writeResult <- s.writeTerminalOutput(ctx, connection, terminal, after, structured, &writeMu)
 	}()
 
 	select {
@@ -173,6 +175,7 @@ func (s *Server) readTerminalInput(
 	ctx context.Context,
 	connection *websocket.Conn,
 	terminal domain.TerminalSession,
+	writeMu *sync.Mutex,
 ) error {
 	operate := terminalScope(terminal.Scopes, "terminal:operate")
 	for {
@@ -188,6 +191,7 @@ func (s *Server) readTerminalInput(
 		}
 		var message struct {
 			Type    string `json:"type"`
+			InputID string `json:"inputId,omitempty"`
 			Data    string `json:"data,omitempty"`
 			Columns uint16 `json:"columns,omitempty"`
 			Rows    uint16 `json:"rows,omitempty"`
@@ -214,9 +218,19 @@ func (s *Server) readTerminalInput(
 			continue
 		}
 		if err := retryTerminalRequest(ctx, func() error {
-			return s.store.QueueTerminalInput(ctx, terminal, data)
+			return s.store.QueueTerminalInput(ctx, terminal, message.InputID, data)
 		}); err != nil {
 			return err
+		}
+		if message.InputID != "" {
+			writeMu.Lock()
+			err := writeTerminalMessage(ctx, connection, terminalServerMessage{
+				Type: "input_ack", InputID: message.InputID,
+			})
+			writeMu.Unlock()
+			if err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -251,6 +265,7 @@ func (s *Server) writeTerminalOutput(
 	terminal domain.TerminalSession,
 	after int64,
 	structured bool,
+	writeMu *sync.Mutex,
 ) error {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -262,6 +277,7 @@ func (s *Server) writeTerminalOutput(
 		}
 		for _, frame := range frames {
 			var err error
+			writeMu.Lock()
 			if structured {
 				err = writeTerminalMessage(ctx, connection, terminalServerMessage{
 					Type:     "output",
@@ -274,17 +290,21 @@ func (s *Server) writeTerminalOutput(
 				// code points never make the WebSocket library reject the output.
 				err = connection.Write(ctx, websocket.MessageBinary, frame.Data)
 			}
+			writeMu.Unlock()
 			if err != nil {
 				return err
 			}
 			after = frame.Sequence
 		}
 		if structured && !replayComplete {
+			writeMu.Lock()
 			if err := writeTerminalMessage(ctx, connection, terminalServerMessage{
 				Type: "replay_complete", Sequence: after,
 			}); err != nil {
+				writeMu.Unlock()
 				return err
 			}
+			writeMu.Unlock()
 			replayComplete = true
 		}
 		if state == "failed" {
@@ -306,6 +326,7 @@ type terminalServerMessage struct {
 	Data     string `json:"data,omitempty"`
 	Message  string `json:"message,omitempty"`
 	Sequence int64  `json:"sequence,omitempty"`
+	InputID  string `json:"inputId,omitempty"`
 }
 
 func writeTerminalMessage(

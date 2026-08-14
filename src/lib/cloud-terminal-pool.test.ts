@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   clearCloudTerminalConnections,
   ensureCloudTerminalConnection,
+  retainCloudSessionConnections,
 } from "./cloud-terminal-pool";
 
 afterEach(() => {
@@ -10,6 +11,50 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it("keeps both terminal streams connected for every live session", async () => {
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly instances: FakeWebSocket[] = [];
+
+    readyState = FakeWebSocket.CONNECTING;
+    close = vi.fn();
+
+    constructor() {
+      FakeWebSocket.instances.push(this);
+    }
+
+    addEventListener() {}
+  }
+
+  vi.stubGlobal("WebSocket", FakeWebSocket);
+  const client = {
+    createTerminalTicket: vi
+      .fn()
+      .mockImplementation(
+        (_organizationId: string, sessionId: string, kind: string) =>
+          Promise.resolve({ ticket: `${sessionId}-${kind}` }),
+      ),
+  };
+
+  retainCloudSessionConnections(client as never, "org-one", [
+    "session-one",
+    "session-two",
+  ]);
+
+  await vi.waitFor(() =>
+    expect(client.createTerminalTicket).toHaveBeenCalledTimes(4),
+  );
+  expect(client.createTerminalTicket.mock.calls).toEqual(
+    expect.arrayContaining([
+      ["org-one", "session-one", "agent", expect.any(Object)],
+      ["org-one", "session-one", "workspace", expect.any(Object)],
+      ["org-one", "session-two", "agent", expect.any(Object)],
+      ["org-one", "session-two", "workspace", expect.any(Object)],
+    ]),
+  );
 });
 
 it("does not forward transient collapsed-pane dimensions to the PTY", async () => {
@@ -50,7 +95,6 @@ it("does not forward transient collapsed-pane dimensions to the PTY", async () =
     "org-one",
     "session-one",
   );
-
   connection.resize(1, 2);
   await vi.waitFor(() => expect(FakeWebSocket.instance).toBeDefined());
   FakeWebSocket.instance.open();
@@ -192,4 +236,152 @@ it("resumes an agent terminal after the last received sequence", async () => {
   expect(FakeWebSocket.instances[1].url).toContain("ticket=ticket-two");
   expect(FakeWebSocket.instances[1].url).toContain("after=7");
   expect(FakeWebSocket.instances[1].url).toContain("protocol=2");
+});
+
+it("retries unacknowledged input once after reconnect", async () => {
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 3;
+    static readonly instances: FakeWebSocket[] = [];
+
+    readyState = FakeWebSocket.CONNECTING;
+    send = vi.fn();
+    private readonly listeners = new Map<string, EventListener[]>();
+
+    constructor() {
+      FakeWebSocket.instances.push(this);
+    }
+
+    addEventListener(type: string, listener: EventListener) {
+      const listeners = this.listeners.get(type) ?? [];
+      listeners.push(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    open() {
+      this.readyState = FakeWebSocket.OPEN;
+      this.dispatch("open", new Event("open"));
+    }
+
+    disconnect() {
+      this.readyState = FakeWebSocket.CLOSED;
+      this.dispatch("close", { code: 1006, reason: "" } as CloseEvent);
+    }
+
+    message(data: string) {
+      this.dispatch("message", { data } as MessageEvent);
+    }
+
+    close() {
+      this.readyState = FakeWebSocket.CLOSED;
+    }
+
+    private dispatch(type: string, event: Event) {
+      for (const listener of this.listeners.get(type) ?? []) listener(event);
+    }
+  }
+
+  vi.stubGlobal("WebSocket", FakeWebSocket);
+  vi.spyOn(window, "setTimeout").mockImplementation((handler) => {
+    queueMicrotask(() => {
+      if (typeof handler === "function") handler();
+    });
+    return 1 as unknown as ReturnType<typeof window.setTimeout>;
+  });
+  const client = {
+    createTerminalTicket: vi
+      .fn()
+      .mockResolvedValueOnce({ ticket: "ticket-one" })
+      .mockResolvedValueOnce({ ticket: "ticket-two" })
+      .mockResolvedValueOnce({ ticket: "ticket-three" }),
+  };
+  const connection = ensureCloudTerminalConnection(
+    client as never,
+    "org-one",
+    "session-one",
+  );
+  const states: string[] = [];
+  connection.subscribe((event) => {
+    if (event.type === "state") states.push(event.state);
+  });
+
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+  FakeWebSocket.instances[0].open();
+  connection.sendInput("finish the PR\r");
+  const firstInput = FakeWebSocket.instances[0].send.mock.calls.find(
+    ([value]) => JSON.parse(value as string).type === "input",
+  )?.[0] as string;
+  expect(firstInput).toBeTruthy();
+
+  FakeWebSocket.instances[0].disconnect();
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+  expect(states).not.toContain("disconnected");
+  expect(states).not.toContain("error");
+  FakeWebSocket.instances[1].open();
+  expect(FakeWebSocket.instances[1].send).toHaveBeenCalledWith(firstInput);
+
+  const inputId = JSON.parse(firstInput).inputId as string;
+  FakeWebSocket.instances[1].message(
+    JSON.stringify({ type: "input_ack", inputId }),
+  );
+  FakeWebSocket.instances[1].disconnect();
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(3));
+  FakeWebSocket.instances[2].open();
+  expect(FakeWebSocket.instances[2].send).not.toHaveBeenCalledWith(firstInput);
+});
+
+it("keeps retrying while a resumed VM terminal process becomes available", async () => {
+  class FakeWebSocket {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 3;
+    static readonly instances: FakeWebSocket[] = [];
+
+    readyState = FakeWebSocket.CONNECTING;
+    private readonly listeners = new Map<string, EventListener[]>();
+
+    constructor() {
+      FakeWebSocket.instances.push(this);
+    }
+
+    addEventListener(type: string, listener: EventListener) {
+      const listeners = this.listeners.get(type) ?? [];
+      listeners.push(listener);
+      this.listeners.set(type, listeners);
+    }
+
+    unavailable() {
+      for (const listener of this.listeners.get("close") ?? []) {
+        listener({ code: 1008, reason: "terminal process unavailable" } as CloseEvent);
+      }
+    }
+
+    close() {}
+  }
+
+  vi.stubGlobal("WebSocket", FakeWebSocket);
+  const client = {
+    createTerminalTicket: vi
+      .fn()
+      .mockResolvedValueOnce({ ticket: "ticket-one" })
+      .mockResolvedValueOnce({ ticket: "ticket-two" }),
+  };
+
+  ensureCloudTerminalConnection(
+    client as never,
+    "org-one",
+    "session-one",
+  );
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+  vi.spyOn(window, "setTimeout").mockImplementation((handler) => {
+    queueMicrotask(() => {
+      if (typeof handler === "function") handler();
+    });
+    return 1 as unknown as ReturnType<typeof window.setTimeout>;
+  });
+  FakeWebSocket.instances[0].unavailable();
+
+  await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+  expect(client.createTerminalTicket).toHaveBeenCalledTimes(2);
 });

@@ -284,6 +284,40 @@ func (s *Server) workerPushGrant(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// workerGitHubToken gives worker-local Git tooling the same short-lived,
+// repository-scoped write grant used by the explicit push bridge. The worker
+// must request it on demand; no GitHub credential is persisted in the sandbox.
+func (s *Server) workerGitHubToken(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:git scope is required.")
+		return
+	}
+	if s.checkoutBroker == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "SCM_BROKER_UNAVAILABLE", "GitHub credentials are not available.")
+		return
+	}
+	grant, err := s.checkoutBroker.IssuePushGrant(r.Context(), claims.OrgID, claims.SessionID)
+	if errors.Is(err, postgres.ErrForbidden) || errors.Is(err, postgres.ErrNotFound) {
+		writeError(w, r, http.StatusForbidden, "PUSH_NOT_AUTHORIZED", "This session does not have an active repository grant.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("issue worker GitHub token", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A GitHub credential could not be issued.")
+		return
+	}
+	if grant.Token == "" || !grant.ExpiresAt.After(time.Now()) {
+		s.logger.Error("worker GitHub broker returned an invalid grant", "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "SCM_BROKER_FAILED", "A GitHub credential could not be issued.")
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.GitHubTokenResponse{
+		Token: grant.Token, ExpiresAt: grant.ExpiresAt,
+	})
+}
+
 func (s *Server) workerRaisePullRequest(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	claims := workerFrom(r)

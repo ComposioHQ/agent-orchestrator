@@ -38,6 +38,8 @@ RUN apt-get update && \
         ca-certificates \
         curl \
         git \
+        gh \
+        jq \
         openssh-client \
         procps \
         tar && \

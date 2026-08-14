@@ -253,7 +253,7 @@ func TestTerminalTicketAndFramesAreDurableAndEpochFenced(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.store.QueueTerminalInput(ctx, terminal, []byte("pwd\n")); err != nil {
+	if err := fixture.store.QueueTerminalInput(ctx, terminal, "input-one", []byte("pwd\n")); err != nil {
 		t.Fatal(err)
 	}
 	inputRequest, ok, err := fixture.store.ClaimWorkerRequest(

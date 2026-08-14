@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,6 +81,7 @@ func TestTerminalOutputUsesBinaryFramesForPartialUTF8(t *testing.T) {
 			domain.TerminalSession{},
 			0,
 			true,
+			&sync.Mutex{},
 		)
 	}))
 	t.Cleanup(httpServer.Close)

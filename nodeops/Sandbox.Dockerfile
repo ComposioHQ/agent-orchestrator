@@ -6,7 +6,9 @@ RUN apt-get update && \
         ca-certificates \
         curl \
         git \
+        gh \
         gnupg \
+        jq \
         openssh-client \
         procps \
         tar \
@@ -32,6 +34,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /root/.npm && \
     claude --version && \
     codex --version
+
+RUN gh --version
 
 RUN architecture="$(dpkg --print-architecture)" && \
     case "$architecture" in \

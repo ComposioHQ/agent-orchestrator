@@ -110,7 +110,10 @@ export function CloudSidebar({
       return next;
     });
   };
-  const pinnedSessions = sessions.filter((s) => pinnedIds.has(s.id));
+  const pinnedSessions = sessions.filter(
+    (session) =>
+      session.kind !== "orchestrator" && pinnedIds.has(session.id),
+  );
   const projectItems = projects.filter((project) => !isStandaloneProject(project));
   const standaloneRows = projects
     .filter(isStandaloneProject)
@@ -172,10 +175,7 @@ export function CloudSidebar({
                     }`}
                     onClick={() => onSelectSession(session.id)}
                   >
-                    <span
-                      className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                      aria-hidden="true"
-                    />
+                    <SessionSidebarIcon session={session} />
                     <span className="min-w-0 flex-1 truncate">
                       {session.displayName}
                     </span>
@@ -237,7 +237,7 @@ export function CloudSidebar({
                           className={`flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 text-left text-sm ${selectedSessionId === session.id ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]" : "text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"}`}
                           onClick={() => onSelectSharedSession?.(shared, session.id)}
                         >
-                          <span className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`} aria-hidden="true" />
+                          <SessionSidebarIcon session={session} />
                           <span className="min-w-0 flex-1 truncate">{session.displayName}</span>
                         </button>
                       ))}
@@ -274,8 +274,8 @@ export function CloudSidebar({
         ) : null}
         {projectItems.map((project) => {
           const open = !closedProjects.has(project.id);
-          const projectSessions = sessions.filter(
-            (session) => session.projectId === project.id,
+          const projectSessions = orchestratorsFirst(
+            sessions.filter((session) => session.projectId === project.id),
           );
           return (
             <div className="mb-1" key={project.id}>
@@ -436,23 +436,22 @@ export function CloudSidebar({
                                 }`}
                                 onClick={() => onSelectSession(session.id)}
                               >
-                                <span
-                                  className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                                  aria-hidden="true"
-                                />
+                                <SessionSidebarIcon session={session} />
                                 <span className="min-w-0 flex-1 truncate">
                                   {session.displayName}
                                 </span>
                               </button>
                             </div>
-                            <button
-                              aria-label={pinnedIds.has(session.id) ? "Unpin session" : "Pin session"}
-                              className={`grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover/session:w-5 group-hover/session:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3 ${pinnedIds.has(session.id) ? "text-[var(--foreground)]" : ""}`}
-                              onClick={(e) => { e.stopPropagation(); togglePin(session.id); }}
-                              type="button"
-                            >
-                              {pinnedIds.has(session.id) ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
-                            </button>
+                            {session.kind !== "orchestrator" ? (
+                              <button
+                                aria-label={pinnedIds.has(session.id) ? "Unpin session" : "Pin session"}
+                                className={`grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover/session:w-5 group-hover/session:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3 ${pinnedIds.has(session.id) ? "text-[var(--foreground)]" : ""}`}
+                                onClick={(e) => { e.stopPropagation(); togglePin(session.id); }}
+                                type="button"
+                              >
+                                {pinnedIds.has(session.id) ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+                              </button>
+                            ) : null}
                             <button
                               aria-label="Delete session"
                               className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,margin,opacity,color] group-hover/session:mr-1.5 group-hover/session:w-5 group-hover/session:opacity-100 hover:text-[var(--destructive)] [&_svg]:size-3"
@@ -524,10 +523,7 @@ export function CloudSidebar({
                       onClick={() => onSelectSession(session.id)}
                       type="button"
                     >
-                      <span
-                        className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
-                        aria-hidden="true"
-                      />
+                      <SessionSidebarIcon session={session} />
                       <span className="min-w-0 flex-1 truncate">
                         {session.displayName}
                       </span>
@@ -664,4 +660,24 @@ function activityDot(activity: Session["activityState"]): string {
   }
   if (activity === "exited") return "bg-status-exited";
   return "bg-status-idle";
+}
+
+function SessionSidebarIcon({ session }: { session: Session }) {
+  if (session.kind === "orchestrator") {
+    return <OrchestratorIcon className="size-3.5 shrink-0" aria-hidden="true" />;
+  }
+  return (
+    <span
+      className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+      aria-hidden="true"
+    />
+  );
+}
+
+function orchestratorsFirst(sessions: Session[]): Session[] {
+  return [...sessions].sort(
+    (left, right) =>
+      Number(right.kind === "orchestrator") -
+      Number(left.kind === "orchestrator"),
+  );
 }

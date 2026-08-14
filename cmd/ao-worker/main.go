@@ -151,6 +151,27 @@ func run(logger *slog.Logger) error {
 		); err != nil {
 			return fmt.Errorf("prepare repository checkout: %w", err)
 		}
+		if err := worker.ConfigureWorkerGit(
+			ctx, worker.ExecGitRunner{}, workspace, dataDir, publicURL,
+			bootstrap.SessionID, bootstrap.Launch.Branch,
+		); err != nil {
+			return fmt.Errorf("configure repository tooling: %w", err)
+		}
+	}
+	for key, value := range map[string]string{
+		"AO_CLOUD_PUBLIC_URL": publicURL,
+		"AO_SESSION_ID":       bootstrap.SessionID,
+		"AO_SESSION_BRANCH":   bootstrap.Launch.Branch,
+		"AO_DATA_DIR":         dataDir,
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			return fmt.Errorf("set worker tooling environment %s: %w", key, err)
+		}
+	}
+	if !worker.IsScratchRepositoryURL(bootstrap.Launch.RepositoryURL) {
+		if err := os.Setenv("PATH", worker.ToolingBinDir(dataDir)+string(os.PathListSeparator)+os.Getenv("PATH")); err != nil {
+			return fmt.Errorf("activate worker tooling: %w", err)
+		}
 	}
 	// Heartbeat before waiting out the first interval. Bootstrap registration is
 	// not a check-in, so a repaired worker can otherwise be replaced again

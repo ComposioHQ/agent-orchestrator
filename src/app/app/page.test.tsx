@@ -543,6 +543,56 @@ it("starts an orchestrator when importing a GitHub repository", async () => {
   ));
 });
 
+it("keeps the orchestrator first in its project and out of the task board", async () => {
+  const worker = {
+    id: "worker-session",
+    orgId: "org-1",
+    projectId: "project-1",
+    kind: "worker" as const,
+    harness: "claude-code",
+    displayName: "Worker task",
+    branch: "ao/worker",
+    mode: "trusted" as const,
+    deniedCommands: [],
+    activityState: "idle" as const,
+    status: "idle" as const,
+    runtimeConnected: true,
+    isTerminated: false,
+    createdAt: "2026-08-12T00:00:00Z",
+    updatedAt: "2026-08-12T00:00:00Z",
+  };
+  const orchestrator = {
+    ...worker,
+    id: "orchestrator-session",
+    kind: "orchestrator" as const,
+    displayName: "Project orchestrator",
+    branch: "ao/orchestrator",
+  };
+  mocks.listSessions.mockResolvedValue({
+    items: [worker, orchestrator],
+    page: { hasMore: false },
+  });
+
+  render(<CloudWorkspace />);
+
+  const sidebar = await screen.findByRole("complementary");
+  const orchestratorLabel = await within(sidebar).findByText(
+    "Project orchestrator",
+  );
+  const workerLabel = within(sidebar).getByText("Worker task");
+  expect(
+    orchestratorLabel.compareDocumentPosition(workerLabel) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  const orchestratorRow = orchestratorLabel.closest("button")?.parentElement
+    ?.parentElement;
+  expect(orchestratorLabel.closest("button")?.querySelector("svg")).not.toBeNull();
+  expect(
+    orchestratorRow?.querySelector('[aria-label="Pin session"]'),
+  ).toBeNull();
+  expect(screen.getAllByText("Project orchestrator")).toHaveLength(1);
+});
+
 it("creates and selects a workspace without reloading the page", async () => {
   mocks.listProjects.mockResolvedValueOnce({ items: [], page: { hasMore: false } });
   mocks.listProjects.mockResolvedValueOnce({ items: [], page: { hasMore: false } });

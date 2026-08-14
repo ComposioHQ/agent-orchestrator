@@ -589,13 +589,15 @@ func classifyInvalidTerminalTicket(
 func (s *Store) QueueTerminalInput(
 	ctx context.Context,
 	terminal domain.TerminalSession,
+	inputID string,
 	data []byte,
 ) error {
 	payload, _ := json.Marshal(map[string]any{
 		"terminalId": terminal.ID,
+		"inputId":    inputID,
 		"data":       data,
 	})
-	return s.queueTerminalRequest(ctx, terminal, "terminal.input", payload)
+	return s.queueTerminalRequest(ctx, terminal, "terminal.input", inputID, payload)
 }
 
 func (s *Store) QueueTerminalResize(
@@ -608,13 +610,14 @@ func (s *Store) QueueTerminalResize(
 		"columns":    columns,
 		"rows":       rows,
 	})
-	return s.queueTerminalRequest(ctx, terminal, "terminal.resize", payload)
+	return s.queueTerminalRequest(ctx, terminal, "terminal.resize", "", payload)
 }
 
 func (s *Store) queueTerminalRequest(
 	ctx context.Context,
 	terminal domain.TerminalSession,
 	kind string,
+	idempotencyKey string,
 	payload []byte,
 ) error {
 	return s.withOrg(ctx, terminal.OrgID, func(tx pgx.Tx) error {
@@ -637,6 +640,23 @@ func (s *Store) queueTerminalRequest(
 		}
 		if !current {
 			return ErrWorkerUnavailable
+		}
+		if idempotencyKey != "" {
+			var exists bool
+			if err := tx.QueryRow(ctx,
+				`SELECT EXISTS (
+					SELECT 1 FROM ao_worker_requests
+					WHERE org_id = $1 AND session_id = $2 AND kind = $3
+					  AND payload->>'terminalId' = $4
+					  AND payload->>'inputId' = $5
+				)`,
+				terminal.OrgID, terminal.SessionID, kind, terminal.ID, idempotencyKey,
+			).Scan(&exists); err != nil {
+				return err
+			}
+			if exists {
+				return nil
+			}
 		}
 		_, err := createWorkerRequest(
 			ctx, tx, terminal.OrgID, terminal.SessionID, kind, payload, 15*time.Second, "",

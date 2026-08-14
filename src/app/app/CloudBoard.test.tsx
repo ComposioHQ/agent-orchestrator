@@ -97,6 +97,27 @@ it("renders an empty board without fetching pull requests", () => {
   expect(mocks.listSessionPullRequests).not.toHaveBeenCalled();
 });
 
+it("keeps project orchestrators out of the task board", () => {
+  render(
+    <CloudBoard
+      onSelectSession={vi.fn()}
+      organizationId="org-1"
+      sessions={[
+        {
+          ...session,
+          id: "orchestrator-1",
+          kind: "orchestrator",
+          displayName: "Project orchestrator",
+        },
+      ]}
+    />,
+  );
+
+  expect(screen.getByText("No sessions yet")).toBeVisible();
+  expect(screen.queryByText("Project orchestrator")).toBeNull();
+  expect(mocks.listSessionPullRequests).not.toHaveBeenCalled();
+});
+
 it("maps legacy Claude sessions to the current harness logo", () => {
   const { container } = render(
     <CloudBoard

@@ -83,10 +83,13 @@ export function CloudBoard({
   organizationId: string;
   sessions: Session[];
 }) {
+  const workerSessions = sessions.filter(
+    (session) => session.kind !== "orchestrator",
+  );
   const [pullRequestsBySession, setPullRequestsBySession] = useState<
     Record<string, BoardPullRequestPresentation[]>
   >({});
-  const sessionIds = sessions.map((session) => session.id).join(",");
+  const sessionIds = workerSessions.map((session) => session.id).join(",");
 
   useEffect(() => {
     if (!sessionIds) return;
@@ -116,7 +119,7 @@ export function CloudBoard({
     };
   }, [organizationId, sessionIds]);
 
-  if (sessions.length === 0) {
+  if (workerSessions.length === 0) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center overflow-y-auto">
         <div className="flex w-full max-w-[400px] flex-col items-center pb-[5vh] text-center">
@@ -131,7 +134,7 @@ export function CloudBoard({
     );
   }
 
-  const presentation = sessions.map((session) => ({
+  const presentation = workerSessions.map((session) => ({
     ...session,
     activity: {
       state: session.activityState,
@@ -148,7 +151,7 @@ export function CloudBoard({
       labels={boardLabels}
       sessions={presentation}
       renderSessionCard={(session) => {
-        const original = sessions.find((s) => s.id === session.id);
+        const original = workerSessions.find((s) => s.id === session.id);
         return (
           <ContextMenu>
             <ContextMenuTrigger asChild>

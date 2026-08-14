@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -169,6 +170,102 @@ func TestPrepareCheckoutRejectsMismatchedOriginBeforeCredentialUse(t *testing.T)
 	if err == nil || !strings.Contains(err.Error(), "does not match") ||
 		len(runner.commands) != 1 || runner.credentialCalls != 0 {
 		t.Fatalf("error = %v, commands = %#v, credential calls = %d", err, runner.commands, runner.credentialCalls)
+	}
+}
+
+func TestConfigureWorkerGitBrokersCurrentWorkerCredential(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "repository")
+	dataDir := filepath.Join(root, "data")
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingGitRunner{}
+	if err := ConfigureWorkerGit(
+		context.Background(), runner, workspace, dataDir,
+		"https://cloud.example", "session-one", "ao/session-one",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 6 || runner.commands[5][0] != "checkout" ||
+		runner.commands[5][2] != "ao/session-one" {
+		t.Fatalf("commands = %#v", runner.commands)
+	}
+	helperPath := filepath.Join(dataDir, "git-credential-ao")
+	helper, err := os.ReadFile(helperPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(helper), "fresh-worker-token") ||
+		!strings.Contains(string(helper), "/worker/github-token") {
+		t.Fatalf("credential helper = %q", helper)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "worker-token"), []byte("fresh-worker-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeTestExecutable(t, filepath.Join(binDir, "curl"), `#!/bin/sh
+printf '%s\n' "$@" > "$CURL_ARGUMENTS"
+printf '{"token":"github-installation-token"}'
+`)
+	writeTestExecutable(t, filepath.Join(binDir, "jq"), `#!/bin/sh
+cat >/dev/null
+printf 'github-installation-token\n'
+`)
+	argumentsPath := filepath.Join(root, "curl-arguments")
+	command := exec.Command(helperPath, "get")
+	command.Env = append(os.Environ(), "PATH="+binDir+":/usr/bin:/bin", "CURL_ARGUMENTS="+argumentsPath)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run credential helper: %v: %s", err, output)
+	}
+	arguments, err := os.ReadFile(argumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(arguments), "Authorization: Worker fresh-worker-token") ||
+		string(output) != "username=x-access-token\npassword=github-installation-token\n" {
+		t.Fatalf("arguments=%q output=%q", arguments, output)
+	}
+
+	githubTokenPath := filepath.Join(root, "gh-token")
+	githubArgsPath := filepath.Join(root, "gh-arguments")
+	realGitHubPath := filepath.Join(binDir, "real-gh")
+	writeTestExecutable(t, realGitHubPath, `#!/bin/sh
+printf '%s\n' "${GH_TOKEN:-}" > "$GH_TOKEN_PATH"
+printf '%s\n' "$@" > "$GH_ARGUMENTS_PATH"
+`)
+	githubCommand := exec.Command(filepath.Join(ToolingBinDir(dataDir), "gh"), "pr", "create", "--title", "change")
+	githubCommand.Env = append(os.Environ(),
+		"PATH="+binDir+":/usr/bin:/bin",
+		"AO_GH_REAL_BINARY="+realGitHubPath,
+		"GH_TOKEN_PATH="+githubTokenPath,
+		"GH_ARGUMENTS_PATH="+githubArgsPath,
+	)
+	if output, err := githubCommand.CombinedOutput(); err != nil {
+		t.Fatalf("run GitHub wrapper: %v: %s", err, output)
+	}
+	githubToken, err := os.ReadFile(githubTokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	githubArguments, err := os.ReadFile(githubArgsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(githubToken) != "github-installation-token\n" ||
+		string(githubArguments) != "pr\ncreate\n--title\nchange\n" {
+		t.Fatalf("GH_TOKEN=%q arguments=%q", githubToken, githubArguments)
+	}
+}
+
+func writeTestExecutable(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
 	}
 }
 

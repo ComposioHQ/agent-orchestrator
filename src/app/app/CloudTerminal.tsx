@@ -142,12 +142,15 @@ export function CloudTerminal({
                   ? "Reconnecting terminal…"
                   : "Terminal unavailable"}
             </p>
-            {notice ? (
-              <p className="mt-2 max-w-72 text-[10px] leading-4 text-[var(--error)]">
-                {notice}
-              </p>
-            ) : null}
           </div>
+        </div>
+      ) : null}
+      {notice ? (
+        <div
+          className="pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-bg-secondary)]/95 px-3 py-2 text-xs text-[var(--error)] shadow-lg"
+          role="status"
+        >
+          {notice}
         </div>
       ) : null}
       <div className="h-full min-h-0 w-full p-2" ref={hostRef} />
