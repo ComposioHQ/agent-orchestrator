@@ -24,6 +24,7 @@ export function CloudTerminal({
   const [connection, setConnection] =
     useState<ConnectionState>("connecting");
   const [notice, setNotice] = useState("");
+  const attemptRef = useRef(0);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -47,6 +48,23 @@ export function CloudTerminal({
     let active = true;
     let reconnectTimer: number | undefined;
     let socket: WebSocket | undefined;
+
+    // Backs off exponentially (capped, with jitter) on repeated failures so a
+    // down worker or a rate limit doesn't get hammered by an unbroken 1s
+    // retry loop — each failed attempt itself competes for the same
+    // per-session outstanding-request budget the worker uses, so retrying
+    // too fast can keep that budget pinned and lock the session out of ever
+    // recovering.
+    const MAX_RECONNECT_DELAY_MS = 30_000;
+    const scheduleReconnect = () => {
+      const attempt = attemptRef.current++;
+      const backoff = Math.min(
+        1_000 * 2 ** attempt,
+        MAX_RECONNECT_DELAY_MS,
+      );
+      const jitter = backoff * (0.75 + Math.random() * 0.5);
+      reconnectTimer = window.setTimeout(() => void connect(), jitter);
+    };
 
     const connect = async () => {
       setConnection("connecting");
@@ -78,6 +96,7 @@ export function CloudTerminal({
         socket = new WebSocket(url);
         socket.binaryType = "arraybuffer";
         socket.addEventListener("open", () => {
+          attemptRef.current = 0;
           setConnection("connected");
           socket?.send(
             JSON.stringify({
@@ -107,12 +126,12 @@ export function CloudTerminal({
                 : "Terminal stream closed. Reconnecting…",
             );
           }
-          reconnectTimer = window.setTimeout(() => void connect(), 1_000);
+          scheduleReconnect();
         });
         socket.addEventListener("error", () => {
           if (!active) return;
           setConnection("error");
-          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
+          scheduleReconnect();
         });
       } catch (cause) {
         if (!active) return;
@@ -120,7 +139,7 @@ export function CloudTerminal({
         setNotice(
           cause instanceof Error ? cause.message : "Could not open terminal.",
         );
-        reconnectTimer = window.setTimeout(() => void connect(), 3_000);
+        scheduleReconnect();
       }
     };
 
