@@ -137,6 +137,14 @@ type Config struct {
 	// GitLab carries the self-managed GitLab host allowlist and per-host
 	// token overrides, loaded once at boot from environment variables.
 	GitLab GitLabConfig
+	// MaxConcurrentSessions caps how many non-terminated sessions may exist
+	// across all projects before a new WORKER spawn is refused (orchestrator
+	// spawns are exempt so a project can always be recovered). 0 means
+	// unlimited, preserving pre-cap behavior. Overridable per project via
+	// ProjectConfig.MaxConcurrentSessions; set from AO_MAX_CONCURRENT_SESSIONS.
+	// Each agent harness uses roughly 1.5-2 GB of RAM, so machines with 8 GB
+	// should set this to 3-4 (see issue #3921).
+	MaxConcurrentSessions int
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -157,6 +165,8 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_MAX_CONCURRENT_SESSIONS  global cap on concurrent non-terminated sessions
+//	                     for worker spawns (default 0 = unlimited)
 //	AO_APP_RUN_ID        desktop-app launch id, set by the Electron supervisor
 //	                     (default: a fresh id minted per daemon boot)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
@@ -212,6 +222,17 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	if raw := os.Getenv("AO_MAX_CONCURRENT_SESSIONS"); raw != "" {
+		limit, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid AO_MAX_CONCURRENT_SESSIONS %q: %w", raw, err)
+		}
+		if limit < 0 {
+			return Config{}, fmt.Errorf("invalid AO_MAX_CONCURRENT_SESSIONS %d: must be >= 0 (0 = unlimited)", limit)
+		}
+		cfg.MaxConcurrentSessions = limit
 	}
 
 	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this

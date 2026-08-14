@@ -110,6 +110,9 @@ type projectConfig struct {
 	Worker            roleOverride        `json:"worker,omitempty"`
 	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
 	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	// MaxConcurrentSessions caps this project's concurrent non-terminated
+	// sessions for worker spawns (0 = no project-level cap).
+	MaxConcurrentSessions int `json:"maxConcurrentSessions,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
@@ -131,12 +134,13 @@ type projectSetConfigOptions struct {
 	env               []string
 	symlink           []string
 	postCreate        []string
-	trackerIntake     bool
-	trackerRepo       string
-	trackerAssignee   string
-	configJSON        string
-	clear             bool
-	json              bool
+	trackerIntake         bool
+	trackerRepo           string
+	trackerAssignee       string
+	maxConcurrentSessions int
+	configJSON            string
+	clear                 bool
+	json                  bool
 }
 
 type projectListResult struct {
@@ -325,6 +329,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
 	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
 	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.IntVar(&opts.maxConcurrentSessions, "max-concurrent-sessions", 0, "Cap on this project's concurrent sessions for worker spawns (0 = no project-level cap)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -369,6 +374,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 			Repo:     opts.trackerRepo,
 			Assignee: opts.trackerAssignee,
 		},
+		MaxConcurrentSessions: opts.maxConcurrentSessions,
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}

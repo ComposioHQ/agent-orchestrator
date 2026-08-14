@@ -97,6 +97,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_TELEMETRY_REMOTE", "posthog")
 	t.Setenv("AO_TELEMETRY_POSTHOG_KEY", "phc_test")
 	t.Setenv("AO_TELEMETRY_POSTHOG_HOST", "https://eu.i.posthog.com")
+	t.Setenv("AO_MAX_CONCURRENT_SESSIONS", "4")
 
 	cfg, err := Load()
 	if err != nil {
@@ -123,6 +124,9 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.Telemetry.Remote != TelemetryRemotePostHog || cfg.Telemetry.PostHogKey != "phc_test" || cfg.Telemetry.PostHogHost != "https://eu.i.posthog.com" {
 		t.Fatalf("Telemetry remote = %+v", cfg.Telemetry)
 	}
+	if cfg.MaxConcurrentSessions != 4 {
+		t.Errorf("MaxConcurrentSessions = %d, want 4", cfg.MaxConcurrentSessions)
+	}
 }
 
 func TestLoadInvalid(t *testing.T) {
@@ -143,6 +147,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"bad telemetry events", map[string]string{"AO_TELEMETRY_EVENTS": "maybe"}},
 		{"bad telemetry metrics", map[string]string{"AO_TELEMETRY_METRICS": "maybe"}},
 		{"bad telemetry remote", map[string]string{"AO_TELEMETRY_REMOTE": "otlp"}},
+		{"non-numeric max concurrent sessions", map[string]string{"AO_MAX_CONCURRENT_SESSIONS": "many"}},
+		{"negative max concurrent sessions", map[string]string{"AO_MAX_CONCURRENT_SESSIONS": "-1"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

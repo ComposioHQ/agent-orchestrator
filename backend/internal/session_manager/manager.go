@@ -121,6 +121,12 @@ var (
 	// ErrResumeInProgress prevents concurrent resume requests from replacing the
 	// same runtime twice.
 	ErrResumeInProgress = errors.New("session: agent resume already in progress")
+	// ErrConcurrencyLimit means the spawn was refused because the number of
+	// concurrent non-terminated sessions already meets the configured cap
+	// (AO_MAX_CONCURRENT_SESSIONS or the project's maxConcurrentSessions).
+	// The API maps it to a 409 so an orchestrator can wait for a worker to
+	// finish and retry instead of OOMing the machine (#3921).
+	ErrConcurrencyLimit = errors.New("session: concurrent session limit reached")
 	// ErrAwaitingDecision means the session is paused on a pending
 	// permission/approval dialog. Send refuses to paste into it: the runtime
 	// appends Enter after every paste, and an Enter into a decision dialog
@@ -316,10 +322,15 @@ type Manager struct {
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
-	executable      func() (string, error)
-	newLaunchID     func() string
-	agentOpMu       sync.Mutex
-	agentOperations map[domain.SessionID]agentOperationKind
+	executable  func() (string, error)
+	newLaunchID func() string
+	// maxConcurrentSessions is the daemon-wide worker-spawn cap (0 = unlimited).
+	// spawnAdmissionMu serializes the count-then-create window so two concurrent
+	// spawns cannot both pass the cap check and land one session over the limit.
+	maxConcurrentSessions int
+	spawnAdmissionMu      sync.Mutex
+	agentOpMu             sync.Mutex
+	agentOperations       map[domain.SessionID]agentOperationKind
 	// switchDecisionInput opens a narrow human-only terminal lane while the
 	// source is blocked on permission during a mandatory switch.
 	switchDecisionInput map[domain.SessionID]domain.AgentSwitchID
@@ -572,6 +583,10 @@ type Deps struct {
 	// BackgroundContext owns work admitted by request-scoped methods. Nil keeps
 	// focused tests and embedders compatible by defaulting to Background.
 	BackgroundContext context.Context
+	// MaxConcurrentSessions is the daemon-wide cap on concurrent non-terminated
+	// sessions enforced against new worker spawns (0 = unlimited). A project may
+	// additionally cap its own sessions via ProjectConfig.MaxConcurrentSessions.
+	MaxConcurrentSessions int
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
@@ -598,6 +613,7 @@ func New(d Deps) *Manager {
 		executable:                   d.Executable,
 		newLaunchID:                  d.NewLaunchID,
 		backgroundContext:            d.BackgroundContext,
+		maxConcurrentSessions:        d.MaxConcurrentSessions,
 		agentOperations:              make(map[domain.SessionID]agentOperationKind),
 		switchDecisionInput:          make(map[domain.SessionID]domain.AgentSwitchID),
 		retainedSwitches:             make(map[domain.SessionID]struct{}),
@@ -711,9 +727,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
+	rec, err := m.createSessionWithinCap(ctx, cfg, project)
 	if err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
 	id := rec.ID
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
@@ -893,6 +909,67 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, err
 	}
 	return rec, promptBytes, systemPromptBytes, nil
+}
+
+// createSessionWithinCap enforces the concurrency cap and creates the seed row
+// under one admission lock, so two racing spawns cannot both pass the count and
+// land the board one session over the limit. Only worker spawns are capped:
+// orchestrator (and any other non-worker) spawns stay exempt so a project can
+// always be recovered even when the board sits at the cap (#3921).
+func (m *Manager) createSessionWithinCap(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (domain.SessionRecord, error) {
+	m.spawnAdmissionMu.Lock()
+	defer m.spawnAdmissionMu.Unlock()
+	if cfg.Kind == domain.KindWorker {
+		if err := m.checkSpawnConcurrency(ctx, cfg.ProjectID, project.Config.MaxConcurrentSessions); err != nil {
+			return domain.SessionRecord{}, err
+		}
+	}
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("create: %w", err)
+	}
+	return rec, nil
+}
+
+// checkSpawnConcurrency compares the live (non-terminated) session count
+// against the daemon-wide cap and, independently, the project's own cap. Each
+// harness holds roughly 1.5-2 GB of RAM, so an uncapped orchestrator spawning
+// 40+ workers overnight OOMs an 8 GB machine — the cap turns that into a typed
+// refusal the orchestrator can wait out and retry (#3921).
+func (m *Manager) checkSpawnConcurrency(ctx context.Context, projectID domain.ProjectID, projectCap int) error {
+	globalCap := m.maxConcurrentSessions
+	if globalCap <= 0 && projectCap <= 0 {
+		return nil
+	}
+	if globalCap > 0 {
+		recs, err := m.store.ListAllSessions(ctx)
+		if err != nil {
+			return fmt.Errorf("concurrency check: %w", err)
+		}
+		if active := countNonTerminated(recs); active >= globalCap {
+			return fmt.Errorf("%w: %d active sessions at AO_MAX_CONCURRENT_SESSIONS=%d; wait for a session to finish (or kill one) and retry", ErrConcurrencyLimit, active, globalCap)
+		}
+	}
+	if projectCap > 0 {
+		recs, err := m.store.ListSessions(ctx, projectID)
+		if err != nil {
+			return fmt.Errorf("concurrency check: %w", err)
+		}
+		if active := countNonTerminated(recs); active >= projectCap {
+			return fmt.Errorf("%w: project %s has %d active sessions at maxConcurrentSessions=%d; wait for a session to finish (or kill one) and retry", ErrConcurrencyLimit, projectID, active, projectCap)
+		}
+	}
+	return nil
+}
+
+func countNonTerminated(recs []domain.SessionRecord) int {
+	active := 0
+	for _, rec := range recs {
+		if !rec.IsTerminated {
+			active++
+		}
+	}
+	return active
 }
 
 // loadProject loads the project record so spawn can resolve its per-project
