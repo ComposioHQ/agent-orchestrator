@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -10,6 +10,9 @@ const repoRoot = resolve(frontendRoot, "..");
 const backendRoot = join(repoRoot, "backend");
 const outDir = join(frontendRoot, "daemon");
 const outPath = join(outDir, process.platform === "win32" ? "ao.exe" : "ao");
+const windowsDevOutDir = join(outDir, `dev-${Date.now()}-${process.pid}`);
+const buildOutPath = process.platform === "win32" ? join(windowsDevOutDir, "ao.exe") : outPath;
+const windowsDevManifestPath = join(outDir, "dev-daemon.json");
 const minimumGoVersion = parseMinimumGoVersion(readFileSync(join(backendRoot, "go.mod"), "utf8"));
 
 if (!minimumGoVersion) {
@@ -17,7 +20,7 @@ if (!minimumGoVersion) {
 	process.exit(1);
 }
 
-const versionResult = spawnSync("go", ["version"], { encoding: "utf8" });
+const versionResult = spawnSync("go", ["version"], { encoding: "utf8", windowsHide: true });
 if (versionResult.error) {
 	console.error(
 		`Go ${minimumGoVersion.join(".")}+ is required, but Go could not be started: ${versionResult.error.message}`,
@@ -31,12 +34,17 @@ if (versionResult.status !== 0 || !actualGoVersion || !meetsMinimumVersion(actua
 	process.exit(1);
 }
 
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
+if (process.platform === "win32") {
+	mkdirSync(windowsDevOutDir, { recursive: true });
+} else {
+	rmSync(outDir, { recursive: true, force: true });
+	mkdirSync(outDir, { recursive: true });
+}
 
-const result = spawnSync("go", ["build", "-o", outPath, "./cmd/ao"], {
+const result = spawnSync("go", ["build", "-o", buildOutPath, "./cmd/ao"], {
 	cwd: backendRoot,
 	stdio: "inherit",
+	windowsHide: true,
 });
 
 if (result.error) {
@@ -46,4 +54,34 @@ if (result.error) {
 
 if (result.status !== 0) {
 	process.exit(result.status ?? 1);
+}
+
+if (process.platform === "win32") {
+	writeFileSync(windowsDevManifestPath, `${JSON.stringify({ path: buildOutPath }, null, 2)}\n`);
+	cleanupOldWindowsDevDaemons(buildOutPath);
+}
+
+function cleanupOldWindowsDevDaemons(activePath) {
+	const activeDir = dirname(activePath);
+	let entries;
+	try {
+		entries = readdirSync(outDir, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory() && entry.name.startsWith("dev-"))
+			.map((entry) => {
+				const dir = join(outDir, entry.name);
+				return { dir, mtimeMs: statSync(dir).mtimeMs };
+			})
+			.sort((a, b) => b.mtimeMs - a.mtimeMs);
+	} catch {
+		return;
+	}
+	for (const entry of entries.slice(5)) {
+		if (entry.dir === activeDir) continue;
+		try {
+			rmSync(entry.dir, { recursive: true, force: true });
+		} catch {
+			// Old session processes can keep their exe locked. They will be cleaned
+			// up by a later dev build after the process exits.
+		}
+	}
 }
