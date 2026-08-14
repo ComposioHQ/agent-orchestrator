@@ -303,8 +303,7 @@ describe("provider error", () => {
 		turnId: "turn_1",
 		willRetry: true,
 	});
-	// What AO actually persisted before the adapter started normalizing this
-	// notification: the Codex envelope, prefixed, in summary and detail.error.
+	// What AO persists: the Codex envelope, prefixed, in summary and detail.error.
 	const stored = `provider error: ${envelope}`;
 
 	it("unwraps the prefixed payload AO actually stores", () => {

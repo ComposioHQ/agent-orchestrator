@@ -1257,8 +1257,7 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
  * Rendering that as a generic activity label made one long unbreakable line that
  * widened the chat column under the sidebars, and five reconnect attempts painted
  * five walls of red JSON. This row unwraps the human parts and always wraps inside
- * the column. New rows are normalized at the daemon; this path is the fallback
- * for already-persisted envelopes.
+ * the column.
  *
  * Not a live region: the enclosing timeline is already a `role="log"`, and the
  * controller banner announces a terminal failure. Marking every historical

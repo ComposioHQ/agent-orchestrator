@@ -2,7 +2,6 @@ package codexappserver
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -182,70 +181,6 @@ func TestNormalizeOtherItemKinds(t *testing.T) {
 // activity with guessed semantics.
 func TestNormalizeUnknownItemTypeIsDropped(t *testing.T) {
 	normalizeNone(t, "item/completed", `{"turnId":"t","item":{"id":"i","type":"someFutureItem"}}`)
-}
-
-// The captured `error` notification stores the Codex envelope under `error`, not
-// as a bare message. Dumping params into Err made every client render the JSON.
-func TestNormalizeErrorNotificationUnwrapsCodexEnvelope(t *testing.T) {
-	ev := normalizeOne(t, "error", `{
-		"error": {
-			"message": "Reconnecting... [1/5] ",
-			"codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": null}},
-			"additionalDetails": "stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing"
-		},
-		"threadId": "th1",
-		"turnId": "tu1",
-		"willRetry": true
-	}`)
-	if ev.Kind != ports.ChatEventError {
-		t.Fatalf("kind = %q", ev.Kind)
-	}
-	if ev.ProviderTurnID != "tu1" {
-		t.Fatalf("turn = %q, want tu1", ev.ProviderTurnID)
-	}
-	if ev.Summary != "Reconnecting... [1/5]" {
-		t.Fatalf("summary = %q", ev.Summary)
-	}
-	if ev.Err == nil || ev.Err.Error() != "Reconnecting... [1/5]" {
-		t.Fatalf("err = %v", ev.Err)
-	}
-	detail := decodeDetailMap(t, ev.Detail)
-	if detail["message"] != "Reconnecting... [1/5]" {
-		t.Fatalf("detail.message = %q", detail["message"])
-	}
-	if !strings.Contains(detail["error"], "no credits remaining") {
-		t.Fatalf("detail.error = %q", detail["error"])
-	}
-	if strings.Contains(string(ev.Detail), "codexErrorInfo") {
-		t.Fatalf("detail leaked the provider envelope: %s", ev.Detail)
-	}
-}
-
-func TestUnwrapJSONErrorEnvelopeReadsPrefixedPayload(t *testing.T) {
-	headline, extra := unwrapJSONErrorEnvelope(
-		`provider error: {"error":{"message":"Reconnecting... [1/5] ","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}},"additionalDetails":"stream disconnected before completion: You have no credits remaining"}}`,
-	)
-	if headline != "Reconnecting... [1/5]" {
-		t.Fatalf("headline = %q", headline)
-	}
-	if extra != "stream disconnected before completion: You have no credits remaining" {
-		t.Fatalf("extra = %q", extra)
-	}
-}
-
-func TestNormalizeErrorItemUnwrapsJSONEnvelope(t *testing.T) {
-	ev := normalizeOne(t, "item/completed",
-		`{"turnId":"t","item":{"id":"i","type":"error","message":"{\"error\":{\"message\":\"Reconnecting... [1/5] \",\"additionalDetails\":\"stream disconnected before completion\"}}"}}`)
-	if ev.Summary != "Reconnecting... [1/5]" {
-		t.Fatalf("summary = %q", ev.Summary)
-	}
-	detail := decodeDetailMap(t, ev.Detail)
-	if detail["message"] != "Reconnecting... [1/5]" {
-		t.Fatalf("detail.message = %q", detail["message"])
-	}
-	if detail["error"] != "stream disconnected before completion" {
-		t.Fatalf("detail.error = %q", detail["error"])
-	}
 }
 
 // Provider bookkeeping is not conversation content. These are the methods a real
