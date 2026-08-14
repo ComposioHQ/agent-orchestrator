@@ -282,11 +282,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		setTerminalTarget((current) =>
 			current.kind === "reviewer" &&
+				reviewerQuery.isFetched &&
 			(!availableReviewerTerminal || availableReviewerTerminal.handleId !== current.handleId)
 				? { kind: "worker" }
 				: current,
 		);
-	}, [availableReviewerTerminal]);
+	}, [availableReviewerTerminal, reviewerQuery.isFetched]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
@@ -332,8 +333,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		setInterfaceSwitchDialogOpen(true);
 	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
+	// the button entirely rather than showing a permanently disabled control.
+	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
 	const showInterfaceSwitchAction = Boolean(
-		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
+		!interfaceSwitchUnsupported && (interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError),
 	);
 	const interfaceSwitchAction = session && showInterfaceSwitchAction ? (
 		<SessionInterfaceSwitchButton
@@ -635,6 +639,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						{showChatSurface ? (
 							<SessionChatSurface
 								session={session}
+								reviewerTerminal={reviewerTerminal}
+								onOpenReviewerTerminal={selectReviewerTerminal}
 								headerActions={sessionHeaderActions}
 								controllerTransitioning={chatControllerTransitioning}
 								onOpenShell={addShellTerminal}

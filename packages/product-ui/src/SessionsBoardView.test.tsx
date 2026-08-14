@@ -112,6 +112,35 @@ describe("SessionsBoardView", () => {
 		expect(onOpen).toHaveBeenCalledOnce();
 	});
 
+	it("truncates the status before card metrics can collide", () => {
+		render(
+			<SessionCardView
+				externalLink={ExternalLink}
+				labels={{
+					formatTime: () => "1h ago",
+					intakeIssue: (id) => `Issue ${id}`,
+					pr: {
+						short: "PR",
+						states: { closed: "closed", draft: "draft", merged: "merged", open: "open" },
+					},
+					updatedAt: (timestamp) => `Updated ${timestamp}`,
+				}}
+				renderAvatar={(provider) => <span role="img" aria-label={provider}>C</span>}
+				session={{ ...baseSession, status: "review_pending" }}
+				usage={{ accessibleLabel: "24,600,000 tokens", compactLabel: "24.6M tok" }}
+			/>,
+		);
+
+		const statusLabel = screen.getByText("Review pending");
+		const status = statusLabel.parentElement;
+		const metadataRow = status?.parentElement;
+		expect(statusLabel).toHaveClass("min-w-0", "truncate");
+		expect(status).toHaveClass("min-w-0", "flex-1");
+		expect(metadataRow).toHaveClass("flex", "items-center", "gap-2");
+		expect(metadataRow).not.toHaveClass("flex-wrap");
+		expect(screen.getByText("24.6M tok").parentElement).toHaveClass("shrink-0", "whitespace-nowrap");
+	});
+
 	it("keeps archive expansion controlled and preserves the grid list", () => {
 		const onExpandedChange = vi.fn();
 		const { rerender } = render(

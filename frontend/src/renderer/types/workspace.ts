@@ -69,6 +69,8 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: ReviewerHarnessId;
+	/** Whether the daemon may automatically review this session after it becomes idle. */
+	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session
@@ -86,6 +88,8 @@ export type WorkspaceSession = {
 	terminateOnPrMerge?: boolean;
 	/** Whether SCM review feedback is automatically injected into the worker. */
 	autoInjectReview?: boolean;
+	/** Default captured by newly created PRs for automatic CI-failure injection. */
+	autoInjectCI?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */

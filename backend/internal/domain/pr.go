@@ -77,6 +77,7 @@ type PullRequest struct {
 	ObservedAt       time.Time
 	CIObservedAt     time.Time
 	ReviewObservedAt time.Time
+	AutoInjectCI     bool
 }
 
 // PullRequestCheck is one normalized CI check run for a pull request.
@@ -125,6 +126,7 @@ type PullRequestReview struct {
 	URL              string
 	Body             string
 	IsBot            bool
+	TargetSHA        string
 	SubmittedAt      time.Time
 	AutoInjectReview bool
 }

@@ -37,7 +37,17 @@ jobs:
             packages/cloud-client/package-lock.json
             packages/product-ui/package-lock.json
 
-      - run: npm ci
+      - name: Install frontend dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "npm ci failed; retrying Electron dependency download ($attempt/3)"
+          done
 
       - name: Install Cloud client dependencies
         run: npm ci

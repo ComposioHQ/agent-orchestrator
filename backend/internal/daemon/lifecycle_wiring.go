@@ -41,12 +41,13 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	trackerDone   <-chan struct{}
+	LCM            *lifecycle.Manager
+	runtimeReaper  *reaper.Reaper
+	reaperDone     <-chan struct{}
+	activityDone   <-chan struct{}
+	autoReviewDone <-chan struct{}
+	scmDone        <-chan struct{}
+	trackerDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -102,6 +103,9 @@ func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
 	if l.activityDone != nil {
 		<-l.activityDone
+	}
+	if l.autoReviewDone != nil {
+		<-l.autoReviewDone
 	}
 	if l.scmDone != nil {
 		<-l.scmDone
@@ -201,22 +205,13 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		BackgroundContext:   ctx,
 		Logger:              log,
 	})
-	scmProvider, err := newGitHubSCMProvider(log)
-	if err != nil {
-		logSCMProviderDisabled(log, err)
-	}
-	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
-	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
-	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueContext and dereferences nil on the
-	// first issue lookup (issue #2685). Assigning the concrete value only on
-	// success leaves tracker as a real interface-nil otherwise.
-	var tracker ports.Tracker
-	if t, err := newGitHubTracker(); err != nil {
-		logTrackerDisabled(log, err)
-	} else {
-		tracker = t
-	}
+	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
+	// Build the multi-tracker dispatching to both GitHub and GitLab. The
+	// multi-tracker returns a true nil ports.Tracker when no provider has
+	// usable credentials, preserving the `s.tracker == nil` guard in
+	// withIssueContext (issue #2685). When one provider's token is missing,
+	// the other still serves issue lookups.
+	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,
 		Store:             store,
@@ -445,6 +440,10 @@ var _ interface {
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
+
+func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
+	return c.svc.SupportsChat(harness)
+}
 
 func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness)

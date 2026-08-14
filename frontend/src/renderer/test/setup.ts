@@ -76,6 +76,8 @@ if (typeof window !== "undefined") {
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
+			setFocused: () => undefined,
+			onFontSizeShortcut: () => () => undefined,
 		},
 		window: {
 			setOverlay: async () => undefined,
