@@ -3089,9 +3089,35 @@ type CleanupResult struct {
 	Skipped []CleanupSkip
 }
 
+// cleanupFactsStore is the optional persistence capability behind durable
+// cleanup bookkeeping (session_cleanup_facts). The production SQLite store
+// implements it; narrow test stores need not. Without it, Cleanup behaves as
+// before facts existed and the periodic GC is a no-op.
+type cleanupFactsStore interface {
+	UpsertSessionCleanupFacts(ctx context.Context, rec domain.SessionCleanupRecord) error
+	GetSessionCleanupFacts(ctx context.Context, id domain.SessionID) (domain.SessionCleanupRecord, bool, error)
+	ListTerminalCleanupCandidates(ctx context.Context, now time.Time) ([]domain.SessionID, error)
+}
+
+// cleanupMaxAutoAttempts is the retry cap after which a still-failing
+// non-dirty teardown transitions to DispositionFailed: the periodic GC stops
+// retrying and only a user-triggered `ao session cleanup` revisits it.
+const cleanupMaxAutoAttempts = 5
+
+// errShellTerminalOpen marks a teardown refusal caused by a scoped shell
+// terminal that could not be confirmed closed.
+var errShellTerminalOpen = errors.New("cleanup: shell terminal still open")
+
 // Cleanup reclaims the workspaces of terminal sessions in a project. A workspace
 // whose teardown is refused (uncommitted work) is never forced; it is reported
 // in Skipped with the reason so the refusal is visible instead of silent.
+//
+// Cleanup is idempotent (#3402): each attempt records its outcome in
+// session_cleanup_facts, and sessions whose current-generation facts already
+// say the workspace was reclaimed (removed / not_applicable) are skipped
+// outright instead of being re-torn-down and re-listed forever. Dirty-preserved
+// and retry-exhausted sessions are NOT skipped here — a manual cleanup is the
+// user-triggered retry that revisits them.
 func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (CleanupResult, error) {
 	recs, err := m.cleanupRecords(ctx, project)
 	if err != nil {
@@ -3102,38 +3128,169 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if !rec.IsTerminated {
 			continue
 		}
-		ws := workspaceInfo(rec)
-		if ws.Path == "" {
-			m.cleanupAgentWorkspace(ctx, rec, "")
-			m.cleanupSystemPromptDir(rec.ID)
+		if m.cleanupAlreadyReclaimed(ctx, rec) {
 			continue
 		}
-		if h := runtimeHandle(rec.Metadata); h.ID != "" {
-			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
-		}
-		if reason := m.cleanupOne(ctx, rec, ws); reason != "" {
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
-			continue
-		}
-		m.cleanupSystemPromptDir(rec.ID)
-		result.Cleaned = append(result.Cleaned, rec.ID)
+		m.cleanupSessionRecord(ctx, rec, &result)
 	}
 	return result, nil
 }
 
+// RunTerminalResourceGC is the periodic worktree/branch garbage collector: it
+// visits every terminated session whose durable cleanup facts say resources may
+// still be held (no facts row yet, facts from an older generation, or a pending
+// teardown due for its capped-backoff retry) and runs the same teardown as
+// Cleanup. This is what finally reclaims the orphaned worktrees that used to
+// accumulate from merge/tracker termination, failed crash finalization, and
+// pre-fix history (#3921, #3402, #2811). Without a facts-capable store it is a
+// no-op.
+func (m *Manager) RunTerminalResourceGC(ctx context.Context) (CleanupResult, error) {
+	result := CleanupResult{Cleaned: []domain.SessionID{}, Skipped: []CleanupSkip{}}
+	factsStore, ok := m.store.(cleanupFactsStore)
+	if !ok {
+		return result, nil
+	}
+	ids, err := factsStore.ListTerminalCleanupCandidates(ctx, m.clock())
+	if err != nil {
+		return result, fmt.Errorf("terminal-resource gc: %w", err)
+	}
+	for _, id := range ids {
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil {
+			m.logger.Warn("terminal-resource gc: load session failed", "sessionID", id, "error", err)
+			continue
+		}
+		if !ok || !rec.IsTerminated {
+			continue
+		}
+		m.cleanupSessionRecord(ctx, rec, &result)
+	}
+	if len(result.Cleaned) > 0 || len(result.Skipped) > 0 {
+		m.logger.Info("terminal-resource gc: pass complete", "reclaimed", len(result.Cleaned), "skipped", len(result.Skipped))
+	}
+	return result, nil
+}
+
+// cleanupAlreadyReclaimed reports whether the session's current-generation
+// cleanup facts already record its workspace as reclaimed.
+func (m *Manager) cleanupAlreadyReclaimed(ctx context.Context, rec domain.SessionRecord) bool {
+	factsStore, ok := m.store.(cleanupFactsStore)
+	if !ok {
+		return false
+	}
+	facts, ok, err := factsStore.GetSessionCleanupFacts(ctx, rec.ID)
+	if err != nil {
+		m.logger.Warn("cleanup: load cleanup facts failed", "sessionID", rec.ID, "error", err)
+		return false
+	}
+	return ok && facts.SessionGeneration == rec.CleanupGeneration &&
+		(facts.WorkspaceDisposition == domain.DispositionRemoved || facts.WorkspaceDisposition == domain.DispositionNotApplicable)
+}
+
+// cleanupSessionRecord runs one session's terminal-resource teardown and
+// records the durable outcome. It takes the session's exclusive operation gate
+// so an unattended GC pass can never destroy a worktree out from under a
+// concurrent Restore/Resume relaunching the same session; a busy session is
+// simply left for the next pass.
+func (m *Manager) cleanupSessionRecord(ctx context.Context, rec domain.SessionRecord, result *CleanupResult) {
+	if err := m.beginAgentOperation(ctx, rec.ID, agentOperationCleanup); err != nil {
+		m.logger.Warn("cleanup: session busy, skipping", "sessionID", rec.ID, "error", err)
+		result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "session operation in progress"})
+		return
+	}
+	defer m.endAgentOperation(rec.ID, agentOperationCleanup)
+
+	// Re-read under the gate: a Restore may have revived the session between
+	// the candidate listing and the gate acquisition.
+	rec, ok, err := m.store.GetSession(ctx, rec.ID)
+	if err != nil || !ok || !rec.IsTerminated {
+		return
+	}
+
+	ws := workspaceInfo(rec)
+	if ws.Path == "" {
+		m.cleanupAgentWorkspace(ctx, rec, "")
+		m.cleanupSystemPromptDir(rec.ID)
+		m.recordCleanupFacts(ctx, rec, domain.DispositionNotApplicable, "")
+		return
+	}
+	if h := runtimeHandle(rec.Metadata); h.ID != "" {
+		_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
+	}
+	if err := m.cleanupOne(ctx, rec, ws); err != nil {
+		result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
+		m.recordCleanupFacts(ctx, rec, cleanupDispositionForError(err), cleanupFailureCode(err))
+		return
+	}
+	m.cleanupSystemPromptDir(rec.ID)
+	m.recordCleanupFacts(ctx, rec, domain.DispositionRemoved, "")
+	result.Cleaned = append(result.Cleaned, rec.ID)
+}
+
+// recordCleanupFacts persists one teardown attempt's durable outcome,
+// including capped-backoff retry bookkeeping for still-pending teardowns.
+// Best-effort: a store without the capability (or a write failure) never
+// blocks the teardown itself.
+func (m *Manager) recordCleanupFacts(ctx context.Context, rec domain.SessionRecord, disposition domain.WorkspaceDisposition, failureCode string) {
+	factsStore, ok := m.store.(cleanupFactsStore)
+	if !ok {
+		return
+	}
+	now := m.clock()
+	attempts := int64(1)
+	var runtimeReleasedAt time.Time
+	if prev, havePrev, err := factsStore.GetSessionCleanupFacts(ctx, rec.ID); err != nil {
+		m.logger.Warn("cleanup: load cleanup facts failed", "sessionID", rec.ID, "error", err)
+	} else if havePrev && prev.SessionGeneration == rec.CleanupGeneration {
+		attempts = prev.AttemptCount + 1
+		runtimeReleasedAt = prev.RuntimeReleasedAt
+	}
+	next := domain.SessionCleanupRecord{
+		SessionID:            rec.ID,
+		SessionGeneration:    rec.CleanupGeneration,
+		RuntimeReleasedAt:    runtimeReleasedAt,
+		WorkspaceDisposition: disposition,
+		AttemptCount:         attempts,
+		LastAttemptAt:        now,
+		FailureCode:          failureCode,
+	}
+	switch disposition {
+	case domain.DispositionRemoved, domain.DispositionNotApplicable:
+		// The runtime destroy directly precedes a reclaimed workspace (Destroy
+		// is idempotent for an already-gone session), so the terminal
+		// disposition also settles the runtime-release fact.
+		next.RuntimeReleasedAt = now
+	case domain.DispositionPending:
+		if attempts >= cleanupMaxAutoAttempts {
+			next.WorkspaceDisposition = domain.DispositionFailed
+		} else {
+			// Linear backoff, capped: frequent enough to self-heal transient
+			// refusals, cheap enough to never matter.
+			backoff := time.Duration(attempts) * 15 * time.Minute
+			if backoff > 6*time.Hour {
+				backoff = 6 * time.Hour
+			}
+			next.NextAttemptAt = now.Add(backoff)
+		}
+	}
+	if err := factsStore.UpsertSessionCleanupFacts(ctx, next); err != nil {
+		m.logger.Warn("cleanup: persist cleanup facts failed", "sessionID", rec.ID, "error", err)
+	}
+}
+
 // cleanupOne reclaims one terminated session's workspace, gating shut any
 // shell terminal scoped to it first (same ordering as Kill). Split out of
-// Cleanup's loop so the release function's defer is scoped to one session's
-// call, not deferred across every iteration until Cleanup itself returns.
-// Returns "" when the workspace was reclaimed; a non-empty reason means it was
-// left alone this run (Cleanup records it in Skipped and can retry on a later
-// call) — most commonly because a scoped shell terminal could not be
-// confirmed closed, so reclaiming would pull the ground out from under it.
-func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (skipReason string) {
+// the per-session loop so the release function's defer is scoped to one
+// session's call, not deferred across every iteration. Returns nil when the
+// workspace was reclaimed; an error means it was left alone this run (the
+// caller records the reason and the durable disposition, and a later pass can
+// retry) — most commonly because the worktree is dirty or a scoped shell
+// terminal could not be confirmed closed.
+func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) error {
 	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
 	if closeErr != nil {
 		m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
-		return "shell terminal still open"
+		return fmt.Errorf("%w: %w", errShellTerminalOpen, closeErr)
 	}
 	if release != nil {
 		defer release()
@@ -3141,16 +3298,16 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-		return "workspace teardown failed"
+		return rowErr
 	} else if ok {
 		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
 			if !errors.Is(err, ports.ErrWorkspaceDirty) {
 				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 			}
-			return cleanupSkipReason(err)
+			return err
 		}
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		return ""
+		return nil
 	}
 	if err := m.workspace.Destroy(ctx, ws); err != nil {
 		if !errors.Is(err, ports.ErrWorkspaceDirty) {
@@ -3158,10 +3315,10 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 			// internal filesystem paths); the full cause lands here.
 			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
 		}
-		return cleanupSkipReason(err)
+		return err
 	}
 	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-	return ""
+	return nil
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short
@@ -3175,7 +3332,35 @@ func cleanupSkipReason(err error) string {
 	if errors.Is(err, ErrProjectNotResolvable) {
 		return "project is archived or unregistered — remove worktree manually"
 	}
+	if errors.Is(err, errShellTerminalOpen) {
+		return "shell terminal still open"
+	}
 	return "workspace teardown failed"
+}
+
+// cleanupDispositionForError maps a teardown refusal onto its durable
+// disposition: a dirty worktree pauses auto-retry until the user retries;
+// everything else stays pending under the capped backoff.
+func cleanupDispositionForError(err error) domain.WorkspaceDisposition {
+	if errors.Is(err, ports.ErrWorkspaceDirty) {
+		return domain.DispositionPreservedDirty
+	}
+	return domain.DispositionPending
+}
+
+// cleanupFailureCode maps a teardown refusal onto the machine-readable
+// failure code persisted in session_cleanup_facts.
+func cleanupFailureCode(err error) string {
+	switch {
+	case errors.Is(err, ports.ErrWorkspaceDirty):
+		return "workspace_dirty"
+	case errors.Is(err, errShellTerminalOpen):
+		return "shell_terminal_open"
+	case errors.Is(err, ErrProjectNotResolvable):
+		return "project_unresolvable"
+	default:
+		return "teardown_failed"
+	}
 }
 
 func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {

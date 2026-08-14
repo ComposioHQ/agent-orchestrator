@@ -999,6 +999,13 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 			return nil, fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
 		}
 		now := m.clock()
+		if rec.IsTerminated {
+			// Un-terminating (restore/relaunch) starts a new cleanup generation:
+			// teardown facts recorded for the previous terminal phase no longer
+			// describe this session's resources, so the terminal-resource
+			// reconciler must treat them as stale (see session_cleanup_facts).
+			rec.CleanupGeneration++
+		}
 		rec.IsTerminated = false
 		rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 		// Each spawn/restore must re-prove its hook pipeline: clear the receipt so

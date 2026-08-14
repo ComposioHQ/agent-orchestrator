@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
@@ -132,6 +133,9 @@ type sessionLifecycle interface {
 	// resources (capture work, free the worktree/branch) after the reaper
 	// records its death; late-bound into the LCM like Kill.
 	FinalizeCrashedSession(ctx context.Context, id domain.SessionID) error
+	// RunTerminalResourceGC reclaims resources still held by terminated
+	// sessions, driven by the durable session_cleanup_facts bookkeeping.
+	RunTerminalResourceGC(ctx context.Context) (sessionmanager.CleanupResult, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
@@ -149,6 +153,36 @@ type sessionLifecycle interface {
 	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
 	// service, which is built alongside the controller-facing service below.
 	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
+}
+
+// Terminal-resource GC cadence: the first pass runs shortly after boot (the
+// boot Reconcile has already settled live reality by then) and then hourly.
+// Reclaiming a leaked worktree an hour late is invisible to the user; running
+// rarely keeps the pass from ever competing with interactive work.
+const (
+	terminalResourceGCInitialDelay = 2 * time.Minute
+	terminalResourceGCInterval     = time.Hour
+)
+
+// startTerminalResourceGC launches the periodic worktree/branch GC goroutine.
+// It exits when ctx is cancelled. Failures are logged and the next tick
+// retries; the durable facts bookkeeping caps per-session retry churn.
+func startTerminalResourceGC(ctx context.Context, sessions sessionLifecycle, log *slog.Logger) {
+	go func() {
+		timer := time.NewTimer(terminalResourceGCInitialDelay)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			if _, err := sessions.RunTerminalResourceGC(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("terminal-resource gc pass failed", "err", err)
+			}
+			timer.Reset(terminalResourceGCInterval)
+		}
+	}()
 }
 
 // sessionLifecycleMessenger adapts sessionLifecycle to ports.AgentMessenger so

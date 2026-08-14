@@ -88,6 +88,9 @@ func (stubAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return stubAg
 
 type stubWorkspace struct {
 	destroyed int
+	// destroyErr, when set, is returned by Destroy so refusal paths (e.g. a
+	// dirty worktree) can be exercised.
+	destroyErr error
 	// root, when set, backs each workspace with a real directory under it so
 	// tests can observe worktree leftovers on disk (ForceDestroy removes it).
 	root           string
@@ -104,8 +107,14 @@ func (s *stubWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	}
 	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
 }
-func (s *stubWorkspace) Destroy(context.Context, ports.WorkspaceInfo) error {
+func (s *stubWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) error {
+	if s.destroyErr != nil {
+		return s.destroyErr
+	}
 	s.destroyed++
+	if s.root != "" {
+		return os.RemoveAll(info.Path)
+	}
 	return nil
 }
 func (s *stubWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
