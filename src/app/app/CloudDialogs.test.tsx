@@ -167,11 +167,7 @@ it("creates a private GitHub-backed scratch project for the selected owner", asy
   fireEvent.change(screen.getByLabelText("Project name"), {
     target: { value: "New service" },
   });
-  fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: /Create a GitHub repository for this project/,
-    }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: /^GitHub/ }));
   expect(screen.getByRole("option", { name: "acme · organization" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
@@ -182,6 +178,47 @@ it("creates a private GitHub-backed scratch project for the selected owner", asy
       prompt: "",
       githubInstallationId: "9007199254740993",
       private: true,
+    }),
+  );
+});
+
+it("flags a scratch project as no-repository when that option is chosen", async () => {
+  const onCreateScratchProject = vi.fn().mockResolvedValue(undefined);
+  render(
+    <NewProjectDialog
+      github={{
+        status: "unavailable",
+        installations: [],
+        repositories: [],
+      }}
+      githubUser={{
+        status: "available",
+        connection: { connected: false, installations: [] },
+      }}
+      onClose={vi.fn()}
+      onCreateFromGitHub={vi.fn()}
+      onCreateScratchProject={onCreateScratchProject}
+      onCreateStandalone={vi.fn()}
+      onOpenProviderSettings={vi.fn()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Create a Project/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Start from scratch/ }));
+  fireEvent.change(screen.getByLabelText("Project name"), {
+    target: { value: "Loose agents" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^No repository/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+  await waitFor(() =>
+    expect(onCreateScratchProject).toHaveBeenCalledWith({
+      displayName: "Loose agents",
+      harness: "claude-code",
+      prompt: "",
+      githubInstallationId: undefined,
+      private: undefined,
+      noRepository: true,
     }),
   );
 });

@@ -26,6 +26,7 @@ import {
 } from "@/lib/cloud-client";
 import { CloudBoard } from "./CloudBoard";
 import {
+  AddAgentToProjectDialog,
   NewProjectDialog,
   type LocalAgentInput,
   type ScratchProjectInput,
@@ -69,6 +70,9 @@ export function CloudWorkspace() {
   >("organization");
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [addAgentProject, setAddAgentProject] = useState<Project | null>(
+    null,
+  );
   const [projectSettings, setProjectSettings] = useState<Project | null>(null);
   const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
   const [shareProject, setShareProject] = useState<Project | null>(null);
@@ -79,6 +83,10 @@ export function CloudWorkspace() {
   const [sharedProjectSessions, setSharedProjectSessions] = useState<
     Record<string, Session[]>
   >({});
+  const sharedProjectSessionsRef = useRef(sharedProjectSessions);
+  useEffect(() => {
+    sharedProjectSessionsRef.current = sharedProjectSessions;
+  }, [sharedProjectSessions]);
   const [sharedSession, setSharedSession] = useState<Session | null>(null);
   const [sharedSessionOrgId, setSharedSessionOrgId] = useState("");
   const [github, setGitHub] = useState<GitHubCapability>(
@@ -423,6 +431,65 @@ export function CloudWorkspace() {
     };
   }, [client, organizationId]);
 
+  // "Shared with me" otherwise only ever loads once at sign-in: a brand-new
+  // share, or a session the owner adds after the recipient already expanded
+  // the project, would sit invisible until a manual reload. Poll the list
+  // itself plus the session list for whichever shared projects are already
+  // expanded, so the connection feels live in both directions like the
+  // owner's own session list above.
+  useEffect(() => {
+    let active = true;
+    let refreshing = false;
+    const refreshShared = async () => {
+      if (refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      try {
+        const items = await client.listSharedProjects();
+        if (!active) return;
+        setSharedProjects(items);
+        const expandedProjectIds = new Set(
+          Object.keys(sharedProjectSessionsRef.current),
+        );
+        const expandedShares = new Map(
+          items
+            .filter((shared) => expandedProjectIds.has(shared.project.id))
+            .map((shared) => [shared.project.id, shared]),
+        );
+        await Promise.all(
+          Array.from(expandedShares.values()).map(async (shared) => {
+            try {
+              const sessionItems = await client.listSharedProjectSessions(
+                shared.project.orgId,
+                shared.project.id,
+              );
+              if (active) {
+                setSharedProjectSessions((current) => ({
+                  ...current,
+                  [shared.project.id]: sessionItems,
+                }));
+              }
+            } catch {
+              // Best-effort, same as the initial expand fetch.
+            }
+          }),
+        );
+      } catch {
+        // "Shared with me" is a courtesy sidebar section — a failed refresh
+        // just tries again next tick rather than surfacing an error.
+      } finally {
+        refreshing = false;
+      }
+    };
+    const interval = window.setInterval(() => void refreshShared(), 3_000);
+    const onVisibility = () => void refreshShared();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [client]);
+
   useEffect(() => {
     const settings = new URLSearchParams(window.location.search).get("settings");
     if (settings === "providers") {
@@ -460,11 +527,23 @@ export function CloudWorkspace() {
     setSelectedProjectId(response.project.id);
   };
 
+  // "orchestrator-project": a real Git workspace (GitHub or AO-managed
+  // local) with an orchestrator that checks out workers into it.
+  // "standalone-agent": no repo, a single independent agent — the
+  // top-level "Create a Standalone Agent" flow.
+  // "independent-project": no repo, but a named project you can keep
+  // adding independent sibling agents to (no orchestrator, since there's
+  // no shared workspace for one to check workers out of).
   const createScratchWork = async (
     input: LocalAgentInput,
-    kind: "worker" | "orchestrator",
+    classification:
+      | "orchestrator-project"
+      | "standalone-agent"
+      | "independent-project",
   ) => {
     const suffix = crypto.randomUUID();
+    const kind =
+      classification === "orchestrator-project" ? "orchestrator" : "worker";
     const projectResponse = await client.createProject(
       organizationId,
       {
@@ -472,9 +551,14 @@ export function CloudWorkspace() {
         repositoryUrl: `https://scratch.ao.local/${suffix}`,
         defaultBranch: "main",
         config: {
-          source: kind === "worker" ? "standalone-agent" : "scratch",
+          source:
+            classification === "standalone-agent"
+              ? "standalone-agent"
+              : classification === "independent-project"
+                ? "scratch-independent"
+                : "scratch",
           scratch: true,
-          standalone: kind === "worker",
+          standalone: classification === "standalone-agent",
         },
       },
       { idempotencyKey: newIdempotencyKey("scratch-project") },
@@ -486,7 +570,7 @@ export function CloudWorkspace() {
         kind,
         harness: input.harness,
         displayName:
-          kind === "orchestrator"
+          classification === "orchestrator-project"
             ? localAgentName(input.harness)
             : input.displayName,
         prompt: input.prompt,
@@ -502,15 +586,17 @@ export function CloudWorkspace() {
   };
 
   const createScratchProject = async (input: ScratchProjectInput) => {
+    if (input.noRepository) {
+      await createScratchWork(input, "independent-project");
+      return;
+    }
     if (!input.githubInstallationId) {
       // Leaving GitHub unchecked doesn't mean "no repo" — AO still
       // initializes a real, persistent AO-managed local Git workspace for
       // it (see the "Create scratch project" dialog copy), so the
       // orchestrator/worker-VM model applies here exactly as it does for a
-      // GitHub-backed scratch project below. Only "Create a Standalone
-      // Agent" (a genuinely repo-less, single-agent workspace) should skip
-      // orchestrator treatment.
-      await createScratchWork(input, "orchestrator");
+      // GitHub-backed scratch project below.
+      await createScratchWork(input, "orchestrator-project");
       return;
     }
     const response = await client.createGitHubScratchProject(
@@ -531,6 +617,28 @@ export function CloudWorkspace() {
     setSelectedProjectId(response.project.id);
     setSelectedSessionId(response.session.id);
     void loadGitHub(organizationId);
+  };
+
+  const addAgentToProject = async (
+    project: Project,
+    input: LocalAgentInput,
+  ) => {
+    const sessionResponse = await client.createSession(
+      organizationId,
+      {
+        projectId: project.id,
+        kind: "worker",
+        harness: input.harness,
+        displayName: input.displayName,
+        prompt: input.prompt,
+        mode: "trusted",
+        deniedCommands: [],
+      },
+      { idempotencyKey: newIdempotencyKey("independent-project-agent") },
+    );
+    setSessions((current) => [...current, sessionResponse.session]);
+    setSelectedProjectId(project.id);
+    setSelectedSessionId(sessionResponse.session.id);
   };
 
   const updateProject = async (
@@ -973,8 +1081,19 @@ export function CloudWorkspace() {
     try {
       await client.deleteSession(organizationId, session.id);
       deletingSessionIds.current.add(session.id);
-      setSessions((current) => current.filter(({ id }) => id !== session.id));
+      const remaining = sessions.filter(({ id }) => id !== session.id);
+      setSessions(remaining);
       if (selectedSessionId === session.id) setSelectedSessionId(null);
+      // An empty project shell left behind reads as "delete didn't work" —
+      // the agent is gone but its folder lingers. Take the project with it
+      // once nothing else in it survives the delete.
+      const projectStillHasSessions = remaining.some(
+        ({ projectId }) => projectId === session.projectId,
+      );
+      if (!projectStillHasSessions) {
+        const project = projects.find(({ id }) => id === session.projectId);
+        if (project) await deleteProject(project);
+      }
     } catch (cause) {
       handleLoadError(cause, setError);
     }
@@ -1002,6 +1121,7 @@ export function CloudWorkspace() {
       <div className="grid h-full grid-cols-[240px_minmax(0,1fr)]">
         <CloudSidebar
           account={account}
+          onAddAgentToProject={setAddAgentProject}
           onDeleteSession={(session) => void deleteSession(session)}
           onNewProject={() => setNewProjectOpen(true)}
           onOpenCommand={() => setCommandOpen(true)}
@@ -1150,12 +1270,21 @@ export function CloudWorkspace() {
           onClose={() => setNewProjectOpen(false)}
           onCreateFromGitHub={createProjectFromGitHub}
           onCreateScratchProject={createScratchProject}
-          onCreateStandalone={(input) => createScratchWork(input, "worker")}
+          onCreateStandalone={(input) =>
+            createScratchWork(input, "standalone-agent")
+          }
           onOpenProviderSettings={() => {
             setNewProjectOpen(false);
             setSettingsTarget("providers");
             setView("settings");
           }}
+        />
+      ) : null}
+      {addAgentProject ? (
+        <AddAgentToProjectDialog
+          onClose={() => setAddAgentProject(null)}
+          onSubmit={(input) => addAgentToProject(addAgentProject, input)}
+          projectName={addAgentProject.displayName}
         />
       ) : null}
       {shareProject ? (

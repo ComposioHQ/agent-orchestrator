@@ -35,6 +35,7 @@ function bySessionKind(a: Session, b: Session): number {
 
 export function CloudSidebar({
   account,
+  onAddAgentToProject,
   onNewProject,
   onOpenCommand,
   onOpenSettings,
@@ -55,6 +56,7 @@ export function CloudSidebar({
   sharedProjects,
 }: {
   account: CurrentAccount;
+  onAddAgentToProject: (project: Project) => void;
   onNewProject: () => void;
   onOpenCommand: () => void;
   onOpenSettings: () => void;
@@ -208,6 +210,20 @@ export function CloudSidebar({
                     className="absolute left-8 top-8 z-30 w-44 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] p-1 shadow-xl"
                     role="menu"
                   >
+                    {isIndependentProject(project) ? (
+                      <button
+                        className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+                        onClick={() => {
+                          setOpenProjectMenu(null);
+                          onAddAgentToProject(project);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <Plus className="size-3.5" aria-hidden="true" />
+                        Add agent
+                      </button>
+                    ) : null}
                     <button
                       className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
                       onClick={() => {
@@ -325,6 +341,10 @@ export function CloudSidebar({
                     onDelete={() => {
                       setOpenSessionMenu(null);
                       onDeleteSession(session);
+                    }}
+                    onShare={() => {
+                      setOpenSessionMenu(null);
+                      onShareProject(project);
                     }}
                     onToggle={() =>
                       setOpenSessionMenu((current) =>
@@ -478,11 +498,13 @@ export function CloudSidebar({
 
 function SessionActions({
   onDelete,
+  onShare,
   onToggle,
   open,
   session,
 }: {
   onDelete: () => void;
+  onShare?: () => void;
   onToggle: () => void;
   open: boolean;
   session: Session;
@@ -507,6 +529,17 @@ function SessionActions({
           className="absolute right-1 top-8 z-40 w-40 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] p-1 shadow-xl"
           role="menu"
         >
+          {onShare ? (
+            <button
+              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={onShare}
+              role="menuitem"
+              type="button"
+            >
+              <Share2 className="size-3.5" aria-hidden="true" />
+              Share agent
+            </button>
+          ) : null}
           <button
             className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
             onClick={() => {
@@ -536,6 +569,15 @@ export function isStandaloneProject(project: Project): boolean {
     project.config?.source === "standalone-agent" ||
     project.repositoryUrl.startsWith("ao-standalone://")
   );
+}
+
+// A project created via "Create scratch project" → "No repository": no
+// shared Git workspace, so no orchestrator checks workers out of it — its
+// sessions are independent siblings you add one at a time. Unlike a
+// standalone-agent project it still lives under "Projects" and can hold
+// more than one agent.
+export function isIndependentProject(project: Project): boolean {
+  return project.config?.source === "scratch-independent";
 }
 
 function activityDot(activity: Session["activityState"]): string {

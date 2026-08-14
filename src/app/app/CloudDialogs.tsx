@@ -19,6 +19,11 @@ export type LocalAgentInput = {
 export type ScratchProjectInput = LocalAgentInput & {
   githubInstallationId?: string;
   private?: boolean;
+  // True when the user explicitly chose "No repository" — a project with no
+  // git workspace at all, whose sessions are independent agents rather than
+  // an orchestrator with worker VMs. Distinct from leaving GitHub unchecked,
+  // which still gets a real AO-managed local git repo and an orchestrator.
+  noRepository?: boolean;
 };
 
 export function NewProjectDialog({
@@ -242,6 +247,95 @@ export function NewProjectDialog({
   );
 }
 
+export function AddAgentToProjectDialog({
+  onClose,
+  onSubmit,
+  projectName,
+}: {
+  onClose: () => void;
+  onSubmit: (input: LocalAgentInput) => Promise<void>;
+  projectName: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <Dialog onClose={onClose} title={`Add agent · ${projectName}`}>
+      <form
+        className="space-y-4 p-5"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          setBusy(true);
+          setError("");
+          try {
+            await onSubmit({
+              displayName: String(form.get("displayName") ?? "").trim(),
+              harness: String(
+                form.get("harness") ?? "claude-code",
+              ) as LocalAgentInput["harness"],
+              prompt: String(form.get("prompt") ?? "").trim(),
+            });
+            onClose();
+          } catch (cause) {
+            setError(
+              cause instanceof Error
+                ? cause.message
+                : "Could not add the agent.",
+            );
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+            Agent name
+          </span>
+          <input
+            autoFocus
+            className={controlClass}
+            maxLength={80}
+            name="displayName"
+            placeholder="New agent"
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+            Agent harness
+          </span>
+          <select className={controlClass} defaultValue="claude-code" name="harness">
+            <option value="claude-code">Claude Code</option>
+            <option value="codex">Codex</option>
+            <option value="cursor">Cursor Agent</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+            Initial task <span className="text-white/35">(optional)</span>
+          </span>
+          <textarea
+            className={`${controlClass} min-h-24 resize-y py-2`}
+            maxLength={65536}
+            name="prompt"
+            placeholder="Give the agent its first task."
+          />
+        </label>
+        <p className="text-xs leading-5 text-[var(--color-text-passive)]">
+          This agent joins {projectName} as an independent sibling — there's
+          no orchestrator or shared workspace to check it out of.
+        </p>
+        <DialogFooter
+          busy={busy}
+          error={error}
+          onCancel={onClose}
+          submitLabel="Add agent"
+        />
+      </form>
+    </Dialog>
+  );
+}
+
 function LocalAgentForm({
   busy,
   error,
@@ -265,7 +359,9 @@ function LocalAgentForm({
   const eligibleInstallations = githubUser.connection.installations.filter(
     ({ canCreateRepository }) => canCreateRepository,
   );
-  const [useGitHub, setUseGitHub] = useState(false);
+  const [repoMode, setRepoMode] = useState<"local" | "github" | "none">(
+    "local",
+  );
   const [installationId, setInstallationId] = useState(
     eligibleInstallations.length === 1
       ? eligibleInstallations[0].githubInstallationId
@@ -288,10 +384,13 @@ function LocalAgentForm({
           ) as LocalAgentInput["harness"],
           prompt: String(form.get("prompt") ?? "").trim(),
           githubInstallationId:
-            isProject && useGitHub
+            isProject && repoMode === "github"
               ? selectedInstallation?.githubInstallationId
               : undefined,
-          private: isProject && useGitHub ? privateRepository : undefined,
+          private:
+            isProject && repoMode === "github" ? privateRepository : undefined,
+          noRepository:
+            isProject && repoMode === "none" ? true : undefined,
         });
       }}
     >
@@ -309,23 +408,55 @@ function LocalAgentForm({
         />
       </label>
       {isProject ? (
-        <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
-          <input
-            checked={useGitHub}
-            className="mt-1"
-            disabled={busy}
-            onChange={(event) => setUseGitHub(event.target.checked)}
-            type="checkbox"
-          />
-          <span>
-            Create a GitHub repository for this project.
-            <span className="block text-[var(--color-text-passive)]">
-              Leave unchecked for an AO-managed local Git repository.
-            </span>
+        <div className="space-y-1.5">
+          <span className="block text-xs text-[var(--muted-foreground)]">
+            Repository
           </span>
-        </label>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {(
+              [
+                {
+                  value: "local" as const,
+                  label: "AO-managed",
+                  description: "A local Git repository AO creates for you.",
+                },
+                {
+                  value: "github" as const,
+                  label: "GitHub",
+                  description: "Create a new repository on GitHub.",
+                },
+                {
+                  value: "none" as const,
+                  label: "No repository",
+                  description:
+                    "Independent agents, no orchestrator or shared workspace.",
+                },
+              ]
+            ).map((option) => (
+              <button
+                aria-pressed={repoMode === option.value}
+                className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                  repoMode === option.value
+                    ? "border-[#4d8dff]/45 bg-[#4d8dff]/10 text-[var(--foreground)]"
+                    : "border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] text-[var(--muted-foreground)] hover:border-white/20 hover:text-[var(--foreground)]"
+                }`}
+                disabled={busy}
+                key={option.value}
+                onClick={() => setRepoMode(option.value)}
+                type="button"
+              >
+                <span className="block text-xs font-medium">
+                  {option.label}
+                </span>
+                <span className="mt-0.5 block text-[10px] leading-4 text-[var(--color-text-passive)]">
+                  {option.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
       ) : null}
-      {isProject && useGitHub ? (
+      {isProject && repoMode === "github" ? (
         githubUser.status === "available" &&
         githubUser.connection.connected ? (
           <>
@@ -405,7 +536,7 @@ function LocalAgentForm({
           maxLength={65536}
           name="prompt"
           placeholder={
-            isProject
+            isProject && repoMode !== "none"
               ? "Describe what the project orchestrator should do."
               : "Give the agent its first task."
           }
@@ -413,7 +544,9 @@ function LocalAgentForm({
       </label>
       <p className="text-xs leading-5 text-[var(--color-text-passive)]">
         {isProject
-          ? "AO will initialize a persistent Git workspace and start the project orchestrator."
+          ? repoMode === "none"
+            ? "AO will create a project with no shared Git workspace — add independent agents to it whenever you like."
+            : "AO will initialize a persistent Git workspace and start the project orchestrator."
           : "AO will initialize a persistent Git workspace for this independent agent."}
       </p>
       <DialogFooter
@@ -421,7 +554,9 @@ function LocalAgentForm({
         error={error}
         onBack={onBack}
         onCancel={onCancel}
-        submitDisabled={isProject && useGitHub && !selectedInstallation}
+        submitDisabled={
+          isProject && repoMode === "github" && !selectedInstallation
+        }
         submitLabel={isProject ? "Create project" : "Create agent"}
       />
     </form>
