@@ -335,6 +335,88 @@ it("shows one search result per standalone agent", async () => {
   expect(within(dialog).getByRole("group", { name: "Sessions" })).toBeVisible();
 });
 
+it("shares a standalone agent", async () => {
+  mocks.listProjects.mockResolvedValue({
+    items: [
+      {
+        id: "standalone-project",
+        orgId: "org-1",
+        displayName: "Solo agent",
+        repositoryUrl: "https://scratch.ao.local/solo",
+        defaultBranch: "main",
+        config: {
+          source: "standalone-agent",
+          scratch: true,
+          standalone: true,
+        },
+        createdAt: "2026-08-12T00:00:00Z",
+        updatedAt: "2026-08-12T00:00:00Z",
+      },
+    ],
+    page: { hasMore: false },
+  });
+  mocks.listSessions.mockResolvedValue({
+    items: [
+      {
+        id: "standalone-session",
+        orgId: "org-1",
+        projectId: "standalone-project",
+        kind: "worker",
+        harness: "claude-code",
+        displayName: "Solo agent",
+        branch: "main",
+        mode: "trusted",
+        deniedCommands: [],
+        activityState: "idle",
+        status: "idle",
+        runtimeConnected: true,
+        isTerminated: false,
+        createdAt: "2026-08-12T00:00:00Z",
+        updatedAt: "2026-08-12T00:00:00Z",
+      },
+    ],
+    page: { hasMore: false },
+  });
+  mocks.createProjectShareLink.mockResolvedValue({
+    link: {
+      id: "link-1",
+      orgId: "org-1",
+      projectId: "standalone-project",
+      role: "editor",
+      status: "active",
+      accessScope: "anyone",
+      recipients: [],
+      interaction: "interact",
+      modeCap: "standard",
+      deniedCommands: [],
+      createdAt: "2026-08-13T00:00:00Z",
+      updatedAt: "2026-08-13T00:00:00Z",
+      token: "tok_abc123",
+    },
+  });
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Agents");
+  fireEvent.click(screen.getByRole("button", { name: "Share" }));
+
+  const dialog = await screen.findByRole("dialog", { name: "Share Solo agent" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create link" }));
+
+  await waitFor(() =>
+    expect(mocks.createProjectShareLink).toHaveBeenCalledWith(
+      "org-1",
+      "standalone-project",
+      {
+        role: "editor",
+        interaction: "interact",
+        accessScope: "anyone",
+        recipients: [],
+        modeCap: "standard",
+      },
+    ),
+  );
+});
+
 it("does not expose the obsolete per-project worker button", async () => {
   render(<CloudWorkspace />);
   await screen.findByRole("button", { name: "Cloud platform" });
@@ -432,6 +514,43 @@ it("uses an agent name instead of an orchestrator name for local scratch project
   );
 });
 
+it("creates a no-repository project with an independent worker", async () => {
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+
+  fireEvent.click(screen.getByRole("button", { name: "New project" }));
+  fireEvent.click(screen.getByRole("button", { name: /Create a Project/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Start from scratch/ }));
+  fireEvent.change(screen.getByLabelText("Project name"), {
+    target: { value: "Loose agents" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^No repository/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+  await waitFor(() =>
+    expect(mocks.createProject).toHaveBeenCalledWith(
+      "org-1",
+      expect.objectContaining({
+        displayName: "Loose agents",
+        config: {
+          source: "scratch-independent",
+          scratch: true,
+          standalone: false,
+        },
+      }),
+      { idempotencyKey: "test-key" },
+    ),
+  );
+  expect(mocks.createSession).toHaveBeenCalledWith(
+    "org-1",
+    expect.objectContaining({
+      kind: "worker",
+      displayName: "Loose agents",
+    }),
+    { idempotencyKey: "test-key" },
+  );
+});
+
 it("searches the loaded workspace without demo commands", async () => {
   render(<CloudWorkspace />);
   await screen.findByRole("button", { name: "Cloud platform" });
@@ -454,7 +573,13 @@ it("connects coding-agent credentials from provider settings", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
-  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Command palette" })).getByRole(
+      "option",
+      { name: "Settings" },
+    ),
+  );
 
   fireEvent.click(screen.getByRole("button", { name: "Providers" }));
   expect(screen.getByText("No GitHub installation")).toBeVisible();
@@ -583,7 +708,7 @@ it("deletes a project and removes all of its sessions from the workspace", async
   ).not.toBeInTheDocument();
 });
 
-it("deletes a session from its hover action menu", async () => {
+it("deletes a session and its now-empty project", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
   render(<CloudWorkspace />);
   fireEvent.click(await screen.findByRole("button", { name: "Delete session" }));
@@ -592,8 +717,10 @@ it("deletes a session from its hover action menu", async () => {
     expect(mocks.deleteSession).toHaveBeenCalledWith("org-1", "session-1"),
   );
   await waitFor(() =>
-    expect(screen.queryAllByText("Build cloud authentication")).toHaveLength(0),
+    expect(mocks.deleteProject).toHaveBeenCalledWith("org-1", "project-1"),
   );
+  expect(screen.queryAllByText("Build cloud authentication")).toHaveLength(0);
+  expect(screen.queryAllByText("Cloud platform")).toHaveLength(0);
 
   mocks.listSessions.mockClear();
   fireEvent(document, new Event("visibilitychange"));

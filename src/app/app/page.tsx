@@ -33,6 +33,7 @@ import {
 } from "@/lib/cloud-client";
 import { CloudBoard } from "./CloudBoard";
 import {
+  AddAgentToProjectDialog,
   NewProjectDialog,
   type LocalAgentInput,
   type ScratchProjectInput,
@@ -84,6 +85,7 @@ export function CloudWorkspace() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [addAgentProject, setAddAgentProject] = useState<Project | null>(null);
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [newSessionProjectId, setNewSessionProjectId] = useState<string | null>(null);
   const [projectSettings, setProjectSettings] = useState<Project | null>(null);
@@ -94,6 +96,7 @@ export function CloudWorkspace() {
   const [shareLinksBusy, setShareLinksBusy] = useState(false);
   const [sharedProjects, setSharedProjects] = useState<SharedProject[]>([]);
   const [sharedProjectSessions, setSharedProjectSessions] = useState<Record<string, Session[]>>({});
+  const sharedProjectSessionsRef = useRef(sharedProjectSessions);
   const [sharedSession, setSharedSession] = useState<Session | null>(null);
   const [sharedSessionOrgId, setSharedSessionOrgId] = useState("");
   const [github, setGitHub] = useState<GitHubCapability>(
@@ -120,6 +123,10 @@ export function CloudWorkspace() {
   const deletingSessionIds = useRef(new Set<string>());
   const [previewUi, setPreviewUi] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    sharedProjectSessionsRef.current = sharedProjectSessions;
+  }, [sharedProjectSessions]);
 
   useEffect(() => {
     setPreviewUi(new URLSearchParams(window.location.search).get("ui") === "next");
@@ -431,6 +438,55 @@ export function CloudWorkspace() {
   }, [client, organizationId]);
 
   useEffect(() => {
+    let active = true;
+    let refreshing = false;
+    const refreshShared = async () => {
+      if (refreshing || document.visibilityState === "hidden") return;
+      refreshing = true;
+      try {
+        const items = await client.listSharedProjects();
+        if (!active) return;
+        setSharedProjects(items);
+        const expandedProjectIds = new Set(
+          Object.keys(sharedProjectSessionsRef.current),
+        );
+        const expandedShares = new Map(
+          items
+            .filter((shared) => expandedProjectIds.has(shared.project.id))
+            .map((shared) => [shared.project.id, shared]),
+        );
+        await Promise.all(
+          Array.from(expandedShares.values()).map(async (shared) => {
+            try {
+              const sessionItems = await client.listSharedProjectSessions(
+                shared.project.orgId,
+                shared.project.id,
+              );
+              if (active) {
+                setSharedProjectSessions((current) => ({
+                  ...current,
+                  [shared.project.id]: sessionItems,
+                }));
+              }
+            } catch {}
+          }),
+        );
+      } catch {
+      } finally {
+        refreshing = false;
+      }
+    };
+    const interval = window.setInterval(() => void refreshShared(), 3_000);
+    const onVisibility = () => void refreshShared();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [client]);
+
+  useEffect(() => {
     const settings = new URLSearchParams(window.location.search).get("settings");
     if (settings === "providers") {
       setSettingsTarget("general");
@@ -469,9 +525,14 @@ export function CloudWorkspace() {
 
   const createScratchWork = async (
     input: LocalAgentInput,
-    kind: "worker" | "orchestrator",
+    classification:
+      | "orchestrator-project"
+      | "standalone-agent"
+      | "independent-project",
   ) => {
     const suffix = crypto.randomUUID();
+    const kind =
+      classification === "orchestrator-project" ? "orchestrator" : "worker";
     const projectResponse = await client.createProject(
       organizationId,
       {
@@ -479,9 +540,14 @@ export function CloudWorkspace() {
         repositoryUrl: `https://scratch.ao.local/${suffix}`,
         defaultBranch: "main",
         config: {
-          source: kind === "worker" ? "standalone-agent" : "scratch",
+          source:
+            classification === "standalone-agent"
+              ? "standalone-agent"
+              : classification === "independent-project"
+                ? "scratch-independent"
+                : "scratch",
           scratch: true,
-          standalone: kind === "worker",
+          standalone: classification === "standalone-agent",
         },
       },
       { idempotencyKey: newIdempotencyKey("scratch-project") },
@@ -493,7 +559,7 @@ export function CloudWorkspace() {
         kind,
         harness: input.harness,
         displayName:
-          kind === "orchestrator"
+          classification === "orchestrator-project"
             ? localAgentName(input.harness)
             : input.displayName,
         prompt: input.prompt,
@@ -531,8 +597,12 @@ export function CloudWorkspace() {
   };
 
   const createScratchProject = async (input: ScratchProjectInput) => {
+    if (input.noRepository) {
+      await createScratchWork(input, "independent-project");
+      return;
+    }
     if (!input.githubInstallationId) {
-      await createScratchWork(input, "orchestrator");
+      await createScratchWork(input, "orchestrator-project");
       return;
     }
     const response = await client.createGitHubScratchProject(
@@ -553,6 +623,13 @@ export function CloudWorkspace() {
     setSelectedProjectId(response.project.id);
     setSelectedSessionId(response.session.id);
     void loadGitHub(organizationId);
+  };
+
+  const addAgentToProject = async (
+    project: Project,
+    input: LocalAgentInput,
+  ) => {
+    await createSessionInProject(project.id, input);
   };
 
   const updateProject = async (
@@ -895,8 +972,13 @@ export function CloudWorkspace() {
     try {
       await client.deleteSession(organizationId, session.id);
       deletingSessionIds.current.add(session.id);
-      setSessions((current) => current.filter(({ id }) => id !== session.id));
+      const remaining = sessions.filter(({ id }) => id !== session.id);
+      setSessions(remaining);
       if (selectedSessionId === session.id) setSelectedSessionId(null);
+      if (!remaining.some(({ projectId }) => projectId === session.projectId)) {
+        const project = projects.find(({ id }) => id === session.projectId);
+        if (project) await deleteProject(project);
+      }
     } catch (cause) {
       handleLoadError(cause, setError);
     }
@@ -992,6 +1074,7 @@ export function CloudWorkspace() {
         {previewUi && mobileNavOpen ? <button type="button" aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMobileNavOpen(false)} /> : null}
         <CloudSidebar
           account={account}
+          onAddAgentToProject={setAddAgentProject}
           onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
           onDeleteProject={(project) => void deleteProject(project)}
           onDeleteSession={(session) => void deleteSession(session)}
@@ -1162,7 +1245,7 @@ export function CloudWorkspace() {
         onClose={() => setNewProjectOpen(false)}
         onCreateFromGitHub={createProjectFromGitHub}
         onCreateScratchProject={createScratchProject}
-        onCreateStandalone={(input) => createScratchWork(input, "worker")}
+        onCreateStandalone={(input) => createScratchWork(input, "standalone-agent")}
         onOpenProviderSettings={() => {
           setNewProjectOpen(false);
           setSettingsTarget("general");
@@ -1170,6 +1253,13 @@ export function CloudWorkspace() {
         }}
         open={newProjectOpen}
       />
+      {addAgentProject ? (
+        <AddAgentToProjectDialog
+          onClose={() => setAddAgentProject(null)}
+          onSubmit={(input) => addAgentToProject(addAgentProject, input)}
+          projectName={addAgentProject.displayName}
+        />
+      ) : null}
       <CloudCreateWorkspaceDialog
         open={createWorkspaceOpen}
         onClose={() => setCreateWorkspaceOpen(false)}

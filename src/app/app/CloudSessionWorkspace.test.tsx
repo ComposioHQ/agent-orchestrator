@@ -104,8 +104,12 @@ it("uses the interactive agent terminal as the primary session surface", async (
 
   expect(screen.getByText("Interactive agent terminal")).toBeVisible();
   expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Changes 1" }));
+  expect(await screen.findByText("diff --git a/README.md b/README.md")).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Files" }));
   expect(await screen.findByText("README.md")).toBeVisible();
-  expect(screen.getByText("diff --git a/README.md b/README.md")).toBeVisible();
 });
 
 it("opens and edits repository files in the right inspector", async () => {

@@ -51,6 +51,14 @@ export function CloudTerminal({
     const connect = async () => {
       setConnection("connecting");
       setNotice("");
+      // Every connection — including a reconnect after a network blip or a
+      // worker restart — always asks the server to replay from sequence 0,
+      // since the client has no way to know what it already rendered. The
+      // backend's output isn't idempotent to re-render (it's a raw byte
+      // stream, not screen-diff frames), so replaying it into a buffer that
+      // already has the same history in it duplicates everything on screen.
+      // Clearing first makes each replay authoritative instead of additive.
+      terminal.reset();
       try {
         const [ticket, configResponse] = await Promise.all([
           client.createTerminalTicket(organizationId, sessionId, kind),

@@ -21,6 +21,7 @@ export type LocalAgentInput = {
 export type ScratchProjectInput = LocalAgentInput & {
   githubInstallationId?: string;
   private?: boolean;
+  noRepository?: boolean;
 };
 
 type Harness = LocalAgentInput["harness"];
@@ -189,6 +190,95 @@ export function NewProjectDialog({
   );
 }
 
+export function AddAgentToProjectDialog({
+  onClose,
+  onSubmit,
+  projectName,
+}: {
+  onClose: () => void;
+  onSubmit: (input: LocalAgentInput) => Promise<void>;
+  projectName: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  return (
+    <Modal onClose={onClose} title={`Add agent · ${projectName}`}>
+      <form
+        className="flex flex-col gap-4 p-5"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          setBusy(true);
+          setError("");
+          try {
+            await onSubmit({
+              displayName: String(form.get("displayName") ?? "").trim(),
+              harness: String(
+                form.get("harness") ?? "claude-code",
+              ) as LocalAgentInput["harness"],
+              prompt: String(form.get("prompt") ?? "").trim(),
+            });
+            onClose();
+          } catch (cause) {
+            setError(
+              cause instanceof Error
+                ? cause.message
+                : "Could not add the agent.",
+            );
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+            Agent name
+          </span>
+          <Input
+            autoFocus
+            maxLength={80}
+            name="displayName"
+            placeholder="New agent"
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+            Agent harness
+          </span>
+          <select className={selectClass} defaultValue="claude-code" name="harness">
+            <option value="claude-code">Claude Code</option>
+            <option value="codex">Codex</option>
+            <option value="cursor">Cursor Agent</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs text-[var(--muted-foreground)]">
+            Initial task <span className="text-[var(--color-text-passive)]">(optional)</span>
+          </span>
+          <textarea
+            className="min-h-24 w-full resize-y rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--color-text-passive)] focus:border-[var(--ring)]"
+            maxLength={65536}
+            name="prompt"
+            placeholder="Give the agent its first task."
+          />
+        </label>
+        <p className="text-xs leading-5 text-[var(--color-text-passive)]">
+          This agent joins {projectName} as an independent sibling with no
+          shared workspace or orchestrator.
+        </p>
+        <ModalFooter
+          busy={busy}
+          error={error}
+          onCancel={onClose}
+          submitLabel="Add agent"
+        />
+      </form>
+    </Modal>
+  );
+}
+
 function LocalAgentForm({
   busy, connectedProviders, error, mode, githubUser, onBack, onCancel, onOpenProviderSettings, onSubmit,
 }: {
@@ -198,7 +288,7 @@ function LocalAgentForm({
 }) {
   const isProject = mode === "scratch";
   const eligibleInstallations = githubUser.connection.installations.filter(({ canCreateRepository }) => canCreateRepository);
-  const [useGitHub, setUseGitHub] = useState(false);
+  const [repoMode, setRepoMode] = useState<"local" | "github" | "none">("local");
   const [installationId, setInstallationId] = useState(
     eligibleInstallations.length === 1 ? eligibleInstallations[0].githubInstallationId : "",
   );
@@ -217,8 +307,9 @@ function LocalAgentForm({
           displayName: String(form.get("displayName") ?? "").trim(),
           harness,
           prompt: String(form.get("prompt") ?? "").trim(),
-          githubInstallationId: isProject && useGitHub ? selectedInstallation?.githubInstallationId : undefined,
-          private: isProject && useGitHub ? privateRepository : undefined,
+          githubInstallationId: isProject && repoMode === "github" ? selectedInstallation?.githubInstallationId : undefined,
+          private: isProject && repoMode === "github" ? privateRepository : undefined,
+          noRepository: isProject && repoMode === "none" ? true : undefined,
         });
       }}
     >
@@ -230,16 +321,34 @@ function LocalAgentForm({
       </label>
 
       {isProject ? (
-        <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
-          <input checked={useGitHub} className="mt-1 cursor-pointer" disabled={busy} onChange={(e) => setUseGitHub(e.target.checked)} type="checkbox" />
-          <span>
-            Create a GitHub repository for this project.
-            <span className="block text-[var(--color-text-passive)]">Without a GitHub repository, there will be no orchestrator — only individual agents.</span>
-          </span>
-        </label>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {([
+            ["local", "AO-managed", "A local Git repository AO creates for you."],
+            ["github", "GitHub", "Create a new repository on GitHub."],
+            ["none", "No repository", "Independent agents with no shared workspace."],
+          ] as const).map(([value, label, description]) => (
+            <button
+              aria-pressed={repoMode === value}
+              className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                repoMode === value
+                  ? "border-[var(--ring)] bg-[var(--color-interactive-active)] text-[var(--foreground)]"
+                  : "border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              }`}
+              disabled={busy}
+              key={value}
+              onClick={() => setRepoMode(value)}
+              type="button"
+            >
+              <span className="block text-xs font-medium">{label}</span>
+              <span className="mt-0.5 block text-[10px] leading-4 text-[var(--color-text-passive)]">
+                {description}
+              </span>
+            </button>
+          ))}
+        </div>
       ) : null}
 
-      {isProject && useGitHub ? (
+      {isProject && repoMode === "github" ? (
         githubUser.status === "available" && githubUser.connection.connected ? (
           <>
             <label className="block">
@@ -316,7 +425,7 @@ function LocalAgentForm({
           className="min-h-24 w-full resize-y rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--foreground)] outline-none placeholder:text-[var(--color-text-passive)] focus:border-[var(--ring)]"
           maxLength={65536}
           name="prompt"
-          placeholder={isProject ? "Describe what the orchestrator should do." : "Give the agent its first task."}
+          placeholder={isProject && repoMode !== "none" ? "Describe what the orchestrator should do." : "Give the agent its first task."}
         />
       </label>
 
@@ -325,7 +434,7 @@ function LocalAgentForm({
         error={error}
         onBack={onBack}
         onCancel={onCancel}
-        submitDisabled={isProject && useGitHub && !selectedInstallation}
+        submitDisabled={isProject && repoMode === "github" && !selectedInstallation}
         submitLabel={isProject ? "Create project" : "Create agent"}
       />
     </form>

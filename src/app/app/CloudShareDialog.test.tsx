@@ -21,6 +21,7 @@ it("uses sandbox policy as the only link permission control", () => {
       busy={false}
       grants={[]}
       links={[]}
+      open
       onClose={vi.fn()}
       onCreate={vi.fn()}
       onRevoke={vi.fn()}
@@ -62,6 +63,7 @@ it("creates a link and shows its one-time url", async () => {
       busy={false}
       grants={[]}
       links={[]}
+      open
       onClose={vi.fn()}
       onCreate={onCreate}
       onRevoke={vi.fn()}
@@ -108,6 +110,7 @@ it("lists active links and revokes them", async () => {
       busy={false}
       grants={[]}
       links={[activeLink]}
+      open
       onClose={vi.fn()}
       onCreate={vi.fn()}
       onRevoke={onRevoke}

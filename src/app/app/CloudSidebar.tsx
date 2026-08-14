@@ -35,6 +35,7 @@ import type { SharedProject } from "./share-types";
 
 export function CloudSidebar({
   account,
+  onAddAgentToProject,
   onCreateWorkspace,
   onNewProject,
   onNewSession,
@@ -61,6 +62,7 @@ export function CloudSidebar({
   parity = false,
 }: {
   account: CurrentAccount;
+  onAddAgentToProject: (project: Project) => void;
   onCreateWorkspace: () => void;
   onNewProject: () => void;
   onNewSession: (projectId: string) => void;
@@ -355,6 +357,7 @@ export function CloudSidebar({
                       className="z-[100] min-w-44 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--popover)] p-1 data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out"
                     >
                       <ProjectMenuItems
+                        onAddAgent={isIndependentProject(project) ? () => onAddAgentToProject(project) : undefined}
                         onDelete={() => { if (window.confirm(`Remove ${project.displayName}?`)) onDeleteProject(project); }}
                         onNewSession={() => onNewSession(project.id)}
                         onSettings={() => onProjectSettings(project)}
@@ -366,10 +369,17 @@ export function CloudSidebar({
               </div>
               </ContextMenuTrigger>
               <ContextMenuContent className="min-w-44">
-                <ContextMenuItem onSelect={() => onNewSession(project.id)}>
-                  <Plus aria-hidden="true" />
-                  New session
-                </ContextMenuItem>
+                {isIndependentProject(project) ? (
+                  <ContextMenuItem onSelect={() => onAddAgentToProject(project)}>
+                    <Plus aria-hidden="true" />
+                    Add agent
+                  </ContextMenuItem>
+                ) : (
+                  <ContextMenuItem onSelect={() => onNewSession(project.id)}>
+                    <Plus aria-hidden="true" />
+                    New session
+                  </ContextMenuItem>
+                )}
                 <ContextMenuSeparator />
                 <ContextMenuItem onSelect={() => onProjectSettings(project)}>
                   <Settings aria-hidden="true" />
@@ -587,11 +597,13 @@ export function CloudSidebar({
 }
 
 function ProjectMenuItems({
+  onAddAgent,
   onDelete,
   onNewSession,
   onSettings,
   onShare,
 }: {
+  onAddAgent?: () => void;
   onDelete: () => void;
   onNewSession: () => void;
   onSettings: () => void;
@@ -601,9 +613,9 @@ function ProjectMenuItems({
     "relative flex cursor-default select-none items-center gap-2.5 rounded-md px-2 py-1.5 text-sm outline-none transition-colors text-[var(--muted-foreground)] focus:bg-[var(--color-interactive-hover)] focus:text-[var(--foreground)] [&_svg]:size-4 [&_svg]:shrink-0";
   return (
     <>
-      <DropdownMenuPrimitive.Item className={itemClass} onSelect={onNewSession}>
+      <DropdownMenuPrimitive.Item className={itemClass} onSelect={onAddAgent ?? onNewSession}>
         <Plus aria-hidden="true" />
-        New session
+        {onAddAgent ? "Add agent" : "New session"}
       </DropdownMenuPrimitive.Item>
       <DropdownMenuPrimitive.Item className={itemClass} onSelect={onSettings}>
         <Settings aria-hidden="true" />
@@ -631,6 +643,10 @@ export function isStandaloneProject(project: Project): boolean {
     project.config?.source === "standalone-agent" ||
     project.repositoryUrl.startsWith("ao-standalone://")
   );
+}
+
+export function isIndependentProject(project: Project): boolean {
+  return project.config?.source === "scratch-independent";
 }
 
 function isScratchProject(project: Project): boolean {
