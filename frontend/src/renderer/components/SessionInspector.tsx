@@ -955,9 +955,15 @@ function ReviewsSection({
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
+	const hasPRs = sortedPRs(session).length > 0;
 
 	return (
 		<div className="p-2">
+			{hasPRs ? null : (
+				<Section surface title={t("inspector.review.controls")}>
+					<AutoInjectReviewPolicyControl session={session} />
+				</Section>
+			)}
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 			<ReviewPanel
