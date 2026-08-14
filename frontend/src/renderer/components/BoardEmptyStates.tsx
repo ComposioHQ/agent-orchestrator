@@ -29,7 +29,7 @@ export function BoardWelcome() {
 
 // Project board with a registered project but no worker sessions yet: a quiet
 // invitation instead of four empty columns. Actions mirror the board header
-// (Orchestrator stays the primary, like the topbar) so the vocabulary holds.
+// (Orchestrator uses the same feature control as the topbar) so the vocabulary holds.
 export function ProjectBoardEmpty({
 	hasOrchestrator,
 	isProjectRestarting,
@@ -65,7 +65,7 @@ export function ProjectBoardEmpty({
 						aria-label={orchestratorLabel}
 						disabled={isSpawning || isProjectRestarting}
 						onClick={onOpenOrchestrator}
-						variant="primary"
+						variant="feature"
 					>
 						<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 						{busyLabel}

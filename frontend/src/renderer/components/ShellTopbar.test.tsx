@@ -216,7 +216,7 @@ describe("ShellTopbar status pill", () => {
 		expect(localActions.contains(screen.getByRole("button", { name: "Switch agent" }))).toBe(true);
 		expect(localActions.contains(screen.getByRole("button", { name: "Switch to chat UI" }))).toBe(true);
 		expect(localActions.contains(screen.getByRole("button", { name: "Kill session" }))).toBe(true);
-		expect(localActions.contains(screen.getByRole("button", { name: "Open orchestrator" }))).toBe(false);
+		expect(localActions.contains(screen.getByRole("button", { name: /orchestrator/i }))).toBe(false);
 	});
 
 	it.each([
@@ -308,13 +308,23 @@ describe("ShellTopbar orchestrator actions", () => {
 		});
 	});
 
-	it("matches the Kanban feature style for Open orchestrator on worker sessions", async () => {
-		renderTopbar(worker);
+	it("matches the board Orchestrator control on worker sessions", () => {
+		renderTopbarSessions(
+			[
+				worker,
+				{
+					...orchestrator,
+					activity: { state: "idle", lastActivityAt: "2026-06-10T00:00:00Z" },
+				},
+			],
+			worker.id,
+		);
 
-		const orchestratorButton = screen.getByRole("button", { name: "Open orchestrator" });
-		expect(orchestratorButton).toHaveTextContent("Open orchestrator");
+		const orchestratorButton = screen.getByRole("button", { name: "Orchestrator, Idle" });
+		expect(orchestratorButton).toHaveTextContent("Orchestrator");
 		expect(orchestratorButton).toHaveClass("topbar-control--feature");
 		expect(orchestratorButton.querySelector("svg")).not.toBeNull();
+		expect(orchestratorButton.querySelector("span.size-dot-sm")).toHaveClass("bg-status-idle");
 	});
 
 	it("opens the board from the Kanban button on the full orchestrator topbar", async () => {
@@ -354,7 +364,7 @@ describe("ShellTopbar orchestrator actions", () => {
 			</QueryClientProvider>,
 		);
 
-		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
+		await userEvent.click(screen.getByRole("button", { name: /orchestrator/i }));
 
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		expect(navigateMock).not.toHaveBeenCalled();

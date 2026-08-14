@@ -207,6 +207,7 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
+		expect(button).toHaveClass("topbar-control--feature");
 		const indicator = button.querySelector("span.size-dot-sm") as HTMLElement;
 		expect(within(button).getByText("Orchestrator").hasAttribute("data-compact-label")).toBe(true);
 		expect(indicator).toHaveAttribute("aria-hidden", "true");

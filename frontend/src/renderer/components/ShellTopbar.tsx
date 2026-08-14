@@ -262,7 +262,7 @@ export function ShellTopbar({
 										data-priority="secondary"
 										disabled={isSpawning || isProjectRestarting}
 										onClick={() => void openOrchestrator()}
-										variant="primary"
+										variant="feature"
 									>
 										<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 										<span data-compact-label>{t("shell.orchestrator")}</span>
@@ -353,7 +353,11 @@ export function ShellTopbar({
 								<TooltipTrigger asChild>
 									<span className="inline-flex" style={noDragStyle}>
 										<TopbarButton
-											aria-label={t("shell.openOrchestrator")}
+											aria-label={
+												orchestratorActivityLabel
+													? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+													: orchestratorActionLabel
+											}
 											className="topbar-control--labeled"
 											data-priority="secondary"
 											disabled={isSpawning || isProjectRestarting}
@@ -361,7 +365,8 @@ export function ShellTopbar({
 											variant="feature"
 										>
 											<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-											<span data-compact-label>{t("shell.openOrchestrator")}</span>
+											<span data-compact-label>{t("shell.orchestrator")}</span>
+											{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 										</TopbarButton>
 									</span>
 								</TooltipTrigger>

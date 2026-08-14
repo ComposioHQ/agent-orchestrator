@@ -283,7 +283,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							data-priority="secondary"
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
-							variant="primary"
+							variant="feature"
 						>
 							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 							<span data-compact-label>{t("shell.orchestrator")}</span>
