@@ -276,6 +276,16 @@ describe("Sidebar", () => {
 		const footer = document.querySelector('[data-sidebar="footer"]');
 		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
+		// Windowed: lift the hairline by the framed panel inset + 1px surface
+		// border. macOS also collapses that inset in native fullscreen.
+		if (footer?.className.includes("--size-center-panel-inset-mac")) {
+			expect(footer).toHaveClass(
+				"mb-[calc(var(--size-center-panel-inset-mac)+1px)]",
+				"in-[.native-fullscreen]:mb-px",
+			);
+		} else {
+			expect(footer).toHaveClass("mb-[calc(var(--size-center-panel-bottom-inset)+1px)]");
+		}
 	});
 
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
