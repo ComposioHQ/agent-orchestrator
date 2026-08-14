@@ -233,10 +233,15 @@ printf 'github-installation-token\n'
 
 	githubTokenPath := filepath.Join(root, "gh-token")
 	githubArgsPath := filepath.Join(root, "gh-arguments")
+	claimArgsPath := filepath.Join(root, "claim-arguments")
 	realGitHubPath := filepath.Join(binDir, "real-gh")
 	writeTestExecutable(t, realGitHubPath, `#!/bin/sh
 printf '%s\n' "${GH_TOKEN:-}" > "$GH_TOKEN_PATH"
 printf '%s\n' "$@" > "$GH_ARGUMENTS_PATH"
+printf 'https://github.com/acme/api/pull/7\n'
+`)
+	writeTestExecutable(t, filepath.Join(binDir, "ao"), `#!/bin/sh
+printf '%s\n' "$@" > "$AO_CLAIM_ARGUMENTS_PATH"
 `)
 	githubCommand := exec.Command(filepath.Join(ToolingBinDir(dataDir), "gh"), "pr", "create", "--title", "change")
 	githubCommand.Env = append(os.Environ(),
@@ -244,6 +249,7 @@ printf '%s\n' "$@" > "$GH_ARGUMENTS_PATH"
 		"AO_GH_REAL_BINARY="+realGitHubPath,
 		"GH_TOKEN_PATH="+githubTokenPath,
 		"GH_ARGUMENTS_PATH="+githubArgsPath,
+		"AO_CLAIM_ARGUMENTS_PATH="+claimArgsPath,
 	)
 	if output, err := githubCommand.CombinedOutput(); err != nil {
 		t.Fatalf("run GitHub wrapper: %v: %s", err, output)
@@ -256,9 +262,14 @@ printf '%s\n' "$@" > "$GH_ARGUMENTS_PATH"
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimArguments, err := os.ReadFile(claimArgsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(githubToken) != "github-installation-token\n" ||
-		string(githubArguments) != "pr\ncreate\n--title\nchange\n" {
-		t.Fatalf("GH_TOKEN=%q arguments=%q", githubToken, githubArguments)
+		string(githubArguments) != "pr\ncreate\n--title\nchange\n" ||
+		string(claimArguments) != "claim-pr\nhttps://github.com/acme/api/pull/7\n" {
+		t.Fatalf("GH_TOKEN=%q arguments=%q claim=%q", githubToken, githubArguments, claimArguments)
 	}
 }
 

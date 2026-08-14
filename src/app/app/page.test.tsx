@@ -11,6 +11,7 @@ import { CloudWorkspace } from "./page";
 
 const mocks = vi.hoisted(() => ({
   getCurrentAccount: vi.fn(),
+  wakePausedSessions: vi.fn(),
   listGitHubInstallations: vi.fn(),
   listGitHubRepositories: vi.fn(),
   getGitHubUserConnection: vi.fn(),
@@ -59,6 +60,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/cloud-client", () => ({
   browserCloudClient: () => ({
     getCurrentAccount: mocks.getCurrentAccount,
+    wakePausedSessions: mocks.wakePausedSessions,
     listGitHubInstallations: mocks.listGitHubInstallations,
     listGitHubRepositories: mocks.listGitHubRepositories,
     getGitHubUserConnection: mocks.getGitHubUserConnection,
@@ -107,6 +109,10 @@ vi.mock("@/lib/cloud-client", () => ({
   newIdempotencyKey: () => "test-key",
 }));
 
+vi.mock("./CloudTerminal", () => ({
+  CloudTerminal: ({ kind }: { kind: string }) => <div>Interactive {kind} terminal</div>,
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal(
@@ -134,6 +140,7 @@ beforeEach(() => {
       },
     ],
   });
+  mocks.wakePausedSessions.mockResolvedValue({ woken: 0 });
   mocks.listProjects.mockResolvedValue({
     items: [
       {

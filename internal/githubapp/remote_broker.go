@@ -202,6 +202,13 @@ func (b *RemoteCheckoutBroker) RaisePullRequest(
 	return domain.PullRequest{}, errRemotePushNotSupported
 }
 
+func (b *RemoteCheckoutBroker) ClaimPullRequest(
+	context.Context,
+	string, string, string,
+) (domain.PullRequest, error) {
+	return domain.PullRequest{}, errRemotePushNotSupported
+}
+
 func (b *RemoteCheckoutBroker) SubmitReview(
 	context.Context,
 	string, string, string,

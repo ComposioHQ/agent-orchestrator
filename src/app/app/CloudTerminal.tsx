@@ -172,7 +172,7 @@ export function CloudTerminal({
 
   useEffect(() => {
     if (!notice) return;
-    const timeout = window.setTimeout(() => setNotice(""), 5_000);
+    const timeout = window.setTimeout(() => setNotice(""), 2_000);
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
@@ -188,6 +188,10 @@ export function CloudTerminal({
             <p className="text-xs text-[var(--muted-foreground)]">
               {connection === "connecting"
                 ? "Connecting terminal…"
+                : connection === "waking"
+                  ? kind === "workspace"
+                    ? "Starting workspace shell…"
+                    : "Waking coding-agent session…"
                 : connection === "disconnected"
                   ? "Reconnecting terminal…"
                   : "Terminal unavailable"}
@@ -197,12 +201,16 @@ export function CloudTerminal({
       ) : null}
       {connection !== "connected" && hasConnected ? (
         <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)]/95 px-2 py-1 text-[10px] text-[var(--muted-foreground)] shadow-sm">
-          Reconnecting terminal…
+          {connection === "waking"
+            ? kind === "workspace"
+              ? "Starting workspace shell…"
+              : "Waking VM…"
+            : "Reconnecting terminal…"}
         </div>
       ) : null}
       {notice ? (
         <div
-          className="pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-bg-secondary)]/95 px-3 py-2 text-xs text-[var(--error)] shadow-lg"
+          className="pointer-events-none absolute bottom-3 right-3 z-20 max-w-[min(24rem,calc(100%-1.5rem))] rounded-md border border-[var(--color-error)]/30 bg-[var(--color-bg-secondary)]/95 px-3 py-2 text-xs text-[var(--error)] shadow-lg"
           role="status"
         >
           {notice}

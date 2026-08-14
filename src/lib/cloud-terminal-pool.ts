@@ -9,6 +9,7 @@ import {
 export type CloudTerminalKind = "agent" | "workspace";
 export type CloudTerminalConnectionState =
   | "connecting"
+  | "waking"
   | "connected"
   | "disconnected"
   | "error";
@@ -23,7 +24,14 @@ type CloudClient = ReturnType<typeof browserCloudClient>;
 type Listener = (event: CloudTerminalEvent) => void;
 
 interface TerminalServerMessage {
-  type: "output" | "error" | "reset" | "replay_complete" | "input_ack";
+  type:
+    | "starting"
+    | "ready"
+    | "output"
+    | "error"
+    | "reset"
+    | "replay_complete"
+    | "input_ack";
   data?: string;
   message?: string;
   sequence?: number;
@@ -59,6 +67,7 @@ class CloudTerminalConnection {
   private nextInputId = 0;
   private size = { rows: 24, cols: 80 };
   private canOperate = true;
+  private terminalReady = false;
 
   constructor(
     private readonly client: CloudClient,
@@ -136,6 +145,7 @@ class CloudTerminalConnection {
     window.removeEventListener("focus", this.reconnectNow);
     this.socket?.close();
     this.socket = null;
+    this.terminalReady = false;
     this.listeners.clear();
   }
 
@@ -159,7 +169,7 @@ class CloudTerminalConnection {
     }
 
     this.connectInFlight = true;
-    this.setState("connecting");
+    if (this.state !== "waking") this.setState("connecting");
     const abortController = new AbortController();
     try {
       const { ticket, scopes } = await this.client.createTerminalTicket(
@@ -176,21 +186,22 @@ class CloudTerminalConnection {
       );
       socket.binaryType = "arraybuffer";
       this.socket = socket;
+      this.terminalReady = false;
       let failureHandled = false;
       const reconnectOnce = (state: CloudTerminalConnectionState) => {
         if (this.socket !== socket || this.closed || failureHandled) return;
         failureHandled = true;
         this.socket = null;
+        this.terminalReady = false;
         this.setState(state);
         this.scheduleReconnect();
       };
 
       socket.addEventListener("open", () => {
         if (this.socket !== socket || this.closed) return;
-        this.retryAttempt = 0;
-        this.setState("connected");
-        this.sendResize();
-        this.flushPendingInput();
+        // A successful WebSocket upgrade only means the control plane stream
+        // is alive. The workspace PTY may still be opening on the VM.
+        this.setState("waking");
       });
       socket.addEventListener("message", async (event) => {
         if (this.socket !== socket || this.closed) return;
@@ -202,6 +213,16 @@ class CloudTerminalConnection {
             return;
           }
           this.lastSequence = Math.max(this.lastSequence, message.sequence ?? 0);
+          if (message.type === "starting") {
+            this.setState("waking");
+            return;
+          }
+          if (message.type === "ready" || message.type === "replay_complete") {
+            // replay_complete is the readiness signal emitted by API replicas
+            // predating the explicit ready message during a rolling deploy.
+            this.markReady();
+            return;
+          }
           if (message.type === "input_ack" && message.inputId) {
             this.pendingInput = this.pendingInput.filter(
               (input) => input.id !== message.inputId,
@@ -229,15 +250,29 @@ class CloudTerminalConnection {
         // Compatibility for an older API replica during a rolling deploy.
         const data = await terminalMessageBytes(event.data);
         if (data) {
+          this.markReady();
           this.pushHistory(data);
           this.emit({ type: "output", data });
         }
       });
       socket.addEventListener("close", (event) => {
+        if (event.code === 1013 && this.kind === "workspace") {
+          reconnectOnce("waking");
+          return;
+        }
         if (event.code === 1008) {
           if (this.socket !== socket || this.closed || failureHandled) return;
           failureHandled = true;
           this.socket = null;
+          this.terminalReady = false;
+          if (this.kind === "workspace") {
+            // A workspace shell may close while its VM is resuming or its
+            // prior terminal slot is being released. Treat that as the same
+            // wake transition as a 409 ticket response, not a terminal error.
+            this.setState("waking");
+            this.scheduleReconnect();
+            return;
+          }
           this.setState("error");
           this.emit({
             type: "notice",
@@ -258,11 +293,17 @@ class CloudTerminalConnection {
         }
         reconnectOnce("disconnected");
       });
-      socket.addEventListener("error", () => {
-        if (this.socket === socket && !this.closed) this.setState("error");
-      });
+      // Browser WebSocket errors do not carry a useful reason. The matching
+      // close event decides whether the stream is waking, retryable, or a
+      // stable harness error.
+      socket.addEventListener("error", () => {});
     } catch (cause) {
       if (!this.closed && !abortController.signal.aborted) {
+        if (isWorkerWaking(cause) || isTransientWorkspaceContention(cause, this.kind)) {
+          this.setState("waking");
+          this.scheduleReconnect();
+          return;
+        }
         this.setState("error");
         this.emit({
           type: "notice",
@@ -284,7 +325,7 @@ class CloudTerminalConnection {
 
   private flushPendingInput() {
     const socket = this.socket;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !this.terminalReady) return;
     for (const input of this.pendingInput) {
       if (input.sentOn === socket) continue;
       socket.send(
@@ -299,9 +340,10 @@ class CloudTerminalConnection {
     // A retained agent stream preserves output while its VM is already alive,
     // but must not wake every idle session merely because the dashboard is open.
     if (this.kind === "agent" && this.retained && this.listeners.size === 0) return;
+    const waking = this.state === "waking";
     const backoff = Math.min(
-      1_000 * 2 ** this.retryAttempt,
-      reconnectMaxDelayMs,
+      (waking ? 750 : 1_000) * 2 ** this.retryAttempt,
+      waking ? 5_000 : reconnectMaxDelayMs,
     );
     this.retryAttempt += 1;
     const jitter = backoff * (0.75 + Math.random() * 0.5);
@@ -321,7 +363,13 @@ class CloudTerminalConnection {
   };
 
   private sendResize() {
-    if (!this.canOperate || this.socket?.readyState !== WebSocket.OPEN) return;
+    if (
+      !this.canOperate ||
+      !this.terminalReady ||
+      this.socket?.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
     this.socket.send(
       JSON.stringify({
         type: "resize",
@@ -329,6 +377,15 @@ class CloudTerminalConnection {
         rows: this.size.rows,
       }),
     );
+  }
+
+  private markReady() {
+    if (this.terminalReady) return;
+    this.terminalReady = true;
+    this.retryAttempt = 0;
+    this.setState("connected");
+    this.sendResize();
+    this.flushPendingInput();
   }
 
   private resetReplayBuffer() {
@@ -448,4 +505,19 @@ async function terminalMessageBytes(data: unknown): Promise<Uint8Array | null> {
 function base64ToBytes(value: string) {
   const binary = window.atob(value);
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
+function isWorkerWaking(cause: unknown) {
+  return cause instanceof CloudApiError && cause.code === "WORKER_UNAVAILABLE";
+}
+
+function isTransientWorkspaceContention(
+  cause: unknown,
+  kind: CloudTerminalKind,
+) {
+  return (
+    kind === "workspace" &&
+    cause instanceof CloudApiError &&
+    cause.code === "TOO_MANY_WORKER_REQUESTS"
+  );
 }

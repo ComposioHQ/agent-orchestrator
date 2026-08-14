@@ -64,6 +64,30 @@ func (s *terminalOutputStore) ListTerminalOutput(
 	}}, "closed", nil
 }
 
+type terminalReadinessStore struct {
+	Store
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *terminalReadinessStore) ListTerminalOutput(
+	_ context.Context,
+	_ domain.TerminalSession,
+	_ int64,
+	_ int,
+) ([]domain.TerminalOutput, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	if s.calls == 1 {
+		return nil, "opening", nil
+	}
+	return []domain.TerminalOutput{{
+		Sequence: 1,
+		Data:     []byte("ready\\n"),
+	}}, "open", nil
+}
+
 func TestTerminalOutputUsesBinaryFramesForPartialUTF8(t *testing.T) {
 	server := &Server{store: &terminalOutputStore{}}
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,23 +122,81 @@ func TestTerminalOutputUsesBinaryFramesForPartialUTF8(t *testing.T) {
 	}
 	defer connection.CloseNow()
 
-	messageType, data, err := connection.Read(ctx)
+	for range 2 {
+		messageType, data, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatalf("read terminal output: %v", err)
+		}
+		if messageType != websocket.MessageText {
+			t.Fatalf("message type = %v, want text", messageType)
+		}
+		var message terminalServerMessage
+		if err := json.Unmarshal(data, &message); err != nil {
+			t.Fatal(err)
+		}
+		if message.Type != "output" {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(message.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if message.Sequence != 1 || string(decoded) != string([]byte{0xe2, 0x82}) {
+			t.Fatalf("message = %#v data = %v, want sequence 1 with partial UTF-8 bytes", message, decoded)
+		}
+		return
+	}
+	t.Fatal("did not receive terminal output")
+}
+
+func TestTerminalOutputReportsShellReadinessBeforeReplay(t *testing.T) {
+	server := &Server{store: &terminalReadinessStore{}}
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connection, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			t.Errorf("accept websocket: %v", err)
+			return
+		}
+		defer connection.CloseNow()
+		_ = server.writeTerminalOutput(
+			r.Context(),
+			connection,
+			domain.TerminalSession{},
+			0,
+			true,
+			&sync.Mutex{},
+		)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(
+		ctx,
+		"ws"+strings.TrimPrefix(httpServer.URL, "http"),
+		nil,
+	)
 	if err != nil {
-		t.Fatalf("read terminal output: %v", err)
+		t.Fatalf("dial websocket: %v", err)
 	}
-	if messageType != websocket.MessageText {
-		t.Fatalf("message type = %v, want text", messageType)
+	defer connection.CloseNow()
+
+	var types []string
+	for range 4 {
+		_, data, err := connection.Read(ctx)
+		if err != nil {
+			t.Fatalf("read terminal lifecycle: %v", err)
+		}
+		var message terminalServerMessage
+		if err := json.Unmarshal(data, &message); err != nil {
+			t.Fatal(err)
+		}
+		types = append(types, message.Type)
 	}
-	var message terminalServerMessage
-	if err := json.Unmarshal(data, &message); err != nil {
-		t.Fatal(err)
-	}
-	decoded, err := base64.StdEncoding.DecodeString(message.Data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if message.Type != "output" || message.Sequence != 1 || string(decoded) != string([]byte{0xe2, 0x82}) {
-		t.Fatalf("message = %#v data = %v, want sequence 1 with partial UTF-8 bytes", message, decoded)
+	if strings.Join(types, ",") != "starting,ready,output,replay_complete" {
+		t.Fatalf("terminal lifecycle = %v", types)
 	}
 }
 

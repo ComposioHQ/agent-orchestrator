@@ -18,6 +18,7 @@ import type {
 } from "@/app/app/share-types";
 
 type ShareClient = {
+  wakePausedSessions: (orgId: string) => Promise<{ woken: number }>;
   claimGitHubInstallation: (
     orgId: string,
     githubInstallationId: string,
@@ -99,6 +100,10 @@ export function browserCloudClient() {
   const orgPath = (orgId: string, suffix: string) =>
     `/api/cloud/v1/orgs/${encodeURIComponent(orgId)}${suffix}`;
   return Object.assign(client, {
+    wakePausedSessions: (orgId: string) =>
+      request<{ woken: number }>(orgPath(orgId, "/sessions/wake"), {
+        method: "POST",
+      }),
     claimGitHubInstallation: (orgId: string, githubInstallationId: string) =>
       request<{ installation: GitHubInstallation }>(
         orgPath(orgId, "/github/installations/claim"),

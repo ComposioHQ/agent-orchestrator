@@ -185,7 +185,8 @@ func (s *Store) AppendSessionEvent(
 		err := tx.QueryRow(
 			ctx,
 			`UPDATE ao_sessions
-			SET next_sequence = next_sequence + 1
+			SET next_sequence = next_sequence + 1,
+				updated_at = now()
 			WHERE org_id = $1 AND id = $2
 			RETURNING next_sequence - 1`,
 			orgID,
@@ -272,6 +273,17 @@ func appendUserMessage(
 				org_id, session_id, worker_epoch, kind, payload, expires_at
 			) VALUES ($1, $2, $3, 'terminal.input', $4, now() + interval '15 seconds')`,
 			orgID, sessionID, workerEpoch, payload,
+		); err != nil {
+			return domain.ClientEvent{}, err
+		}
+		// A live agent terminal does not create an ao_turn. Mark the session
+		// active at enqueue time so status/sidebar projections cannot claim it
+		// is idle while the worker still has ordered terminal input pending.
+		if _, err := tx.Exec(ctx,
+			`UPDATE ao_sessions
+			SET activity_state = 'active', updated_at = now()
+			WHERE org_id = $1 AND id = $2 AND is_terminated = false`,
+			orgID, sessionID,
 		); err != nil {
 			return domain.ClientEvent{}, err
 		}

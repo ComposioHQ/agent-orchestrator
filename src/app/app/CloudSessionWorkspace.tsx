@@ -97,9 +97,15 @@ export function CloudSessionWorkspace({
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const diffInFlight = useRef(false);
   const shownErrors = useRef(new Set<string>());
-  const projectRuntimeKey = projectSessions
-    .map((candidate) => `${candidate.id}:${candidate.runtimeConnected}:${candidate.isTerminated}`)
+  const projectRuntimeKey = Array.from(
+    new Map([session, ...projectSessions].map((candidate) => [candidate.id, candidate])).values(),
+  )
+    .map((candidate) => `${candidate.id}:${candidate.runtimeConnected}:${candidate.isTerminated}:${candidate.updatedAt}`)
     .join("|");
+  const terminalCanWake =
+    !session.isTerminated &&
+    session.runtimeState !== "failed" &&
+    !session.runtimeError;
 
   useEffect(() => {
     if (!error || error === "Too many workspace operations are already in progress." || shownErrors.current.has(error)) return;
@@ -110,6 +116,14 @@ export function CloudSessionWorkspace({
   }, [error]);
 
   const loadReviews = async () => {
+    // While a NodeOps VM is waking, the terminal ticket is the only request
+    // allowed to touch the worker. These projections refresh after the
+    // authoritative session state reports a connected worker.
+    if (!session.runtimeConnected) {
+      setReviewsLoading(false);
+      return;
+    }
+    setReviewsLoading(true);
     try {
       const [pullRequestPage, reviewPage] = await Promise.all([
         client.listSessionPullRequests(organizationId, session.id),
@@ -160,6 +174,7 @@ export function CloudSessionWorkspace({
   };
 
   const loadDirectory = async (path: string) => {
+    if (!session.runtimeConnected) return;
     setBusy(true);
     try {
       const page = await client.listWorkspaceFiles(
@@ -180,6 +195,7 @@ export function CloudSessionWorkspace({
   };
 
   const openFile = async (path: string, sourceSessionId = session.id) => {
+    if (!session.runtimeConnected) return;
     setBusy(true);
     try {
       const file = await client.readWorkspaceFile(
@@ -200,7 +216,7 @@ export function CloudSessionWorkspace({
   };
 
   const saveFile = async () => {
-    if (!selectedFile || session.mode === "read-only") return;
+    if (!selectedFile || session.mode === "read-only" || !session.runtimeConnected) return;
     setBusy(true);
     try {
       const file = await client.writeWorkspaceFile(
@@ -210,7 +226,10 @@ export function CloudSessionWorkspace({
       );
       setSelectedFile(file);
       setFileContent(file.content);
-      await loadDiff();
+      // Do not issue a competing workspace diff request while the file pane is
+      // active. The Summary tab fetches the fresh durable state when opened.
+      setDiff(null);
+      setProjectDiffs([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not save file.");
     } finally {
@@ -219,18 +238,14 @@ export function CloudSessionWorkspace({
   };
 
   useEffect(() => {
-    void loadDiff();
-  }, [organizationId, session.id, session.runtimeConnected, projectRuntimeKey]);
-
-  useEffect(() => {
     if (tab === "files" && entries.length === 0) void loadDirectory("");
   }, [tab, session.id]);
 
   useEffect(() => {
+    if (tab !== "summary") return;
+    void loadDiff();
     void loadReviews();
-    const timer = window.setInterval(() => void loadReviews(), 8_000);
-    return () => window.clearInterval(timer);
-  }, [organizationId, session.id]);
+  }, [tab, organizationId, session.id, session.runtimeConnected, projectRuntimeKey]);
 
   const inspectorTabs: InspectorTab<CloudInspectorTab>[] = [
     {
@@ -315,7 +330,7 @@ export function CloudSessionWorkspace({
           </div>
           )}
         />
-        {session.runtimeConnected ? (
+        {terminalCanWake ? (
           <CloudTerminal
             kind="agent"
             layoutKey={inspectorOpen ? "inspector-open" : "inspector-closed"}
@@ -373,7 +388,7 @@ export function CloudSessionWorkspace({
             onSave={() => void saveFile()}
             readOnly={session.mode === "read-only"}
           />}
-          terminalView={session.runtimeConnected ? <CloudTerminal
+          terminalView={terminalCanWake ? <CloudTerminal
             kind="workspace"
             layoutKey={`${inspectorOpen ? "inspector-open" : "inspector-closed"}:${tab}`}
             organizationId={organizationId}
@@ -435,6 +450,8 @@ function provisioningLabel(
         : "Connecting the coding-agent terminal…";
     case "disconnected":
       return "Reconnecting to the isolated worker…";
+    case "paused":
+      return "Waking the NodeOps VM…";
     default:
       return "Preparing the isolated worker…";
   }

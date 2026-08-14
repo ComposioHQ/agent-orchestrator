@@ -145,15 +145,38 @@ printf 'username=x-access-token\npassword=%%s\n' "$github_token"
 	githubWrapper := fmt.Sprintf(`#!/bin/sh
 set -eu
 real_gh="${AO_GH_REAL_BINARY:-/usr/bin/gh}"
-if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
-  exec "$real_gh" "$@"
+if [ ! -x "$real_gh" ]; then
+  echo "AO GitHub CLI is unavailable at $real_gh" >&2
+  exit 127
 fi
-worker_token="$(tr -d '\r\n' < %s)"
-response="$(curl -fsS -X POST \
-  -H "Authorization: Worker ${worker_token}" \
-  -H "X-AO-Session-ID: %s" \
-  %s)"
-github_token="$(printf '%%s' "$response" | jq -er '.token | select(type == "string" and length > 0)')"
+if [ -n "${GH_TOKEN:-}" ]; then
+  github_token="$GH_TOKEN"
+elif [ -n "${GITHUB_TOKEN:-}" ]; then
+  github_token="$GITHUB_TOKEN"
+else
+  worker_token="$(tr -d '\r\n' < %s)"
+  response="$(curl -fsS -X POST \
+    -H "Authorization: Worker ${worker_token}" \
+    -H "X-AO-Session-ID: %s" \
+    %s)"
+  github_token="$(printf '%%s' "$response" | jq -er '.token | select(type == "string" and length > 0)')"
+fi
+if [ "${1:-}" = "pr" ] && [ "${2:-}" = "create" ]; then
+  set +e
+  output="$(GH_TOKEN="$github_token" "$real_gh" "$@" 2>&1)"
+  status=$?
+  set -e
+  printf '%%s\n' "$output"
+  if [ "$status" -ne 0 ]; then
+    exit "$status"
+  fi
+  pr_url="$(printf '%%s\n' "$output" | sed -n 's#.*\(https://github.com/[^[:space:]]*/pull/[0-9][0-9]*\).*#\1#p' | tail -n 1)"
+  if [ -z "$pr_url" ]; then
+    echo "AO could not observe the pull request URL; run ao claim-pr <number-or-url>." >&2
+    exit 1
+  fi
+  exec ao claim-pr "$pr_url"
+fi
 GH_TOKEN="$github_token" exec "$real_gh" "$@"
 `, shellQuote(filepath.Join(dataDir, "worker-token")), sessionID,
 		shellQuote(strings.TrimRight(publicURL, "/")+"/api/cloud/v1/worker/github-token"))

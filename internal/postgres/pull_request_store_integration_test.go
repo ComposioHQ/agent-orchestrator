@@ -97,6 +97,9 @@ func TestCreatePullRequestRecordPersistsWithDefaults(t *testing.T) {
 	if created.State != contract.PRStateOpen || created.Draft {
 		t.Fatalf("created record state = %v, draft = %v, want open/non-draft", created.State, created.Draft)
 	}
+	if created.ClaimedBySessionID == nil || *created.ClaimedBySessionID != fixture.sessionID || created.ClaimedAt == nil {
+		t.Fatalf("created record claim = %#v, want owner session claim", created)
+	}
 	if created.CIState != contract.CIUnknown || created.ReviewState != contract.ReviewNone ||
 		created.Mergeability != contract.MergeUnknown || created.AOReviewState != contract.AOReviewNeedsReview {
 		t.Fatalf("created record defaults = %#v", created)
@@ -143,6 +146,43 @@ func TestListPullRequestsBySessionReturnsMostRecentFirst(t *testing.T) {
 	}
 	if len(list) != 2 || list[0].ID != second.ID || list[1].ID != first.ID {
 		t.Fatalf("list = %#v, want [second, first]", list)
+	}
+}
+
+func TestClaimPullRequestRecordUpsertsTheWorkerOwnedProjection(t *testing.T) {
+	t.Parallel()
+	fixture := newPullRequestFixture(t, "pr-claim")
+	ctx := context.Background()
+
+	created, err := fixture.store.CreatePullRequestRecord(
+		ctx, fixture.orgID, fixture.sessionID,
+		"github", "acme/api", "octocat", 7,
+		"https://github.com/acme/api/pull/7", "feat/old", "main", "oldsha", "Old title",
+		0, 0, 0,
+	)
+	if err != nil {
+		t.Fatalf("create pull request record: %v", err)
+	}
+	claimed, err := fixture.store.ClaimPullRequestRecord(ctx, fixture.orgID, fixture.sessionID, domain.PullRequest{
+		Provider: "github", Repository: "acme/api", Author: "octocat", Number: 7,
+		URL: "https://github.com/acme/api/pull/7", Title: "Updated title", State: contract.PRStateOpen,
+		HeadSHA: "newsha", SourceBranch: "feat/new", TargetBranch: "main",
+		Additions: 4, Deletions: 1, ChangedFiles: 2,
+	})
+	if err != nil {
+		t.Fatalf("claim pull request record: %v", err)
+	}
+	if claimed.ID != created.ID || claimed.Title != "Updated title" || claimed.SourceBranch != "feat/new" ||
+		claimed.HeadSHA != "newsha" || claimed.ClaimedBySessionID == nil ||
+		*claimed.ClaimedBySessionID != fixture.sessionID || claimed.ClaimedAt == nil {
+		t.Fatalf("claimed record = %#v", claimed)
+	}
+	list, err := fixture.store.ListPullRequestsBySession(ctx, fixture.principal, fixture.orgID, fixture.sessionID)
+	if err != nil {
+		t.Fatalf("list pull requests: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != created.ID {
+		t.Fatalf("list = %#v", list)
 	}
 }
 

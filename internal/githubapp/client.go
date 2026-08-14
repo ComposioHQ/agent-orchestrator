@@ -446,6 +446,7 @@ type PullRequestResponse struct {
 	Number       int    `json:"number"`
 	HTMLURL      string `json:"html_url"`
 	State        string `json:"state"`
+	Draft        bool   `json:"draft"`
 	Title        string `json:"title"`
 	User         User   `json:"user"`
 	Additions    int    `json:"additions"`
@@ -458,6 +459,36 @@ type PullRequestResponse struct {
 	Base struct {
 		Ref string `json:"ref"`
 	} `json:"base"`
+}
+
+// GetPullRequestRecord fetches the full pull request fields required to
+// durably claim a PR that was created by worker-side tooling.
+func (c *Client) GetPullRequestRecord(
+	ctx context.Context,
+	token, owner, repo string,
+	number int,
+) (PullRequestResponse, error) {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	if owner == "" || repo == "" || number <= 0 {
+		return PullRequestResponse{}, errors.New("pull request owner, repo, and number are required")
+	}
+	var pullRequest PullRequestResponse
+	if err := c.userJSON(
+		ctx,
+		token,
+		http.MethodGet,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(repo)+"/pulls/"+strconv.Itoa(number),
+		nil,
+		&pullRequest,
+	); err != nil {
+		return PullRequestResponse{}, err
+	}
+	if pullRequest.Number != number || pullRequest.HTMLURL == "" || pullRequest.Head.SHA == "" ||
+		pullRequest.Head.Ref == "" || pullRequest.Base.Ref == "" {
+		return PullRequestResponse{}, errors.New("GitHub returned an incomplete pull request response")
+	}
+	return pullRequest, nil
 }
 
 // CreatePullRequestInput is the request to open a pull request.

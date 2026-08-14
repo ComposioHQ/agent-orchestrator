@@ -110,7 +110,10 @@ const minWorkerSigningKeyLength = 32
 // Provider-side auto-pause is opt-in; the control plane tracks real activity.
 const defaultNodeOpsAutoPauseSeconds = 0
 
-const defaultIdlePauseThreshold = 15 * time.Minute
+// Give background sessions a full hour before their NodeOps VM is paused. A
+// visible workspace terminal still holds its shorter interactive lease, but
+// this default avoids turning an ordinary review break into a cold resume.
+const defaultIdlePauseThreshold = time.Hour
 
 const defaultIdlePauseInterval = 30 * time.Second
 

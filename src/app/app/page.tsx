@@ -405,6 +405,12 @@ export function CloudWorkspace() {
       .then(async (value) => {
         if (!active) return;
         setAccount(value);
+        // Resume the current user's paused sandboxes once per sign-in. This
+        // records only desired state; the reconciler and worker heartbeat
+        // remain authoritative for when a terminal can actually be opened.
+        void Promise.allSettled(
+          value.organizations.map(({ id }) => client.wakePausedSessions(id)),
+        );
         const shareParams = new URLSearchParams(window.location.search);
         const shareOrg = shareParams.get("shareOrg");
         const shareToken = shareParams.get("share");

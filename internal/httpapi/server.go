@@ -56,6 +56,7 @@ type Store interface {
 	SendMessage(context.Context, domain.Principal, string, string, string, string) (domain.ClientEvent, error)
 	ListClientEvents(context.Context, domain.Principal, string, string, int64, int) ([]domain.ClientEvent, bool, error)
 	SetSandboxDesiredState(ctx context.Context, principal domain.Principal, orgID, sessionID, desiredState string) error
+	WakePausedSessions(context.Context, domain.Principal, string) (int64, error)
 	RedeemWorkerBootstrapTicket(context.Context, string) (domain.AccessTicket, error)
 	WorkerLaunchSpec(context.Context, string, string) (domain.WorkerLaunch, error)
 	RegisterWorkerBootstrap(ctx context.Context, orgID, sessionID, workerID, version string, epoch int64, capabilities []string) error
@@ -115,6 +116,7 @@ type CheckoutBroker interface {
 	IssueCheckoutGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
 	IssuePushGrant(context.Context, string, string) (githubapp.CheckoutGrant, error)
 	RaisePullRequest(context.Context, string, string, domain.RaisePullRequest) (domain.PullRequest, error)
+	ClaimPullRequest(context.Context, string, string, string) (domain.PullRequest, error)
 	SubmitReview(context.Context, string, string, string, domain.SubmitReviewResult) (domain.ReviewRun, error)
 }
 
@@ -297,6 +299,7 @@ func New(options Options) *Server {
 			router.Post("/worker/push-grant", server.workerPushGrant)
 			router.Post("/worker/github-token", server.workerGitHubToken)
 			router.Post("/worker/pull-requests", server.workerRaisePullRequest)
+			router.Post("/worker/pull-requests/claim", server.workerClaimPullRequest)
 			router.Post("/worker/reviews/{reviewRunId}/submit", server.workerSubmitReview)
 			router.Get("/worker/children", server.listWorkerChildren)
 			router.Post("/worker/children", server.createWorkerChild)
@@ -339,6 +342,7 @@ func New(options Options) *Server {
 			router.Post("/provider-connections/agents/{agent}/promote", server.promoteAgentConnection)
 			router.Get("/sessions", server.listSessions)
 			router.Post("/sessions", server.createSession)
+			router.Post("/sessions/wake", server.wakePausedSessions)
 			router.Get("/sessions/{sessionId}", server.getSession)
 			router.Delete("/sessions/{sessionId}", server.deleteSession)
 			router.Post("/sessions/{sessionId}/messages", server.sendMessage)

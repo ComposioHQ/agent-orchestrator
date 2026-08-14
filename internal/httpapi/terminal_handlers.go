@@ -297,11 +297,33 @@ func (s *Server) writeTerminalOutput(
 ) error {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+	startupDeadline := time.NewTimer(terminalReadyTimeout)
+	defer startupDeadline.Stop()
 	replayComplete := false
+	startingSent := false
+	ready := false
 	for {
 		frames, state, err := s.store.ListTerminalOutput(ctx, terminal, after, 100)
 		if err != nil {
 			return err
+		}
+		if structured && !ready && (!startingSent || state == "open") {
+			writeMu.Lock()
+			messageType := "starting"
+			if state == "open" {
+				messageType = "ready"
+				ready = true
+			} else {
+				startingSent = true
+			}
+			err := writeTerminalMessage(ctx, connection, terminalServerMessage{
+				Type:     messageType,
+				Sequence: after,
+			})
+			writeMu.Unlock()
+			if err != nil {
+				return err
+			}
 		}
 		for _, frame := range frames {
 			var err error
@@ -324,7 +346,7 @@ func (s *Server) writeTerminalOutput(
 			}
 			after = frame.Sequence
 		}
-		if structured && !replayComplete {
+		if structured && ready && !replayComplete {
 			writeMu.Lock()
 			if err := writeTerminalMessage(ctx, connection, terminalServerMessage{
 				Type: "replay_complete", Sequence: after,
@@ -344,6 +366,10 @@ func (s *Server) writeTerminalOutput(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-startupDeadline.C:
+			if !ready {
+				return errTerminalProcessUnavailable
+			}
 		case <-ticker.C:
 		}
 	}

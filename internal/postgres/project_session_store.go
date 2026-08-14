@@ -830,7 +830,15 @@ const sessionSelect = `
 	SELECT session.id, session.org_id, session.project_id, session.kind,
 		session.harness, session.display_name, session.branch,
 		session.mode, session.denied_commands,
-		session.activity_state, session.is_terminated,
+		CASE
+			WHEN EXISTS (
+				SELECT 1 FROM ao_turns turn
+				WHERE turn.org_id = session.org_id AND turn.session_id = session.id
+					AND turn.state IN ('queued', 'claimed', 'running')
+			) THEN 'active'
+			ELSE session.activity_state
+		END AS activity_state,
+		session.is_terminated,
 		EXISTS (
 			SELECT 1 FROM ao_worker_connections worker
 			WHERE worker.session_id = session.id AND worker.disconnected_at IS NULL

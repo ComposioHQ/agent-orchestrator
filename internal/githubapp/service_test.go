@@ -62,6 +62,8 @@ type checkoutContextStore struct {
 	authorizationErr    error
 	remoteAuthorization domain.RemoteGitHubCheckoutContext
 	capability          domain.GitHubRepositoryCapability
+	claimed             *domain.PullRequest
+	claimErr            error
 }
 
 func (s checkoutContextStore) WorkerGitHubCheckoutContext(
@@ -101,6 +103,21 @@ func (s checkoutContextStore) CreatePullRequestRecord(
 		HeadSHA: headSHA, Title: title,
 		Additions: additions, Deletions: deletions, ChangedFiles: changedFiles,
 	}, nil
+}
+
+func (s checkoutContextStore) ClaimPullRequestRecord(
+	_ context.Context, orgID, sessionID string, input domain.PullRequest,
+) (domain.PullRequest, error) {
+	if s.claimErr != nil {
+		return domain.PullRequest{}, s.claimErr
+	}
+	input.ID = "claimed-pr-record"
+	input.OrgID = orgID
+	input.SessionID = sessionID
+	if s.claimed != nil {
+		*s.claimed = input
+	}
+	return input, nil
 }
 
 // CreateReviewRun stubs the review-trigger fan-out RaisePullRequest performs
@@ -967,6 +984,84 @@ func TestRaisePullRequestFailsClosedWithNoBaseBranchAvailable(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("GitHub requests = %d, want 0", requests)
+	}
+}
+
+func TestClaimPullRequestAdoptsWorkerCreatedPullRequest(t *testing.T) {
+	var claimed domain.PullRequest
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token": "write-secret", "expires_at": time.Now().UTC().Add(time.Hour),
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/api/pulls/7":
+			if r.Header.Get("Authorization") != "Bearer write-secret" {
+				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+			response := PullRequestResponse{
+				Number: 7, HTMLURL: "https://github.com/acme/api/pull/7", Title: "Fix the thing",
+				State: "open", Additions: 12, Deletions: 3, ChangedFiles: 2,
+			}
+			response.User.Login = "octocat"
+			response.Head.Ref, response.Head.SHA = "feat/fix", "deadbeef"
+			response.Base.Ref = "main"
+			_ = json.NewEncoder(w).Encode(response)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer github.Close()
+	service, err := NewService(
+		checkoutContextStore{
+			authorization: domain.GitHubCheckoutContext{
+				OrgID: "org", SessionID: "session", ProjectID: "project",
+				GitHubInstallationID: 123, GitHubRepositoryID: 456,
+				FullName: "acme/api", CloneURL: "https://github.com/acme/api.git",
+				DefaultBranch: "main",
+			},
+			claimed: &claimed,
+		},
+		testClient(t, github.URL), make([]byte, 32), make([]byte, 32),
+		"webhook-secret", time.Minute, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pr, err := service.ClaimPullRequest(
+		context.Background(), "org", "session", "https://github.com/acme/api/pull/7",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.ID != "claimed-pr-record" || pr.Number != 7 || pr.URL != "https://github.com/acme/api/pull/7" ||
+		claimed.Repository != "acme/api" || claimed.Author != "octocat" ||
+		claimed.SourceBranch != "feat/fix" || claimed.TargetBranch != "main" ||
+		claimed.HeadSHA != "deadbeef" || claimed.State != contract.PRStateOpen ||
+		claimed.Additions != 12 || claimed.Deletions != 3 || claimed.ChangedFiles != 2 {
+		t.Fatalf("claimed=%#v returned=%#v", claimed, pr)
+	}
+}
+
+func TestClaimPullRequestRejectsReferenceOutsideTheWorkerRepository(t *testing.T) {
+	service, err := NewService(
+		checkoutContextStore{authorization: domain.GitHubCheckoutContext{
+			OrgID: "org", SessionID: "session", ProjectID: "project",
+			GitHubInstallationID: 123, GitHubRepositoryID: 456,
+			FullName: "acme/api", CloneURL: "https://github.com/acme/api.git",
+		}},
+		testClient(t, "https://github.invalid"), make([]byte, 32), make([]byte, 32),
+		"webhook-secret", time.Minute, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ClaimPullRequest(
+		context.Background(), "org", "session", "https://github.com/other/api/pull/7",
+	)
+	if !errors.Is(err, postgres.ErrInvalid) {
+		t.Fatalf("ClaimPullRequest() error = %v, want ErrInvalid", err)
 	}
 }
 

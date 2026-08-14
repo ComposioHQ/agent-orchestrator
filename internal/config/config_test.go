@@ -378,8 +378,8 @@ func TestLoadDefaultsPreferControlPlaneIdlePauseOverProviderAutoPause(t *testing
 	if cfg.NodeOpsAutoPauseSeconds != 0 {
 		t.Errorf("NodeOpsAutoPauseSeconds = %d, want 0 (disabled by default)", cfg.NodeOpsAutoPauseSeconds)
 	}
-	if cfg.IdlePauseThreshold != 15*time.Minute {
-		t.Errorf("IdlePauseThreshold = %v, want 15m", cfg.IdlePauseThreshold)
+	if cfg.IdlePauseThreshold != time.Hour {
+		t.Errorf("IdlePauseThreshold = %v, want 1h", cfg.IdlePauseThreshold)
 	}
 	if cfg.IdlePauseInterval != 30*time.Second {
 		t.Errorf("IdlePauseInterval = %v, want 30s", cfg.IdlePauseInterval)

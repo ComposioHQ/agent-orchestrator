@@ -280,7 +280,19 @@ func (s *Store) ListReviewRunsBySession(
 				pr.provider, pr.repository, pr.number, pr.url, pr.title, pr.ao_review_state
 			FROM ao_review_runs run
 			JOIN ao_pull_requests pr ON pr.org_id = run.org_id AND pr.id = run.pull_request_id
-			WHERE run.org_id = $1 AND pr.session_id = $2
+			WHERE run.org_id = $1
+				AND (
+					pr.session_id = $2
+					OR EXISTS (
+						SELECT 1
+						FROM ao_sessions requested
+						JOIN ao_sessions owner
+							ON owner.org_id = pr.org_id AND owner.id = pr.session_id
+						WHERE requested.org_id = $1 AND requested.id = $2
+							AND requested.kind = 'orchestrator'
+							AND owner.project_id = requested.project_id
+					)
+				)
 			ORDER BY run.pull_request_id, run.created_at DESC`,
 			orgID, sessionID,
 		)

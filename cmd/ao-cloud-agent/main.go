@@ -95,6 +95,8 @@ func run(args []string) error {
 		return runSend(ctx, c, args[1:])
 	case "kill", "delete", "rm":
 		return runDelete(ctx, c, args[1:])
+	case "claim-pr":
+		return runClaimPullRequest(ctx, c, args[1:])
 	default:
 		return fmt.Errorf("unknown command %q; run `ao help`", args[0])
 	}
@@ -256,6 +258,28 @@ func runDelete(ctx context.Context, c *client, args []string) error {
 	return nil
 }
 
+func runClaimPullRequest(ctx context.Context, c *client, args []string) error {
+	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+		return errors.New("claim-pr requires a pull request number or URL")
+	}
+	var response worker.ClaimPullRequestResponse
+	if err := c.request(
+		ctx,
+		http.MethodPost,
+		"/worker/pull-requests/claim",
+		worker.ClaimPullRequestRequest{Reference: strings.TrimSpace(args[0])},
+		true,
+		&response,
+	); err != nil {
+		return err
+	}
+	if response.ID == "" || response.Number <= 0 || response.HTMLURL == "" {
+		return errors.New("control plane returned an incomplete pull request response")
+	}
+	fmt.Printf("claimed PR #%d %s\n", response.Number, response.HTMLURL)
+	return nil
+}
+
 func (c *client) request(
 	ctx context.Context,
 	method, path string,
@@ -326,6 +350,7 @@ func printUsage(out io.Writer) {
   ao list [--json]
   ao send SESSION_ID MESSAGE
   ao kill SESSION_ID
+	  ao claim-pr NUMBER_OR_URL
 
 All commands are authenticated through the control plane. Child workers never
 connect directly to one another.`)

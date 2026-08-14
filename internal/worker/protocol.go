@@ -83,6 +83,21 @@ type RaisePullRequestResponse struct {
 	BaseBranch string `json:"baseBranch"`
 }
 
+// ClaimPullRequestRequest adopts a pull request that was opened by worker-side
+// tooling (for example `gh pr create`). The control plane resolves the
+// reference against the worker's assigned repository, records it durably, and
+// makes it visible to the session inspector.
+type ClaimPullRequestRequest struct {
+	Reference string `json:"reference"`
+}
+
+// ClaimPullRequestResponse describes the tracked pull request.
+type ClaimPullRequestResponse struct {
+	ID      string `json:"id"`
+	Number  int    `json:"number"`
+	HTMLURL string `json:"htmlUrl"`
+}
+
 // SubmitReviewRequest reports a review session's verdict on the AO review
 // pass it was asked to perform. Verdict is "approved" or "changes_requested".
 type SubmitReviewRequest struct {

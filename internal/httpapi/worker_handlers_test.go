@@ -50,6 +50,9 @@ type recordingCheckoutBroker struct {
 	raiseErr       error
 	raiseInput     domain.RaisePullRequest
 	sawRaiseCall   bool
+	claimErr       error
+	claimReference string
+	sawClaimCall   bool
 	reviewRun      domain.ReviewRun
 	reviewErr      error
 	reviewInput    domain.SubmitReviewResult
@@ -86,6 +89,18 @@ func (b *recordingCheckoutBroker) RaisePullRequest(
 	b.raiseInput = input
 	if b.raiseErr != nil {
 		return domain.PullRequest{}, b.raiseErr
+	}
+	return b.pullRequest, nil
+}
+
+func (b *recordingCheckoutBroker) ClaimPullRequest(
+	_ context.Context, _, _ string, reference string,
+) (domain.PullRequest, error) {
+	b.calls++
+	b.sawClaimCall = true
+	b.claimReference = reference
+	if b.claimErr != nil {
+		return domain.PullRequest{}, b.claimErr
 	}
 	return b.pullRequest, nil
 }
@@ -449,6 +464,53 @@ func TestWorkerRaisePullRequestRequiresGitScope(t *testing.T) {
 	server.workerRaisePullRequest(response, request)
 	if response.Code != http.StatusForbidden || broker.calls != 0 {
 		t.Fatalf("status=%d calls=%d", response.Code, broker.calls)
+	}
+}
+
+func TestWorkerClaimPullRequestReturnsTrackedRecord(t *testing.T) {
+	tokens := worker.NewTokenManager([]byte("0123456789abcdef0123456789abcdef"))
+	credential, err := tokens.Issue(worker.Claims{
+		OrgID: "org", SessionID: "session", WorkerID: "session:7", Epoch: 7,
+		Scopes: []string{"worker:git"},
+	}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(Options{Store: checkoutEndpointStore{current: true}, WorkerTokens: tokens})
+	broker := &recordingCheckoutBroker{pullRequest: domain.PullRequest{
+		ID: "pr-7", Number: 7, URL: "https://github.com/acme/api/pull/7",
+	}}
+	server.checkoutBroker = broker
+	body, _ := json.Marshal(worker.ClaimPullRequestRequest{
+		Reference: "https://github.com/acme/api/pull/7",
+	})
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/cloud/v1/worker/pull-requests/claim",
+		bytes.NewReader(body),
+	)
+	request.Header.Set("Authorization", "Worker "+credential)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	var pr worker.ClaimPullRequestResponse
+	_ = json.Unmarshal(response.Body.Bytes(), &pr)
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" ||
+		pr.ID != "pr-7" || pr.Number != 7 || pr.HTMLURL != "https://github.com/acme/api/pull/7" ||
+		!broker.sawClaimCall || broker.claimReference != "https://github.com/acme/api/pull/7" {
+		t.Fatalf("status=%d pr=%#v broker=%#v", response.Code, pr, broker)
+	}
+}
+
+func TestWorkerClaimPullRequestRequiresGitScope(t *testing.T) {
+	server := &Server{logger: slog.Default(), checkoutBroker: &recordingCheckoutBroker{}}
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"reference":"7"}`))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker.Claims{
+		Scopes: []string{"worker:event"},
+	}))
+	response := httptest.NewRecorder()
+	server.workerClaimPullRequest(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403", response.Code)
 	}
 }
 

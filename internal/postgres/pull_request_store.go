@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
@@ -31,13 +32,95 @@ func (s *Store) CreatePullRequestRecord(
 			ctx,
 			`INSERT INTO ao_pull_requests (
 				org_id, session_id, provider, repository, author, number, url, title,
-				state, head_sha, source_branch, target_branch, additions, deletions, changed_files
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+				state, head_sha, source_branch, target_branch, additions, deletions, changed_files,
+				claimed_by_session_id, claimed_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $2, now())
 			RETURNING `+pullRequestColumns,
 			orgID, sessionID, provider, repository, author, number, url, title,
 			string(contract.PRStateOpen), headSHA, sourceBranch, targetBranch,
 			additions, deletions, changedFiles,
 		))
+		if err != nil {
+			return err
+		}
+		// PR creation changes both the worker's activity projection and the
+		// project's aggregate inspector. The session timestamp is the durable
+		// invalidation key observed by the UI's session stream.
+		_, err = tx.Exec(ctx,
+			`UPDATE ao_sessions SET updated_at = now() WHERE org_id = $1 AND id = $2`,
+			orgID, sessionID,
+		)
+		return err
+	})
+	if err != nil {
+		return domain.PullRequest{}, normalizeConstraintError(err)
+	}
+	return record, nil
+}
+
+// ClaimPullRequestRecord adopts an existing provider pull request for the
+// worker that opened it. Repeating the call is safe: this is the durable
+// boundary between worker-side GitHub tooling and AO's inspector projections.
+func (s *Store) ClaimPullRequestRecord(
+	ctx context.Context,
+	orgID, sessionID string,
+	input domain.PullRequest,
+) (domain.PullRequest, error) {
+	if strings.TrimSpace(input.Provider) != "github" || strings.TrimSpace(input.Repository) == "" ||
+		input.Number <= 0 || strings.TrimSpace(input.URL) == "" || strings.TrimSpace(input.Title) == "" ||
+		strings.TrimSpace(input.HeadSHA) == "" || strings.TrimSpace(input.SourceBranch) == "" ||
+		strings.TrimSpace(input.TargetBranch) == "" {
+		return domain.PullRequest{}, ErrInvalid
+	}
+	state := input.State
+	if state == contract.PRStateDraft {
+		state = contract.PRStateOpen
+		input.Draft = true
+	}
+	if state != contract.PRStateOpen && state != contract.PRStateClosed && state != contract.PRStateMerged {
+		return domain.PullRequest{}, ErrInvalid
+	}
+	var record domain.PullRequest
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var err error
+		record, err = scanPullRequest(tx.QueryRow(
+			ctx,
+			`INSERT INTO ao_pull_requests (
+				org_id, session_id, provider, repository, author, number, url, title,
+				state, draft, head_sha, source_branch, target_branch, additions, deletions, changed_files,
+				claimed_by_session_id, claimed_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $2, now())
+			ON CONFLICT (org_id, provider, repository, number) DO UPDATE
+			SET session_id = EXCLUDED.session_id,
+				author = EXCLUDED.author,
+				url = EXCLUDED.url,
+				title = EXCLUDED.title,
+				state = EXCLUDED.state,
+				draft = EXCLUDED.draft,
+				head_sha = EXCLUDED.head_sha,
+				source_branch = EXCLUDED.source_branch,
+				target_branch = EXCLUDED.target_branch,
+				additions = EXCLUDED.additions,
+				deletions = EXCLUDED.deletions,
+				changed_files = EXCLUDED.changed_files,
+				claimed_by_session_id = EXCLUDED.claimed_by_session_id,
+				claimed_at = now(),
+				released_at = NULL,
+				observed_at = now(),
+				updated_at = now()
+			RETURNING `+pullRequestColumns,
+			orgID, sessionID, input.Provider, input.Repository, input.Author, input.Number, input.URL, input.Title,
+			string(state), input.Draft, input.HeadSHA, input.SourceBranch, input.TargetBranch,
+			input.Additions, input.Deletions, input.ChangedFiles,
+		))
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(
+			ctx,
+			`UPDATE ao_sessions SET updated_at = now() WHERE org_id = $1 AND id = $2`,
+			orgID, sessionID,
+		)
 		return err
 	})
 	if err != nil {
@@ -80,9 +163,22 @@ func (s *Store) ListPullRequestsBySession(
 		rows, err := tx.Query(
 			ctx,
 			`SELECT `+pullRequestColumns+`
-			FROM ao_pull_requests
-			WHERE org_id = $1 AND session_id = $2
-			ORDER BY created_at DESC`,
+			FROM ao_pull_requests pr
+			WHERE pr.org_id = $1
+				AND (
+					pr.session_id = $2
+					OR pr.claimed_by_session_id = $2
+					OR EXISTS (
+						SELECT 1
+						FROM ao_sessions requested
+						JOIN ao_sessions owner
+							ON owner.org_id = pr.org_id AND owner.id = pr.session_id
+						WHERE requested.org_id = $1 AND requested.id = $2
+							AND requested.kind = 'orchestrator'
+							AND owner.project_id = requested.project_id
+					)
+				)
+			ORDER BY pr.created_at DESC`,
 			orgID, sessionID,
 		)
 		if err != nil {

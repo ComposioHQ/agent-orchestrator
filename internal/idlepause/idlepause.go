@@ -32,7 +32,7 @@ type Options struct {
 
 const (
 	DefaultInterval      = 30 * time.Second
-	DefaultIdleThreshold = 15 * time.Minute
+	DefaultIdleThreshold = time.Hour
 )
 
 // Scanner periodically pauses sandboxes whose session has gone quiet.

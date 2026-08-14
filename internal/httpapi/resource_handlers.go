@@ -381,6 +381,23 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "page": page})
 }
 
+// wakePausedSessions asks the reconciler to resume this user's idle-paused
+// sandboxes. It intentionally does not wait for NodeOps or a worker heartbeat;
+// callers continue to use the regular session projection for readiness.
+func (s *Server) wakePausedSessions(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	if requireUUID(orgID, "orgId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId must be a UUID.")
+		return
+	}
+	woken, err := s.store.WakePausedSessions(r.Context(), principalFrom(r), orgID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"woken": woken})
+}
+
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	sessionID := chi.URLParam(r, "sessionId")

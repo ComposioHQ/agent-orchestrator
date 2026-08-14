@@ -24,7 +24,7 @@ RUN apt-get update && \
     gh_version=2.97.0 && \
     curl --fail --location --silent --show-error \
         "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_${architecture}.tar.gz" \
-        | tar --strip-components=2 -xzf - -C /usr/local/bin \
+        | tar --strip-components=2 -xzf - -C /usr/bin \
             "gh_${gh_version}_linux_${architecture}/bin/gh" && \
     npm install --global \
         @anthropic-ai/claude-code@2.1.228 \

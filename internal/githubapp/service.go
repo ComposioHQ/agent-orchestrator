@@ -15,6 +15,7 @@ import (
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/postgres"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/google/uuid"
 )
 
@@ -56,6 +57,7 @@ type Store interface {
 		url, sourceBranch, targetBranch, headSHA, title string,
 		additions, deletions, changedFiles int,
 	) (domain.PullRequest, error)
+	ClaimPullRequestRecord(context.Context, string, string, domain.PullRequest) (domain.PullRequest, error)
 	GitHubInstallationForRepository(ctx context.Context, orgID, repository string) (installationID, repositoryID int64, err error)
 	UpdatePullRequestObservation(
 		ctx context.Context,
@@ -535,6 +537,101 @@ func (s *Service) RaisePullRequest(
 	}
 	s.triggerReview(ctx, orgID, sessionID, record)
 	return record, nil
+}
+
+// ClaimPullRequest records a pull request that worker-side tooling already
+// opened. Installation tokens deliberately do not represent a human GitHub
+// identity, so this claims ownership for the AO worker session instead of
+// attempting unsupported user-only GitHub subscription or assignment calls.
+func (s *Service) ClaimPullRequest(
+	ctx context.Context,
+	orgID, sessionID, reference string,
+) (domain.PullRequest, error) {
+	authorization, err := s.resolveWorkerCheckoutAuthorization(ctx, orgID, sessionID)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	owner, repository, ok := strings.Cut(authorization.FullName, "/")
+	if !ok || strings.TrimSpace(owner) == "" || strings.TrimSpace(repository) == "" {
+		return domain.PullRequest{}, postgres.ErrInvalid
+	}
+	number, err := parsePullRequestReference(reference, authorization.FullName)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	access, err := s.client.repositoryWriteToken(
+		ctx,
+		authorization.GitHubInstallationID,
+		authorization.GitHubRepositoryID,
+	)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	pullRequest, err := s.client.GetPullRequestRecord(ctx, access.Token, owner, repository, number)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	state := contract.PRState(strings.ToLower(strings.TrimSpace(pullRequest.State)))
+	switch state {
+	case contract.PRStateOpen, contract.PRStateClosed:
+	default:
+		return domain.PullRequest{}, postgres.ErrInvalid
+	}
+	if pullRequest.Number != number || pullRequest.HTMLURL == "" || pullRequest.Head.SHA == "" ||
+		pullRequest.Head.Ref == "" || pullRequest.Base.Ref == "" {
+		return domain.PullRequest{}, postgres.ErrInvalid
+	}
+	record, err := s.store.ClaimPullRequestRecord(ctx, orgID, sessionID, domain.PullRequest{
+		Provider:     "github",
+		Repository:   authorization.FullName,
+		Author:       pullRequest.User.Login,
+		Number:       pullRequest.Number,
+		URL:          pullRequest.HTMLURL,
+		Title:        pullRequest.Title,
+		State:        state,
+		Draft:        pullRequest.Draft,
+		HeadSHA:      pullRequest.Head.SHA,
+		SourceBranch: pullRequest.Head.Ref,
+		TargetBranch: pullRequest.Base.Ref,
+		Additions:    pullRequest.Additions,
+		Deletions:    pullRequest.Deletions,
+		ChangedFiles: pullRequest.ChangedFiles,
+	})
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	s.triggerReview(ctx, orgID, sessionID, record)
+	return record, nil
+}
+
+func parsePullRequestReference(reference, fullName string) (int, error) {
+	reference = strings.TrimSpace(reference)
+	if number, err := strconv.Atoi(reference); err == nil && number > 0 {
+		return number, nil
+	}
+	parsed, err := url.Parse(reference)
+	if err != nil || parsed.Scheme != "https" ||
+		!strings.EqualFold(parsed.Hostname(), "github.com") || parsed.Port() != "" ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return 0, postgres.ErrInvalid
+	}
+	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
+	if len(parts) != 4 || !strings.EqualFold(parts[2], "pull") {
+		return 0, postgres.ErrInvalid
+	}
+	owner, err := url.PathUnescape(parts[0])
+	if err != nil {
+		return 0, postgres.ErrInvalid
+	}
+	repository, err := url.PathUnescape(parts[1])
+	if err != nil || !strings.EqualFold(owner+"/"+repository, strings.Trim(fullName, "/")) {
+		return 0, postgres.ErrInvalid
+	}
+	number, err := strconv.Atoi(parts[3])
+	if err != nil || number <= 0 {
+		return 0, postgres.ErrInvalid
+	}
+	return number, nil
 }
 
 func validGitHubCloneIdentity(cloneURL, fullName string) bool {

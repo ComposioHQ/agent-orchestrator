@@ -104,9 +104,14 @@ it("uses the interactive agent terminal as the primary session surface", async (
 
   expect(screen.getByText("Interactive agent terminal")).toBeVisible();
   expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+  expect(mocks.getWorkspaceDiff).not.toHaveBeenCalled();
+  expect(mocks.listSessionPullRequests).not.toHaveBeenCalled();
+  expect(mocks.getSessionReviewState).not.toHaveBeenCalled();
 
   fireEvent.click(await screen.findByRole("tab", { name: "Summary" }));
   expect(await screen.findByText("diff --git a/README.md b/README.md")).toBeVisible();
+  expect(mocks.listSessionPullRequests).toHaveBeenCalledWith("org-1", "session-1");
+  expect(mocks.getSessionReviewState).toHaveBeenCalledWith("org-1", "session-1");
 
   fireEvent.click(screen.getByRole("tab", { name: "Files" }));
   expect(await screen.findByText("README.md")).toBeVisible();
@@ -207,7 +212,7 @@ it("shows orchestrator and child worker changes in the orchestrator inspector", 
   );
 
   fireEvent.click(await screen.findByRole("tab", { name: "Summary" }));
-  expect((await screen.findAllByText("Orchestrator")).length).toBeGreaterThanOrEqual(2);
+  expect((await screen.findAllByText("Orchestrator")).length).toBeGreaterThanOrEqual(1);
   expect(await screen.findByText("random-file-pr")).toBeVisible();
   fireEvent.click(screen.getByText("random-fact.txt"));
   await waitFor(() => expect(mocks.readWorkspaceFile).toHaveBeenCalledWith(
@@ -219,7 +224,7 @@ it("shows orchestrator and child worker changes in the orchestrator inspector", 
   expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith("org-1", "worker-1");
 });
 
-it("waits for the worker before mounting the terminal", () => {
+it("mounts visible terminals to wake a paused or provisioning worker", () => {
   render(
     <CloudSessionWorkspace
       onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
@@ -228,8 +233,9 @@ it("waits for the worker before mounting the terminal", () => {
     />,
   );
 
-  expect(screen.getAllByText("Provisioning the NodeOps VM…")).toHaveLength(2);
-  expect(screen.queryByText("Interactive agent terminal")).not.toBeInTheDocument();
+  expect(screen.getByText("Interactive agent terminal")).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
+  expect(screen.getByText("Interactive workspace terminal")).toBeVisible();
 });
 
 it("shows the worker failure instead of looping on a waiting message", () => {

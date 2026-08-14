@@ -292,6 +292,39 @@ func (s *Store) SetSandboxDesiredState(
 	})
 }
 
+// WakePausedSessions records resume intent for sessions created by principal.
+// This is deliberately an intent-only operation: the reconciler owns provider
+// calls and the worker heartbeat remains the authoritative ready signal.
+func (s *Store) WakePausedSessions(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID string,
+) (int64, error) {
+	var woken int64
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(
+			ctx,
+			`UPDATE ao_sandboxes sandbox
+			SET desired_state = 'running', reconcile_after = now(), updated_at = now()
+			FROM ao_sessions session
+			WHERE sandbox.org_id = $1
+				AND sandbox.org_id = session.org_id
+				AND sandbox.session_id = session.id
+				AND session.created_by_user_id = $2
+				AND NOT session.is_terminated
+				AND sandbox.desired_state = 'paused'`,
+			orgID,
+			principal.UserID,
+		)
+		if err != nil {
+			return fmt.Errorf("wake paused sessions: %w", err)
+		}
+		woken = tag.RowsAffected()
+		return nil
+	})
+	return woken, err
+}
+
 // RunningSandboxSessions lists running session sandboxes across organizations.
 func (s *Store) RunningSandboxSessions(ctx context.Context) ([]domain.SandboxRef, error) {
 	var refs []domain.SandboxRef

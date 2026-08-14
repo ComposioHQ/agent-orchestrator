@@ -372,6 +372,50 @@ func (s *Server) workerRaisePullRequest(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// workerClaimPullRequest records a pull request opened by worker-side tooling
+// such as the GitHub CLI. GitHub has already created the PR by this point; this
+// route makes the control plane the authoritative place that associates it
+// with the worker/session and wakes the inspector projection.
+func (s *Server) workerClaimPullRequest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	claims := workerFrom(r)
+	if !worker.HasScope(claims, "worker:git") {
+		writeError(w, r, http.StatusForbidden, "SCOPE_REQUIRED", "The worker:git scope is required.")
+		return
+	}
+	if s.checkoutBroker == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "SCM_BROKER_UNAVAILABLE", "Pull request tracking is not available.")
+		return
+	}
+	var input worker.ClaimPullRequestRequest
+	if err := decodeJSON(w, r, &input); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	input.Reference = strings.TrimSpace(input.Reference)
+	if input.Reference == "" || len(input.Reference) > 2048 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "A pull request number or URL is required.")
+		return
+	}
+	pr, err := s.checkoutBroker.ClaimPullRequest(r.Context(), claims.OrgID, claims.SessionID, input.Reference)
+	if errors.Is(err, postgres.ErrForbidden) || errors.Is(err, postgres.ErrNotFound) {
+		writeError(w, r, http.StatusForbidden, "PULL_REQUEST_NOT_AUTHORIZED", "This session does not have an active repository grant.")
+		return
+	}
+	if errors.Is(err, postgres.ErrInvalid) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PULL_REQUEST", "The pull request reference is invalid for this repository.")
+		return
+	}
+	if err != nil {
+		s.logger.Error("claim worker pull request", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_FAILED", "The pull request could not be tracked.")
+		return
+	}
+	writeJSON(w, http.StatusOK, worker.ClaimPullRequestResponse{
+		ID: pr.ID, Number: pr.Number, HTMLURL: pr.URL,
+	})
+}
+
 func (s *Server) workerSubmitReview(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	claims := workerFrom(r)
