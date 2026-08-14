@@ -3,12 +3,12 @@ package agyjson
 import (
 	"context"
 	"encoding/json"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestInstallChatHooksPreservesUserDefinitions(t *testing.T) {
@@ -155,5 +155,77 @@ func TestSendTurnRejectsUnsupportedEffort(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected reasoning effort to be rejected")
+	}
+}
+
+func TestNormalizeResultDefersTurnCompletionUntilProcessExit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := &conversation{
+		ctx:       ctx,
+		cancel:    cancel,
+		events:    make(chan ports.ChatEvent, 4),
+		deferred:  map[string]ports.ChatUserMessage{},
+		approvals: map[string]chan ports.ChatDecision{},
+		active: &activeTurn{
+			id: "agy-turn-1",
+		},
+	}
+
+	c.normalizeResult("agy-turn-1", map[string]any{
+		"status": "SUCCESS",
+	})
+
+	c.mu.Lock()
+	seen := c.active != nil && c.active.resultSeen
+	state := c.active.resultState
+	c.mu.Unlock()
+
+	if !seen {
+		t.Fatal("result was not recorded on active turn")
+	}
+	if state != domain.TurnStateCompleted {
+		t.Fatalf("result state = %q, want completed", state)
+	}
+
+	select {
+	case event := <-c.events:
+		if event.Kind == ports.ChatEventTurnCompleted {
+			t.Fatal("turn completed was emitted before the provider process exited")
+		}
+	default:
+	}
+}
+
+func TestEmitTurnCompletedReleasesActiveTurnBeforePublishing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := &conversation{
+		ctx:       ctx,
+		cancel:    cancel,
+		events:    make(chan ports.ChatEvent, 4),
+		deferred:  map[string]ports.ChatUserMessage{},
+		approvals: map[string]chan ports.ChatDecision{},
+		active: &activeTurn{
+			id: "agy-turn-1",
+		},
+	}
+
+	c.emitTurnCompleted("agy-turn-1", domain.TurnStateCompleted, nil)
+
+	c.mu.Lock()
+	active := c.active
+	c.mu.Unlock()
+
+	if active != nil {
+		t.Fatalf("active turn = %#v, want nil before completion is consumed", active)
+	}
+
+	if _, err := c.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text: "next turn",
+	}); err != nil {
+		t.Fatalf("next turn rejected after completion: %v", err)
 	}
 }

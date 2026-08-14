@@ -56,6 +56,9 @@ type activeTurn struct {
 	cancel      context.CancelFunc
 	permission  ports.PermissionMode
 	interrupted bool
+	resultSeen  bool
+	resultState domain.TurnState
+	resultErr   error
 }
 
 var (
@@ -190,13 +193,6 @@ func (c *conversation) Close() error {
 
 func (c *conversation) runTurn(ctx context.Context, turnID string, msg ports.ChatUserMessage) {
 	defer c.wg.Done()
-	defer func() {
-		c.mu.Lock()
-		if c.active != nil && c.active.id == turnID {
-			c.active = nil
-		}
-		c.mu.Unlock()
-	}()
 
 	args := c.turnArgs(msg)
 	cmd := aoprocess.CommandContext(ctx, c.binary, args...)
@@ -244,6 +240,12 @@ func (c *conversation) runTurn(ctx context.Context, turnID string, msg ports.Cha
 
 	c.mu.Lock()
 	interrupted := c.active != nil && c.active.id == turnID && c.active.interrupted
+	resultState := domain.TurnStateCompleted
+	var resultErr error
+	if c.active != nil && c.active.id == turnID && c.active.resultSeen {
+		resultState = c.active.resultState
+		resultErr = c.active.resultErr
+	}
 	c.mu.Unlock()
 
 	if interrupted {
@@ -264,7 +266,9 @@ func (c *conversation) runTurn(ctx context.Context, turnID string, msg ports.Cha
 	}
 	if !resultSeen {
 		c.finishTurnWithError(turnID, errors.New("agy stream ended without a result event"), false)
+		return
 	}
+	c.emitTurnCompleted(turnID, resultState, resultErr)
 }
 
 func (c *conversation) turnArgs(msg ports.ChatUserMessage) []string {
@@ -373,35 +377,51 @@ func (c *conversation) normalizeStepUpdate(turnID string, update map[string]any)
 }
 
 func (c *conversation) normalizeResult(turnID string, result map[string]any) {
+	state := domain.TurnStateCompleted
+	var resultErr error
+
 	if result == nil {
-		err := errors.New("agy result event is missing its result payload")
-		c.emitError(turnID, err)
-		c.emitTurnCompleted(turnID, domain.TurnStateFailed, err)
-		return
-	}
-	response, _ := result["response"].(string)
-	status, _ := result["status"].(string)
-	errorText, _ := result["error"].(string)
-	if response != "" {
-		c.emit(ports.ChatEvent{
-			Kind:            ports.ChatEventMessageCompleted,
-			ProviderEventID: c.newEventID(turnID, "message-completed"),
-			ProviderTurnID:  turnID,
-			ProviderItemID:  turnID + "-assistant",
-			Text:            response,
-		})
-	}
-	if usage, ok := result["usage"].(map[string]any); ok {
-		c.emitUsage(turnID, usage)
-	}
-	if status == "ERROR" || errorText != "" {
-		if errorText == "" {
-			errorText = "Agy reported an error"
+		state = domain.TurnStateFailed
+		resultErr = errors.New("agy result event is missing its result payload")
+	} else {
+		response, _ := result["response"].(string)
+		status, _ := result["status"].(string)
+		errorText, _ := result["error"].(string)
+
+		if response != "" {
+			c.emit(ports.ChatEvent{
+				Kind:            ports.ChatEventMessageCompleted,
+				ProviderEventID: c.newEventID(turnID, "message-completed"),
+				ProviderTurnID:  turnID,
+				ProviderItemID:  turnID + "-assistant",
+				Text:            response,
+			})
 		}
-		c.emitTurnCompleted(turnID, domain.TurnStateFailed, errors.New(errorText))
-		return
+
+		if usage, ok := result["usage"].(map[string]any); ok {
+			c.emitUsage(turnID, usage)
+		}
+
+		if strings.EqualFold(status, "error") || errorText != "" {
+			state = domain.TurnStateFailed
+			if errorText == "" {
+				errorText = "Agy reported an error"
+			}
+			resultErr = errors.New(errorText)
+		}
 	}
-	c.emitTurnCompleted(turnID, domain.TurnStateCompleted, nil)
+
+	// The result frame is terminal at the protocol level, but the child process
+	// may not have exited yet. Record its outcome here and let runTurn publish
+	// turn.completed only after cmd.Wait returns. Otherwise the Chat queue can
+	// dispatch the next turn while this process is still the active owner.
+	c.mu.Lock()
+	if c.active != nil && c.active.id == turnID {
+		c.active.resultSeen = true
+		c.active.resultState = state
+		c.active.resultErr = resultErr
+	}
+	c.mu.Unlock()
 }
 
 func (c *conversation) emitUsage(turnID string, usage map[string]any) {
@@ -427,6 +447,15 @@ func (c *conversation) emitUsage(turnID string, usage map[string]any) {
 }
 
 func (c *conversation) emitTurnCompleted(turnID string, state domain.TurnState, err error) {
+	// Release ownership before publishing completion. The Chat service drains
+	// queued turns synchronously from this event, so publishing first creates a
+	// race where SendTurn still observes the previous turn as active.
+	c.mu.Lock()
+	if c.active != nil && c.active.id == turnID {
+		c.active = nil
+	}
+	c.mu.Unlock()
+
 	c.emit(ports.ChatEvent{
 		Kind:            ports.ChatEventTurnCompleted,
 		ProviderEventID: c.newEventID(turnID, "completed"),
