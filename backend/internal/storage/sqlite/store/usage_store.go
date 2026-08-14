@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -436,6 +437,250 @@ func (s *Store) ApplyUsageChunk(
 	return nil
 }
 
+// ListUsageCostCandidates returns the next stable bounded page of total-null
+// events whose exact canonical provider has not been attempted at version.
+func (s *Store) ListUsageCostCandidates(
+	ctx context.Context,
+	providerID, version string,
+) ([]domain.UsageCostCandidate, error) {
+	rows, err := s.qr.ListUsageCostCandidates(ctx, gen.ListUsageCostCandidatesParams{
+		ProviderID:     sql.NullString{String: providerID, Valid: true},
+		PricingVersion: version,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list %s usage cost candidates: %w", providerID, err)
+	}
+	out := make([]domain.UsageCostCandidate, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.UsageCostCandidate{
+			ID:         row.ID,
+			BindingID:  row.BindingID,
+			ProviderID: row.ProviderID.String,
+			ModelID:    row.ModelID,
+			Tokens: domain.UsageTokenMetrics{
+				InputTokens:         row.InputTokens,
+				UncachedInputTokens: row.UncachedInputTokens,
+				CacheReadTokens:     row.CacheReadTokens,
+				CacheWriteTokens:    row.CacheWriteTokens,
+				OutputTokens:        row.OutputTokens,
+				ReasoningTokens:     nullInt64Ptr(row.ReasoningTokens),
+			},
+			CacheWrite5mTokens: nullInt64Ptr(row.CacheWrite5mTokens),
+			CacheWrite1hTokens: nullInt64Ptr(row.CacheWrite1hTokens),
+			PricingVersion:     row.PricingVersion,
+			SourceEventKey:     row.SourceEventKey,
+		})
+	}
+	return out, nil
+}
+
+// ApplyUsageCostUpdates applies one bounded candidate page atomically. Stale
+// candidates are ignored, and every binding with at least one winning CAS is
+// touched exactly once so the existing trigger publishes one CDC invalidation.
+func (s *Store) ApplyUsageCostUpdates(
+	ctx context.Context,
+	updates []domain.UsageCostUpdate,
+	at time.Time,
+) (int, error) {
+	if len(updates) == 0 {
+		return 0, nil
+	}
+	if len(updates) > 256 {
+		return 0, fmt.Errorf("usage cost update batch has %d rows, maximum is 256", len(updates))
+	}
+	if err := s.writeMu.LockContext(ctx); err != nil {
+		return 0, err
+	}
+	defer s.writeMu.Unlock()
+	applied := 0
+	err := s.inTx(ctx, "apply usage cost updates", func(q *gen.Queries) error {
+		affectedBindings := make(map[int64]struct{})
+		for _, update := range updates {
+			candidate := update.Candidate
+			bindingID, err := q.UpdateUsageCostCandidate(ctx, gen.UpdateUsageCostCandidateParams{
+				UncachedInputCostNanos:      ptrInt64ToNull(update.UncachedInputCostNanos),
+				CacheReadCostNanos:          ptrInt64ToNull(update.CacheReadCostNanos),
+				CacheWriteCostNanos:         ptrInt64ToNull(update.CacheWriteCostNanos),
+				OutputCostNanos:             ptrInt64ToNull(update.OutputCostNanos),
+				EstimatedCostNanos:          ptrInt64ToNull(update.EstimatedCostNanos),
+				AttemptedPricingVersion:     update.PricingVersion,
+				ID:                          candidate.ID,
+				BindingID:                   candidate.BindingID,
+				ExpectedProviderID:          sql.NullString{String: candidate.ProviderID, Valid: true},
+				ExpectedModelID:             candidate.ModelID,
+				ExpectedInputTokens:         candidate.Tokens.InputTokens,
+				ExpectedUncachedInputTokens: candidate.Tokens.UncachedInputTokens,
+				ExpectedCacheReadTokens:     candidate.Tokens.CacheReadTokens,
+				ExpectedCacheWriteTokens:    candidate.Tokens.CacheWriteTokens,
+				ExpectedOutputTokens:        candidate.Tokens.OutputTokens,
+				ExpectedReasoningTokens:     ptrInt64ToNull(candidate.Tokens.ReasoningTokens),
+				ExpectedCacheWrite5mTokens:  ptrInt64ToNull(candidate.CacheWrite5mTokens),
+				ExpectedCacheWrite1hTokens:  ptrInt64ToNull(candidate.CacheWrite1hTokens),
+				ExpectedSourceEventKey:      candidate.SourceEventKey,
+				ExpectedPricingVersion:      candidate.PricingVersion,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			applied++
+			affectedBindings[bindingID] = struct{}{}
+		}
+		bindingIDs := make([]int64, 0, len(affectedBindings))
+		for bindingID := range affectedBindings {
+			bindingIDs = append(bindingIDs, bindingID)
+		}
+		sort.Slice(bindingIDs, func(left, right int) bool { return bindingIDs[left] < bindingIDs[right] })
+		for _, bindingID := range bindingIDs {
+			if err := q.TouchUsageBinding(ctx, gen.TouchUsageBindingParams{
+				UpdatedAt: timeOrNow(at),
+				ID:        bindingID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return applied, nil
+}
+
+// ListLegacyUsageSources returns source contexts that still own provider-null,
+// total-null events. The repairer validates each durable artifact before use.
+func (s *Store) ListLegacyUsageSources(ctx context.Context) ([]domain.UsageSourceContext, error) {
+	ids, err := s.qr.ListLegacyUsageSourceIDs(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list legacy usage sources: %w", err)
+	}
+	out := make([]domain.UsageSourceContext, 0, len(ids))
+	for _, id := range ids {
+		row, err := s.qr.GetUsageSourceWithBindingAndSession(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get legacy usage source %d: %w", id, err)
+		}
+		out = append(out, usageSourceContextFromGen(row))
+	}
+	return out, nil
+}
+
+// ListLegacyUsageEvents returns the immutable generic facts that transcript
+// attribution must match before provider and split repair is eligible.
+func (s *Store) ListLegacyUsageEvents(ctx context.Context, sourceID int64) ([]domain.LegacyUsageEvent, error) {
+	rows, err := s.qr.ListLegacyUsageEvents(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list legacy usage events for source %d: %w", sourceID, err)
+	}
+	out := make([]domain.LegacyUsageEvent, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.LegacyUsageEvent{
+			ID:            row.ID,
+			BindingID:     row.BindingID,
+			UsageSourceID: row.UsageSourceID,
+			ModelID:       row.ModelID,
+			Tokens: domain.UsageTokenMetrics{
+				InputTokens:         row.InputTokens,
+				UncachedInputTokens: row.UncachedInputTokens,
+				CacheReadTokens:     row.CacheReadTokens,
+				CacheWriteTokens:    row.CacheWriteTokens,
+				OutputTokens:        row.OutputTokens,
+				ReasoningTokens:     nullInt64Ptr(row.ReasoningTokens),
+			},
+			PricingVersion: row.PricingVersion,
+			SourceEventKey: row.SourceEventKey,
+		})
+	}
+	return out, nil
+}
+
+// ApplyLegacyUsageRepairs atomically CAS-updates one bounded replay result and
+// touches each winning binding once. It never writes usage source cursor state.
+func (s *Store) ApplyLegacyUsageRepairs(
+	ctx context.Context,
+	repairs []domain.LegacyUsageRepair,
+	at time.Time,
+) (int, error) {
+	if len(repairs) == 0 {
+		return 0, nil
+	}
+	if len(repairs) > 256 {
+		return 0, fmt.Errorf("legacy usage repair batch has %d rows, maximum is 256", len(repairs))
+	}
+	if err := s.writeMu.LockContext(ctx); err != nil {
+		return 0, err
+	}
+	defer s.writeMu.Unlock()
+	applied := 0
+	err := s.inTx(ctx, "apply legacy usage repairs", func(q *gen.Queries) error {
+		affectedBindings := make(map[int64]struct{})
+		for _, repair := range repairs {
+			providerID := strings.TrimSpace(repair.ProviderID)
+			if providerID == "" {
+				return errors.New("legacy usage repair provider must be nonempty")
+			}
+			candidate := repair.Candidate
+			bindingID, err := q.UpdateLegacyUsageEvent(ctx, gen.UpdateLegacyUsageEventParams{
+				ProviderID:                  sql.NullString{String: providerID, Valid: true},
+				CacheWrite5mTokens:          ptrInt64ToNull(repair.CacheWrite5mTokens),
+				CacheWrite1hTokens:          ptrInt64ToNull(repair.CacheWrite1hTokens),
+				UncachedInputCostNanos:      ptrInt64ToNull(repair.UncachedInputCostNanos),
+				CacheReadCostNanos:          ptrInt64ToNull(repair.CacheReadCostNanos),
+				CacheWriteCostNanos:         ptrInt64ToNull(repair.CacheWriteCostNanos),
+				OutputCostNanos:             ptrInt64ToNull(repair.OutputCostNanos),
+				EstimatedCostNanos:          ptrInt64ToNull(repair.EstimatedCostNanos),
+				PricingVersion:              repair.PricingVersion,
+				ID:                          candidate.ID,
+				BindingID:                   candidate.BindingID,
+				UsageSourceID:               candidate.UsageSourceID,
+				ExpectedModelID:             candidate.ModelID,
+				ExpectedInputTokens:         candidate.Tokens.InputTokens,
+				ExpectedUncachedInputTokens: candidate.Tokens.UncachedInputTokens,
+				ExpectedCacheReadTokens:     candidate.Tokens.CacheReadTokens,
+				ExpectedCacheWriteTokens:    candidate.Tokens.CacheWriteTokens,
+				ExpectedOutputTokens:        candidate.Tokens.OutputTokens,
+				ExpectedReasoningTokens:     ptrInt64ToNull(candidate.Tokens.ReasoningTokens),
+				ExpectedSourceEventKey:      candidate.SourceEventKey,
+				ExpectedPricingVersion:      candidate.PricingVersion,
+				ExpectedFileIdentity:        repair.ExpectedFileIdentity,
+				ExpectedByteOffset:          repair.ExpectedByteOffset,
+				ExpectedParserStateJson:     repair.ExpectedParserStateJSON,
+				ExpectedSourceUpdatedAt:     repair.ExpectedSourceUpdatedAt,
+			})
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			applied++
+			affectedBindings[bindingID] = struct{}{}
+		}
+		bindingIDs := make([]int64, 0, len(affectedBindings))
+		for bindingID := range affectedBindings {
+			bindingIDs = append(bindingIDs, bindingID)
+		}
+		sort.Slice(bindingIDs, func(left, right int) bool { return bindingIDs[left] < bindingIDs[right] })
+		for _, bindingID := range bindingIDs {
+			if err := q.TouchUsageBinding(ctx, gen.TouchUsageBindingParams{
+				UpdatedAt: timeOrNow(at), ID: bindingID,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return applied, nil
+}
+
 // ListUsageModelAggregates returns model-level aggregate rows for a session.
 func (s *Store) ListUsageModelAggregates(ctx context.Context, sessionID domain.SessionID) ([]domain.UsageModelAggregate, error) {
 	rows, err := s.qr.AggregateUsageBySessionHarnessModel(ctx, sessionID)
@@ -673,6 +918,14 @@ func ptrInt64ToNull(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
+}
+
+func nullInt64Ptr(v sql.NullInt64) *int64 {
+	if !v.Valid {
+		return nil
+	}
+	value := v.Int64
+	return &value
 }
 
 func int64PtrWhen(v int64, ok bool) *int64 {

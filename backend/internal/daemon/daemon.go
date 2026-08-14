@@ -299,7 +299,24 @@ func Run() error {
 	var (
 		usageCollector *usagesvc.Collector
 		usagePipeline  *usagepipeline.Pipeline
+		usagePricing   *usagePricingRuntime
 	)
+	if pricingRuntime, pricingErr := newUsagePricingRuntime(usagePricingRuntimeConfig{
+		DataDir: cfg.DataDir,
+		Store:   store,
+		Logger:  log,
+	}); pricingErr != nil {
+		log.Warn("usage pricing disabled", "err", pricingErr)
+	} else {
+		usagePricing = pricingRuntime
+		if pricingErr := pricingRuntime.Start(ctx); pricingErr != nil {
+			log.Warn("usage pricing startup failed; continuing without catalog enrichment", "err", pricingErr)
+		}
+		defer func() {
+			stop()
+			usagePricing.Wait()
+		}()
+	}
 	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
 		log.Warn("usage collection disabled", "err", rootsErr)
 	} else {
@@ -313,7 +330,14 @@ func Run() error {
 				usagePipeline.NotifyInventoryChanged()
 			}
 		})
-		ingestor := usagepipeline.NewIngestor(store, usagepipeline.IngestorConfig{})
+		ingestorConfig := usagepipeline.IngestorConfig{}
+		if usagePricing != nil {
+			ingestorConfig.Pricing = usagePricing.Manager()
+			ingestorConfig.OnPricingError = func(err error) {
+				log.Warn("usage event pricing failed", "err", err)
+			}
+		}
+		ingestor := usagepipeline.NewIngestor(store, ingestorConfig)
 		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
 			roots.ClaudeProjects,
 			roots.CodexSessions,
@@ -521,6 +545,9 @@ func Run() error {
 	chatCancel()
 	if usageDone != nil {
 		<-usageDone
+	}
+	if usagePricing != nil {
+		usagePricing.Wait()
 	}
 	lcStack.Stop()
 	// Tear the tailnet proxy down before the listener it fronts. `tailscale

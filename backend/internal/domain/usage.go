@@ -137,6 +137,64 @@ type ModelUsageEvent struct {
 	SourceEventKey         string
 }
 
+// UsageCostCandidate is one still-total-null event selected for an exact
+// provider catalog attempt. Source facts remain immutable and are carried back
+// to storage as compare-and-swap guards.
+type UsageCostCandidate struct {
+	ID                 int64
+	BindingID          int64
+	ProviderID         string
+	ModelID            string
+	Tokens             UsageTokenMetrics
+	CacheWrite5mTokens *int64
+	CacheWrite1hTokens *int64
+	PricingVersion     string
+	SourceEventKey     string
+}
+
+// UsageCostUpdate carries one candidate's immutable compare-and-swap facts and
+// the result of attempting it against a newer provider catalog version.
+type UsageCostUpdate struct {
+	Candidate              UsageCostCandidate
+	UncachedInputCostNanos *int64
+	CacheReadCostNanos     *int64
+	CacheWriteCostNanos    *int64
+	OutputCostNanos        *int64
+	EstimatedCostNanos     *int64
+	PricingVersion         string
+}
+
+// LegacyUsageEvent is one provider-null event selected for transcript
+// attribution repair. Its source and generic facts are immutable CAS guards.
+type LegacyUsageEvent struct {
+	ID             int64
+	BindingID      int64
+	UsageSourceID  int64
+	ModelID        string
+	Tokens         UsageTokenMetrics
+	PricingVersion string
+	SourceEventKey string
+}
+
+// LegacyUsageRepair carries transcript-derived attribution and the estimate
+// made from the same fenced pricing snapshot.
+type LegacyUsageRepair struct {
+	Candidate               LegacyUsageEvent
+	ExpectedFileIdentity    string
+	ExpectedByteOffset      int64
+	ExpectedParserStateJSON string
+	ExpectedSourceUpdatedAt time.Time
+	ProviderID              string
+	CacheWrite5mTokens      *int64
+	CacheWrite1hTokens      *int64
+	UncachedInputCostNanos  *int64
+	CacheReadCostNanos      *int64
+	CacheWriteCostNanos     *int64
+	OutputCostNanos         *int64
+	EstimatedCostNanos      *int64
+	PricingVersion          string
+}
+
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {

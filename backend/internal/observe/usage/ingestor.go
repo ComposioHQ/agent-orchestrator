@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 )
 
@@ -37,6 +38,8 @@ type IngestorConfig struct {
 	RecordBytes      int
 	FinalizationWait time.Duration
 	Clock            func() time.Time
+	Pricing          *pricing.Manager
+	OnPricingError   func(error)
 }
 
 // IngestResult tells the coordinator whether another immediate chunk, source
@@ -59,6 +62,8 @@ type Ingestor struct {
 	recordBytes      int
 	finalizationWait time.Duration
 	now              func() time.Time
+	pricing          *pricing.Manager
+	onPricingError   func(error)
 	openTranscript   func(string) (*os.File, error)
 	afterRead        func()
 }
@@ -77,12 +82,17 @@ func NewIngestor(store ingestorStore, cfg IngestorConfig) *Ingestor {
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
+	if cfg.OnPricingError == nil {
+		cfg.OnPricingError = func(error) {}
+	}
 	return &Ingestor{
 		store:            store,
 		chunkBytes:       cfg.ChunkBytes,
 		recordBytes:      cfg.RecordBytes,
 		finalizationWait: cfg.FinalizationWait,
 		now:              cfg.Clock,
+		pricing:          cfg.Pricing,
+		onPricingError:   cfg.OnPricingError,
 		openTranscript:   os.Open,
 	}
 }
@@ -286,14 +296,45 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 			errors.New("transcript changed during ingestion"),
 		)
 	}
-	if err := i.store.ApplyUsageChunk(
-		ctx,
-		source.Source.ID,
-		source.Source.ByteOffset,
-		source.Source.UpdatedAt,
-		parsed.Cursor,
-		parsed.Events,
-	); err != nil {
+	apply := func() error {
+		return i.store.ApplyUsageChunk(
+			ctx,
+			source.Source.ID,
+			source.Source.ByteOffset,
+			source.Source.UpdatedAt,
+			parsed.Cursor,
+			parsed.Events,
+		)
+	}
+	if i.pricing != nil {
+		apply = func() error {
+			return i.pricing.WithSnapshot(ctx, func(snapshot *pricing.Snapshot) error {
+				for index := range parsed.Events {
+					estimate, estimateErr := snapshot.Estimate(parsed.Events[index])
+					if estimateErr != nil {
+						parsed.Events[index].PricingVersion = snapshot.ProviderVersion(parsed.Events[index].ProviderID)
+						i.onPricingError(fmt.Errorf("estimate usage event %q: %w", parsed.Events[index].SourceEventKey, estimateErr))
+						continue
+					}
+					parsed.Events[index].UncachedInputCostNanos = estimate.UncachedInputNanos
+					parsed.Events[index].CacheReadCostNanos = estimate.CacheReadNanos
+					parsed.Events[index].CacheWriteCostNanos = estimate.CacheWriteNanos
+					parsed.Events[index].OutputCostNanos = estimate.OutputNanos
+					parsed.Events[index].EstimatedCostNanos = estimate.TotalNanos
+					parsed.Events[index].PricingVersion = estimate.PricingVersion
+				}
+				return i.store.ApplyUsageChunk(
+					ctx,
+					source.Source.ID,
+					source.Source.ByteOffset,
+					source.Source.UpdatedAt,
+					parsed.Cursor,
+					parsed.Events,
+				)
+			})
+		}
+	}
+	if err := apply(); err != nil {
 		if errors.Is(err, domain.ErrUsageSourceEventConflict) {
 			if _, markErr := i.store.MarkUsageSourceState(
 				ctx,

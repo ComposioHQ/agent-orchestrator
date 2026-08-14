@@ -358,6 +358,126 @@ INSERT INTO model_usage_events (
 -- name: TouchUsageBinding :exec
 UPDATE usage_bindings SET updated_at = ? WHERE id = ?;
 
+-- name: ListUsageCostCandidates :many
+SELECT
+    id,
+    binding_id,
+    provider_id,
+    model_id,
+    input_tokens,
+    uncached_input_tokens,
+    cache_read_tokens,
+    cache_write_tokens,
+    output_tokens,
+    reasoning_tokens,
+    cache_write_5m_tokens,
+    cache_write_1h_tokens,
+    pricing_version,
+    source_event_key
+FROM model_usage_events
+WHERE provider_id IS NOT NULL
+  AND CASE lower(trim(provider_id))
+        WHEN 'z.ai' THEN 'zai'
+        ELSE lower(trim(provider_id))
+      END = sqlc.arg(provider_id)
+  AND estimated_cost_nanos IS NULL
+  AND pricing_version <> sqlc.arg(pricing_version)
+ORDER BY id
+LIMIT 256;
+
+-- name: UpdateUsageCostCandidate :one
+UPDATE model_usage_events
+SET uncached_input_cost_nanos = sqlc.narg(uncached_input_cost_nanos),
+    cache_read_cost_nanos = sqlc.narg(cache_read_cost_nanos),
+    cache_write_cost_nanos = sqlc.narg(cache_write_cost_nanos),
+    output_cost_nanos = sqlc.narg(output_cost_nanos),
+    estimated_cost_nanos = sqlc.narg(estimated_cost_nanos),
+    pricing_version = sqlc.arg(attempted_pricing_version)
+WHERE id = sqlc.arg(id)
+  AND binding_id = sqlc.arg(binding_id)
+  AND provider_id = sqlc.arg(expected_provider_id)
+  AND model_id = sqlc.arg(expected_model_id)
+  AND input_tokens = sqlc.arg(expected_input_tokens)
+  AND uncached_input_tokens = sqlc.arg(expected_uncached_input_tokens)
+  AND cache_read_tokens = sqlc.arg(expected_cache_read_tokens)
+  AND cache_write_tokens = sqlc.arg(expected_cache_write_tokens)
+  AND output_tokens = sqlc.arg(expected_output_tokens)
+  AND reasoning_tokens IS sqlc.narg(expected_reasoning_tokens)
+  AND cache_write_5m_tokens IS sqlc.narg(expected_cache_write_5m_tokens)
+  AND cache_write_1h_tokens IS sqlc.narg(expected_cache_write_1h_tokens)
+  AND source_event_key = sqlc.arg(expected_source_event_key)
+  AND pricing_version = sqlc.arg(expected_pricing_version)
+  AND estimated_cost_nanos IS NULL
+RETURNING binding_id;
+
+-- name: ListLegacyUsageSourceIDs :many
+SELECT DISTINCT us.id
+FROM usage_sources us
+JOIN model_usage_events mue ON mue.usage_source_id = us.id
+WHERE mue.provider_id IS NULL
+  AND mue.estimated_cost_nanos IS NULL
+ORDER BY us.id;
+
+-- name: ListLegacyUsageEvents :many
+SELECT
+    id,
+    binding_id,
+    usage_source_id,
+    model_id,
+    input_tokens,
+    uncached_input_tokens,
+    cache_read_tokens,
+    cache_write_tokens,
+    output_tokens,
+    reasoning_tokens,
+    pricing_version,
+    source_event_key
+FROM model_usage_events
+WHERE usage_source_id = sqlc.arg(usage_source_id)
+  AND provider_id IS NULL
+  AND estimated_cost_nanos IS NULL
+ORDER BY id;
+
+-- name: UpdateLegacyUsageEvent :one
+UPDATE model_usage_events
+SET provider_id = sqlc.arg(provider_id),
+    cache_write_5m_tokens = sqlc.narg(cache_write_5m_tokens),
+    cache_write_1h_tokens = sqlc.narg(cache_write_1h_tokens),
+    uncached_input_cost_nanos = sqlc.narg(uncached_input_cost_nanos),
+    cache_read_cost_nanos = sqlc.narg(cache_read_cost_nanos),
+    cache_write_cost_nanos = sqlc.narg(cache_write_cost_nanos),
+    output_cost_nanos = sqlc.narg(output_cost_nanos),
+    estimated_cost_nanos = sqlc.narg(estimated_cost_nanos),
+    pricing_version = sqlc.arg(pricing_version)
+WHERE model_usage_events.id = sqlc.arg(id)
+  AND model_usage_events.binding_id = sqlc.arg(binding_id)
+  AND model_usage_events.usage_source_id = sqlc.arg(usage_source_id)
+  AND model_usage_events.provider_id IS NULL
+  AND model_usage_events.model_id = sqlc.arg(expected_model_id)
+  AND model_usage_events.input_tokens = sqlc.arg(expected_input_tokens)
+  AND model_usage_events.uncached_input_tokens = sqlc.arg(expected_uncached_input_tokens)
+  AND model_usage_events.cache_read_tokens = sqlc.arg(expected_cache_read_tokens)
+  AND model_usage_events.cache_write_tokens = sqlc.arg(expected_cache_write_tokens)
+  AND model_usage_events.output_tokens = sqlc.arg(expected_output_tokens)
+  AND model_usage_events.reasoning_tokens IS sqlc.narg(expected_reasoning_tokens)
+  AND model_usage_events.source_event_key = sqlc.arg(expected_source_event_key)
+  AND model_usage_events.pricing_version = sqlc.arg(expected_pricing_version)
+  AND model_usage_events.estimated_cost_nanos IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM usage_sources source
+      WHERE source.id = model_usage_events.usage_source_id
+        AND source.file_identity = sqlc.arg(expected_file_identity)
+        AND source.byte_offset = sqlc.arg(expected_byte_offset)
+        AND source.parser_state_json = sqlc.arg(expected_parser_state_json)
+        AND source.updated_at = sqlc.arg(expected_source_updated_at)
+        AND NOT (
+            source.state = 'complete'
+            AND source.last_error_code = 'artifact_replaced'
+        )
+  )
+RETURNING binding_id;
+
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
     ub.harness,

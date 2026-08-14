@@ -661,6 +661,110 @@ func (q *Queries) ListLatestRetiredCodexReplacementClaimsByPath(ctx context.Cont
 	return items, nil
 }
 
+const listLegacyUsageEvents = `-- name: ListLegacyUsageEvents :many
+SELECT
+    id,
+    binding_id,
+    usage_source_id,
+    model_id,
+    input_tokens,
+    uncached_input_tokens,
+    cache_read_tokens,
+    cache_write_tokens,
+    output_tokens,
+    reasoning_tokens,
+    pricing_version,
+    source_event_key
+FROM model_usage_events
+WHERE usage_source_id = ?1
+  AND provider_id IS NULL
+  AND estimated_cost_nanos IS NULL
+ORDER BY id
+`
+
+type ListLegacyUsageEventsRow struct {
+	ID                  int64
+	BindingID           int64
+	UsageSourceID       int64
+	ModelID             string
+	InputTokens         int64
+	UncachedInputTokens int64
+	CacheReadTokens     int64
+	CacheWriteTokens    int64
+	OutputTokens        int64
+	ReasoningTokens     sql.NullInt64
+	PricingVersion      string
+	SourceEventKey      string
+}
+
+func (q *Queries) ListLegacyUsageEvents(ctx context.Context, usageSourceID int64) ([]ListLegacyUsageEventsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listLegacyUsageEvents, usageSourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLegacyUsageEventsRow{}
+	for rows.Next() {
+		var i ListLegacyUsageEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.UsageSourceID,
+			&i.ModelID,
+			&i.InputTokens,
+			&i.UncachedInputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.OutputTokens,
+			&i.ReasoningTokens,
+			&i.PricingVersion,
+			&i.SourceEventKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLegacyUsageSourceIDs = `-- name: ListLegacyUsageSourceIDs :many
+SELECT DISTINCT us.id
+FROM usage_sources us
+JOIN model_usage_events mue ON mue.usage_source_id = us.id
+WHERE mue.provider_id IS NULL
+  AND mue.estimated_cost_nanos IS NULL
+ORDER BY us.id
+`
+
+func (q *Queries) ListLegacyUsageSourceIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listLegacyUsageSourceIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUsageBindingsForCodexParent = `-- name: ListUsageBindingsForCodexParent :many
 SELECT DISTINCT ub.id, ub.session_id, ub.harness, ub.native_root_id, ub.initial_model_id, ub.state, ub.last_error_code, ub.updated_at, ub.provider_hint
 FROM usage_bindings ub
@@ -745,6 +849,94 @@ func (q *Queries) ListUsageBindingsForSession(ctx context.Context, sessionID dom
 			&i.LastErrorCode,
 			&i.UpdatedAt,
 			&i.ProviderHint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsageCostCandidates = `-- name: ListUsageCostCandidates :many
+SELECT
+    id,
+    binding_id,
+    provider_id,
+    model_id,
+    input_tokens,
+    uncached_input_tokens,
+    cache_read_tokens,
+    cache_write_tokens,
+    output_tokens,
+    reasoning_tokens,
+    cache_write_5m_tokens,
+    cache_write_1h_tokens,
+    pricing_version,
+    source_event_key
+FROM model_usage_events
+WHERE provider_id IS NOT NULL
+  AND CASE lower(trim(provider_id))
+        WHEN 'z.ai' THEN 'zai'
+        ELSE lower(trim(provider_id))
+      END = ?1
+  AND estimated_cost_nanos IS NULL
+  AND pricing_version <> ?2
+ORDER BY id
+LIMIT 256
+`
+
+type ListUsageCostCandidatesParams struct {
+	ProviderID     sql.NullString
+	PricingVersion string
+}
+
+type ListUsageCostCandidatesRow struct {
+	ID                  int64
+	BindingID           int64
+	ProviderID          sql.NullString
+	ModelID             string
+	InputTokens         int64
+	UncachedInputTokens int64
+	CacheReadTokens     int64
+	CacheWriteTokens    int64
+	OutputTokens        int64
+	ReasoningTokens     sql.NullInt64
+	CacheWrite5mTokens  sql.NullInt64
+	CacheWrite1hTokens  sql.NullInt64
+	PricingVersion      string
+	SourceEventKey      string
+}
+
+func (q *Queries) ListUsageCostCandidates(ctx context.Context, arg ListUsageCostCandidatesParams) ([]ListUsageCostCandidatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listUsageCostCandidates, arg.ProviderID, arg.PricingVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUsageCostCandidatesRow{}
+	for rows.Next() {
+		var i ListUsageCostCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BindingID,
+			&i.ProviderID,
+			&i.ModelID,
+			&i.InputTokens,
+			&i.UncachedInputTokens,
+			&i.CacheReadTokens,
+			&i.CacheWriteTokens,
+			&i.OutputTokens,
+			&i.ReasoningTokens,
+			&i.CacheWrite5mTokens,
+			&i.CacheWrite1hTokens,
+			&i.PricingVersion,
+			&i.SourceEventKey,
 		); err != nil {
 			return nil, err
 		}
@@ -954,6 +1146,108 @@ func (q *Queries) TouchUsageBinding(ctx context.Context, arg TouchUsageBindingPa
 	return err
 }
 
+const updateLegacyUsageEvent = `-- name: UpdateLegacyUsageEvent :one
+UPDATE model_usage_events
+SET provider_id = ?1,
+    cache_write_5m_tokens = ?2,
+    cache_write_1h_tokens = ?3,
+    uncached_input_cost_nanos = ?4,
+    cache_read_cost_nanos = ?5,
+    cache_write_cost_nanos = ?6,
+    output_cost_nanos = ?7,
+    estimated_cost_nanos = ?8,
+    pricing_version = ?9
+WHERE model_usage_events.id = ?10
+  AND model_usage_events.binding_id = ?11
+  AND model_usage_events.usage_source_id = ?12
+  AND model_usage_events.provider_id IS NULL
+  AND model_usage_events.model_id = ?13
+  AND model_usage_events.input_tokens = ?14
+  AND model_usage_events.uncached_input_tokens = ?15
+  AND model_usage_events.cache_read_tokens = ?16
+  AND model_usage_events.cache_write_tokens = ?17
+  AND model_usage_events.output_tokens = ?18
+  AND model_usage_events.reasoning_tokens IS ?19
+  AND model_usage_events.source_event_key = ?20
+  AND model_usage_events.pricing_version = ?21
+  AND model_usage_events.estimated_cost_nanos IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM usage_sources source
+      WHERE source.id = model_usage_events.usage_source_id
+        AND source.file_identity = ?22
+        AND source.byte_offset = ?23
+        AND source.parser_state_json = ?24
+        AND source.updated_at = ?25
+        AND NOT (
+            source.state = 'complete'
+            AND source.last_error_code = 'artifact_replaced'
+        )
+  )
+RETURNING binding_id
+`
+
+type UpdateLegacyUsageEventParams struct {
+	ProviderID                  sql.NullString
+	CacheWrite5mTokens          sql.NullInt64
+	CacheWrite1hTokens          sql.NullInt64
+	UncachedInputCostNanos      sql.NullInt64
+	CacheReadCostNanos          sql.NullInt64
+	CacheWriteCostNanos         sql.NullInt64
+	OutputCostNanos             sql.NullInt64
+	EstimatedCostNanos          sql.NullInt64
+	PricingVersion              string
+	ID                          int64
+	BindingID                   int64
+	UsageSourceID               int64
+	ExpectedModelID             string
+	ExpectedInputTokens         int64
+	ExpectedUncachedInputTokens int64
+	ExpectedCacheReadTokens     int64
+	ExpectedCacheWriteTokens    int64
+	ExpectedOutputTokens        int64
+	ExpectedReasoningTokens     sql.NullInt64
+	ExpectedSourceEventKey      string
+	ExpectedPricingVersion      string
+	ExpectedFileIdentity        string
+	ExpectedByteOffset          int64
+	ExpectedParserStateJson     string
+	ExpectedSourceUpdatedAt     time.Time
+}
+
+func (q *Queries) UpdateLegacyUsageEvent(ctx context.Context, arg UpdateLegacyUsageEventParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, updateLegacyUsageEvent,
+		arg.ProviderID,
+		arg.CacheWrite5mTokens,
+		arg.CacheWrite1hTokens,
+		arg.UncachedInputCostNanos,
+		arg.CacheReadCostNanos,
+		arg.CacheWriteCostNanos,
+		arg.OutputCostNanos,
+		arg.EstimatedCostNanos,
+		arg.PricingVersion,
+		arg.ID,
+		arg.BindingID,
+		arg.UsageSourceID,
+		arg.ExpectedModelID,
+		arg.ExpectedInputTokens,
+		arg.ExpectedUncachedInputTokens,
+		arg.ExpectedCacheReadTokens,
+		arg.ExpectedCacheWriteTokens,
+		arg.ExpectedOutputTokens,
+		arg.ExpectedReasoningTokens,
+		arg.ExpectedSourceEventKey,
+		arg.ExpectedPricingVersion,
+		arg.ExpectedFileIdentity,
+		arg.ExpectedByteOffset,
+		arg.ExpectedParserStateJson,
+		arg.ExpectedSourceUpdatedAt,
+	)
+	var binding_id int64
+	err := row.Scan(&binding_id)
+	return binding_id, err
+}
+
 const updateUsageBinding = `-- name: UpdateUsageBinding :execrows
 UPDATE usage_bindings SET
     state = CASE
@@ -987,6 +1281,83 @@ func (q *Queries) UpdateUsageBinding(ctx context.Context, arg UpdateUsageBinding
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const updateUsageCostCandidate = `-- name: UpdateUsageCostCandidate :one
+UPDATE model_usage_events
+SET uncached_input_cost_nanos = ?1,
+    cache_read_cost_nanos = ?2,
+    cache_write_cost_nanos = ?3,
+    output_cost_nanos = ?4,
+    estimated_cost_nanos = ?5,
+    pricing_version = ?6
+WHERE id = ?7
+  AND binding_id = ?8
+  AND provider_id = ?9
+  AND model_id = ?10
+  AND input_tokens = ?11
+  AND uncached_input_tokens = ?12
+  AND cache_read_tokens = ?13
+  AND cache_write_tokens = ?14
+  AND output_tokens = ?15
+  AND reasoning_tokens IS ?16
+  AND cache_write_5m_tokens IS ?17
+  AND cache_write_1h_tokens IS ?18
+  AND source_event_key = ?19
+  AND pricing_version = ?20
+  AND estimated_cost_nanos IS NULL
+RETURNING binding_id
+`
+
+type UpdateUsageCostCandidateParams struct {
+	UncachedInputCostNanos      sql.NullInt64
+	CacheReadCostNanos          sql.NullInt64
+	CacheWriteCostNanos         sql.NullInt64
+	OutputCostNanos             sql.NullInt64
+	EstimatedCostNanos          sql.NullInt64
+	AttemptedPricingVersion     string
+	ID                          int64
+	BindingID                   int64
+	ExpectedProviderID          sql.NullString
+	ExpectedModelID             string
+	ExpectedInputTokens         int64
+	ExpectedUncachedInputTokens int64
+	ExpectedCacheReadTokens     int64
+	ExpectedCacheWriteTokens    int64
+	ExpectedOutputTokens        int64
+	ExpectedReasoningTokens     sql.NullInt64
+	ExpectedCacheWrite5mTokens  sql.NullInt64
+	ExpectedCacheWrite1hTokens  sql.NullInt64
+	ExpectedSourceEventKey      string
+	ExpectedPricingVersion      string
+}
+
+func (q *Queries) UpdateUsageCostCandidate(ctx context.Context, arg UpdateUsageCostCandidateParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, updateUsageCostCandidate,
+		arg.UncachedInputCostNanos,
+		arg.CacheReadCostNanos,
+		arg.CacheWriteCostNanos,
+		arg.OutputCostNanos,
+		arg.EstimatedCostNanos,
+		arg.AttemptedPricingVersion,
+		arg.ID,
+		arg.BindingID,
+		arg.ExpectedProviderID,
+		arg.ExpectedModelID,
+		arg.ExpectedInputTokens,
+		arg.ExpectedUncachedInputTokens,
+		arg.ExpectedCacheReadTokens,
+		arg.ExpectedCacheWriteTokens,
+		arg.ExpectedOutputTokens,
+		arg.ExpectedReasoningTokens,
+		arg.ExpectedCacheWrite5mTokens,
+		arg.ExpectedCacheWrite1hTokens,
+		arg.ExpectedSourceEventKey,
+		arg.ExpectedPricingVersion,
+	)
+	var binding_id int64
+	err := row.Scan(&binding_id)
+	return binding_id, err
 }
 
 const updateUsageSourceCursor = `-- name: UpdateUsageSourceCursor :exec
