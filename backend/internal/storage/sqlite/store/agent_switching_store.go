@@ -544,6 +544,11 @@ func (s *Store) ActivateAgentSwitchTarget(ctx context.Context, activation domain
 	if n != 1 {
 		return false, nil
 	}
+	if err := q.ResetConversationAgentOverridesForSession(ctx, gen.ResetConversationAgentOverridesForSessionParams{
+		UpdatedAt: activation.ActivatedAt, CurrentSessionID: &activation.SessionID,
+	}); err != nil {
+		return false, fmt.Errorf("activate agent switch target %s: reset conversation agent overrides: %w", activation.SwitchID, err)
+	}
 	targetRef := activation.TargetNativeSessionRef
 	n, err = q.MarkAgentSwitchTargetReady(ctx, gen.MarkAgentSwitchTargetReadyParams{
 		ActivatedAt: activation.ActivatedAt, ID: activation.SwitchID,
