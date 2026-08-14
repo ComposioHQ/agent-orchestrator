@@ -53,7 +53,6 @@ class CloudTerminalConnection {
   private idleCloseTimer: number | undefined;
   private connectInFlight = false;
   private closed = false;
-  private hasConnected = false;
   private retained = false;
   private retryAttempt = 0;
   private pendingInput: PendingInput[] = [];
@@ -78,6 +77,7 @@ class CloudTerminalConnection {
       this.idleCloseTimer = undefined;
     }
     this.listeners.add(listener);
+    this.reconnectNow();
     listener({ type: "state", state: this.state });
     for (const data of this.history) listener({ type: "output", data });
     return () => {
@@ -144,7 +144,6 @@ class CloudTerminalConnection {
   }
 
   private setState(state: CloudTerminalConnectionState) {
-    if (this.hasConnected && state !== "connected") return;
     this.state = state;
     this.emit({ type: "state", state });
   }
@@ -189,7 +188,6 @@ class CloudTerminalConnection {
       socket.addEventListener("open", () => {
         if (this.socket !== socket || this.closed) return;
         this.retryAttempt = 0;
-        this.hasConnected = true;
         this.setState("connected");
         this.sendResize();
         this.flushPendingInput();
@@ -298,6 +296,9 @@ class CloudTerminalConnection {
 
   private scheduleReconnect() {
     if (this.closed || this.reconnectTimer !== undefined) return;
+    // A retained agent stream preserves output while its VM is already alive,
+    // but must not wake every idle session merely because the dashboard is open.
+    if (this.kind === "agent" && this.retained && this.listeners.size === 0) return;
     const backoff = Math.min(
       1_000 * 2 ** this.retryAttempt,
       reconnectMaxDelayMs,

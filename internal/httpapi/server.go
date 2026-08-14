@@ -81,6 +81,7 @@ type Store interface {
 	FailWorkerRequest(context.Context, string, string, string, string, int64, int, string, string) error
 	IssueTerminalTicket(context.Context, domain.Principal, string, string, string, time.Duration) (string, []string, error)
 	OpenTerminal(context.Context, string, string, time.Duration) (domain.TerminalSession, error)
+	RefreshTerminalInteraction(context.Context, domain.TerminalSession, time.Duration) error
 	QueueTerminalInput(context.Context, domain.TerminalSession, string, []byte) error
 	QueueTerminalResize(context.Context, domain.TerminalSession, uint16, uint16) error
 	CloseTerminal(context.Context, domain.TerminalSession) error

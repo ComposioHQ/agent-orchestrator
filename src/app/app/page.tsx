@@ -521,7 +521,9 @@ export function CloudWorkspace() {
     retainCloudSessionConnections(
       client,
       organizationId,
-      sessions.filter((session) => !session.isTerminated).map(({ id }) => id),
+      sessions
+        .filter((session) => !session.isTerminated && session.runtimeConnected)
+        .map(({ id }) => id),
     );
   }, [client, organizationId, sessions]);
 
@@ -820,10 +822,12 @@ export function CloudWorkspace() {
   const connectGitHubOrganization = async (existingPopup?: Window | null) => {
     const before = new Map(
       github.status === "available"
-        ? github.installations.map(({ githubInstallationId, updatedAt }) => [
-            githubInstallationId,
-            updatedAt,
-          ])
+        ? github.installations
+            .filter(({ accountType }) => accountType === "Organization")
+            .map(({ githubInstallationId, updatedAt }) => [
+              githubInstallationId,
+              updatedAt,
+            ])
         : [],
     );
     const beforeUserInstallations = new Map(
@@ -854,12 +858,14 @@ export function CloudWorkspace() {
     }
 
     const deadline = Date.now() + 2 * 60 * 1000;
+    let popupClosedAt: number | undefined;
     let connectedInstallation: GitHubInstallation | undefined;
     let claimedExistingInstallation = false;
     while (Date.now() < deadline) {
       const installations = await client.listGitHubInstallations(organizationId);
       connectedInstallation = installations.find(
-        ({ githubInstallationId, status, updatedAt }) =>
+        ({ accountType, githubInstallationId, status, updatedAt }) =>
+          accountType === "Organization" &&
           status === "active" &&
           (!before.has(githubInstallationId) ||
             before.get(githubInstallationId) !== updatedAt),
@@ -893,8 +899,11 @@ export function CloudWorkspace() {
         return;
       }
       if (popup.closed) {
-        await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
-        return;
+        popupClosedAt ??= Date.now();
+        if (Date.now() - popupClosedAt >= 10_000) {
+          await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
+          return;
+        }
       }
       await delay(500);
     }
@@ -927,7 +936,11 @@ export function CloudWorkspace() {
         popup = await connectGitHubUser();
       }
       const hasInstalls =
-        github.status === "available" && github.installations.length > 0;
+        github.status === "available" &&
+        github.installations.some(
+          ({ accountType, status }) =>
+            accountType === "Organization" && status !== "removed",
+        );
       if (!hasInstalls) {
         await connectGitHubOrganization(popup);
         return;

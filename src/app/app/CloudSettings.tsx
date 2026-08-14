@@ -440,7 +440,9 @@ function GitHubSettings({
   const orgInstallations =
     github.status === "available"
       ? github.installations.filter(
-          (installation) => installation.status !== "removed",
+          (installation) =>
+            installation.accountType === "Organization" &&
+            installation.status !== "removed",
         )
       : [];
   const hasOrgAccess = orgInstallations.length > 0;

@@ -26,11 +26,14 @@ export function CloudTerminal({
   const termRef = useRef<Terminal | null>(null);
   const [connection, setConnection] =
     useState<CloudTerminalConnectionState>("connecting");
+  const [hasConnected, setHasConnected] = useState(false);
   const [notice, setNotice] = useState("");
 
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    setConnection("connecting");
+    setHasConnected(false);
 
     const terminal = new Terminal({
       convertEol: false,
@@ -65,6 +68,7 @@ export function CloudTerminal({
     const unsubscribe = persistentConnection.subscribe((event) => {
       if (event.type === "state") {
         setConnection(event.state);
+        if (event.state === "connected") setHasConnected(true);
       } else if (event.type === "reset") {
         terminal.reset();
         terminal.clear();
@@ -174,7 +178,7 @@ export function CloudTerminal({
 
   return (
     <div className="relative min-h-0 flex-1 bg-[var(--color-bg-terminal-opaque)]">
-      {connection !== "connected" ? (
+      {connection !== "connected" && !hasConnected ? (
         <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-[var(--color-bg-terminal-opaque)]/92">
           <div className="text-center">
             <div className="relative mx-auto mb-3 size-8">
@@ -189,6 +193,11 @@ export function CloudTerminal({
                   : "Terminal unavailable"}
             </p>
           </div>
+        </div>
+      ) : null}
+      {connection !== "connected" && hasConnected ? (
+        <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)]/95 px-2 py-1 text-[10px] text-[var(--muted-foreground)] shadow-sm">
+          Reconnecting terminal…
         </div>
       ) : null}
       {notice ? (

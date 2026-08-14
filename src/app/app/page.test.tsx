@@ -771,9 +771,7 @@ it("lets a connected GitHub user add another organization from settings", async 
 
   fireEvent.click(screen.getByRole("button", { name: "Providers" }));
   expect(screen.getAllByText("amoreX").length).toBeGreaterThan(0);
-  expect(
-    screen.getByRole("button", { name: "Manage organization repository access" }),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Connect organization" })).toBeVisible();
   expect(screen.queryByText("No GitHub installation")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Sync" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Disconnect" })).toBeVisible();
@@ -824,6 +822,77 @@ it("recognizes a reconfigured GitHub installation and closes the popup", async (
   fireEvent.click(screen.getByRole("button", { name: "Manage organization repository access" }));
 
   await waitFor(() => expect(mocks.syncGitHubInstallation).toHaveBeenCalledWith("org-1", "inst-1"));
+  expect(popup.close).toHaveBeenCalled();
+});
+
+it("continues from account authorization to organization installation when only a personal installation exists", async () => {
+  const personalInstallation = {
+    id: "inst-personal",
+    githubInstallationId: "101",
+    accountLogin: "amoreX",
+    accountType: "User",
+    status: "active",
+    repositorySelection: "all",
+    syncStatus: "ready",
+    createdAt: "2026-08-12T00:00:00Z",
+    updatedAt: "2026-08-12T00:00:00Z",
+  };
+  const organizationInstallation = {
+    ...personalInstallation,
+    id: "inst-org",
+    githubInstallationId: "202",
+    accountLogin: "rae-app",
+    accountType: "Organization",
+    updatedAt: "2026-08-12T00:01:00Z",
+  };
+  const connectedUser = {
+    connected: true,
+    login: "amoreX",
+    installations: [
+      {
+        githubInstallationId: "101",
+        accountLogin: "amoreX",
+        accountType: "User",
+        repositorySelection: "all",
+        canCreateRepository: true,
+      },
+    ],
+  };
+  mocks.startGitHubUserAuthorization.mockResolvedValue({
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+  });
+  mocks.getGitHubUserConnection
+    .mockResolvedValueOnce({ connected: false, installations: [] })
+    .mockResolvedValue(connectedUser);
+  mocks.listGitHubInstallations
+    .mockResolvedValueOnce([personalInstallation])
+    .mockResolvedValue([organizationInstallation]);
+  const popup = {
+    closed: false,
+    close: vi.fn(),
+    location: { assign: vi.fn() },
+  };
+  vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Command palette" })).getByRole(
+      "option",
+      { name: "Settings" },
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Providers" }));
+  fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+
+  await waitFor(() => expect(mocks.startGitHubInstallation).toHaveBeenCalledWith("org-1"));
+  expect(popup.location.assign).toHaveBeenCalledWith(
+    "https://github.com/apps/ao/installations/new",
+  );
+  await waitFor(() =>
+    expect(mocks.syncGitHubInstallation).toHaveBeenCalledWith("org-1", "inst-org"),
+  );
   expect(popup.close).toHaveBeenCalled();
 });
 

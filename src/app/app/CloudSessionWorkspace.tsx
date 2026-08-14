@@ -220,17 +220,11 @@ export function CloudSessionWorkspace({
 
   useEffect(() => {
     void loadDiff();
-    const timer = window.setInterval(() => void loadDiff(), 2_000);
-    return () => window.clearInterval(timer);
   }, [organizationId, session.id, session.runtimeConnected, projectRuntimeKey]);
 
   useEffect(() => {
-    if (tab === "files") {
-      if (entries.length === 0) void loadDirectory("");
-      const timer = window.setInterval(() => void loadDirectory(directory), 5_000);
-      return () => window.clearInterval(timer);
-    }
-  }, [tab, directory]);
+    if (tab === "files" && entries.length === 0) void loadDirectory("");
+  }, [tab, session.id]);
 
   useEffect(() => {
     void loadReviews();

@@ -336,6 +336,7 @@ func (s *Store) PauseIfIdle(
 				AND org_id = $2
 				AND desired_state = 'running'
 				AND observed_state = 'running'
+				AND (interactive_until IS NULL OR interactive_until <= now())
 				AND EXISTS (
 					SELECT 1 FROM ao_sessions
 					WHERE ao_sessions.id = $1

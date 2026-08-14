@@ -112,6 +112,25 @@ it("uses the interactive agent terminal as the primary session surface", async (
   expect(await screen.findByText("README.md")).toBeVisible();
 });
 
+it("does not poll workspace diff or files while the inspector is open", async () => {
+  const intervalSpy = vi.spyOn(window, "setInterval");
+
+  render(
+    <CloudSessionWorkspace
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
+      organizationId="org-1"
+      session={session}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+  expect(await screen.findByText("README.md")).toBeVisible();
+  expect(intervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 2_000);
+  expect(intervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 5_000);
+
+  intervalSpy.mockRestore();
+});
+
 it("opens and edits repository files in the right inspector", async () => {
   render(
     <CloudSessionWorkspace

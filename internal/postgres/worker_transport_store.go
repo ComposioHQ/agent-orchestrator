@@ -332,9 +332,12 @@ func (s *Store) IssueTerminalTicket(
 	if err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		_, err := tx.Exec(ctx,
 			`UPDATE ao_sandboxes
-			SET desired_state = 'running', reconcile_after = now(), updated_at = now()
-			WHERE org_id = $1 AND session_id = $2 AND desired_state = 'paused'`,
-			orgID, sessionID,
+			SET desired_state = CASE WHEN desired_state = 'paused' THEN 'running' ELSE desired_state END,
+				reconcile_after = CASE WHEN desired_state = 'paused' THEN now() ELSE reconcile_after END,
+				interactive_until = CASE WHEN $3 = 'workspace' THEN now() + interval '2 minutes' ELSE interactive_until END,
+				updated_at = now()
+			WHERE org_id = $1 AND session_id = $2`,
+			orgID, sessionID, kind,
 		)
 		return err
 	}); err != nil {
@@ -401,6 +404,42 @@ func (s *Store) IssueTerminalTicket(
 		return "", nil, err
 	}
 	return token, scopes, nil
+}
+
+// RefreshTerminalInteraction extends the short wake lease for a visible
+// workspace terminal. Agent streams are retained in the browser for output
+// continuity, so they deliberately do not prevent normal idle pause.
+func (s *Store) RefreshTerminalInteraction(
+	ctx context.Context,
+	terminal domain.TerminalSession,
+	ttl time.Duration,
+) error {
+	if terminal.Kind != "workspace" {
+		return nil
+	}
+	return s.withOrg(ctx, terminal.OrgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes
+			SET interactive_until = now() + $1::interval, updated_at = now()
+			WHERE org_id = $2 AND session_id = $3
+			  AND desired_state = 'running'
+			  AND EXISTS (
+				SELECT 1 FROM ao_terminal_sessions
+				WHERE org_id = $2 AND session_id = $3 AND id = $4
+				  AND worker_epoch = $5 AND kind = 'workspace'
+				  AND state IN ('opening', 'open') AND expires_at > now()
+			  )`,
+			intervalString(ttl), terminal.OrgID, terminal.SessionID,
+			terminal.ID, terminal.WorkerEpoch,
+		)
+		if err != nil {
+			return fmt.Errorf("refresh terminal interaction: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrWorkerUnavailable
+		}
+		return nil
+	})
 }
 
 func (s *Store) EnsureWorkerAgentTerminal(

@@ -320,7 +320,7 @@ it("retries unacknowledged input once after reconnect", async () => {
 
   FakeWebSocket.instances[0].disconnect();
   await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
-  expect(states).not.toContain("disconnected");
+  expect(states).toContain("disconnected");
   expect(states).not.toContain("error");
   FakeWebSocket.instances[1].open();
   expect(FakeWebSocket.instances[1].send).toHaveBeenCalledWith(firstInput);
