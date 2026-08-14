@@ -1996,6 +1996,76 @@ type interruptRecorder struct {
 	attempts []string
 }
 
+// blockingInterruptRefusalConversation holds the provider refusal open so a
+// message can arrive after Stop began but before reconciliation runs.
+type blockingInterruptRefusalConversation struct {
+	*fakeConversation
+	started     chan struct{}
+	release     chan struct{}
+	startedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newBlockingInterruptRefusalConversation() *blockingInterruptRefusalConversation {
+	return &blockingInterruptRefusalConversation{
+		fakeConversation: newFakeConversation(),
+		started:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+}
+
+func (c *blockingInterruptRefusalConversation) Interrupt(ctx context.Context, _ string) error {
+	c.startedOnce.Do(func() { close(c.started) })
+	select {
+	case <-c.release:
+		return ports.ErrChatNoActiveTurn
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *blockingInterruptRefusalConversation) unblock() {
+	c.releaseOnce.Do(func() { close(c.release) })
+}
+
+// completionBeforeRefusalConversation lets the committed completion win the
+// controller's send lock before the provider's stale refusal reaches Interrupt.
+type completionBeforeRefusalConversation struct {
+	*fakeConversation
+	emitted     chan struct{}
+	release     chan struct{}
+	emittedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func newCompletionBeforeRefusalConversation() *completionBeforeRefusalConversation {
+	return &completionBeforeRefusalConversation{
+		fakeConversation: newFakeConversation(),
+		emitted:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+}
+
+func (c *completionBeforeRefusalConversation) Interrupt(ctx context.Context, turn string) error {
+	c.emittedOnce.Do(func() {
+		c.emit(ports.ChatEvent{
+			Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn,
+			TurnState: domain.TurnStateCompleted,
+		})
+		close(c.emitted)
+	})
+	select {
+	case <-c.release:
+		return ports.ErrChatNoActiveTurn
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *completionBeforeRefusalConversation) unblock() {
+	c.releaseOnce.Do(func() { close(c.release) })
+}
+
 func newInterruptRecorder() *interruptRecorder {
 	return &interruptRecorder{fakeConversation: newFakeConversation(), active: map[string]bool{}}
 }
@@ -2075,6 +2145,112 @@ func TestProviderRefusalReconcilesTheDurableTurnAsInterrupted(t *testing.T) {
 	})
 	if !hasActivitySignal(h.activity.snapshot(), domain.ActivityIdle, "chat.interrupt.reconciled") {
 		t.Errorf("no idle signal after reconciliation; signals = %v", h.activity.snapshot())
+	}
+}
+
+// The recovery path must keep the same cutoff as the Stop request. The composer
+// remains available while provider cancellation is pending, and a later prompt
+// is new user intent rather than part of the queue that Stop was asked to clear.
+func TestProviderRefusalPreservesMessageQueuedAfterStop(t *testing.T) {
+	conv := newBlockingInterruptRefusalConversation()
+	t.Cleanup(conv.unblock)
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "before stop", ClientMessageID: "c2",
+	}); err != nil {
+		t.Fatalf("Send before stop: %v", err)
+	}
+
+	interruptDone := make(chan error, 1)
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	select {
+	case <-conv.started:
+	case <-time.After(4 * time.Second):
+		t.Fatal("provider interrupt did not start")
+	}
+
+	h.advance(time.Second)
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "after stop", ClientMessageID: "c3",
+	}); err != nil {
+		t.Fatalf("Send after stop: %v", err)
+	}
+	conv.unblock()
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["before stop"] == domain.TurnStateInterrupted &&
+			states["after stop"] != domain.TurnStateQueued
+	})
+	states := turnStateByText(t, snapshot)
+	if got := states["after stop"]; got != domain.TurnStateRunning {
+		t.Fatalf("post-stop message = %q, want running", got)
+	}
+	if got := conv.sentTexts(); len(got) != 2 || got[1] != "after stop" {
+		t.Fatalf("provider received %v, want the post-stop message delivered", got)
+	}
+}
+
+// A provider can publish completion just before its interrupt call reports that
+// no active turn remains. If that completion commits first, reconciliation must
+// not overwrite it or the queue transition it already performed.
+func TestProviderRefusalDoesNotOverwriteCommittedCompletion(t *testing.T) {
+	conv := newCompletionBeforeRefusalConversation()
+	t.Cleanup(conv.unblock)
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send running: %v", err)
+	}
+	conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "before stop", ClientMessageID: "c2",
+	}); err != nil {
+		t.Fatalf("Send before stop: %v", err)
+	}
+
+	interruptDone := make(chan error, 1)
+	go func() { interruptDone <- h.svc.Interrupt(ctx, testSession) }()
+	select {
+	case <-conv.emitted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("provider completion was not emitted")
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["running"] == domain.TurnStateCompleted &&
+			states["before stop"] == domain.TurnStateInterrupted
+	})
+
+	conv.unblock()
+	if err := <-interruptDone; err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["running"].Terminal()
+	})
+	if got := turnStateByText(t, snapshot)["running"]; got != domain.TurnStateCompleted {
+		t.Fatalf("turn after committed completion = %q, want completed", got)
 	}
 }
 

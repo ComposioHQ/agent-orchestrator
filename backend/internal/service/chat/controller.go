@@ -1185,12 +1185,12 @@ func (c *Controller) interruptForHandoff(ctx context.Context) error {
 //     "no active turn" would leave the user staring at a Working bar they cannot
 //     dismiss. Reconcile the durable row instead.
 func (c *Controller) Interrupt(ctx context.Context) error {
+	cutoff := c.now()
 	turn, ok := c.awaitAcknowledgedTurn(ctx)
 	if !ok {
 		// Serialize against dispatch so its "durable row running, memory not yet
 		// updated" middle state cannot be mistaken for a lost turn.
 		c.sendMu.Lock()
-		defer c.sendMu.Unlock()
 
 		c.mu.Lock()
 		pending := c.pendingTurnID
@@ -1198,27 +1198,48 @@ func (c *Controller) Interrupt(ctx context.Context) error {
 		if pending == "" {
 			_, providerTurnID, running, err := c.store.GetRunningTurn(ctx, c.conversation.ID)
 			if err != nil {
+				c.sendMu.Unlock()
 				return fmt.Errorf("check running turn: %w", err)
 			}
 			if !running {
+				c.sendMu.Unlock()
 				return ErrNoActiveTurn
 			}
-			return c.reconcileDurableTurn(ctx, providerTurnID)
+			if err := c.conv.Interrupt(ctx, providerTurnID); err != nil &&
+				!errors.Is(err, ports.ErrChatNoActiveTurn) {
+				c.log.Warn("provider interrupt during reconciliation failed",
+					"session", c.sessionID, "turn", providerTurnID, "error", err)
+			}
+			err = c.reconcileDurableTurnLocked(ctx, providerTurnID, cutoff)
+			c.sendMu.Unlock()
+			return err
 		}
 		// dispatch finished while we waited — interrupt normally.
 		turn = pending
+		c.sendMu.Unlock()
 	}
 
 	c.mu.Lock()
-	c.cancelQueuedAt = c.now()
+	c.cancelQueuedAt = cutoff
 	c.mu.Unlock()
 
 	if err := c.conv.Interrupt(ctx, turn); err != nil {
 		if errors.Is(err, ports.ErrChatNoActiveTurn) {
+			// Serialize durable settlement, memory cleanup, and queue promotion so
+			// a message arriving after Stop cannot slip between those steps.
+			c.sendMu.Lock()
+			defer c.sendMu.Unlock()
+
+			// A committed completion may have won the sendMu race after the
+			// provider answered. It already consumed the cutoff and drained the
+			// queue, so do not overwrite its terminal state or a successor turn.
 			c.mu.Lock()
-			c.cancelQueuedAt = time.Time{}
+			stillPending := c.pendingTurnID == turn
 			c.mu.Unlock()
-			return c.reconcileDurableTurn(ctx, turn)
+			if !stillPending {
+				return nil
+			}
+			return c.reconcileDurableTurnLocked(ctx, turn, cutoff)
 		}
 		// The interrupt did not happen, so the queue it was going to cancel is
 		// still the user's to send.
@@ -1230,27 +1251,24 @@ func (c *Controller) Interrupt(ctx context.Context) error {
 	return nil
 }
 
-// reconcileDurableTurn settles a turn the controller can no longer cancel through
-// the normal path but durable state still shows as running. It delivers the full
-// Interrupt contract in one place — best-effort provider cancel, settle the row
-// as interrupted, clear in-memory tracking, cancel the queue behind it, report
-// idle — so both recovery paths behave identically.
-func (c *Controller) reconcileDurableTurn(ctx context.Context, providerTurnID string) error {
-	if err := c.conv.Interrupt(ctx, providerTurnID); err != nil {
-		if !errors.Is(err, ports.ErrChatNoActiveTurn) {
-			c.log.Warn("provider interrupt during reconciliation failed",
-				"session", c.sessionID, "turn", providerTurnID, "error", err)
-		}
-	}
-
+// reconcileDurableTurnLocked settles a turn the controller can no longer cancel
+// through the normal path but durable state still shows as running. Callers hold
+// sendMu so settlement, memory cleanup, queue cancellation, and survivor dispatch
+// are one serialized transition. The cutoff is the original Stop time: a prompt
+// submitted while provider cancellation was pending is new work and must survive.
+func (c *Controller) reconcileDurableTurnLocked(
+	ctx context.Context,
+	providerTurnID string,
+	cutoff time.Time,
+) error {
+	now := c.now()
 	if err := c.store.SettleTurn(ctx, c.conversation.ID, providerTurnID,
-		domain.TurnStateInterrupted, "reconciled by interrupt", c.now()); err != nil {
+		domain.TurnStateInterrupted, "reconciled by interrupt", now); err != nil {
 		return fmt.Errorf("reconcile durable turn %s: %w", providerTurnID, err)
 	}
 
-	now := c.now()
 	c.mu.Lock()
-	c.cancelQueuedAt = now
+	c.cancelQueuedAt = cutoff
 	if c.pendingTurnID == providerTurnID {
 		c.pendingTurnID = ""
 	}
@@ -1260,12 +1278,10 @@ func (c *Controller) reconcileDurableTurn(ctx context.Context, providerTurnID st
 	c.state = ports.ChatControllerReady
 	c.mu.Unlock()
 
-	if err := c.store.CancelQueuedTurns(ctx, c.conversation.ID, now, now); err != nil {
-		c.log.Error("failed to cancel queued turns during reconciliation",
-			"session", c.sessionID, "error", err)
-	}
-
 	c.reportActivity(ctx, domain.ActivityIdle, "chat.interrupt.reconciled", now)
+	// drainLocked consumes cancelQueuedAt, cancels only the pre-Stop queue, and
+	// immediately dispatches the oldest surviving post-Stop prompt.
+	c.drainLocked(ctx)
 	return nil
 }
 
