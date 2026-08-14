@@ -75,6 +75,7 @@ export function TurnSettingsBar({
 	error,
 	disabled,
 	children,
+	beforeApprovals,
 }: {
 	models: ChatModel[];
 	settings: TurnSettings;
@@ -97,6 +98,8 @@ export function TurnSettingsBar({
 	disabled?: boolean;
 	/** Inline controls that belong on the model row, such as queue vs steer. */
 	children?: ReactNode;
+	/** Sits on the right, immediately before the approvals picker. */
+	beforeApprovals?: ReactNode;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
 	const fallback = models.find((model) => model.default);
@@ -155,42 +158,47 @@ export function TurnSettingsBar({
 						: null}
 				</div>
 
-				{onChange ? (
-					<Picker
-						label={approvalLabel}
-						title="What the agent may do without asking"
-						disabled={disabled}
-					>
-						<DropdownMenuLabel
-							className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
-						>
-							<span>Approvals</span>
-							<span className="text-[11px] font-normal text-muted-foreground">
-								Applies to the next turn
-							</span>
-						</DropdownMenuLabel>
-						{APPROVAL_ORDER.map((mode) => (
-							<DropdownMenuItem
-								key={mode}
-								onSelect={() => onChange({ ...settings, approvalMode: mode })}
-								className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+				{(onChange || beforeApprovals) ? (
+					<div className="flex h-7 shrink-0 items-center gap-1">
+						{beforeApprovals}
+						{onChange ? (
+							<Picker
+								label={approvalLabel}
+								title="What the agent may do without asking"
+								disabled={disabled}
 							>
-								<span
-									className={cn(
-										"text-xs",
-										mode === (settings.approvalMode ?? "default")
-											? "text-foreground"
-											: "text-muted-foreground",
-									)}
+								<DropdownMenuLabel
+									className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
 								>
-									{APPROVAL_COPY[mode].label}
-								</span>
-								<span className="text-[11px] leading-snug text-muted-foreground">
-									{APPROVAL_COPY[mode].hint}
-								</span>
-							</DropdownMenuItem>
-						))}
-					</Picker>
+									<span>Approvals</span>
+									<span className="text-[11px] font-normal text-muted-foreground">
+										Applies to the next turn
+									</span>
+								</DropdownMenuLabel>
+								{APPROVAL_ORDER.map((mode) => (
+									<DropdownMenuItem
+										key={mode}
+										onSelect={() => onChange({ ...settings, approvalMode: mode })}
+										className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+									>
+										<span
+											className={cn(
+												"text-xs",
+												mode === (settings.approvalMode ?? "default")
+													? "text-foreground"
+													: "text-muted-foreground",
+											)}
+										>
+											{APPROVAL_COPY[mode].label}
+										</span>
+										<span className="text-[11px] leading-snug text-muted-foreground">
+											{APPROVAL_COPY[mode].hint}
+										</span>
+									</DropdownMenuItem>
+								))}
+							</Picker>
+						) : null}
+					</div>
 				) : null}
 			</div>
 			{error ? (

@@ -397,15 +397,6 @@ export function ChatWorkspace({
 
 			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-					<div className="flex items-center justify-end">
-						<CompactButton
-							onCompact={onCompact}
-							compacting={compacting}
-							unavailable={compactUnavailable}
-							turnInFlight={Boolean(turn)}
-							compactedAt={snapshot.compactedAt}
-						/>
-					</div>
 					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 					{snapshot.branchedFromEarlierMessage ? (
 						<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -432,7 +423,7 @@ export function ChatWorkspace({
 						onSend={(text, attachments) => onSend?.(text, attachments)}
 						commandError={commandError}
 						settings={
-							onChooseSettings || onChooseConfigOption
+							onChooseSettings || onChooseConfigOption || onCompact
 								? (addon) => (
 										<TurnSettingsBar
 											models={models ?? []}
@@ -445,6 +436,15 @@ export function ChatWorkspace({
 											error={configOptionError}
 											disabled={
 												snapshot.controller.state === "stopped" || configOptionPending
+											}
+											beforeApprovals={
+												<CompactButton
+													onCompact={onCompact}
+													compacting={compacting}
+													unavailable={compactUnavailable}
+													turnInFlight={Boolean(turn)}
+													compactedAt={snapshot.compactedAt}
+												/>
 											}
 										>
 											{addon}
@@ -727,7 +727,7 @@ function CompactButton({
 			disabled={compacting || turnInFlight}
 			title={title}
 			aria-label="Compact conversation history"
-			className="h-5 gap-1 px-1.5 text-[11px]"
+			className="h-7 gap-1 px-1.5 text-[11px]"
 		>
 			{compacting ? (
 				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
