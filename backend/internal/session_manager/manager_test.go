@@ -5008,13 +5008,18 @@ func TestSaveAndTeardownAllThenRestoreAll_TeardownsAndRestoresReviewerTerminal(t
 func TestSaveAndTeardownAllThenRestoreAll_PreservesIgnoredAttachments(t *testing.T) {
 	dataDir := t.TempDir()
 	workspacePath := filepath.Join(t.TempDir(), "mer-1")
-	attachmentPath := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir), "attachment-before-restart.png")
-	if err := os.MkdirAll(filepath.Dir(attachmentPath), 0o750); err != nil {
+	attachmentDir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
+	if err := os.MkdirAll(attachmentDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	want := []byte("image-bytes-before-restart")
-	if err := os.WriteFile(attachmentPath, want, 0o600); err != nil {
-		t.Fatal(err)
+	want := map[string][]byte{
+		"attachment-before-restart.png": []byte("image-bytes-before-restart"),
+		"attachment-before-restart.txt": []byte("text-bytes-before-restart"),
+	}
+	for name, data := range want {
+		if err := os.WriteFile(filepath.Join(attachmentDir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	st := newFakeStore()
@@ -5055,12 +5060,61 @@ func TestSaveAndTeardownAllThenRestoreAll_PreservesIgnoredAttachments(t *testing
 		t.Fatalf("RestoreAll: %v", err)
 	}
 
-	got, err := os.ReadFile(attachmentPath)
-	if err != nil {
-		t.Fatalf("read attachment after restore: %v", err)
+	for name, wantData := range want {
+		got, err := os.ReadFile(filepath.Join(attachmentDir, name))
+		if err != nil {
+			t.Fatalf("read %s after restore: %v", name, err)
+		}
+		if string(got) != string(wantData) {
+			t.Fatalf("%s after restore = %q, want %q", name, got, wantData)
+		}
 	}
-	if string(got) != string(want) {
-		t.Fatalf("attachment after restore = %q, want %q", got, want)
+	if wantPattern := "/" + attachmentsDir + "/"; !reflect.DeepEqual(ws.excludePatterns, []string{wantPattern}) {
+		t.Fatalf("restore exclude patterns = %v, want [%s]", ws.excludePatterns, wantPattern)
+	}
+}
+
+func TestSaveAndTeardownAllDoesNotDestroyWorkspaceWhenAttachmentImportIsUnsafe(t *testing.T) {
+	dataDir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dataDir, "attachments")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	workspacePath := filepath.Join(t.TempDir(), "mer-1")
+	attachmentPath := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir), "attachment-before-restart.png")
+	if err := os.MkdirAll(filepath.Dir(attachmentPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(attachmentPath, []byte("must survive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: workspacePath}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		DataDir: dataDir, LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{WorkspacePath: workspacePath, Branch: "ao/mer-1/root", RuntimeHandleID: "h1", AgentSessionID: "agent-w"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll: %v", err)
+	}
+	if ws.stashCalls != 0 || rt.destroyed != 0 {
+		t.Fatalf("unsafe import still tore down session: stash=%d runtimeDestroy=%d", ws.stashCalls, rt.destroyed)
+	}
+	if got, err := os.ReadFile(attachmentPath); err != nil || string(got) != "must survive" {
+		t.Fatalf("live workspace attachment = %q, %v; want preserved", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "mer-1", "attachment-before-restart.png")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unsafe import wrote outside AO data: %v", err)
 	}
 }
 

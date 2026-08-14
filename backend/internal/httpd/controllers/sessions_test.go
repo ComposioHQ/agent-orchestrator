@@ -1463,7 +1463,7 @@ func TestSessionsAPI_PreviewFileServesCanonicalAttachmentWithoutWorkspace(t *tes
 	}
 	want := []byte("durable-image-bytes")
 	store := attachmentstore.New(dataDir)
-	if err := store.Put("ao-1", workspace, "attachment-durable.png", want); err != nil {
+	if err := store.Put(context.Background(), "ao-1", workspace, "attachment-durable.png", want); err != nil {
 		t.Fatalf("Put attachment: %v", err)
 	}
 	if err := os.RemoveAll(workspace); err != nil {
@@ -1487,6 +1487,36 @@ func TestSessionsAPI_PreviewFileServesCanonicalAttachmentWithoutWorkspace(t *tes
 	}
 	if !bytes.Equal(body, want) {
 		t.Fatalf("canonical attachment body = %q, want %q", body, want)
+	}
+}
+
+func TestSessionsAPI_PreviewFileDoesNotCrossSessionThroughCanonicalSymlink(t *testing.T) {
+	dataDir := t.TempDir()
+	workspace := t.TempDir()
+	name := "attachment-private.png"
+	store := attachmentstore.New(dataDir)
+	if err := store.Put(context.Background(), "ao-1", workspace, name, []byte("session-one-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("ao-1", filepath.Join(dataDir, "attachments", "ao-2")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	svc := newFakeSessionService()
+	second := svc.sessions["ao-1"]
+	second.ID = "ao-2"
+	second.Metadata.WorkspacePath = t.TempDir()
+	svc.sessions[second.ID] = second
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{DataDir: dataDir}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet,
+		"/api/v1/sessions/ao-2/preview/files/.ao/attachments/"+name, "")
+	if status != http.StatusNotFound || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_NOT_FOUND"`)) {
+		t.Fatalf("cross-session preview = %d, %s; want PREVIEW_FILE_NOT_FOUND", status, body)
 	}
 }
 

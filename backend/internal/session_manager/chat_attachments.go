@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -51,13 +53,24 @@ func (m *Manager) StageAttachments(
 		if ext == "" {
 			ext = ".bin"
 		}
-		suffix, err := randomSuffix()
-		if err != nil {
-			return nil, fmt.Errorf("name attachment %d: %w", i+1, err)
+		var name string
+		for attempt := 0; attempt < 8; attempt++ {
+			suffix, err := m.attachmentSuffix()
+			if err != nil {
+				return nil, fmt.Errorf("name attachment %d: %w", i+1, err)
+			}
+			name = "attachment-" + suffix + ext
+			err = m.attachments.Put(ctx, id, rec.Metadata.WorkspacePath, name, a.Data)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, attachmentstore.ErrExists) {
+				return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
+			}
+			name = ""
 		}
-		name := "attachment-" + suffix + ext
-		if err := m.attachments.Put(id, rec.Metadata.WorkspacePath, name, a.Data); err != nil {
-			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
+		if name == "" {
+			return nil, fmt.Errorf("write attachment %d: could not allocate a unique name", i+1)
 		}
 		refs = append(refs, attachmentsDir+"/"+name)
 	}
@@ -74,7 +87,7 @@ func (m *Manager) StageAttachments(
 // randomSuffix is a short collision-resistant name part. Short because it ends up
 // in a path the user reads in their own message text.
 func randomSuffix() (string, error) {
-	var buf [5]byte
+	var buf [16]byte
 	if _, err := rand.Read(buf[:]); err != nil {
 		return "", err
 	}

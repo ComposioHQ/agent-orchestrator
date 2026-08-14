@@ -51,8 +51,8 @@ const (
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
 	// body, so the caps are deliberately conservative.
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 10 MiB per file, decoded
-	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
+	maxAttachmentBytes  = attachmentstore.MaxFileBytes // 10 MiB per file, decoded
+	maxAttachmentsBytes = 25 << 20                     // 25 MiB total, decoded
 	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
 	// per-attachment and total caps above only apply after the whole body is
 	// materialized, so without this an oversized body (base64 inflates the
@@ -429,7 +429,7 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 	}
 	assetPath := chi.URLParam(r, "*")
 	if name, ok := attachmentstore.NameFromWorkspacePath(assetPath); ok && c.Attachments != nil {
-		file, info, openErr := c.Attachments.Open(sess.ID, name)
+		file, info, openErr := c.Attachments.Open(r.Context(), sess.ID, name)
 		if openErr == nil {
 			defer func() { _ = file.Close() }()
 			serveOpenedPreviewFile(w, r, file, info, assetPath)

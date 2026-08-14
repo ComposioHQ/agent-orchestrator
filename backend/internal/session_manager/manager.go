@@ -305,6 +305,7 @@ type Manager struct {
 	browser             BrowserLifecycle
 	browserCapabilities BrowserCapabilityIssuer
 	attachments         *attachmentstore.Store
+	attachmentSuffix    func() (string, error)
 	dataDir             string
 	clock               func() time.Time
 	// openTranscriptFile is os.Open in production. The narrow seam lets tests
@@ -594,6 +595,7 @@ func New(d Deps) *Manager {
 		browser:                      d.Browser,
 		browserCapabilities:          d.BrowserCapabilities,
 		attachments:                  attachmentstore.New(d.DataDir),
+		attachmentSuffix:             randomSuffix,
 		dataDir:                      d.DataDir,
 		clock:                        d.Clock,
 		openTranscriptFile:           os.Open,
@@ -751,7 +753,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// exists) and before the launch command is built (so the references reach
 	// the agent).
 	if len(cfg.Attachments) > 0 {
-		refs, err := m.writeSpawnAttachments(id, ws.Path, cfg.Attachments)
+		refs, err := m.writeSpawnAttachments(ctx, id, ws.Path, cfg.Attachments)
 		if err != nil {
 			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
@@ -1187,7 +1189,7 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
 	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
 		m.cleanupSystemPromptDir(id)
-		m.cleanupAttachments(id)
+		m.cleanupAttachments(ctx, id)
 		return
 	}
 	m.markSpawnFailedTerminated(ctx, id)
@@ -1211,7 +1213,7 @@ func (m *Manager) rollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 	}
 	if deleted {
 		m.cleanupSystemPromptDir(id)
-		m.cleanupAttachments(id)
+		m.cleanupAttachments(ctx, id)
 		return true, false, nil
 	}
 	killed, err = m.Kill(ctx, id)
@@ -1273,7 +1275,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// Attachments are deliberately ignored by git, so stash cannot preserve
 	// legacy worktree-only files. Import them before any controller or worktree
 	// teardown; a failed import leaves the live session intact.
-	if err := m.importAttachments(rec); err != nil {
+	if err := m.importAttachments(ctx, rec); err != nil {
 		return false, fmt.Errorf("kill %s: preserve attachments: %w", id, err)
 	}
 
@@ -1419,7 +1421,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if release != nil {
 		defer release()
 	}
-	if err := m.importAttachments(rec); err != nil {
+	if err := m.importAttachments(ctx, rec); err != nil {
 		return fmt.Errorf("retire replacement %s: preserve attachments: %w", id, err)
 	}
 
@@ -1866,7 +1868,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	if release != nil {
 		defer release()
 	}
-	if err := m.importAttachments(rec); err != nil {
+	if err := m.importAttachments(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: preserve attachments: %w", rec.ID, err)
 	}
 
@@ -2153,8 +2155,8 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", "empty restored root path")
 			continue
 		}
-		if err := m.materializeAttachments(rec.ID, ws.Path); err != nil {
-			m.logger.Error("restore-all: materialize attachments failed", "sessionID", rec.ID, "error", err)
+		if err := m.restoreAttachments(ctx, rec.ID, ws); err != nil {
+			m.logger.Error("restore-all: restore attachments failed", "sessionID", rec.ID, "error", err)
 			continue
 		}
 
@@ -2257,8 +2259,8 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 		if err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
-		if err := m.materializeAttachments(rec.ID, ws.Path); err != nil {
-			return ports.WorkspaceInfo{}, fmt.Errorf("materialize attachments: %w", err)
+		if err := m.restoreAttachments(ctx, rec.ID, ws); err != nil {
+			return ports.WorkspaceInfo{}, fmt.Errorf("restore attachments: %w", err)
 		}
 		return ws, nil
 	}
@@ -2276,8 +2278,8 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 		}
 	}
 	ws := workspaceInfoFromRepoInfo(root)
-	if err := m.materializeAttachments(rec.ID, ws.Path); err != nil {
-		return ports.WorkspaceInfo{}, fmt.Errorf("materialize attachments: %w", err)
+	if err := m.restoreAttachments(ctx, rec.ID, ws); err != nil {
+		return ports.WorkspaceInfo{}, fmt.Errorf("restore attachments: %w", err)
 	}
 	return ws, nil
 }
@@ -2883,7 +2885,7 @@ func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws p
 	if release != nil {
 		defer release()
 	}
-	if err := m.importAttachments(rec); err != nil {
+	if err := m.importAttachments(ctx, rec); err != nil {
 		m.logger.Warn("cleanup: attachment preservation failed", "sessionID", rec.ID, "error", err)
 		return "attachment preservation failed"
 	}
@@ -3064,7 +3066,7 @@ const attachmentsDir = attachmentstore.WorkspaceDir
 // writeSpawnAttachments writes canonical and worktree-projected copies named
 // attachment-1<ext>, attachment-2<ext>, ... and returns the worktree-relative
 // paths in order. The projections are excluded from git via info/exclude.
-func (m *Manager) writeSpawnAttachments(id domain.SessionID, workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
+func (m *Manager) writeSpawnAttachments(ctx context.Context, id domain.SessionID, workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
 	refs := make([]string, 0, len(attachments))
 	for i, a := range attachments {
 		ext := a.Ext
@@ -3072,7 +3074,7 @@ func (m *Manager) writeSpawnAttachments(id domain.SessionID, workspacePath strin
 			ext = ".bin"
 		}
 		name := fmt.Sprintf("attachment-%d%s", i+1, ext)
-		if err := m.attachments.Put(id, workspacePath, name, a.Data); err != nil {
+		if err := m.attachments.Put(ctx, id, workspacePath, name, a.Data); err != nil {
 			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
 		}
 		// Worktree-relative reference, always forward-slashed for the prompt.
@@ -3081,19 +3083,29 @@ func (m *Manager) writeSpawnAttachments(id domain.SessionID, workspacePath strin
 	return refs, nil
 }
 
-func (m *Manager) importAttachments(rec domain.SessionRecord) error {
+func (m *Manager) importAttachments(ctx context.Context, rec domain.SessionRecord) error {
 	if rec.Metadata.WorkspacePath == "" {
 		return nil
 	}
-	return m.attachments.ImportWorkspace(rec.ID, rec.Metadata.WorkspacePath)
+	return m.attachments.ImportWorkspace(ctx, rec.ID, rec.Metadata.WorkspacePath)
 }
 
-func (m *Manager) materializeAttachments(id domain.SessionID, workspacePath string) error {
-	return m.attachments.MaterializeWorkspace(id, workspacePath)
+func (m *Manager) restoreAttachments(ctx context.Context, id domain.SessionID, workspace ports.WorkspaceInfo) error {
+	materialized, err := m.attachments.MaterializeWorkspace(ctx, id, workspace.Path)
+	if err != nil {
+		return err
+	}
+	if !materialized {
+		return nil
+	}
+	if err := m.workspace.AddExclude(ctx, workspace, "/"+attachmentsDir+"/"); err != nil {
+		return fmt.Errorf("exclude attachments directory: %w", err)
+	}
+	return nil
 }
 
-func (m *Manager) cleanupAttachments(id domain.SessionID) {
-	if err := m.attachments.RemoveSession(id); err != nil {
+func (m *Manager) cleanupAttachments(ctx context.Context, id domain.SessionID) {
+	if err := m.attachments.RemoveSession(ctx, id); err != nil {
 		m.logger.Warn("attachment cleanup failed", "sessionID", id, "error", err)
 	}
 }
