@@ -18,7 +18,7 @@ func TestLANManagerAuthGatesSharedHandler(t *testing.T) {
 	})
 	st := &authState{}
 	st.setHash(mobilebridge.HashPassword("secret12"))
-	m := NewLANManager(inner, st, 0, slog.Default()) // port 0 → ephemeral
+	m := NewLANManager(inner, st, 0, slog.Default(), nil) // port 0 → ephemeral
 	port, err := m.Start(0)
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -54,7 +54,7 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 	})
 	st := &authState{}
 	st.setHash(mobilebridge.HashPassword("secret12"))
-	m := NewLANManager(inner, st, 0, slog.Default())
+	m := NewLANManager(inner, st, 0, slog.Default(), nil)
 	port, err := m.Start(0)
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -65,6 +65,8 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		"/shutdown",
 		"/internal/telemetry/cli-invoked",
 		"/api/v1/mobile/status",
+		"/api/v1/mobile/devices",
+		"/api/v1/mobile/devices/i1",
 		"/api/v1/dev/import-projects",
 		"/api/v1/browser/status",
 		"/api/v1/sessions/ao-1/preview/server",
@@ -97,7 +99,7 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 }
 
 func TestLANManagerStartStopIdempotent(t *testing.T) {
-	m := NewLANManager(http.NotFoundHandler(), &authState{}, 0, slog.Default())
+	m := NewLANManager(http.NotFoundHandler(), &authState{}, 0, slog.Default(), nil)
 	p1, _ := m.Start(0)
 	p2, _ := m.Start(0) // idempotent — same port, no error
 	if p1 != p2 {

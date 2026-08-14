@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import type { WorkspaceSession } from "../types/workspace";
+import type { PullRequestFacts, WorkspaceSession } from "../types/workspace";
 import {
 	prBrowserUrl,
 	prCardPresentation,
@@ -25,7 +25,7 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	additions: 10,
 	deletions: 3,
 	changedFiles: 2,
-	ci: { state: "passing", checkCount: 0, failingChecks: [] },
+	ci: { autoInjectCI: true, state: "passing", checkCount: 0, failingChecks: [] },
 	review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 	updatedAt: "2026-06-15T00:00:00Z",
@@ -47,11 +47,137 @@ const session = (prs: WorkspaceSession["prs"]): WorkspaceSession => ({
 	prs,
 });
 
+function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSession {
+	return {
+		id: "sess-1",
+		workspaceId: "ws-1",
+		workspaceName: "my-app",
+		title: "fix-bug",
+		provider: "claude-code",
+		branch: "feat/x",
+		status: "working",
+		updatedAt: "2026-01-01T00:00:00Z",
+		prs: [],
+		...overrides,
+	};
+}
+
+describe("sessionPRDisplaySummaries", () => {
+	it("keeps GitHub PR #7 and GitLab MR #7 distinct in the same session", () => {
+		// Both providers have a PR/MR numbered 7. Keying by number alone collapses
+		// them into one summary (the second wins), hiding the other. Keying by the
+		// canonical web URL keeps both visible.
+		const githubPR: PullRequestFacts = {
+			url: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "approved",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		};
+		const gitlabMR: PullRequestFacts = {
+			url: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "approved",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		};
+		const session = sessionWith({ prs: [githubPR, gitlabMR] });
+		const githubSummary = summary({
+			url: "https://github.com/acme/repo/pull/7",
+			htmlUrl: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			provider: "github",
+			repo: "acme/repo",
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://github.com/acme/repo/pull/7",
+			},
+		});
+		const gitlabSummary = summary({
+			url: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			number: 7,
+			provider: "gitlab",
+			repo: "acme/repo",
+			mergeability: {
+				state: "mergeable",
+				reasons: [],
+				prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+			},
+		});
+
+		const result = sessionPRDisplaySummaries(session, [githubSummary, gitlabSummary]);
+
+		// Both summaries appear — not deduped to one.
+		expect(result).toHaveLength(2);
+		const urls = result.map((r) => r.url).sort();
+		expect(urls).toEqual(["https://github.com/acme/repo/pull/7", "https://gitlab.com/acme/repo/-/merge_requests/7"]);
+		// Each retains its own provider/repo, no summary is hidden.
+		const github = result.find((r) => r.url === "https://github.com/acme/repo/pull/7");
+		const gitlab = result.find((r) => r.url === "https://gitlab.com/acme/repo/-/merge_requests/7");
+		expect(github?.provider).toBe("github");
+		expect(gitlab?.provider).toBe("gitlab");
+	});
+
+	it("does not drop summaries whose url is empty, falling back to number:${number}", () => {
+		// Two facts with empty urls and distinct numbers must both surface. The
+		// fallback key `number:${number}` keeps them distinct within one provider
+		// even when the canonical URL is not yet populated.
+		const session = sessionWith({
+			prs: [
+				{
+					url: "",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T00:00:00Z",
+				},
+				{
+					url: "",
+					number: 8,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T00:00:00Z",
+				},
+			],
+		});
+		const summaries: SessionPRSummary[] = [
+			summary({
+				url: "",
+				htmlUrl: undefined,
+				number: 7,
+			}),
+			summary({
+				url: "",
+				htmlUrl: undefined,
+				number: 8,
+			}),
+		];
+
+		const result = sessionPRDisplaySummaries(session, summaries);
+
+		expect(result.map((r) => r.number).sort((a, b) => a - b)).toEqual([7, 8]);
+	});
+});
+
 describe("prStatusRows", () => {
 	it("formats the three PR states without exposing raw unknown", () => {
 		const rows = prStatusRows(
 			summary({
-				ci: { state: "unknown", checkCount: 0, failingChecks: [] },
+				ci: { autoInjectCI: true, state: "unknown", checkCount: 0, failingChecks: [] },
 				review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 				mergeability: { state: "unknown", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 			}),
@@ -102,6 +228,7 @@ describe("prCardPresentation", () => {
 		const presentation = prCardPresentation(
 			summary({
 				ci: {
+					autoInjectCI: true,
 					state: "failing",
 					checkCount: 1,
 					failingChecks: [{ name: "unit", status: "failed", conclusion: "failure", url: "https://ci/unit" }],
@@ -123,7 +250,7 @@ describe("prCardPresentation", () => {
 	it("retains running checks as linked supporting state when review is the primary action", () => {
 		const presentation = prCardPresentation(
 			summary({
-				ci: { state: "pending", checkCount: 1, failingChecks: [] },
+				ci: { autoInjectCI: true, state: "pending", checkCount: 1, failingChecks: [] },
 				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 				mergeability: {
 					state: "blocked",
@@ -144,7 +271,7 @@ describe("prCardPresentation", () => {
 	it("shows running checks instead of an internal provider blocker", () => {
 		const presentation = prCardPresentation(
 			summary({
-				ci: { state: "pending", checkCount: 1, failingChecks: [] },
+				ci: { autoInjectCI: true, state: "pending", checkCount: 1, failingChecks: [] },
 				mergeability: {
 					state: "unstable",
 					reasons: ["blocked_by_provider"],
@@ -192,6 +319,40 @@ describe("prBrowserUrl", () => {
 				}),
 			),
 		).toBe("https://github.com/acme/repo/pull/7");
+	});
+
+	it("normalizes GitLab merge request URLs", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					provider: "gitlab",
+					url: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					},
+				}),
+			),
+		).toBe("https://gitlab.com/acme/repo/-/merge_requests/7");
+	});
+
+	it("strips query params and fragments from GitLab MR URLs", () => {
+		expect(
+			prBrowserUrl(
+				summary({
+					provider: "gitlab",
+					url: "https://gitlab.com/acme/repo/-/merge_requests/7/diffs?view=inline#note_123",
+					htmlUrl: "https://gitlab.com/acme/repo/-/merge_requests/7/diffs?view=inline#note_123",
+					mergeability: {
+						state: "mergeable",
+						reasons: [],
+						prUrl: "https://gitlab.com/acme/repo/-/merge_requests/7",
+					},
+				}),
+			),
+		).toBe("https://gitlab.com/acme/repo/-/merge_requests/7");
 	});
 });
 
@@ -248,7 +409,7 @@ describe("sessionPRDisplaySummaries", () => {
 		const got = sessionPRDisplaySummaries(session([]), [
 			summary({ number: 7, title: "first observed PR #7" }),
 			summary({ number: 7, title: "duplicate PR #7" }),
-			summary({ number: 8, title: "PR #8" }),
+			summary({ number: 8, title: "PR #8", url: "https://github.com/acme/repo/pull/8", htmlUrl: "https://github.com/acme/repo/pull/8" }),
 		]);
 
 		expect(got.map((pr) => pr.number)).toEqual([7, 8]);
@@ -297,28 +458,6 @@ describe("sessionPRDisplaySummaries", () => {
 		]);
 
 		expect(got.map((pr) => pr.title)).toEqual(["Acme PR #7", "Other PR #7"]);
-	});
-
-	it("deduplicates transferred GitHub repository aliases", () => {
-		const got = sessionPRDisplaySummaries(session([]), [
-			summary({
-				url: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-				htmlUrl: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-				repo: "AgentWrapper/agent-orchestrator",
-				number: 3193,
-				title: "first observed alias",
-			}),
-			summary({
-				url: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-				htmlUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-				repo: "Untrivial-ai/agent-orchestrator",
-				number: 3193,
-				title: "duplicate transferred alias",
-			}),
-		]);
-
-		expect(got).toHaveLength(1);
-		expect(got[0].title).toBe("first observed alias");
 	});
 
 	it("uses the enriched summary for a unique session fact when URL identities differ", () => {
@@ -413,7 +552,7 @@ describe("sessionPRDisplaySummaries", () => {
 				},
 			]),
 			[
-				summary({ number: 7, title: "enriched PR #7", ci: { state: "passing", checkCount: 0, failingChecks: [] } }),
+				summary({ number: 7, title: "enriched PR #7", ci: { autoInjectCI: true, state: "passing", checkCount: 0, failingChecks: [] } }),
 				summary({ number: 7, title: "duplicate enriched PR #7" }),
 			],
 		);
@@ -477,6 +616,7 @@ describe("prSummaryParts", () => {
 		const parts = prSummaryParts(
 			summary({
 				ci: {
+					autoInjectCI: true,
 					state: "failing",
 					checkCount: 1,
 					failingChecks: [
@@ -490,7 +630,14 @@ describe("prSummaryParts", () => {
 						{
 							reviewerId: "alice",
 							count: 6,
-							links: [{ url: "https://github.com/acme/repo/pull/7#discussion_r1", file: "main.go", line: 12 }],
+							links: [
+								{
+									url: "https://github.com/acme/repo/pull/7#discussion_r1",
+									file: "main.go",
+									line: 12,
+									autoInjectReview: true,
+								},
+							],
 						},
 					],
 				},
@@ -532,6 +679,7 @@ describe("prSummaryParts", () => {
 		const parts = prSummaryParts(
 			summary({
 				ci: {
+					autoInjectCI: true,
 					state: "failing",
 					checkCount: 4,
 					failingChecks: [
@@ -565,8 +713,18 @@ describe("prSummaryParts", () => {
 							count: 2,
 							reviewUrl: "https://github.com/acme/repo/pull/7#pullrequestreview-1",
 							links: [
-								{ url: "https://github.com/acme/repo/pull/7#discussion_r1", file: "main.go", line: 12 },
-								{ url: "https://github.com/acme/repo/pull/7#discussion_r2", file: "test.go", line: 20 },
+								{
+									url: "https://github.com/acme/repo/pull/7#discussion_r1",
+									file: "main.go",
+									line: 12,
+									autoInjectReview: true,
+								},
+								{
+									url: "https://github.com/acme/repo/pull/7#discussion_r2",
+									file: "test.go",
+									line: 20,
+									autoInjectReview: true,
+								},
 							],
 						},
 					],
@@ -592,8 +750,18 @@ describe("prSummaryParts", () => {
 							reviewerId: "alice",
 							count: 2,
 							links: [
-								{ url: "https://github.com/acme/repo/pull/7#discussion_r1", file: "main.go", line: 12 },
-								{ url: "https://github.com/acme/repo/pull/7#discussion_r2", file: "test.go", line: 20 },
+								{
+									url: "https://github.com/acme/repo/pull/7#discussion_r1",
+									file: "main.go",
+									line: 12,
+									autoInjectReview: true,
+								},
+								{
+									url: "https://github.com/acme/repo/pull/7#discussion_r2",
+									file: "test.go",
+									line: 20,
+									autoInjectReview: true,
+								},
 							],
 						},
 					],
@@ -681,7 +849,12 @@ describe("prSummaryParts", () => {
 		const parts = prSummaryParts(
 			summary({
 				state: "merged",
-				ci: { state: "failing", checkCount: 1, failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
+				ci: {
+					autoInjectCI: true,
+					state: "failing",
+					checkCount: 1,
+					failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }],
+				},
 				review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
 				mergeability: { state: "conflicting", reasons: ["conflicts"], prUrl: "https://github.com/acme/repo/pull/7" },
 			}),

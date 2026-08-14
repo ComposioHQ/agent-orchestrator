@@ -16,11 +16,14 @@ import {
 import type { Theme } from "../lib/theme";
 import { haptics } from "../lib/haptics";
 import { clearOnboardingSkipped } from "../lib/onboardingStore";
-import { parsePairingPayload } from "../lib/pairing";
+import { applyPairingPayload, parsePairingPayload } from "../lib/pairing";
 import { connectSheetRoute } from "../lib/sheetResult";
 import { useApp } from "../lib/store";
 import { Button, NumberedStep } from "../lib/ui";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
+import { MinimalBackButton } from "../lib/MinimalBackButton";
+import { MOBILE_EVENTS } from "../lib/telemetry/events";
+import { mobileTelemetry } from "../lib/telemetry/runtime";
 
 export default function PairScreen() {
 	const t = useTheme();
@@ -83,12 +86,7 @@ export default function PairScreen() {
 		rejected.current = null;
 		scanned.current = true;
 		const cfg = await loadConfig();
-		await verify({
-			...cfg,
-			host: parsed.host,
-			httpPort: parsed.port,
-			password: parsed.password || cfg.password,
-		});
+		await verify(applyPairingPayload(cfg, parsed));
 	}
 
 	async function verify(target: ServerConfig) {
@@ -98,6 +96,8 @@ export default function PairScreen() {
 		try {
 			await pingServer(target);
 			await saveConfig(target);
+			mobileTelemetry()?.capture(MOBILE_EVENTS.paired, { method: "qr", from_onboarding: fromOnboarding });
+			if (fromOnboarding) mobileTelemetry()?.capture(MOBILE_EVENTS.onboardingCompleted);
 			haptics.success();
 			await finish();
 		} catch (e) {
@@ -128,11 +128,7 @@ export default function PairScreen() {
 
 	return (
 		<View style={[styles.screen, { paddingTop: insets.top }]}>
-			<View style={styles.topBar}>
-				<Pressable onPress={back} hitSlop={14} accessibilityRole="button" accessibilityLabel="Back">
-					<Feather name="chevron-left" size={26} color={t.textPrimary} />
-				</Pressable>
-			</View>
+			<View style={styles.topBar}><MinimalBackButton onPress={back} /></View>
 
 			<View style={styles.steps}>
 				<NumberedStep n={1} title="Open AO on your computer" compact />
@@ -197,7 +193,7 @@ export default function PairScreen() {
 			{/* Always reachable — including when the camera is permanently denied,
 			    which would otherwise leave the user with no way forward at all. */}
 			<Pressable
-				onPress={() => router.push(connectSheetRoute(() => void finish()))}
+				onPress={() => { haptics.tap(); router.push(connectSheetRoute(() => void finish())); }}
 				style={[styles.manual, { paddingBottom: insets.bottom + 14 }]}
 				accessibilityRole="button"
 			>

@@ -290,12 +290,12 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 					variant="icon"
 				>
 					{unreadCount > 0 ? (
-						<BellRing className="size-5 fill-current text-foreground" aria-hidden="true" />
+						<BellRing className="size-icon-base fill-current text-foreground" aria-hidden="true" />
 					) : (
-						<Bell className="size-5" aria-hidden="true" />
+						<Bell className="size-icon-base" aria-hidden="true" />
 					)}
 					{unreadCount > 0 ? (
-						<span className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm">
+						<span className="pointer-events-none absolute right-px top-px grid h-3 min-w-3 place-items-center rounded-full bg-accent-strong px-0.5 font-mono text-[7px] font-semibold leading-none text-accent-foreground shadow-sm ring-1 ring-background">
 							{unreadCount > 99 ? "99+" : unreadCount}
 						</span>
 					) : null}
@@ -360,6 +360,12 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						{notifications.map((notification) => {
 							const sessionId = notification.target.sessionId || notification.sessionId;
 							const terminated = Boolean(sessionId) && terminatedIds.has(sessionId);
+							// Restoring only makes sense when an agent is actually paused waiting
+							// on input. PR outcomes (ready_to_merge, pr_merged, pr_closed_unmerged)
+							// describe work that already finished — there is nothing to resume, so
+							// a terminated session behind one of these should stay viewable, not
+							// gated behind a restore action.
+							const offerRestore = terminated && notification.type === "needs_input";
 							return (
 								<NotificationItem
 									highlighted={highlightedIds.has(notification.id) || notification.status === "unread"}
@@ -372,6 +378,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 									restoreDisabled={restoringSessionId !== undefined}
 									sessionsReady={sessionsReady}
 									terminated={terminated}
+									offerRestore={offerRestore}
 								/>
 							);
 						})}
@@ -419,14 +426,18 @@ function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message
 }
 
 /**
- * The whole row is the click target for live sessions. Terminated sessions are
- * not navigable — restore is the only session action. PR titles stay a real
+ * The whole row is the click target for live sessions. A terminated session
+ * behind a `needs_input` notification is not navigable — restore is the only
+ * action, since there is a paused agent to resume. PR-outcome notifications
+ * (`offerRestore` false) describe finished work, so a terminated session stays
+ * viewable there instead of being gated behind restore. PR titles stay a real
  * link so a PR row can open the PR without a separate icon button.
  */
 function NotificationItem({
 	highlighted,
 	meta,
 	notification,
+	offerRestore,
 	onOpenSession,
 	onRestore,
 	restoring,
@@ -437,6 +448,7 @@ function NotificationItem({
 	highlighted: boolean;
 	meta?: { projectName: string; sessionName: string };
 	notification: NotificationDTO;
+	offerRestore: boolean;
 	onOpenSession: (notification: NotificationDTO) => void;
 	onRestore: () => void;
 	restoring: boolean;
@@ -447,7 +459,7 @@ function NotificationItem({
 	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
 	const sessionId = notification.target.sessionId || notification.sessionId;
-	const canOpenSession = Boolean(sessionId) && sessionsReady && !terminated;
+	const canOpenSession = Boolean(sessionId) && sessionsReady && (!terminated || !offerRestore);
 	const copy = notificationCopy(notification, meta?.sessionName);
 	const titleLink = notificationPRTitleLink(notification, copy.title);
 	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(copy, meta?.sessionName ?? "");
@@ -540,7 +552,7 @@ function NotificationItem({
 					<time className="shrink-0 font-mono text-[9px] leading-none text-passive" dateTime={notification.createdAt}>
 						{formatTimeCompact(notification.createdAt)}
 					</time>
-					{terminated && sessionId ? (
+					{offerRestore && sessionId ? (
 						<Tooltip delayDuration={0}>
 							<TooltipTrigger asChild>
 								<button

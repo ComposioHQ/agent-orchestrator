@@ -26,6 +26,7 @@ const PR_HEAD_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function ci(state: SessionPRSummary["ci"]["state"], checkCount = 0): SessionPRSummary["ci"] {
 	return {
+		autoInjectCI: true,
 		state,
 		checkCount,
 		failingChecks: [],

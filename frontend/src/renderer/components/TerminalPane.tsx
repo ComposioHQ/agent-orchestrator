@@ -16,14 +16,14 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
-import { useUiStore, type Theme } from "../stores/ui-store";
+import type { Theme } from "../stores/ui-store";
 import {
 	useTerminalSession,
 	type AttachableTerminal,
 	type TerminalSessionState,
 } from "../hooks/useTerminalSession";
-import { apiClient, getApiBaseUrl } from "../lib/api-client";
-import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
+import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
+import { getApiBaseUrl } from "../lib/api-client";
 import {
 	createTerminalMux,
 	createTerminalMuxPool,
@@ -44,6 +44,13 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	isFullscreen?: boolean;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
+	/** Refuse agent PTY input while a controller transition owns the source. */
+	inputDisabled?: boolean;
+	/** Focus the terminal when an in-flight controller asks for human input. */
+	focusRequested?: boolean;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
 };
@@ -102,6 +109,10 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.theme === right.theme &&
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
+		left.isFullscreen === right.isFullscreen &&
+		left.onToggleFullscreen === right.onToggleFullscreen &&
+		left.inputDisabled === right.inputDisabled &&
+		left.focusRequested === right.focusRequested &&
 		left.createMux === right.createMux &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
@@ -635,6 +646,10 @@ export function TerminalPane({
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
+	isFullscreen,
+	onToggleFullscreen,
+	inputDisabled,
+	focusRequested,
 }: TerminalPaneProps) {
 	const terminalTarget =
 		requestedTerminalTarget &&
@@ -698,7 +713,17 @@ export function TerminalPane({
 		);
 	}
 
-	const props = { session, theme, daemonReady, terminalTarget, fontSize };
+	const props = {
+		session,
+		theme,
+		daemonReady,
+		terminalTarget,
+		fontSize,
+		isFullscreen,
+		onToggleFullscreen,
+		inputDisabled,
+		focusRequested,
+	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
 		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
@@ -711,6 +736,10 @@ export function TerminalPane({
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			isFullscreen={isFullscreen}
+			inputDisabled={inputDisabled}
+			onToggleFullscreen={onToggleFullscreen}
+			focusRequested={focusRequested}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -832,7 +861,8 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
 // PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
 // kilocode is a fork of opencode and shares its TUI surface; grok also uses a
-// full-screen keyboard-scroll TUI, so both scroll the same way.
+// full-screen keyboard-scroll TUI, so both scroll the same way. Muse Code uses
+// the normal terminal buffer instead and must keep the SGR -> tmux scroll path.
 const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok"]);
 
 // Whether the given provider's TUI is one of the keyboard-scroll agents above.
@@ -852,6 +882,10 @@ function AttachedTerminal({
 	daemonReady,
 	terminalTarget,
 	fontSize,
+	isFullscreen,
+	onToggleFullscreen,
+	inputDisabled,
+	focusRequested,
 	createMux,
 	isVisible = true,
 	onFatal,
@@ -879,39 +913,13 @@ function AttachedTerminal({
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	// Glow the Browser tab when the agent prints a URL in this worker's terminal
-	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
-	// open it — and is skipped while they are already looking at the Browser tab.
-	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
-	const urlWatcherRef = useRef<UrlWatcher | null>(null);
-	const isVisibleRef = useRef(isVisible);
-	isVisibleRef.current = isVisible;
-	const handleOutput = useCallback(
-		(text: string) => {
-			const sessionId = session?.id;
-			if (!sessionId) return;
-			if (!urlWatcherRef.current) {
-				urlWatcherRef.current = createUrlWatcher(() => {
-					const store = useUiStore.getState();
-					const current = store.inspectorSessions[sessionId];
-					const viewingBrowser =
-						isVisibleRef.current &&
-						(current?.isOpen ?? true) &&
-						(current?.view ?? "summary") === "browser";
-					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
-				});
-			}
-			urlWatcherRef.current.push(text);
-		},
-		[session?.id],
-	);
 	const { attach, state, error, replaySettled, syncVisibleSize } = useTerminalSession(attachSession, {
 		coverInitialReplay: terminalTarget?.kind !== "reviewer",
 		createMux,
 		daemonReady,
+		inputDisabled,
 		isVisible,
 		shellTerminalHandleId,
-		onOutput: watchLinks ? handleOutput : undefined,
 	});
 	// xterm's write callback means the replay has been parsed, not that the
 	// browser has painted its final viewport. Keep the first-load cover mounted
@@ -959,40 +967,7 @@ function AttachedTerminal({
 			return;
 		}
 	}, [initFailed, onFatal]);
-	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
-	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
-	const handleLinkOpen = useCallback(
-		(uri: string) => {
-			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
-			try {
-				const url = new URL(uri);
-				if (url.protocol !== "http:" && url.protocol !== "https:") return;
-			} catch {
-				return;
-			}
-			const linkSessionId = session.id;
-			// A left-click is an explicit request to view the link, so open the
-			// Browser tab now (unlike a passive `ao preview`, which only badges it).
-			setInspectorViewForSession(linkSessionId, "browser");
-			setInspectorOpenForSession(linkSessionId, true);
-			void (async () => {
-				try {
-					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: linkSessionId } },
-						body: { url: uri },
-					});
-					if (previewError) {
-						console.warn("Unable to open terminal link in Browser preview", previewError);
-						return;
-					}
-					await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-				} catch (error) {
-					console.warn("Unable to open terminal link in Browser preview", error);
-				}
-			})();
-		},
-		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
-	);
+	const handleLinkOpen = useSessionBrowserLink(session);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
 		setIsRestoring(true);
@@ -1076,17 +1051,21 @@ function AttachedTerminal({
 					}
 				/>
 			)}
-			{/* p-2 insets xterm from the pane edges. Surface + xterm chrome use
-			    the opaque #101317 plate so the gutter never fringes against app
-			    chrome. Overlays cover the full padding box. */}
-			<div className="relative min-h-0 flex-1 p-2">
+			{/* Keep a small gutter where terminal output starts, but let xterm use the
+			    full top/right/bottom extent. The host fills the remaining
+			    content box, so FitAddon still measures it correctly and the absolute
+			    overlays (empty state, banner) keep covering the full padding box. */}
+			<div className="relative min-h-0 flex-1 pl-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
+					focusRequested={focusRequested}
+					isFullscreen={isFullscreen}
 					isVisible={isVisible}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
+					onToggleFullscreen={onToggleFullscreen}
 					onVisibleSize={syncVisibleSize}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}

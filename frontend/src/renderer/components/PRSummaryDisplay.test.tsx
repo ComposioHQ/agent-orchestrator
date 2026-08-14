@@ -20,7 +20,7 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	additions: 10,
 	deletions: 3,
 	changedFiles: 2,
-	ci: { state: "passing", checkCount: 0, failingChecks: [] },
+	ci: { autoInjectCI: true, state: "passing", checkCount: 0, failingChecks: [] },
 	review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 	updatedAt: "2026-06-15T00:00:00Z",
@@ -50,7 +50,7 @@ describe("PRSummaryParts", () => {
 		const { container } = render(
 			<PRCardStatusSummary
 				pr={summary({
-					ci: { state: "pending", checkCount: 1, failingChecks: [] },
+					ci: { autoInjectCI: true, state: "pending", checkCount: 1, failingChecks: [] },
 					review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 					mergeability: {
 						state: "blocked",
@@ -94,6 +94,7 @@ describe("PRSummaryParts", () => {
 			<PRCardStatusSummary
 				pr={summary({
 				ci: {
+					autoInjectCI: true,
 					state: "failing",
 					checkCount: 1,
 					failingChecks: [
@@ -123,6 +124,7 @@ describe("PRSummaryParts", () => {
 				maxLinks={2}
 				pr={summary({
 					ci: {
+						autoInjectCI: true,
 						state: "failing",
 						checkCount: 3,
 						failingChecks: [
@@ -147,6 +149,7 @@ describe("PRSummaryParts", () => {
 				interactiveLinks={false}
 				pr={summary({
 					ci: {
+						autoInjectCI: true,
 						state: "failing",
 						checkCount: 3,
 						failingChecks: [

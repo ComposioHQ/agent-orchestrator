@@ -1,5 +1,4 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { TaskComposer } from "./TaskComposer";
 
@@ -15,26 +14,12 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-popover p-0 text-popover-foreground shadow-[var(--shadow-settings-dialog)] data-[state=open]:animate-modal-in">
-					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)">
-						<div className="min-w-0">
-							<Dialog.Title className="settings-dialog-title">{t("newTask.title")}</Dialog.Title>
-							<Dialog.Description className="mt-1 text-xs text-settings-muted">
-								{t("newTask.description")}
-							</Dialog.Description>
-						</div>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="settings-close-button"
-								aria-label={t("newTask.close")}
-							>
-								<X className="size-icon-base" aria-hidden="true" />
-							</button>
-						</Dialog.Close>
-					</div>
-
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none">
+					{/* One title line names the dialog, styled like every other settings-style
+					    modal; everything else stays the composer's surface, no bordered header. */}
+					<Dialog.Title className="settings-dialog-title px-4 pt-3">{t("newTask.title")}</Dialog.Title>
+					<Dialog.Description className="sr-only">{t("newTask.description")}</Dialog.Description>
 					<TaskComposer
 						projectId={projectId}
 						autoFocusTitle
@@ -42,7 +27,6 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							onCreated(sessionId);
 							onOpenChange(false);
 						}}
-						onCancel={() => onOpenChange(false)}
 					/>
 				</Dialog.Content>
 			</Dialog.Portal>

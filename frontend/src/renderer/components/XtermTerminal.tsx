@@ -34,10 +34,10 @@ import type {
 } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
-import { openLinkInSystemBrowser } from "../lib/external-link-policy";
-import { applyDocumentTheme } from "../lib/theme";
+import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
+import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
-import type { Theme } from "../stores/ui-store";
+import { useUiStore, type Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -50,7 +50,10 @@ export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
 	fontSize?: number;
+	isFullscreen?: boolean;
 	theme: Theme;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
 	/**
 	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
 	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
@@ -66,6 +69,8 @@ export type XtermTerminalProps = {
 	onVisibleSize?: (cols: number, rows: number) => void;
 	/** Hidden retained terminals keep parsing output but expose no UI overlays. */
 	isVisible?: boolean;
+	/** Move keyboard focus into xterm when a controller needs human input. */
+	focusRequested?: boolean;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
 	 * handle stays valid until unmount; cols/rows are live getters.
@@ -183,6 +188,9 @@ function terminalHasFocus(host: HTMLElement): boolean {
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
+		viewport?: {
+			scrollBarWidth: number;
+		};
 		_selectionService?: {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
@@ -203,15 +211,6 @@ type TerminalContextMenuState = {
 	// "Open in system browser" item (left-click opens it in the AO Browser).
 	link: string | null;
 };
-
-function isWebLink(uri: string): boolean {
-	try {
-		const { protocol } = new URL(uri);
-		return protocol === "http:" || protocol === "https:";
-	} catch {
-		return false;
-	}
-}
 
 type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
 
@@ -250,8 +249,14 @@ function forceSelectionMode(term: Terminal): void {
 	element.classList.remove("enable-mouse-events");
 }
 
+function removeHiddenScrollbarReservation(term: Terminal): void {
+	const viewport = (term as XtermInternal)._core?.viewport;
+	if (viewport) viewport.scrollBarWidth = 0;
+}
+
 export function XtermTerminal(props: XtermTerminalProps) {
 	const { t } = useTranslation();
+	const themeStyle = useUiStore((state) => state.themeStyle);
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
@@ -287,16 +292,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	callbacksRef.current = props;
 
 	useEffect(() => {
+		// buildTerminalThemes() reads live CSS vars from :root. Parent shell effects
+		// run after child effects, so sync both independent theme axes here before
+		// reading. Retained terminals subscribe to themeStyle directly and update
+		// their live palette without being torn down or losing scrollback.
+		applyDocumentTheme(props.theme);
+		applyDocumentThemeStyle(themeStyle);
 		const term = termRef.current;
 		if (!term) return;
-		// buildTerminalThemes() reads live CSS vars from :root. Parent shell
-		// applies data-theme in its own effect, and child effects run first, so
-		// sync the document here before reading — otherwise the palette stays on
-		// the previous theme until remount.
-		applyDocumentTheme(props.theme);
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
-	}, [props.theme]);
+	}, [props.theme, themeStyle]);
 
 	useEffect(() => {
 		const term = termRef.current;
@@ -363,7 +369,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// rely on the terminal's scrollback (codex, a plain shell). Keep it > 0
 				// so that history survives to be scrolled locally (see the wheel
 				// handler's normal-buffer branch). The scrollbar itself is hidden in
-				// CSS so FitAddon's ~14px reservation doesn't shift the grid.
+				// CSS; its matching FitAddon reservation is removed after open() below.
 				scrollback: 5000,
 				theme: props.theme === "dark" ? dark : light,
 			});
@@ -395,6 +401,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (import.meta.env.DEV) {
 			(host as DevXtermHost).__aoXtermForTest = term;
 		}
+		// xterm reserves a 15px fallback for macOS overlay scrollbars even when CSS
+		// hides the scrollbar entirely. FitAddon subtracts that private value from
+		// every width proposal, leaving a conspicuous empty strip on the right. The
+		// viewport still scrolls normally without the invisible reservation.
+		removeHiddenScrollbarReservation(term);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
@@ -903,6 +914,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		};
 	}, []);
 
+	useEffect(() => {
+		if (!props.focusRequested || props.isVisible === false) return undefined;
+		try {
+			termRef.current?.focus();
+		} catch {
+			// The retained terminal may have been parked during this effect.
+		}
+		return undefined;
+	}, [props.focusRequested, props.isVisible]);
+
 	useLayoutEffect(() => {
 		if (props.isVisible === false) setContextMenuOpen(false);
 	}, [props.isVisible, setContextMenuOpen]);
@@ -918,6 +939,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const term = termRef.current;
 		if (term) callbacksRef.current.onVisibleSize?.(term.cols, term.rows);
 	}, [props.isVisible]);
+
+	const fullscreenElement = document.fullscreenElement;
+	const contextMenuPortalContainer =
+		props.isFullscreen &&
+		fullscreenElement instanceof HTMLElement &&
+		hostRef.current &&
+		fullscreenElement.contains(hostRef.current)
+			? fullscreenElement
+			: undefined;
 
 	return (
 		<>
@@ -955,6 +985,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					align="start"
 					className="min-w-36"
 					onCloseAutoFocus={(event) => event.preventDefault()}
+					portalContainer={contextMenuPortalContainer}
 					side="right"
 					sideOffset={2}
 				>
@@ -979,6 +1010,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
+					{props.onToggleFullscreen ? (
+						<DropdownMenuItem
+							onSelect={() => {
+								setContextMenuOpen(false);
+								callbacksRef.current.onToggleFullscreen?.();
+							}}
+						>
+							{props.isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
+						</DropdownMenuItem>
+					) : null}
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</>
