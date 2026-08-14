@@ -1,4 +1,5 @@
 import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, TriangleAlert } from "lucide-react";
+import { SessionWorkspaceTopbarView } from "@aoagents/product-ui";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
@@ -249,21 +250,16 @@ export function CenterPane({
 	);
 
 	const terminalTopbar = (
-		<div className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
-
-			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
-				<div
-					className={cn(
-						"flex min-w-0 shrink items-center pr-1.5",
+		<SessionWorkspaceTopbarView
+			terminalClassName={cn(
 						!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
 						!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
 					)}
-					data-testid="session-terminal-region"
-					style={{
+			terminalStyle={{
 						width: terminalBounds.width > 0 ? terminalBounds.width : "100%",
 					}}
-				>
-					<div className="flex h-full min-w-flex-min flex-1 items-center">
+			terminalTabs={
+				<>
 						{tabsOverflow.canScrollLeft ? (
 							<button
 								aria-label={t("terminal.scrollTabsLeft")}
@@ -343,12 +339,10 @@ export function CenterPane({
 								<TooltipContent>{t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}</TooltipContent>
 							</Tooltip>
 						) : null}
-					</div>
-					<div
-						aria-label={t("terminal.controlsAria")}
-						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
-						role="toolbar"
-					>
+				</>
+			}
+			terminalControls={
+				<>
 						<TerminalControl
 							disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
 							label={t("terminal.decreaseFontSize")}
@@ -381,18 +375,11 @@ export function CenterPane({
 								<Maximize2 aria-hidden="true" className="size-icon-md" />
 							)}
 						</TerminalControl>
-					</div>
-				</div>
-				{isFullscreen ? null : (
-					<div
-						className="ml-auto flex shrink-0 items-center px-3"
-						data-testid="session-action-region"
-					>
-						{topbarActions}
-					</div>
-				)}
-			</div>
-		</div>
+				</>
+			}
+			terminalControlsAriaLabel={t("terminal.controlsAria")}
+			actions={isFullscreen ? null : topbarActions}
+		/>
 	);
 
 	return (

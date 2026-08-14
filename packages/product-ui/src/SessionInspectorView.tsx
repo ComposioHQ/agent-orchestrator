@@ -21,11 +21,11 @@ import { cn } from "./utils";
 
 export type InspectorView = "summary" | "browser" | "files";
 
-export type InspectorTab = {
+export type InspectorTab<TView extends string = InspectorView> = {
 	badge?: boolean;
 	displayLabel?: string;
 	icon: ReactNode;
-	id: InspectorView;
+	id: TView;
 	label: string;
 };
 
@@ -34,7 +34,7 @@ const inspectorBodyBaseClass = "min-h-0 flex-1";
 const inspectorScrollableBodyClass = "overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 export const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
-export function SessionInspectorShellView({
+export function SessionInspectorShellView<TView extends string = InspectorView>({
 	activeView,
 	ariaLabel,
 	browserPoppedOut,
@@ -43,17 +43,19 @@ export function SessionInspectorShellView({
 	loadingText,
 	onViewChange,
 	summaryView,
+	terminalView,
 	tabs,
 }: {
-	activeView: InspectorView;
+	activeView: TView;
 	ariaLabel: string;
 	browserPoppedOut: boolean;
 	browserView?: ReactNode;
 	filesView?: ReactNode;
 	loadingText?: string;
-	onViewChange: (view: InspectorView) => void;
+	onViewChange: (view: TView) => void;
 	summaryView?: ReactNode;
-	tabs: InspectorTab[];
+	terminalView?: ReactNode;
+	tabs: InspectorTab<TView>[];
 }) {
 	if (loadingText) {
 		return (
@@ -133,16 +135,18 @@ export function SessionInspectorShellView({
 			<div
 				className={cn(
 					inspectorBodyBaseClass,
-					activeView !== "browser" && activeView !== "files" && inspectorScrollableBodyClass,
+					activeView !== "browser" && activeView !== "files" && activeView !== "terminal" && inspectorScrollableBodyClass,
 					activeView === "browser" &&
 						!browserPoppedOut &&
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					activeView === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
+					activeView === "terminal" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
 				{activeView === "summary" ? summaryView : null}
 				{activeView === "browser" ? browserView : null}
 				{activeView === "files" ? filesView : null}
+				{activeView === "terminal" ? terminalView : null}
 			</div>
 		</aside>
 	);
