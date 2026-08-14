@@ -125,6 +125,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Usage:         deps.UsageHooks,
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
+			DataDir:       cfg.DataDir,
 		},
 		usage:         &controllers.UsageController{Svc: deps.UsageSummary},
 		prs:           &controllers.PRsController{Svc: deps.PRs},

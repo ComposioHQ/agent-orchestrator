@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachments"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -28,9 +29,9 @@ import (
 func (m *Manager) StageAttachments(
 	ctx context.Context,
 	id domain.SessionID,
-	attachments []ports.SpawnAttachment,
+	files []ports.SpawnAttachment,
 ) ([]string, error) {
-	if len(attachments) == 0 {
+	if len(files) == 0 {
 		return nil, nil
 	}
 
@@ -52,8 +53,8 @@ func (m *Manager) StageAttachments(
 		return nil, fmt.Errorf("create attachments dir: %w", err)
 	}
 
-	refs := make([]string, 0, len(attachments))
-	for i, a := range attachments {
+	refs := make([]string, 0, len(files))
+	for i, a := range files {
 		ext := a.Ext
 		if ext == "" {
 			ext = ".bin"
@@ -63,6 +64,14 @@ func (m *Manager) StageAttachments(
 			return nil, fmt.Errorf("name attachment %d: %w", i+1, err)
 		}
 		name := "attachment-" + suffix + ext
+		// Canonical copy first: the durable conversation will reference this file
+		// forever, while the worktree copy below lives only until the next
+		// worktree recycle. If the durable write fails the attachment is refused
+		// outright — a file that renders today and vanishes on the next restart
+		// is the data loss this ordering exists to prevent (#3884).
+		if err := attachments.Store(m.dataDir, string(id), name, a.Data); err != nil {
+			return nil, fmt.Errorf("store attachment %d durably: %w", i+1, err)
+		}
 		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
 			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
 		}

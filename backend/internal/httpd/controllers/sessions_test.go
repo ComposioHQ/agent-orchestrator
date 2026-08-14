@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachments"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
@@ -2516,5 +2517,65 @@ func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
 			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", tc.body)
 			assertErrorCode(t, body, status, tc.code, tc.want)
 		})
+	}
+}
+
+// After daemon recovery recreates a worktree, the .ao/attachments/... URLs
+// embedded in durable conversation history must keep resolving from durable
+// storage (#3884). Ordinary preview files stay confined to the live workspace.
+func TestSessionsAPI_PreviewServesDurableAttachmentAfterWorktreeLoss(t *testing.T) {
+	svc := newFakeSessionService()
+	workspace := t.TempDir()
+	dataDir := t.TempDir()
+	s := svc.sessions["ao-1"]
+	s.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+	svc.sessions["ao-1"] = s
+
+	// The canonical copy exists; the recreated worktree has no projection yet.
+	if err := attachments.Store(dataDir, "ao-1", "attachment-ab12cd.png", []byte("durable-bytes")); err != nil {
+		t.Fatalf("store canonical attachment: %v", err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{DataDir: dataDir}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet,
+		"/api/v1/sessions/ao-1/preview/files/.ao/attachments/attachment-ab12cd.png", "")
+	if status != http.StatusOK || string(body) != "durable-bytes" {
+		t.Fatalf("durable attachment = %d %q, want 200 with canonical bytes", status, body)
+	}
+
+	// A live worktree copy wins over the canonical one: it is what the agent
+	// most recently saw.
+	dir := filepath.Join(workspace, ".ao", "attachments")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "attachment-ab12cd.png"), []byte("worktree-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body, status, _ = doRequest(t, srv, http.MethodGet,
+		"/api/v1/sessions/ao-1/preview/files/.ao/attachments/attachment-ab12cd.png", "")
+	if status != http.StatusOK || string(body) != "worktree-bytes" {
+		t.Fatalf("worktree attachment = %d %q, want 200 with worktree bytes", status, body)
+	}
+
+	// Traversal through the attachment prefix must not reach durable storage.
+	if _, status, _ := doRequest(t, srv, http.MethodGet,
+		"/api/v1/sessions/ao-1/preview/files/.ao/attachments/../../../attachment-ab12cd.png", ""); status == http.StatusOK {
+		t.Fatalf("traversal request = %d, want failure", status)
+	}
+
+	// Another session must never see this session's attachments.
+	other := domain.Session{SessionRecord: domain.SessionRecord{
+		ID: "ao-2", ProjectID: "ao", Kind: domain.KindWorker,
+		Metadata: domain.SessionMetadata{WorkspacePath: t.TempDir()},
+	}, Status: domain.StatusIdle}
+	svc.sessions["ao-2"] = other
+	if _, status, _ := doRequest(t, srv, http.MethodGet,
+		"/api/v1/sessions/ao-2/preview/files/.ao/attachments/attachment-ab12cd.png", ""); status != http.StatusNotFound {
+		t.Fatalf("cross-session attachment = %d, want 404", status)
 	}
 }

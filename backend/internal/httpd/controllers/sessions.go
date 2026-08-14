@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachments"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -147,6 +148,9 @@ type SessionsController struct {
 	Usage         UsageHookRecorder
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
+	// DataDir locates durable attachment storage, so preview URLs embedded in
+	// conversation history keep resolving after the worktree copy is recycled.
+	DataDir string
 }
 
 // Register mounts the session routes on the supplied router.
@@ -423,7 +427,34 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteError(w, r, err)
 		return
 	}
-	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
+	asset := chi.URLParam(r, "*")
+	// An AO-generated attachment reference is served from durable storage when
+	// the worktree copy is gone: conversation history outlives the disposable
+	// worktree, so the URLs embedded in it must too (#3884). Ordinary preview
+	// files remain confined to the current workspace.
+	if name, ok := attachments.RefName(asset); ok {
+		if _, exists := previewutil.EntryAtPath(sess.Metadata.WorkspacePath, asset); !exists {
+			if c.serveDurableAttachment(w, r, sessionID(r), name) {
+				return
+			}
+		}
+	}
+	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, asset)
+}
+
+// serveDurableAttachment writes the canonical copy of one attachment. Reports
+// false when there is no canonical copy, so the caller can fall through to the
+// ordinary workspace lookup and its error shape.
+func (c *SessionsController) serveDurableAttachment(
+	w http.ResponseWriter, r *http.Request, id domain.SessionID, name string,
+) bool {
+	file, info, err := attachments.Open(c.DataDir, string(id), name)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = file.Close() }()
+	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+	return true
 }
 
 // PreviewOrigin serves a workspace preview from its isolated *.localhost

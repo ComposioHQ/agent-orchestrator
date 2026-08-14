@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachments"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -1901,7 +1902,20 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 		}
 	}
 
-	// 6. Force-remove the worktree (safe: work is captured in step 1 and the
+	// 6. Import any attachments that exist only in the worktree into durable
+	// storage. StashUncommitted deliberately skips ignored files, so this is the
+	// last moment the bytes of a legacy worktree-only attachment exist (#3884).
+	// Best-effort with a loud log: a failed import must not block the teardown,
+	// but a silent one would hide data loss.
+	if imported, err := attachments.ImportWorktree(m.dataDir, string(rec.ID), ws.Path); err != nil {
+		m.logger.Error("save-teardown-all: import worktree attachments failed; attachment bytes may be lost",
+			"sessionID", rec.ID, "error", err)
+	} else if imported > 0 {
+		m.logger.Info("save-teardown-all: imported worktree-only attachments",
+			"sessionID", rec.ID, "count", imported)
+	}
+
+	// 7. Force-remove the worktree (safe: work is captured in step 1 and the
 	// DB write in step 2 is already committed).
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "error", err)
@@ -2158,6 +2172,17 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 					}
 					// Continue: always relaunch even on conflict (never delete the ref here).
 				}
+			}
+		}
+
+		// Step 2b: project durable attachments back into the recreated worktree
+		// before the controller relaunches, so the resumed agent can read the
+		// same .ao/attachments/... paths its conversation history names (#3884).
+		if copied, matErr := attachments.Materialize(m.dataDir, string(rec.ID), ws.Path); matErr != nil {
+			m.logger.Error("restore-all: rematerialize attachments failed", "sessionID", rec.ID, "error", matErr)
+		} else if copied > 0 {
+			if err := m.workspace.AddExclude(ctx, ws, "/"+attachmentsDir+"/"); err != nil {
+				m.logger.Warn("restore-all: exclude attachments dir", "sessionID", rec.ID, "error", err)
 			}
 		}
 
