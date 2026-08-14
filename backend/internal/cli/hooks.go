@@ -431,9 +431,10 @@ func (c *commandContext) emitSessionStartContext(agent, event, sessionID string)
 // first model invocation; later invocations return an empty object so the large
 // prompt is not duplicated into provider context. Stop explicitly allows the
 // provider to terminate — AO observes the outcome but never forces a retry from
-// inside this hook.
+// inside this hook. Legacy hook events return without writing so they cannot
+// append a second JSON document to older SessionStart-compatible responses.
 func (c *commandContext) emitAgyNativeHookResponse(agent, event, sessionID string, payload []byte) {
-	var out any = struct{}{}
+	var out any
 	switch event {
 	case "pre-invocation":
 		response := agyPreInvocationHookOutput{}
@@ -464,6 +465,8 @@ func (c *commandContext) emitAgyNativeHookResponse(agent, event, sessionID strin
 		out = agyStopHookOutput{Decision: "allow"}
 	case "post-tool-use":
 		out = struct{}{}
+	default:
+		return
 	}
 	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write native hook response: %w", err))
