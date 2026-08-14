@@ -266,6 +266,7 @@
 	"inspector.earlierPass": "以前の実行",
 	"inspector.previousLabel": "前回:",
 	"inspector.reviews": "レビュー概要",
+	"inspector.reviewTab": "レビュー",
 	"inspector.session": "セッション",
 	"inspector.started": "開始",
 	"inspector.startedFromPrompt": "保存済みプロンプトから開始",

@@ -23,6 +23,7 @@ function ExternalLink({ ariaLabel, children, stopPropagation, ...props }: Extern
 
 const tabs = [
 	{ id: "summary" as const, icon: <svg />, label: "Summary" },
+	{ id: "reviews" as const, icon: <svg />, label: "Reviews" },
 	{ badge: true, id: "browser" as const, icon: <svg />, label: "Browser" },
 	{ displayLabel: "2 Files", id: "files" as const, icon: <svg />, label: "Files" },
 ];
@@ -38,6 +39,7 @@ describe("SessionInspectorShellView", () => {
 				browserView={<div role="tabpanel">browser slot</div>}
 				filesView={<div role="tabpanel">files slot</div>}
 				onViewChange={onViewChange}
+				reviewsView={<div role="tabpanel">reviews slot</div>}
 				summaryView={<div role="tabpanel">summary slot</div>}
 				tabs={tabs}
 			/>,
@@ -54,8 +56,20 @@ describe("SessionInspectorShellView", () => {
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		expect(onViewChange).toHaveBeenCalledWith("browser");
 		fireEvent.keyDown(screen.getByRole("tab", { name: "Summary" }), { key: "ArrowRight" });
-		expect(onViewChange).toHaveBeenLastCalledWith("browser");
-		expect(screen.getByRole("tab", { name: "Browser" })).toHaveFocus();
+		expect(onViewChange).toHaveBeenLastCalledWith("reviews");
+		expect(screen.getByRole("tab", { name: "Reviews" })).toHaveFocus();
+
+		rerender(
+			<SessionInspectorShellView
+				activeView="reviews"
+				ariaLabel="Session inspector"
+				browserPoppedOut={false}
+				onViewChange={onViewChange}
+				reviewsView={<div role="tabpanel">reviews slot</div>}
+				tabs={tabs}
+			/>,
+		);
+		expect(screen.getByText("reviews slot")).toBeInTheDocument();
 
 		rerender(
 			<SessionInspectorShellView

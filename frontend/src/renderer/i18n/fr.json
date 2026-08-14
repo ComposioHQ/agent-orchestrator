@@ -268,6 +268,7 @@
 	"inspector.earlierPass": "exécution précédente",
 	"inspector.previousLabel": "Précédent :",
 	"inspector.reviews": "Résumé des revues",
+	"inspector.reviewTab": "Revues",
 	"inspector.session": "Session",
 	"inspector.started": "Démarré",
 	"inspector.startedFromPrompt": "Démarré à partir du prompt enregistré",
