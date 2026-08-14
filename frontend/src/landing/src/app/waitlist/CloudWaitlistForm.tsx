@@ -10,13 +10,17 @@ export function CloudWaitlistForm() {
   const roleId = useId();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedRole = role.trim();
     if (!normalizedEmail || !trimmedRole) return;
+    setError("");
+    setIsSubmitting(true);
 
     let wasOptedOut = false;
     try {
@@ -41,7 +45,28 @@ export function CloudWaitlistForm() {
       // The form should still complete if analytics is unavailable.
     }
 
-    setSubmitted(true);
+    try {
+      const response = await fetch("/api/cloud-waitlist/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          role: trimmedRole,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Waitlist request failed");
+      }
+
+      setSubmitted(true);
+    } catch {
+      setError("We could not save your request. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   if (submitted) {
@@ -99,10 +124,17 @@ export function CloudWaitlistForm() {
 
       <button
         type="submit"
-        className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-foreground px-5 text-sm font-semibold text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        disabled={isSubmitting}
+        className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-xl bg-foreground px-5 text-sm font-semibold text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
       >
-        Join the waitlist
+        {isSubmitting ? "Joining..." : "Join the waitlist"}
       </button>
+
+      {error ? (
+        <p className="text-sm leading-6 text-red-400" role="alert">
+          {error}
+        </p>
+      ) : null}
 
       <p className="text-xs leading-relaxed text-muted-foreground">
         We'll only use this to contact you about AO Cloud. See our{" "}
