@@ -166,11 +166,11 @@ func Sync(root string, upstream []byte, source Source) (Result, error) {
 			return Result{}, err
 		}
 	}
-	bytes, err := canonicalJSON(generated.manifest)
+	manifestBytes, err := canonicalJSON(generated.manifest)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), bytes, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), manifestBytes, 0o600); err != nil {
 		return Result{}, fmt.Errorf("write manifest: %w", err)
 	}
 	return Result{Changed: true}, nil
@@ -456,7 +456,7 @@ func readManifest(path string) (manifest, error) {
 	return m, nil
 }
 
-func writeAppendOnly(path string, contents []byte) error {
+func writeAppendOnly(path string, contents []byte) (err error) {
 	if existing, err := os.ReadFile(path); err == nil {
 		if !bytes.Equal(existing, contents) {
 			return fmt.Errorf("refusing to modify existing provider blob %s", path)
@@ -475,11 +475,15 @@ func writeAppendOnly(path string, contents []byte) error {
 		}
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+	}()
 	if _, err := file.Write(contents); err != nil {
 		return err
 	}
-	return file.Close()
+	return nil
 }
 
 func sameProviders(left, right []providerRef) bool {

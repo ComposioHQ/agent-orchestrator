@@ -34,7 +34,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func runSync(args []string, stdout, stderr io.Writer) error {
+func runSync(args []string, stdout, stderr io.Writer) (err error) {
 	flags := flag.NewFlagSet("sync", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	root := flags.String("root", ".", "repository root")
@@ -50,7 +50,11 @@ func runSync(args []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); err == nil {
+			err = closeErr
+		}
+	}()
 	source, err := io.ReadAll(io.LimitReader(file, maxSourceBytes+1))
 	if err != nil {
 		return fmt.Errorf("read source: %w", err)

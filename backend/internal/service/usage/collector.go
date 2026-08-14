@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/pricing"
 )
 
 const (
@@ -234,7 +235,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		return err
 	}
 	signal.Harness = session.Harness
-	signal.ProviderHint = boundedUsageMetadata(signal.ProviderHint)
+	signal.ProviderHint = trustedClaudeProviderHint(session.Harness, signal.ProviderHint)
 	signal.NativeSessionID = boundedUsageMetadata(signal.NativeSessionID)
 	if signal.NativeSessionID == "" {
 		signal.NativeSessionID = boundedUsageMetadata(session.Metadata.AgentSessionID)
@@ -412,6 +413,19 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		c.notifySourceInventory(false)
 	}
 	return nil
+}
+
+func trustedClaudeProviderHint(harness domain.AgentHarness, raw string) string {
+	if harness != domain.HarnessClaudeCode {
+		return ""
+	}
+	providerID := pricing.CanonicalProviderID(boundedUsageMetadata(raw))
+	switch providerID {
+	case "anthropic", "zai", "bedrock", "vertex_ai":
+		return providerID
+	default:
+		return ""
+	}
 }
 
 func finalizingEvent(event string) bool {
