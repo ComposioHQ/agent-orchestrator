@@ -1065,7 +1065,7 @@ export function CloudWorkspace() {
                 sidebarOpen={!sidebarCollapsed}
                 showBoardActions={!!selectedProjectId}
                 onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
-                onOrchestrator={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
+                onOrchestrator={selectedProject && !selectedProject.config?.scratch ? () => setNewSessionProjectId(selectedProjectId!) : undefined}
                 onShare={selectedProject ? () => void openShareDialog(selectedProject) : undefined}
               />
               <div className="relative min-h-0 flex-1">

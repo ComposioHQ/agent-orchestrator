@@ -88,28 +88,7 @@ export function CloudTopbar({
                 New task
               </button>
             ) : null}
-            {onOrchestrator ? (
-              <button
-                type="button"
-                aria-label="Orchestrator"
-                className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md bg-[var(--color-accent-strong)] px-2.5 text-xs font-semibold leading-none text-[var(--color-accent-foreground)] transition-[filter] duration-100 hover:brightness-110 active:brightness-95"
-                onClick={onOrchestrator}
-              >
-                <OrchestratorIcon className="size-[18px]" aria-hidden="true" />
-                Orchestrator
-              </button>
-            ) : null}
           </>
-        ) : null}
-        {onShare ? (
-          <button
-            type="button"
-            aria-label="Share"
-            className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-            onClick={onShare}
-          >
-            <Share2 className="size-3.5" aria-hidden="true" />
-          </button>
         ) : null}
         {onDelete ? (
           <button

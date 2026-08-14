@@ -234,7 +234,7 @@ function LocalAgentForm({
           <input checked={useGitHub} className="mt-1 cursor-pointer" disabled={busy} onChange={(e) => setUseGitHub(e.target.checked)} type="checkbox" />
           <span>
             Create a GitHub repository for this project.
-            <span className="block text-[var(--color-text-passive)]">Leave unchecked for a managed Git repository.</span>
+            <span className="block text-[var(--color-text-passive)]">Without a GitHub repository, there will be no orchestrator — only individual agents.</span>
           </span>
         </label>
       ) : null}

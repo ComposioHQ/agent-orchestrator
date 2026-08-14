@@ -243,15 +243,6 @@ export function CloudSessionWorkspace({
             </button>
             <button
               type="button"
-              aria-label="Orchestrator"
-              className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md bg-[var(--color-accent-strong)] px-2.5 text-xs font-semibold leading-none text-[var(--color-accent-foreground)] transition-[filter] duration-100 hover:brightness-110 active:brightness-95"
-              onClick={onClose}
-            >
-              <OrchestratorIcon className="size-3.5" aria-hidden="true" />
-              Orchestrator
-            </button>
-            <button
-              type="button"
               aria-label={inspectorOpen ? "Close inspector" : "Open inspector"}
               className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
               onClick={() => setInspectorOpen((c) => !c)}
@@ -293,7 +284,7 @@ export function CloudSessionWorkspace({
         <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
           <InspectorButton
             active={tab === "changes"}
-            label={`Changes ${diff?.files.length ?? 0}`}
+            label={`Changes ${diff?.files.filter((f) => !f.path.split("/").some((s) => s.startsWith("."))).length ?? 0}`}
             onClick={() => setTab("changes")}
           >
             <GitCompareArrows className="size-3.5" />
@@ -489,7 +480,10 @@ function ChangesView({
       </div>
     );
   }
-  if (diff.files.length === 0 && diff.untrackedFiles.length === 0) {
+  const visibleFiles = diff.files.filter((f) => !f.path.split("/").some((seg) => seg.startsWith(".")));
+  const visibleUntracked = diff.untrackedFiles.filter((p) => !p.split("/").some((seg) => seg.startsWith(".")));
+
+  if (visibleFiles.length === 0 && visibleUntracked.length === 0) {
     return (
       <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
         No workspace changes yet.
@@ -499,7 +493,7 @@ function ChangesView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="max-h-44 shrink-0 overflow-y-auto border-b border-[var(--color-border-strong)] p-2">
-        {diff.files.map((file) => (
+        {visibleFiles.map((file) => (
           <button
             className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
             key={file.path}
@@ -516,7 +510,7 @@ function ChangesView({
             </span>
           </button>
         ))}
-        {diff.untrackedFiles.map((path) => (
+        {visibleUntracked.map((path) => (
           <button
             className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
             key={path}
@@ -605,7 +599,7 @@ function FileBrowser({
       {!busy && entries.length === 0 ? (
         <p className="p-3 text-xs text-[var(--color-text-passive)]">No files found.</p>
       ) : null}
-      {entries.map((entry) => (
+      {entries.filter((entry) => !entry.name.startsWith(".")).map((entry) => (
         <button
           className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
           key={entry.path}

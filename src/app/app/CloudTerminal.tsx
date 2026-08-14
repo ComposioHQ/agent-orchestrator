@@ -102,7 +102,9 @@ export function CloudTerminal({
           reconnectTimer = window.setTimeout(() => void connect(), 1_000);
         });
         socket.addEventListener("error", () => {
+          if (!active) return;
           setConnection("error");
+          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
         });
       } catch (cause) {
         if (!active) return;
@@ -110,6 +112,7 @@ export function CloudTerminal({
         setNotice(
           cause instanceof Error ? cause.message : "Could not open terminal.",
         );
+        reconnectTimer = window.setTimeout(() => void connect(), 3_000);
       }
     };
 

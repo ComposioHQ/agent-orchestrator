@@ -315,14 +315,16 @@ export function CloudSidebar({
                     {project.displayName}
                   </span>
                 </motion.button>
-                <button
-                  aria-label="Orchestrator"
-                  className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
-                  onClick={(e) => { e.stopPropagation(); onNewSession(project.id); }}
-                  type="button"
-                >
-                  <OrchestratorIcon aria-hidden="true" />
-                </button>
+                {!isScratchProject(project) ? (
+                  <button
+                    aria-label="Orchestrator"
+                    className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
+                    onClick={(e) => { e.stopPropagation(); onNewSession(project.id); }}
+                    type="button"
+                  >
+                    <OrchestratorIcon aria-hidden="true" />
+                  </button>
+                ) : null}
                 <button
                   aria-label="Share project"
                   className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
@@ -576,16 +578,6 @@ export function CloudSidebar({
         ) : null}
       </div>
 
-      <div className="mt-auto border-t border-[var(--color-border-strong)] p-2">
-        <button
-          className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 text-sm text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-          onClick={onOpenSettings}
-          type="button"
-        >
-          <Settings className="size-3.5" aria-hidden="true" />
-          Settings
-        </button>
-      </div>
     </aside>
   );
 }
@@ -634,6 +626,14 @@ export function isStandaloneProject(project: Project): boolean {
     project.config?.standalone === true ||
     project.config?.source === "standalone-agent" ||
     project.repositoryUrl.startsWith("ao-standalone://")
+  );
+}
+
+function isScratchProject(project: Project): boolean {
+  return (
+    project.config?.scratch === true ||
+    project.config?.source === "scratch" ||
+    project.repositoryUrl.includes("scratch.ao.local")
   );
 }
 
