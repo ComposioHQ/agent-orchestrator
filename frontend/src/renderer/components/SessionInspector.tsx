@@ -199,6 +199,7 @@ export function SessionInspector({
 				) : undefined
 			}
 			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
+			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
 			isVisible={isInspectorVisible}
 			loadingText={session ? undefined : t("inspector.loadingSession")}
 			onViewChange={setView}

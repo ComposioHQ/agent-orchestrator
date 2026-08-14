@@ -962,6 +962,7 @@ describe("SessionView", () => {
 	it("locks responsive inspector labels to the opening target throughout the transition", () => {
 		vi.useFakeTimers();
 		try {
+			window.localStorage.setItem("ao.inspector.widthPx", "500");
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 			render(<SessionView sessionId="sess-1" />);
 
@@ -1039,13 +1040,23 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("keeps global topbar actions out of the inspector header", () => {
+	it("keeps the inspector toggle and trailing notification pinned while the panel changes state", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
+		const actions = screen.getByTestId("session-pinned-actions");
+		const toggle = within(actions).getByRole("button", { name: "Close inspector panel" });
+		const notification = within(actions).getByRole("button", { name: "Notifications" });
+		const buttons = within(actions).getAllByRole("button");
+		expect(buttons.indexOf(notification)).toBeGreaterThan(buttons.indexOf(toggle));
+		expect(toggle).toHaveAttribute("aria-pressed", "true");
 
-		expect(screen.queryByTestId("session-inspector-actions")).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
+		fireEvent.click(toggle);
+
+		expect(inspectorOpen("sess-1")).toBe(false);
+		expect(screen.getByTestId("session-pinned-actions")).toBe(actions);
+		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
+		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
+		expect(toggle).toHaveAttribute("aria-pressed", "false");
 	});
 
 	it("restores and clamps the persisted inspector width in pixels", () => {

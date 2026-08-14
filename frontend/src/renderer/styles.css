@@ -2095,6 +2095,45 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	color: var(--color-text-topbar);
 }
 
+.session-pinned-actions-reserve {
+	display: flex;
+	width: 0;
+	min-width: 0;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: flex-end;
+	margin-left: calc(-1 * var(--space-2));
+	transition:
+		width var(--session-inspector-motion-duration, 400ms)
+			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)),
+		margin-left var(--session-inspector-motion-duration, 400ms)
+			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1));
+}
+
+.session-pinned-actions-reserve[data-state="expanded"] {
+	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
+	margin-left: 0;
+}
+
+.session-pinned-actions {
+	-webkit-app-region: no-drag;
+	position: absolute;
+	top: 0;
+	right: var(--space-3);
+	z-index: var(--z-index-chrome);
+	display: flex;
+	height: var(--size-inspector-tabs);
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.session-inspector-actions-spacer {
+	width: calc(
+		var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2) + var(--space-3)
+	);
+	flex: 0 0 auto;
+}
+
 @container workspace-topbar (max-width: 759px) {
 	.workspace-topbar-actions [data-priority="secondary"] [data-compact-label] {
 		inline-size: 0;
@@ -2173,6 +2212,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 @media (prefers-reduced-motion: reduce) {
 	.workspace-topbar-actions .topbar-control,
 	.workspace-topbar-actions [data-compact-label],
+	.session-pinned-actions-reserve,
 	.session-split[data-terminal-live-resize="true"]
 		.workspace-topbar-actions
 		[data-priority="secondary"].topbar-control,
@@ -2732,7 +2772,11 @@ body.is-resizing-x [data-slot="inspector-container"] {
 		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-@container inspector (max-width: 359px) {
+.session-inspector__tablist {
+	container: inspector-tabs / inline-size;
+}
+
+@container inspector-tabs (max-width: 359px) {
 	.session-inspector__responsive-label {
 		max-width: 0;
 		margin-left: 0;

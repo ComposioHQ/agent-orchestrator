@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Folder, LayoutDashboard, PanelRight, Plus, Trash2 } from "lucide-react";
+import { Folder, LayoutDashboard, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -76,7 +76,6 @@ export function ShellTopbar({
 	const isInspectorOpen = useUiStore((state) =>
 		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
-	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
@@ -369,20 +368,14 @@ export function ShellTopbar({
 					</>
 				) : null}
 				{isSessionRoute && !isOrchestrator ? (
-					<>
-						<TopbarButton
-							aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
-							aria-pressed={isInspectorOpen}
-							onClick={() => currentSessionId && toggleInspector(currentSessionId)}
-							style={noDragStyle}
-							title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
-							variant="icon"
-						>
-							<PanelRight className="size-icon-md" aria-hidden="true" />
-						</TopbarButton>
-						{/* Notifications are global topbar chrome, not an inspector tab action. */}
-						<NotificationCenter style={noDragStyle} />
-					</>
+					/* The pinned controls are owned by SessionView so they stay at the
+					   window's right edge. Reserve their width only when the rail is closed. */
+					<div
+						className="session-pinned-actions-reserve"
+						data-state={isInspectorOpen ? "collapsed" : "expanded"}
+						data-testid="session-pinned-actions-reserve"
+						aria-hidden="true"
+					/>
 				) : (
 					<NotificationCenter style={noDragStyle} />
 				)}

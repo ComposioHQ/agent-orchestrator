@@ -101,7 +101,7 @@ export function SessionInspectorShellView({
 		<aside className={inspectorShellClass} aria-label={ariaLabel}>
 			<div className="session-inspector__topbar flex h-inspector-tabs shrink-0 items-center border-b border-border pl-2.5">
 				{isVisible ? (
-					<div className="flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
+					<div className="session-inspector__tablist flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
 						{tabs.map((tab, index) => (
 							<button
 								aria-label={tab.label}
