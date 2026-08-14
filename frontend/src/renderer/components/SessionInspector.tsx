@@ -1492,16 +1492,16 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							contentAlign="end"
-							defaultHarness={effectiveReviewerHarness}
-							defaultTriggerLabel={effectiveReviewerHarness}
+							defaultHarness={resolvedDefaultHarness}
+							defaultOptionLabel={resolvedDefaultHarness}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-36 min-w-24 max-w-36 shrink-0 justify-end text-right text-xs"
 							value={reviewerOverride}
-							excludedHarness={effectiveReviewerHarness}
-							showDefaultOption={false}
+							excludedHarness={resolvedDefaultHarness}
+							showDefaultOption
 						/>
 					</div>
 					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
