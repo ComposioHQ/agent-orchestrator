@@ -45,6 +45,7 @@ import (
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
+	"github.com/aoagents/agent-orchestrator/backend/internal/service/usagecost"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -313,7 +314,9 @@ func Run() error {
 				usagePipeline.NotifyInventoryChanged()
 			}
 		})
-		ingestor := usagepipeline.NewIngestor(store, usagepipeline.IngestorConfig{})
+		ingestor := usagepipeline.NewIngestor(store, usagepipeline.IngestorConfig{
+			OnUsageApplied: usagecost.NewEmitter(telemetrySink, store).OnApplied,
+		})
 		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
 			roots.ClaudeProjects,
 			roots.CodexSessions,
