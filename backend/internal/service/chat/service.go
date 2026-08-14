@@ -767,6 +767,12 @@ func (f SnapshotPageReaderFunc) LoadConversationSnapshotPage(
 // without importing this package's config types. They are deliberately narrow:
 // the manager decides when, this package decides how.
 
+// SupportsChat reports whether a harness has a Chat driver at all, without
+// probing the local install. Use it to decide whether Chat is even offerable.
+func (s *Service) SupportsChat(harness domain.AgentHarness) bool {
+	return s.drivers.SupportsChat(harness)
+}
+
 // PreflightChat reports whether a harness can start in chat mode right now.
 //
 // Called before any durable state exists, so an unsupported request costs nothing

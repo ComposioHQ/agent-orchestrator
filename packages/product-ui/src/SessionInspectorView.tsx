@@ -19,7 +19,7 @@ import type {
 } from "./pull-request-models";
 import { cn } from "./utils";
 
-export type InspectorView = "summary" | "browser" | "files";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
 export type InspectorTab = {
 	badge?: boolean;
@@ -40,8 +40,11 @@ export function SessionInspectorShellView({
 	browserPoppedOut,
 	browserView,
 	filesView,
+	headerActions,
+	isVisible = true,
 	loadingText,
 	onViewChange,
+	reviewsView,
 	summaryView,
 	tabs,
 }: {
@@ -50,8 +53,11 @@ export function SessionInspectorShellView({
 	browserPoppedOut: boolean;
 	browserView?: ReactNode;
 	filesView?: ReactNode;
+	headerActions?: ReactNode;
+	isVisible?: boolean;
 	loadingText?: string;
 	onViewChange: (view: InspectorView) => void;
+	reviewsView?: ReactNode;
 	summaryView?: ReactNode;
 	tabs: InspectorTab[];
 }) {
@@ -93,54 +99,63 @@ export function SessionInspectorShellView({
 
 	return (
 		<aside className={inspectorShellClass} aria-label={ariaLabel}>
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{tabs.map((tab, index) => (
-					<button
-						aria-label={tab.label}
-						key={tab.id}
-						type="button"
-						role="tab"
-						aria-selected={activeView === tab.id}
-						tabIndex={activeView === tab.id ? 0 : -1}
-						className={cn(
-							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-							activeView === tab.id && "bg-interactive-active text-foreground",
-						)}
-						onClick={() => onViewChange(tab.id)}
-						onKeyDown={(event) => selectAdjacentTab(event, index)}
-						title={tab.label}
-					>
-						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
-							{tab.icon}
-							{tab.badge ? (
-								<span
-									aria-hidden="true"
-									className="absolute -right-1 -top-1 inline-flex size-dot-sm"
-									data-testid="browser-unseen-indicator"
-								>
-									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+			<div className="session-inspector__topbar flex h-inspector-tabs shrink-0 items-center border-b border-border pl-2.5">
+				{isVisible ? (
+					<div className="flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
+						{tabs.map((tab, index) => (
+							<button
+								aria-label={tab.label}
+								key={tab.id}
+								type="button"
+								role="tab"
+								aria-selected={activeView === tab.id}
+								tabIndex={activeView === tab.id ? 0 : -1}
+								className={cn(
+									"session-inspector__tab-button inline-flex h-control-md shrink-0 items-center justify-center rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+									activeView === tab.id && "bg-interactive-active text-foreground",
+								)}
+								onClick={() => onViewChange(tab.id)}
+								onKeyDown={(event) => selectAdjacentTab(event, index)}
+								title={tab.label}
+							>
+								<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
+									{tab.icon}
+									{tab.badge ? (
+										<span
+											aria-hidden="true"
+											className="absolute right-0 top-0 inline-flex size-dot-sm"
+											data-testid="browser-unseen-indicator"
+										>
+											<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+											<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+										</span>
+									) : null}
 								</span>
-							) : null}
-						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">
-							{tab.displayLabel ?? tab.label}
-						</span>
-					</button>
-				))}
+								<span className="session-inspector__responsive-label truncate whitespace-nowrap text-2xs">
+									{tab.displayLabel ?? tab.label}
+								</span>
+							</button>
+						))}
+					</div>
+				) : null}
+				{isVisible ? headerActions : null}
 			</div>
 
 			<div
+				aria-hidden={!isVisible}
 				className={cn(
 					inspectorBodyBaseClass,
+					!isVisible && "invisible pointer-events-none",
 					activeView !== "browser" && activeView !== "files" && inspectorScrollableBodyClass,
 					activeView === "browser" &&
 						!browserPoppedOut &&
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					activeView === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
+				inert={!isVisible}
 			>
 				{activeView === "summary" ? summaryView : null}
+				{activeView === "reviews" ? reviewsView : null}
 				{activeView === "browser" ? browserView : null}
 				{activeView === "files" ? filesView : null}
 			</div>

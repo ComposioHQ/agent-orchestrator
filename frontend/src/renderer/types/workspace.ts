@@ -49,6 +49,15 @@ export type PullRequestFacts = {
 /** The daemon-committed controller currently responsible for the session. */
 export type SessionMode = "chat" | "tui";
 
+export type AgentSwitchSummary = {
+	agentHandoffStatus: string;
+	errorCode?: string;
+	fromHarness: string;
+	id: string;
+	state: string;
+	targetHarness: string;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -60,6 +69,8 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: ReviewerHarnessId;
+	/** Whether the daemon may automatically review this session after it becomes idle. */
+	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session
@@ -87,6 +98,7 @@ export type WorkspaceSession = {
 	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
+	activeAgentSwitch?: AgentSwitchSummary;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.
