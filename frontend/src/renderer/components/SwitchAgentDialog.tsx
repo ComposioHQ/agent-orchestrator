@@ -2,12 +2,19 @@ import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert, X } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { agentSwitchesQueryKey, agentSwitchNeedsRecovery, isTerminalAgentSwitch } from "../hooks/useAgentSwitches";
+import {
+	agentSwitchesQueryKey,
+	agentSwitchNeedsRecovery,
+	agentSwitchNeedsSourceStopRecovery,
+	agentSwitchNeedsSourceRestore,
+	isTerminalAgentSwitch,
+} from "../hooks/useAgentSwitches";
 import {
 	createSwitchAgentIdempotencyKey,
 	clearSwitchAgentState,
 	type SwitchAgentHarness,
 	useSwitchAgent,
+	useRecoverAgentSwitch,
 	useSwitchAgentState,
 } from "../hooks/useSwitchAgent";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -115,14 +122,39 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	const [mode, setMode] = useState("");
 	const [modelWarning, setModelWarning] = useState<string | undefined>();
 	const switchAgent = useSwitchAgent();
+	const recoverAgentSwitch = useRecoverAgentSwitch();
 	const switchMutation = useSwitchAgentState(session.id);
 	const admissionPending = switchMutation.isPending;
 	const durableSwitch = session.activeAgentSwitch;
 	const recoveryRequired = durableSwitch ? agentSwitchNeedsRecovery(durableSwitch) : false;
+	const sourceStopRecoveryRequired = durableSwitch ? agentSwitchNeedsSourceStopRecovery(durableSwitch) : false;
+	const sourceRestoreRequired = durableSwitch ? agentSwitchNeedsSourceRestore(durableSwitch) : false;
+	const sourceRecoveryRequired = sourceStopRecoveryRequired || sourceRestoreRequired;
+	const sourceLabel = durableSwitch
+		? agentLabel(durableSwitch.fromHarness)
+		: agentLabel(session.provider);
+	const recoveryTitleKey = sourceStopRecoveryRequired
+		? "switchAgent.sourceStopRecovery.title"
+		: sourceRestoreRequired
+			? "switchAgent.sourceRecovery.title"
+			: "switchAgent.recovery.title";
+	const recoveryDescriptionKey = sourceStopRecoveryRequired
+		? "switchAgent.sourceStopRecovery.description"
+		: sourceRestoreRequired
+			? "switchAgent.sourceRecovery.description"
+			: "switchAgent.recovery.description";
+	const sourceRecoveryActionKey = sourceStopRecoveryRequired
+		? recoverAgentSwitch.isPending
+			? "switchAgent.sourceStopRecovery.checking"
+			: "switchAgent.sourceStopRecovery.action"
+		: recoverAgentSwitch.isPending
+			? "switchAgent.sourceRecovery.restoring"
+			: "switchAgent.sourceRecovery.action";
 	const durableSwitching = Boolean(
 		durableSwitch && !isTerminalAgentSwitch(durableSwitch) && !recoveryRequired,
 	);
 	const [refreshingRecovery, setRefreshingRecovery] = useState(false);
+	const operationPending = admissionPending || recoverAgentSwitch.isPending;
 	useEffect(() => {
 		setTargetHarness(session.provider === "claude-code" ? "codex" : "claude-code");
 		setModel("");
@@ -176,7 +208,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 		<Dialog
 			modal={false}
 			onOpenChange={(nextOpen) => {
-				if (!nextOpen && admissionPending) return;
+			if (!nextOpen && operationPending) return;
 				onOpenChange(nextOpen);
 			}}
 			open={open}
@@ -197,7 +229,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 						<button
 							aria-label={t("switchAgent.close")}
 							className="settings-dialog-close-button settings-close-button"
-							disabled={admissionPending}
+							disabled={operationPending}
 							type="button"
 						>
 							<X className="size-icon-base" aria-hidden="true" />
@@ -216,26 +248,51 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 								<TriangleAlert aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-warning" />
 								<div className="min-w-0">
 									<p className="font-mono text-control font-medium text-foreground">
-										{t("switchAgent.recovery.title")}
+										{t(recoveryTitleKey, { source: sourceLabel })}
 									</p>
 									<p className="mt-1 text-caption leading-4 text-muted-foreground">
-										{t("switchAgent.recovery.description")}
+										{t(recoveryDescriptionKey, { source: sourceLabel })}
 									</p>
+									{sourceRecoveryRequired && recoverAgentSwitch.error instanceof Error ? (
+										<p className="mt-2 text-caption leading-4 text-error" role="alert">
+											{recoverAgentSwitch.error.message}
+										</p>
+									) : null}
 								</div>
 							</div>
-							<Button
-								className="self-end"
-								disabled={refreshingRecovery}
-								onClick={() => void refreshRecovery()}
-								type="button"
-								variant="outline"
-							>
-								{refreshingRecovery ? <LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" /> : null}
-								{t("settings.project.refresh")}
-							</Button>
+							{sourceRecoveryRequired && durableSwitch ? (
+								<Button
+									className="self-end"
+									disabled={recoverAgentSwitch.isPending}
+									onClick={() =>
+										recoverAgentSwitch.mutate({
+											sessionId: session.id,
+											switchId: durableSwitch.id,
+										})
+									}
+									type="button"
+									variant="outline"
+								>
+									{recoverAgentSwitch.isPending ? (
+										<LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" />
+									) : null}
+									{t(sourceRecoveryActionKey, { source: sourceLabel })}
+								</Button>
+							) : (
+								<Button
+									className="self-end"
+									disabled={refreshingRecovery}
+									onClick={() => void refreshRecovery()}
+									type="button"
+									variant="outline"
+								>
+									{refreshingRecovery ? <LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" /> : null}
+									{t("settings.project.refresh")}
+								</Button>
+							)}
 						</div>
 					) : (
-					<form className="flex flex-col gap-3 px-4 pb-4 pt-4" onSubmit={submit}>
+						<form className="flex flex-col gap-3 px-4 pb-4 pt-4" onSubmit={submit}>
 						{error || modelWarning ? (
 							<div>
 								{error ? (
@@ -298,9 +355,9 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 								)}
 							</Button>
 						</div>
-					</form>
+						</form>
 					)}
-				</DialogContent>
+			</DialogContent>
 		</Dialog>
 	);
 }

@@ -283,6 +283,7 @@ const (
 	AgentSwitchErrorTargetBinaryMissing              AgentSwitchErrorCode = "target_binary_missing"
 	AgentSwitchErrorTargetAgentUnauthorized          AgentSwitchErrorCode = "target_agent_unauthorized"
 	AgentSwitchErrorTargetStartUnconfirmed           AgentSwitchErrorCode = "target_start_unconfirmed"
+	AgentSwitchErrorSourceRestoreUnconfirmed         AgentSwitchErrorCode = "source_restore_unconfirmed"
 	AgentSwitchErrorRequestCancelled                 AgentSwitchErrorCode = "request_cancelled"
 	AgentSwitchErrorSourceBlocked                    AgentSwitchErrorCode = "source_blocked"
 	AgentSwitchErrorFailedPreStop                    AgentSwitchErrorCode = "failed_pre_stop"
@@ -300,6 +301,7 @@ func (c AgentSwitchErrorCode) Valid() bool {
 		AgentSwitchErrorDeliveryUnconfirmed, AgentSwitchErrorSourceSessionTerminated,
 		AgentSwitchErrorSourceStopUnconfirmed, AgentSwitchErrorTargetBinaryMissing,
 		AgentSwitchErrorTargetAgentUnauthorized, AgentSwitchErrorTargetStartUnconfirmed,
+		AgentSwitchErrorSourceRestoreUnconfirmed,
 		AgentSwitchErrorRequestCancelled,
 		AgentSwitchErrorSourceBlocked, AgentSwitchErrorFailedPreStop, AgentSwitchErrorFailedPostStop,
 		AgentSwitchErrorTargetReadyFailed, AgentSwitchErrorDeliveryFailed, AgentSwitchErrorSwitchFailed:
@@ -340,13 +342,38 @@ type AgentSwitch struct {
 	UpdatedAt               time.Time                         `json:"updatedAt"`
 }
 
-// RequiresRecovery reports the one nonterminal condition currently exposed to
-// clients: target creation may have started, but AO received no durable handle
-// with which to prove or clean up ownership.
+// RequiresRecovery reports whether a nonterminal switch needs an explicit,
+// ownership-safe recovery action before terminal input can reopen.
 func (s AgentSwitch) RequiresRecovery() bool {
+	return s.RequiresTargetStartRecovery() || s.RequiresSourceRecovery()
+}
+
+// RequiresTargetStartRecovery reports the ambiguous target-start boundary.
+func (s AgentSwitch) RequiresTargetStartRecovery() bool {
 	return s.State == AgentSwitchStartingTarget &&
 		s.TargetRuntimeHandleID == "" &&
 		s.ErrorCode == AgentSwitchErrorTargetStartUnconfirmed
+}
+
+// RequiresSourceRecovery reports a retained source-side boundary that can be
+// reconciled without starting the target agent.
+func (s AgentSwitch) RequiresSourceRecovery() bool {
+	return s.RequiresSourceStopRecovery() || s.RequiresSourceRestore()
+}
+
+// RequiresSourceStopRecovery reports that source teardown started, but AO
+// could not prove whether the source runtime stopped.
+func (s AgentSwitch) RequiresSourceStopRecovery() bool {
+	return s.State == AgentSwitchStoppingSource &&
+		s.ErrorCode == AgentSwitchErrorSourceStopUnconfirmed
+}
+
+// RequiresSourceRestore reports that no target owns the session, but AO could
+// not relaunch the conclusively stopped source. Retrying this compensation is
+// safe because durable ownership still points at the source provider.
+func (s AgentSwitch) RequiresSourceRestore() bool {
+	return (s.State == AgentSwitchSourceStopped || s.State == AgentSwitchStartingTarget) &&
+		s.ErrorCode == AgentSwitchErrorSourceRestoreUnconfirmed
 }
 
 // AgentSwitchTargetActivation is the narrow command that transfers durable

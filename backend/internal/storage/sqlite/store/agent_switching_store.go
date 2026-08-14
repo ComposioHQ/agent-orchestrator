@@ -604,9 +604,11 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 		return fmt.Errorf("agent switch %s: invalid error code %q", rec.ID, rec.ErrorCode)
 	}
 	recoveryRequired := rec.RequiresRecovery()
-	failureCode := rec.State == domain.AgentSwitchFailed && rec.ErrorCode != "" && rec.ErrorCode != domain.AgentSwitchErrorTargetStartUnconfirmed
+	recoveryMarker := rec.ErrorCode == domain.AgentSwitchErrorTargetStartUnconfirmed ||
+		rec.ErrorCode == domain.AgentSwitchErrorSourceRestoreUnconfirmed
+	failureCode := rec.State == domain.AgentSwitchFailed && rec.ErrorCode != "" && !recoveryMarker
 	if (rec.State == domain.AgentSwitchFailed) != failureCode || (rec.ErrorCode != "" && !failureCode && !recoveryRequired) {
-		return fmt.Errorf("agent switch %s: error code must describe a terminal failure or the exact target-start recovery condition", rec.ID)
+		return fmt.Errorf("agent switch %s: error code must describe a terminal failure or an exact recovery condition", rec.ID)
 	}
 	if rec.SourceGenerationID == "" {
 		return fmt.Errorf("agent switch %s: source generation is required", rec.ID)

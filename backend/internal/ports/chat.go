@@ -480,9 +480,10 @@ type (
 		Rollback(ctx context.Context, providerTurnID string) error
 	}
 	// ChatForker branches a conversation, so an alternative approach can be tried
-	// without destroying the original.
+	// without destroying the original. A nil anchor copies the whole thread; a
+	// non-nil provider turn id copies through that turn, inclusive.
 	ChatForker interface {
-		Fork(ctx context.Context) (providerConversationID string, err error)
+		Fork(ctx context.Context, lastProviderTurnID *string) (providerConversationID string, err error)
 	}
 	// ChatRenamer sets or reads a human title the provider derived for the thread.
 	ChatRenamer interface {

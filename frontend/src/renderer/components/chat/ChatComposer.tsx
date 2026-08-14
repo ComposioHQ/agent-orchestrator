@@ -90,7 +90,9 @@ export function ChatComposer({
 	canSteer,
 	steerPending,
 	steerRefusal,
+	draftSeed,
 	commandError,
+	attachedTop = false,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
@@ -124,8 +126,12 @@ export function ChatComposer({
 	steerPending?: boolean;
 	/** Why the last steer was refused. */
 	steerRefusal?: string;
+	/** A selected history message to load into the composer as a new draft. */
+	draftSeed?: { id: string; text: string };
 	/** A failed send, approval, interrupt, or settings mutation. */
 	commandError?: string;
+	/** A queued-message dock owns the shared rounded top edge. */
+	attachedTop?: boolean;
 }) {
 	const [text, setText] = useState("");
 	const [caret, setCaret] = useState(0);
@@ -195,6 +201,8 @@ export function ChatComposer({
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
 	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+	const draftSeedId = draftSeed?.id;
+	const draftSeedText = draftSeed?.text;
 
 	// A steer choice belongs to one running turn. Once that turn disappears, return
 	// Enter to the durable queue path so the next turn cannot be steered by accident.
@@ -214,6 +222,14 @@ export function ChatComposer({
 		setText(next);
 		setCaret(nextCaret);
 	}, []);
+
+	useEffect(() => {
+		if (draftSeedText === undefined) return;
+		applyText(draftSeedText, draftSeedText.length);
+		setDismissedAt(null);
+		setHighlighted(0);
+		setSendError(null);
+	}, [applyText, draftSeedId, draftSeedText]);
 
 	useLayoutEffect(() => {
 		resizeTextarea();
@@ -418,7 +434,8 @@ export function ChatComposer({
 			onDragLeave={() => setDragging(false)}
 			onDrop={onDrop}
 			className={cn(
-				"cursor-chat-composer relative flex flex-col gap-2 rounded-[10px] border p-2.5 transition-[background,border-color,box-shadow]",
+				"cursor-chat-composer relative flex flex-col gap-2 border p-2.5 transition-[background,border-color,box-shadow]",
+				attachedTop ? "rounded-b-[10px] rounded-t-none" : "rounded-[10px]",
 				dragging ? "border-logo-accent" : "border-border-strong",
 			)}
 		>

@@ -9,6 +9,11 @@ import { SwitchAgentDialog } from "./SwitchAgentDialog";
 const switchMocks = vi.hoisted(() => ({
 	clear: vi.fn(),
 	mutate: vi.fn(),
+	recoverMutate: vi.fn(),
+	recoverState: {
+		error: null as Error | null,
+		isPending: false,
+	},
 	state: {
 		error: null as string | null,
 		isPending: false,
@@ -22,6 +27,7 @@ vi.mock("../hooks/useSwitchAgent", async (importOriginal) => {
 		clearSwitchAgentState: switchMocks.clear,
 		createSwitchAgentIdempotencyKey: () => "idempotency-1",
 		useSwitchAgent: () => ({ mutate: switchMocks.mutate }),
+		useRecoverAgentSwitch: () => ({ ...switchMocks.recoverState, mutate: switchMocks.recoverMutate }),
 		useSwitchAgentState: () => switchMocks.state,
 	};
 });
@@ -73,6 +79,9 @@ function renderDialog(session: WorkspaceSession = worker, onOpenChange = vi.fn()
 beforeEach(() => {
 	switchMocks.clear.mockReset();
 	switchMocks.mutate.mockReset();
+	switchMocks.recoverMutate.mockReset();
+	switchMocks.recoverState.error = null;
+	switchMocks.recoverState.isPending = false;
 	switchMocks.state.error = null;
 	switchMocks.state.isPending = false;
 });
@@ -231,5 +240,52 @@ describe("SwitchAgentDialog", () => {
 
 		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["session-agent-switches", "sess-1"] });
 		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+	});
+
+	it("offers to restore the previous agent after source rollback fails", async () => {
+		const recoverySession = {
+			...worker,
+			activeAgentSwitch: {
+				agentHandoffStatus: "received",
+				errorCode: "source_restore_unconfirmed",
+				fromHarness: "claude-code",
+				id: "switch-source-recovery",
+				state: "source_stopped",
+				targetHarness: "codex",
+			},
+		} satisfies WorkspaceSession;
+		renderDialog(recoverySession);
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+
+		expect(within(dialog).getByText("Claude Code could not be restored")).toBeInTheDocument();
+		await userEvent.click(within(dialog).getByRole("button", { name: "Restore Claude Code" }));
+		expect(switchMocks.recoverMutate).toHaveBeenCalledWith({
+			sessionId: "sess-1",
+			switchId: "switch-source-recovery",
+		});
+		expect(within(dialog).queryByRole("button", { name: "Target agent" })).not.toBeInTheDocument();
+	});
+
+	it("offers to recover an unconfirmed source stop", async () => {
+		const recoverySession = {
+			...worker,
+			activeAgentSwitch: {
+				agentHandoffStatus: "received",
+				errorCode: "source_stop_unconfirmed",
+				fromHarness: "claude-code",
+				id: "switch-source-stop-recovery",
+				state: "stopping_source",
+				targetHarness: "codex",
+			},
+		} satisfies WorkspaceSession;
+		renderDialog(recoverySession);
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+
+		expect(within(dialog).getByText("Claude Code status could not be confirmed")).toBeInTheDocument();
+		await userEvent.click(within(dialog).getByRole("button", { name: "Check Claude Code" }));
+		expect(switchMocks.recoverMutate).toHaveBeenCalledWith({
+			sessionId: "sess-1",
+			switchId: "switch-source-stop-recovery",
+		});
 	});
 });

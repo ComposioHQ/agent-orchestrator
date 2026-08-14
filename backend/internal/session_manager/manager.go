@@ -90,6 +90,9 @@ var (
 	// ErrSwitchNotFound is returned for a switch id outside the requested AO
 	// session (the same response is used for absent and cross-session ids).
 	ErrSwitchNotFound = errors.New("session: agent switch not found")
+	// ErrSwitchRecoveryNotRequired rejects recovery requests for switches that
+	// are terminal or do not carry a durable source-restore marker.
+	ErrSwitchRecoveryNotRequired = errors.New("session: agent switch does not require source recovery")
 	// ErrStaleHandoff rejects semantic handoff submissions from an old provider
 	// generation or after the collection window has closed.
 	ErrStaleHandoff = errors.New("session: stale agent handoff")
@@ -935,10 +938,14 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	}
 	childRepos := make([]ports.WorkspaceProjectRepoConfig, 0, len(repos))
 	for _, repo := range repos {
+		if repo.GitStatus == domain.GitStatusNeedsInit {
+			continue
+		}
 		childRepos = append(childRepos, ports.WorkspaceProjectRepoConfig{
 			Name:         repo.Name,
 			RelativePath: repo.RelativePath,
 			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
+			BaseBranch:   repo.DefaultBranch,
 		})
 	}
 	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
@@ -2907,6 +2914,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		// statement that can change it afterwards.
 		Mode:             domain.NormalizeSessionMode(cfg.RequestedMode),
 		AutoInjectReview: true,
+		AutoInjectCI:     true,
 	}
 }
 

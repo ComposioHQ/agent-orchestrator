@@ -33,6 +33,13 @@ export type AgentSwitchPresentationInput = {
 	isTerminated: boolean;
 };
 
+export type AgentSwitchStatusVisual = {
+	className: string;
+	indicatorClassName: string;
+	tone: string;
+	breathe: boolean;
+};
+
 const inProgressDescriptions: Partial<Record<string, MessageKey>> = {
 	preparing_handoff: "switchAgent.state.preparingHandoff",
 	stopping_source: "switchAgent.state.stoppingSource",
@@ -58,6 +65,39 @@ export function deriveAgentSwitchPresentation({
 		source: agentLabel(agentSwitch.fromHarness),
 		target: agentLabel(agentSwitch.targetHarness),
 	};
+
+	if (agentSwitch.state === "stopping_source" && agentSwitch.errorCode === "source_stop_unconfirmed") {
+		return {
+			stage: "needs_attention",
+			outcome: "recovery",
+			compactLabelKey: "switchAgent.recovery.compact",
+			titleKey: "switchAgent.sourceStopRecovery.title",
+			descriptionKey: "switchAgent.sourceStopRecovery.description",
+			values,
+			tone: "warning",
+			animate: false,
+			lockAgentTerminal: true,
+			allowSourceInput: false,
+		};
+	}
+
+	if (
+		(agentSwitch.state === "source_stopped" || agentSwitch.state === "starting_target") &&
+		agentSwitch.errorCode === "source_restore_unconfirmed"
+	) {
+		return {
+			stage: "needs_attention",
+			outcome: "recovery",
+			compactLabelKey: "switchAgent.sourceRecovery.compact",
+			titleKey: "switchAgent.sourceRecovery.title",
+			descriptionKey: "switchAgent.sourceRecovery.description",
+			values,
+			tone: "warning",
+			animate: false,
+			lockAgentTerminal: true,
+			allowSourceInput: false,
+		};
+	}
 
 	if (agentSwitch.state === "starting_target" && agentSwitch.errorCode === "target_start_unconfirmed") {
 		return {
@@ -184,4 +224,37 @@ export function deriveSessionAgentSwitchPresentation(
 		isTerminated: Boolean(session.isTerminated),
 		terminalHandleId: session.terminalHandleId,
 	});
+}
+
+export function agentSwitchStatusVisual(presentation: AgentSwitchPresentation): AgentSwitchStatusVisual {
+	switch (presentation.tone) {
+		case "success":
+			return {
+				className: "text-status-ready",
+				indicatorClassName: "bg-status-ready",
+				tone: "var(--color-status-ready)",
+				breathe: false,
+			};
+		case "warning":
+			return {
+				className: "text-status-needs-you",
+				indicatorClassName: "bg-status-needs-you",
+				tone: "var(--color-status-needs-you)",
+				breathe: false,
+			};
+		case "danger":
+			return {
+				className: "text-status-exited",
+				indicatorClassName: "bg-status-exited",
+				tone: "var(--color-status-exited)",
+				breathe: false,
+			};
+		default:
+			return {
+				className: "text-status-working",
+				indicatorClassName: "bg-status-working",
+				tone: "var(--color-status-working)",
+				breathe: presentation.animate,
+			};
+	}
 }

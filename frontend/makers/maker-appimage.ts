@@ -19,6 +19,8 @@ export type MakerAppImageConfig = {
 	productName?: string;
 	// Path to the PNG icon used for the app and desktop entry.
 	icon?: string;
+	// URL schemes written to the AppImage desktop entry.
+	protocols?: Array<{ name: string; schemes: string[] }>;
 	// Any extra electron-builder `appImage` options, merged over our defaults.
 	appImage?: Record<string, unknown>;
 };
@@ -44,6 +46,7 @@ export default class MakerAppImage extends MakerBase<MakerAppImageConfig> {
 				config: {
 					appId: cfg.appId,
 					productName: cfg.productName ?? appName,
+					protocols: cfg.protocols,
 					directories: { output },
 					// Forge owns publishing (the workflow uploads via `gh release`).
 					// `null` stops electron-builder from inferring a GitHub publish

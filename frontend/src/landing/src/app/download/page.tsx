@@ -8,7 +8,8 @@ import {
 import { Download } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
-import { FaAndroid, FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { AndroidAppCTA } from "./AndroidAppCTA";
 import { MobileAppCTA } from "./MobileAppCTA";
 import { PlatformDownloadButton } from "./PlatformDownloadButton";
 import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
@@ -16,7 +17,7 @@ import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
 export const metadata: Metadata = {
   title: "Download",
   description:
-    "Download Agent Orchestrator for macOS, Windows, or Linux, and join the iOS TestFlight beta of the mobile companion.",
+    "Download Agent Orchestrator for macOS, Windows, or Linux, or join the AO Mobile beta on iOS and Android.",
 };
 
 interface GitHubReleaseAsset {
@@ -93,17 +94,48 @@ export default async function DownloadPage() {
     {
       name: "macOS",
       icon: FaApple,
+      // Prefer the .dmg. Mounting it gives the drag-to-Applications window, so
+      // the app lands in /Applications instead of being unzipped into
+      // ~/Downloads and launched from there, which is what leaves macOS running
+      // it translocated or as a stale copy (#3617, #3527).
+      //
+      // Only the STABLE channel builds one. The container costs its own
+      // notarization submission per architecture and nightly publishes far too
+      // often to pay for it, so the nightly rows resolve to their zip
+      // permanently, not just until some later rollout step.
+      //
+      // Every row falls back to the zip FROM THE SAME RELEASE before it falls
+      // back to a DOWNLOAD_URL_* constant. That ordering is load-bearing: those
+      // constants now point at the dmg too, so they are not a safe fallback on
+      // their own. Reading the live release list is what lets this page serve a
+      // real asset rather than a 404 in the window before the first stable dmg
+      // ships, and if the GitHub call fails outright the constant is a guess of
+      // last resort.
       builds: available([
-        build("Mac (Apple silicon)", DOWNLOAD_URL_MAC_ARM64, "Stable"),
-        build("Mac (Intel)", DOWNLOAD_URL_MAC_X64, "Stable"),
         build(
           "Mac (Apple silicon)",
-          assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
+          assetUrl(stable, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-arm64.zip") ??
+            DOWNLOAD_URL_MAC_ARM64,
+          "Stable",
+        ),
+        build(
+          "Mac (Intel)",
+          assetUrl(stable, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-x64.zip") ??
+            DOWNLOAD_URL_MAC_X64,
+          "Stable",
+        ),
+        build(
+          "Mac (Apple silicon)",
+          assetUrl(nightly, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
           "Nightly",
         ),
         build(
           "Mac (Intel)",
-          assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
+          assetUrl(nightly, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
           "Nightly",
         ),
       ]),
@@ -222,10 +254,7 @@ export default async function DownloadPage() {
                 </p>
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <MobileAppCTA />
-                  <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-3xl border border-border px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-muted-foreground sm:px-6 sm:py-3 sm:text-base">
-                    <FaAndroid className="size-4 shrink-0" aria-hidden="true" />
-                    Android coming soon
-                  </span>
+                  <AndroidAppCTA />
                 </div>
               </div>
             </article>

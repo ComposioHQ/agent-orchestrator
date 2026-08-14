@@ -422,6 +422,120 @@ func TestAgentSwitchTargetStartUnconfirmedMarkerIsNonTerminalAndMonotonic(t *tes
 	}
 }
 
+func TestAgentSwitchSourceStopMarkerCanAdvanceOnlyThroughConfirmedBoundary(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "source-stop-recovery")
+	rec := sampleRecord("source-stop-recovery")
+	now := rec.CreatedAt
+	rec.Metadata.RuntimeHandleID = "source-handle"
+	rec.Metadata.RuntimeLaunchID = "source-runtime"
+	session, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create AO session: %v", err)
+	}
+	sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
+		ID: "switch-source-stop", SessionID: session.ID, IdempotencyKey: "switch-source-stop",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
+		RequestedAt: now, UpdatedAt: now,
+	})
+	if err != nil || !created {
+		t.Fatalf("create switch: created=%v err=%v", created, err)
+	}
+	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &sw, domain.AgentSwitchStoppingSource, now.Add(time.Second), func(sw *domain.AgentSwitch) {
+		sw.TargetGenerationID = "target-generation"
+	})
+	sw.ErrorCode = domain.AgentSwitchErrorSourceStopUnconfirmed
+	sw.UpdatedAt = now.Add(2 * time.Second)
+	if ok, err := s.UpdateAgentSwitch(ctx, sw, domain.AgentSwitchStoppingSource, "source-generation", "target-generation"); err != nil || !ok {
+		t.Fatalf("persist source-stop marker: ok=%v err=%v", ok, err)
+	}
+	marked, ok, err := s.GetActiveAgentSwitch(ctx, session.ID)
+	if err != nil || !ok || !marked.RequiresRecovery() || marked.State.Terminal() {
+		t.Fatalf("marked switch = %+v, ok=%v err=%v", marked, ok, err)
+	}
+
+	staleClear := marked
+	staleClear.ErrorCode = ""
+	staleClear.UpdatedAt = now.Add(3 * time.Second)
+	if changed, err := s.UpdateAgentSwitch(ctx, staleClear, domain.AgentSwitchStoppingSource, "source-generation", "target-generation"); err != nil || changed {
+		t.Fatalf("stale source-stop clear: changed=%v err=%v", changed, err)
+	}
+	if ok, err := s.ConfirmAgentSwitchSourceStopped(ctx, domain.AgentSwitchSourceStopConfirmation{
+		SwitchID: marked.ID, SessionID: session.ID, SourceHarness: domain.HarnessClaudeCode,
+		SourceGenerationID: "source-generation", ExpectedSourceRuntimeLaunchID: "source-runtime", TargetGenerationID: "target-generation",
+		StoppedAt: now.Add(4 * time.Second),
+	}); err != nil || !ok {
+		t.Fatalf("confirm marked source stopped: ok=%v err=%v", ok, err)
+	}
+	confirmed, ok, err := s.GetAgentSwitch(ctx, marked.ID)
+	if err != nil || !ok || confirmed.State != domain.AgentSwitchSourceStopped || confirmed.ErrorCode != "" {
+		t.Fatalf("confirmed switch = %+v, ok=%v err=%v", confirmed, ok, err)
+	}
+}
+
+func TestAgentSwitchSourceRestoreMarkerCanSettleOnlyAsTerminalFailure(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "source-restore-recovery")
+	rec := sampleRecord("source-restore-recovery")
+	now := rec.CreatedAt
+	rec.Metadata.RuntimeHandleID = "source-handle"
+	rec.Metadata.RuntimeLaunchID = "source-runtime"
+	session, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create AO session: %v", err)
+	}
+	sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
+		ID: "switch-source-restore", SessionID: session.ID, IdempotencyKey: "switch-source-restore",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
+		RequestedAt: now, UpdatedAt: now,
+	})
+	if err != nil || !created {
+		t.Fatalf("create switch: created=%v err=%v", created, err)
+	}
+	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &sw, domain.AgentSwitchStoppingSource, now.Add(time.Second), func(sw *domain.AgentSwitch) {
+		sw.TargetGenerationID = "target-generation"
+	})
+	if ok, err := s.ConfirmAgentSwitchSourceStopped(ctx, domain.AgentSwitchSourceStopConfirmation{
+		SwitchID: sw.ID, SessionID: session.ID, SourceHarness: domain.HarnessClaudeCode,
+		SourceGenerationID: "source-generation", ExpectedSourceRuntimeLaunchID: "source-runtime", TargetGenerationID: "target-generation",
+		StoppedAt: now.Add(2 * time.Second),
+	}); err != nil || !ok {
+		t.Fatalf("confirm source stopped: ok=%v err=%v", ok, err)
+	}
+	sw, _, _ = s.GetAgentSwitch(ctx, sw.ID)
+	sw.ErrorCode = domain.AgentSwitchErrorSourceRestoreUnconfirmed
+	sw.UpdatedAt = now.Add(3 * time.Second)
+	if ok, err := s.UpdateAgentSwitch(ctx, sw, domain.AgentSwitchSourceStopped, "source-generation", "target-generation"); err != nil || !ok {
+		t.Fatalf("persist source-restore marker: ok=%v err=%v", ok, err)
+	}
+	marked, ok, err := s.GetActiveAgentSwitch(ctx, session.ID)
+	if err != nil || !ok || !marked.RequiresSourceRestore() || marked.State.Terminal() {
+		t.Fatalf("marked switch = %+v, ok=%v err=%v", marked, ok, err)
+	}
+
+	staleClear := marked
+	staleClear.ErrorCode = ""
+	staleClear.UpdatedAt = now.Add(4 * time.Second)
+	if changed, err := s.UpdateAgentSwitch(ctx, staleClear, domain.AgentSwitchSourceStopped, "source-generation", "target-generation"); err != nil || changed {
+		t.Fatalf("stale source-restore clear: changed=%v err=%v", changed, err)
+	}
+	failed := marked
+	failed.State = domain.AgentSwitchFailed
+	failed.ErrorCode = domain.AgentSwitchErrorDaemonRestartPostStop
+	failed.UpdatedAt = now.Add(5 * time.Second)
+	if changed, err := s.UpdateAgentSwitch(ctx, failed, domain.AgentSwitchSourceStopped, "source-generation", "target-generation"); err != nil || !changed {
+		t.Fatalf("terminal source-restore settlement: changed=%v err=%v", changed, err)
+	}
+}
+
 func TestAgentHandoffOutcomeIsMonotonicWhenTimeoutWins(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

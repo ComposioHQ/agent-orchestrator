@@ -140,7 +140,16 @@ WHERE id = sqlc.arg(id)
   AND state = sqlc.arg(expected_state)
   AND source_generation_id = sqlc.arg(expected_source_generation_id)
   AND target_generation_id = sqlc.arg(expected_target_generation_id)
-  AND (error_code = '' OR error_code = sqlc.arg(error_code))
+  AND (
+      error_code = ''
+      OR error_code = sqlc.arg(error_code)
+      OR (
+		  error_code IN ('source_stop_unconfirmed', 'source_restore_unconfirmed')
+          AND sqlc.arg(next_state) = 'failed'
+          AND sqlc.arg(error_code) <> ''
+		  AND sqlc.arg(error_code) <> error_code
+      )
+  )
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = sqlc.arg(next_target_runtime_handle_id)
@@ -291,6 +300,7 @@ WHERE id = sqlc.arg(session_id)
 -- name: MarkAgentSwitchSourceStopped :execrows
 UPDATE agent_switches SET
     state = 'source_stopped',
+	error_code = '',
     updated_at = sqlc.arg(stopped_at)
 WHERE id = sqlc.arg(id)
   AND session_id = sqlc.arg(session_id)
