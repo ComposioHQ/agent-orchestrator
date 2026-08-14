@@ -1143,9 +1143,8 @@ func (w *Workspace) resolveBaseRef(ctx, remoteCtx context.Context, repo, branch,
 	// Preserve the existing resume behavior: a fetched remote session branch
 	// wins over starting a fresh branch from the repository default. The remote
 	// comes from the same authoritative resolution, never from a hardcoded name.
-	remoteSessionRef := ""
 	if resolution.Remote != "" {
-		remoteSessionRef = "refs/remotes/" + resolution.Remote + "/" + branch
+		remoteSessionRef := "refs/remotes/" + resolution.Remote + "/" + branch
 		if exists, err := w.refExists(ctx, repo, remoteSessionRef); err != nil {
 			return "", err
 		} else if exists {

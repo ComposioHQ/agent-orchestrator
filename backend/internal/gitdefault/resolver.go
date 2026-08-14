@@ -29,9 +29,12 @@ var ErrUnresolved = errors.New("git default branch is unresolved")
 type Source string
 
 const (
-	SourceLiveRemoteHead   Source = "live_remote_head"
+	// SourceLiveRemoteHead means the branch came from a live symbolic remote HEAD.
+	SourceLiveRemoteHead Source = "live_remote_head"
+	// SourceCachedRemoteHead means the branch came from the selected remote's cached HEAD.
 	SourceCachedRemoteHead Source = "cached_remote_head"
-	SourceAOInitialized    Source = "ao_initialized"
+	// SourceAOInitialized means AO recorded the branch when it initialized the repository.
+	SourceAOInitialized Source = "ao_initialized"
 )
 
 // Resolution is an authoritative branch plus the ref that can safely seed a
@@ -105,21 +108,21 @@ func (r *Resolver) Resolve(ctx, remoteCtx context.Context, repo string) (Resolut
 			liveErr = err
 		} else {
 			ref := remoteBranchRef(remote, branch)
-			if _, err := r.run(remoteCtx, r.binary, fetchBranchArgs(repo, remote, branch)...); err == nil {
+			_, fetchErr := r.run(remoteCtx, r.binary, fetchBranchArgs(repo, remote, branch)...)
+			if fetchErr == nil {
 				if err := r.setCachedRemoteHead(ctx, repo, remote, branch); err != nil {
 					return Resolution{}, err
 				}
 				return Resolution{Branch: branch, Remote: remote, Ref: ref, Source: SourceLiveRemoteHead}, nil
-			} else {
-				liveErr = fmt.Errorf("fetch remote default %q from %q: %w", branch, remote, err)
-				// The live lookup still authoritatively named the branch. If that
-				// remote-tracking ref already exists, it is the best offline cache.
-				if r.refExists(ctx, repo, ref) {
-					if err := r.setCachedRemoteHead(ctx, repo, remote, branch); err != nil {
-						return Resolution{}, err
-					}
-					return Resolution{Branch: branch, Remote: remote, Ref: ref, Source: SourceCachedRemoteHead}, nil
+			}
+			liveErr = fmt.Errorf("fetch remote default %q from %q: %w", branch, remote, fetchErr)
+			// The live lookup still authoritatively named the branch. If that
+			// remote-tracking ref already exists, it is the best offline cache.
+			if r.refExists(ctx, repo, ref) {
+				if err := r.setCachedRemoteHead(ctx, repo, remote, branch); err != nil {
+					return Resolution{}, err
 				}
+				return Resolution{Branch: branch, Remote: remote, Ref: ref, Source: SourceCachedRemoteHead}, nil
 			}
 		}
 	}
