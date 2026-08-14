@@ -9,6 +9,7 @@ import (
 
 func TestHooks_AgyAfterAgentReportsConversationFacts(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_PROJECT_ID", "")
 	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
