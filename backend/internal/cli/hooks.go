@@ -326,6 +326,12 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
+		return nil
+	}
+	if domain.AgentHarness(agent) == domain.HarnessAgy && event == "after-agent" {
+		if err := c.relayAgyAfterAgent(ctx, sessionID, conversation); err != nil {
+			c.reportHookFailure(agent, event, sessionID, fmt.Errorf("relay execution result: %w", err))
+		}
 	}
 	return nil
 }
