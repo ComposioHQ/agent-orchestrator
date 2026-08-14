@@ -284,6 +284,32 @@ describe("derivePRReviewPresentation", () => {
 		expect(presentation.comments).toEqual({ unresolved: 3, inline: 1, general: 2 });
 	});
 
+	it("requires a positive line number for inline comments", () => {
+		const presentation = derivePRReviewPresentation(
+			prSummary({
+				review: {
+					decision: "changes_requested",
+					hasUnresolvedHumanComments: true,
+					unresolvedBy: [
+						{
+							reviewerId: "lin",
+							count: 3,
+							links: [
+								{ file: "src/a.ts", line: 0, autoInjectReview: true },
+								{ file: "src/b.ts", line: -1, autoInjectReview: true },
+								{ file: "src/c.ts", line: 1, autoInjectReview: true },
+							],
+						},
+					],
+				},
+			}),
+			undefined,
+			[],
+		);
+
+		expect(presentation.comments).toEqual({ unresolved: 3, inline: 1, general: 2 });
+	});
+
 	it("counts distinct trigger batches as cycles and derives delivery from the current run", () => {
 		const current = run({ batchId: "batch-2", deliveredAt: "2026-06-10T00:02:00Z" });
 		const presentation = derivePRReviewPresentation(

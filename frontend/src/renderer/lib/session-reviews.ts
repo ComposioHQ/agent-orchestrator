@@ -65,7 +65,7 @@ export function derivePRReviewPresentation(
 ): PRReviewPresentation {
 	const commentLinks = pr.review.unresolvedBy.flatMap((reviewer) => reviewer.links);
 	const unresolved = pr.review.unresolvedBy.reduce((sum, reviewer) => sum + reviewer.count, 0);
-	const inline = commentLinks.filter((link) => Boolean(link.file && link.line)).length;
+	const inline = commentLinks.filter((link) => Boolean(link.file) && (link.line ?? 0) > 0).length;
 	const currentRun = aoState?.latestRun;
 	const progress = deriveReviewProgress(pr, aoState);
 	const prRuns = runs.filter((candidate) => candidate.prUrl === pr.url);
