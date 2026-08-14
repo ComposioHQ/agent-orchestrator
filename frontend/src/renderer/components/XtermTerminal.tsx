@@ -230,7 +230,7 @@ type TerminalContextMenuState = {
 	link: string | null;
 };
 
-type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
+type TerminalContextMenuAction = "copy" | "paste" | "selectAll";
 
 type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
 
@@ -505,10 +505,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 		};
 		contextMenuActionsRef.current = {
-			clear: () => {
-				term.clear();
-				focusTerminal();
-			},
 			copy: () => {
 				copySelection();
 				focusTerminal();
@@ -1061,8 +1057,6 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>{t("titlebar.paste")}</DropdownMenuItem>
 					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
 					{props.onToggleFullscreen ? (
 						<DropdownMenuItem
 							onSelect={() => {

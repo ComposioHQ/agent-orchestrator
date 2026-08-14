@@ -896,7 +896,6 @@
 	"termination.dialogNamed": "Encerrar {{title}}?",
 	"terminal.agent": "agente",
 	"terminal.backToAgent": "Voltar ao terminal do agente",
-	"terminal.clear": "Limpar",
 	"terminal.close": "Fechar terminal",
 	"terminal.closeNamed": "Fechar terminal {{title}}",
 	"terminal.closeSessionTab": "Fechar aba da sessão {{label}}",

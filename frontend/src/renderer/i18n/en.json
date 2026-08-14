@@ -876,7 +876,6 @@
 	"termination.dialogNamed": "Terminate {{title}}?",
 	"terminal.agent": "agent",
 	"terminal.backToAgent": "Back to agent terminal",
-	"terminal.clear": "Clear",
 	"terminal.close": "Close terminal",
 	"terminal.closeNamed": "Close terminal {{title}}",
 	"terminal.closeSessionTab": "Close session tab {{label}}",

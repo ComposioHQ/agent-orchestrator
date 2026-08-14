@@ -885,7 +885,6 @@
 	"termination.dialogNamed": "{{title}} を終了しますか？",
 	"terminal.agent": "agent",
 	"terminal.backToAgent": "エージェントターミナルに戻る",
-	"terminal.clear": "クリア",
 	"terminal.close": "ターミナルを閉じる",
 	"terminal.closeNamed": "ターミナル {{title}} を閉じる",
 	"terminal.closeSessionTab": "セッションタブ {{label}} を閉じる",
