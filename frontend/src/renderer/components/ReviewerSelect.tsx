@@ -35,6 +35,7 @@ export function ReviewerSelect({
 	defaultHarness,
 	defaultOptionLabel,
 	defaultTriggerLabel,
+	showDefaultOption = true,
 	contentAlign = "start",
 	disabled = false,
 	authorized,
@@ -47,8 +48,9 @@ export function ReviewerSelect({
 	triggerClassName?: string;
 	ariaLabel?: string;
 	defaultHarness?: string;
-	defaultOptionLabel: string;
+	defaultOptionLabel?: string;
 	defaultTriggerLabel?: string;
+	showDefaultOption?: boolean;
 	contentAlign?: "start" | "end";
 	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
@@ -71,11 +73,8 @@ export function ReviewerSelect({
 	});
 	const selectableOptions = options.filter((agent) => agent.id !== excludedHarness);
 
-	// The trigger shows the agent that will actually run, since "project default"
-	// names the setting rather than answering the question. The menu keeps the
-	// longer wording, where there is room for it.
 	const menuOptions = [
-		{ value: "__default__", label: defaultOptionLabel },
+		...(showDefaultOption && defaultOptionLabel ? [{ value: "__default__", label: defaultOptionLabel }] : []),
 		...selectableOptions.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
 	];
 	const selectedValue = value && value !== excludedHarness ? value : "__default__";
@@ -99,7 +98,9 @@ export function ReviewerSelect({
 						<AgentAvatar provider={defaultHarness} className="size-icon-lg" />
 					) : null}
 					<span className={contentAlign === "end" ? "min-w-0 truncate text-right" : "min-w-0 truncate"}>
-						{selected && selected.value !== "__default__" ? selected.label : (defaultTriggerLabel ?? defaultOptionLabel)}
+						{selected && selected.value !== "__default__"
+							? selected.label
+							: (defaultTriggerLabel ?? defaultOptionLabel ?? defaultHarness)}
 					</span>
 				</>
 			)}

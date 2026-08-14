@@ -1417,8 +1417,8 @@ function ReviewPanel({
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
 	const resolvedDefaultHarness = resolveDefaultReviewerHarness(config, session.provider);
-	const harness = latest?.harness || resolvedDefaultHarness;
-	const defaultLabel = t("settings.models.default");
+	const effectiveReviewerHarness = reviewerOverride || resolvedDefaultHarness;
+	const activeReviewerHarness = latest?.harness || effectiveReviewerHarness;
 	const autoReviewFailure =
 		latestAutoFailure && latestAutoFailure.id !== dismissedAutoFailureId ? latestAutoFailure.body.trim() : null;
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
@@ -1492,16 +1492,16 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							contentAlign="end"
-							defaultHarness={harness}
-							defaultOptionLabel={`${defaultLabel} (${resolvedDefaultHarness})`}
-							defaultTriggerLabel={harness || defaultLabel}
+							defaultHarness={effectiveReviewerHarness}
+							defaultTriggerLabel={effectiveReviewerHarness}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-36 min-w-24 max-w-36 shrink-0 justify-end text-right text-xs"
 							value={reviewerOverride}
-							excludedHarness={resolvedDefaultHarness}
+							excludedHarness={effectiveReviewerHarness}
+							showDefaultOption={false}
 						/>
 					</div>
 					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
@@ -1553,7 +1553,7 @@ function ReviewPanel({
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
+							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${activeReviewerHarness}`}
 						</span>
 					</div>
 				) : null}
