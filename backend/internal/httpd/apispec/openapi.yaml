@@ -8321,6 +8321,10 @@ components:
           type: string
         modelId:
           type: string
+        providerId:
+          description: Canonical provider routing hint derived by the trusted local
+            Claude hook.
+          type: string
         subagentId:
           type: string
         subagentTranscriptPath:

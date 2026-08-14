@@ -1,12 +1,16 @@
 -- name: UpsertUsageBinding :one
 INSERT INTO usage_bindings (
     session_id, harness, native_root_id, initial_model_id, state,
-    last_error_code, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+    last_error_code, updated_at, provider_hint
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
     initial_model_id = CASE
         WHEN excluded.initial_model_id <> '' THEN excluded.initial_model_id
         ELSE usage_bindings.initial_model_id
+    END,
+    provider_hint = CASE
+        WHEN excluded.provider_hint <> '' THEN excluded.provider_hint
+        ELSE usage_bindings.provider_hint
     END,
     state = CASE
         WHEN usage_bindings.state IN ('finalizing', 'complete', 'partial')
@@ -237,6 +241,7 @@ SELECT
     ub.harness,
     ub.native_root_id,
     ub.initial_model_id,
+    ub.provider_hint,
     ub.state AS binding_state
 FROM usage_sources us
 JOIN usage_bindings ub ON ub.id = us.binding_id
@@ -335,17 +340,20 @@ WHERE id = sqlc.arg(usage_binding_id)
 
 -- name: GetModelUsageEventByKey :one
 SELECT
-    model_id, input_tokens, uncached_input_tokens,
-    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens
+    provider_id, model_id, input_tokens, uncached_input_tokens,
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    cache_write_5m_tokens, cache_write_1h_tokens
 FROM model_usage_events
 WHERE binding_id = ? AND source_event_key = ?;
 
 -- name: InsertModelUsageEvent :exec
 INSERT INTO model_usage_events (
-    binding_id, usage_source_id, model_id, input_tokens, uncached_input_tokens,
+    binding_id, usage_source_id, provider_id, model_id, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    source_event_key
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    cache_write_5m_tokens, cache_write_1h_tokens,
+    uncached_input_cost_nanos, cache_read_cost_nanos, cache_write_cost_nanos,
+    output_cost_nanos, estimated_cost_nanos, pricing_version, source_event_key
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: TouchUsageBinding :exec
 UPDATE usage_bindings SET updated_at = ? WHERE id = ?;

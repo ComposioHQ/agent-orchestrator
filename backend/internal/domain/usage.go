@@ -72,6 +72,7 @@ type UsageBindingRecord struct {
 	Harness        AgentHarness
 	NativeRootID   string
 	InitialModelID string
+	ProviderHint   string
 	State          UsageBindingState
 	LastErrorCode  string
 	UpdatedAt      time.Time
@@ -105,6 +106,7 @@ type UsageSourceContext struct {
 	SessionID      SessionID
 	NativeRootID   string
 	InitialModelID string
+	ProviderHint   string
 	BindingState   UsageBindingState
 }
 
@@ -121,9 +123,18 @@ type UsageTokenMetrics struct {
 
 // ModelUsageEvent is one append-only normalized usage fact.
 type ModelUsageEvent struct {
-	ModelID        string
-	Tokens         UsageTokenMetrics
-	SourceEventKey string
+	ProviderID             string
+	ModelID                string
+	Tokens                 UsageTokenMetrics
+	CacheWrite5mTokens     *int64
+	CacheWrite1hTokens     *int64
+	UncachedInputCostNanos *int64
+	CacheReadCostNanos     *int64
+	CacheWriteCostNanos    *int64
+	OutputCostNanos        *int64
+	EstimatedCostNanos     *int64
+	PricingVersion         string
+	SourceEventKey         string
 }
 
 // UsageModelAggregate is the raw model-level aggregate read from storage before

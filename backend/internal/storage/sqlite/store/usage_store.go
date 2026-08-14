@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -21,7 +22,8 @@ func (s *Store) UpsertUsageBinding(ctx context.Context, rec domain.UsageBindingR
 		SessionID:      rec.SessionID,
 		Harness:        rec.Harness,
 		NativeRootID:   rec.NativeRootID,
-		InitialModelID: rec.InitialModelID,
+		InitialModelID: strings.TrimSpace(rec.InitialModelID),
+		ProviderHint:   strings.TrimSpace(rec.ProviderHint),
 		State:          usageBindingStateOrDefault(rec.State),
 		LastErrorCode:  rec.LastErrorCode,
 		UpdatedAt:      timeOrNow(rec.UpdatedAt),
@@ -384,6 +386,11 @@ func (s *Store) ApplyUsageChunk(
 		}
 		insertedEvent := false
 		for _, ev := range events {
+			ev.ProviderID = strings.TrimSpace(ev.ProviderID)
+			ev.ModelID = strings.TrimSpace(ev.ModelID)
+			if ev.ProviderID == "" {
+				return errors.New("usage event provider must be nonempty")
+			}
 			existing, err := q.GetModelUsageEventByKey(ctx, gen.GetModelUsageEventByKeyParams{
 				BindingID:      source.BindingID,
 				SourceEventKey: ev.SourceEventKey,
@@ -474,6 +481,7 @@ func usageBindingFromGen(row gen.UsageBinding) domain.UsageBindingRecord {
 		Harness:        row.Harness,
 		NativeRootID:   row.NativeRootID,
 		InitialModelID: row.InitialModelID,
+		ProviderHint:   row.ProviderHint,
 		State:          row.State,
 		LastErrorCode:  row.LastErrorCode,
 		UpdatedAt:      row.UpdatedAt,
@@ -524,6 +532,7 @@ func usageSourceContextFromGen(row gen.GetUsageSourceWithBindingAndSessionRow) d
 		SessionID:      row.SessionID,
 		NativeRootID:   row.NativeRootID,
 		InitialModelID: row.InitialModelID,
+		ProviderHint:   row.ProviderHint,
 		BindingState:   row.BindingState,
 	}
 }
@@ -550,28 +559,43 @@ func usageSourceInsertParams(rec domain.UsageSourceRecord) gen.InsertUsageSource
 
 func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, ev domain.ModelUsageEvent) gen.InsertModelUsageEventParams {
 	return gen.InsertModelUsageEventParams{
-		BindingID:           source.BindingID,
-		UsageSourceID:       source.SourceID,
-		ModelID:             ev.ModelID,
-		InputTokens:         ev.Tokens.InputTokens,
-		UncachedInputTokens: ev.Tokens.UncachedInputTokens,
-		CacheReadTokens:     ev.Tokens.CacheReadTokens,
-		CacheWriteTokens:    ev.Tokens.CacheWriteTokens,
-		OutputTokens:        ev.Tokens.OutputTokens,
-		ReasoningTokens:     ptrInt64ToNull(ev.Tokens.ReasoningTokens),
-		SourceEventKey:      ev.SourceEventKey,
+		BindingID:              source.BindingID,
+		UsageSourceID:          source.SourceID,
+		ProviderID:             sql.NullString{String: ev.ProviderID, Valid: true},
+		ModelID:                ev.ModelID,
+		InputTokens:            ev.Tokens.InputTokens,
+		UncachedInputTokens:    ev.Tokens.UncachedInputTokens,
+		CacheReadTokens:        ev.Tokens.CacheReadTokens,
+		CacheWriteTokens:       ev.Tokens.CacheWriteTokens,
+		OutputTokens:           ev.Tokens.OutputTokens,
+		ReasoningTokens:        ptrInt64ToNull(ev.Tokens.ReasoningTokens),
+		CacheWrite5mTokens:     ptrInt64ToNull(ev.CacheWrite5mTokens),
+		CacheWrite1hTokens:     ptrInt64ToNull(ev.CacheWrite1hTokens),
+		UncachedInputCostNanos: ptrInt64ToNull(ev.UncachedInputCostNanos),
+		CacheReadCostNanos:     ptrInt64ToNull(ev.CacheReadCostNanos),
+		CacheWriteCostNanos:    ptrInt64ToNull(ev.CacheWriteCostNanos),
+		OutputCostNanos:        ptrInt64ToNull(ev.OutputCostNanos),
+		EstimatedCostNanos:     ptrInt64ToNull(ev.EstimatedCostNanos),
+		PricingVersion:         ev.PricingVersion,
+		SourceEventKey:         ev.SourceEventKey,
 	}
 }
 
 func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
 	reasoning := ptrInt64ToNull(event.Tokens.ReasoningTokens)
-	return existing.ModelID == event.ModelID &&
+	genericMatches := existing.ModelID == event.ModelID &&
 		existing.InputTokens == event.Tokens.InputTokens &&
 		existing.UncachedInputTokens == event.Tokens.UncachedInputTokens &&
 		existing.CacheReadTokens == event.Tokens.CacheReadTokens &&
 		existing.CacheWriteTokens == event.Tokens.CacheWriteTokens &&
 		existing.OutputTokens == event.Tokens.OutputTokens &&
 		existing.ReasoningTokens == reasoning
+	if !genericMatches || !existing.ProviderID.Valid {
+		return genericMatches
+	}
+	return existing.ProviderID.String == event.ProviderID &&
+		existing.CacheWrite5mTokens == ptrInt64ToNull(event.CacheWrite5mTokens) &&
+		existing.CacheWrite1hTokens == ptrInt64ToNull(event.CacheWrite1hTokens)
 }
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {

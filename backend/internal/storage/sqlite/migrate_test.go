@@ -16,7 +16,7 @@ import (
 var expectedUsageTableColumns = map[string][]string{
 	"usage_bindings": {
 		"id", "session_id", "harness", "native_root_id", "initial_model_id",
-		"state", "last_error_code", "updated_at",
+		"state", "last_error_code", "updated_at", "provider_hint",
 	},
 	"usage_sources": {
 		"id", "binding_id", "kind", "native_session_id", "subagent_id", "artifact_path",
@@ -26,7 +26,9 @@ var expectedUsageTableColumns = map[string][]string{
 	"model_usage_events": {
 		"id", "binding_id", "usage_source_id", "model_id", "input_tokens", "uncached_input_tokens",
 		"cache_read_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens",
-		"source_event_key",
+		"source_event_key", "provider_id", "cache_write_5m_tokens", "cache_write_1h_tokens",
+		"uncached_input_cost_nanos", "cache_read_cost_nanos", "cache_write_cost_nanos",
+		"output_cost_nanos", "estimated_cost_nanos", "pricing_version",
 	},
 }
 
@@ -37,6 +39,81 @@ func TestUsageTablesKeepOnlyDurableCollectionState(t *testing.T) {
 		if !reflect.DeepEqual(got, wantColumns) {
 			t.Errorf("%s columns = %v, want %v", table, got, wantColumns)
 		}
+	}
+}
+
+func TestUsageCostMigrationKeepsLegacyRowsUnattributedAndUnpriced(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 94)
+	seedUsageMigrationRow(t, db)
+	if err := migrate(db); err != nil {
+		t.Fatalf("apply cost migration: %v", err)
+	}
+
+	var providerHint, pricingVersion string
+	var providerID sql.NullString
+	var cacheWrite5m, cacheWrite1h sql.NullInt64
+	var uncachedCost, readCost, writeCost, outputCost, totalCost sql.NullInt64
+	if err := db.QueryRow(`
+SELECT ub.provider_hint, mue.provider_id,
+       mue.cache_write_5m_tokens, mue.cache_write_1h_tokens,
+       mue.uncached_input_cost_nanos, mue.cache_read_cost_nanos,
+       mue.cache_write_cost_nanos, mue.output_cost_nanos,
+       mue.estimated_cost_nanos, mue.pricing_version
+FROM usage_bindings ub
+JOIN model_usage_events mue ON mue.binding_id = ub.id
+WHERE mue.source_event_key = 'migration-event'`).Scan(
+		&providerHint, &providerID, &cacheWrite5m, &cacheWrite1h,
+		&uncachedCost, &readCost, &writeCost, &outputCost, &totalCost, &pricingVersion,
+	); err != nil {
+		t.Fatalf("read migrated usage facts: %v", err)
+	}
+	if providerHint != "" || pricingVersion != "" || providerID.Valid || cacheWrite5m.Valid || cacheWrite1h.Valid ||
+		uncachedCost.Valid || readCost.Valid || writeCost.Valid || outputCost.Valid || totalCost.Valid {
+		t.Fatalf("legacy defaults = hint:%q provider:%v splits:%v/%v costs:%v/%v/%v/%v/%v version:%q",
+			providerHint, providerID, cacheWrite5m, cacheWrite1h,
+			uncachedCost, readCost, writeCost, outputCost, totalCost, pricingVersion)
+	}
+
+	var indexSQL string
+	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_model_usage_events_cost_candidates'`).Scan(&indexSQL); err != nil {
+		t.Fatalf("read cost candidate index: %v", err)
+	}
+	if !strings.Contains(indexSQL, "provider_id, pricing_version, id") ||
+		!strings.Contains(indexSQL, "estimated_cost_nanos IS NULL") {
+		t.Fatalf("cost candidate index = %q", indexSQL)
+	}
+}
+
+func seedUsageMigrationRow(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, display_name, registered_at)
+VALUES ('migration-project', '/tmp/migration-project', 'migration-project', CURRENT_TIMESTAMP);
+INSERT INTO sessions (
+    id, project_id, num, harness, activity_last_at, workspace_path, branch, created_at, updated_at
+)
+VALUES (
+    'migration-session', 'migration-project', 1, 'codex', CURRENT_TIMESTAMP,
+    '/tmp/migration-session', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+);
+INSERT INTO usage_bindings (session_id, harness, native_root_id, state, updated_at)
+VALUES ('migration-session', 'codex', 'native-root', 'active', CURRENT_TIMESTAMP);
+INSERT INTO usage_sources (binding_id, kind, artifact_path, state, updated_at)
+VALUES (last_insert_rowid(), 'codex_rollout', '/tmp/rollout.jsonl', 'active', CURRENT_TIMESTAMP);
+INSERT INTO model_usage_events (
+    binding_id, usage_source_id, model_id, input_tokens, uncached_input_tokens,
+    cache_read_tokens, cache_write_tokens, output_tokens, source_event_key
+)
+SELECT binding_id, id, 'gpt-test', 10, 8, 2, 0, 3, 'migration-event'
+FROM usage_sources WHERE artifact_path = '/tmp/rollout.jsonl';
+`); err != nil {
+		t.Fatalf("seed migrated usage row: %v", err)
 	}
 }
 

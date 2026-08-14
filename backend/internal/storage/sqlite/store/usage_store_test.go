@@ -2,9 +2,11 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func TestUsageBindingAndSourceIdempotency(t *testing.T) {
@@ -23,6 +26,7 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
 		NativeRootID:   "root-thread",
 		InitialModelID: "gpt-5",
+		ProviderHint:   "openai",
 		State:          domain.UsageBindingDiscovering,
 	})
 	again := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
@@ -36,6 +40,9 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	}
 	if again.InitialModelID != "gpt-5.1" || again.State != domain.UsageBindingActive {
 		t.Fatalf("refreshed binding = %+v", again)
+	}
+	if again.ProviderHint != "openai" {
+		t.Fatalf("provider hint = %q, want retained openai", again.ProviderHint)
 	}
 
 	src := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
@@ -479,6 +486,164 @@ func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 		ctxRow.InitialModelID != "gpt-5" || ctxRow.BindingState != domain.UsageBindingActive {
 		t.Fatalf("source context = %+v", ctxRow)
 	}
+}
+
+func TestApplyUsageChunkPersistsProviderSplitsAndPassiveCosts(t *testing.T) {
+	dataDir := t.TempDir()
+	s := sqlitetest.MustOpenAt(t, dataDir)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
+	now := time.Unix(1700000000, 0).UTC()
+	binding := mustUpsertUsageBinding(t, s, sess, now, domain.UsageBindingRecord{
+		NativeRootID:   "root-thread",
+		InitialModelID: " claude-sonnet ",
+		ProviderHint:   " anthropic ",
+		State:          domain.UsageBindingActive,
+	})
+	source := mustInsertUsageSource(t, s, now, domain.UsageSourceRecord{
+		BindingID:       binding.ID,
+		Kind:            domain.UsageSourceClaudeMain,
+		NativeSessionID: "root-thread",
+		ArtifactPath:    "/tmp/claude/transcript.jsonl",
+		State:           domain.UsageSourcePending,
+	})
+	fiveMinutes, oneHour := int64(7), int64(3)
+	uncachedCost, readCost, writeCost, outputCost, totalCost := int64(11), int64(12), int64(13), int64(14), int64(50)
+	event := domain.ModelUsageEvent{
+		ProviderID:             "source-provider",
+		ModelID:                " source-model ",
+		Tokens:                 domain.UsageTokenMetrics{InputTokens: 20, UncachedInputTokens: 5, CacheReadTokens: 5, CacheWriteTokens: 10, OutputTokens: 4},
+		CacheWrite5mTokens:     &fiveMinutes,
+		CacheWrite1hTokens:     &oneHour,
+		UncachedInputCostNanos: &uncachedCost,
+		CacheReadCostNanos:     &readCost,
+		CacheWriteCostNanos:    &writeCost,
+		OutputCostNanos:        &outputCost,
+		EstimatedCostNanos:     &totalCost,
+		PricingVersion:         "catalog-v1",
+		SourceEventKey:         "event-cost",
+	}
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{event}); err != nil {
+		t.Fatalf("apply priced source event: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db"))
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	var providerHint, providerID, modelID, pricingVersion string
+	var got5m, got1h, gotUncached, gotRead, gotWrite, gotOutput, gotTotal int64
+	if err := raw.QueryRow(`
+SELECT ub.provider_hint, mue.provider_id, mue.model_id,
+       mue.cache_write_5m_tokens, mue.cache_write_1h_tokens,
+       mue.uncached_input_cost_nanos, mue.cache_read_cost_nanos,
+       mue.cache_write_cost_nanos, mue.output_cost_nanos,
+       mue.estimated_cost_nanos, mue.pricing_version
+FROM model_usage_events mue JOIN usage_bindings ub ON ub.id = mue.binding_id
+WHERE mue.source_event_key = 'event-cost'`).Scan(
+		&providerHint, &providerID, &modelID, &got5m, &got1h,
+		&gotUncached, &gotRead, &gotWrite, &gotOutput, &gotTotal, &pricingVersion,
+	); err != nil {
+		t.Fatalf("read persisted source/cost facts: %v", err)
+	}
+	if providerHint != "anthropic" || providerID != "source-provider" || modelID != "source-model" ||
+		got5m != 7 || got1h != 3 || gotUncached != 11 || gotRead != 12 || gotWrite != 13 ||
+		gotOutput != 14 || gotTotal != 50 || pricingVersion != "catalog-v1" {
+		t.Fatalf("persisted facts = hint:%q provider:%q model:%q splits:%d/%d costs:%d/%d/%d/%d/%d version:%q",
+			providerHint, providerID, modelID, got5m, got1h,
+			gotUncached, gotRead, gotWrite, gotOutput, gotTotal, pricingVersion)
+	}
+	contextRow, ok, err := s.GetUsageSourceForIngestion(ctx, source.ID)
+	if err != nil || !ok || contextRow.ProviderHint != "anthropic" || contextRow.InitialModelID != "claude-sonnet" {
+		t.Fatalf("source context = %+v, ok=%v err=%v", contextRow, ok, err)
+	}
+}
+
+func TestApplyUsageChunkReplayComparesNewSourceFactsButNotCosts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessClaudeCode)
+	now := time.Unix(1700000000, 0).UTC()
+	source := seedUsageSource(t, s, sess, now)
+	fiveMinutes, oneHour := int64(7), int64(3)
+	event := usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 20, UncachedInputTokens: 5, CacheReadTokens: 5, CacheWriteTokens: 10, OutputTokens: 4})
+	event.ProviderID = "anthropic"
+	event.CacheWrite5mTokens = &fiveMinutes
+	event.CacheWrite1hTokens = &oneHour
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{event}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+
+	differentCost := int64(99)
+	replay := event
+	replay.EstimatedCostNanos = &differentCost
+	replay.PricingVersion = "later-version"
+	if err := s.ApplyUsageChunk(ctx, source.ID, 10, now, domain.SourceCursorState{ByteOffset: 20, State: domain.UsageSourceActive, UpdatedAt: now.Add(time.Second)}, []domain.ModelUsageEvent{replay}); err != nil {
+		t.Fatalf("cost-only replay conflict: %v", err)
+	}
+
+	providerConflict := event
+	providerConflict.ProviderID = "zai"
+	if err := s.ApplyUsageChunk(ctx, source.ID, 20, now.Add(time.Second), domain.SourceCursorState{ByteOffset: 30, State: domain.UsageSourceActive, UpdatedAt: now.Add(2 * time.Second)}, []domain.ModelUsageEvent{providerConflict}); !errors.Is(err, domain.ErrUsageSourceEventConflict) {
+		t.Fatalf("provider replay err = %v, want source conflict", err)
+	}
+	splitConflict := event
+	otherFiveMinutes := int64(6)
+	splitConflict.CacheWrite5mTokens = &otherFiveMinutes
+	if err := s.ApplyUsageChunk(ctx, source.ID, 20, now.Add(time.Second), domain.SourceCursorState{ByteOffset: 30, State: domain.UsageSourceActive, UpdatedAt: now.Add(2 * time.Second)}, []domain.ModelUsageEvent{splitConflict}); !errors.Is(err, domain.ErrUsageSourceEventConflict) {
+		t.Fatalf("split replay err = %v, want source conflict", err)
+	}
+}
+
+func TestApplyUsageChunkLegacyNullProviderReplayUsesGenericTokenFacts(t *testing.T) {
+	dataDir := t.TempDir()
+	s := sqlitetest.MustOpenAt(t, dataDir)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	source := seedUsageSource(t, s, sess, now)
+	raw, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db"))
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = raw.Close() })
+	if _, err := raw.Exec(`
+INSERT INTO model_usage_events (
+    binding_id, usage_source_id, model_id, input_tokens, uncached_input_tokens,
+    cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
+    source_event_key
+) VALUES (?, ?, 'gpt-5', 20, 5, 5, 10, 4, NULL, 'legacy-event')`, source.BindingID, source.ID); err != nil {
+		t.Fatalf("seed legacy event: %v", err)
+	}
+	fiveMinutes, oneHour := int64(7), int64(3)
+	replay := usageEvent("legacy-event", domain.UsageTokenMetrics{InputTokens: 20, UncachedInputTokens: 5, CacheReadTokens: 5, CacheWriteTokens: 10, OutputTokens: 4})
+	replay.ProviderID = "openai"
+	replay.CacheWrite5mTokens = &fiveMinutes
+	replay.CacheWrite1hTokens = &oneHour
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{replay}); err != nil {
+		t.Fatalf("legacy replay conflict: %v", err)
+	}
+}
+
+func TestApplyUsageChunkRejectsBlankProviderOnNewEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	now := time.Unix(1700000000, 0).UTC()
+	source := seedUsageSource(t, s, sess, now)
+	event := usageEvent("event-blank-provider", domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1, OutputTokens: 1})
+	event.ProviderID = "  "
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{event}); err == nil {
+		t.Fatal("blank provider event was persisted")
+	}
+	assertUsageSourceOffset(t, s, source.ID, 0)
 }
 
 func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
@@ -957,6 +1122,7 @@ func mustInsertUsageSource(
 
 func usageEvent(key string, tokens domain.UsageTokenMetrics) domain.ModelUsageEvent {
 	return domain.ModelUsageEvent{
+		ProviderID:     "unknown",
 		ModelID:        "gpt-5",
 		Tokens:         tokens,
 		SourceEventKey: key,

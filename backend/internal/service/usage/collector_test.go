@@ -32,6 +32,7 @@ func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
 
 	err := collector.RecordHook(context.Background(), session.ID, HookSignal{
 		Harness:         domain.HarnessCodex,
+		ProviderHint:    " openai ",
 		Event:           "session-start",
 		NativeSessionID: "native-1",
 		TranscriptPath:  path,
@@ -48,7 +49,7 @@ func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
 	if err != nil || len(sources) != 1 {
 		t.Fatalf("sources=%+v err=%v", sources, err)
 	}
-	if bindings[0].State != domain.UsageBindingActive || bindings[0].InitialModelID != "gpt-5.6" ||
+	if bindings[0].State != domain.UsageBindingActive || bindings[0].InitialModelID != "gpt-5.6" || bindings[0].ProviderHint != "openai" ||
 		sources[0].State != domain.UsageSourceActive || wakes == 0 {
 		t.Fatalf("registered binding=%+v source=%+v wakes=%d", bindings[0], sources[0], wakes)
 	}

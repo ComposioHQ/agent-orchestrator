@@ -45,6 +45,7 @@ type validatedSourceArtifact struct {
 // HookSignal is the usage-specific metadata carried by an AO agent hook.
 type HookSignal struct {
 	Harness                domain.AgentHarness
+	ProviderHint           string
 	Event                  string
 	LaunchID               string
 	NativeSessionID        string
@@ -233,6 +234,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		return err
 	}
 	signal.Harness = session.Harness
+	signal.ProviderHint = boundedUsageMetadata(signal.ProviderHint)
 	signal.NativeSessionID = boundedUsageMetadata(signal.NativeSessionID)
 	if signal.NativeSessionID == "" {
 		signal.NativeSessionID = boundedUsageMetadata(session.Metadata.AgentSessionID)
@@ -322,6 +324,7 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		Harness:        session.Harness,
 		NativeRootID:   signal.NativeSessionID,
 		InitialModelID: boundedUsageMetadata(signal.ModelID),
+		ProviderHint:   signal.ProviderHint,
 		State:          state,
 		LastErrorCode:  lastErrorCode,
 		UpdatedAt:      now,
@@ -541,6 +544,7 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 		Harness:        session.Harness,
 		NativeRootID:   nativeID,
 		InitialModelID: existing.InitialModelID,
+		ProviderHint:   existing.ProviderHint,
 		State:          state,
 		LastErrorCode:  lastErrorCode,
 		UpdatedAt:      now,

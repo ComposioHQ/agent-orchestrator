@@ -385,6 +385,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 		State:           domain.UsageSourceActive,
 		UpdatedAt:       now,
 	}, []domain.ModelUsageEvent{{
+		ProviderID:     "unknown",
 		ModelID:        "gpt-5",
 		Tokens:         domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 2},
 		SourceEventKey: "budget-root-event",

@@ -35,6 +35,100 @@ func TestParseClaudeFinalUsageAndSkipMainSidechain(t *testing.T) {
 	if got.ModelID != "claude-x" {
 		t.Fatalf("event = %+v", got)
 	}
+	if got.CacheWrite5mTokens == nil || *got.CacheWrite5mTokens != 2 ||
+		got.CacheWrite1hTokens == nil || *got.CacheWrite1hTokens != 1 {
+		t.Fatalf("cache write splits = %v/%v, want 2/1", got.CacheWrite5mTokens, got.CacheWrite1hTokens)
+	}
+}
+
+func TestParseClaudeProviderPrecedenceAndRetention(t *testing.T) {
+	source := usageSource(domain.UsageSourceClaudeMain)
+	source.ProviderHint = "anthropic"
+	records := []jsonlRecord{
+		{Data: []byte(`{"type":"assistant","provider":" record-provider ","uuid":"one","message":{"id":"msg-1","provider":" message-provider ","model":" claude-a ","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`)},
+		{Data: []byte(`{"type":"assistant","uuid":"two","message":{"id":"msg-2","model":"","stop_reason":"end_turn","usage":{"input_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3}}}`)},
+		{Data: []byte(`{"type":"assistant","provider":" replacement-provider ","uuid":"three","message":{"id":"msg-3","model":"claude-b","stop_reason":"end_turn","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}}}`)},
+	}
+
+	result := parseRecords(source, records, 500, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 3 {
+		t.Fatalf("events = %+v", result.Events)
+	}
+	if result.Events[0].ProviderID != "message-provider" || result.Events[0].ModelID != "claude-a" ||
+		result.Events[1].ProviderID != "message-provider" || result.Events[1].ModelID != "claude-a" ||
+		result.Events[2].ProviderID != "replacement-provider" || result.Events[2].ModelID != "claude-b" {
+		t.Fatalf("provider/model sequence = %+v", result.Events)
+	}
+	state := parserStateFromResult(t, result, domain.UsageSourceClaudeMain)
+	if state.Claude.Provider != "replacement-provider" {
+		t.Fatalf("retained provider = %q", state.Claude.Provider)
+	}
+}
+
+func TestParseClaudeProviderFallsBackToTrustedHintThenUnknown(t *testing.T) {
+	record := jsonlRecord{Data: []byte(`{"type":"assistant","uuid":"one","message":{"id":"msg-1","model":"claude-a","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`)}
+	for _, test := range []struct {
+		name string
+		hint string
+		want string
+	}{
+		{name: "trusted hook hint", hint: "zai", want: "zai"},
+		{name: "unknown", want: "unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := usageSource(domain.UsageSourceClaudeMain)
+			source.ProviderHint = test.hint
+			result := parseRecords(source, []jsonlRecord{record}, 100, time.Unix(1700000000, 0).UTC())
+			if len(result.Events) != 1 || result.Events[0].ProviderID != test.want {
+				t.Fatalf("events = %+v, want provider %q", result.Events, test.want)
+			}
+		})
+	}
+}
+
+func TestParseClaudeCacheWriteSplitsRetainGenericUsage(t *testing.T) {
+	tests := []struct {
+		name          string
+		cacheCreation string
+		want5m        *int64
+		want1h        *int64
+		wantAnomaly   int64
+	}{
+		{name: "absent"},
+		{name: "explicit zero", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0}`, want5m: int64Ptr(0), want1h: int64Ptr(0)},
+		{name: "valid", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}`, want5m: int64Ptr(2), want1h: int64Ptr(1)},
+		{name: "missing member", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":3}`, wantAnomaly: 1},
+		{name: "negative", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":-1}`, wantAnomaly: 1},
+		{name: "sum mismatch", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":1}`, wantAnomaly: 1},
+		{name: "malformed member", cacheCreation: `,"cache_creation":{"ephemeral_5m_input_tokens":"three","ephemeral_1h_input_tokens":0}`, wantAnomaly: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			generic := int64(3)
+			if test.name == "explicit zero" {
+				generic = 0
+			}
+			record := jsonlRecord{Data: []byte(fmt.Sprintf(
+				`{"type":"assistant","uuid":"one","message":{"id":"msg-1","model":"claude-a","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":%d,"cache_read_input_tokens":0,"output_tokens":2%s}}}`,
+				generic, test.cacheCreation,
+			))}
+			result := parseRecords(usageSource(domain.UsageSourceClaudeMain), []jsonlRecord{record}, 100, time.Unix(1700000000, 0).UTC())
+			if len(result.Events) != 1 {
+				t.Fatalf("generic usage was dropped: events=%+v cursor=%+v", result.Events, result.Cursor)
+			}
+			got := result.Events[0]
+			if !equalInt64Ptr(got.CacheWrite5mTokens, test.want5m) || !equalInt64Ptr(got.CacheWrite1hTokens, test.want1h) ||
+				result.Cursor.AnomalyCount != test.wantAnomaly {
+				t.Fatalf("splits=%v/%v anomalies=%d, want %v/%v anomalies=%d",
+					got.CacheWrite5mTokens, got.CacheWrite1hTokens, result.Cursor.AnomalyCount,
+					test.want5m, test.want1h, test.wantAnomaly)
+			}
+		})
+	}
+}
+
+func equalInt64Ptr(left, right *int64) bool {
+	return left == nil && right == nil || left != nil && right != nil && *left == *right
 }
 
 func TestParseClaudeSubagentIncludesSidechainTranscript(t *testing.T) {
@@ -69,9 +163,34 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 		got.ReasoningTokens == nil || *got.ReasoningTokens != 3 {
 		t.Fatalf("delta tokens = %+v", got)
 	}
+	if result.Events[0].ProviderID != "openai" || result.Events[1].ProviderID != "openai" {
+		t.Fatalf("providers = %q/%q, want retained openai", result.Events[0].ProviderID, result.Events[1].ProviderID)
+	}
 	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
-	if state.Codex.Baseline.InputTokens != 160 || state.Codex.ModelID != "gpt-5.6" {
+	if state.Codex.Baseline.InputTokens != 160 || state.Codex.ModelID != "gpt-5.6" || state.Codex.Provider != "openai" {
 		t.Fatalf("parser state = %+v", state.Codex)
+	}
+}
+
+func TestParseCodexSessionMetaProviderAppliesOnlyToSubsequentEvents(t *testing.T) {
+	source := usageSource(domain.UsageSourceCodexRollout)
+	result := parseRecords(source, []jsonlRecord{
+		{Data: []byte(`{"type":"turn_context","payload":{"model":"gpt-a"}}`)},
+		{Data: codexTokenLine("2026-07-01T10:00:00Z", 10, 5, 0, 2, 1)},
+		{Data: []byte(`{"type":"session_meta","payload":{"model_provider":" openai "}}`)},
+		{Data: codexTokenLine("2026-07-01T10:01:00Z", 20, 10, 0, 4, 2)},
+		{Data: []byte(`{"type":"session_meta","payload":{"model_provider":" azure "}}`)},
+		{Data: codexTokenLine("2026-07-01T10:02:00Z", 30, 15, 0, 6, 3)},
+	}, 500, time.Unix(1700000000, 0).UTC())
+	if len(result.Events) != 3 ||
+		result.Events[0].ProviderID != "unknown" ||
+		result.Events[1].ProviderID != "openai" ||
+		result.Events[2].ProviderID != "azure" {
+		t.Fatalf("provider sequence = %+v", result.Events)
+	}
+	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
+	if state.Codex.Provider != "azure" {
+		t.Fatalf("retained provider = %q", state.Codex.Provider)
 	}
 }
 
@@ -153,7 +272,7 @@ func TestDecodeParserStateTreatsWhitespaceOnlyObjectAsFreshState(t *testing.T) {
 	}
 }
 
-func TestDecodeParserStateRetiresPersistedProviderField(t *testing.T) {
+func TestDecodeParserStateRetainsPersistedProviderField(t *testing.T) {
 	tests := []struct {
 		kind domain.UsageSourceKind
 		raw  string
@@ -182,8 +301,8 @@ func TestDecodeParserStateRetiresPersistedProviderField(t *testing.T) {
 		if parsed.err != nil {
 			t.Fatalf("encode normalized %s state: %v", test.kind, parsed.err)
 		}
-		if strings.Contains(parsed.Cursor.ParserStateJSON, `"provider"`) {
-			t.Fatalf("normalized %s state retained provider: %s", test.kind, parsed.Cursor.ParserStateJSON)
+		if !strings.Contains(parsed.Cursor.ParserStateJSON, `"provider"`) {
+			t.Fatalf("normalized %s state dropped provider: %s", test.kind, parsed.Cursor.ParserStateJSON)
 		}
 	}
 }

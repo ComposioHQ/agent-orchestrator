@@ -192,17 +192,26 @@ type ConversationTurn struct {
 }
 
 type ModelUsageEvent struct {
-	ID                  int64
-	BindingID           int64
-	UsageSourceID       int64
-	ModelID             string
-	InputTokens         int64
-	UncachedInputTokens int64
-	CacheReadTokens     int64
-	CacheWriteTokens    int64
-	OutputTokens        int64
-	ReasoningTokens     sql.NullInt64
-	SourceEventKey      string
+	ID                     int64
+	BindingID              int64
+	UsageSourceID          int64
+	ModelID                string
+	InputTokens            int64
+	UncachedInputTokens    int64
+	CacheReadTokens        int64
+	CacheWriteTokens       int64
+	OutputTokens           int64
+	ReasoningTokens        sql.NullInt64
+	SourceEventKey         string
+	ProviderID             sql.NullString
+	CacheWrite5mTokens     sql.NullInt64
+	CacheWrite1hTokens     sql.NullInt64
+	UncachedInputCostNanos sql.NullInt64
+	CacheReadCostNanos     sql.NullInt64
+	CacheWriteCostNanos    sql.NullInt64
+	OutputCostNanos        sql.NullInt64
+	EstimatedCostNanos     sql.NullInt64
+	PricingVersion         string
 }
 
 type Notification struct {
@@ -472,6 +481,7 @@ type UsageBinding struct {
 	State          domain.UsageBindingState
 	LastErrorCode  string
 	UpdatedAt      time.Time
+	ProviderHint   string
 }
 
 type UsageCodexPendingChild struct {

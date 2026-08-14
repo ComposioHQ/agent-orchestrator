@@ -2912,6 +2912,8 @@ export interface components {
             /** @enum {string} */
             harness: "claude-code" | "codex";
             modelId?: string;
+            /** @description Canonical provider routing hint derived by the trusted local Claude hook. */
+            providerId?: string;
             subagentId?: string;
             subagentTranscriptPath?: string;
             transcriptPath?: string;

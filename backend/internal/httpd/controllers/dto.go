@@ -837,6 +837,7 @@ type SetActivityRequest struct {
 // response content.
 type UsageHookMetadata struct {
 	Harness                domain.AgentHarness `json:"harness" enum:"claude-code,codex"`
+	ProviderID             string              `json:"providerId,omitempty" description:"Canonical provider routing hint derived by the trusted local Claude hook."`
 	TranscriptPath         string              `json:"transcriptPath,omitempty"`
 	ModelID                string              `json:"modelId,omitempty"`
 	SubagentID             string              `json:"subagentId,omitempty"`

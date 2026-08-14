@@ -111,14 +111,14 @@ type stableTailStateV1 struct {
 }
 
 type claudeParserStateV1 struct {
-	ModelID        string `json:"model_id,omitempty"`
-	LegacyProvider string `json:"provider,omitempty"`
+	ModelID  string `json:"model_id,omitempty"`
+	Provider string `json:"provider,omitempty"`
 }
 
 type codexParserStateV1 struct {
 	Baseline            codexTokenVector `json:"baseline"`
 	ModelID             string           `json:"model_id,omitempty"`
-	LegacyProvider      string           `json:"provider,omitempty"`
+	Provider            string           `json:"provider,omitempty"`
 	NativeSessionID     string           `json:"native_session_id,omitempty"`
 	DirectParentID      string           `json:"direct_parent_id,omitempty"`
 	PendingSpawnCallIDs []string         `json:"pending_spawn_call_ids"`
@@ -169,7 +169,6 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 		if state.Claude == nil || state.Codex != nil {
 			return nil, errors.New("claude state has invalid parser payload")
 		}
-		state.Claude.LegacyProvider = ""
 	case domain.UsageSourceCodexRollout:
 		if state.Codex == nil || state.Claude != nil {
 			return nil, errors.New("codex state has invalid parser payload")
@@ -180,7 +179,6 @@ func decodeParserState(source domain.UsageSourceRecord) (*parserStateEnvelope, e
 		if state.Codex.DiscoveredChildIDs == nil {
 			state.Codex.DiscoveredChildIDs = []string{}
 		}
-		state.Codex.LegacyProvider = ""
 		if err := normalizeCodexParserState(state.Codex); err != nil {
 			return nil, err
 		}
@@ -240,16 +238,19 @@ func validSHA256Digest(value string) bool {
 type claudeTranscriptRecord struct {
 	Type        string `json:"type"`
 	UUID        string `json:"uuid"`
+	Provider    string `json:"provider"`
 	IsSidechain bool   `json:"isSidechain"`
 	Message     struct {
 		ID         string  `json:"id"`
 		Model      string  `json:"model"`
+		Provider   string  `json:"provider"`
 		StopReason *string `json:"stop_reason"`
 		Usage      *struct {
-			InputTokens              int64 `json:"input_tokens"`
-			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-			OutputTokens             int64 `json:"output_tokens"`
+			InputTokens              int64           `json:"input_tokens"`
+			CacheCreationInputTokens int64           `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int64           `json:"cache_read_input_tokens"`
+			OutputTokens             int64           `json:"output_tokens"`
+			CacheCreation            json.RawMessage `json:"cache_creation"`
 		} `json:"usage"`
 	} `json:"message"`
 }
@@ -260,6 +261,10 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		if err := json.Unmarshal(record.Data, &native); err != nil {
 			recordMalformed(result)
 			continue
+		}
+		nativeProvider := firstNonEmpty(native.Message.Provider, native.Provider)
+		if nativeProvider != "" {
+			state.Provider = nativeProvider
 		}
 		if native.Type != "assistant" || native.Message.Usage == nil || native.Message.StopReason == nil || strings.TrimSpace(*native.Message.StopReason) == "" {
 			continue
@@ -288,12 +293,23 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 			recordMalformed(result)
 			continue
 		}
+		cacheWrite5m, cacheWrite1h, malformedSplit := claudeCacheWriteSplits(
+			usage.CacheCreation,
+			usage.CacheCreationInputTokens,
+		)
+		if malformedSplit {
+			recordMalformed(result)
+		}
 		model := firstNonEmpty(native.Message.Model, state.ModelID, source.InitialModelID, "unknown")
 		state.ModelID = model
+		provider := firstNonEmpty(native.Message.Provider, native.Provider, state.Provider, source.ProviderHint, "unknown")
 		keyID := firstNonEmpty(native.Message.ID, native.UUID, strconv.FormatInt(record.Offset, 10))
 		event := domain.ModelUsageEvent{
-			ModelID: model,
-			Tokens:  tokens,
+			ProviderID:         provider,
+			ModelID:            model,
+			Tokens:             tokens,
+			CacheWrite5mTokens: cacheWrite5m,
+			CacheWrite1hTokens: cacheWrite1h,
 			SourceEventKey: stableSourceEventKey(
 				"claude",
 				source.NativeRootID,
@@ -305,6 +321,24 @@ func parseClaude(source domain.UsageSourceContext, records []jsonlRecord, state 
 		}
 		result.Events = append(result.Events, event)
 	}
+}
+
+func claudeCacheWriteSplits(raw json.RawMessage, generic int64) (fiveMinutes, oneHour *int64, malformed bool) {
+	if len(raw) == 0 {
+		return nil, nil, false
+	}
+	var split struct {
+		FiveMinutes *int64 `json:"ephemeral_5m_input_tokens"`
+		OneHour     *int64 `json:"ephemeral_1h_input_tokens"`
+	}
+	if err := json.Unmarshal(raw, &split); err != nil || split.FiveMinutes == nil || split.OneHour == nil {
+		return nil, nil, true
+	}
+	total, ok := sumNonNegative(*split.FiveMinutes, *split.OneHour)
+	if !ok || total != generic {
+		return nil, nil, true
+	}
+	return split.FiveMinutes, split.OneHour, false
 }
 
 type codexEnvelope struct {
@@ -321,6 +355,13 @@ func parseCodex(source domain.UsageSourceContext, records []jsonlRecord, state *
 			continue
 		}
 		switch envelope.Type {
+		case "session_meta":
+			var payload struct {
+				ModelProvider string `json:"model_provider"`
+			}
+			if json.Unmarshal(envelope.Payload, &payload) == nil {
+				state.Provider = firstNonEmpty(payload.ModelProvider, state.Provider)
+			}
 		case "turn_context":
 			var payload struct {
 				Model string `json:"model"`
@@ -577,8 +618,9 @@ func parseCodexEvent(source domain.UsageSourceContext, envelope codexEnvelope, s
 		return
 	}
 	event := domain.ModelUsageEvent{
-		ModelID: model,
-		Tokens:  tokens,
+		ProviderID: firstNonEmpty(state.Provider, "unknown"),
+		ModelID:    model,
+		Tokens:     tokens,
 		SourceEventKey: stableSourceEventKey(
 			"codex",
 			source.NativeRootID,
