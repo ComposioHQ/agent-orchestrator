@@ -1278,13 +1278,14 @@ function Timeline({
 			{!pinned ? (
 				<Button
 					type="button"
-					size="sm"
+					size="icon-sm"
 					variant="outline"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
+					aria-label="Jump to latest"
+					title="Jump to latest"
+					className="absolute bottom-3 left-1/2 size-10 -translate-x-1/2 rounded-full border-border-strong bg-raised p-0 text-foreground shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
-					<ArrowDown aria-hidden="true" className="size-3.5" />
-					Jump to latest
+					<ArrowDown aria-hidden="true" className="size-4" />
 				</Button>
 			) : null}
 		</div>
@@ -1838,7 +1839,7 @@ function LiveTurnBar({
 	}, [startedAt]);
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2">
+		<div className="cursor-chat-composer flex items-center gap-2.5 rounded-xl! border px-4 py-2">
 			{blocked ? (
 				<span role="alert" className="sr-only">
 					The agent is waiting for your decision.
