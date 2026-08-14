@@ -2463,6 +2463,16 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	color: var(--fg);
 }
 
+.window-titlebar__toggle:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+
+.window-titlebar__toggle:disabled:hover {
+	background: transparent;
+	color: var(--fg-muted);
+}
+
 .window-titlebar__toggle-icon {
 	width: 16px;
 	height: 16px;
