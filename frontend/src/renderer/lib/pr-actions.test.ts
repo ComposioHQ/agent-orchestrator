@@ -73,7 +73,7 @@ describe("isPRMergeable", () => {
 		expect(isPRMergeable(pr())).toBe(true);
 	});
 
-    it("is true when CI is unknown and no checks were ever observed", () => {
+	it("is true when CI is unknown and no checks were ever observed", () => {
 		expect(isPRMergeable(pr({ ci: ci("unknown", 0) }))).toBe(true);
 	});
 
@@ -90,10 +90,6 @@ describe("isPRMergeable", () => {
 	it("is false when CI is failing or pending", () => {
 		expect(isPRMergeable(pr({ ci: ci("failing") }))).toBe(false);
 		expect(isPRMergeable(pr({ ci: ci("pending") }))).toBe(false);
-	});
-
-	it("is true when CI is unknown but everything else is ready (no-checks-configured case)", () => {
-		expect(isPRMergeable(pr({ ci: ci("unknown") }))).toBe(true);
 	});
 
 	it("is false on changes requested or unresolved human comments", () => {
@@ -133,20 +129,6 @@ describe("mergeDisabledReason", () => {
 		);
 	});
 
-	it("explains failing, pending, and unknown CI distinctly", () => {
-		expect(mergeDisabledReason(pr({ ci: ci("failing") }))).toBe(
-			"CI is failing",
-		);
-
-		expect(mergeDisabledReason(pr({ ci: ci("pending") }))).toBe(
-			"CI checks are still running",
-		);
-
-		expect(mergeDisabledReason(pr({ ci: ci("unknown") }))).toBe(
-			"No CI status reported for this PR yet",
-		);
-	});
-
 	it("explains unresolved review feedback", () => {
 		expect(
 			mergeDisabledReason(
@@ -157,7 +139,7 @@ describe("mergeDisabledReason", () => {
 		).toBe("Has unresolved review feedback");
 	});
 
-    it("explains failing, pending, and unknown CI distinctly", () => {
+	it("explains failing, pending, and unknown CI distinctly", () => {
 		expect(mergeDisabledReason(pr({ ci: ci("failing") }))).toBe("CI is failing");
 		expect(mergeDisabledReason(pr({ ci: ci("pending") }))).toBe("CI checks are still running");
 		expect(mergeDisabledReason(pr({ ci: ci("unknown", 0) }))).toBe(

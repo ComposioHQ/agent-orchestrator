@@ -298,6 +298,7 @@ func TestNotificationStore_ReconcileAppliesFullReadyToMergePredicate(t *testing.
 	for _, tt := range []struct {
 		name         string
 		pr           domain.PullRequest
+		checks       []domain.PullRequestCheck
 		comments     []domain.PullRequestComment
 		wantResolved bool
 	}{
@@ -307,6 +308,12 @@ func TestNotificationStore_ReconcileAppliesFullReadyToMergePredicate(t *testing.
 		{name: "draft", pr: withPR(func(p *domain.PullRequest) { p.Draft = true }), wantResolved: true},
 		{name: "ci failing", pr: withPR(func(p *domain.PullRequest) { p.CI = domain.CIFailing }), wantResolved: true},
 		{name: "ci pending", pr: withPR(func(p *domain.PullRequest) { p.CI = domain.CIPending }), wantResolved: true},
+		{
+			name:         "unknown ci with observed checks fails closed",
+			pr:           withPR(func(p *domain.PullRequest) { p.CI = domain.CIUnknown }),
+			checks:       []domain.PullRequestCheck{{Name: "ci", CommitHash: "deadbeef", Status: domain.PRCheckFailed, CreatedAt: time.Now().UTC()}},
+			wantResolved: true,
+		},
 		{
 			name:         "changes requested",
 			pr:           withPR(func(p *domain.PullRequest) { p.Review = domain.ReviewChangesRequest }),
@@ -338,7 +345,7 @@ func TestNotificationStore_ReconcileAppliesFullReadyToMergePredicate(t *testing.
 			pr.URL = prURL
 			pr.SessionID = sess.ID
 			pr.UpdatedAt = now
-			if err := s.WritePR(ctx, pr, nil, tt.comments); err != nil {
+			if err := s.WritePR(ctx, pr, tt.checks, tt.comments); err != nil {
 				t.Fatalf("WritePR: %v", err)
 			}
 			rec := domain.NotificationRecord{

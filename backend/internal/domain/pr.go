@@ -223,14 +223,17 @@ type MergeReadiness struct {
 	Merged             bool
 	Closed             bool
 	CI                 CIState
+	CheckCount         int
 	Review             ReviewDecision
 	Mergeability       Mergeability
 	UnresolvedComments bool
 }
 
-// ReadyToMerge reports whether the PR has no known blocker left. An unknown or
-// still-running CI result is treated as a blocker: AO only claims readiness it
-// can actually prove.
+// ReadyToMerge reports whether the PR has no known blocker left. Failing or
+// still-running CI is a blocker; unknown CI is only ready when no checks were
+// ever observed (CheckCount == 0), so no-CI repos merge while incomplete
+// rollups fail closed — matching PRMergeReady / contract.prMergeReady /
+// isPRMergeable.
 func (r MergeReadiness) ReadyToMerge() bool {
 	if r.Merged || r.Closed || r.Draft {
 		return false
@@ -240,8 +243,10 @@ func (r MergeReadiness) ReadyToMerge() bool {
 		ci = CIUnknown
 	}
 	switch ci {
-	case CIFailing, CIPending, CIUnknown:
+	case CIFailing, CIPending:
 		return false
+	case CIUnknown:
+		return r.CheckCount == 0
 	}
 	if r.Review == ReviewChangesRequest || r.UnresolvedComments {
 		return false
@@ -251,13 +256,17 @@ func (r MergeReadiness) ReadyToMerge() bool {
 
 // MergeReadinessOf projects stored PR facts into the shared readiness rule.
 // hasUnresolvedComments comes from the pr_comment rows AO keeps for the PR,
-// which only ever hold unresolved human threads.
-func MergeReadinessOf(pr PullRequest, hasUnresolvedComments bool) MergeReadiness {
+// which only ever hold unresolved human threads. checkCount is the number of
+// persisted CI checks for the PR, so the unknown-CI branch matches the live SCM
+// path (no checks observed → mergeable; checks observed but rolled up unknown →
+// fail closed) instead of always treating unknown as a no-CI repo.
+func MergeReadinessOf(pr PullRequest, hasUnresolvedComments bool, checkCount int) MergeReadiness {
 	return MergeReadiness{
 		Draft:              pr.Draft,
 		Merged:             pr.Merged,
 		Closed:             pr.Closed,
 		CI:                 pr.CI,
+		CheckCount:         checkCount,
 		Review:             pr.Review,
 		Mergeability:       pr.Mergeability,
 		UnresolvedComments: hasUnresolvedComments,

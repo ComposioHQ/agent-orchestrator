@@ -443,6 +443,7 @@ func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
 		Merged:             o.PR.Merged,
 		Closed:             o.PR.Closed,
 		CI:                 domain.CIState(o.CI.Summary),
+		CheckCount:         len(o.CI.Checks),
 		Review:             domain.ReviewDecision(o.Review.Decision),
 		Mergeability:       domain.Mergeability(o.Mergeability.State),
 		UnresolvedComments: hasUnresolvedSCMComments(o.Review.Threads),

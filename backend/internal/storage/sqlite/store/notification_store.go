@@ -194,7 +194,11 @@ func (s *Store) ReconcileResolvedNotifications(ctx context.Context, at time.Time
 				break
 			}
 		}
-		if !domain.MergeReadinessOf(pr, unresolved).ReadyToMerge() {
+		checks, err := s.ListChecks(ctx, row.PRURL)
+		if err != nil {
+			return nil, fmt.Errorf("reconcile read pr checks %s: %w", row.PRURL, err)
+		}
+		if !domain.MergeReadinessOf(pr, unresolved, len(checks)).ReadyToMerge() {
 			stalePRs = append(stalePRs, row.PRURL)
 		}
 	}

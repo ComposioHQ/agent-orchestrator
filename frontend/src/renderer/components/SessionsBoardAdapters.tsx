@@ -11,7 +11,7 @@ import {
 	type BoardUsagePresentation,
 	type ProductUITranslator,
 } from "@aoagents/product-ui";
-import { Check, Copy, GitBranch, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
+import { Check, Copy, GitBranch, GitMerge, LoaderCircle, RotateCcw, Trash2 } from "lucide-react";
 import type { MessageKey } from "../i18n";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
@@ -19,7 +19,9 @@ import { formatTokenCount } from "../lib/format-token-count";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession } from "../types/workspace";
 import { canonicalTrackerIssueId } from "../types/workspace";
-import { useSessionScmSummary } from "../hooks/useSessionScmSummary";
+import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { isPRMergeable, mergeDisabledReason, useMergePR } from "../lib/pr-actions";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { SessionUsageSummary } from "../hooks/useSessionUsageSummaries";
 import {
 	clearTerminateSessionState,
@@ -132,6 +134,53 @@ export function ArchivedSessionCardAdapter({
 	);
 }
 
+function MergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+	const { t } = useTranslation();
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const mergePr = useMergePR();
+	const disabledReason = mergeDisabledReason(pr);
+	const mergeable = isPRMergeable(pr);
+	useEffect(() => {
+		if (mergePr.isSuccess) setConfirmOpen(false);
+	}, [mergePr.isSuccess]);
+	return (
+		<>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("pr.merge.actionFor", { number: pr.number })}
+						className="inline-flex size-icon-sm items-center justify-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-35"
+						disabled={!mergeable || mergePr.isPending}
+						onClick={(event) => {
+							event.stopPropagation();
+							setConfirmOpen(true);
+						}}
+						title={mergeable ? t("pr.mergeTooltip") : disabledReason}
+						type="button"
+					>
+						{mergePr.isPending ? (
+							<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
+						) : (
+							<GitMerge className="size-icon-sm" aria-hidden="true" />
+						)}
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="top">{mergeable ? t("pr.mergeTooltip") : disabledReason}</TooltipContent>
+			</Tooltip>
+			<ConfirmDialog
+				description={t("pr.merge.confirmDescription", { number: pr.number })}
+				confirmLabel={mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+				error={mergePr.error ? t("pr.merge.failed", { number: pr.number }) : null}
+				busy={mergePr.isPending}
+				onConfirm={() => mergePr.mutate({ pr, sessionId })}
+				onOpenChange={setConfirmOpen}
+				open={confirmOpen}
+				title={t("pr.merge.confirmTitle", { number: pr.number })}
+			/>
+		</>
+	);
+}
+
 function DesktopSessionCard({
 	action,
 	branchAction,
@@ -218,11 +267,12 @@ function DesktopSessionCard({
 			}}
 			onOpen={onOpen}
 			overlay={terminationOverlay}
-			prs={summaries.map((pr) => ({
-				number: pr.number,
-				state: pr.state,
-				url: prBrowserUrl(pr),
-			}))}
+		prs={summaries.map((pr) => ({
+			mergeAction: isPRMergeable(pr) ? <MergePRButton pr={pr} sessionId={session.id} /> : undefined,
+			number: pr.number,
+			state: pr.state,
+			url: prBrowserUrl(pr),
+		}))}
 			renderAvatar={(provider) => <AgentAvatar className="mt-0.5" provider={provider} />}
 			renderUsage={(presentation) => <DesktopUsageMetric usage={presentation} />}
 			session={toBoardSessionPresentation(session)}

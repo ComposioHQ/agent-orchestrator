@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient, apiErrorMessage } from "./api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { usesPreviewWorkspaceData } from "./preview-mode";
 
 /**
  * True when this PR's pipeline is genuinely ready to merge — mirrors
@@ -10,6 +11,7 @@ import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSe
  */
 export function isPRMergeable(pr: SessionPRSummary): boolean {
 	if (pr.state !== "open") return false;
+	if (!pr.headSha) return false;
 	if (pr.ci.state === "failing" || pr.ci.state === "pending") return false;
 	// Unknown CI is only safe to treat as ready when no checks were ever
 	// observed for this PR. If checks exist but the rollup hasn't resolved
@@ -59,6 +61,7 @@ export function useMergePR() {
 	const queryClient = useQueryClient();
 	return useMutation({
 		mutationFn: async ({ pr }: MergePRInput) => {
+			if (usesPreviewWorkspaceData) return;
 			const { error, response } = await apiClient.POST("/api/v1/prs/{id}/merge", {
 				params: { path: { id: String(pr.number) } },
 				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },

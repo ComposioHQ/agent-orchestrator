@@ -347,6 +347,11 @@ describe("SessionInspector PR section", () => {
 		expect(mergeButton).toBeEnabled();
 		fireEvent.click(mergeButton);
 
+		// The merge button opens a confirmation dialog (shared with the board) —
+		// confirm to actually fire the merge request.
+		const confirmMerge = await screen.findByRole("button", { name: "Merge" });
+		fireEvent.click(confirmMerge);
+
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
 				params: { path: { id: "7" } },

@@ -188,6 +188,7 @@ func readyToMerge(o ports.SCMObservation, review ports.SCMReviewObservation) boo
 		Merged:             o.PR.Merged,
 		Closed:             o.PR.Closed,
 		CI:                 domain.CIState(o.CI.Summary),
+		CheckCount:         len(o.CI.Checks),
 		Review:             domain.ReviewDecision(review.Decision),
 		Mergeability:       domain.Mergeability(o.Mergeability.State),
 		UnresolvedComments: hasUnresolvedHumanComments(review.Threads),

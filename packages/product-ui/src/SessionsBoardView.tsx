@@ -34,6 +34,7 @@ export type BoardPullRequestPresentation = {
 	number: number;
 	state: BoardPullRequestState;
 	url: string;
+	mergeAction?: ReactNode;
 };
 
 export type BoardUsagePresentation = {
@@ -555,16 +556,17 @@ function BoardPullRequestGroup({
 		>
 			<span>{labels.short}</span>
 			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center" key={pr.url || pr.number}>
-					<ExternalLink
-						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-						href={pr.url}
-						stopPropagation
-					>
-						#{pr.number}
-					</ExternalLink>
-					{index < group.prs.length - 1 ? "," : null}
-				</span>
+			<span className="inline-flex items-center gap-1" key={pr.url || pr.number}>
+				<ExternalLink
+					className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+					href={pr.url}
+					stopPropagation
+				>
+					#{pr.number}
+				</ExternalLink>
+				{pr.mergeAction}
+				{index < group.prs.length - 1 ? "," : null}
+			</span>
 			))}
 			<span className={cn("font-medium", lifecycleClassName(group.state))}>{statusLabel}</span>
 		</span>

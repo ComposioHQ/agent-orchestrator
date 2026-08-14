@@ -22,14 +22,6 @@ var ErrSCMPRNotMergeable = errors.New("scm: pr not mergeable")
 // rejected because the caller's preconditions no longer match provider state.
 var ErrSCMPRPreconditions = errors.New("scm: pr merge preconditions unmet")
 
-// SCMRepoMergeSettings is which merge strategies a repository currently
-// allows. Providers map their native repository settings into this shape.
-type SCMRepoMergeSettings struct {
-	AllowMergeCommit bool
-	AllowSquash      bool
-	AllowRebase      bool
-}
-
 // SCMRepo identifies a repository without assuming a provider-specific URL
 // shape. Repo is conventionally "owner/name" for providers that expose an
 // owner namespace, while Owner/Name are kept split for provider calls.
