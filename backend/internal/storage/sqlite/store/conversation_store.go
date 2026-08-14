@@ -679,6 +679,23 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
+// GetRunningTurn returns the most recent turn SQLite still considers running.
+//
+// Interrupt uses it to recover from a desync where the in-memory controller has
+// lost track of a turn the durable state — and therefore the UI — still shows as
+// running. The durable row is what the user is looking at, so it is what Stop
+// must be able to act on.
+func (s *Store) GetRunningTurn(ctx context.Context, conversationID string) (id, providerTurnID string, ok bool, err error) {
+	row, err := s.qr.GetRunningTurnForConversation(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, fmt.Errorf("get running turn for %s: %w", conversationID, err)
+	}
+	return row.ID, row.ProviderTurnID, true, nil
+}
+
 // SetConversationSettings records the provider choices for the next turn.
 //
 // An empty field is stored as NULL rather than as an empty string, so "the user
