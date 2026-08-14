@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { PanelRight, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import {
 	useCallback,
@@ -19,7 +19,6 @@ import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shor
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
-import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
@@ -886,25 +885,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</SessionInspectorRail>
 				) : null}
 			</div>
-			{hasInspector ? (
-				<div
-					className="session-inspector-persistent-actions"
-					data-testid="session-inspector-actions"
-					style={noDragStyle}
-				>
-					<NotificationCenter style={noDragStyle} />
-					<TopbarButton
-						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
-						aria-pressed={isInspectorOpen}
-						onClick={() => toggleInspector(sessionId)}
-						style={noDragStyle}
-						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
-						variant="icon"
-					>
-						<PanelRight className="size-icon-md" aria-hidden="true" />
-					</TopbarButton>
-				</div>
-			) : null}
 			<SessionInterfaceSwitchDialog
 				open={interfaceSwitchDialogOpen}
 				target={interfaceTarget}

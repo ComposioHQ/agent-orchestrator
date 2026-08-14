@@ -1039,21 +1039,13 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("keeps one inspector action cluster mounted while the panel opens and closes", () => {
+	it("keeps global topbar actions out of the inspector header", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		const actions = screen.getByTestId("session-inspector-actions");
-		const notification = screen.getByRole("button", { name: "Notifications" });
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
-		expect(toggle).toHaveAttribute("aria-pressed", "true");
 
-		fireEvent.click(toggle);
-
-		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(screen.getByTestId("session-inspector-actions")).toBe(actions);
-		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
-		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
-		expect(toggle).toHaveAttribute("aria-pressed", "false");
+		expect(screen.queryByTestId("session-inspector-actions")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
 	});
 
 	it("restores and clamps the persisted inspector width in pixels", () => {
