@@ -72,6 +72,7 @@ type nativeHistoryConversation struct {
 	*fakeConversation
 	events []ports.ChatEvent
 	err    error
+	onRead func()
 }
 
 type convergingHistoryConversation struct {
@@ -98,6 +99,9 @@ func (c *blockingHistoryConversation) ReadHistory(ctx context.Context) ([]ports.
 }
 
 func (c *nativeHistoryConversation) ReadHistory(context.Context) ([]ports.ChatEvent, error) {
+	if c.onRead != nil {
+		c.onRead()
+	}
 	return c.events, c.err
 }
 
@@ -555,11 +559,17 @@ func TestOrdinaryResumeAllowsACPContextWithoutHistoryReplay(t *testing.T) {
 	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
 }
 
-func TestInterfaceHandoffReportsUnsettledHistoryWhenConvergenceTimesOut(t *testing.T) {
+func TestInterfaceHandoffReportsUnsettledHistoryWhenContextEndsDuringConvergence(t *testing.T) {
 	st := openStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	conv := &nativeHistoryConversation{
 		fakeConversation: newFakeConversation(),
 		err:              ports.ErrChatHistoryUnsettled,
+		// End the request only after native history import is reached. A tiny
+		// wall-clock deadline here used to expire during SQLite setup under the
+		// race runner and test ClaimChatControllerGeneration instead.
+		onRead: cancel,
 	}
 	svc := chatsvc.New(chatsvc.Options{
 		Store: st, Sessions: st,
@@ -567,9 +577,6 @@ func TestInterfaceHandoffReportsUnsettledHistoryWhenConvergenceTimesOut(t *testi
 		Log:     slog.New(slog.DiscardHandler),
 		NewID:   func() string { return fmt.Sprintf("unsettled-%d", time.Now().UnixNano()) },
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-
 	_, err := svc.Start(ctx, chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
 		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
