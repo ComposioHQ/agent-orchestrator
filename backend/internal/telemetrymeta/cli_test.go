@@ -14,6 +14,7 @@ func TestIsRoutineInternalCLICommandNormalizesLegacyShapes(t *testing.T) {
 		"ao  hooks",
 		"AO HOOKS",
 		"ao hooks claude-code post-tool-use",
+		"ao agy-chat-hook pre-tool-use",
 		"ao session get sess-123",
 		"ao session agent-switch ls sess-123",
 		"ao session handoff submit --switch switch-1",
