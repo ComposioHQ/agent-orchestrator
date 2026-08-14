@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ao-cloud-web",
   "account_id": "ed364bdf90d5a988f50a0650eddc2742",
-  "main": ".open-next/worker.js",
+  "main": "open-next.wrapper.js",
   "compatibility_date": "2026-08-14",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
