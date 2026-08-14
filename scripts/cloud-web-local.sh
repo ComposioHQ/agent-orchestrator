@@ -85,6 +85,7 @@ fi
 
 export AO_CLOUD_WEB_MODE=local
 export AO_CLOUD_WEB_API_BASE_URL="$api_url"
+export NEXT_PUBLIC_AO_CLOUD_WEB_API_BASE_URL="$AO_CLOUD_WEB_API_BASE_URL"
 source "$root/scripts/lib/workos-web-env.sh"
 github_broker_auth="disabled (local-only mode)"
 if [[ -n "${WORKOS_API_KEY:-}" && -n "${WORKOS_CLIENT_ID:-}" ]] ||

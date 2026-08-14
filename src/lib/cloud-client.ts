@@ -145,6 +145,38 @@ export function browserCloudClient() {
   } satisfies ShareClient);
 }
 
+export function browserCloudApiBaseUrl(): string {
+  const configured = process.env.NEXT_PUBLIC_AO_CLOUD_WEB_API_BASE_URL?.trim();
+  if (configured) return new URL(configured).origin;
+  if (typeof window === "undefined") return "http://127.0.0.1:8081";
+
+  const { hostname, origin } = window.location;
+  if (hostname === "cloud.aoagents.dev") return "https://api.aoagents.dev";
+  if (
+    hostname === "staging-cloud.aoagents.dev" ||
+    hostname.startsWith("staging.")
+  ) {
+    return "https://staging-api.aoagents.dev";
+  }
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return "http://127.0.0.1:8081";
+  }
+  return origin;
+}
+
+export function browserTerminalUrl(
+  ticket: string,
+  after = 0,
+  kind: "agent" | "workspace" = "workspace",
+): string {
+  const url = new URL("/api/cloud/v1/terminal", browserCloudApiBaseUrl());
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("ticket", ticket);
+  url.searchParams.set("after", String(after));
+  url.searchParams.set("kind", kind);
+  return url.toString();
+}
+
 export function newIdempotencyKey(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
 }

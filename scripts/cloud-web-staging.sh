@@ -23,6 +23,7 @@ fi
 
 export AO_CLOUD_WEB_MODE=staging
 export AO_CLOUD_WEB_API_BASE_URL="${api_url%/}"
+export NEXT_PUBLIC_AO_CLOUD_WEB_API_BASE_URL="$AO_CLOUD_WEB_API_BASE_URL"
 source "$root/scripts/lib/workos-web-env.sh"
 configure_workos_web "$web_port" "127.0.0.1"
 broker_secret="$(
