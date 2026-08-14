@@ -1,15 +1,19 @@
 import { NextResponse } from "next/server";
 
-import { cloudApiBaseUrl } from "@/lib/cloud-config";
+import { cloudApiBaseUrl, cloudWebMode } from "@/lib/cloud-config";
 
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  // Browser WebSockets must hit the control-plane ALB directly. Terminating
-  // them on cloud.aoagents.dev fails in Firefox: that hostname is HTTP/3, and
-  // Firefox will not complete a WebSocket upgrade over H3. The ALB is HTTP/1.1.
+  // Hosted Firefox cannot complete a WebSocket handshake against the API ALB
+  // or the OpenNext Worker (nodejs_compat + HTTP/3). A dedicated Worker
+  // without nodejs_compat terminates the socket on ws.aoagents.dev.
+  const origin =
+    cloudWebMode() === "local"
+      ? cloudApiBaseUrl()
+      : "https://ws.aoagents.dev";
   return NextResponse.json(
-    { origin: cloudApiBaseUrl() },
+    { origin },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
