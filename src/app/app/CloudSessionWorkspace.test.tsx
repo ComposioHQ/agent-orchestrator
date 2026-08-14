@@ -150,7 +150,7 @@ it("opens a separate trusted workspace shell in the right inspector", () => {
   expect(screen.getByText("Interactive workspace terminal")).toBeVisible();
 });
 
-it("shows child worker changes in the orchestrator inspector", async () => {
+it("shows orchestrator and child worker changes in the orchestrator inspector", async () => {
   const orchestrator = {
     ...session,
     id: "orchestrator-1",
@@ -163,13 +163,13 @@ it("shows child worker changes in the orchestrator inspector", async () => {
     displayName: "random-file-pr",
   };
   mocks.getWorkspaceDiff.mockImplementation(async (_orgID: string, sessionID: string) => ({
-    status: sessionID === worker.id ? "?? random-fact.txt" : "",
+    status: sessionID === worker.id ? "?? worker-fact.txt" : "?? random-fact.txt",
     unstaged: "",
     staged: "",
     combined: "",
     diffBaseRef: "main",
     files: [],
-    untrackedFiles: sessionID === worker.id ? ["random-fact.txt"] : [],
+    untrackedFiles: sessionID === worker.id ? ["worker-fact.txt"] : ["random-fact.txt"],
     truncated: { combined: false, stats: false },
   }));
   mocks.readWorkspaceFile.mockResolvedValue({
@@ -188,13 +188,16 @@ it("shows child worker changes in the orchestrator inspector", async () => {
   );
 
   fireEvent.click(await screen.findByRole("tab", { name: "Summary" }));
+  expect((await screen.findAllByText("Orchestrator")).length).toBeGreaterThanOrEqual(2);
   expect(await screen.findByText("random-file-pr")).toBeVisible();
   fireEvent.click(screen.getByText("random-fact.txt"));
   await waitFor(() => expect(mocks.readWorkspaceFile).toHaveBeenCalledWith(
     "org-1",
-    "worker-1",
+    "orchestrator-1",
     "random-fact.txt",
   ));
+  expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith("org-1", "orchestrator-1");
+  expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith("org-1", "worker-1");
 });
 
 it("waits for the worker before mounting the terminal", () => {

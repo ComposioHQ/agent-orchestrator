@@ -333,7 +333,7 @@ export function CloudSidebar({
                   {orchestrator ? (
                     <button
                       aria-label={`Open orchestrator for ${project.displayName}`}
-                      className="grid size-6 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] transition-[color,transform] duration-150 hover:scale-125 hover:text-[var(--foreground)] motion-reduce:hover:scale-100"
+                      className="grid size-6 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] transition-[color,filter] duration-150 hover:text-[var(--foreground)] hover:drop-shadow-[0_0_5px_currentColor]"
                       onClick={() => onSelectSession(orchestrator.id)}
                       type="button"
                     >

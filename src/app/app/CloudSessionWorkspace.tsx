@@ -83,7 +83,7 @@ export function CloudSessionWorkspace({
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [tab, setTab] = useState<CloudInspectorTab>("terminal");
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
-  const [workerDiffs, setWorkerDiffs] = useState<Array<{ session: Session; diff: WorkspaceDiff }>>([]);
+  const [projectDiffs, setProjectDiffs] = useState<Array<{ session: Session; diff: WorkspaceDiff }>>([]);
   const [directory, setDirectory] = useState("");
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
@@ -129,21 +129,27 @@ export function CloudSessionWorkspace({
     diffInFlight.current = true;
     try {
       if (session.kind === "orchestrator") {
-        const workers = projectSessions.filter(
-          (candidate) => candidate.kind !== "orchestrator" && candidate.runtimeConnected && !candidate.isTerminated,
+        const projectRepositories = Array.from(
+          new Map(
+            [session, ...projectSessions]
+              .filter((candidate) => (
+                candidate.id === session.id || candidate.kind !== "orchestrator"
+              ) && candidate.runtimeConnected && !candidate.isTerminated)
+              .map((candidate) => [candidate.id, candidate]),
+          ).values(),
         );
         const results = await Promise.allSettled(
-          workers.map(async (worker) => ({
-            session: worker,
-            diff: await client.getWorkspaceDiff(organizationId, worker.id),
+          projectRepositories.map(async (projectSession) => ({
+            session: projectSession,
+            diff: await client.getWorkspaceDiff(organizationId, projectSession.id),
           })),
         );
-        setWorkerDiffs(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
+        setProjectDiffs(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
         setDiff(null);
       } else {
         const next = await client.getWorkspaceDiff(organizationId, session.id);
         setDiff(next);
-        setWorkerDiffs([]);
+        setProjectDiffs([]);
       }
       setError("");
     } catch (cause) {
@@ -237,7 +243,7 @@ export function CloudSessionWorkspace({
       id: "summary",
       label: "Summary",
       displayLabel: `Summary ${session.kind === "orchestrator"
-        ? workerDiffs.reduce((count, item) => count + item.diff.files.length + item.diff.untrackedFiles.length, 0)
+        ? projectDiffs.reduce((count, item) => count + item.diff.files.length + item.diff.untrackedFiles.length, 0)
         : (diff?.files.length ?? 0) + (diff?.untrackedFiles.length ?? 0)}`,
       icon: <SummaryIcon />,
     },
@@ -342,8 +348,8 @@ export function CloudSessionWorkspace({
             <div className="space-y-5">
               <InspectorSectionHeader label="Changes" onRefresh={() => void loadDiff()} />
               {session.kind === "orchestrator" ? (
-                <WorkerChangesView
-                  workerDiffs={workerDiffs}
+                <ProjectChangesView
+                  projectDiffs={projectDiffs}
                   onOpenFile={(sessionId, path) => void openFile(path, sessionId)}
                 />
               ) : (
@@ -590,43 +596,43 @@ function ChangesView({
   );
 }
 
-function WorkerChangesView({
+function ProjectChangesView({
   onOpenFile,
-  workerDiffs,
+  projectDiffs,
 }: {
   onOpenFile: (sessionId: string, path: string) => void;
-  workerDiffs: Array<{ session: Session; diff: WorkspaceDiff }>;
+  projectDiffs: Array<{ session: Session; diff: WorkspaceDiff }>;
 }) {
-  const changedWorkers = workerDiffs.filter(({ diff }) => {
+  const changedRepositories = projectDiffs.filter(({ diff }) => {
     const visibleFiles = diff.files.filter((file) => !isHiddenPath(file.path));
     const visibleUntracked = diff.untrackedFiles.filter((path) => !isHiddenPath(path));
     return visibleFiles.length > 0 || visibleUntracked.length > 0;
   });
 
-  if (changedWorkers.length === 0) {
+  if (changedRepositories.length === 0) {
     return (
       <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
-        No worker changes yet.
+        No project changes yet.
       </div>
     );
   }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      {changedWorkers.map(({ session: worker, diff }) => {
+      {changedRepositories.map(({ session: projectSession, diff }) => {
         const visibleFiles = diff.files.filter((file) => !isHiddenPath(file.path));
         const visibleUntracked = diff.untrackedFiles.filter((path) => !isHiddenPath(path));
         return (
-          <section key={worker.id} className="overflow-hidden rounded-md border border-[var(--color-border-strong)]">
+          <section key={projectSession.id} className="overflow-hidden rounded-md border border-[var(--color-border-strong)]">
             <div className="border-b border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs font-medium text-[var(--foreground)]">
-              {worker.displayName}
+              {projectSession.kind === "orchestrator" ? "Orchestrator" : projectSession.displayName}
             </div>
             <div className="p-1">
               {visibleFiles.map((file) => (
                 <button
                   className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
                   key={file.path}
-                  onClick={() => onOpenFile(worker.id, file.path)}
+                  onClick={() => onOpenFile(projectSession.id, file.path)}
                   type="button"
                 >
                   <FileCode2 className="size-3.5 text-[var(--color-text-passive)]" />
@@ -639,7 +645,7 @@ function WorkerChangesView({
                 <button
                   className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
                   key={path}
-                  onClick={() => onOpenFile(worker.id, path)}
+                  onClick={() => onOpenFile(projectSession.id, path)}
                   type="button"
                 >
                   <FileCode2 className="size-3.5 text-[var(--color-text-passive)]" />
