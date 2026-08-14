@@ -510,6 +510,38 @@ func TestInterfaceTransitionStatusBlocksFreshStartWithoutHistoryProbe(t *testing
 	}
 }
 
+func TestInterfaceTransitionStatusBlocksFreshStartWithHistoryProbeAndConversationHistory(t *testing.T) {
+	store := newTransitionStore()
+	store.projects["proj"] = domain.ProjectRecord{ID: "proj", Path: "/repo"}
+	store.sessions["session-1"] = domain.SessionRecord{
+		ID: "session-1", ProjectID: "proj", Kind: domain.KindWorker,
+		Harness: domain.HarnessClaudeCode, Mode: domain.SessionModeTUI,
+		Metadata:      domain.SessionMetadata{WorkspacePath: "/ws/session-1", Branch: "ao/session-1", LatestUserPrompt: "implement the feature"},
+		Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		FirstSignalAt: time.Now(),
+	}
+	log := &[]string{}
+	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
+	chat := &transitionChat{log: log, supportsChat: true}
+	manager := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: emptyTransitionAgent{}}, Workspace: &fakeWorkspace{},
+		Store: store, Chat: chat, Lifecycle: &fakeLCM{store: store.fakeStore},
+		LookPath:    func(string) (string, error) { return "/bin/true", nil },
+		NewLaunchID: func() string { return "generation-1" },
+	})
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.Supported {
+		t.Fatal("expected switch to be blocked when conversation history exists but native id is empty")
+	}
+	if status.ReasonCode != "NATIVE_SESSION_MISSING" {
+		t.Fatalf("reasonCode = %q, want NATIVE_SESSION_MISSING", status.ReasonCode)
+	}
+}
+
 func awaitTransition(t *testing.T, store *transitionStore, id string) domain.SessionInterfaceTransition {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -993,27 +1025,24 @@ func TestInterfaceTransitionTUIToChatReusesPersistedCodexRollout(t *testing.T) {
 // TestInterfaceTransitionFreshTUISessionResumesAfterHookCapture is a regression
 // test for a fresh TUI session where the SessionStart hook captures the native
 // session id. The transition must resume the persisted Codex conversation
+// rather than starting fresh, proving the identifiers are populated before
+// transition and the original conversation is resumed afterward.
 func TestInterfaceTransitionFreshTUISessionResumesAfterHookCapture(t *testing.T) {
 	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
 	codexHome := t.TempDir()
 	t.Setenv("CODEX_HOME", codexHome)
 	manager.agents = singleAgent{agent: codexagent.New()}
 
-	// Start with a fresh TUI session — no agentSessionID, no rollout.
 	id := "019fc430-1234-7abc-8def-0123456789ab"
 	rec := store.sessions["session-1"]
 	rec.Harness = domain.HarnessCodex
 	rec.Metadata.AgentSessionID = ""
 	store.sessions["session-1"] = rec
 
-	// Simulate the SessionStart hook: the hook captures the native session id
-	// and stores it on the session record, exactly as ApplyActivitySignal does
-	// in the real lifecycle manager.
 	rec = store.sessions["session-1"]
 	rec.Metadata.AgentSessionID = id
 	store.sessions["session-1"] = rec
 
-	// Verify the identifier was populated before transition.
 	preRec, ok, err := store.GetSession(context.Background(), "session-1")
 	if err != nil || !ok {
 		t.Fatalf("read pre-transition session: %v %v", err, ok)
@@ -1023,7 +1052,6 @@ func TestInterfaceTransitionFreshTUISessionResumesAfterHookCapture(t *testing.T)
 			preRec.Metadata.AgentSessionID, id)
 	}
 
-	// Materialize a rollout so the history probe finds a real conversation.
 	rolloutDir := filepath.Join(codexHome, "sessions", "2026", "08", "08")
 	if err := os.MkdirAll(rolloutDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1033,7 +1061,6 @@ func TestInterfaceTransitionFreshTUISessionResumesAfterHookCapture(t *testing.T)
 		t.Fatal(err)
 	}
 
-	// The transition must resume (not fresh-start) because a real conversation exists.
 	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
 		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
 	if err != nil {
