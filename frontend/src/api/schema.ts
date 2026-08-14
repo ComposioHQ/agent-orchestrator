@@ -1643,6 +1643,7 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            maxMemoryMB?: number;
             mode?: string;
             model?: string;
             permissions?: string;
@@ -2345,6 +2346,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            maxConcurrentSessions?: number;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
             postCreate?: string[];

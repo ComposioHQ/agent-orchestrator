@@ -4962,6 +4962,8 @@ components:
       type: object
     AgentConfig:
       properties:
+        maxMemoryMB:
+          type: integer
         mode:
           type: string
         model:
@@ -6849,6 +6851,8 @@ components:
           additionalProperties:
             type: string
           type: object
+        maxConcurrentSessions:
+          type: integer
         orchestrator:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:
