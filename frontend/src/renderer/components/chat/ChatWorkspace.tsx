@@ -1783,7 +1783,10 @@ function LiveTurnBar({
 	}, [startedAt]);
 
 	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2">
+		<div
+			className="flex min-h-6 items-center gap-2 px-1.5"
+			data-testid="live-turn-status"
+		>
 			{blocked ? (
 				<span role="alert" className="sr-only">
 					The agent is waiting for your decision.
@@ -1794,12 +1797,17 @@ function LiveTurnBar({
 			) : (
 				<Loader2
 					aria-hidden="true"
-					className="size-3.5 shrink-0 animate-spin text-status-working opacity-100"
+					className="size-3 shrink-0 animate-spin text-status-working opacity-100"
 				/>
 			)}
-			<strong className={cn("text-xs font-medium", blocked ? "text-warning" : "text-foreground")}>
+			<span
+				className={cn(
+					"text-xs font-medium",
+					blocked ? "text-warning" : "text-muted-foreground",
+				)}
+			>
 				{blocked ? "Waiting for your decision" : "Working"}
-			</strong>
+			</span>
 			<span className="text-[11px] tabular-nums text-muted-foreground">{elapsed}</span>
 			{queuedCount > 0 ? (
 				<span className="text-[11px] text-muted-foreground">
@@ -1811,10 +1819,11 @@ function LiveTurnBar({
 				size="sm"
 				variant="ghost"
 				onClick={onInterrupt}
-				className="ml-auto gap-1.5"
+				aria-label={queuedCount > 0 ? "Stop turn and clear queued messages" : "Stop turn"}
+				className="ml-auto h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
 			>
-				<Square aria-hidden="true" className="size-3" />
-				{queuedCount > 0 ? "Stop and clear queue" : "Stop turn"}
+				<Square aria-hidden="true" className="size-2.5" />
+				{queuedCount > 0 ? "Stop + clear queue" : "Stop"}
 			</Button>
 		</div>
 	);

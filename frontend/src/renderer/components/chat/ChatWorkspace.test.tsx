@@ -217,6 +217,24 @@ describe("ChatWorkspace timeline", () => {
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
 
+	it("renders an active turn as a compact status line instead of a boxed panel", async () => {
+		const user = userEvent.setup();
+		const onInterrupt = vi.fn();
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.filter((item) => item.id !== "a-7"),
+		};
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
+
+		const status = screen.getByTestId("live-turn-status");
+		expect(status).toHaveClass("min-h-6", "px-1.5");
+		expect(status).not.toHaveClass("border", "bg-surface", "rounded-md");
+		expect(status).toHaveTextContent("Working");
+
+		await user.click(screen.getByRole("button", { name: "Stop turn" }));
+		expect(onInterrupt).toHaveBeenCalledOnce();
+	});
+
 	it("lets readers select conversation text", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 
