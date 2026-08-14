@@ -170,7 +170,7 @@ const agentCatalogResponse = {
 
 function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
-		if (path === "/api/v1/agents") return agentCatalogResponse;
+		if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") return agentCatalogResponse;
 		if (path === "/api/v1/agents/{agent}/models") {
 			return {
 				data: {
@@ -461,7 +461,7 @@ describe("ProjectSettingsForm", () => {
 
 	it("shows the full model catalog again after selecting a model", async () => {
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") return agentCatalogResponse;
 			if (path === "/api/v1/agents/{agent}/models") {
 				return {
 					data: {
@@ -525,7 +525,7 @@ describe("ProjectSettingsForm", () => {
 
 	it("shows a warning when refreshing a cached model catalog fails", async () => {
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") return agentCatalogResponse;
 			if (path === "/api/v1/agents/{agent}/models") {
 				return {
 					data: {
@@ -581,7 +581,7 @@ describe("ProjectSettingsForm", () => {
 			stale: false,
 		};
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") return agentCatalogResponse;
 			if (path === "/api/v1/agents/{agent}/models") return { data: cachedCatalog, error: undefined };
 			return {
 				data: {
@@ -724,7 +724,7 @@ describe("ProjectSettingsForm", () => {
 
 	it("disables agent selectors while the initial agent catalog is loading", async () => {
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") {
 				return new Promise(() => {});
 			}
 			return {
@@ -790,7 +790,7 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") {
 				return {
 					data: {
 						supported: [...agentCatalogResponse.data.supported, muse],
@@ -889,7 +889,7 @@ describe("ProjectSettingsForm", () => {
 			{ id: "vibe", label: "Vibe", authStatus: "authorized" },
 		];
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") {
 				return {
 					data: {
 						supported: [...agentCatalogResponse.data.supported, qwen, devin, droid, kimi, aider, amp, ...experimental],
@@ -928,7 +928,7 @@ describe("ProjectSettingsForm", () => {
 	it("warns when an experimental reviewer is selected", async () => {
 		const kimchi = { id: "kimchi", label: "Kimchi", authStatus: "authorized" };
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") {
 				return {
 					data: {
 						supported: [...agentCatalogResponse.data.supported, kimchi],
@@ -1029,7 +1029,7 @@ describe("ProjectSettingsForm", () => {
 
 	it("disables the Copilot reviewer when its binary is missing", async () => {
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") {
 				return {
 					data: {
 						supported: [{ id: "copilot", label: "GitHub Copilot" }],
@@ -1071,7 +1071,7 @@ describe("ProjectSettingsForm", () => {
 
 	it("shows the standard unknown-auth warning for an installed Copilot reviewer", async () => {
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") {
 				return {
 					data: {
 						supported: [{ id: "copilot", label: "GitHub Copilot" }],
@@ -1144,7 +1144,7 @@ describe("ProjectSettingsForm", () => {
 		};
 		const agy = { id: "agy", label: "Agy", authStatus: "authorized" };
 		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/agents") {
+			if (path === "/api/v1/agents" || path === "/api/v1/reviewer-harnesses") {
 				return {
 					data: {
 						supported: [...agentCatalogResponse.data.supported, agy],

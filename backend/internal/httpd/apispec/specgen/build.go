@@ -81,6 +81,8 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "reviewerHarnesses"}).WithDescription(
+			"Reviewer agent harness catalog"),
 	}
 
 	for _, op := range operations() {
@@ -331,6 +333,10 @@ var schemaNames = map[string]string{
 	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
 	"ControllersInstallIDParam":        "InstallIDParam",
 	"ControllersPushPairingIDParam":    "PushPairingIDParam",
+	// httpd/controllers/reviewer_harnesses.go's ListReviewerHarnessesResponse is
+	// a type alias for agentsvc.Inventory (the same underlying type as
+	// ListAgentsResponse below), so it reflects and renames as "AgentInventory"
+	// -> "ListAgentsResponse" too; no separate override needed here.
 	// devimport report
 	"DevimportReport":   "DevImportProjectsReport",
 	"DevimportConflict": "DevImportProjectsConflict",
@@ -444,7 +450,28 @@ func operations() []operation {
 	ops = append(ops, mobileDeviceOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
+	ops = append(ops, reviewerHarnessOperations()...)
 	return ops
+}
+
+// reviewerHarnessOperations declares the read-only /reviewer-harnesses
+// catalog operation. Must stay 1:1 with the route
+// ReviewerHarnessesController.Register mounts (enforced by the parity test).
+// It shares AgentsController's Catalog dependency and response contract
+// (ListReviewerHarnessesResponse is agentsvc.Inventory), so it can 501 the
+// same way /agents does when that dependency is absent.
+func reviewerHarnessOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/reviewer-harnesses", id: "listReviewerHarnesses", tag: "reviewerHarnesses",
+			summary: "Return cached supported and locally installed agent adapters that are also valid reviewer harnesses",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListReviewerHarnessesResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func browserOperations() []operation {

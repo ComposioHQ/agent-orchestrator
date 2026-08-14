@@ -54,14 +54,16 @@ export function ReviewerSelect({
 	installed?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
 }) {
+	// supported/installed/authorized now come pre-filtered to reviewer-capable
+	// harnesses from GET /api/v1/reviewer-harnesses (see useReviewerHarnessesQuery),
+	// so KNOWN_REVIEWER_HARNESS_IDS only builds the placeholder list shown before
+	// that query resolves -- it is a loading-state fallback, not a live filter.
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
 		label: id,
 	}));
-	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
-	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
 	const options = buildRankedAgentOptions({
-		supported: supportedAgents,
+		supported,
 		installed,
 		authorized,
 		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,

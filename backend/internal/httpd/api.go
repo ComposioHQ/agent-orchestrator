@@ -87,23 +87,24 @@ func normalizeAPIDeps(deps APIDeps, log *slog.Logger) APIDeps {
 // API owns one controller per resource and is the single Register call the
 // router invokes to mount the /api/v1 surface.
 type API struct {
-	cfg           config.Config
-	deps          APIDeps
-	agents        *controllers.AgentsController
-	projects      *controllers.ProjectsController
-	sessions      *controllers.SessionsController
-	usage         *controllers.UsageController
-	prs           *controllers.PRsController
-	reviews       *controllers.ReviewsController
-	notifications *controllers.NotificationsController
-	push          *controllers.PushController
-	imports       *controllers.ImportController
-	shellTerms    *controllers.ShellTerminalsController
-	conversations *controllers.ConversationsController
-	settings      *controllers.SettingsController
-	dev           *controllers.DevController
-	browser       *controllers.BrowserController
-	events        *EventsController
+	cfg               config.Config
+	deps              APIDeps
+	agents            *controllers.AgentsController
+	projects          *controllers.ProjectsController
+	sessions          *controllers.SessionsController
+	usage             *controllers.UsageController
+	prs               *controllers.PRsController
+	reviews           *controllers.ReviewsController
+	notifications     *controllers.NotificationsController
+	push              *controllers.PushController
+	imports           *controllers.ImportController
+	shellTerms        *controllers.ShellTerminalsController
+	conversations     *controllers.ConversationsController
+	settings          *controllers.SettingsController
+	dev               *controllers.DevController
+	browser           *controllers.BrowserController
+	reviewerHarnesses *controllers.ReviewerHarnessesController
+	events            *EventsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -126,18 +127,19 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},
-		usage:         &controllers.UsageController{Svc: deps.UsageSummary},
-		prs:           &controllers.PRsController{Svc: deps.PRs},
-		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
-		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
-		push:          &controllers.PushController{Registry: deps.Push},
-		imports:       &controllers.ImportController{Svc: deps.Import},
-		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
-		conversations: &controllers.ConversationsController{Svc: deps.Conversations},
-		settings:      &controllers.SettingsController{Svc: deps.Settings},
-		dev:           &controllers.DevController{Import: deps.DevImport},
-		browser:       &controllers.BrowserController{Svc: deps.Browser},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		usage:             &controllers.UsageController{Svc: deps.UsageSummary},
+		prs:               &controllers.PRsController{Svc: deps.PRs},
+		reviews:           &controllers.ReviewsController{Svc: deps.Reviews},
+		notifications:     &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
+		push:              &controllers.PushController{Registry: deps.Push},
+		imports:           &controllers.ImportController{Svc: deps.Import},
+		shellTerms:        &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
+		conversations:     &controllers.ConversationsController{Svc: deps.Conversations},
+		settings:          &controllers.SettingsController{Svc: deps.Settings},
+		dev:               &controllers.DevController{Import: deps.DevImport},
+		browser:           &controllers.BrowserController{Svc: deps.Browser},
+		reviewerHarnesses: &controllers.ReviewerHarnessesController{Catalog: deps.Agents},
+		events:            &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
 
@@ -169,6 +171,7 @@ func (a *API) Register(root chi.Router) {
 			a.settings.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
+			a.reviewerHarnesses.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
