@@ -15,7 +15,8 @@ export default {
       if (url.pathname === TERMINAL_PATH) {
         const apiBase =
           env.AO_CLOUD_WEB_API_BASE_URL || "https://api.aoagents.dev";
-        return fetch(new URL(`${url.pathname}${url.search}`, apiBase), request);
+        const target = new URL(`${url.pathname}${url.search}`, apiBase);
+        return fetch(new Request(target, request));
       }
     }
     return worker.fetch(request, env, ctx);
