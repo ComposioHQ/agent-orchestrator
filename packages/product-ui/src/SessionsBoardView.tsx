@@ -103,7 +103,10 @@ export function SessionsBoardGridView<TSession extends BoardSessionPresentation>
 	}
 
 	return (
-		<div className="h-full overflow-x-auto overflow-y-hidden">
+		<div
+			className="board-horizontal-scrollbar h-full overflow-x-auto overflow-y-hidden"
+			data-testid="board-horizontal-scroll"
+		>
 			<div className="relative grid h-full min-w-[64rem] grid-cols-4 divide-x divide-border-strong xl:min-w-0">
 				<div
 					aria-hidden="true"
