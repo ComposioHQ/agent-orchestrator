@@ -51,7 +51,9 @@ vi.mock("../lib/telemetry", () => ({
 	captureRendererException: vi.fn(),
 }));
 vi.mock("./NewTaskDialog", () => ({ NewTaskDialog: () => null }));
-vi.mock("./NotificationCenter", () => ({ NotificationCenter: () => null }));
+vi.mock("./NotificationCenter", () => ({
+	NotificationCenter: () => <button type="button" aria-label="Notifications">Notifications</button>,
+}));
 
 const worker: WorkspaceSession = {
 	id: "sess-1",
@@ -367,6 +369,19 @@ describe("ShellTopbar orchestrator actions", () => {
 });
 
 describe("ShellTopbar inspector state", () => {
+	it("places notifications before the inspector toggle on worker sessions", () => {
+		renderTopbarSessions([worker], "sess-1");
+
+		const actions = screen.getByTestId("workspace-topbar-actions");
+		const buttons = within(actions)
+			.getAllByRole("button")
+			.map((button) => button.getAttribute("aria-label"));
+		const notificationsIndex = buttons.indexOf("Notifications");
+		const inspectorIndex = buttons.indexOf("Close inspector panel");
+		expect(notificationsIndex).toBeGreaterThanOrEqual(0);
+		expect(inspectorIndex).toBeGreaterThan(notificationsIndex);
+	});
+
 	it("treats missing worker inspector state as open", async () => {
 		renderTopbarSessions([worker], "sess-1");
 

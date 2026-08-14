@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Folder, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { Folder, LayoutDashboard, PanelRight, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -368,6 +368,8 @@ export function ShellTopbar({
 								<TooltipContent side="bottom">{orchestratorTooltip}</TooltipContent>
 							</Tooltip>
 						) : null}
+						{/* Bell before inspector so expand/collapse stays the trailing control. */}
+						{!isOrchestrator ? <NotificationCenter style={noDragStyle} /> : null}
 						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
 						{!isOrchestrator && (
 							<TopbarButton
@@ -378,17 +380,13 @@ export function ShellTopbar({
 								title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
 								variant="icon"
 							>
-								{isInspectorOpen ? (
-									<PanelRightClose className="size-icon-md" aria-hidden="true" />
-								) : (
-									<PanelRightOpen className="size-icon-md" aria-hidden="true" />
-								)}
+								<PanelRight className="size-icon-md" aria-hidden="true" />
 							</TopbarButton>
 						)}
 					</>
 				) : null}
-				{/* The bell always trails the actions row, on every platform. */}
-				<NotificationCenter style={noDragStyle} />
+				{/* Bell trails the actions row when there is no inspector toggle after it. */}
+				{!(isSessionRoute && !isOrchestrator) ? <NotificationCenter style={noDragStyle} /> : null}
 			</div>
 		</motion.header>
 	</LayoutGroup>
