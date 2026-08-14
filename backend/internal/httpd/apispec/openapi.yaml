@@ -2295,6 +2295,57 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/usage:
+    post:
+      operationId: recordSessionUsage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordUsageRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordUsageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Report agent token usage for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/workspace/file:
     get:
       operationId: getSessionWorkspaceFile
@@ -3498,6 +3549,25 @@ components:
       - createdAt
       - lastSeenAt
       type: object
+    RecordUsageRequest:
+      properties:
+        summary:
+          $ref: '#/components/schemas/UsageSummary'
+        turns:
+          items:
+            $ref: '#/components/schemas/UsageTurn'
+          type: array
+      type: object
+    RecordUsageResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
+      type: object
     RegisterPushDeviceRequest:
       properties:
         deviceName:
@@ -4290,6 +4360,71 @@ components:
           type: string
       required:
       - title
+      type: object
+    UsageSummary:
+      properties:
+        cacheReadTokens:
+          description: Tokens served from the prompt cache.
+          format: int64
+          type: integer
+        cacheWriteTokens:
+          description: Tokens written to the prompt cache.
+          format: int64
+          type: integer
+        durationMs:
+          description: Wall-clock session duration in milliseconds, when known.
+          format: int64
+          type: integer
+        inputTokens:
+          description: Fresh (non-cached) input tokens.
+          format: int64
+          type: integer
+        model:
+          description: Model id that produced the turn (e.g. claude-opus-4-8).
+          type: string
+        outputTokens:
+          description: Output tokens generated.
+          format: int64
+          type: integer
+        turnCount:
+          description: Number of model turns in the session.
+          format: int64
+          type: integer
+      required:
+      - model
+      - inputTokens
+      - outputTokens
+      - cacheReadTokens
+      - cacheWriteTokens
+      - turnCount
+      type: object
+    UsageTurn:
+      properties:
+        cacheReadTokens:
+          description: Tokens served from the prompt cache.
+          format: int64
+          type: integer
+        cacheWriteTokens:
+          description: Tokens written to the prompt cache.
+          format: int64
+          type: integer
+        inputTokens:
+          description: Fresh (non-cached) input tokens.
+          format: int64
+          type: integer
+        model:
+          description: Model id that produced the turn (e.g. claude-opus-4-8).
+          type: string
+        outputTokens:
+          description: Output tokens generated.
+          format: int64
+          type: integer
+      required:
+      - model
+      - inputTokens
+      - outputTokens
+      - cacheReadTokens
+      - cacheWriteTokens
       type: object
     WorkspaceFileResponse:
       properties:

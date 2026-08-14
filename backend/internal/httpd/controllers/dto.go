@@ -606,6 +606,37 @@ type SetActivityResponse struct {
 	State     string           `json:"state"`
 }
 
+// UsageTurn is one agent model turn's token consumption, as reported by an
+// agent hook on POST /api/v1/sessions/{sessionId}/usage.
+type UsageTurn struct {
+	Model            string `json:"model" description:"Model id that produced the turn (e.g. claude-opus-4-8)."`
+	InputTokens      int64  `json:"inputTokens" description:"Fresh (non-cached) input tokens."`
+	OutputTokens     int64  `json:"outputTokens" description:"Output tokens generated."`
+	CacheReadTokens  int64  `json:"cacheReadTokens" description:"Tokens served from the prompt cache."`
+	CacheWriteTokens int64  `json:"cacheWriteTokens" description:"Tokens written to the prompt cache."`
+}
+
+// UsageSummary is a whole-session token rollup reported once when a session ends.
+type UsageSummary struct {
+	UsageTurn
+	TurnCount  int64 `json:"turnCount" description:"Number of model turns in the session."`
+	DurationMs int64 `json:"durationMs,omitempty" description:"Wall-clock session duration in milliseconds, when known."`
+}
+
+// RecordUsageRequest is the body of POST /api/v1/sessions/{sessionId}/usage.
+// Turns become per-turn telemetry events; Summary, when present, becomes one
+// session-summary event. Both are optional but at least one must be supplied.
+type RecordUsageRequest struct {
+	Turns   []UsageTurn   `json:"turns,omitempty"`
+	Summary *UsageSummary `json:"summary,omitempty"`
+}
+
+// RecordUsageResponse is the body of POST /api/v1/sessions/{sessionId}/usage.
+type RecordUsageResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+}
+
 // OrchestratorIDParam is the {id} path parameter for orchestrator routes.
 type OrchestratorIDParam struct {
 	ID string `path:"id" description:"Orchestrator session identifier, e.g. project-orchestrator."`

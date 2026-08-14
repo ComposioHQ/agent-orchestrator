@@ -92,6 +92,13 @@ type ActivityRecorder interface {
 	ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error
 }
 
+// UsageRecorder prices and emits token-usage telemetry reported by an agent
+// hook. It is satisfied by *session.Service; a nil recorder keeps the route
+// registered but returns a 501.
+type UsageRecorder interface {
+	RecordUsage(ctx context.Context, id domain.SessionID, report ports.UsageReport) error
+}
+
 // ManagedPreviewServer is the deterministic server lifecycle attached to a
 // worker. It is separate from static file rendering and browser automation.
 type ManagedPreviewServer interface {
@@ -111,6 +118,7 @@ type SessionCapabilityValidator interface {
 type SessionsController struct {
 	Svc           SessionService
 	Activity      ActivityRecorder
+	Usage         UsageRecorder
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
 }
@@ -140,6 +148,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
 	r.Post("/sessions/{sessionId}/activity", c.activity)
+	r.Post("/sessions/{sessionId}/usage", c.usage)
 	r.Get("/orchestrators", c.listOrchestrators)
 	r.Post("/orchestrators", c.spawnOrchestrator)
 	r.Get("/orchestrators/{id}", c.getOrchestrator)
@@ -924,6 +933,66 @@ func capActivityMeta(v string) string {
 	const maxLen = 256
 	if len(v) > maxLen {
 		return ""
+	}
+	return v
+}
+
+// maxUsageBodyBytes bounds a usage report. A per-turn batch is small; this cap
+// is defense against a non-hook caller posting an oversized body.
+const maxUsageBodyBytes = 1 << 18 // 256 KiB
+
+// usage records token-usage telemetry reported by an agent hook (via
+// `ao hooks <agent> stop|session-end`). Each turn becomes a per-turn event and
+// an optional summary becomes a session-usage event; pricing and tagging
+// happen server-side so the caller cannot spoof harness or cost.
+func (c *SessionsController) usage(w http.ResponseWriter, r *http.Request) {
+	if c.Usage == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/usage")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUsageBodyBytes)
+	var in RecordUsageRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	report := ports.UsageReport{}
+	for _, t := range in.Turns {
+		report.Turns = append(report.Turns, toTokenUsage(t))
+	}
+	if in.Summary != nil {
+		report.Summary = &ports.UsageSummary{
+			TokenUsage: toTokenUsage(in.Summary.UsageTurn),
+			TurnCount:  in.Summary.TurnCount,
+			DurationMs: in.Summary.DurationMs,
+		}
+	}
+	if !report.HasData() {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "USAGE_EMPTY", "At least one turn or a summary is required", nil)
+		return
+	}
+	if err := c.Usage.RecordUsage(r.Context(), sessionID(r), report); err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, RecordUsageResponse{OK: true, SessionID: sessionID(r)})
+}
+
+func toTokenUsage(t UsageTurn) ports.TokenUsage {
+	// Clamp negatives: a malformed report must never record negative token
+	// counts, which would poison any sum() over the telemetry.
+	return ports.TokenUsage{
+		Model:            capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(t.Model))),
+		InputTokens:      nonNegTokens(t.InputTokens),
+		OutputTokens:     nonNegTokens(t.OutputTokens),
+		CacheReadTokens:  nonNegTokens(t.CacheReadTokens),
+		CacheWriteTokens: nonNegTokens(t.CacheWriteTokens),
+	}
+}
+
+func nonNegTokens(v int64) int64 {
+	if v < 0 {
+		return 0
 	}
 	return v
 }

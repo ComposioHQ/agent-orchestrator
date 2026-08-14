@@ -73,6 +73,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc:           deps.Sessions,
 			Activity:      deps.Activity,
+			Usage:         usageRecorderFrom(deps.Sessions),
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},
@@ -86,6 +87,17 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
+}
+
+// usageRecorderFrom returns the session service as a UsageRecorder when it
+// implements one (the production *session.Service does), or nil so the usage
+// route registers but returns a 501. This keeps the recorder wired without a
+// separate dependency in the composition root.
+func usageRecorderFrom(svc controllers.SessionService) controllers.UsageRecorder {
+	if u, ok := svc.(controllers.UsageRecorder); ok {
+		return u
+	}
+	return nil
 }
 
 // Register mounts the bounded /api/v1 REST surface. Long-lived surfaces such

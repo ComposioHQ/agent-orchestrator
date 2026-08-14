@@ -148,6 +148,9 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if shouldEmitSessionStartContext(agent, event) {
 		c.emitSessionStartContext(agent, event, sessionID)
 	}
+	// Token-usage reporting is independent of activity derivation: it runs for
+	// the Stop/SessionEnd hooks of harnesses whose transcript carries usage.
+	c.reportUsage(ctx, agent, event, sessionID, payload)
 
 	state, hasActivity := activitydispatch.Derive(agent, event, payload)
 	agentSessionID := ""

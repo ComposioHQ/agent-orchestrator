@@ -33,6 +33,8 @@ var remoteEventNameAliases = map[string]string{
 	"ao.renderer.loaded":         "ao.v2.renderer.loaded",
 	"ao.renderer.api_error":      "ao.v2.renderer.api_error",
 	"ao.renderer.daemon_failure": "ao.v2.renderer.daemon_failure",
+	"ao.session.turn_usage":      "ao.v2.session.turn_usage",
+	"ao.session.usage":           "ao.v2.session.usage",
 }
 
 var remoteCommandTokens = map[string]struct{}{
@@ -168,6 +170,32 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"duration_ms": {},
 		"harness":     {},
 		"kind":        {},
+	},
+	"ao.session.turn_usage": {
+		"harness":            {},
+		"kind":               {},
+		"model":              {},
+		"model_priced":       {},
+		"input_tokens":       {},
+		"output_tokens":      {},
+		"cache_read_tokens":  {},
+		"cache_write_tokens": {},
+		"total_tokens":       {},
+		"cost_usd":           {},
+	},
+	"ao.session.usage": {
+		"harness":            {},
+		"kind":               {},
+		"model":              {},
+		"model_priced":       {},
+		"input_tokens":       {},
+		"output_tokens":      {},
+		"cache_read_tokens":  {},
+		"cache_write_tokens": {},
+		"total_tokens":       {},
+		"cost_usd":           {},
+		"turn_count":         {},
+		"duration_ms":        {},
 	},
 	"ao.session.waiting_input_entered": {
 		"state": {},
