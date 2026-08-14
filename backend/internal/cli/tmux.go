@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -23,6 +22,10 @@ func (c *commandContext) ensureTmux(ctx context.Context, goos string, in io.Read
 		return
 	}
 	pretty := strings.Join(argv, " ")
+	if c.tmuxInstallNeedsRoot(goos, argv) {
+		c.warnTmuxMissing(out, goos, fmt.Sprintf("run as root: `%s`", pretty))
+		return
+	}
 	if !stdinIsInteractive(in) {
 		c.warnTmuxMissing(out, goos, fmt.Sprintf("install it with `%s`", pretty))
 		return
@@ -63,8 +66,8 @@ func (c *commandContext) haveTmux() bool {
 }
 
 // tmuxInstallCommand returns the first supported package-manager command. Linux
-// commands require root; an unprivileged process without sudo gets guidance but
-// no doomed install attempt.
+// commands require root; an unprivileged process without sudo keeps the bare
+// command so ensureTmux can explain both the command and the missing privilege.
 func (c *commandContext) tmuxInstallCommand(goos string) []string {
 	var candidates [][]string
 	switch goos {
@@ -91,11 +94,15 @@ func (c *commandContext) tmuxInstallCommand(goos string) []string {
 }
 
 func (c *commandContext) withTmuxInstallPrivilege(goos string, argv []string) []string {
-	if goos != "linux" || os.Geteuid() == 0 {
+	if goos != "linux" || c.deps.EffectiveUID() == 0 {
 		return argv
 	}
 	if path, err := c.deps.LookPath("sudo"); err != nil || path == "" {
-		return nil
+		return argv
 	}
 	return append([]string{"sudo"}, argv...)
+}
+
+func (c *commandContext) tmuxInstallNeedsRoot(goos string, argv []string) bool {
+	return goos == "linux" && c.deps.EffectiveUID() != 0 && len(argv) > 0 && argv[0] != "sudo"
 }

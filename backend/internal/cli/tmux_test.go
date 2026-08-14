@@ -75,6 +75,23 @@ func TestEnsureTmuxNonInteractiveOnlyWarns(t *testing.T) {
 	}
 }
 
+func TestEnsureTmuxWithoutSudoReportsRootBlocker(t *testing.T) {
+	out := &bytes.Buffer{}
+	c := &commandContext{deps: Deps{
+		LookPath:     tmuxLookPath("apt-get"),
+		EffectiveUID: func() int { return 1000 },
+		RunInteractive: func(context.Context, string, ...string) error {
+			t.Fatal("unexpected unprivileged install")
+			return nil
+		},
+	}.withDefaults()}
+
+	c.ensureTmux(context.Background(), "linux", tmuxFakeTerminal(t, "\n"), out)
+	if got := out.String(); !strings.Contains(got, "run as root: `apt-get install -y tmux`") {
+		t.Fatalf("warning = %q, want concrete command and root requirement", got)
+	}
+}
+
 func TestEnsureTmuxDoesNotPromptOnDevNull(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("no /dev/null on Windows")

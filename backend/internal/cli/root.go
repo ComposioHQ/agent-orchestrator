@@ -69,6 +69,7 @@ type Deps struct {
 	StartProcess       func(processStartConfig) error
 	ProcessAlive       func(pid int) bool
 	LookPath           func(file string) (string, error)
+	EffectiveUID       func() int
 	CommandOutput      func(ctx context.Context, name string, args ...string) ([]byte, error)
 	CommandOutputInDir func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 	// RunInteractive runs a child process attached to the real terminal, for
@@ -96,6 +97,7 @@ func DefaultDeps() Deps {
 		StartProcess:         startProcess,
 		ProcessAlive:         processalive.Alive,
 		LookPath:             exec.LookPath,
+		EffectiveUID:         os.Geteuid,
 		CommandOutput:        commandOutput,
 		CommandOutputInDir:   commandOutputInDir,
 		RunInteractive:       runInteractive,
@@ -151,6 +153,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.LookPath == nil {
 		d.LookPath = def.LookPath
+	}
+	if d.EffectiveUID == nil {
+		d.EffectiveUID = def.EffectiveUID
 	}
 	if d.CommandOutput == nil {
 		d.CommandOutput = def.CommandOutput
