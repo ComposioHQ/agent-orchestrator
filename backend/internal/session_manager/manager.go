@@ -852,6 +852,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	argv = memoryCeilingArgv(argv, agentConfig.MaxMemoryMB)
 	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
 	if err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
@@ -1205,7 +1206,27 @@ func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 	if override.Permissions != "" {
 		base.Permissions = override.Permissions
 	}
+	if override.MaxMemoryMB > 0 {
+		base.MaxMemoryMB = override.MaxMemoryMB
+	}
 	return base
+}
+
+// memoryCeilingArgv wraps the agent launch command in a `sh` that applies a
+// virtual-memory ceiling before exec'ing the agent, so the agent process group
+// runs under `ulimit -v` and a runaway child is OOM-killed instead of paging
+// the whole machine out (#2523). The wrapper is inserted INSIDE the AO
+// supervisor (the supervisor itself is a Go process whose large virtual
+// reservations must not be limited). No-op when unconfigured, on Windows, or
+// for an empty argv. Best-effort by design: platforms that ignore RLIMIT_AS
+// simply run without the ceiling, and the `2>/dev/null` keeps a shell that
+// rejects the limit from failing the launch.
+func memoryCeilingArgv(argv []string, maxMemoryMB int) []string {
+	if maxMemoryMB <= 0 || len(argv) == 0 || runtime.GOOS == "windows" {
+		return argv
+	}
+	script := fmt.Sprintf("ulimit -v %d 2>/dev/null; exec \"$@\"", maxMemoryMB*1024)
+	return append([]string{"/bin/sh", "-c", script, "ao-memlimit"}, argv...)
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
@@ -1893,6 +1914,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	argv = memoryCeilingArgv(argv, agentConfig.MaxMemoryMB)
 	argv, launchID, err := m.superviseAgentProcess(agent, rec.ID, env, argv)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)

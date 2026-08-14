@@ -78,6 +78,8 @@ type agentConfig struct {
 	Model       string `json:"model,omitempty"`
 	Mode        string `json:"mode,omitempty"`
 	Permissions string `json:"permissions,omitempty"`
+	// MaxMemoryMB caps the agent process group's virtual memory (0 = no ceiling).
+	MaxMemoryMB int `json:"maxMemoryMB,omitempty"`
 }
 
 // roleOverride mirrors domain.RoleOverride.
@@ -138,6 +140,7 @@ type projectSetConfigOptions struct {
 	trackerRepo           string
 	trackerAssignee       string
 	maxConcurrentSessions int
+	maxMemoryMB           int
 	configJSON            string
 	clear                 bool
 	json                  bool
@@ -330,6 +333,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
 	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
 	f.IntVar(&opts.maxConcurrentSessions, "max-concurrent-sessions", 0, "Cap on this project's concurrent sessions for worker spawns (0 = no project-level cap)")
+	f.IntVar(&opts.maxMemoryMB, "max-memory-mb", 0, "Virtual-memory ceiling in MB for each agent process group (0 = no ceiling)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -365,7 +369,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		AgentRules:        opts.agentRules,
 		AgentRulesFile:    opts.agentRulesFile,
 		OrchestratorRules: opts.orchestratorRules,
-		AgentConfig:       agentConfig{Model: opts.model, Permissions: opts.permission},
+		AgentConfig:       agentConfig{Model: opts.model, Permissions: opts.permission, MaxMemoryMB: opts.maxMemoryMB},
 		Worker:            roleOverride{Agent: opts.workerAgent},
 		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent},
 		TrackerIntake: trackerIntakeConfig{
