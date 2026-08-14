@@ -27,7 +27,6 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-	Archive,
 	ArrowDown,
 	CornerDownRight,
 	GitBranch,
@@ -397,15 +396,6 @@ export function ChatWorkspace({
 
 			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-					<div className="flex items-center justify-end">
-						<CompactButton
-							onCompact={onCompact}
-							compacting={compacting}
-							unavailable={compactUnavailable}
-							turnInFlight={Boolean(turn)}
-							compactedAt={snapshot.compactedAt}
-						/>
-					</div>
 					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 					{snapshot.branchedFromEarlierMessage ? (
 						<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -462,6 +452,10 @@ export function ChatWorkspace({
 						canSteer={Boolean(onSteer) && turn?.state === "running"}
 						steerPending={steerPending}
 						steerRefusal={steerRefusal}
+						onCompact={onCompact}
+						compacting={compacting}
+						compactUnavailable={compactUnavailable}
+						compactBlocked={Boolean(turn)}
 					/>
 				</div>
 			</div>
@@ -687,51 +681,6 @@ function ChatHeader({
 				</div>
 			</header>
 		</SessionTopbarPortal>
-	);
-}
-
-function CompactButton({
-	onCompact,
-	compacting,
-	unavailable,
-	turnInFlight,
-	compactedAt,
-}: {
-	onCompact?: () => void;
-	compacting?: boolean;
-	unavailable?: string;
-	turnInFlight?: boolean;
-	compactedAt?: string;
-}) {
-	if (!onCompact) return null;
-	if (unavailable === "This agent cannot compact its history") {
-		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
-	}
-
-	const title = turnInFlight
-		? "Finish or stop the current turn before compacting"
-		: compactedAt
-			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
-			: "Summarize earlier history to reclaim context";
-
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="ghost"
-			onClick={onCompact}
-			disabled={compacting || turnInFlight}
-			title={title}
-			aria-label="Compact conversation history"
-			className="h-5 gap-1 px-1.5 text-[11px]"
-		>
-			{compacting ? (
-				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-			) : (
-				<Archive aria-hidden="true" className="size-3" />
-			)}
-			{compacting ? "Compacting…" : "Compact"}
-		</Button>
 	);
 }
 

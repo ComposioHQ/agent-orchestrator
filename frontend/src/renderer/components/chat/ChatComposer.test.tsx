@@ -71,7 +71,14 @@ describe("send keys", () => {
 
 		const actions = screen.getByRole("group", { name: "Send message controls" });
 		expect(within(actions).getByRole("button", { name: "Send message" })).toBeInTheDocument();
-		expect(within(actions).getByText("Enter to send")).toBeInTheDocument();
+		expect(within(actions).queryByText(/Enter to/)).not.toBeInTheDocument();
+	});
+
+	it("starts as a single-line field and grows only when the draft needs it", () => {
+		const { field } = renderComposer();
+		expect(field).toHaveAttribute("rows", "1");
+		expect(field).toHaveClass("min-h-9");
+		expect(field).not.toHaveClass("min-h-[3.25rem]");
 	});
 
 	it("uses the AO logo palette for the send control", async () => {
