@@ -21,6 +21,7 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	// UpdateSessionFromActivitySignal is a narrow, owner-generation-fenced
 	// write. It returns false when a concurrent lifecycle/agent-switch boundary
 	// made the reducer's previously read session stale.

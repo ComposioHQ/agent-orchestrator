@@ -41,12 +41,13 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	trackerDone   <-chan struct{}
+	LCM            *lifecycle.Manager
+	runtimeReaper  *reaper.Reaper
+	reaperDone     <-chan struct{}
+	activityDone   <-chan struct{}
+	autoReviewDone <-chan struct{}
+	scmDone        <-chan struct{}
+	trackerDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -102,6 +103,9 @@ func (l *lifecycleStack) Stop() {
 	<-l.reaperDone
 	if l.activityDone != nil {
 		<-l.activityDone
+	}
+	if l.autoReviewDone != nil {
+		<-l.autoReviewDone
 	}
 	if l.scmDone != nil {
 		<-l.scmDone
@@ -434,6 +438,10 @@ var _ interface {
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
+
+func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
+	return c.svc.SupportsChat(harness)
+}
 
 func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness)

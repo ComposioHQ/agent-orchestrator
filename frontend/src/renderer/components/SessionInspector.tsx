@@ -28,6 +28,7 @@ import {
 	Play,
 	Trash2,
 	Loader2,
+	MessageSquare,
 	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
@@ -70,7 +71,7 @@ type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => v
 
 export type { InspectorView } from "@aoagents/product-ui";
 
-const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
+const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files"; icon: ReactNode }[] = [
 	{
 		id: "summary",
 		labelKey: "inspector.summary",
@@ -84,6 +85,11 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 				<circle cx="4" cy="17" r="1" />
 			</svg>
 		),
+	},
+	{
+		id: "reviews",
+		labelKey: "inspector.reviewTab",
+		icon: <MessageSquare aria-hidden="true" />,
 	},
 	{
 		id: "browser",
@@ -111,7 +117,7 @@ const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
 };
 
 /**
- * Tabbed inspector rail beside the terminal (Summary · Browser · Files).
+ * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser · Files).
  */
 export function SessionInspector({
 	session,
@@ -185,28 +191,23 @@ export function SessionInspector({
 			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
 			loadingText={session ? undefined : t("inspector.loadingSession")}
 			onViewChange={setView}
+			reviewsView={
+				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+			}
 			summaryView={
-				session ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+				session ? <SummaryView session={session} /> : undefined
 			}
 			tabs={tabs}
 		/>
 	);
 }
 
-function SummaryView({
-	session,
-	onOpenReviewerTerminal,
-}: {
-	session: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
-}) {
+function SummaryView({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
-	const showCompletion = session.kind !== "orchestrator";
-
 	return (
 		<SessionInspectorSummaryView
 			activity={
@@ -216,7 +217,7 @@ function SummaryView({
 				</>
 			}
 			activityTitle={t("inspector.activity")}
-			completion={showCompletion ? <CompletionControls session={session} /> : undefined}
+			completion={<SessionControls session={session} />}
 			pullRequestCards={
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
@@ -229,16 +230,21 @@ function SummaryView({
 				</div>
 			}
 			pullRequestTitle={prSectionTitle}
-			reviews={
-				<>
-					{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
-					<div className="mb-4">
-						<AutoInjectCIPolicyControl session={session} />
-						{hasPRs ? <AutoInjectReviewPolicyControl session={session} /> : null}
-					</div>
-				</>
-			}
 		/>
+	);
+}
+
+function ReviewsView({
+	session,
+	onOpenReviewerTerminal,
+}: {
+	session: WorkspaceSession;
+	onOpenReviewerTerminal?: OpenReviewerTerminal;
+}) {
+	return (
+		<div role="tabpanel">
+			<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+		</div>
 	);
 }
 
@@ -464,7 +470,7 @@ function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
 	);
 }
 
-function CompletionControls({ session }: { session: WorkspaceSession }) {
+function SessionControls({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -515,8 +521,9 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 	if (session.isTerminated === true) return null;
 
 	return (
-		<Section title={t("inspector.completion")}>
-			{canTerminateNow ? (
+		<Section title={t("inspector.sessionControls")}>
+			<AutoInjectCIPolicyControl session={session} />
+			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
 					<SessionTerminationPopover
@@ -541,10 +548,12 @@ function CompletionControls({ session }: { session: WorkspaceSession }) {
 					<InspectorPolicyRow
 						ariaLabel={t("inspector.terminateOnMerge")}
 						checked={Boolean(session.terminateOnPrMerge)}
+						description={t("inspector.terminateOnMergeDescription")}
 						disabled={policy.isPending}
 						id={`merge-policy-${session.id}`}
 						label={t("inspector.terminateOnMergeShort")}
 						onCheckedChange={(checked) => policy.mutate(checked)}
+						tooltipClassName="max-w-60"
 					/>
 					{policyError ? (
 						<p className="mt-1 text-2xs leading-normal text-error" role="status">
@@ -835,7 +844,8 @@ function ReviewsSection({
 		refetchInterval: (query) => {
 			const data = query.state.data as ReviewsResponse | undefined;
 			const reviews = data?.reviews ?? [];
-			return reviews.some((review) => review.status === "running") ? 2500 : false;
+			if (reviews.some((review) => review.status === "running")) return 2500;
+			return session.autoReviewEnabled === true ? 10_000 : false;
 		},
 		queryFn: async () => {
 			if (usePreviewData) return mockReviewsResponse(session);
@@ -879,6 +889,18 @@ function ReviewsSection({
 		},
 		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
+	const saveAutoReview = useMutation({
+		mutationFn: async (enabled: boolean) => {
+			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/auto-review", {
+				params: { path: { sessionId: session.id } },
+				body: { enabled },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.reviewRequestFailed")));
+		},
+		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -938,6 +960,7 @@ function ReviewsSection({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
+	const autoReviewEnabled = session.autoReviewEnabled === true;
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
@@ -946,26 +969,36 @@ function ReviewsSection({
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
+	const hasPRs = sortedPRs(session).length > 0;
 
 	return (
 		<div className="p-2">
+			{hasPRs ? null : (
+				<Section surface title={t("inspector.review.controls")}>
+					<AutoInjectReviewPolicyControl session={session} />
+				</Section>
+			)}
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 			<ReviewPanel
+				autoReviewEnabled={autoReviewEnabled}
 				config={projectConfigQuery.data}
 				error={
 					reviewsQuery.error ??
 					triggerReview.error ??
 					cancelReview.error ??
 					killReview.error ??
-					saveReviewer.error
+					saveReviewer.error ??
+					saveAutoReview.error
 				}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
+				isAutoReviewSaving={saveAutoReview.isPending}
 				isKilling={killReview.isPending}
 				isSwitchingReviewer={saveReviewer.isPending}
 				isTriggering={triggerReview.isPending}
 				onCancel={() => cancelReview.mutate()}
+				onAutoReviewChange={(enabled) => saveAutoReview.mutate(enabled)}
 				onKill={() => killReview.mutate()}
 				onTrigger={() => triggerReview.mutate()}
 				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
@@ -1183,6 +1216,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							sessionId: session.id,
 							status: "delivered",
 							targetSha,
+							triggerSource: "manual" as const,
 							verdict: pr.review === "approved" ? "approved" : "changes_requested",
 						}
 					: undefined;
@@ -1199,6 +1233,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 				sessionId: session.id,
 				status: "complete",
 				targetSha,
+				triggerSource: "manual" as const,
 				verdict: "",
 				...over,
 			});
@@ -1260,6 +1295,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			sessionId: session.id,
 			status: "delivered",
 			targetSha: state.targetSha,
+			triggerSource: "manual" as const,
 		};
 		return [
 			{
@@ -1301,6 +1337,7 @@ function mockReviewTitle(prNumber: number): string {
 }
 
 function ReviewPanel({
+	autoReviewEnabled,
 	session,
 	config,
 	reviewStates,
@@ -1308,6 +1345,7 @@ function ReviewPanel({
 	isLoading,
 	isTriggering,
 	isCancelling,
+	isAutoReviewSaving,
 	isKilling,
 	isSwitchingReviewer,
 	error,
@@ -1317,8 +1355,10 @@ function ReviewPanel({
 	onReviewerOverrideChange,
 	onTrigger,
 	onCancel,
+	onAutoReviewChange,
 	onKill,
 }: {
+	autoReviewEnabled: boolean;
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
@@ -1335,9 +1375,29 @@ function ReviewPanel({
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
 	onCancel: () => void;
+	onAutoReviewChange: (enabled: boolean) => void;
+	isAutoReviewSaving: boolean;
 	onKill: () => void;
 }) {
 	const { t } = useTranslation();
+	const latestAutoFailure = reviewStates
+		.map((review) => review.latestRun)
+		.filter(
+			(run): run is ReviewRunFacts =>
+				Boolean(
+					autoReviewEnabled &&
+						run?.triggerSource === "auto" &&
+						run.status === "failed" &&
+						run.body?.trim(),
+				),
+		)
+		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+	const [dismissedAutoFailureId, setDismissedAutoFailureId] = useState<string | null>(null);
+	useEffect(() => {
+		if (!latestAutoFailure || latestAutoFailure.id === dismissedAutoFailureId) return;
+		const timer = window.setTimeout(() => setDismissedAutoFailureId(latestAutoFailure.id), 10_000);
+		return () => window.clearTimeout(timer);
+	}, [dismissedAutoFailureId, latestAutoFailure]);
 	if (sortedPRs(session).length === 0) {
 		return <p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>;
 	}
@@ -1359,6 +1419,8 @@ function ReviewPanel({
 	const resolvedDefaultHarness = resolveDefaultReviewerHarness(config, session.provider);
 	const harness = latest?.harness || resolvedDefaultHarness;
 	const defaultLabel = t("settings.models.default");
+	const autoReviewFailure =
+		latestAutoFailure && latestAutoFailure.id !== dismissedAutoFailureId ? latestAutoFailure.body.trim() : null;
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1374,14 +1436,22 @@ function ReviewPanel({
 			? t("inspector.review.cancelling")
 			: t("inspector.review.cancel")
 		: runAction;
-	const killDisabled = isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
+	const killDisabled = autoReviewEnabled || isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
-				<Section surface title={t("inspector.review.run")}>
+				<Section surface title={t("inspector.review.controls")}>
 					{error ? (
 						<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
 							{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
+					</p>
+				) : null}
+				{autoReviewFailure ? (
+					<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error" role="status">
+						<span className="font-semibold">
+							{t("inspector.autoReview")} {t("inspector.review.failed")}:
+						</span>{" "}
+						{autoReviewFailure}
 					</p>
 				) : null}
 				{/* Neutral, not success: a notice is the trigger declining to run and
@@ -1412,27 +1482,47 @@ function ReviewPanel({
 						</Tooltip>
 					</TooltipProvider>
 				) : null}
-				<div className="review-run-controls-container min-w-0">
-					<div className="review-run-controls flex min-w-0 items-center gap-1.5">
+				<div className="review-run-controls-container min-w-0 divide-y divide-border/70">
+					<AutoInjectReviewPolicyControl session={session} />
+					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
+						<span className="min-w-0 text-xs font-medium text-foreground">
+							{t("inspector.selectReviewerAgent")}
+						</span>
 						<ReviewerSelect
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
+							contentAlign="end"
 							defaultHarness={harness}
 							defaultOptionLabel={`${defaultLabel} (${resolvedDefaultHarness})`}
 							defaultTriggerLabel={harness || defaultLabel}
-							disabled={reviewRunning || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
+							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
+							triggerClassName="review-run-agent-select ml-auto h-control-md w-36 min-w-24 max-w-36 shrink-0 justify-end text-right text-xs"
 							value={reviewerOverride}
 							excludedHarness={resolvedDefaultHarness}
 						/>
-						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
+					</div>
+					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
+						<label className="text-xs font-medium text-foreground" htmlFor={`auto-review-${session.id}`}>
+							{t("inspector.autoReview")}
+						</label>
+						<Switch
+							aria-label={t("inspector.autoReview")}
+							checked={autoReviewEnabled}
+							disabled={isAutoReviewSaving}
+							id={`auto-review-${session.id}`}
+							onCheckedChange={onAutoReviewChange}
+						/>
+					</div>
+					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
+						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
+						<div className="flex shrink-0 items-center gap-1.5">
 							<Button
 								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
-								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled}
+								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
 								title={primaryReviewActionLabel}
@@ -1444,21 +1534,21 @@ function ReviewPanel({
 							</Button>
 							{hasReviewerSession ? (
 								<Button
-									aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-									className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
-									disabled={killDisabled}
-									onClick={onKill}
-									size="sm"
-									title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
-									type="button"
-									variant="ghost"
-								>
-									<Trash2 aria-hidden="true" />
-								</Button>
+								aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+								className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+								disabled={killDisabled}
+								onClick={onKill}
+								size="sm"
+								title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+								type="button"
+								variant="ghost"
+							>
+								<Trash2 aria-hidden="true" />
+							</Button>
 							) : null}
 						</div>
 					</div>
-				</div>
+					</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
@@ -1523,14 +1613,7 @@ function runsByPRFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[])
 }
 
 function reviewRunHasOutcome(run: ReviewRunFacts | undefined): boolean {
-	return Boolean(
-		run &&
-			(run.verdict?.trim() ||
-				run.status === "complete" ||
-				run.status === "delivered" ||
-				run.status === "failed" ||
-				run.status === "cancelled"),
-	);
+	return Boolean(run?.verdict?.trim());
 }
 
 /** The PRs AO has an agent review outcome for. */

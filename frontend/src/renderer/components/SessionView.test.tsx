@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
+import { TooltipProvider } from "./ui/tooltip";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
@@ -17,7 +18,7 @@ const interfaceTransitionMock = vi.hoisted(() => ({
 }));
 const interfaceTransitionState = vi.hoisted(() => ({
 	status: undefined as
-		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string }
+		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string; reasonCode?: string }
 		| undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
@@ -131,12 +132,36 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
-vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
+vi.mock("./ShellTopbar", () => ({
+	ShellTopbar: ({ sessionAction }: { sessionAction?: ReactNode }) => (
+		<div data-testid="mock-session-topbar">{sessionAction}</div>
+	),
+}));
+vi.mock("./TerminalSwitchAgentButton", () => ({
+	TerminalSwitchAgentButton: () => (
+		<button aria-label="Switch agent" type="button" />
+	),
+}));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({ onOpenShell, headerActions }: { onOpenShell?: () => void; headerActions?: ReactNode }) => (
+	SessionChatSurface: ({
+		onOpenShell,
+		headerActions,
+		reviewerTerminal,
+		onOpenReviewerTerminal,
+	}: {
+		onOpenShell?: () => void;
+		headerActions?: ReactNode;
+		reviewerTerminal?: { handleId: string; harness: string };
+		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	}) => (
 		<div data-testid="chat-surface">
 			chat surface
 			{headerActions}
+			{reviewerTerminal ? (
+				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
+					Reviewer
+				</button>
+			) : null}
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
@@ -151,7 +176,6 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
 		onSelectReviewerTerminal,
-		onNewShellTerminal,
 		topbarActions,
 		reviewerTerminal,
 		terminalTarget,
@@ -162,7 +186,6 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
 		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
-		onNewShellTerminal?: () => void;
 		topbarActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		terminalTarget?: { kind: string; handleId?: string };
@@ -193,9 +216,6 @@ vi.mock("./CenterPane", () => ({
 			))}
 			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
 				select agent tab
-			</button>
-			<button type="button" onClick={() => onNewShellTerminal?.()}>
-				new terminal
 			</button>
 		</div>
 	),
@@ -409,7 +429,11 @@ function render(ui: ReactNode) {
 	});
 	return {
 		...rtlRender(ui, {
-			wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+			wrapper: ({ children }) => (
+				<QueryClientProvider client={client}>
+					<TooltipProvider>{children}</TooltipProvider>
+				</QueryClientProvider>
+			),
 		}),
 		client,
 	};
@@ -547,8 +571,16 @@ describe("SessionView", () => {
 	it("opens new terminals in the on-screen session's worktree", () => {
 		render(<SessionView sessionId="sess-2" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "new terminal" }));
+		const newTerminalButton = screen.getByRole("button", { name: "New terminal" });
+		expect(newTerminalButton).toHaveAttribute("title", "New terminal (Ctrl+T)");
+		fireEvent.click(newTerminalButton);
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+	});
+
+	it("does not offer a new terminal for orchestrator sessions", () => {
+		render(<SessionView sessionId="sess-orch" />);
+
+		expect(screen.queryByRole("button", { name: "New terminal" })).not.toBeInTheDocument();
 	});
 
 	it("shows a shell opened from chat and returns to the chat agent tab", () => {
@@ -652,6 +684,33 @@ describe("SessionView", () => {
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "chat", policy: "drain" });
 	});
 
+	it.each([
+		["worker", "sess-1"],
+		["orchestrator", "sess-orch"],
+	] as const)("hides the interface switch button for %s sessions when Chat UI is unsupported", (_label, sessionId) => {
+		interfaceTransitionState.status = { supported: false, targetMode: "chat", reasonCode: "CHAT_UNSUPPORTED" };
+		const session = workerSession(sessionId);
+		session.mode = "tui";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId={sessionId} />);
+
+		expect(screen.queryByRole("button", { name: "Switch to chat UI" })).not.toBeInTheDocument();
+	});
+
+	it("shows the switch button when the adapter only reports a generic unsupported reason", () => {
+		interfaceTransitionState.status = { supported: false, targetMode: "chat", reasonCode: "INTERFACE_HANDOFF_UNSUPPORTED" };
+		const session = workerSession("sess-1");
+		session.mode = "tui";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		expect(screen.getByRole("button", { name: "Switch to chat UI" })).toBeInTheDocument();
+	});
+
 	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {
 		shellTerminalsState.data = [
 			{
@@ -709,6 +768,30 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		await waitFor(() => expect(screen.getByTestId("reviewer-harness")).toHaveTextContent("codex"));
+	});
+
+	it("keeps the reviewer terminal reachable from a Chat session", async () => {
+		const worker = workerSession("sess-1");
+		worker.mode = "chat";
+		worker.prs = [{
+			url: "https://github.com/acme/repo/pull/7",
+			number: 7,
+			state: "open",
+			ci: "passing",
+			review: "none",
+			mergeability: "mergeable",
+			reviewComments: false,
+			updatedAt: "2026-06-15T00:00:00Z",
+		}];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [], runs: [] },
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "Reviewer" });
+		fireEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
 	});
 
 	it("returns to the session terminal when the reviewer handle is cleared", async () => {

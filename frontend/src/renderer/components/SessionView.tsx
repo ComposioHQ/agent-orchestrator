@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import type { components } from "../../api/schema";
+import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
@@ -16,6 +18,8 @@ import {
 	SessionInterfaceTransitionNotice,
 } from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
+import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
+import { TopbarButton } from "./TopbarButton";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
@@ -31,7 +35,7 @@ import {
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { hidesShellTopbar } from "../lib/platform";
+import { hidesShellTopbar, isMacPlatform } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
@@ -43,6 +47,8 @@ const INSPECTOR_MIN_PERCENT = 30;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
+const isMac = isMacPlatform();
+const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewerTerminalTarget = { handleId: string; harness: string };
@@ -282,11 +288,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	useEffect(() => {
 		setTerminalTarget((current) =>
 			current.kind === "reviewer" &&
+				reviewerQuery.isFetched &&
 			(!availableReviewerTerminal || availableReviewerTerminal.handleId !== current.handleId)
 				? { kind: "worker" }
 				: current,
 		);
-	}, [availableReviewerTerminal]);
+	}, [availableReviewerTerminal, reviewerQuery.isFetched]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
@@ -332,8 +339,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		setInterfaceSwitchDialogOpen(true);
 	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
+	// the button entirely rather than showing a permanently disabled control.
+	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
 	const showInterfaceSwitchAction = Boolean(
-		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
+		!interfaceSwitchUnsupported && (interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError),
 	);
 	const interfaceSwitchAction = session && showInterfaceSwitchAction ? (
 		<SessionInterfaceSwitchButton
@@ -354,12 +364,26 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}}
 		/>
 	) : null;
-	const sessionHeaderActions = (
+	const newTerminalError = openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined;
+	const sessionLocalActions = session ? (
 		<SessionInterfaceActionGroup>
+			{!isOrchestrator ? (
+				<TopbarButton
+					aria-label={t("shortcut.new-shell-terminal")}
+					disabled={openShellTerminal.isPending}
+					onClick={addShellTerminal}
+					title={newTerminalError ?? t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
+					type="button"
+					variant="icon"
+				>
+					<Plus aria-hidden="true" className="size-icon-md" />
+				</TopbarButton>
+			) : null}
+			<TerminalSwitchAgentButton session={session} />
 			{interfaceSwitchAction}
-			<ShellTopbar embedded />
 		</SessionInterfaceActionGroup>
-	);
+	) : null;
+	const sessionHeaderActions = <ShellTopbar embedded sessionAction={sessionLocalActions} />;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -641,6 +665,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						{showChatSurface ? (
 							<SessionChatSurface
 								session={session}
+								reviewerTerminal={reviewerTerminal}
+								onOpenReviewerTerminal={selectReviewerTerminal}
 								headerActions={sessionHeaderActions}
 								controllerTransitioning={chatControllerTransitioning}
 								onOpenShell={addShellTerminal}
@@ -656,7 +682,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								}
 								daemonReady={daemonStatus.state === "ready"}
 								onCloseShellTerminal={closeShellTerminalByHandle}
-								onNewShellTerminal={addShellTerminal}
 								onRenameShellTerminal={renameShellTerminalByHandle}
 								onSelectSessionTerminal={selectSessionTerminal}
 								onSelectReviewerTerminal={selectReviewerTerminal}

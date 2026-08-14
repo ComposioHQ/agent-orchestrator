@@ -85,6 +85,9 @@ func (m *Manager) InterfaceTransitionStatus(
 	if rec.IsTerminated {
 		status.ReasonCode = "SESSION_TERMINATED"
 		status.Reason = "Terminated sessions must be restored before switching interfaces."
+	} else if target == domain.SessionModeChat && (m.chat == nil || !m.chat.SupportsChat(rec.Harness)) {
+		status.ReasonCode = "CHAT_UNSUPPORTED"
+		status.Reason = fmt.Sprintf("%s does not support Chat UI.", rec.Harness)
 	} else if _, _, err := m.nativeConversationID(ctx, rec); err != nil {
 		if errors.Is(err, ErrInterfaceHandoffUnsupported) {
 			status.ReasonCode = "INTERFACE_HANDOFF_UNSUPPORTED"
