@@ -1625,7 +1625,9 @@ body.is-resizing-x [data-slot="resize-handle"]::after {
 }
 
 body.is-resizing-x [data-slot="sidebar-gap"],
-body.is-resizing-x [data-slot="sidebar-container"] {
+body.is-resizing-x [data-slot="sidebar-container"],
+body.is-resizing-x [data-slot="inspector-gap"],
+body.is-resizing-x [data-slot="inspector-container"] {
 	transition: none;
 }
 
@@ -2041,10 +2043,10 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	justify-content: flex-end;
 	margin-left: calc(-1 * var(--space-2));
 	transition:
-		width var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
-		margin-left var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+		width var(--session-inspector-motion-duration, 400ms)
+			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)),
+		margin-left var(--session-inspector-motion-duration, 400ms)
+			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1));
 }
 
 .session-collapsed-inspector-actions[data-state="expanded"] {
@@ -2110,7 +2112,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition-duration: var(--session-inspector-motion-duration);
 	transition-timing-function: var(
 		--session-inspector-motion-easing,
-		cubic-bezier(0.16, 1, 0.3, 1)
+		linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)
 	);
 }
 
@@ -2673,51 +2675,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Match the left sidebar's spring-like reveal while keeping direct separator
- * drags under the pointer. Both panels participate so neither edge snaps. */
-.session-split > [data-panel] {
-	transition: flex-grow var(--session-inspector-motion-duration, 320ms)
-		var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
-}
-
-.session-inspector-separator {
-	transition-duration: var(--session-inspector-motion-duration, 320ms);
-	transition-timing-function: var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
-}
-
-.session-split > .session-inspector-panel[data-panel] {
-	max-width: var(--session-inspector-max-width, 50%);
-}
-
-.session-split:has([data-separator="active"]) > [data-panel] {
-	transition: none;
-}
-
-.session-inspector-motion {
-	opacity: 1;
-	transform: translateX(0);
-	transition:
-		opacity var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
-		transform var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
-	will-change: opacity, transform;
-}
-
-.session-inspector-motion[data-motion-state="opening"],
-.session-inspector-motion[data-motion-state="closing"],
-.session-inspector-motion[data-motion-state="closed"] {
-	opacity: 0;
-	transform: translateX(12px);
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.session-split > [data-panel],
-	.session-inspector-separator,
-	.session-inspector-motion {
-		transition: none;
-	}
-}
+/* Inspector open/close uses the same Motion spring as the left sidebar
+ * (gap width + x-transform). Dragging updates --ao-inspector-w directly. */
 
 .session-inspector__topbar {
 	background: var(--bg);
@@ -3744,9 +3703,7 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 
 @media (prefers-reduced-motion: reduce) {
 	.notification-row-enter,
-	.session-inspector-motion,
-	.session-inspector__responsive-label,
-	.session-split > [data-panel] {
+	.session-inspector__responsive-label {
 		animation: none;
 		transition: none;
 	}
