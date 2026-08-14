@@ -471,6 +471,15 @@ func androidDeviceOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/android-device/sdk/use-existing", id: "useExistingAndroidSDK", tag: "android-device",
+			summary: "Adopt an Android SDK already installed on the host instead of downloading AO's own managed copy",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AndroidSDKStatusResponse{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/android-device/status", id: "getAndroidDeviceStatus", tag: "android-device",
 			summary: "Check the lifecycle state of AO's managed Android emulator process",
 			resps: []respUnit{

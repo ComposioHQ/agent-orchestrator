@@ -157,6 +157,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/android-device/sdk/use-existing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adopt an Android SDK already installed on the host instead of downloading AO's own managed copy */
+        post: operations["useExistingAndroidSDK"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/android-device/start": {
         parameters: {
             query?: never;
@@ -1772,7 +1789,10 @@ export interface components {
         };
         AndroidSDKStatusResponse: {
             components?: components["schemas"]["AndroidSDKComponentProgress"][];
+            detected?: components["schemas"]["ControllersAndroidSDKDetectedInfo"];
             error?: string;
+            /** @enum {string} */
+            source?: "ao_managed" | "external";
             /** @enum {string} */
             state: "not_installed" | "downloading" | "installed" | "failed";
         };
@@ -1857,6 +1877,12 @@ export interface components {
         };
         ContainerReapConfig: {
             disabled?: boolean;
+        };
+        ControllersAndroidSDKDetectedInfo: {
+            abi: string;
+            apiLevel: number;
+            root: string;
+            tag: string;
         };
         ControllersSecurePairingStatus: {
             active: boolean;
@@ -3420,6 +3446,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AndroidSDKStatusResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    useExistingAndroidSDK: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AndroidSDKStatusResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Implemented */

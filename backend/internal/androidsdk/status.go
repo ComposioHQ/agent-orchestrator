@@ -52,26 +52,61 @@ type Manager struct {
 }
 
 // NewManager builds a Manager whose initial state reflects whatever is
-// already on disk under toolsDir (installed if a matching version manifest
-// is present, not_installed otherwise).
+// already on disk under toolsDir: installed if AO's own managed install or
+// a previously-adopted external SDK (see UseExternal) is present and still
+// valid, not_installed otherwise. Checking through Installed (rather than
+// just the AO-managed manifest) is what makes an external SDK adoption
+// survive a daemon restart.
 func NewManager(toolsDir string) *Manager {
 	state := StateNotInstalled
-	if _, ok := readInstalledManifest(toolsDir); ok {
+	if _, ok := Installed(toolsDir); ok {
 		state = StateInstalled
 	}
 	return &Manager{toolsDir: toolsDir, state: state}
 }
 
 // Status returns the current install state and, while downloading, per
-// component progress.
+// component progress. If the state was Installed but the underlying SDK
+// (AO-managed or external) no longer validates -- most likely an adopted
+// external SDK whose Android Studio install was since removed -- this
+// self-heals the in-memory state back to StateNotInstalled rather than
+// keep reporting a source that can no longer boot.
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.state == StateInstalled {
+		if _, ok := Installed(m.toolsDir); !ok {
+			m.state = StateNotInstalled
+		}
+	}
 	s := Status{State: m.state, Error: m.lastErr}
 	for _, p := range m.progress {
 		s.Components = append(s.Components, p)
 	}
 	return s
+}
+
+// UseExternal adopts an already-detected external SDK in place of
+// downloading AO's own managed copy: records d as the installed SDK
+// (surviving future NewManager calls, see above) and transitions to
+// StateInstalled. Guarded only by m.running -- the same, sole guard
+// StartInstall uses, and provably equivalent to a full state check since
+// running and state=StateDownloading are always set and cleared together in
+// the same critical sections. Allowed from any other state (not_installed,
+// installed, or failed), matching StartInstall's own laxness about
+// overwriting a prior install.
+func (m *Manager) UseExternal(d DetectedSDK) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running {
+		return errInstallAlreadyRunning
+	}
+	if err := writeExternalSDKRecord(m.toolsDir, d); err != nil {
+		return err
+	}
+	m.state = StateInstalled
+	m.lastErr = ""
+	return nil
 }
 
 // StartInstall kicks off Install in the background and returns immediately;

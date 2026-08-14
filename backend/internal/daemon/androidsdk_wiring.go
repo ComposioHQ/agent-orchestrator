@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -108,6 +109,22 @@ func (s *androidDeviceService) Status() controllers.AndroidSDKStatusResponse {
 			Component: c.Component, BytesDone: c.BytesDone, BytesTotal: c.BytesTotal,
 		})
 	}
+	switch st.State {
+	case androidsdk.StateNotInstalled, androidsdk.StateFailed:
+		if d, ok := androidsdk.DetectExisting(s.candidateRoots(), s.plat.SysImgABI); ok {
+			resp.Detected = &controllers.AndroidSDKDetectedInfo{
+				Root: d.Root, APILevel: d.SystemImage.APILevel, Tag: d.SystemImage.Tag, ABI: d.SystemImage.ABI,
+			}
+		}
+	case androidsdk.StateInstalled:
+		if sdk, ok := androidsdk.Installed(s.toolsDir); ok {
+			resp.Source = sdk.Source
+		}
+	case androidsdk.StateDownloading:
+		// Nothing to add: downloading is unambiguous about source (always
+		// AO's own managed copy) and there's nothing useful to detect while
+		// a download is already in flight.
+	}
 	return resp
 }
 
@@ -124,6 +141,38 @@ func (s *androidDeviceService) Setup(_ context.Context, acceptLicenses bool) err
 		Tag:                   androidDefaultTag,
 		AcceptLicenses:        acceptLicenses,
 	})
+}
+
+// candidateRoots builds the OS/env-derived list of places an existing
+// Android SDK might already live, excluding AO's own managed directory --
+// otherwise an interrupted, manifest-less partial AO download could be
+// "detected" as an external SDK pointing right back at itself.
+func (s *androidDeviceService) candidateRoots() []string {
+	home, _ := os.UserHomeDir()
+	roots := androidsdk.DefaultCandidateRoots(runtime.GOOS, home, os.Getenv("LOCALAPPDATA"), os.Getenv("ANDROID_HOME"), os.Getenv("ANDROID_SDK_ROOT"))
+	return excludeRoot(roots, androidsdk.Dir(s.toolsDir))
+}
+
+func excludeRoot(roots []string, exclude string) []string {
+	var out []string
+	for _, r := range roots {
+		if r != exclude {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// UseExisting adopts an existing Android SDK found on the host in place of
+// downloading AO's own managed copy. Re-detects fresh rather than trusting
+// any client-supplied path -- the daemon only ever spawns binaries from a
+// root it validated itself.
+func (s *androidDeviceService) UseExisting(_ context.Context) error {
+	d, ok := androidsdk.DetectExisting(s.candidateRoots(), s.plat.SysImgABI)
+	if !ok {
+		return fmt.Errorf("no existing Android SDK detected")
+	}
+	return s.manager.UseExternal(d)
 }
 
 func (s *androidDeviceService) DeviceStatus() controllers.AndroidEmulatorStatusResponse {
@@ -156,23 +205,49 @@ func ensureAndroidPrefsRoot(toolsDir string) (string, error) {
 	return dir, nil
 }
 
+// androidBootPlan is the fully-resolved set of paths/config StartDevice
+// needs to write the AVD and spawn the emulator, computed from whichever SDK
+// is currently installed (AO's own managed copy, or a user-adopted external
+// one -- see androidsdk.InstalledSDK). AO's own AVD/snapshot/prefs data
+// (avdHome, avdDir, prefsRoot in StartDevice) is always derived from
+// s.toolsDir, never from plan.SDKRoot: AO never writes into a detected
+// external SDK's directory.
+type androidBootPlan struct {
+	Profile         androidemulator.DeviceProfile
+	SysImageRelPath string
+	EmulatorPath    string
+	AdbPath         string
+	SDKRoot         string
+	VersionKey      string
+}
+
+func buildAndroidBootPlan(sdk androidsdk.InstalledSDK) androidBootPlan {
+	return androidBootPlan{
+		Profile:         androidemulator.DefaultProfile(sdk.APILevel, sdk.Tag, sdk.ABI),
+		SysImageRelPath: systemImageRelPath(sdk.APILevel, sdk.Tag, sdk.ABI),
+		EmulatorPath:    filepath.Join(androidsdk.EmulatorDirIn(sdk.Root), androidemulator.EmulatorBinaryName()),
+		AdbPath:         filepath.Join(androidsdk.PlatformToolsDirIn(sdk.Root), androidsdk.AdbBinaryName()),
+		SDKRoot:         sdk.Root,
+		VersionKey:      sdk.VersionKey,
+	}
+}
+
 func (s *androidDeviceService) StartDevice(ctx context.Context) error {
-	sysImageSHA1, ok := androidsdk.InstalledSystemImageSHA1(s.toolsDir)
+	sdk, ok := androidsdk.Installed(s.toolsDir)
 	if !ok {
 		return fmt.Errorf("android SDK is not installed; run setup first")
 	}
+	plan := buildAndroidBootPlan(sdk)
 
 	avdHome := androidsdk.AVDHomeDir(s.toolsDir)
-	profile := androidemulator.DefaultProfile(androidDefaultAPILevel, androidDefaultTag, s.plat.SysImgABI)
-	sysImageRelPath := systemImageRelPath(androidDefaultAPILevel, androidDefaultTag, s.plat.SysImgABI)
-	if err := androidemulator.WriteAVDConfig(avdHome, androidAVDName, profile, sysImageRelPath); err != nil {
+	if err := androidemulator.WriteAVDConfig(avdHome, androidAVDName, plan.Profile, plan.SysImageRelPath); err != nil {
 		return fmt.Errorf("write AVD config: %w", err)
 	}
 
 	avdDir := filepath.Join(avdHome, androidAVDName+".avd")
 	if _, err := androidemulator.EnsureSnapshotValid(avdDir, androidemulator.SnapshotVersion{
-		SystemImageSHA1: sysImageSHA1,
-		ProfileHash:     fmt.Sprintf("%+v", profile),
+		VersionKey:  plan.VersionKey,
+		ProfileHash: fmt.Sprintf("%+v", plan.Profile),
 	}); err != nil {
 		return fmt.Errorf("check quick-boot snapshot validity: %w", err)
 	}
@@ -182,16 +257,14 @@ func (s *androidDeviceService) StartDevice(ctx context.Context) error {
 		return err
 	}
 
-	emulatorPath := filepath.Join(androidsdk.EmulatorDir(s.toolsDir), androidemulator.EmulatorBinaryName())
-	adbPath := filepath.Join(androidsdk.PlatformToolsDir(s.toolsDir), androidsdk.AdbBinaryName())
 	env := []string{
 		"ANDROID_AVD_HOME=" + avdHome,
-		"ANDROID_SDK_ROOT=" + androidsdk.Dir(s.toolsDir),
+		"ANDROID_SDK_ROOT=" + plan.SDKRoot,
 		"ANDROID_PREFS_ROOT=" + prefsRoot,
 	}
 
 	return s.emulatorManager.Start(ctx, androidemulator.BootConfig{
-		Command: emulatorPath,
+		Command: plan.EmulatorPath,
 		Args: []string{
 			"-avd", androidAVDName,
 			"-no-window", "-no-audio", "-no-boot-anim",
@@ -199,9 +272,9 @@ func (s *androidDeviceService) StartDevice(ctx context.Context) error {
 		},
 		Env: env,
 		AccelCheck: func(ctx context.Context) (androidemulator.AccelStatus, error) {
-			return androidemulator.CheckAcceleration(ctx, emulatorPath)
+			return androidemulator.CheckAcceleration(ctx, plan.EmulatorPath)
 		},
-		ReadyCheck:        func(ctx context.Context) (bool, error) { return adbBootCompleted(ctx, adbPath) },
+		ReadyCheck:        func(ctx context.Context) (bool, error) { return adbBootCompleted(ctx, plan.AdbPath) },
 		ReadyPollInterval: androidReadyPollInterval,
 		ReadyTimeout:      androidReadyTimeout,
 		RestartBackoff:    androidRestartBackoff,
@@ -291,7 +364,11 @@ func (s *androidDeviceService) InspectUI(ctx context.Context) (controllers.Andro
 	if st := s.emulatorManager.Status(); st.State != androidemulator.StateRunning {
 		return controllers.AndroidUINode{}, fmt.Errorf("android device is not running (state: %s)", st.State)
 	}
-	adbPath := filepath.Join(androidsdk.PlatformToolsDir(s.toolsDir), androidsdk.AdbBinaryName())
+	sdk, ok := androidsdk.Installed(s.toolsDir)
+	if !ok {
+		return controllers.AndroidUINode{}, fmt.Errorf("android SDK is not installed")
+	}
+	adbPath := filepath.Join(androidsdk.PlatformToolsDirIn(sdk.Root), androidsdk.AdbBinaryName())
 	node, err := androidemulator.UIInspect(ctx, adbPath, androidDeviceSerial)
 	if err != nil {
 		return controllers.AndroidUINode{}, err

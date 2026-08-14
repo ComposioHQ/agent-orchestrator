@@ -29,6 +29,27 @@ func TestEnvProviderReturnsAndroidHomeAndPathDirsWhenInstalled(t *testing.T) {
 	}
 }
 
+func TestEnvProviderReturnsExternalRootWhenSourceIsExternal(t *testing.T) {
+	toolsDir := t.TempDir()
+	extRoot := t.TempDir()
+	writeFakeSDKBinaries(t, extRoot)
+	writeFakeSystemImage(t, extRoot, 34, "google_apis", "x86_64")
+	d := DetectedSDK{Root: extRoot, SystemImage: DetectedSystemImage{APILevel: 34, Tag: "google_apis", ABI: "x86_64"}}
+	if err := writeExternalSDKRecord(toolsDir, d); err != nil {
+		t.Fatal(err)
+	}
+
+	vars, dirs := EnvProvider(toolsDir)()
+
+	if vars["ANDROID_HOME"] != extRoot || vars["ANDROID_SDK_ROOT"] != extRoot {
+		t.Fatalf("vars = %+v, want ANDROID_HOME/ANDROID_SDK_ROOT = %q (the external root, not AO's managed dir)", vars, extRoot)
+	}
+	wantPlatformTools, wantEmulator := PlatformToolsDirIn(extRoot), EmulatorDirIn(extRoot)
+	if len(dirs) != 2 || dirs[0] != wantPlatformTools || dirs[1] != wantEmulator {
+		t.Fatalf("dirs = %v, want [%q, %q]", dirs, wantPlatformTools, wantEmulator)
+	}
+}
+
 func TestEnvProviderRechecksAfterTTL(t *testing.T) {
 	toolsDir := t.TempDir()
 	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

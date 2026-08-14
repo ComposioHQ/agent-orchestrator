@@ -10,6 +10,11 @@ import (
 
 func androidCLIServer(t *testing.T, status androidSDKStatusDTO, setupCalls *int, setupAccepted *bool) *httptest.Server {
 	t.Helper()
+	return androidCLIServerWithUseExisting(t, status, setupCalls, setupAccepted, nil, androidSDKStatusDTO{})
+}
+
+func androidCLIServerWithUseExisting(t *testing.T, status androidSDKStatusDTO, setupCalls *int, setupAccepted *bool, useExistingCalls *int, useExistingResult androidSDKStatusDTO) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -22,6 +27,11 @@ func androidCLIServer(t *testing.T, status androidSDKStatusDTO, setupCalls *int,
 			*setupAccepted = body.AcceptLicenses
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(androidSDKStatusDTO{State: "downloading"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/android-device/sdk/use-existing":
+			if useExistingCalls != nil {
+				*useExistingCalls++
+			}
+			_ = json.NewEncoder(w).Encode(useExistingResult)
 		default:
 			http.NotFound(w, r)
 		}
@@ -67,6 +77,66 @@ func TestAndroidSDKSetupRequiresAcceptLicensesFlag(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Errorf("server was contacted %d times without --accept-licenses, want 0", calls)
+	}
+}
+
+func TestAndroidSDKStatusShowsDetected(t *testing.T) {
+	cfg := setConfigEnv(t)
+	status := androidSDKStatusDTO{
+		State:    "not_installed",
+		Detected: &androidSDKDetectedInfo{Root: "/opt/android-sdk", APILevel: 34, Tag: "google_apis", ABI: "x86_64"},
+	}
+	var calls int
+	var accepted bool
+	srv := androidCLIServer(t, status, &calls, &accepted)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	out, errOut, err := executeCLI(t, deps, "android", "sdk", "status")
+	if err != nil {
+		t.Fatalf("status err=%v stderr=%s stdout=%s", err, errOut, out)
+	}
+	if !strings.Contains(out, "detected:") || !strings.Contains(out, "/opt/android-sdk") || !strings.Contains(out, "google_apis") {
+		t.Fatalf("status output = %q, want a detected line", out)
+	}
+}
+
+func TestAndroidSDKStatusShowsSource(t *testing.T) {
+	cfg := setConfigEnv(t)
+	status := androidSDKStatusDTO{State: "installed", Source: "external"}
+	var calls int
+	var accepted bool
+	srv := androidCLIServer(t, status, &calls, &accepted)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	out, errOut, err := executeCLI(t, deps, "android", "sdk", "status")
+	if err != nil {
+		t.Fatalf("status err=%v stderr=%s stdout=%s", err, errOut, out)
+	}
+	if !strings.Contains(out, "source: external") {
+		t.Fatalf("status output = %q, want a source line", out)
+	}
+}
+
+func TestAndroidSDKUseExistingCommand(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var setupCalls, useExistingCalls int
+	var accepted bool
+	result := androidSDKStatusDTO{State: "installed", Source: "external"}
+	srv := androidCLIServerWithUseExisting(t, androidSDKStatusDTO{}, &setupCalls, &accepted, &useExistingCalls, result)
+	writeRunFileFor(t, cfg, srv)
+	deps := Deps{ProcessAlive: func(int) bool { return true }}
+
+	out, errOut, err := executeCLI(t, deps, "android", "sdk", "use-existing")
+	if err != nil {
+		t.Fatalf("use-existing err=%v stderr=%s stdout=%s", err, errOut, out)
+	}
+	if useExistingCalls != 1 {
+		t.Errorf("server was contacted %d times, want 1", useExistingCalls)
+	}
+	if !strings.Contains(out, "state: installed") || !strings.Contains(out, "source: external") {
+		t.Fatalf("use-existing output = %q", out)
 	}
 }
 

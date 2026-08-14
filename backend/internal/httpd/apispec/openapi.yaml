@@ -330,6 +330,32 @@ paths:
       summary: Check the status of AO's managed Android SDK download/install
       tags:
       - android-device
+  /api/v1/android-device/sdk/use-existing:
+    post:
+      operationId: useExistingAndroidSDK
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AndroidSDKStatusResponse'
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Adopt an Android SDK already installed on the host instead of downloading
+        AO's own managed copy
+      tags:
+      - android-device
   /api/v1/android-device/start:
     post:
       operationId: startAndroidDevice
@@ -5110,7 +5136,14 @@ components:
           items:
             $ref: '#/components/schemas/AndroidSDKComponentProgress'
           type: array
+        detected:
+          $ref: '#/components/schemas/ControllersAndroidSDKDetectedInfo'
         error:
+          type: string
+        source:
+          enum:
+          - ao_managed
+          - external
           type: string
         state:
           enum:
@@ -5326,6 +5359,22 @@ components:
       properties:
         disabled:
           type: boolean
+      type: object
+    ControllersAndroidSDKDetectedInfo:
+      properties:
+        abi:
+          type: string
+        apiLevel:
+          type: integer
+        root:
+          type: string
+        tag:
+          type: string
+      required:
+      - root
+      - apiLevel
+      - tag
+      - abi
       type: object
     ControllersSecurePairingStatus:
       properties:

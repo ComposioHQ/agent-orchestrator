@@ -42,6 +42,16 @@ export async function setupAndroidSDK(): Promise<AndroidSDKStatus> {
 	return data;
 }
 
+// Adopts the Android SDK AO already detected on the host (see
+// AndroidSDKStatus["detected"]) instead of downloading AO's own managed
+// copy. The daemon re-detects fresh server-side rather than trusting a
+// client-supplied path, so this call takes no body.
+export async function useExistingAndroidSDK(): Promise<AndroidSDKStatus> {
+	const { data, error } = await apiClient.POST("/api/v1/android-device/sdk/use-existing");
+	if (error) throw error;
+	return data;
+}
+
 export async function startAndroidEmulator(): Promise<AndroidEmulatorStatus> {
 	const { data, error } = await apiClient.POST("/api/v1/android-device/start");
 	if (error) throw error;
@@ -99,6 +109,12 @@ export function useAndroidDevice(enabled: boolean) {
 			void queryClient.invalidateQueries({ queryKey: androidSDKStatusQueryKey });
 		},
 	});
+	const useExisting = useMutation({
+		mutationFn: useExistingAndroidSDK,
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: androidSDKStatusQueryKey });
+		},
+	});
 	const start = useMutation({
 		mutationFn: startAndroidEmulator,
 		onSuccess: () => {
@@ -112,7 +128,7 @@ export function useAndroidDevice(enabled: boolean) {
 		},
 	});
 
-	return { sdk, emulator, setup, start, stop };
+	return { sdk, emulator, setup, start, stop, useExisting };
 }
 
 /** Fire-and-forget tap/swipe/key/text input, independent of useAndroidDevice's status polling. */

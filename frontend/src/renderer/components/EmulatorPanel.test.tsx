@@ -10,7 +10,9 @@ const hookState = vi.hoisted(() => ({
 	setupMutate: vi.fn(),
 	startMutate: vi.fn(),
 	stopMutate: vi.fn(),
+	useExistingMutate: vi.fn(),
 	setupError: undefined as unknown,
+	useExistingError: undefined as unknown,
 	sendInputMutate: vi.fn(),
 	frameUrl: null as string | null,
 }));
@@ -22,6 +24,7 @@ vi.mock("../hooks/useAndroidDevice", () => ({
 		setup: { mutate: hookState.setupMutate, isPending: false, error: hookState.setupError },
 		start: { mutate: hookState.startMutate, isPending: false },
 		stop: { mutate: hookState.stopMutate, isPending: false },
+		useExisting: { mutate: hookState.useExistingMutate, isPending: false, error: hookState.useExistingError },
 	}),
 	useSendAndroidInput: () => ({ mutate: hookState.sendInputMutate }),
 }));
@@ -37,10 +40,12 @@ describe("EmulatorPanel", () => {
 		hookState.sdk = { data: undefined, isLoading: false };
 		hookState.emulator = { data: undefined };
 		hookState.setupError = undefined;
+		hookState.useExistingError = undefined;
 		hookState.frameUrl = null;
 		hookState.setupMutate.mockReset();
 		hookState.startMutate.mockReset();
 		hookState.stopMutate.mockReset();
+		hookState.useExistingMutate.mockReset();
 		hookState.sendInputMutate.mockReset();
 	});
 
@@ -59,6 +64,37 @@ describe("EmulatorPanel", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Install Android SDK (~2GB)" }));
 
 		expect(hookState.setupMutate).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows both use-existing and download CTAs when an existing SDK is detected", () => {
+		hookState.sdk = {
+			data: { state: "not_installed", detected: { root: "/opt/android-sdk", apiLevel: 34, tag: "google_apis", abi: "x86_64" } },
+			isLoading: false,
+		};
+		render(<EmulatorPanel active poppedOut={false} onTogglePopOut={noop} />);
+
+		expect(screen.getByRole("button", { name: "Use existing SDK" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Download AO's own copy (~2GB) instead" })).toBeInTheDocument();
+	});
+
+	it("calls useExisting.mutate when the use-existing button is clicked", async () => {
+		hookState.sdk = {
+			data: { state: "not_installed", detected: { root: "/opt/android-sdk", apiLevel: 34, tag: "google_apis", abi: "x86_64" } },
+			isLoading: false,
+		};
+		render(<EmulatorPanel active poppedOut={false} onTogglePopOut={noop} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Use existing SDK" }));
+
+		expect(hookState.useExistingMutate).toHaveBeenCalledTimes(1);
+	});
+
+	it("shows only the download CTA when no existing SDK is detected", () => {
+		hookState.sdk = { data: { state: "not_installed" }, isLoading: false };
+		render(<EmulatorPanel active poppedOut={false} onTogglePopOut={noop} />);
+
+		expect(screen.queryByRole("button", { name: "Use existing SDK" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Install Android SDK (~2GB)" })).toBeInTheDocument();
 	});
 
 	it("shows download progress while the SDK is downloading", () => {

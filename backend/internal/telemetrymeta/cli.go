@@ -79,6 +79,7 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao android sdk":                  {},
 	"ao android sdk setup":            {},
 	"ao android sdk status":           {},
+	"ao android sdk use-existing":     {},
 	"ao android emulator":             {},
 	"ao android emulator status":      {},
 	"ao android emulator start":       {},

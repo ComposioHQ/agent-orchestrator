@@ -1773,6 +1773,16 @@ type AndroidSDKComponentProgress struct {
 	BytesTotal int64  `json:"bytesTotal"`
 }
 
+// AndroidSDKDetectedInfo describes an existing Android SDK AO found already
+// installed on the host (e.g. by Android Studio), offered as an alternative
+// to downloading AO's own managed copy.
+type AndroidSDKDetectedInfo struct {
+	Root     string `json:"root"`
+	APILevel int    `json:"apiLevel"`
+	Tag      string `json:"tag"`
+	ABI      string `json:"abi"`
+}
+
 // AndroidSDKStatusResponse reports the current state of AO's managed Android
 // SDK download/install (~2GB, downloaded only on explicit user request via
 // AndroidSDKSetupRequest — never automatically).
@@ -1780,6 +1790,13 @@ type AndroidSDKStatusResponse struct {
 	State      string                        `json:"state" enum:"not_installed,downloading,installed,failed"`
 	Components []AndroidSDKComponentProgress `json:"components,omitempty"`
 	Error      string                        `json:"error,omitempty"`
+	// Detected is populated when state is not_installed or failed and AO
+	// found a usable, existing Android SDK on the host -- an alternative to
+	// downloading AO's own copy, adopted via AndroidDeviceService.UseExisting.
+	Detected *AndroidSDKDetectedInfo `json:"detected,omitempty"`
+	// Source reports where the installed SDK came from, once state is
+	// installed.
+	Source string `json:"source,omitempty" enum:"ao_managed,external"`
 }
 
 // AndroidSDKSetupRequest triggers the Android SDK download. AcceptLicenses

@@ -20,7 +20,7 @@ func writeFakeSnapshot(t *testing.T, avdDir string) {
 func TestEnsureSnapshotValidFirstRunRecordsVersionWithoutClearing(t *testing.T) {
 	avdDir := t.TempDir()
 	writeFakeSnapshot(t, avdDir)
-	want := SnapshotVersion{SystemImageSHA1: "abc123", ProfileHash: "profile-v1"}
+	want := SnapshotVersion{VersionKey: "abc123", ProfileHash: "profile-v1"}
 
 	cleared, err := EnsureSnapshotValid(avdDir, want)
 	if err != nil {
@@ -40,7 +40,7 @@ func TestEnsureSnapshotValidFirstRunRecordsVersionWithoutClearing(t *testing.T) 
 func TestEnsureSnapshotValidSameVersionKeepsSnapshot(t *testing.T) {
 	avdDir := t.TempDir()
 	writeFakeSnapshot(t, avdDir)
-	v := SnapshotVersion{SystemImageSHA1: "abc123", ProfileHash: "profile-v1"}
+	v := SnapshotVersion{VersionKey: "abc123", ProfileHash: "profile-v1"}
 
 	if _, err := EnsureSnapshotValid(avdDir, v); err != nil {
 		t.Fatalf("first EnsureSnapshotValid: %v", err)
@@ -60,12 +60,12 @@ func TestEnsureSnapshotValidSameVersionKeepsSnapshot(t *testing.T) {
 func TestEnsureSnapshotValidVersionChangeClearsSnapshot(t *testing.T) {
 	avdDir := t.TempDir()
 	writeFakeSnapshot(t, avdDir)
-	original := SnapshotVersion{SystemImageSHA1: "abc123", ProfileHash: "profile-v1"}
+	original := SnapshotVersion{VersionKey: "abc123", ProfileHash: "profile-v1"}
 	if _, err := EnsureSnapshotValid(avdDir, original); err != nil {
 		t.Fatalf("first EnsureSnapshotValid: %v", err)
 	}
 
-	changed := SnapshotVersion{SystemImageSHA1: "def456", ProfileHash: "profile-v1"}
+	changed := SnapshotVersion{VersionKey: "def456", ProfileHash: "profile-v1"}
 	cleared, err := EnsureSnapshotValid(avdDir, changed)
 	if err != nil {
 		t.Fatalf("second EnsureSnapshotValid: %v", err)

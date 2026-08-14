@@ -18,8 +18,12 @@ const defaultQuickBootSnapshotName = "default_boot"
 // emulator could resume RAM state that doesn't match the (now different)
 // system image or device profile on disk.
 type SnapshotVersion struct {
-	SystemImageSHA1 string `json:"systemImageSha1"`
-	ProfileHash     string `json:"profileHash"`
+	// VersionKey identifies the system image in use: a real SHA1 checksum
+	// for AO's own managed downloads, or a synthetic mtime+size fingerprint
+	// for a user-adopted external SDK (see androidsdk.InstalledSDK) -- only
+	// ever compared with !=, never parsed as a real checksum.
+	VersionKey  string `json:"versionKey"`
+	ProfileHash string `json:"profileHash"`
 }
 
 func versionMarkerPath(avdDir string) string {

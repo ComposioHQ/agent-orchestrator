@@ -21,6 +21,11 @@ type AndroidDeviceService interface {
 	// Android SDK. acceptLicenses must be true or the caller should not call
 	// this at all — the controller itself rejects false before reaching here.
 	Setup(ctx context.Context, acceptLicenses bool) error
+	// UseExisting adopts an existing Android SDK already on the host (see
+	// AndroidSDKStatusResponse.Detected) instead of downloading AO's own
+	// managed copy. Re-detects fresh rather than trusting any client-supplied
+	// path.
+	UseExisting(ctx context.Context) error
 
 	// DeviceStatus reports the lifecycle state of AO's single, shared,
 	// persistent emulator process (distinct from Status, which reports SDK
@@ -60,6 +65,7 @@ type AndroidDeviceController struct {
 func (c *AndroidDeviceController) Register(r chi.Router) {
 	r.Get("/android-device/sdk/status", c.status)
 	r.Post("/android-device/sdk/setup", c.setup)
+	r.Post("/android-device/sdk/use-existing", c.useExisting)
 	r.Get("/android-device/status", c.deviceStatus)
 	r.Post("/android-device/start", c.startDevice)
 	r.Post("/android-device/stop", c.stopDevice)
@@ -97,6 +103,18 @@ func (c *AndroidDeviceController) setup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	envelope.WriteJSON(w, http.StatusAccepted, c.Svc.Status())
+}
+
+func (c *AndroidDeviceController) useExisting(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, http.MethodPost, "/api/v1/android-device/sdk/use-existing")
+		return
+	}
+	if err := c.Svc.UseExisting(r.Context()); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "ANDROID_SDK_USE_EXISTING_CONFLICT", err.Error(), nil)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, c.Svc.Status())
 }
 
 func (c *AndroidDeviceController) deviceStatus(w http.ResponseWriter, r *http.Request) {

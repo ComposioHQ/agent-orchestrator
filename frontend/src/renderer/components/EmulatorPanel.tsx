@@ -44,7 +44,7 @@ const swipeThresholdPx = 8;
 
 export function EmulatorPanel({ active, poppedOut, onTogglePopOut }: EmulatorPanelProps) {
 	const { t } = useTranslation();
-	const { sdk, emulator, setup, start, stop } = useAndroidDevice(active);
+	const { sdk, emulator, setup, start, stop, useExisting } = useAndroidDevice(active);
 	const sendInput = useSendAndroidInput();
 	const emulatorState = emulator.data?.state;
 	const streamEnabled = active && emulatorState === "running";
@@ -167,9 +167,11 @@ export function EmulatorPanel({ active, poppedOut, onTogglePopOut }: EmulatorPan
 					onPointerUp={handlePointerUp}
 					onStart={() => start.mutate()}
 					onSetup={() => setup.mutate()}
+					onUseExisting={() => useExisting.mutate()}
 					sdk={sdk.data}
 					sdkLoading={sdk.isLoading}
 					setupError={setup.error}
+					useExistingError={useExisting.error}
 					starting={start.isPending}
 				/>
 			</div>
@@ -188,9 +190,11 @@ function EmulatorBody({
 	onPointerUp,
 	onSetup,
 	onStart,
+	onUseExisting,
 	sdk,
 	sdkLoading,
 	setupError,
+	useExistingError,
 	starting,
 }: {
 	accelAvailable?: boolean;
@@ -203,9 +207,11 @@ function EmulatorBody({
 	onPointerUp: (event: ReactPointerEvent<HTMLImageElement>) => void;
 	onSetup: () => void;
 	onStart: () => void;
+	onUseExisting: () => void;
 	sdk: AndroidSDKStatus | undefined;
 	sdkLoading: boolean;
 	setupError: unknown;
+	useExistingError: unknown;
 	starting: boolean;
 }) {
 	const { t } = useTranslation();
@@ -213,12 +219,34 @@ function EmulatorBody({
 	if (sdkLoading) return <EmptyState icon={<Loader2 className="size-8 animate-spin" />} title={t("emulator.checkingSdk")} />;
 
 	if (!sdk || sdk.state === "not_installed" || sdk.state === "failed") {
+		const detected = sdk?.detected;
+		const failureError = sdk?.state === "failed" ? (sdk.error ?? t("emulator.setupFailed")) : undefined;
+		if (detected) {
+			return (
+				<EmptyState
+					icon={<Download className="size-8" />}
+					title={t("emulator.detectedTitle")}
+					body={t("emulator.detectedBody", { root: detected.root, apiLevel: detected.apiLevel, tag: detected.tag, abi: detected.abi })}
+					error={failureError ?? (useExistingError ? t("emulator.useExistingFailed") : setupError ? t("emulator.setupFailed") : undefined)}
+					action={
+						<div className="flex flex-wrap items-center justify-center gap-2">
+							<Button onClick={onUseExisting} size="sm" type="button">
+								{t("emulator.useExisting")}
+							</Button>
+							<Button onClick={onSetup} size="sm" type="button" variant="outline">
+								{t("emulator.downloadOwnCopy")}
+							</Button>
+						</div>
+					}
+				/>
+			);
+		}
 		return (
 			<EmptyState
 				icon={<Download className="size-8" />}
 				title={t("emulator.setupTitle")}
 				body={t("emulator.setupBody")}
-				error={sdk?.state === "failed" ? (sdk.error ?? t("emulator.setupFailed")) : setupError ? t("emulator.setupFailed") : undefined}
+				error={failureError ?? (setupError ? t("emulator.setupFailed") : undefined)}
 				action={<Button onClick={onSetup} size="sm" type="button">{t("emulator.setupAction")}</Button>}
 			/>
 		);

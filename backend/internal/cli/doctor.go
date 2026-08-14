@@ -320,20 +320,21 @@ func (c *commandContext) checkAndroidSDK(ctx context.Context, cfg config.Config)
 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "android-sdk",
 			Message: fmt.Sprintf("Android emulator not supported on this host (%v)", err)}
 	}
-	if _, ok := androidsdk.InstalledSystemImageSHA1(cfg.ToolsDir); !ok {
+	sdk, ok := androidsdk.Installed(cfg.ToolsDir)
+	if !ok {
 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "android-sdk",
 			Message: "not installed; run `ao android sdk setup --accept-licenses` to enable the emulator"}
 	}
-	emulatorPath := filepath.Join(androidsdk.EmulatorDir(cfg.ToolsDir), androidemulator.EmulatorBinaryName())
+	emulatorPath := filepath.Join(androidsdk.EmulatorDirIn(sdk.Root), androidemulator.EmulatorBinaryName())
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	accel, _ := androidemulator.CheckAcceleration(reqCtx, emulatorPath)
 	if !accel.Available {
 		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "android-sdk",
-			Message: fmt.Sprintf("installed at %s, but hardware acceleration is unavailable: %s", androidsdk.Dir(cfg.ToolsDir), accel.Detail)}
+			Message: fmt.Sprintf("installed (%s) at %s, but hardware acceleration is unavailable: %s", sdk.Source, sdk.Root, accel.Detail)}
 	}
 	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "android-sdk",
-		Message: fmt.Sprintf("installed at %s; hardware acceleration available", androidsdk.Dir(cfg.ToolsDir))}
+		Message: fmt.Sprintf("installed (%s) at %s; hardware acceleration available", sdk.Source, sdk.Root)}
 }
 
 func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {

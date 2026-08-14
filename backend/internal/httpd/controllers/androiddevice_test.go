@@ -19,10 +19,12 @@ import (
 )
 
 type fakeAndroidDeviceService struct {
-	status       controllers.AndroidSDKStatusResponse
-	setupErr     error
-	setupCalls   int
-	lastAccepted bool
+	status           controllers.AndroidSDKStatusResponse
+	setupErr         error
+	setupCalls       int
+	lastAccepted     bool
+	useExistingErr   error
+	useExistingCalls int
 
 	deviceStatus controllers.AndroidEmulatorStatusResponse
 	startErr     error
@@ -57,6 +59,11 @@ func (f *fakeAndroidDeviceService) Setup(_ context.Context, acceptLicenses bool)
 	f.setupCalls++
 	f.lastAccepted = acceptLicenses
 	return f.setupErr
+}
+
+func (f *fakeAndroidDeviceService) UseExisting(_ context.Context) error {
+	f.useExistingCalls++
+	return f.useExistingErr
 }
 
 func (f *fakeAndroidDeviceService) DeviceStatus() controllers.AndroidEmulatorStatusResponse {
@@ -104,6 +111,58 @@ func TestAndroidDeviceStatus(t *testing.T) {
 	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/android-device/sdk/status", "")
 	if status != http.StatusOK || !containsAll(body, `"state":"not_installed"`) {
 		t.Fatalf("status = %d body=%s", status, body)
+	}
+}
+
+func TestAndroidDeviceStatusIncludesDetectedAndSource(t *testing.T) {
+	svc := &fakeAndroidDeviceService{status: controllers.AndroidSDKStatusResponse{
+		State:    "not_installed",
+		Detected: &controllers.AndroidSDKDetectedInfo{Root: "/opt/android-sdk", APILevel: 34, Tag: "google_apis", ABI: "x86_64"},
+	}}
+	srv := androidDeviceServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/android-device/sdk/status", "")
+	if status != http.StatusOK || !containsAll(body, `"detected"`, `"root":"/opt/android-sdk"`, `"apiLevel":34`) {
+		t.Fatalf("status = %d body=%s, want a serialized detected field", status, body)
+	}
+
+	svc2 := &fakeAndroidDeviceService{status: controllers.AndroidSDKStatusResponse{State: "installed", Source: "external"}}
+	srv2 := androidDeviceServer(t, svc2)
+	body2, status2, _ := doRequest(t, srv2, http.MethodGet, "/api/v1/android-device/sdk/status", "")
+	if status2 != http.StatusOK || !containsAll(body2, `"source":"external"`) {
+		t.Fatalf("status = %d body=%s, want a serialized source field", status2, body2)
+	}
+}
+
+func TestAndroidDeviceUseExisting(t *testing.T) {
+	svc := &fakeAndroidDeviceService{status: controllers.AndroidSDKStatusResponse{State: "installed", Source: "external"}}
+	srv := androidDeviceServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/android-device/sdk/use-existing", "")
+	if status != http.StatusOK || !containsAll(body, `"state":"installed"`, `"source":"external"`) {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if svc.useExistingCalls != 1 {
+		t.Errorf("UseExisting calls = %d, want 1", svc.useExistingCalls)
+	}
+}
+
+func TestAndroidDeviceUseExistingPropagatesServiceError(t *testing.T) {
+	svc := &fakeAndroidDeviceService{useExistingErr: errors.New("no existing Android SDK detected")}
+	srv := androidDeviceServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/android-device/sdk/use-existing", "")
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d body=%s, want 409 Conflict", status, body)
+	}
+}
+
+func TestAndroidDeviceUseExistingNilServiceReturns501(t *testing.T) {
+	srv := androidDeviceServer(t, nil)
+
+	_, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/android-device/sdk/use-existing", "")
+	if status != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501", status)
 	}
 }
 

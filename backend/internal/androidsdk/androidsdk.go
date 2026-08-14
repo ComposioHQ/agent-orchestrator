@@ -16,12 +16,26 @@ func Dir(toolsDir string) string {
 // PlatformToolsDir is where the unzipped platform-tools package (adb, etc.)
 // lives.
 func PlatformToolsDir(toolsDir string) string {
-	return filepath.Join(Dir(toolsDir), "platform-tools")
+	return PlatformToolsDirIn(Dir(toolsDir))
 }
 
 // EmulatorDir is where the unzipped emulator package lives.
 func EmulatorDir(toolsDir string) string {
-	return filepath.Join(Dir(toolsDir), "emulator")
+	return EmulatorDirIn(Dir(toolsDir))
+}
+
+// PlatformToolsDirIn is where the platform-tools package lives directly
+// under an SDK root — either AO's own managed root (Dir(toolsDir)) or a
+// detected external SDK root, which is already a root and must not be
+// passed through Dir() again.
+func PlatformToolsDirIn(root string) string {
+	return filepath.Join(root, "platform-tools")
+}
+
+// EmulatorDirIn is where the emulator package lives directly under an SDK
+// root. See PlatformToolsDirIn.
+func EmulatorDirIn(root string) string {
+	return filepath.Join(root, "emulator")
 }
 
 // SystemImageDir is where the unzipped system image for the given API level,

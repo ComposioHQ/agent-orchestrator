@@ -3,6 +3,7 @@ package androidsdk
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -37,6 +38,87 @@ func TestNewManagerInstalledWhenManifestPresent(t *testing.T) {
 	m := NewManager(toolsDir)
 	if got := m.Status().State; got != StateInstalled {
 		t.Errorf("State = %q, want %q", got, StateInstalled)
+	}
+}
+
+func TestNewManagerInstalledFromExternalMarker(t *testing.T) {
+	toolsDir := t.TempDir()
+	extRoot := t.TempDir()
+	writeFakeSDKBinaries(t, extRoot)
+	writeFakeSystemImage(t, extRoot, 34, "google_apis", "x86_64")
+	d := DetectedSDK{Root: extRoot, SystemImage: DetectedSystemImage{APILevel: 34, Tag: "google_apis", ABI: "x86_64"}}
+	if err := writeExternalSDKRecord(toolsDir, d); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(toolsDir)
+	if got := m.Status().State; got != StateInstalled {
+		t.Errorf("State = %q, want %q (external adoption must survive a daemon restart)", got, StateInstalled)
+	}
+}
+
+func TestUseExternalTransitionsToInstalled(t *testing.T) {
+	toolsDir := t.TempDir()
+	extRoot := t.TempDir()
+	writeFakeSDKBinaries(t, extRoot)
+	writeFakeSystemImage(t, extRoot, 34, "google_apis", "x86_64")
+	d := DetectedSDK{Root: extRoot, SystemImage: DetectedSystemImage{APILevel: 34, Tag: "google_apis", ABI: "x86_64"}}
+
+	m := NewManager(toolsDir)
+	if err := m.UseExternal(d); err != nil {
+		t.Fatalf("UseExternal: %v", err)
+	}
+	if got := m.Status().State; got != StateInstalled {
+		t.Errorf("State = %q, want %q", got, StateInstalled)
+	}
+
+	sdk, ok := Installed(toolsDir)
+	if !ok || sdk.Source != SourceExternal || sdk.Root != extRoot {
+		t.Errorf("Installed = %+v (ok=%v), want Source=%q Root=%q", sdk, ok, SourceExternal, extRoot)
+	}
+}
+
+func TestUseExternalRejectsWhileInstallRunning(t *testing.T) {
+	srv, cfg, _, _ := installTestServer(t)
+	defer srv.Close()
+
+	m := NewManager(cfg.ToolsDir)
+	if err := m.StartInstall(cfg); err != nil {
+		t.Fatalf("StartInstall: %v", err)
+	}
+
+	extRoot := t.TempDir()
+	writeFakeSDKBinaries(t, extRoot)
+	writeFakeSystemImage(t, extRoot, 34, "google_apis", "x86_64")
+	d := DetectedSDK{Root: extRoot, SystemImage: DetectedSystemImage{APILevel: 34, Tag: "google_apis", ABI: "x86_64"}}
+	if err := m.UseExternal(d); err == nil {
+		t.Error("UseExternal while an install is running: want an error, got nil")
+	}
+
+	waitForState(t, m, StateInstalled)
+}
+
+func TestStatusSelfHealsWhenExternalSDKVanishes(t *testing.T) {
+	toolsDir := t.TempDir()
+	extRoot := t.TempDir()
+	writeFakeSDKBinaries(t, extRoot)
+	writeFakeSystemImage(t, extRoot, 34, "google_apis", "x86_64")
+	d := DetectedSDK{Root: extRoot, SystemImage: DetectedSystemImage{APILevel: 34, Tag: "google_apis", ABI: "x86_64"}}
+
+	m := NewManager(toolsDir)
+	if err := m.UseExternal(d); err != nil {
+		t.Fatalf("UseExternal: %v", err)
+	}
+	if got := m.Status().State; got != StateInstalled {
+		t.Fatalf("State = %q, want %q before removing the external SDK", got, StateInstalled)
+	}
+
+	if err := os.RemoveAll(extRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := m.Status().State; got != StateNotInstalled {
+		t.Errorf("State = %q, want %q after the external SDK vanished from disk", got, StateNotInstalled)
 	}
 }
 
