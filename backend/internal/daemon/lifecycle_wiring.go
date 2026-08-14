@@ -128,6 +128,10 @@ type sessionLifecycle interface {
 	RestoreAll(ctx context.Context) error
 	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	// FinalizeCrashedSession releases a crash-terminated session's external
+	// resources (capture work, free the worktree/branch) after the reaper
+	// records its death; late-bound into the LCM like Kill.
+	FinalizeCrashedSession(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service

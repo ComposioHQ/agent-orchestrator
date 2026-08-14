@@ -1628,7 +1628,25 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: workspace: %w", id, err)
 	}
-	return m.relaunchRestoredSession(ctx, rec, project, ws)
+	result, err := m.relaunchRestoredSession(ctx, rec, project, ws)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	// One-shot marker consumption, mirroring RestoreAll: the preserve ref was
+	// replayed above, so a stale marker must not survive to resurrect this
+	// session again at the next boot (workspace projects flip their rows to
+	// "active" inside restoreSessionWorkspace instead).
+	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		if rows, listErr := m.store.ListSessionWorktrees(ctx, id); listErr == nil && len(rows) > 0 {
+			if markErr := m.markSessionWorktreesActive(ctx, rows); markErr != nil {
+				m.logger.Warn("restore: marking worktrees active failed", "sessionID", id, "error", markErr)
+			}
+			if delErr := m.store.DeleteSessionWorktrees(ctx, id); delErr != nil {
+				m.logger.Warn("restore: delete restore marker failed", "sessionID", id, "error", delErr)
+			}
+		}
+	}
+	return result, nil
 }
 
 func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (RestoreResult, error) {
@@ -1988,6 +2006,66 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	return nil
 }
 
+// FinalizeCrashedSession releases the external resources of a session the
+// Lifecycle Manager terminated after observing its runtime die (crash, OOM
+// kill, or an external tmux kill — never a user Kill, which owns its own
+// teardown). Before this hook existed, reaper-observed death only flipped
+// is_terminated: the worktree stayed on disk and kept its branch checked out,
+// so a dead orchestrator wedged the canonical orchestrator branch and the only
+// way to spawn a replacement was deleting the project (#3921), while crashed
+// workers accumulated as orphaned worktrees (#2811-adjacent, #3402).
+//
+// It runs the same capture-then-destroy sequence a daemon shutdown uses:
+// uncommitted work is preserved at refs/ao/preserved/<id> and a
+// session_worktrees marker is recorded before the worktree is force-removed.
+// The session therefore stays restorable — Restore recreates the worktree and
+// replays the preserved ref — and its branch is freed for a replacement spawn.
+func (m *Manager) FinalizeCrashedSession(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return fmt.Errorf("finalize crashed %s: %w", id, err)
+	}
+	if !ok || !rec.IsTerminated {
+		// Only the LCM's terminal decision reaches here; a session that revived
+		// (or vanished) in the meantime keeps its resources.
+		return nil
+	}
+	m.stopPreviewBestEffort(ctx, id)
+	m.destroyBrowserBestEffort(ctx, id)
+	// Destroy the runtime first: it is idempotent for an already-dead session,
+	// and when the tmux session half-survived the crash this also reaps the
+	// pane's orphaned child processes (#2523).
+	if handle := runtimeHandle(rec.Metadata); handle.ID != "" {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			m.logger.Warn("finalize crashed: runtime destroy failed", "sessionID", id, "error", err)
+		}
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return fmt.Errorf("finalize crashed %s: %w", id, err)
+	}
+	// Scratch sessions are branchless and their workspace holds the user's only
+	// copy of the work — mirror reconcileLive and leave the directory alone.
+	if project.Kind.WithDefault() == domain.ProjectKindScratch ||
+		rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+		m.cleanupSystemPromptDir(id)
+		return nil
+	}
+	if err := m.saveAndTeardownOne(ctx, rec, false); err != nil {
+		if errors.Is(err, ports.ErrWorkspaceStale) {
+			// The worktree is already gone (torn down by an earlier pass or by
+			// hand): nothing left to capture or destroy.
+			m.cleanupSystemPromptDir(id)
+			return nil
+		}
+		// Leave the worktree in place: the periodic terminal-resource GC retries
+		// the teardown with durable bookkeeping (#3402).
+		return fmt.Errorf("finalize crashed %s: %w", id, err)
+	}
+	m.cleanupSystemPromptDir(id)
+	return nil
+}
+
 // reconcileLive handles a single non-terminated session on boot. If its runtime
 // session is still alive (tmux is the persistence layer, so it survives a daemon
 // crash) we adopt it: a no-op, the agent keeps running. If the runtime is gone,
@@ -2152,8 +2230,20 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("restore-all: list sessions: %w", err)
 	}
+	// The concurrency cap governs live workers however they come to life: a
+	// boot restoring dozens of shutdown-saved (or crash-finalized) workers at
+	// once would recreate the exact OOM pile-up the spawn cap exists to prevent
+	// (#3921). Workers over the cap keep their restore markers and stay
+	// terminated — a later boot or a manual Restore picks them up once slots
+	// free. Orchestrators are exempt, matching spawn admission.
+	live := countNonTerminated(recs)
 	for _, rec := range recs {
 		if !rec.IsTerminated {
+			continue
+		}
+		if m.maxConcurrentSessions > 0 && rec.Kind == domain.KindWorker && live >= m.maxConcurrentSessions {
+			m.logger.Warn("restore-all: concurrency cap reached; leaving session terminated with its restore marker intact",
+				"sessionID", rec.ID, "live", live, "cap", m.maxConcurrentSessions)
 			continue
 		}
 		// Check the shutdown-saved marker: is there a session_worktrees row?
@@ -2254,6 +2344,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			}
 			continue
 		}
+		live++
 
 		// One-shot: drop the consumed marker so it never outlives one restart
 		// (#2319). A still-live session re-acquires it at the next quit.
@@ -2302,7 +2393,7 @@ func (m *Manager) markSessionWorktreesActive(ctx context.Context, rows []domain.
 
 func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.ProjectRecord, rec domain.SessionRecord) (ports.WorkspaceInfo, error) {
 	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
-		return m.workspace.Restore(ctx, ports.WorkspaceConfig{
+		ws, err := m.workspace.Restore(ctx, ports.WorkspaceConfig{
 			ProjectID:     rec.ProjectID,
 			SessionID:     rec.ID,
 			Kind:          rec.Kind,
@@ -2310,6 +2401,34 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 			Branch:        rec.Metadata.Branch,
 			Path:          rec.Metadata.WorkspacePath,
 		})
+		if err != nil {
+			return ports.WorkspaceInfo{}, err
+		}
+		// A teardown that captured uncommitted work (daemon shutdown recovery or
+		// crashed-session finalization) left its preserve ref on the session's
+		// worktree marker. Replay it so a user-driven Restore gets the agent's
+		// in-flight work back, exactly like the boot-time RestoreAll pass; a
+		// conflict is logged and the relaunch proceeds with markers in place.
+		rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
+		if err != nil {
+			m.logger.Warn("restore: list worktree markers failed; skipping preserved-work replay", "sessionID", rec.ID, "error", err)
+			return ws, nil
+		}
+		for _, row := range rows {
+			if row.PreservedRef == "" {
+				continue
+			}
+			if applyErr := m.workspace.ApplyPreserved(ctx, ws, row.PreservedRef); applyErr != nil {
+				if errors.Is(applyErr, ports.ErrPreservedConflict) {
+					m.logger.Warn("restore: apply preserved produced conflicts; agent relaunched with conflict markers in place",
+						"sessionID", rec.ID, "ref", row.PreservedRef, "error", applyErr)
+				} else {
+					m.logger.Error("restore: apply preserved failed", "sessionID", rec.ID, "error", applyErr)
+				}
+			}
+			break
+		}
+		return ws, nil
 	}
 	rows, err := m.workspaceProjectRestoreRows(ctx, project, rec)
 	if err != nil {
