@@ -1175,6 +1175,188 @@ func TestSendWhileBusyQueuesUntilTheTurnEnds(t *testing.T) {
 	}
 }
 
+// Codex can start nested turns while the root turn is still working. A child
+// completion is not conversation quiescence: dispatching queued automation at
+// that point injects it into the still-running root and leaves the AO turn minted
+// for that automation with no matching provider lifecycle.
+func TestNestedTurnCompletionDoesNotDrainQueueWhilePrimaryTurnRuns(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "root work", ClientMessageID: "c1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("send root turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+		ProviderConversationID: "thread-1",
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["root work"] == domain.TurnStateRunning
+	})
+
+	queued, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued automation", ClientMessageID: "c2", Origin: domain.MessageOriginAutomation,
+	})
+	if err != nil {
+		t.Fatalf("queue automation: %v", err)
+	}
+	if queued.State != domain.TurnStateQueued {
+		t.Fatalf("automation state = %q, want queued", queued.State)
+	}
+
+	h.conv.emit(
+		ports.ChatEvent{
+			Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-child-1",
+			ProviderConversationID: "child-thread-1",
+		},
+		ports.ChatEvent{
+			Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-child-1",
+			ProviderConversationID: "child-thread-1", TurnState: domain.TurnStateCompleted,
+		},
+		// This later root event is a deterministic barrier: once projected, the
+		// child's afterProject hook (including any incorrect drain) has finished.
+		ports.ChatEvent{
+			Kind: ports.ChatEventActivityCompleted, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: "root-still-working", ActivityKind: domain.ActivityKindCommand,
+			ActivityStatus: domain.ActivityStatusCompleted, Summary: "root continued",
+		},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		for _, activity := range s.Activities {
+			if activity.ProviderItemID == "root-still-working" {
+				return true
+			}
+		}
+		return false
+	})
+	states := turnStateByText(t, snapshot)
+	if states["queued automation"] != domain.TurnStateQueued {
+		t.Errorf("automation state after child completion = %q, want queued", states["queued automation"])
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; child completion must not drain queued automation", got)
+	}
+	if got := h.ctrl.State(); got != ports.ChatControllerBusy {
+		t.Errorf("controller state after child completion = %q, want busy", got)
+	}
+	for _, signal := range h.activity.snapshot() {
+		if signal.State == domain.ActivityIdle {
+			t.Fatalf("child completion reported the session idle: %+v", signal)
+		}
+	}
+
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		ProviderConversationID: "thread-1", TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["queued automation"] == domain.TurnStateRunning
+	})
+	if got := h.conv.sentTexts(); len(got) != 2 || got[1] != "queued automation" {
+		t.Fatalf("provider received %v, want automation only after root completion", got)
+	}
+	idleReported := false
+	for _, signal := range h.activity.snapshot() {
+		idleReported = idleReported || signal.State == domain.ActivityIdle
+	}
+	if !idleReported {
+		t.Fatal("root completion did not report the session idle")
+	}
+}
+
+// A Chat -> TUI handoff waits for the root turn and everything already queued
+// behind it. Nested Codex lifecycle must not make that drain look complete, nor
+// may it release the accepted queue into a root turn that is still running.
+func TestChatHandoffDrainWaitsForRootAfterNestedTurnCompletes(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "root work", ClientMessageID: "handoff-nested-1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("send root turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1",
+		ProviderConversationID: "thread-1",
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["root work"] == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "accepted queue", ClientMessageID: "handoff-nested-2", Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatalf("queue accepted turn: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain)
+	}()
+
+	h.conv.emit(
+		ports.ChatEvent{
+			Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-child-1",
+			ProviderConversationID: "child-thread-1",
+		},
+		ports.ChatEvent{
+			Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-child-1",
+			ProviderConversationID: "child-thread-1", TurnState: domain.TurnStateCompleted,
+		},
+		ports.ChatEvent{
+			Kind: ports.ChatEventActivityCompleted, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: "handoff-root-still-working", ActivityKind: domain.ActivityKindCommand,
+			ActivityStatus: domain.ActivityStatusCompleted, Summary: "root continued",
+		},
+	)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		for _, activity := range s.Activities {
+			if activity.ProviderItemID == "handoff-root-still-working" {
+				return true
+			}
+		}
+		return false
+	})
+
+	select {
+	case err := <-done:
+		t.Fatalf("handoff finished after child completion while root was active: %v", err)
+	default:
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; nested completion released the accepted queue", got)
+	}
+
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		ProviderConversationID: "thread-1", TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["accepted queue"] == domain.TurnStateRunning
+	})
+	select {
+	case err := <-done:
+		t.Fatalf("handoff finished before its accepted queue completed: %v", err)
+	default:
+	}
+
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-2",
+		ProviderConversationID: "thread-1", TurnState: domain.TurnStateCompleted,
+	})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("prepare handoff: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("handoff did not become quiescent after the root and accepted queue completed")
+	}
+}
+
 // Stop is a brake. Releasing the queue when the user presses it would be the
 // opposite of what the button says, so anything waiting is cancelled with the turn.
 func TestInterruptCancelsWhatIsQueuedBehindTheTurn(t *testing.T) {

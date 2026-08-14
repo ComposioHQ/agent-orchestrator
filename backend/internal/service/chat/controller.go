@@ -283,7 +283,7 @@ func (c *Controller) importNativeHistory(
 		if event.ProviderEventID == "" {
 			return fmt.Errorf("native history event %s has no stable identity", event.Kind)
 		}
-		if _, err := c.projectEvent(ctx, event); err != nil {
+		if _, _, err := c.projectEvent(ctx, event); err != nil {
 			return fmt.Errorf("import native history event %s: %w", event.Kind, err)
 		}
 	}
@@ -818,7 +818,13 @@ func (c *Controller) dispatch(
 func (c *Controller) drain(ctx context.Context) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
+	c.drainLocked(ctx)
+}
 
+// drainLocked is drain with the dispatch lock already held. Turn completion
+// uses it so committing the completion, clearing primary ownership, and claiming
+// the next queued request are one serialized lifecycle transition.
+func (c *Controller) drainLocked(ctx context.Context) {
 	c.mu.Lock()
 	cutoff := c.cancelQueuedAt
 	c.cancelQueuedAt = time.Time{}
@@ -966,6 +972,11 @@ func (c *Controller) BeginHandoff(
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		// Quiescence is a dispatch boundary, not merely "pendingTurnID is empty".
+		// dispatch marks the durable row running before it installs pendingTurnID;
+		// without sendMu a handoff can observe that narrow middle state as neither
+		// queued nor active and start the target controller too early.
+		c.sendMu.Lock()
 		c.mu.Lock()
 		busy := c.pendingTurnID != ""
 		c.mu.Unlock()
@@ -973,14 +984,17 @@ func (c *Controller) BeginHandoff(
 			_, err := c.store.NextQueuedTurn(ctx, c.conversation.ID)
 			switch {
 			case errors.Is(err, domain.ErrNoQueuedTurn):
+				c.sendMu.Unlock()
 				return nil
 			case err != nil:
+				c.sendMu.Unlock()
 				c.AbortHandoff()
 				return fmt.Errorf("check queued turns before handoff: %w", err)
 			case policy == domain.SessionInterfaceTransitionDrain:
-				c.drain(ctx)
+				c.drainLocked(ctx)
 			}
 		}
+		c.sendMu.Unlock()
 		select {
 		case <-ctx.Done():
 			c.AbortHandoff()
@@ -1301,17 +1315,25 @@ func (c *Controller) project() {
 	ctx := context.WithoutCancel(context.Background())
 
 	for event := range c.conv.Events() {
-		projected, err := c.projectEvent(ctx, event)
+		// A lifecycle event and a concurrent Send must agree on whether the root
+		// conversation is busy. Holding the same lock Send/dispatch use closes the
+		// window between the durable projection and the in-memory ownership update.
+		lifecycle := event.Kind == ports.ChatEventTurnStarted || event.Kind == ports.ChatEventTurnCompleted
+		if lifecycle {
+			c.sendMu.Lock()
+		}
+		projected, primaryTurn, err := c.projectEvent(ctx, event)
 		if err != nil {
 			// A projection failure must not kill the provider stream. The store
 			// rolls the archive back with its projection, so durable state remains
 			// internally consistent and a later provider replay may retry it.
 			c.log.Error("failed to project chat event",
 				"session", c.sessionID, "kind", event.Kind, "error", err)
-			continue
+		} else if projected {
+			c.afterProject(ctx, event, primaryTurn)
 		}
-		if projected {
-			c.afterProject(ctx, event)
+		if lifecycle {
+			c.sendMu.Unlock()
 		}
 	}
 
@@ -1348,31 +1370,32 @@ func (c *Controller) project() {
 
 // projectEvent archives one normalized provider event and applies its durable
 // projection in the same SQLite transaction.
-func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (bool, error) {
+func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (bool, bool, error) {
 	record := map[string]any{
-		"kind":            event.Kind,
-		"providerEventId": event.ProviderEventID,
-		"providerTurnId":  event.ProviderTurnID,
-		"providerItemId":  event.ProviderItemID,
-		"clientMessageId": event.ClientMessageID,
-		"turnState":       event.TurnState,
-		"delta":           event.Delta,
-		"text":            event.Text,
-		"activityKind":    event.ActivityKind,
-		"activityStatus":  event.ActivityStatus,
-		"summary":         event.Summary,
-		"detail":          json.RawMessage(nonEmptyJSON(event.Detail)),
-		"requestId":       event.RequestID,
-		"decisions":       event.Decisions,
-		"controllerState": event.ControllerState,
-		"usage":           event.Usage,
-		"rateLimits":      event.RateLimits,
-		"title":           event.Title,
-		"plan":            event.Plan,
-		"reroute":         event.Reroute,
-		"account":         event.Account,
-		"threadState":     event.ThreadState,
-		"mcpServers":      event.MCPServers,
+		"kind":                   event.Kind,
+		"providerEventId":        event.ProviderEventID,
+		"providerTurnId":         event.ProviderTurnID,
+		"providerConversationId": event.ProviderConversationID,
+		"providerItemId":         event.ProviderItemID,
+		"clientMessageId":        event.ClientMessageID,
+		"turnState":              event.TurnState,
+		"delta":                  event.Delta,
+		"text":                   event.Text,
+		"activityKind":           event.ActivityKind,
+		"activityStatus":         event.ActivityStatus,
+		"summary":                event.Summary,
+		"detail":                 json.RawMessage(nonEmptyJSON(event.Detail)),
+		"requestId":              event.RequestID,
+		"decisions":              event.Decisions,
+		"controllerState":        event.ControllerState,
+		"usage":                  event.Usage,
+		"rateLimits":             event.RateLimits,
+		"title":                  event.Title,
+		"plan":                   event.Plan,
+		"reroute":                event.Reroute,
+		"account":                event.Account,
+		"threadState":            event.ThreadState,
+		"mcpServers":             event.MCPServers,
 	}
 	record["diff"] = event.Diff
 	if event.Input != nil {
@@ -1383,11 +1406,55 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
-		return false, fmt.Errorf("encode provider event archive: %w", err)
+		return false, false, fmt.Errorf("encode provider event archive: %w", err)
 	}
-	return c.store.ProjectProviderEvent(ctx, c.conversation.ID, c.sessionID,
+	projected, err := c.store.ProjectProviderEvent(ctx, c.conversation.ID, c.sessionID,
 		c.generation, event.ProviderEventID, string(event.Kind), string(payload), c.now(),
 		func(txCtx context.Context) error { return c.apply(txCtx, event) })
+	if err != nil || !projected {
+		return projected, false, err
+	}
+	return true, c.applyCommittedTurnLifecycle(event), nil
+}
+
+// applyCommittedTurnLifecycle updates the controller's volatile ownership only
+// after the matching durable projection commits. Codex streams events for nested
+// child threads over the root connection, so only events from the conversation AO
+// opened are allowed to claim or release the primary turn.
+func (c *Controller) applyCommittedTurnLifecycle(event ports.ChatEvent) bool {
+	if event.Kind != ports.ChatEventTurnStarted && event.Kind != ports.ChatEventTurnCompleted {
+		return false
+	}
+	if event.ProviderConversationID != "" && event.ProviderConversationID != c.conv.ProviderConversationID() {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch event.Kind {
+	case ports.ChatEventTurnStarted:
+		// AO serializes root dispatch. A different turn id while one is pending is
+		// auxiliary provider work, even for a protocol that cannot name its thread.
+		if c.pendingTurnID != "" && c.pendingTurnID != event.ProviderTurnID {
+			return false
+		}
+		c.pendingTurnID = event.ProviderTurnID
+		c.ackedTurnID = event.ProviderTurnID
+		c.state = ports.ChatControllerBusy
+		return true
+	case ports.ChatEventTurnCompleted:
+		if c.pendingTurnID != event.ProviderTurnID {
+			return false
+		}
+		c.pendingTurnID = ""
+		if c.ackedTurnID == event.ProviderTurnID {
+			c.ackedTurnID = ""
+		}
+		c.state = ports.ChatControllerReady
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
@@ -1395,13 +1462,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 
 	switch event.Kind {
 	case ports.ChatEventTurnStarted:
-		c.mu.Lock()
-		c.pendingTurnID = event.ProviderTurnID
-		// The provider has confirmed this turn, so it will accept an interrupt for
-		// it. Until this arrives, it will not.
-		c.ackedTurnID = event.ProviderTurnID
-		c.state = ports.ChatControllerBusy
-		c.mu.Unlock()
 		// A turn AO dispatched already has a row, bound in dispatch. This covers the
 		// turn AO did NOT dispatch: a compaction, or work the provider resumed from its
 		// own history. Adopting it is what keeps every item it emits correlated, and
@@ -1430,15 +1490,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			}, now)
 
 	case ports.ChatEventTurnCompleted:
-		c.mu.Lock()
-		if c.pendingTurnID == event.ProviderTurnID {
-			c.pendingTurnID = ""
-		}
-		if c.ackedTurnID == event.ProviderTurnID {
-			c.ackedTurnID = ""
-		}
-		c.state = ports.ChatControllerReady
-		c.mu.Unlock()
 		message := ""
 		if event.Err != nil {
 			message = event.Err.Error()
@@ -1776,15 +1827,20 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 // archive/projection transaction. Lifecycle writes touch the sessions table and
 // draining may call the provider, so either one inside the store transaction
 // would hold the single writer connection across another subsystem.
-func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent) {
+func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent, primaryTurn bool) {
 	now := c.now()
 	switch event.Kind {
 	case ports.ChatEventTurnStarted:
-		c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
+		if primaryTurn {
+			c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
+		}
 	case ports.ChatEventTurnCompleted:
+		if !primaryTurn {
+			return
+		}
 		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.completed", now)
 		// The settled turn is committed before another queued turn can dispatch.
-		c.drain(ctx)
+		c.drainLocked(ctx)
 	case ports.ChatEventApprovalRequested:
 		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
 	case ports.ChatEventInputRequested:
