@@ -15,7 +15,7 @@
  * only the grouping of the triggers changed.
  */
 
-import { Fragment } from "react";
+import { Fragment, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { ChevronRight, Shuffle } from "lucide-react";
 import {
 	DropdownMenu,
@@ -222,6 +222,28 @@ function ModelEffortPicker({
 	rerouted?: string;
 	chosenLabel: string;
 }) {
+	const modelScrollRef = useRef<HTMLDivElement>(null);
+	const [modelSubOpen, setModelSubOpen] = useState(false);
+	const [canScrollDown, setCanScrollDown] = useState(false);
+	const updateScrollCue = useCallback(() => {
+		const element = modelScrollRef.current;
+		setCanScrollDown(
+			Boolean(element && element.scrollHeight - element.scrollTop > element.clientHeight + 1),
+		);
+	}, []);
+	useLayoutEffect(() => {
+		if (!modelSubOpen) {
+			setCanScrollDown(false);
+			return;
+		}
+		updateScrollCue();
+		const element = modelScrollRef.current;
+		if (!element || typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(updateScrollCue);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [modelSubOpen, updateScrollCue, models.length, reroute]);
+
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild disabled={disabled}>
@@ -249,7 +271,7 @@ function ModelEffortPicker({
 				</SettingsMenuTrigger>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent align="start" side="top" className={SETTINGS_MENU_SURFACE}>
-				<DropdownMenuSub>
+				<DropdownMenuSub onOpenChange={setModelSubOpen}>
 					<DropdownMenuSubTrigger
 						className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
 					>
@@ -259,9 +281,16 @@ function ModelEffortPicker({
 							<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
 						</span>
 					</DropdownMenuSubTrigger>
-					<DropdownMenuSubContent className={SETTINGS_MENU_SURFACE}>
+					{/* Scroll on an inner strip: the surface utility caps height but wheel
+					    events do not reliably reach an outer overflow on nested submenus. */}
+					<DropdownMenuSubContent
+						className={cn(SETTINGS_MENU_SURFACE, "max-h-select-menu-max! overflow-hidden!")}
+					>
 						<DropdownMenuLabel
-							className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
+							className={cn(
+								SETTINGS_MENU_LABEL,
+								"flex shrink-0 items-baseline justify-between gap-2",
+							)}
 						>
 							<span>Model</span>
 							<span className="text-[11px] font-normal text-muted-foreground">
@@ -272,47 +301,61 @@ function ModelEffortPicker({
 						    goes to change the model, and it is where the fact that their last
 						    choice was overridden matters most. */}
 						{reroute ? (
-							<p className="px-3 pb-1.5 text-[11px] leading-snug text-warning">
+							<p className="shrink-0 px-3 pb-1.5 text-[11px] leading-snug text-warning">
 								The provider answered with {rerouted} instead of{" "}
 								{reroute.fromModel ?? chosenLabel}
 								{reroute.reason ? ` — ${reroute.reason}` : "."}
 							</p>
 						) : null}
-						{models.map((model) => (
-							<DropdownMenuItem
-								key={model.id}
-								onSelect={() =>
-									// Effort is cleared with the model: a level one model supports is
-									// not necessarily one the next model does.
-									onChange({ ...settings, model: model.id, reasoningEffort: undefined })
-								}
-								className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+						<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
+							<div
+								ref={modelScrollRef}
+								className="model-menu-scroll min-h-0 overflow-y-auto overscroll-contain pb-1"
+								onScroll={updateScrollCue}
 							>
-								<span className="flex w-full items-baseline gap-2">
-									<span
-										className={cn(
-											"text-xs",
-											model.id === settings.model ? "text-foreground" : "text-muted-foreground",
-										)}
+								{models.map((model) => (
+									<DropdownMenuItem
+										key={model.id}
+										onSelect={() =>
+											// Effort is cleared with the model: a level one model supports is
+											// not necessarily one the next model does.
+											onChange({ ...settings, model: model.id, reasoningEffort: undefined })
+										}
+										className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
 									>
-										{model.displayName}
-									</span>
-									{model.default ? (
-										<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-											default
+										<span className="flex w-full items-baseline gap-2">
+											<span
+												className={cn(
+													"text-xs",
+													model.id === settings.model
+														? "text-foreground"
+														: "text-muted-foreground",
+												)}
+											>
+												{model.displayName}
+											</span>
+											{model.default ? (
+												<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+													default
+												</span>
+											) : null}
+											{model.id === settings.model ? (
+												<span className="ml-auto text-[10px] text-accent">selected</span>
+											) : null}
 										</span>
-									) : null}
-									{model.id === settings.model ? (
-										<span className="ml-auto text-[10px] text-accent">selected</span>
-									) : null}
-								</span>
-								{model.description ? (
-									<span className="text-[11px] leading-snug text-muted-foreground">
-										{model.description}
-									</span>
-								) : null}
-							</DropdownMenuItem>
-						))}
+										{model.description ? (
+											<span className="text-[11px] leading-snug text-muted-foreground">
+												{model.description}
+											</span>
+										) : null}
+									</DropdownMenuItem>
+								))}
+							</div>
+							<div
+								className={cn("model-menu-overflow-cue", canScrollDown ? "opacity-100" : "opacity-0")}
+								aria-hidden="true"
+							/>
+						</div>
 					</DropdownMenuSubContent>
 				</DropdownMenuSub>
 
