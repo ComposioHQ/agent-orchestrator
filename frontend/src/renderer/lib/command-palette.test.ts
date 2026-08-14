@@ -148,6 +148,29 @@ describe("buildCommands attention", () => {
 		expect(ids.has("attention:w-merge")).toBe(false);
 		expect(ids.has("attention:w-action")).toBe(true);
 	});
+
+	it("keeps terminated merged sessions out of Needs attention and search-only (#3087)", () => {
+		// `merged` is the SCM outcome; `isTerminated` is the lifetime. An archived
+		// merged session is not actionable work.
+		const summaries: WorkspaceSummary[] = [
+			{
+				id: "proj-1",
+				name: "app",
+				path: "/repos/app",
+				type: "main",
+				sessions: [session({ id: "w-archived", title: "shipped payment retry", status: "merged", isTerminated: true })],
+			},
+		];
+		const items = buildCommands({ workspaces: summaries });
+		const ids = new Set(items.map((item) => item.id));
+		expect(ids.has("attention:w-archived")).toBe(false);
+		const archived = items.find((item) => item.id === "session:w-archived");
+		expect(archived?.searchOnly).toBe(true);
+		const suggested = filterCommands(items, "");
+		expect(suggested.some((item) => item.id.endsWith("w-archived"))).toBe(false);
+		const searched = filterCommands(items, "shipped");
+		expect(searched.some((item) => item.id === "session:w-archived")).toBe(true);
+	});
 });
 
 describe("buildCommands sessions", () => {

@@ -934,34 +934,63 @@ describe("SessionInspector Activity section", () => {
 		expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
 	});
 
-	it("renders the current state before reverse-chronological historical milestones", () => {
+	it("renders the current state before timestamp-ordered historical milestones", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
+		// Chronology deliberately conflicts with category construction order
+		// (#3087): the child PR #41 opened AFTER the root PR #40 merged, so it
+		// must appear above the merge even though "opened" events are assembled
+		// before "merged" ones.
+		const summaries = [
+			prSummary(42, "draft", { stateChangedAt: "2026-06-15T10:30:00Z" }),
+			prSummary(41, "open", { createdAt: "2026-06-15T11:45:00Z" }),
+			prSummary(40, "merged", { createdAt: "2026-06-15T09:30:00Z", stateChangedAt: "2026-06-15T10:00:00Z" }),
+		];
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return { data: { sessionId: "sess-1", prs: summaries }, error: undefined };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
 		renderWithQuery(
 			<SessionInspector
-				session={session([pr(42, "draft"), pr(41, "open"), pr(40, "merged")], {
-					status: "merged",
-					createdAt: "2026-06-15T09:00:00Z",
-					updatedAt: "2026-06-15T11:55:00Z",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
-				})}
+				session={session(
+					[
+						pr(42, "draft", { url: "https://api.github.com/repos/acme/repo/pulls/42" }),
+						pr(41, "open", { url: "https://api.github.com/repos/acme/repo/pulls/41" }),
+						pr(40, "merged", { url: "https://api.github.com/repos/acme/repo/pulls/40" }),
+					],
+					{
+						status: "merged",
+						createdAt: "2026-06-15T09:00:00Z",
+						updatedAt: "2026-06-15T11:55:00Z",
+						activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+					},
+				)}
 			/>,
 		);
+		// waitFor polls on real timers, which fake timers would deadlock; flush
+		// the mocked fetch through the fake clock instead.
+		await vi.advanceTimersByTimeAsync(50);
+		expect(screen.getByRole("link", { name: "Opened PR #41" })).toBeInTheDocument();
 
 		const section = screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement;
 		const rows = Array.from(section.querySelectorAll("[data-testid='inspector-timeline-event']"), (row) =>
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
-		expect(rows).toEqual([
-			"Idle",
-			"Done",
-			"Merged PR #40",
-			"Opened PR #40",
-			"Opened PR #41",
-			"Draft PR #42",
-			"Created workspace3h ago",
-		]);
+		const expectedOrder = [
+			/^Idle/,
+			/^Opened PR #41/,
+			/^Draft PR #42/,
+			/^Done/,
+			/^Merged PR #40/,
+			/^Opened PR #40/,
+			/^Created workspace/,
+		];
+		expect(rows).toHaveLength(expectedOrder.length);
+		expectedOrder.forEach((label, index) => expect(rows[index]).toMatch(label));
 
 		const eventRows = section.querySelectorAll("[data-testid='inspector-timeline-event']");
 		expect(section.querySelectorAll("[data-testid='inspector-timeline-connector']")).toHaveLength(eventRows.length - 1);

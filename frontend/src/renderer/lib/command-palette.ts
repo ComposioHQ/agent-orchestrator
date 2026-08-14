@@ -251,7 +251,12 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 		.flatMap((workspace) => workerSessions(workspace.sessions).map((session) => ({ workspace, session })))
 		.filter(
 			({ session }) =>
-				session.id !== currentSessionId && (attentionZone(session) === "merge" || sessionNeedsAttention(session)),
+				// `merged` is an SCM outcome, not a lifetime: a terminated merged
+				// session is archived context, not actionable work, so it must stay
+				// search-only instead of crowding Needs attention (#3087).
+				session.id !== currentSessionId &&
+				sessionIsActive(session) &&
+				(attentionZone(session) === "merge" || sessionNeedsAttention(session)),
 		)
 		.sort(
 			(a, b) =>
