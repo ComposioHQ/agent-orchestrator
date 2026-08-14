@@ -3,6 +3,9 @@
 package e2e
 
 import (
+	"bytes"
+	"encoding/base64"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -149,4 +152,80 @@ func TestChatAttachmentIsStagedIntoTheWorktreeAndReadableByTheAgent(t *testing.T
 			t.Errorf("staged attachment %q shows up as a workspace change (%s)", file.Path, file.Status)
 		}
 	}
+}
+
+// The #3884 data-loss seam, driven end to end: an attachment staged before a
+// daemon restart must still resolve — same preview URL, same bytes — after
+// startup recovery has recreated the session's worktree, and the resumed agent
+// must still be able to read the same .ao/attachments/... path its
+// conversation history names.
+func TestChatAttachmentSurvivesADaemonRestart(t *testing.T) {
+	requireE2E(t)
+	dataDir := t.TempDir()
+	d := startDaemon(t, dataDir)
+	project := seedProject(t, d, "attachrestart")
+	session := chatSession(t, d, project, "Reply with exactly: READY")
+
+	const onePixelPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+	wantBytes, err := base64.StdEncoding.DecodeString(onePixelPNG)
+	if err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+
+	var staged struct {
+		Paths []string `json:"paths"`
+	}
+	d.mustCall("POST", "/sessions/"+session+"/attachments", http.StatusCreated,
+		map[string]any{"attachments": []map[string]any{{"mimeType": "image/png", "data": onePixelPNG}}},
+		&staged)
+	if len(staged.Paths) != 1 {
+		t.Fatalf("staged %d paths, want 1: %+v", len(staged.Paths), staged.Paths)
+	}
+	path := staged.Paths[0]
+	previewPath := "/sessions/" + session + "/preview/files/" + path
+
+	if got := rawGET(t, d, previewPath); !bytes.Equal(got, wantBytes) {
+		t.Fatalf("preview before restart returned %d bytes, want the staged image", len(got))
+	}
+
+	// The user quits the app; the next boot's recovery recreates the worktree.
+	d.stop()
+	restarted := startDaemon(t, dataDir)
+	restarted.awaitLiveController(session, 3*time.Minute)
+
+	// The same URL the durable conversation embeds must keep answering with the
+	// original bytes — this is the request that returned PREVIEW_FILE_NOT_FOUND
+	// before attachments had a durable owner.
+	if got := rawGET(t, restarted, previewPath); !bytes.Equal(got, wantBytes) {
+		t.Fatalf("preview after restart returned %d bytes, want the staged image", len(got))
+	}
+
+	// And the resumed agent can still open the path its history names.
+	send(t, restarted, session,
+		"Run `test -f "+path+" && echo FOUND || echo MISSING` and reply with its exact output.",
+		"attach-restart-read")
+	snap := restarted.awaitConversation(session, 3*time.Minute, "the resumed agent to look for the image",
+		func(s snapshot) bool { return terminal(s.Turns[len(s.Turns)-1].State) })
+	if !contains(snap.assistantText(), "FOUND") {
+		t.Fatalf("the resumed agent could not see the restored image at %s:\n%s", path, describe(snap))
+	}
+}
+
+// rawGET fetches an API path and returns the body bytes without assuming JSON,
+// which is what an <img> tag does with a preview URL.
+func rawGET(t *testing.T, d *daemon, path string) []byte {
+	t.Helper()
+	res, err := httpClient.Get(d.baseURL + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d: %s\n%s", path, res.StatusCode, body, d.tailLog())
+	}
+	return body
 }
