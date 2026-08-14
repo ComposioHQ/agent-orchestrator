@@ -431,6 +431,7 @@ type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
 var _ interface {
+	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
@@ -492,10 +493,19 @@ func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
 	return c.svc.HasLiveChatController(id)
 }
 
-// PrepareChatHandoff closes Chat intake and waits for the controller to become
-// quiescent before Session Manager stops it. These methods intentionally live
-// on the wiring adapter: Session Manager's handoff capability is optional, but
-// wrapping the concrete Chat service must not erase it.
+// ArmChatHandoff closes Chat intake synchronously at transition acceptance.
+// PrepareChatHandoff then waits for the armed controller to become quiescent
+// before Session Manager stops it. These methods intentionally live on the
+// wiring adapter: Session Manager's handoff capability is optional, but wrapping
+// the concrete Chat service must not erase it.
+func (c chatLauncher) ArmChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	return c.svc.ArmChatHandoff(ctx, id, policy)
+}
+
 func (c chatLauncher) PrepareChatHandoff(
 	ctx context.Context,
 	id domain.SessionID,

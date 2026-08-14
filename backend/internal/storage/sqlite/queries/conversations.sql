@@ -548,6 +548,15 @@ UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
 WHERE conversation_id = ? AND state = 'queued' AND requested_at <= ?;
 
+-- An interrupt interface handoff closes intake under the controller's dispatch
+-- lock before this runs. There can be no later accepted row to preserve, so the
+-- correct operation is independent of wall-clock ordering and cancels the whole
+-- durable queue.
+-- name: CancelAllQueuedConversationTurns :exec
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE conversation_id = ? AND state = 'queued';
+
 -- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (
     id, conversation_id, turn_id, sequence, revision, role, origin,

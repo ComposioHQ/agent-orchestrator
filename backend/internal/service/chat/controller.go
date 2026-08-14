@@ -58,6 +58,7 @@ type Store interface {
 
 	NextQueuedTurn(ctx context.Context, conversationID string) (domain.QueuedTurn, error)
 	CancelQueuedTurns(ctx context.Context, conversationID string, cutoff, now time.Time) error
+	CancelAllQueuedTurns(ctx context.Context, conversationID string, now time.Time) error
 
 	TurnByID(ctx context.Context, turnID string) (domain.ConversationTurn, error)
 	RollbackTurns(ctx context.Context, conversationID, turnID string, now time.Time) (int, error)
@@ -111,6 +112,25 @@ type IDFactory func() string
 // Clock is injected so tests do not depend on wall time.
 type Clock func() time.Time
 
+// controllerHandoff is the controller's dispatch gate. Keeping the lifecycle in
+// one state avoids invalid combinations such as "handoff=true, drain=false"
+// meaning either an interrupt transition or an idle branch mutation.
+type controllerHandoff uint8
+
+const (
+	controllerHandoffNone controllerHandoff = iota
+	controllerHandoffInterfaceDrain
+	controllerHandoffInterfaceInterrupt
+	controllerHandoffIdleBranch
+)
+
+func interfaceHandoff(policy domain.SessionInterfaceTransitionPolicy) controllerHandoff {
+	if policy == domain.SessionInterfaceTransitionDrain {
+		return controllerHandoffInterfaceDrain
+	}
+	return controllerHandoffInterfaceInterrupt
+}
+
 // Controller drives one Chat session.
 type Controller struct {
 	sessionID    domain.SessionID
@@ -145,12 +165,11 @@ type Controller struct {
 	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
 	cancelQueuedAt time.Time
-	// handoff closes source-controller intake while Session Manager moves the AO
-	// session to its other interface. Drain keeps dispatching rows already queued;
-	// interrupt cancels them with the active turn. The target controller is not
+	// handoff closes source-controller intake while ownership is being changed.
+	// Interface drain keeps dispatching accepted rows; interface interrupt and an
+	// idle branch mutation stop dispatch entirely. The target controller is not
 	// started until this controller reports quiescent and is closed.
-	handoff      bool
-	handoffDrain bool
+	handoff controllerHandoff
 
 	// account, threadState and mcpServers are merged here before being written,
 	// because the provider reports each of them in pieces: account/updated carries
@@ -588,7 +607,7 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	c.mu.Lock()
-	handoff := c.handoff
+	handoff := c.handoff != controllerHandoffNone
 	c.mu.Unlock()
 	if handoff {
 		return domain.ConversationTurn{}, ErrControllerHandoff
@@ -802,7 +821,6 @@ func (c *Controller) drain(ctx context.Context) {
 	c.cancelQueuedAt = time.Time{}
 	busy := c.pendingTurnID != ""
 	handoff := c.handoff
-	drainDuringHandoff := c.handoffDrain
 	c.mu.Unlock()
 
 	if busy {
@@ -819,7 +837,7 @@ func (c *Controller) drain(ctx context.Context) {
 			return
 		}
 	}
-	if handoff && !drainDuringHandoff {
+	if handoff != controllerHandoffNone && handoff != controllerHandoffInterfaceDrain {
 		return
 	}
 
@@ -857,66 +875,81 @@ func (c *Controller) drain(ctx context.Context) {
 	}
 }
 
-// BeginHandoff closes source intake and prepares the provider to be stopped
-// without overlapping the target controller. Drain preserves and finishes work
-// AO had already accepted. Interrupt is the explicit brake: once the provider
-// accepts cancellation, it cancels the durable queue and returns so a provider
-// that never reports turn/completed cannot make Terminal UI unreachable.
+// ArmHandoff is the linearization point for an interface transition. It closes
+// source intake synchronously and, for interrupt policy, settles the durable
+// queue while sendMu makes promotion impossible. Once this method returns, no
+// queued turn accepted before the transition can cross the provider seam.
+//
+// Provider I/O deliberately does not happen here. ACP may emit turn completion
+// as part of its cancellation handshake, and Codex may deliver turn/completed on
+// either side of the interrupt response. Calling either adapter while holding
+// sendMu would couple their event backpressure to AO's dispatch lock.
+func (c *Controller) ArmHandoff(
+	ctx context.Context,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	if !policy.Valid() {
+		return fmt.Errorf("invalid interface handoff policy %q", policy)
+	}
+	want := interfaceHandoff(policy)
+
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+
+	c.mu.Lock()
+	if c.handoff == want {
+		c.mu.Unlock()
+		return nil
+	}
+	if c.handoff != controllerHandoffNone {
+		c.mu.Unlock()
+		return ErrControllerHandoff
+	}
+	c.handoff = want
+	// The state is installed before the store write while sendMu prevents both
+	// new intake and completion-driven promotion.
+	cancelQueue := want == controllerHandoffInterfaceInterrupt
+	c.mu.Unlock()
+
+	if cancelQueue {
+		if err := c.store.CancelAllQueuedTurns(ctx, c.conversation.ID, c.now()); err != nil {
+			c.mu.Lock()
+			if c.handoff == want {
+				c.handoff = controllerHandoffNone
+			}
+			c.mu.Unlock()
+			return fmt.Errorf("arm interrupt handoff: cancel queued turns: %w", err)
+		}
+	}
+	return nil
+}
+
+// BeginHandoff quiesces a controller whose dispatch gate is already armed. It
+// remains safe to call directly: focused callers and tests use this single deep
+// interface, while Session Manager calls ArmHandoff synchronously before its
+// background preflight and then reaches this method later.
 func (c *Controller) BeginHandoff(
 	ctx context.Context,
 	policy domain.SessionInterfaceTransitionPolicy,
 ) error {
-	c.sendMu.Lock()
+	if err := c.ArmHandoff(ctx, policy); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
-	if c.handoff {
-		c.mu.Unlock()
-		c.sendMu.Unlock()
-		return ErrControllerHandoff
-	}
-	c.handoff = true
-	c.handoffDrain = policy == domain.SessionInterfaceTransitionDrain
 	active := c.pendingTurnID != ""
-	interruptCutoff := time.Time{}
-	if policy == domain.SessionInterfaceTransitionInterrupt {
-		// This cutoff is also needed when no turn is active: the handoff still has
-		// to cancel the durable queue without dispatching another turn.
-		interruptCutoff = c.now()
-		c.cancelQueuedAt = interruptCutoff
-	}
 	c.mu.Unlock()
-	c.sendMu.Unlock()
 
 	if policy == domain.SessionInterfaceTransitionInterrupt {
 		if active {
-			if err := c.Interrupt(ctx); err != nil && !errors.Is(err, ErrNoActiveTurn) {
+			if err := c.interruptForHandoff(ctx); err != nil {
 				c.AbortHandoff()
 				return err
 			}
 		}
-		// Do not wait for turn/completed here. The interrupt RPC succeeding is the
-		// source-side cancellation boundary; Session Manager now needs to close the
-		// controller and launch Terminal UI. Some providers omit the completion
-		// event for a killed long-running tool, which was previously an unbounded
-		// wait in this loop.
-		//
-		// Cancel the queued rows directly before returning. Ordinarily drain does
-		// this after the active turn settles, but the whole point of this path is
-		// that settlement is not required. Use the cutoff captured while closing
-		// intake rather than consuming the shared marker: a racing completion may
-		// already have taken that marker, and this idempotent write is the handoff's
-		// independent proof that the durable queue is empty.
-		if err := c.store.CancelQueuedTurns(ctx, c.conversation.ID, interruptCutoff, c.now()); err != nil {
-			c.mu.Lock()
-			if c.cancelQueuedAt.IsZero() {
-				c.cancelQueuedAt = interruptCutoff
-			}
-			c.mu.Unlock()
-			c.AbortHandoff()
-			return fmt.Errorf("cancel queued turns before handoff: %w", err)
-		}
-		c.mu.Lock()
-		c.cancelQueuedAt = time.Time{}
-		c.mu.Unlock()
+		// Provider acceptance is the source-side cancellation boundary. Some
+		// adapters never report turn/completed for a killed long-running tool, so
+		// waiting for that notification would make Terminal unreachable again.
 		return nil
 	} else if !active {
 		// A queued row can exist in the narrow gap after a completion was
@@ -964,7 +997,7 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.handoff {
+	if c.handoff != controllerHandoffNone {
 		return ErrControllerHandoff
 	}
 	if c.pendingTurnID != "" {
@@ -975,8 +1008,7 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 	} else if !errors.Is(err, domain.ErrNoQueuedTurn) {
 		return fmt.Errorf("check queue before branch handoff: %w", err)
 	}
-	c.handoff = true
-	c.handoffDrain = false
+	c.handoff = controllerHandoffIdleBranch
 	return nil
 }
 
@@ -984,9 +1016,8 @@ func (c *Controller) BeginIdleBranchHandoff(ctx context.Context) error {
 // controller is stopped. Any queued work resumes through the ordinary drain.
 func (c *Controller) AbortHandoff() {
 	c.mu.Lock()
-	wasDraining := c.handoff && c.handoffDrain
-	c.handoff = false
-	c.handoffDrain = false
+	wasDraining := c.handoff == controllerHandoffInterfaceDrain
+	c.handoff = controllerHandoffNone
 	c.mu.Unlock()
 	if wasDraining {
 		go c.drain(context.WithoutCancel(context.Background()))
@@ -1092,6 +1123,25 @@ func (c *Controller) Compact(ctx context.Context) (ports.ChatCompactionResult, e
 // in the moment someone is most likely to use it: right after realizing they sent
 // the wrong thing.
 const turnAckWait = 3 * time.Second
+
+// interruptForHandoff cancels only the provider turn. ArmHandoff has already
+// cancelled the durable queue under the dispatch lock, so reusing Interrupt
+// here would reintroduce a second, callback-ordered cancellation path.
+func (c *Controller) interruptForHandoff(ctx context.Context) error {
+	turn, ok := c.awaitAcknowledgedTurn(ctx)
+	if !ok {
+		return nil
+	}
+	if err := c.conv.Interrupt(ctx, turn); err != nil {
+		if errors.Is(err, ports.ErrChatNoActiveTurn) {
+			// Completion won the race after the dispatch gate was armed. The queue is
+			// already terminal, so there is no remaining source work to release.
+			return nil
+		}
+		return fmt.Errorf("interrupt turn %s for handoff: %w", turn, err)
+	}
+	return nil
+}
 
 // Interrupt cancels the in-flight turn, and with it anything queued behind it.
 //
@@ -1967,7 +2017,7 @@ func (c *Controller) ReloadMCPServers(ctx context.Context) ([]domain.Conversatio
 func (c *Controller) handoffActive() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.handoff
+	return c.handoff != controllerHandoffNone
 }
 
 // planItemID keys a turn's plan activity. The provider sends no item id with a plan
