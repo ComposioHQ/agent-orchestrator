@@ -253,7 +253,7 @@ func defaultBranchForProject(project domain.ProjectRecord, ok bool) string {
 	if !ok {
 		return domain.DefaultBranchName
 	}
-	return project.Config.WithDefaults().DefaultBranch
+	return project.Config.WorktreeBaseBranch()
 }
 
 type workspaceCompareTarget struct {
@@ -368,7 +368,7 @@ func workspaceBaseRefCandidates(defaultBranch string) []string {
 
 func workspaceDefaultBranch(defaultBranch string) string {
 	defaultBranch = strings.TrimSpace(defaultBranch)
-	if defaultBranch == "" {
+	if defaultBranch == "" || defaultBranch == domain.DefaultBranchAuto {
 		return domain.DefaultBranchName
 	}
 	return defaultBranch

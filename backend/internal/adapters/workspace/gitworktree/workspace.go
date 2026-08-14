@@ -17,8 +17,8 @@ import (
 
 const (
 	defaultGitBinary = "git"
-	// defaultBranch is the base branch used when neither the per-project config
-	// nor the adapter options name one. It shares domain's single source of truth.
+	// defaultBranch is the last-resort base used when automatic per-repository
+	// inference and the adapter options both yield no branch.
 	defaultBranch = domain.DefaultBranchName
 )
 
@@ -66,7 +66,7 @@ func (r StaticRepoResolver) RepoPath(projectID domain.ProjectID) (string, error)
 }
 
 // Options configures a gitworktree Workspace. ManagedRoot and RepoResolver are
-// required; Binary and DefaultBranch fall back to defaults.
+// required; Binary and the last-resort DefaultBranch fall back to defaults.
 type Options struct {
 	Binary        string
 	ManagedRoot   string

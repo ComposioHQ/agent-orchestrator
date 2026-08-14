@@ -39,6 +39,7 @@ type ProjectConfig = components["schemas"]["ProjectConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
+const DEFAULT_BRANCH_AUTO = "auto";
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -121,7 +122,7 @@ function SettingsBody({
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const [form, setForm] = useState({
 		displayName: project.name,
-		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
+		defaultBranch: config.defaultBranch ?? DEFAULT_BRANCH_AUTO,
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
@@ -196,7 +197,10 @@ function SettingsBody({
 					}
 				: {
 						...config,
-						defaultBranch: form.defaultBranch || undefined,
+						defaultBranch:
+							form.defaultBranch.trim() === DEFAULT_BRANCH_AUTO
+								? undefined
+								: form.defaultBranch || undefined,
 						sessionPrefix: form.sessionPrefix || undefined,
 						worker: {
 							...config.worker,

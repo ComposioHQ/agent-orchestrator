@@ -1126,6 +1126,9 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	if !agent.lastConfig.IsZero() {
 		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
 	}
+	if got := ws.lastCfg.BaseBranch; got != "" {
+		t.Fatalf("automatic workspace base branch = %q, want empty for adapter inference", got)
+	}
 }
 
 func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
@@ -2052,6 +2055,9 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	}
 	if got := ws.lastProjectCfg.RootRepoPath; got != projectPath {
 		t.Fatalf("root repo path = %q, want %q", got, projectPath)
+	}
+	if got := ws.lastProjectCfg.BaseBranch; got != "" {
+		t.Fatalf("root base branch = %q, want empty so adapter infers the repo default", got)
 	}
 	if len(ws.lastProjectCfg.Repos) != 2 {
 		t.Fatalf("child repo configs = %d, want 2", len(ws.lastProjectCfg.Repos))

@@ -29,7 +29,7 @@ Project settings expose the fields that AO consumes at spawn time:
 
 | Field | Purpose |
 | --- | --- |
-| `defaultBranch` | Base branch for new Git worktrees; defaults to `main` |
+| `defaultBranch` | Base branch for new Git worktrees; defaults to `auto` |
 | `sessionPrefix` | Prefix used in generated session identifiers |
 | `env` | Extra environment variables forwarded to agent runtimes |
 | `symlinks` | Repo-relative paths linked into each session workspace |
@@ -45,6 +45,8 @@ Project settings expose the fields that AO consumes at spawn time:
 | `containerReap` | Project-wide opt-out from AO's session-container cleanup |
 
 `symlinks` and `agentRulesFile` must remain inside the repository. AO rejects absolute paths and traversal. Scratch rejects Git-only fields such as `defaultBranch` and symlinks.
+
+`defaultBranch: "auto"` resolves each repository's Git default independently. AO prefers `origin/HEAD`, then the checked-out branch, and uses `main` only as a last resort. Set an explicit branch when a project should remain pinned to that ref.
 
 ## Worker and orchestrator roles
 

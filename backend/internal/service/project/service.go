@@ -243,16 +243,6 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 			"suggestedFix": "Run `git commit --allow-empty -m \"initial commit\"` in this folder, then try again.",
 		})
 	}
-	// Record the repo's actual checked-out branch as the project default so
-	// session worktrees base off a branch that exists. Without this a repo on
-	// `master` (or any non-`main` default) falls back to DefaultBranchName and
-	// every spawn fails BRANCH_NOT_FETCHED. Only persist when it diverges from
-	// the default, so the common `main` repo keeps an empty (NULL) config.
-	if row.Config.DefaultBranch == "" {
-		if branch := resolveDefaultBranch(path); branch != "" && branch != domain.DefaultBranchName {
-			row.Config.DefaultBranch = branch
-		}
-	}
 	row.RepoOriginURL = resolveGitOriginURL(path)
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_ADD_FAILED", "Failed to register project")
@@ -714,9 +704,15 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 
 func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 	kind := row.Kind.WithDefault()
-	defaultBranch := row.Config.WithDefaults().DefaultBranch
-	if kind == domain.ProjectKindScratch {
-		defaultBranch = ""
+	defaultBranch := ""
+	if kind != domain.ProjectKindScratch {
+		defaultBranch = row.Config.WorktreeBaseBranch()
+		if defaultBranch == "" {
+			defaultBranch = resolveDefaultBranch(row.Path)
+			if defaultBranch == "" {
+				defaultBranch = domain.DefaultBranchName
+			}
+		}
 	}
 	p := Project{
 		ID:            domain.ProjectID(row.ID),

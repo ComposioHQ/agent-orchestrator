@@ -868,7 +868,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
-		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WithDefaults().DefaultBranch)
+		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WorktreeBaseBranch())
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
@@ -914,7 +914,7 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
 	projectKind := project.Kind.WithDefault()
 	if projectKind != domain.ProjectKindWorkspace {
-		baseBranch := project.Config.WithDefaults().DefaultBranch
+		baseBranch := project.Config.WorktreeBaseBranch()
 		if projectKind == domain.ProjectKindScratch {
 			baseBranch = ""
 		}
@@ -955,7 +955,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		SessionPrefix: sessionPrefix(project),
 		Branch:        branch,
 		RootRepoPath:  project.Path,
-		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+		BaseBranch:    project.Config.WorktreeBaseBranch(),
 		Repos:         childRepos,
 	})
 	if err != nil {

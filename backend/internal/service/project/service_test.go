@@ -478,7 +478,7 @@ func TestManager_GetUsesConfiguredDefaultHarness(t *testing.T) {
 	}
 }
 
-func TestManager_AddDetectsNonMainDefaultBranch(t *testing.T) {
+func TestManager_AddResolvesAutomaticNonMainDefaultBranch(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)
 	repo := gitRepoOnBranch(t, "master")
@@ -487,11 +487,13 @@ func TestManager_AddDetectsNonMainDefaultBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	// A repo whose checked-out branch is not `main` must record that branch so
-	// session worktrees base off a ref that exists (otherwise spawn fails
-	// BRANCH_NOT_FETCHED).
+	// The read model reports the resolved Git default, while the stored config
+	// remains empty so spawn can infer the repository default again.
 	if proj.DefaultBranch != "master" {
 		t.Fatalf("DefaultBranch = %q, want master", proj.DefaultBranch)
+	}
+	if proj.Config != nil {
+		t.Fatalf("automatic branch selection should not pin config, got %#v", proj.Config)
 	}
 
 	got, err := m.Get(ctx, "ao")
@@ -517,8 +519,8 @@ func TestManager_AddDetectsNonMainDefaultBranch(t *testing.T) {
 	}
 }
 
-// A repo checked out on a feature branch must NOT record that branch as the
-// project default — detection must prefer the remote default (origin/HEAD), so a
+// A repo checked out on a feature branch must NOT report that branch as the
+// project default — resolution must prefer the remote default (origin/HEAD), so a
 // repo whose origin/HEAD is `main` stays on `main` even when HEAD is elsewhere.
 func TestManager_AddPrefersOriginHeadOverCheckedOutBranch(t *testing.T) {
 	ctx := context.Background()
@@ -529,16 +531,15 @@ func TestManager_AddPrefersOriginHeadOverCheckedOutBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	// origin/HEAD is `main`, which equals DefaultBranchName, so config stays empty
-	// and the effective default resolves to main — never the feature branch.
+	// Automatic mode resolves origin/HEAD to main — never the feature branch.
 	if proj.DefaultBranch != domain.DefaultBranchName {
 		t.Fatalf("DefaultBranch = %q, want %q (not the checked-out feature branch)",
 			proj.DefaultBranch, domain.DefaultBranchName)
 	}
 }
 
-// When origin/HEAD points at a non-main default (e.g. master), detection records
-// that — not the feature branch the user happens to be on.
+// When origin/HEAD points at a non-main default (e.g. master), automatic mode
+// reports that — not the feature branch the user happens to be on.
 func TestManager_AddPrefersOriginHeadNonMain(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

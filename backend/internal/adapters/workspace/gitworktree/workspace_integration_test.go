@@ -457,10 +457,10 @@ func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
 	}
 }
 
-func TestWorkspaceIntegrationWorkspaceProjectInfersChildDefaultBranches(t *testing.T) {
+func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()
-	rootRepo := setupOriginClone(t, git, filepath.Join(tmp, "root"))
+	rootRepo := setupOriginCloneOnBranch(t, git, filepath.Join(tmp, "root"), "trunk")
 	devChildRepo := setupOriginCloneOnBranch(t, git, filepath.Join(tmp, "dev-child"), "dev")
 	mainChildRepo := setupOriginClone(t, git, filepath.Join(tmp, "main-child"))
 
@@ -475,7 +475,6 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersChildDefaultBranches(t *testi
 		Kind:         "worker",
 		Branch:       "ao/proj-1",
 		RootRepoPath: rootRepo,
-		BaseBranch:   "main",
 		Repos: []ports.WorkspaceProjectRepoConfig{
 			{
 				Name:         "api",
@@ -510,9 +509,9 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersChildDefaultBranches(t *testi
 		t.Fatalf("main child branch base = %s, want origin/main %s", mainChildHead, mainChildBase)
 	}
 	rootHead := gitOutput(t, git, rootRepo, "rev-parse", "refs/heads/ao/proj-1")
-	rootBase := gitOutput(t, git, rootRepo, "rev-parse", "origin/main")
+	rootBase := gitOutput(t, git, rootRepo, "rev-parse", "origin/trunk")
 	if rootHead != rootBase {
-		t.Fatalf("root branch base = %s, want origin/main %s", rootHead, rootBase)
+		t.Fatalf("root branch base = %s, want origin/trunk %s", rootHead, rootBase)
 	}
 	if err := ws.DestroyWorkspaceProject(context.Background(), info); err != nil {
 		t.Fatalf("destroy workspace project: %v", err)

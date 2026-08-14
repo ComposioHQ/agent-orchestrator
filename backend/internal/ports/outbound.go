@@ -318,8 +318,9 @@ type WorkspaceConfig struct {
 	// orchestrator worktree. Defaults to a truncation of ProjectID when empty.
 	SessionPrefix string
 	Branch        string
-	// BaseBranch is the per-project default branch new session branches are
-	// created from. Empty falls back to the workspace adapter's own default.
+	// BaseBranch is the explicitly configured branch new session branches are
+	// created from. Empty asks the workspace adapter to infer the repository's
+	// Git default before falling back to its own last-resort default.
 	BaseBranch string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
@@ -348,8 +349,10 @@ type WorkspaceProjectConfig struct {
 	SessionPrefix string
 	Branch        string
 	RootRepoPath  string
-	BaseBranch    string
-	Repos         []WorkspaceProjectRepoConfig
+	// BaseBranch applies only to RootRepoPath. Empty asks the workspace adapter
+	// to infer that repository's Git default independently from every child.
+	BaseBranch string
+	Repos      []WorkspaceProjectRepoConfig
 }
 
 // WorkspaceProjectRepoConfig describes one registered child repo in a
@@ -358,7 +361,9 @@ type WorkspaceProjectRepoConfig struct {
 	Name         string
 	RelativePath string
 	RepoPath     string
-	BaseBranch   string
+	// BaseBranch applies only to RepoPath. Empty asks the workspace adapter to
+	// infer this repository's Git default independently from the workspace root.
+	BaseBranch string
 }
 
 // WorkspaceProjectInfo returns the root worktree plus every child worktree.
