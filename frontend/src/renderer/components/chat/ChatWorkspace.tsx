@@ -959,7 +959,9 @@ function Timeline({
 		const anchors = Array.from(
 			scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]") ?? [],
 		);
-		const markerGap = anchors.length > 1 ? Math.min(18, (trackHeight - 12) / (anchors.length - 1)) : 0;
+		// 8px is the Cursor-chat cadence: a 2px dash with a ~6px gap. 18px left
+		// a sparse ladder when the conversation only had a handful of turns.
+		const markerGap = anchors.length > 1 ? Math.min(8, (trackHeight - 12) / (anchors.length - 1)) : 0;
 		const markerStart = (trackHeight - markerGap * Math.max(0, anchors.length - 1)) / 2;
 		const markers = anchors.map((anchor, index) => {
 			const rect = anchor.getBoundingClientRect();

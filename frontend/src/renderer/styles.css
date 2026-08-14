@@ -1910,7 +1910,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	position: absolute;
 	left: 0;
 	right: 0;
-	height: 10px;
+	height: 8px;
 	transform: translateY(-50%);
 }
 

@@ -1706,16 +1706,13 @@ export function TurnOutcome({
 	}[state];
 
 	return (
-		<div className="group/turn flex items-center gap-2 pt-1">
+		<div className="flex items-center gap-2 pt-1">
 			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 			{onRollback ? (
-				// Revealed on hover or keyboard focus. Undo belongs on the turn it undoes,
-				// but a permanent button on every turn would compete with the conversation
-				// for attention.
 				<button
 					type="button"
 					onClick={onRollback}
-					className="shrink-0 rounded px-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground/70 opacity-0 transition-opacity hover:text-muted-foreground focus-visible:opacity-100 group-hover/turn:opacity-100"
+					className="shrink-0 rounded px-1 text-[10px] uppercase tracking-[0.08em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 				>
 					Roll back to here
 				</button>

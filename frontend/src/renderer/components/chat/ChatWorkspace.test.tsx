@@ -294,7 +294,7 @@ describe("ChatWorkspace timeline", () => {
 		);
 		expect(markers.length).toBeGreaterThan(1);
 		expect(Number.parseFloat(markers[1]!.style.top) - Number.parseFloat(markers[0]!.style.top)).toBeLessThanOrEqual(
-			18,
+			8,
 		);
 
 		fireEvent.wheel(scrollbar, { deltaY: 200 });
