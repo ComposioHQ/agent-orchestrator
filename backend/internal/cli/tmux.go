@@ -21,7 +21,8 @@ func (c *commandContext) ensureTmux(ctx context.Context, goos string, in io.Read
 		c.warnTmuxMissing(out, goos, "install it with your package manager")
 		return
 	}
-	pretty := strings.Join(argv, " ")
+	steps := tmuxInstallSteps(argv)
+	pretty := formatTmuxInstallSteps(steps)
 	if c.tmuxInstallNeedsRoot(goos, argv) {
 		c.warnTmuxMissing(out, goos, fmt.Sprintf("run as root: `%s`", pretty))
 		return
@@ -37,7 +38,7 @@ func (c *commandContext) ensureTmux(ctx context.Context, goos string, in io.Read
 		c.warnTmuxMissing(out, goos, fmt.Sprintf("install it with `%s`", pretty))
 		return
 	}
-	if err := c.installTmux(ctx, out, argv); err != nil {
+	if err := c.installTmux(ctx, out, steps); err != nil {
 		_, _ = fmt.Fprintf(out, "Warning: %v\n", err)
 		c.warnTmuxMissing(out, goos, fmt.Sprintf("install it with `%s`", pretty))
 	}
@@ -47,11 +48,13 @@ func (c *commandContext) warnTmuxMissing(out io.Writer, goos, remedy string) {
 	_, _ = fmt.Fprintf(out, "Warning: tmux is unavailable, so terminal sessions will fail to start on %s. To fix it, %s.\n", goos, remedy)
 }
 
-func (c *commandContext) installTmux(ctx context.Context, out io.Writer, argv []string) error {
-	pretty := strings.Join(argv, " ")
+func (c *commandContext) installTmux(ctx context.Context, out io.Writer, steps [][]string) error {
+	pretty := formatTmuxInstallSteps(steps)
 	_, _ = fmt.Fprintf(out, "Running %s...\n", pretty)
-	if err := c.deps.RunInteractive(ctx, argv[0], argv[1:]...); err != nil {
-		return fmt.Errorf("install tmux with `%s`: %w", pretty, err)
+	for _, argv := range steps {
+		if err := c.deps.RunInteractive(ctx, argv[0], argv[1:]...); err != nil {
+			return fmt.Errorf("install tmux with `%s`: `%s` failed: %w", pretty, strings.Join(argv, " "), err)
+		}
 	}
 	if !c.haveTmux() {
 		return fmt.Errorf("`%s` finished but tmux is still unavailable", pretty)
@@ -105,4 +108,28 @@ func (c *commandContext) withTmuxInstallPrivilege(goos string, argv []string) []
 
 func (c *commandContext) tmuxInstallNeedsRoot(goos string, argv []string) bool {
 	return goos == "linux" && c.deps.EffectiveUID() != 0 && len(argv) > 0 && argv[0] != "sudo"
+}
+
+// tmuxInstallSteps refreshes apt's package index before installing. Fresh
+// Debian/Ubuntu images commonly have an empty index, and the prompt must show
+// both commands before the user consents.
+func tmuxInstallSteps(argv []string) [][]string {
+	manager := 0
+	if len(argv) > 0 && argv[0] == "sudo" {
+		manager = 1
+	}
+	if manager < len(argv) && argv[manager] == "apt-get" {
+		update := append([]string(nil), argv[:manager+1]...)
+		update = append(update, "update")
+		return [][]string{update, argv}
+	}
+	return [][]string{argv}
+}
+
+func formatTmuxInstallSteps(steps [][]string) string {
+	commands := make([]string, 0, len(steps))
+	for _, argv := range steps {
+		commands = append(commands, strings.Join(argv, " "))
+	}
+	return strings.Join(commands, " && ")
 }

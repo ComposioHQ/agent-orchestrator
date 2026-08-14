@@ -87,8 +87,61 @@ func TestEnsureTmuxWithoutSudoReportsRootBlocker(t *testing.T) {
 	}.withDefaults()}
 
 	c.ensureTmux(context.Background(), "linux", tmuxFakeTerminal(t, "\n"), out)
-	if got := out.String(); !strings.Contains(got, "run as root: `apt-get install -y tmux`") {
+	if got := out.String(); !strings.Contains(got, "run as root: `apt-get update && apt-get install -y tmux`") {
 		t.Fatalf("warning = %q, want concrete command and root requirement", got)
+	}
+}
+
+func TestEnsureTmuxAptRefreshesPackageIndexBeforeInstall(t *testing.T) {
+	installed := false
+	var commands []string
+	out := &bytes.Buffer{}
+	c := &commandContext{deps: Deps{
+		LookPath: func(name string) (string, error) {
+			if name == "tmux" && !installed {
+				return "", exec.ErrNotFound
+			}
+			return "/usr/bin/" + name, nil
+		},
+		EffectiveUID: func() int { return 0 },
+		RunInteractive: func(_ context.Context, name string, args ...string) error {
+			command := strings.Join(append([]string{name}, args...), " ")
+			commands = append(commands, command)
+			if command == "apt-get install -y tmux" {
+				installed = true
+			}
+			return nil
+		},
+	}.withDefaults()}
+
+	c.ensureTmux(context.Background(), "linux", tmuxFakeTerminal(t, "\n"), out)
+	want := "apt-get update && apt-get install -y tmux"
+	if got := strings.Join(commands, " && "); got != want {
+		t.Fatalf("commands = %q, want %q", got, want)
+	}
+	if got := out.String(); !strings.Contains(got, "Install it now with `"+want+"`?") || !strings.Contains(got, "tmux installed.") {
+		t.Fatalf("output = %q, want exact plan and success", got)
+	}
+}
+
+func TestEnsureTmuxAptUpdateFailureSkipsInstall(t *testing.T) {
+	commands := 0
+	out := &bytes.Buffer{}
+	c := &commandContext{deps: Deps{
+		LookPath:     tmuxLookPath("apt-get"),
+		EffectiveUID: func() int { return 0 },
+		RunInteractive: func(context.Context, string, ...string) error {
+			commands++
+			return errors.New("update failed")
+		},
+	}.withDefaults()}
+
+	c.ensureTmux(context.Background(), "linux", tmuxFakeTerminal(t, "\n"), out)
+	if commands != 1 {
+		t.Fatalf("commands = %d, want only failed update", commands)
+	}
+	if got := out.String(); !strings.Contains(got, "`apt-get update` failed: update failed") {
+		t.Fatalf("output = %q, want failed update", got)
 	}
 }
 
