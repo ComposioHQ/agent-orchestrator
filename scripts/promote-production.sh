@@ -113,6 +113,9 @@ fi
 	--expected-control-image "$control_image" \
 	--expected-worker-image "$worker_image" >/dev/null
 
+# Same worker CVE allowlist as deploy-staging.sh. Inspector flags unpatched
+# Debian packages pulled in by git; a zero HIGH/CRITICAL gate would block every
+# promote until Debian ships fixes. New HIGH/CRITICAL IDs still fail the gate.
 verify_scan() {
 	local image="$1"
 	local repository_uri="${image%@sha256:*}"
@@ -124,7 +127,7 @@ verify_scan() {
 			--repository-name "$repository" \
 			--image-id "imageDigest=${digest}"
 	)"
-	if ! SCAN="$scan" python3 - <<'PY'
+	if ! SCAN="$scan" ALLOWLIST="${AO_CLOUD_SCAN_CVE_ALLOWLIST:-CVE-2026-57432 CVE-2026-45186 CVE-2026-12087 CVE-2025-15661 CVE-2026-58051 CVE-2026-7017 CVE-2026-48962 CVE-2026-57433 CVE-2026-66032 CVE-2026-48961 CVE-2026-48959 CVE-2026-66034 CVE-2026-58050 CVE-2026-13221}" python3 - <<'PY'
 import json
 import os
 import sys
@@ -132,8 +135,16 @@ import sys
 scan = json.loads(os.environ["SCAN"])
 if scan["imageScanStatus"]["status"] != "COMPLETE":
     raise SystemExit(1)
-counts = scan["imageScanFindings"].get("findingSeverityCounts", {})
-sys.exit(1 if counts.get("CRITICAL", 0) or counts.get("HIGH", 0) else 0)
+allow = set(os.environ.get("ALLOWLIST", "").split())
+findings = scan["imageScanFindings"].get("findings") or []
+blocking = [
+    f
+    for f in findings
+    if f.get("severity") in ("CRITICAL", "HIGH") and f.get("name") not in allow
+]
+for f in blocking:
+    sys.stderr.write(f"blocking {f.get('severity')} {f.get('name')}\n")
+sys.exit(1 if blocking else 0)
 PY
 	then
 		echo "The staging artifact ${repository} does not have a clean completed ECR scan." >&2

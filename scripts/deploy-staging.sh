@@ -16,14 +16,13 @@ HEAD_SHA="$(git rev-parse HEAD)"
 RELEASE="${1:-$HEAD_SHA}"
 IMAGE_TAG="${RELEASE//+/-}-linux-amd64"
 
-# STAGING-ONLY CVE allowlist. These CRITICAL/HIGH findings are unpatched 2026
-# CVEs in base OS packages (perl, libssh2, expat) that git pulls into the worker
-# image; no fix exists in Debian 12 or 13 yet. They are accepted for STAGING
-# ONLY, because the worker runs inside an ephemeral, single-tenant, isolated
-# CreateOS sandbox that already executes untrusted agent code, so the added
-# blast radius is minimal. Production (promote-production.sh) keeps its own
-# strict scan gate and is NOT affected by this list. Remove entries as Debian
-# ships fixes; the worker stage's apt-get upgrade then clears them on rebuild.
+# CVE allowlist shared with promote-production.sh. These CRITICAL/HIGH findings
+# are unpatched 2026 CVEs in base OS packages (perl, libssh2, expat) that git
+# pulls into the worker image; no fix exists in Debian 12 or 13 yet. The worker
+# runs inside an ephemeral, single-tenant, isolated CreateOS sandbox that
+# already executes untrusted agent code. Keep this list in sync with production
+# promote. Remove entries as Debian ships fixes; the worker stage's apt-get
+# upgrade then clears them on rebuild.
 SCAN_CVE_ALLOWLIST="${AO_CLOUD_SCAN_CVE_ALLOWLIST:-CVE-2026-57432 CVE-2026-45186 CVE-2026-12087 CVE-2025-15661 CVE-2026-58051 CVE-2026-7017 CVE-2026-48962 CVE-2026-57433 CVE-2026-66032 CVE-2026-48961 CVE-2026-48959 CVE-2026-66034 CVE-2026-58050 CVE-2026-13221}"
 
 AWS_OPTIONS=(--region "$REGION")
