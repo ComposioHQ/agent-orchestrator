@@ -770,7 +770,7 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     latest_user_prompt = ?, latest_assistant_update = ?, native_transcript_path = ?,
-    preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
+    preview_url = ?, preview_revision = ?,
     cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, updated_at = ?,
     is_pinned = ?, pinned_at = ?, auto_inject_review = ?, auto_inject_ci = ?
@@ -802,7 +802,6 @@ type UpdateSessionParams struct {
 	NativeTranscriptPath      string
 	PreviewURL                string
 	PreviewRevision           int64
-	TerminateOnPRMerge        bool
 	CleanupGeneration         int64
 	BrowserCapabilityVerifier string
 	ProviderConversationID    string
@@ -815,6 +814,11 @@ type UpdateSessionParams struct {
 	ID                        domain.SessionID
 }
 
+// terminate_on_pr_merge is deliberately ABSENT: it is an independently-owned
+// user setting written only by SetSessionTerminateOnPRMerge (and seeded by
+// CreateSession). Including it here let a lifecycle read-modify-full-write
+// commit a stale snapshot over a policy flip the user made in between
+// (#3087 finding 4), silently reverting terminate-on-merge.
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
 	_, err := q.db.ExecContext(ctx, updateSession,
 		arg.IssueID,
@@ -841,7 +845,6 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.NativeTranscriptPath,
 		arg.PreviewURL,
 		arg.PreviewRevision,
-		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
 		arg.BrowserCapabilityVerifier,
 		arg.ProviderConversationID,

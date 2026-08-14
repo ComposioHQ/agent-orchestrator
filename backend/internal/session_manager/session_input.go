@@ -18,6 +18,10 @@ const (
 	agentOperationKill    agentOperationKind = "kill"
 	agentOperationRestore agentOperationKind = "restore"
 	agentOperationRetire  agentOperationKind = "retire"
+	// agentOperationCleanup guards terminal-resource teardown (manual Cleanup
+	// and the periodic GC) so it can never race a Restore/Resume relaunch of
+	// the same session.
+	agentOperationCleanup agentOperationKind = "cleanup"
 )
 
 var errAgentOperationInProgress = errors.New("session: another exclusive operation is in progress")

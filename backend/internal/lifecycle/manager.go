@@ -92,6 +92,14 @@ type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
+// crashedSessionFinalizer releases a crash-terminated session's external
+// resources (runtime leftovers, worktree — with its uncommitted work captured
+// first) after the reducer records reaper-observed death. Late-bound like
+// sessionTerminator because Session Manager depends on this reducer.
+type crashedSessionFinalizer interface {
+	FinalizeCrashedSession(ctx context.Context, id domain.SessionID) error
+}
+
 type sessionUsageFinalizer interface {
 	FinalizeSession(
 		ctx context.Context,
@@ -160,6 +168,10 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
+	// crashFinalizer is late-bound for the same reason. Nil (narrow embedders,
+	// tests) means reaper-observed death only records the terminal fact, as it
+	// did before crash finalization existed.
+	crashFinalizer crashedSessionFinalizer
 	// usageFinalizer is late-bound because the usage pipeline is optional. It
 	// receives terminal intent before is_terminated makes the session ineligible
 	// for normal source discovery.
@@ -222,6 +234,15 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completionTerminator = terminator
+}
+
+// SetCrashFinalizer wires reaper-observed session death to external-resource
+// teardown (capture work, free the worktree/branch) so a crashed session does
+// not strand an orphaned worktree or wedge its branch (#3921).
+func (m *Manager) SetCrashFinalizer(finalizer crashedSessionFinalizer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.crashFinalizer = finalizer
 }
 
 // SetUsageFinalizer wires termination and relaunches to usage collection.
@@ -424,6 +445,18 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 		// runtime reaper must not leave the session's Docker containers behind
 		// just because it never called MarkTerminated directly.
 		m.reapSessionContainers(ctx, id)
+		// Release the session's external resources: capture uncommitted work,
+		// record the restore marker, and free the worktree + branch. Best-effort —
+		// the terminal fact is already durable, and the periodic terminal-resource
+		// GC retries anything left behind (#3921, #3402).
+		m.mu.Lock()
+		finalizerHook := m.crashFinalizer
+		m.mu.Unlock()
+		if finalizerHook != nil {
+			if err := finalizerHook.FinalizeCrashedSession(ctx, id); err != nil {
+				slog.Default().Warn("lifecycle: crashed-session resource finalization failed; terminal-resource GC will retry", "session", id, "err", err)
+			}
+		}
 	}
 	return nil
 }
@@ -966,6 +999,13 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 			return nil, fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
 		}
 		now := m.clock()
+		if rec.IsTerminated {
+			// Un-terminating (restore/relaunch) starts a new cleanup generation:
+			// teardown facts recorded for the previous terminal phase no longer
+			// describe this session's resources, so the terminal-resource
+			// reconciler must treat them as stale (see session_cleanup_facts).
+			rec.CleanupGeneration++
+		}
 		rec.IsTerminated = false
 		rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
 		// Each spawn/restore must re-prove its hook pipeline: clear the receipt so

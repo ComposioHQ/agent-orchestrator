@@ -31,6 +31,12 @@ type AgentConfig struct {
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`
+	// MaxMemoryMB, when > 0, launches the agent process (and its children)
+	// under a virtual-memory ceiling (`ulimit -v`) so one runaway child is
+	// OOM-killed instead of swapping the whole machine to a crawl (#2523).
+	// Best-effort: enforced where the platform honors RLIMIT_AS (Linux;
+	// partially on macOS); ignored on Windows. 0 = no ceiling.
+	MaxMemoryMB int `json:"maxMemoryMB,omitempty"`
 }
 
 // IsZero reports whether the config carries no settings, so storage can persist
@@ -59,6 +65,9 @@ func (c AgentConfig) Validate() error {
 	case "", "low", "medium", "high", "ultra":
 	default:
 		return fmt.Errorf("invalid mode %q: want one of low, medium, high, ultra", c.Mode)
+	}
+	if c.MaxMemoryMB < 0 {
+		return fmt.Errorf("invalid maxMemoryMB %d: must be >= 0 (0 = no ceiling)", c.MaxMemoryMB)
 	}
 	if c.Permissions.Valid() {
 		return nil

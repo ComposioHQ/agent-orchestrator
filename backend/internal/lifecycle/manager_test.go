@@ -2502,6 +2502,28 @@ func TestApplyTrackerFacts_TerminalStateMarksTerminated(t *testing.T) {
 	}
 }
 
+func TestApplyTrackerFacts_TerminalStateUsesConfiguredTerminator(t *testing.T) {
+	// The full teardown path (Kill) must run, not the bare terminal flag: a
+	// flag-only termination leaves the worktree and runtime orphaned (#2811).
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	st.sessions["mer-1"] = working("mer-1")
+	o := ports.TrackerObservation{
+		Fetched: true,
+		Issue:   ports.TrackerIssueObservation{URL: "https://github.com/o/r/issues/1", State: domain.IssueDone},
+	}
+	if err := m.ApplyTrackerFacts(ctx, "mer-1", o); err != nil {
+		t.Fatalf("ApplyTrackerFacts: %v", err)
+	}
+	if terminator.calls != 1 {
+		t.Fatalf("terminator calls = %d, want 1", terminator.calls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("flag-only termination ran alongside the terminator")
+	}
+}
+
 func TestApplyTrackerFacts_TerminalStateIsSuppressedDuringSessionMutation(t *testing.T) {
 	m, st, _ := newManager()
 	m.SetSessionOperationGate(fixedSessionOperationGate(true))

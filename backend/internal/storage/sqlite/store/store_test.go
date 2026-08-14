@@ -1515,3 +1515,46 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 		t.Fatalf("State = %q, want %q", got.State, "active")
 	}
 }
+
+// Regression for #3087 finding 4: a full-row UpdateSession carrying a stale
+// snapshot must not revert the independently-owned terminate-on-merge policy
+// a narrow setter flipped in between (the lifecycle read-modify-full-write
+// lost-update).
+func TestUpdateSessionCannotRevertTerminateOnPRMerge(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A lifecycle-style writer reads its snapshot (policy false) ...
+	stale, ok, err := s.GetSession(ctx, rec.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+
+	// ... the user flips the policy on ...
+	if ok, err := s.SetSessionTerminateOnPRMerge(ctx, rec.ID, true, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("set policy: ok=%v err=%v", ok, err)
+	}
+
+	// ... and the stale full-row commit lands afterwards.
+	stale.Activity.State = domain.ActivityIdle
+	stale.UpdatedAt = time.Now().UTC()
+	if err := s.UpdateSession(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, err := s.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.TerminateOnPRMerge {
+		t.Fatal("stale UpdateSession reverted terminate-on-merge")
+	}
+	if got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("UpdateSession stopped writing its own fields: %+v", got.Activity)
+	}
+}

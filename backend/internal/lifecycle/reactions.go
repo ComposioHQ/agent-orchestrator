@@ -554,7 +554,18 @@ func (m *Manager) ApplyTrackerFacts(ctx context.Context, id domain.SessionID, o 
 		if m.sessionMutationInProgress(id) {
 			return nil
 		}
-		return m.MarkTerminated(ctx, id)
+		// Route through the same full teardown as merge completion (Kill):
+		// MarkTerminated alone left the worktree and runtime orphaned on every
+		// tracker-driven termination (#2811). The bare-flag fallback remains
+		// only for narrow embedders that wired no terminator; the daemon always
+		// wires one, and the terminal-resource GC sweeps up after the fallback.
+		m.mu.Lock()
+		terminator := m.completionTerminator
+		m.mu.Unlock()
+		if terminator == nil {
+			return m.MarkTerminated(ctx, id)
+		}
+		return m.terminateCompletedSession(ctx, id)
 	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {

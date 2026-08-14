@@ -72,6 +72,14 @@ type commander interface {
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 }
 
+// terminatedOrchestratorReleaser is an optional command capability (see
+// interfaceTransitionCommander for the pattern): SpawnOrchestrator uses it to
+// free the canonical orchestrator branch from a dead predecessor's leftover
+// worktree before spawning the replacement (#3921).
+type terminatedOrchestratorReleaser interface {
+	ReleaseTerminatedOrchestratorWorkspaces(ctx context.Context, projectID domain.ProjectID) error
+}
+
 // interfaceTransitionCommander is an optional command capability. Keeping it
 // separate avoids widening every focused session-service fake while production
 // can expose the feature through the concrete Session Manager.
@@ -241,6 +249,19 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.Session{}, 0, 0, err
+	}
+	// Recovery for a dead orchestrator (#3921): a terminated orchestrator whose
+	// teardown failed still holds the canonical orchestrator branch in its
+	// leftover worktree, which would make every replacement spawn fail. Free
+	// those leftovers (work is captured to the preserve ref first) before
+	// spawning. Best-effort: if release fails, the spawn below surfaces the
+	// real branch conflict.
+	if cfg.Kind == domain.KindOrchestrator {
+		if releaser, ok := s.manager.(terminatedOrchestratorReleaser); ok {
+			if err := releaser.ReleaseTerminatedOrchestratorWorkspaces(ctx, cfg.ProjectID); err != nil && s.logger != nil {
+				s.logger.Warn("spawn orchestrator: releasing terminated orchestrator worktrees failed", "projectID", cfg.ProjectID, "error", err)
+			}
+		}
 	}
 	start := s.now()
 	firstSession, err := s.isFirstSession(ctx)
@@ -917,6 +938,8 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrNotResumable):
 		return apierr.Conflict("SESSION_NOT_RESUMABLE",
 			"This session has no saved agent session or prompt to resume from", nil)
+	case errors.Is(err, sessionmanager.ErrConcurrencyLimit):
+		return apierr.Conflict("SESSION_CONCURRENCY_LIMIT", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrProjectNotResolvable):
 		return apierr.Invalid("PROJECT_NOT_RESOLVABLE", "Project is not registered or has no repo. Register it with `ao project add`", nil)
 	case errors.Is(err, sessionmanager.ErrUnknownHarness):

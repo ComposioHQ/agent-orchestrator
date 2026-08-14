@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
@@ -128,6 +129,13 @@ type sessionLifecycle interface {
 	RestoreAll(ctx context.Context) error
 	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	// FinalizeCrashedSession releases a crash-terminated session's external
+	// resources (capture work, free the worktree/branch) after the reaper
+	// records its death; late-bound into the LCM like Kill.
+	FinalizeCrashedSession(ctx context.Context, id domain.SessionID) error
+	// RunTerminalResourceGC reclaims resources still held by terminated
+	// sessions, driven by the durable session_cleanup_facts bookkeeping.
+	RunTerminalResourceGC(ctx context.Context) (sessionmanager.CleanupResult, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
@@ -145,6 +153,36 @@ type sessionLifecycle interface {
 	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
 	// service, which is built alongside the controller-facing service below.
 	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
+}
+
+// Terminal-resource GC cadence: the first pass runs shortly after boot (the
+// boot Reconcile has already settled live reality by then) and then hourly.
+// Reclaiming a leaked worktree an hour late is invisible to the user; running
+// rarely keeps the pass from ever competing with interactive work.
+const (
+	terminalResourceGCInitialDelay = 2 * time.Minute
+	terminalResourceGCInterval     = time.Hour
+)
+
+// startTerminalResourceGC launches the periodic worktree/branch GC goroutine.
+// It exits when ctx is cancelled. Failures are logged and the next tick
+// retries; the durable facts bookkeeping caps per-session retry churn.
+func startTerminalResourceGC(ctx context.Context, sessions sessionLifecycle, log *slog.Logger) {
+	go func() {
+		timer := time.NewTimer(terminalResourceGCInitialDelay)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			if _, err := sessions.RunTerminalResourceGC(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("terminal-resource gc pass failed", "err", err)
+			}
+			timer.Reset(terminalResourceGCInterval)
+		}
+	}()
 }
 
 // sessionLifecycleMessenger adapts sessionLifecycle to ports.AgentMessenger so
@@ -190,20 +228,21 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:             runtime,
-		Agents:              agents,
-		Workspace:           ws,
-		Store:               store,
-		Messenger:           messenger,
-		Chat:                chat,
-		Defaults:            defaults,
-		Lifecycle:           lcm,
-		Preview:             previewLifecycle,
-		Browser:             browserLifecycle,
-		BrowserCapabilities: browserCapabilities,
-		DataDir:             cfg.DataDir,
-		BackgroundContext:   ctx,
-		Logger:              log,
+		Runtime:               runtime,
+		Agents:                agents,
+		Workspace:             ws,
+		Store:                 store,
+		Messenger:             messenger,
+		Chat:                  chat,
+		Defaults:              defaults,
+		Lifecycle:             lcm,
+		Preview:               previewLifecycle,
+		Browser:               browserLifecycle,
+		BrowserCapabilities:   browserCapabilities,
+		DataDir:               cfg.DataDir,
+		BackgroundContext:     ctx,
+		MaxConcurrentSessions: cfg.MaxConcurrentSessions,
+		Logger:                log,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
 	// Build the multi-tracker dispatching to both GitHub and GitLab. The
