@@ -14,7 +14,10 @@ import (
 )
 
 const (
-	defaultGitBinary = "git"
+	defaultGitBinary             = "git"
+	legacyDefaultBranch          = "main"
+	legacyInitialCommitSubject   = "initial commit"
+	legacyWorkspaceCommitSubject = "chore: initialize AO workspace root"
 	// ManagedDefaultConfigKey records the branch AO selected when it initialized
 	// a repository itself. It is intentionally repo-local and is only consulted
 	// when the repository has no remotes.
@@ -84,6 +87,28 @@ func (r *Resolver) Inspect(ctx context.Context, repo string) (Resolution, error)
 	return Resolution{}, unresolvedf(
 		"remote %q in repository %q has no cached HEAD", remote, repo,
 	)
+}
+
+// FindCachedRemoteBranch returns a fetched branch from the repository's
+// selected primary remote. It does not require that remote to advertise a
+// symbolic HEAD, so callers can resume an explicitly requested remote branch
+// even when the repository default itself is unavailable.
+func (r *Resolver) FindCachedRemoteBranch(ctx context.Context, repo, branch string) (remote, ref string, ok bool, err error) {
+	if err := r.validateBranch(ctx, repo, branch); err != nil {
+		return "", "", false, err
+	}
+	remote, remotes, err := r.selectRemote(ctx, repo)
+	if err != nil {
+		return "", "", false, err
+	}
+	if len(remotes) == 0 {
+		return "", "", false, nil
+	}
+	ref = remoteBranchRef(remote, branch)
+	if !r.refExists(ctx, repo, ref) {
+		return remote, ref, false, nil
+	}
+	return remote, ref, true, nil
 }
 
 // Resolve asks the selected remote for its symbolic HEAD, fetches that exact
@@ -207,12 +232,19 @@ func (r *Resolver) cachedRemoteHead(ctx context.Context, repo, remote string) (R
 
 func (r *Resolver) resolveAOInitialized(ctx context.Context, repo string) (Resolution, error) {
 	out, err := r.run(ctx, r.binary, "-C", repo, "config", "--local", "--get", ManagedDefaultConfigKey)
-	if err != nil || strings.TrimSpace(string(out)) == "" {
-		return Resolution{}, unresolvedf(
-			"repository %q has no remote or AO-recorded default; configure defaultBranch explicitly", repo,
-		)
-	}
 	branch := strings.TrimSpace(string(out))
+	if err != nil || branch == "" {
+		var ok bool
+		branch, ok = r.legacyAOInitializedBranch(ctx, repo)
+		if !ok {
+			return Resolution{}, unresolvedf(
+				"repository %q has no remote or AO-recorded default", repo,
+			)
+		}
+		if _, err := r.run(ctx, r.binary, "-C", repo, "config", "--local", ManagedDefaultConfigKey, branch); err != nil {
+			return Resolution{}, fmt.Errorf("backfill %s for repository %q: %w", ManagedDefaultConfigKey, repo, err)
+		}
+	}
 	if err := r.validateBranch(ctx, repo, branch); err != nil {
 		return Resolution{}, unresolvedf("repository %q has invalid %s=%q", repo, ManagedDefaultConfigKey, branch)
 	}
@@ -223,6 +255,40 @@ func (r *Resolver) resolveAOInitialized(ctx context.Context, repo string) (Resol
 		)
 	}
 	return Resolution{Branch: branch, Ref: ref, Source: SourceAOInitialized}, nil
+}
+
+// legacyAOInitializedBranch recognizes the two initial commits written by AO
+// before ManagedDefaultConfigKey existed. Both legacy creation paths selected
+// main explicitly, so this is a compatibility backfill rather than a branch
+// guess. User-created remoteless repositories remain unresolved.
+func (r *Resolver) legacyAOInitializedBranch(ctx context.Context, repo string) (string, bool) {
+	ref := "refs/heads/" + legacyDefaultBranch
+	if !r.refExists(ctx, repo, ref) {
+		return "", false
+	}
+	out, err := r.run(
+		ctx,
+		r.binary,
+		"-C", repo,
+		"log", "--max-parents=0", "--format=%an%x00%ae%x00%s", ref,
+	)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 3 {
+			continue
+		}
+		name := strings.TrimSpace(fields[0])
+		email := strings.TrimSpace(fields[1])
+		subject := strings.TrimSpace(fields[2])
+		if subject == legacyWorkspaceCommitSubject ||
+			(subject == legacyInitialCommitSubject && name == "Agent Orchestrator" && email == "ao@example.com") {
+			return legacyDefaultBranch, true
+		}
+	}
+	return "", false
 }
 
 func (r *Resolver) validateBranch(ctx context.Context, repo, branch string) error {

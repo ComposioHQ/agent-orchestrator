@@ -448,6 +448,9 @@ func TestWorkspaceIntegrationAutoRejectsUnmarkedRemotelessRepo(t *testing.T) {
 	if !errors.Is(err, ports.ErrWorkspaceDefaultBranchUnresolved) {
 		t.Fatalf("Create error = %v, want ErrWorkspaceDefaultBranchUnresolved", err)
 	}
+	if !strings.Contains(err.Error(), "remote set-head") || !strings.Contains(err.Error(), repo) {
+		t.Fatalf("Create error = %v, want repository-specific remote HEAD remediation", err)
+	}
 	if out, err := exec.Command(git, "-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/ao/proj-1").CombinedOutput(); err == nil {
 		t.Fatalf("unresolved auto selection leaked a session branch: %s", out)
 	}
@@ -488,6 +491,37 @@ func TestWorkspaceIntegrationAutoUsesAOInitializedRemotelessDefault(t *testing.T
 	}
 }
 
+func TestWorkspaceIntegrationAutoUsesRequestedRemoteBranchWithoutRemoteHead(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	branch := "feature/resume"
+	sha := gitOutput(t, git, repo, "rev-parse", "HEAD")
+	runGit(t, git, repo, "update-ref", "refs/remotes/origin/"+branch, sha)
+	runGit(t, git, repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+	origin := gitOutput(t, git, repo, "remote", "get-url", "origin")
+	runGit(t, git, origin, "update-ref", "--no-deref", "HEAD", sha)
+
+	ws, err := New(Options{
+		Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo},
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID: "proj", SessionID: "sess", Branch: branch,
+	})
+	if err != nil {
+		t.Fatalf("create from requested remote branch: %v", err)
+	}
+	if info.BaseRef != "refs/remotes/origin/"+branch {
+		t.Fatalf("base ref = %q, want requested origin branch", info.BaseRef)
+	}
+	if got := gitOutput(t, git, info.Path, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("worktree HEAD = %s, want requested remote SHA %s", got, sha)
+	}
+}
+
 func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()
@@ -524,6 +558,16 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *tes
 	}
 	if len(info.Worktrees) != 3 {
 		t.Fatalf("worktrees = %d, want root and two children: %#v", len(info.Worktrees), info.Worktrees)
+	}
+	wantRefs := map[string]string{
+		"__root__": "refs/remotes/origin/trunk",
+		"api":      "refs/remotes/origin/dev",
+		"web":      "refs/remotes/origin/main",
+	}
+	for _, wt := range info.Worktrees {
+		if wt.BaseRef != wantRefs[wt.RepoName] {
+			t.Fatalf("worktree %q base ref = %q, want %q", wt.RepoName, wt.BaseRef, wantRefs[wt.RepoName])
+		}
 	}
 	devChildPath := filepath.Join(info.Root.Path, "services", "api")
 	if _, err := os.Stat(filepath.Join(devChildPath, "README.md")); err != nil {

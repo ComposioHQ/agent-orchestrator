@@ -329,16 +329,16 @@ func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef
 	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
 
-func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defaultBranch string) workspaceCompareTarget {
-	defaultBranch = workspaceDefaultBranch(defaultBranch)
-	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
+func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, recordedRef string) workspaceCompareTarget {
+	recordedRef = workspaceDefaultBranch(recordedRef)
+	for _, ref := range workspaceBaseRefCandidates(recordedRef) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
 			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
 		}
 	}
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
-		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: defaultBranch, Mode: WorkspaceCompareBase}
+		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: recordedRef, Mode: WorkspaceCompareBase}
 	}
 	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
@@ -492,8 +492,14 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		if prefix == "" {
 			exclude = childPrefixes
 		}
+		baseRef := row.BaseRef
+		if strings.TrimSpace(baseRef) == "" {
+			// Compatibility for sessions created before per-repository base refs
+			// were persisted. New rows always use their adapter-resolved ref.
+			baseRef = defaultBranch
+		}
 		resolve := func(rctx context.Context) workspaceCompareTarget {
-			return resolveWorkspaceProjectCompare(rctx, row.WorktreePath, row.BaseSHA, defaultBranch)
+			return resolveWorkspaceProjectCompare(rctx, row.WorktreePath, row.BaseSHA, baseRef)
 		}
 		repoFiles, repoTruncated, compare, err := s.workspaceFileSummariesCached(ctx, rec.ID, row.WorktreePath, prefix, exclude, resolve)
 		if err != nil {
@@ -539,8 +545,12 @@ func (s *Service) getWorkspaceProjectFile(ctx context.Context, rec domain.Sessio
 		return WorkspaceFileDetail{}, apierr.NotFound("WORKSPACE_FILE_NOT_FOUND", "Workspace file not found")
 	}
 	defaultBranch := defaultBranchForProject(project, true)
+	baseRef := row.BaseRef
+	if strings.TrimSpace(baseRef) == "" {
+		baseRef = defaultBranch
+	}
 	resolve := func(rctx context.Context) workspaceCompareTarget {
-		return resolveWorkspaceProjectCompare(rctx, row.WorktreePath, row.BaseSHA, defaultBranch)
+		return resolveWorkspaceProjectCompare(rctx, row.WorktreePath, row.BaseSHA, baseRef)
 	}
 	compare, changes, err := s.resolveWorkspaceChanges(ctx, rec.ID, row.WorktreePath, resolve)
 	if err != nil {

@@ -1053,7 +1053,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	runGit(t, child, "rebase", "main")
 
 	st := newFakeStore()
-	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace, Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace}
 	st.sessions["ws-1"] = domain.SessionRecord{
 		ID:        "ws-1",
 		ProjectID: "ws",
@@ -1061,7 +1061,7 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	}
 	st.worktrees["ws-1"] = []domain.SessionWorktreeRecord{
 		{SessionID: "ws-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: root, BaseSHA: rootBase},
-		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: oldChildBase},
+		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: oldChildBase, BaseRef: "refs/heads/main"},
 	}
 
 	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ws-1")
@@ -1083,8 +1083,8 @@ func TestWorkspaceProjectChildRepoRecomputesBaseAfterRebase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != newChildBase || detail.CompareBaseRef != "main" {
-		t.Fatalf("child detail compare = mode:%q sha:%q ref:%q, want base %s main", detail.CompareMode, detail.CompareBaseSHA, detail.CompareBaseRef, newChildBase)
+	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != newChildBase || detail.CompareBaseRef != "refs/heads/main" {
+		t.Fatalf("child detail compare = mode:%q sha:%q ref:%q, want base %s refs/heads/main", detail.CompareMode, detail.CompareBaseSHA, detail.CompareBaseRef, newChildBase)
 	}
 }
 

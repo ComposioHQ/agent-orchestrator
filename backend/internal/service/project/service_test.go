@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/gitdefault"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -737,7 +738,7 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 
 	t.Run("unborn git repo", func(t *testing.T) {
 		dir := t.TempDir()
-		if out, err := exec.Command("git", "init", "-b", "main", dir).CombinedOutput(); err != nil {
+		if out, err := exec.Command("git", "init", "-b", "trunk", dir).CombinedOutput(); err != nil {
 			t.Fatalf("git init: %v (%s)", err, out)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("unborn file\n"), 0o644); err != nil {
@@ -755,6 +756,13 @@ func TestManager_InitializeRepositoryRecovery(t *testing.T) {
 		}
 		if got := string(out); got != "unborn file\n" {
 			t.Fatalf("HEAD:notes.txt = %q, want %q", got, "unborn file\n")
+		}
+		marker, err := exec.Command("git", "-C", dir, "config", "--local", "--get", gitdefault.ManagedDefaultConfigKey).CombinedOutput()
+		if err != nil {
+			t.Fatalf("read managed default marker: %v (%s)", err, marker)
+		}
+		if got := strings.TrimSpace(string(marker)); got != "trunk" {
+			t.Fatalf("managed default marker = %q, want trunk", got)
 		}
 	})
 

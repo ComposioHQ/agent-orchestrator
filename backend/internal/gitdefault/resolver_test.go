@@ -65,8 +65,8 @@ func TestResolveNeverFallsBackToCurrentOrConventionalBranch(t *testing.T) {
 	if !errors.Is(err, ErrUnresolved) {
 		t.Fatalf("Resolve error = %v, want ErrUnresolved", err)
 	}
-	if !strings.Contains(err.Error(), "configure defaultBranch explicitly") {
-		t.Fatalf("Resolve error = %v, want actionable explicit-config guidance", err)
+	if !strings.Contains(err.Error(), "no remote or AO-recorded default") {
+		t.Fatalf("Resolve error = %v, want missing authoritative metadata detail", err)
 	}
 }
 
@@ -81,6 +81,52 @@ func TestResolveUsesBranchAORecordedAtInitialization(t *testing.T) {
 	}
 	if resolution.Branch != "main" || resolution.Ref != "refs/heads/main" || resolution.Source != SourceAOInitialized {
 		t.Fatalf("resolution = %#v, want AO-initialized main", resolution)
+	}
+}
+
+func TestResolveBackfillsLegacyAOInitializedRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		author  string
+		email   string
+		subject string
+	}{
+		{name: "initialized folder", author: "Agent Orchestrator", email: "ao@example.com", subject: legacyInitialCommitSubject},
+		{name: "workspace root", author: "Developer", email: "developer@example.com", subject: legacyWorkspaceCommitSubject},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := filepath.Join(t.TempDir(), "repo")
+			run(t, "git", "init", "-b", legacyDefaultBranch, repo)
+			runGit(t, repo, "config", "user.name", tc.author)
+			runGit(t, repo, "config", "user.email", tc.email)
+			runGit(t, repo, "commit", "--allow-empty", "-m", tc.subject)
+			runGit(t, repo, "switch", "-c", "feature/temporary")
+
+			resolution, err := New("", nil).Resolve(context.Background(), context.Background(), repo)
+			if err != nil {
+				t.Fatalf("Resolve legacy repository: %v", err)
+			}
+			if resolution.Branch != legacyDefaultBranch || resolution.Ref != "refs/heads/main" || resolution.Source != SourceAOInitialized {
+				t.Fatalf("resolution = %#v, want backfilled AO main", resolution)
+			}
+			if got := gitOutput(t, repo, "config", "--local", "--get", ManagedDefaultConfigKey); got != legacyDefaultBranch {
+				t.Fatalf("backfilled marker = %q, want %q", got, legacyDefaultBranch)
+			}
+		})
+	}
+}
+
+func TestFindCachedRemoteBranchDoesNotRequireRemoteHead(t *testing.T) {
+	_, repo := remoteRepo(t, "main")
+	runGit(t, repo, "update-ref", "refs/remotes/origin/feature/resume", "HEAD")
+	runGit(t, repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+
+	remote, ref, ok, err := New("", nil).FindCachedRemoteBranch(context.Background(), repo, "feature/resume")
+	if err != nil {
+		t.Fatalf("FindCachedRemoteBranch: %v", err)
+	}
+	if !ok || remote != "origin" || ref != "refs/remotes/origin/feature/resume" {
+		t.Fatalf("cached branch = remote:%q ref:%q ok:%v", remote, ref, ok)
 	}
 }
 

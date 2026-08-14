@@ -197,6 +197,7 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 		Kind:          domain.KindOrchestrator,
 		SessionPrefix: "proj",
 		Branch:        "ao/proj-orchestrator",
+		BaseBranch:    "main",
 	}
 	ws.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		joined := strings.Join(args, " ")
@@ -205,6 +206,8 @@ func TestCreateReusesRegisteredWorktreeAtExpectedPath(t *testing.T) {
 			return nil, nil
 		case strings.Contains(joined, "worktree list --porcelain"):
 			return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("sha\n"), nil
 		default:
 			t.Fatalf("unexpected git invocation: %v", args)
 			return nil, nil
@@ -241,6 +244,7 @@ func TestCreateRecreatesMissingRegisteredWorktreeWithForce(t *testing.T) {
 		Kind:          domain.KindOrchestrator,
 		SessionPrefix: "proj",
 		Branch:        "ao/proj-orchestrator",
+		BaseBranch:    "main",
 	}
 
 	// The stale registration is never cleared, so it stays in every listing:
@@ -256,6 +260,8 @@ func TestCreateRecreatesMissingRegisteredWorktreeWithForce(t *testing.T) {
 			return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/ao/proj-orchestrator"):
 			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("sha\n"), nil
 		case strings.Contains(joined, "worktree add --force "+path+" ao/proj-orchestrator"):
 			return nil, nil
 		default:
@@ -316,6 +322,7 @@ func TestRestoreRecreatesMissingRegisteredWorktreeWithForce(t *testing.T) {
 		Kind:          domain.KindOrchestrator,
 		SessionPrefix: "proj",
 		Branch:        "ao/proj-orchestrator",
+		BaseBranch:    "main",
 		Path:          path,
 	}
 
@@ -330,6 +337,8 @@ func TestRestoreRecreatesMissingRegisteredWorktreeWithForce(t *testing.T) {
 			return []byte("worktree " + path + "\nbranch refs/heads/ao/proj-orchestrator\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/ao/proj-orchestrator"):
 			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("sha\n"), nil
 		case strings.Contains(joined, "worktree add --force "+path+" ao/proj-orchestrator"):
 			return nil, nil
 		default:
@@ -380,6 +389,7 @@ func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
 		Kind:          domain.KindOrchestrator,
 		SessionPrefix: "proj",
 		Branch:        "ao/proj-orchestrator/root",
+		BaseBranch:    "main",
 		Path:          path,
 	}
 
@@ -394,6 +404,8 @@ func TestRestoreRecreatesOnRegisteredBranchNotCfgBranch(t *testing.T) {
 			return []byte("worktree " + path + "\nbranch refs/heads/" + registeredBranch + "\n"), nil
 		case strings.Contains(joined, "rev-parse --verify --quiet refs/heads/"+registeredBranch):
 			return nil, nil
+		case strings.Contains(joined, "rev-parse --verify --quiet"):
+			return []byte("sha\n"), nil
 		case strings.Contains(joined, "worktree add --force "+path+" "+registeredBranch):
 			return nil, nil
 		default:
@@ -752,11 +764,12 @@ func TestRestoreWithRepoPathMovesStrayPathAside(t *testing.T) {
 	}
 
 	info, err := ws.Restore(context.Background(), ports.WorkspaceConfig{
-		ProjectID: "proj",
-		SessionID: "proj-1",
-		Branch:    "ao/proj-1",
-		RepoPath:  repo,
-		Path:      path,
+		ProjectID:  "proj",
+		SessionID:  "proj-1",
+		Branch:     "ao/proj-1",
+		BaseBranch: "main",
+		RepoPath:   repo,
+		Path:       path,
 	})
 	if err != nil {
 		t.Fatalf("Restore: %v", err)

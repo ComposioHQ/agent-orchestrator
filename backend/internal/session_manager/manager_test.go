@@ -669,6 +669,9 @@ type fakeWorkspace struct {
 	// trip (production Create resolves this path; the zero default keeps every
 	// other test's behavior unchanged).
 	createRepoPath string
+	// baseRef is the authoritative ref returned with single-repo workspaces.
+	// When empty, an explicit BaseBranch is echoed to match the real adapter.
+	baseRef string
 	// lastDestroyInfo records the WorkspaceInfo passed to the most recent Destroy
 	// so tests can assert teardown fed it the persisted repo path.
 	lastDestroyInfo   ports.WorkspaceInfo
@@ -707,7 +710,11 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	if path == "" {
 		path = "/ws/" + string(cfg.SessionID)
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: w.createRepoPath}, nil
+	baseRef := w.baseRef
+	if baseRef == "" {
+		baseRef = cfg.BaseBranch
+	}
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, BaseRef: baseRef, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: w.createRepoPath}, nil
 }
 func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.WorkspaceProjectConfig) (ports.WorkspaceProjectInfo, error) {
 	if w.projectErr != nil {
@@ -722,7 +729,11 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 		rootPath = "/ws/" + string(cfg.SessionID)
 	}
 	branch := cfg.Branch
-	root := ports.WorkspaceInfo{Path: rootPath, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}
+	rootBaseRef := cfg.BaseBranch
+	if rootBaseRef == "" {
+		rootBaseRef = "refs/remotes/origin/main"
+	}
+	root := ports.WorkspaceInfo{Path: rootPath, Branch: branch, BaseRef: rootBaseRef, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}
 	out := ports.WorkspaceProjectInfo{
 		Root: root,
 		Worktrees: []ports.WorkspaceRepoInfo{{
@@ -731,6 +742,7 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 			Path:      rootPath,
 			Branch:    branch,
 			BaseSHA:   "root-base",
+			BaseRef:   rootBaseRef,
 			SessionID: cfg.SessionID,
 			ProjectID: cfg.ProjectID,
 		}},
@@ -742,6 +754,7 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 			Path:         filepath.Join(rootPath, filepath.FromSlash(repo.RelativePath)),
 			Branch:       branch,
 			BaseSHA:      repo.Name + "-base",
+			BaseRef:      "refs/remotes/origin/" + repo.Name,
 			SessionID:    cfg.SessionID,
 			ProjectID:    cfg.ProjectID,
 			RelativePath: repo.RelativePath,
@@ -1146,6 +1159,33 @@ func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
 	wantBase := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "main"))
 	if rec.Metadata.DiffBaseSHA != wantBase || rec.Metadata.DiffBaseRef != "main" {
 		t.Fatalf("spawn diff base = sha:%q ref:%q, want %s main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, wantBase)
+	}
+}
+
+func TestSpawnAutoRecordsResolvedDiffBaseInsteadOfFeatureTip(t *testing.T) {
+	m, st, _, ws := newManager()
+	repo := newManagerGitRepo(t)
+	wantBase := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "main"))
+	runManagerGit(t, repo, "switch", "-c", "feature/temporary")
+	if err := os.WriteFile(filepath.Join(repo, "existing-feature.txt"), []byte("already here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runManagerGit(t, repo, "add", "existing-feature.txt")
+	runManagerGit(t, repo, "commit", "-m", "existing feature work")
+	featureTip := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: repo, Config: testRoleAgents()}
+	ws.path = repo
+	ws.baseRef = "refs/heads/main"
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Metadata.DiffBaseSHA != wantBase || rec.Metadata.DiffBaseRef != "refs/heads/main" {
+		t.Fatalf("auto diff base = sha:%q ref:%q, want %s refs/heads/main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, wantBase)
+	}
+	if rec.Metadata.DiffBaseSHA == featureTip {
+		t.Fatal("auto diff base incorrectly collapsed to the existing feature tip")
 	}
 }
 
@@ -2093,6 +2133,9 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 		if row.BaseSHA == "" {
 			t.Fatalf("row %s missing base sha", row.RepoName)
 		}
+		if row.BaseRef == "" {
+			t.Fatalf("row %s missing resolved base ref", row.RepoName)
+		}
 	}
 	if rt.created != 1 {
 		t.Fatal("runtime should be created")
@@ -3015,6 +3058,19 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 	if !st.sessions[s.ID].AutoInjectReview {
 		t.Fatal("automatic review injection must default to enabled")
+	}
+}
+
+func TestPromptProjectContextOmitsAutomaticBranchSentinel(t *testing.T) {
+	automatic := promptProjectContext("mer", domain.ProjectRecord{ID: "mer"})
+	if automatic.DefaultBranch != "" {
+		t.Fatalf("automatic prompt default branch = %q, want omitted", automatic.DefaultBranch)
+	}
+	explicit := promptProjectContext("mer", domain.ProjectRecord{
+		ID: "mer", Config: domain.ProjectConfig{DefaultBranch: "trunk"},
+	})
+	if explicit.DefaultBranch != "trunk" {
+		t.Fatalf("explicit prompt default branch = %q, want trunk", explicit.DefaultBranch)
 	}
 }
 

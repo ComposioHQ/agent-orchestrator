@@ -270,18 +270,21 @@ func adoptWorkspaceParent(ctx context.Context, parent string, repos []domain.Wor
 	return nil
 }
 
-func initWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord) (retErr error) {
+func initWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord) error {
+	return initWorkspaceParentWithGit(ctx, parent, repos, gitOutput)
+}
+
+type workspaceGitRunner func(context.Context, string, ...string) (string, error)
+
+func initWorkspaceParentWithGit(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord, runGit workspaceGitRunner) (retErr error) {
 	// Snapshot the original .gitignore so we can restore it on failure.
 	// If the file doesn't exist, originalGitignore is nil.
 	gitignorePath := filepath.Join(parent, ".gitignore")
 	originalGitignore, readErr := os.ReadFile(gitignorePath)
 	gitignoreExisted := readErr == nil
 
-	if _, err := gitOutput(ctx, parent, "init", "-b", domain.DefaultBranchName); err != nil {
+	if _, err := runGit(ctx, parent, "init", "-b", domain.DefaultBranchName); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_INIT_FAILED", "Failed to initialize workspace parent git repository", map[string]any{"error": err.Error()})
-	}
-	if _, err := gitOutput(ctx, parent, "config", "--local", gitdefault.ManagedDefaultConfigKey, domain.DefaultBranchName); err != nil {
-		return apierr.Invalid("WORKSPACE_PARENT_INIT_FAILED", "Failed to record the workspace root default branch", map[string]any{"error": err.Error()})
 	}
 
 	// Rollback helper: remove the .git dir we just created and restore the
@@ -298,16 +301,20 @@ func initWorkspaceParent(ctx context.Context, parent string, repos []domain.Work
 		}
 	}()
 
+	if _, err := runGit(ctx, parent, "config", "--local", gitdefault.ManagedDefaultConfigKey, domain.DefaultBranchName); err != nil {
+		return apierr.Invalid("WORKSPACE_PARENT_INIT_FAILED", "Failed to record the workspace root default branch", map[string]any{"error": err.Error()})
+	}
+
 	if _, err := ensureWorkspaceGitignore(parent, repos); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_GITIGNORE_FAILED", "Failed to write workspace parent .gitignore", map[string]any{"error": err.Error()})
 	}
-	if _, err := gitOutput(ctx, parent, "add", "-A"); err != nil {
+	if _, err := runGit(ctx, parent, "add", "-A"); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_ADD_FAILED", "Failed to stage workspace parent files", map[string]any{"error": err.Error()})
 	}
 	if err := guardNoGitlinks(ctx, parent); err != nil {
 		return err
 	}
-	if _, err := gitOutput(ctx, parent, "commit", "-m", "chore: initialize AO workspace root"); err != nil {
+	if _, err := runGit(ctx, parent, "commit", "-m", "chore: initialize AO workspace root"); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_COMMIT_FAILED", "Failed to create workspace parent initial commit", map[string]any{"error": err.Error()})
 	}
 	return nil

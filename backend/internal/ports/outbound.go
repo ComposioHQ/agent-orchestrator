@@ -334,8 +334,11 @@ type WorkspaceConfig struct {
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
 type WorkspaceInfo struct {
-	Path      string
-	Branch    string
+	Path   string
+	Branch string
+	// BaseRef is the authoritative ref selected when the worktree was created.
+	// Session diff metadata uses it instead of reinterpreting an auto sentinel.
+	BaseRef   string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
 	// RepoPath optionally overrides ProjectID-based repo resolution. It is used
@@ -380,11 +383,14 @@ type WorkspaceProjectInfo struct {
 // WorkspaceRepoInfo describes one materialized repo worktree in a workspace
 // project session.
 type WorkspaceRepoInfo struct {
-	RepoName     string
-	RepoPath     string
-	Path         string
-	Branch       string
-	BaseSHA      string
+	RepoName string
+	RepoPath string
+	Path     string
+	Branch   string
+	BaseSHA  string
+	// BaseRef is persisted with BaseSHA so comparisons can recompute a merge
+	// base after the repository default advances or the session is rebased.
+	BaseRef      string
 	SessionID    domain.SessionID
 	ProjectID    domain.ProjectID
 	RelativePath string

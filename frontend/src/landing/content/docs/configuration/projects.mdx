@@ -48,7 +48,7 @@ Project settings expose the fields that AO consumes at spawn time:
 
 `defaultBranch: "auto"` resolves each repository independently. AO selects the remote named by Git's `checkout.defaultRemote`, otherwise `origin`, otherwise the repository's only remote. It asks that remote for its symbolic `HEAD`, fetches the exact advertised branch, and can fall back to the same remote's cached `HEAD` while offline.
 
-AO never treats the currently checked-out branch, `main`, or `master` as an inferred default. If a repository has no authoritative remote default (or has ambiguous remotes), spawn returns `DEFAULT_BRANCH_UNRESOLVED`; set `defaultBranch` explicitly or configure `checkout.defaultRemote`. Repositories initialized by AO are the exception because AO records the `main` choice when it creates them.
+AO never treats the currently checked-out branch, `main`, or `master` as an inferred default. If a repository has no authoritative remote default (or has ambiguous remotes), spawn returns `DEFAULT_BRANCH_UNRESOLVED`. For a single repository or workspace root, set `defaultBranch` explicitly. For a workspace child, configure its primary remote with `checkout.defaultRemote` when needed and set its cached remote `HEAD` with `git remote set-head`. Repositories initialized by AO are the exception because AO records its branch choice when it creates them; older AO-created repositories are recognized and backfilled on first resolution.
 
 ## Worker and orchestrator roles
 

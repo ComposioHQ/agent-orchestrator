@@ -868,7 +868,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
-		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WorktreeBaseBranch())
+		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
@@ -970,6 +970,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			RepoName:     wt.RepoName,
 			Branch:       wt.Branch,
 			BaseSHA:      wt.BaseSHA,
+			BaseRef:      wt.BaseRef,
 			WorktreePath: wt.Path,
 			State:        "active",
 		}); err != nil {
@@ -2271,11 +2272,12 @@ func (m *Manager) workspaceProjectRestoreRowsFromMarkers(ctx context.Context, pr
 	}
 	rootPath := rec.Metadata.WorkspacePath
 	rootBranch := rec.Metadata.Branch
-	var rootBaseSHA string
+	var rootBaseSHA, rootBaseRef string
 	if len(rows) == 1 && (rows[0].RepoName == "" || rows[0].RepoName == domain.RootWorkspaceRepoName) {
 		rootPath = firstNonEmptyString(rows[0].WorktreePath, rootPath)
 		rootBranch = firstNonEmptyString(rows[0].Branch, rootBranch)
 		rootBaseSHA = rows[0].BaseSHA
+		rootBaseRef = rows[0].BaseRef
 	}
 	out := []ports.WorkspaceRepoInfo{{
 		RepoName:  domain.RootWorkspaceRepoName,
@@ -2283,6 +2285,7 @@ func (m *Manager) workspaceProjectRestoreRowsFromMarkers(ctx context.Context, pr
 		Path:      rootPath,
 		Branch:    rootBranch,
 		BaseSHA:   rootBaseSHA,
+		BaseRef:   rootBaseRef,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 	}}
@@ -2345,6 +2348,7 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 			Path:         row.WorktreePath,
 			Branch:       firstNonEmptyString(row.Branch, rec.Metadata.Branch),
 			BaseSHA:      row.BaseSHA,
+			BaseRef:      row.BaseRef,
 			SessionID:    rec.ID,
 			ProjectID:    rec.ProjectID,
 			RelativePath: relPaths[row.RepoName],
@@ -2364,6 +2368,7 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 			RepoName:     row.RepoName,
 			Branch:       row.Branch,
 			BaseSHA:      row.BaseSHA,
+			BaseRef:      row.BaseRef,
 			WorktreePath: row.Path,
 			PreservedRef: ref,
 			State:        "removed",
@@ -2432,6 +2437,7 @@ func (m *Manager) upsertWorkspaceProjectRowState(ctx context.Context, row ports.
 		RepoName:     row.RepoName,
 		Branch:       row.Branch,
 		BaseSHA:      row.BaseSHA,
+		BaseRef:      row.BaseRef,
 		WorktreePath: row.Path,
 		State:        state,
 	})
@@ -2452,6 +2458,7 @@ func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.
 		}
 		row.Path = restored.Path
 		row.Branch = restored.Branch
+		row.BaseRef = firstNonEmptyString(restored.BaseRef, row.BaseRef)
 		if row.RepoName == domain.RootWorkspaceRepoName {
 			root = row
 		}
@@ -3008,7 +3015,7 @@ func promptRoleForKind(kind domain.SessionKind) sessionPromptRole {
 
 func promptProjectContext(projectID domain.ProjectID, project domain.ProjectRecord) promptProject {
 	cfg := project.Config.WithDefaults()
-	if project.Kind.WithDefault() == domain.ProjectKindScratch {
+	if project.Kind.WithDefault() == domain.ProjectKindScratch || cfg.DefaultBranch == domain.DefaultBranchAuto {
 		cfg.DefaultBranch = ""
 	}
 	id := project.ID
@@ -4058,6 +4065,7 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 	return ports.WorkspaceInfo{
 		Path:      rec.Metadata.WorkspacePath,
 		Branch:    rec.Metadata.Branch,
+		BaseRef:   rec.Metadata.DiffBaseRef,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 		RepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -4068,6 +4076,7 @@ func workspaceInfoFromRepoInfo(info ports.WorkspaceRepoInfo) ports.WorkspaceInfo
 	return ports.WorkspaceInfo{
 		Path:      info.Path,
 		Branch:    info.Branch,
+		BaseRef:   info.BaseRef,
 		SessionID: info.SessionID,
 		ProjectID: info.ProjectID,
 		RepoPath:  info.RepoPath,
