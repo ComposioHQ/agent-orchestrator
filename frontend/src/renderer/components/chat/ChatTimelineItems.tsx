@@ -426,7 +426,8 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const detail = activity.detail;
 	const files = fileChangeFiles(activity);
 	const hasBody = Boolean(
-		detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
+		detail?.command ||
+			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
 	);
 	const { label, path } = splitSummary(activity);
 	const compactCommand = activity.activityKind === "command";
@@ -508,6 +509,14 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			{open && hasBody ? (
 				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
 					{files.length ? <FileChangeList files={files} /> : null}
+					{detail?.command ? (
+						// Said explicitly rather than implied by the label: "Ran command"
+						// alone never tells the reader what ran, and the collapsed row
+						// deliberately keeps only the category.
+						<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+							{detail.command}
+						</pre>
+					) : null}
 					{detail?.reason || detail?.text ? (
 						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
 							{detail.reason ?? detail.text}
