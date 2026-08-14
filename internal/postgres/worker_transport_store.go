@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
@@ -15,8 +16,9 @@ import (
 )
 
 const (
-	maxOutstandingWorkerRequests = 8
-	maxTerminalOutputBytes       = 4 << 20
+	maxOutstandingWorkerRequests    = 10
+	maxOutstandingWorkspaceRequests = 6
+	maxTerminalOutputBytes          = 4 << 20
 )
 
 func (s *Store) CreateWorkspaceRequest(
@@ -85,7 +87,11 @@ func createWorkerRequest(
 	).Scan(&outstanding); err != nil {
 		return domain.WorkerRequest{}, err
 	}
-	if outstanding >= maxOutstandingWorkerRequests {
+	limit := maxOutstandingWorkspaceRequests
+	if strings.HasPrefix(kind, "terminal.") {
+		limit = maxOutstandingWorkerRequests
+	}
+	if outstanding >= limit {
 		return domain.WorkerRequest{}, ErrConflict
 	}
 	request := domain.WorkerRequest{
@@ -175,7 +181,15 @@ func (s *Store) ClaimWorkerRequest(
 					OR (status = 'claimed' AND lease_until < now())
 				  )
 				  AND attempt_count < 3
-				ORDER BY created_at, id
+				ORDER BY
+					CASE
+						WHEN kind = 'terminal.close' THEN 0
+						WHEN kind = 'terminal.open' THEN 1
+						WHEN kind IN ('terminal.input', 'terminal.resize') THEN 2
+						ELSE 3
+					END,
+					created_at,
+					id
 				FOR UPDATE SKIP LOCKED
 				LIMIT 1
 			)

@@ -7,6 +7,7 @@ public_root="$(cd "$root/../.." && pwd)"
 readonly public_root
 readonly api_url="${AO_CLOUD_STAGING_URL:-https://staging-api.aoagents.dev}"
 readonly web_port="${AO_CLOUD_WEB_PORT:-3000}"
+readonly web_host="${AO_CLOUD_WEB_HOST:-localhost}"
 
 if [[ ! -f "$public_root/packages/product-ui/src/index.ts" || ! -f "$public_root/packages/cloud-client/src/index.ts" ]]; then
 	echo "The Cloud web UI must run from private/ao-cloud inside an Agent Orchestrator checkout." >&2
@@ -25,7 +26,7 @@ export AO_CLOUD_WEB_MODE=staging
 export AO_CLOUD_WEB_API_BASE_URL="${api_url%/}"
 export NEXT_PUBLIC_AO_CLOUD_WEB_API_BASE_URL="$AO_CLOUD_WEB_API_BASE_URL"
 source "$root/scripts/lib/workos-web-env.sh"
-configure_workos_web "$web_port" "127.0.0.1"
+configure_workos_web "$web_port" "$web_host"
 broker_secret="$(
 	aws secretsmanager get-secret-value \
 		--profile "${AWS_PROFILE:-ao-cloud}" \
@@ -46,8 +47,8 @@ print(value["auth_token"], value["staging_control_token"])
 unset broker_secret
 
 printf 'Cloud API: %s\n' "$AO_CLOUD_WEB_API_BASE_URL"
-printf 'Cloud web: http://127.0.0.1:%s\n' "$web_port"
+printf 'Cloud web: http://%s:%s\n' "$web_host" "$web_port"
 printf 'WorkOS credentials: %s via AWS profile %s\n' "$AO_CLOUD_WORKOS_SECRET_ID" "$AO_CLOUD_WORKOS_AWS_PROFILE"
 printf 'WorkOS redirect: %s (%s)\n' "$WORKOS_REDIRECT_URI" "$WORKOS_REDIRECT_STATUS"
 cd "$root"
-exec npm run dev -- --hostname 127.0.0.1 --port "$web_port"
+exec npm run dev -- --hostname "$web_host" --port "$web_port"

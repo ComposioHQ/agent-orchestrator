@@ -23,7 +23,7 @@ const (
 	// arrived already dead and the client retried forever. The ticket stays
 	// single-use and session-scoped; only the window to redeem it is wider.
 	terminalTicketTTL    = 5 * time.Minute
-	terminalReadyTimeout = 5 * time.Second
+	terminalReadyTimeout = 20 * time.Second
 	terminalSessionTTL   = 30 * time.Minute
 	agentTerminalTTL     = 24 * time.Hour
 )

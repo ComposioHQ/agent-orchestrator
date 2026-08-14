@@ -308,6 +308,68 @@ func TestTerminalTicketAndFramesAreDurableAndEpochFenced(t *testing.T) {
 	}
 }
 
+func TestTerminalOpenHasReservedCapacityAndPriority(t *testing.T) {
+	fixture := newSandboxFixture(t, "terminal-priority")
+	ctx := context.Background()
+	workerID, epoch := registerTestWorker(t, fixture)
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sessions SET mode = 'trusted', denied_commands = '{}'
+			WHERE id = $1`,
+			fixture.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for range maxOutstandingWorkspaceRequests {
+		if _, err := fixture.store.CreateWorkspaceRequest(
+			ctx,
+			fixture.principal,
+			fixture.orgID,
+			fixture.sessionID,
+			"workspace.diff",
+			json.RawMessage(`{}`),
+			time.Minute,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fixture.store.CreateWorkspaceRequest(
+		ctx,
+		fixture.principal,
+		fixture.orgID,
+		fixture.sessionID,
+		"workspace.diff",
+		json.RawMessage(`{}`),
+		time.Minute,
+	); !errors.Is(err, ErrConflict) {
+		t.Fatalf("workspace request above reserved capacity error = %v", err)
+	}
+
+	token, _, err := fixture.store.IssueTerminalTicket(
+		ctx,
+		fixture.principal,
+		fixture.orgID,
+		fixture.sessionID,
+		"workspace",
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.store.OpenTerminal(ctx, token, "workspace", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	request, ok, err := fixture.store.ClaimWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, time.Minute,
+	)
+	if err != nil || !ok || request.Kind != "terminal.open" {
+		t.Fatalf("priority claim = %+v, ok = %v, err = %v", request, ok, err)
+	}
+}
+
 func TestOpenTerminalIgnoresStaleEpochTerminalCapacity(t *testing.T) {
 	fixture := newSandboxFixture(t, "terminal-stale-capacity")
 	ctx := context.Background()
