@@ -47,6 +47,7 @@ import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-s
 
 const INSPECTOR_DEFAULT_PX = 360;
 const INSPECTOR_MIN_PX = 360;
+const INSPECTOR_MIN_FALLBACK_PERCENT = 30;
 const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
@@ -68,9 +69,17 @@ function inspectorMaxWidthPx(availableWidth?: number): number | undefined {
 	return Math.floor((availableWidth * INSPECTOR_MAX_PERCENT) / 100);
 }
 
-function inspectorMinSizeForWidth(availableWidth?: number): string {
+function inspectorMinSizeForWidth(groupWidth?: number): string {
+	// Always a non-zero floor (never "0%"). Before the split is measured, use the
+	// legacy 30% clamp that hard-stops drags. After measure, use the 360px floor
+	// as a percentage of the real group width.
+	if (!Number.isFinite(groupWidth) || !groupWidth || groupWidth <= 0) {
+		return `${INSPECTOR_MIN_FALLBACK_PERCENT}%`;
+	}
+	const availableWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
 	const maxWidth = inspectorMaxWidthPx(availableWidth);
-	return maxWidth === undefined ? "0%" : `${Math.min(INSPECTOR_MIN_PX, maxWidth)}px`;
+	const minPx = Math.min(INSPECTOR_MIN_PX, maxWidth ?? INSPECTOR_MIN_PX);
+	return `${Number.parseFloat(((minPx / groupWidth) * 100).toFixed(3))}%`;
 }
 
 function initialInspectorSize(availableWidth?: number): string {
@@ -130,6 +139,10 @@ type SessionViewProps = {
 // narrow session splits, where the inspector tabs compact to icons.
 // Content keeps a stable min-width inside the clipped panel so nothing reflows
 // mid-animation; the persisted pixel width is clamped by the panel constraints.
+// Cold start: rrp derives minSize:0 when the group has not laid out yet, and a
+// mere minSize prop tweak is not enough — collapse/expand worked because it
+// remounts the panel. After the first real measure we remount the inspector
+// once (constraint epoch) so the 360px / 30% floor is installed without a toggle.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
@@ -149,7 +162,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
 	const terminalLiveResizeTimerRef = useRef<number | null>(null);
 	const initializedInspectorSessionIdRef = useRef<string | null>(null);
-	const [inspectorMinimumSize, setInspectorMinimumSize] = useState("0%");
+	const inspectorConstraintsHydratedRef = useRef(false);
+	const [inspectorMinimumSize, setInspectorMinimumSize] = useState(() => inspectorMinSizeForWidth());
+	const [inspectorConstraintEpoch, setInspectorConstraintEpoch] = useState(0);
 	const [inspectorMotionState, setInspectorMotionState] = useState<"closed" | "closing" | "open" | "opening">(
 		isInspectorOpen ? "open" : "closed",
 	);
@@ -196,10 +211,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		const element = sessionSplitRef.current;
 		if (!element) return;
 		const updateAvailableWidth = () => {
-			const groupWidth = element.clientWidth || window.innerWidth;
-			const nextWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
-			const nextMinimumSize = inspectorMinSizeForWidth(nextWidth);
+			const groupWidth = element.clientWidth;
+			if (groupWidth <= 0) return;
+			const nextMinimumSize = inspectorMinSizeForWidth(groupWidth);
 			setInspectorMinimumSize((currentSize) => (currentSize === nextMinimumSize ? currentSize : nextMinimumSize));
+			// Remount the inspector once the group has a real width. Changing
+			// minSize alone still left cold-start drags unbounded; collapse/expand
+			// worked because it tore the panel down and registered it again.
+			if (!inspectorConstraintsHydratedRef.current) {
+				inspectorConstraintsHydratedRef.current = true;
+				setInspectorConstraintEpoch((epoch) => epoch + 1);
+			}
 		};
 		updateAvailableWidth();
 		if (typeof ResizeObserver === "undefined") return;
@@ -693,6 +715,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (!hasInspector) {
 			setInspectorMotionState("closed");
 			stopTerminalLiveResize();
+			inspectorConstraintsHydratedRef.current = false;
+			setInspectorConstraintEpoch(0);
+			setInspectorMinimumSize(inspectorMinSizeForWidth());
 			return;
 		}
 		if (!inspectorImperativeReadyRef.current) {
@@ -765,7 +790,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
 			if (size.inPixels <= 0) return;
-			window.localStorage?.setItem(inspectorWidthStorageKey, String(Math.round(size.inPixels)));
+			// Never persist a crushed width from a frame that slipped past the floor.
+			const width = Math.round(size.inPixels);
+			if (width < INSPECTOR_MIN_PX) return;
+			window.localStorage?.setItem(inspectorWidthStorageKey, String(width));
 		},
 		[],
 	);
@@ -863,10 +891,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							elementRef={inspectorSeparatorRef}
 						/>
 						<ResizablePanel
+							key={inspectorConstraintEpoch > 0 ? `inspector-ready-${inspectorConstraintEpoch}` : "inspector-pending"}
 							aria-hidden={!inspectorPanelVisible}
 							className="session-inspector-panel"
 							collapsible={!isInspectorOpen}
+							data-constraint-epoch={inspectorConstraintEpoch}
 							defaultSize={inspectorDefaultSize}
+							groupResizeBehavior="preserve-pixel-size"
 							id="inspector"
 							inert={!isInspectorOpen}
 							maxSize={`${INSPECTOR_MAX_PERCENT}%`}

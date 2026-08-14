@@ -59,7 +59,7 @@ test("inspector drag stops at minSize instead of collapsing; buttons still toggl
 	const y = separatorBox.y + separatorBox.height / 2;
 
 	// Drag the separator all the way to the right edge: the rail must clamp at
-	// its 30% minSize, not snap away.
+	// its 360px floor (or 50% of a narrow split), not snap away or crush below.
 	await dragPointer(
 		page,
 		{ x: separatorBox.x + separatorBox.width / 2, y },
@@ -69,7 +69,8 @@ test("inspector drag stops at minSize instead of collapsing; buttons still toggl
 	await expect(inspector).toBeVisible();
 	const inspectorBox = await inspector.boundingBox();
 	if (!inspectorBox) throw new Error("inspector hidden after drag");
-	expect(inspectorBox.width / groupBox.width).toBeGreaterThan(0.28);
+	const floor = Math.min(360, Math.floor(groupBox.width * 0.5));
+	expect(inspectorBox.width).toBeGreaterThanOrEqual(floor - 1);
 
 	// The explicit control still collapses…
 	await page.getByRole("button", { name: "Close inspector panel" }).click();

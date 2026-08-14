@@ -402,6 +402,7 @@ vi.mock("./ui/resizable", () => ({
 		panelRef,
 		onResize,
 		style: _style,
+		groupResizeBehavior: _groupResizeBehavior,
 		...rest
 	}: {
 		children?: ReactNode;
@@ -413,6 +414,7 @@ vi.mock("./ui/resizable", () => ({
 		panelRef?: Ref<FakePanelHandle | null>;
 		onResize?: (size: { asPercentage: number; inPixels: number }) => void;
 		style?: React.CSSProperties;
+		groupResizeBehavior?: "preserve-relative-size" | "preserve-pixel-size";
 	}) => {
 		let entry = panels.get(id);
 		if (!entry) {
@@ -919,7 +921,7 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
-		expect(panelSizes("inspector")).toEqual(["360px", "360px", "50%"]);
+		expect(panelSizes("inspector")).toEqual(["360px", "30%", "50%"]);
 		expect(screen.getByTestId("panel-group")).toHaveStyle({
 			"--session-inspector-motion-duration": "320ms",
 			"--session-inspector-motion-easing": "cubic-bezier(0.16, 1, 0.3, 1)",
@@ -936,8 +938,37 @@ describe("SessionView", () => {
 		try {
 			render(<SessionView sessionId="sess-1" />);
 
-			expect(panelSizes("inspector")[1]).toBe("316px");
+			// After measure, min is expressed as a % of the group so rrp re-registers
+			// with a non-zero group size (316px of 640px ≈ 49.375%).
+			expect(panelSizes("inspector")[1]).toBe("49.375%");
 			expect(panelSizes("inspector")[2]).toBe("50%");
+		} finally {
+			clientWidth.mockRestore();
+		}
+	});
+
+	it("keeps a percentage inspector floor until the session split has a laid-out width", () => {
+		const clientWidth = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
+		try {
+			render(<SessionView sessionId="sess-1" />);
+			expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-constraint-epoch", "0");
+			expect(panelSizes("inspector")[1]).toBe("30%");
+		} finally {
+			clientWidth.mockRestore();
+		}
+	});
+
+	it("installs a percentage inspector floor once the session split is measured", () => {
+		const clientWidth = vi
+			.spyOn(HTMLElement.prototype, "clientWidth", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				return this.dataset.testid === "resize-handle" ? 8 : 1200;
+			});
+		try {
+			render(<SessionView sessionId="sess-1" />);
+			// 360px of 1200px — measure remounts the panel with this floor installed.
+			expect(panelSizes("inspector")[1]).toBe("30%");
+			expect(screen.getByTestId("panel-inspector")).toHaveAttribute("data-constraint-epoch", "1");
 		} finally {
 			clientWidth.mockRestore();
 		}
@@ -1180,6 +1211,16 @@ describe("SessionView", () => {
 		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
 		expect(inspectorOpen("sess-1")).toBe(true);
 		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("400");
+	});
+
+	it("refuses to persist inspector widths crushed below the 360px floor", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+		const entry = panels.get("inspector")!;
+		screen.getByTestId("resize-handle").setAttribute("data-separator", "active");
+
+		act(() => entry.onResize?.({ asPercentage: 12, inPixels: 180 }));
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBeNull();
 	});
 
 	// Regression: rrp v4 reports observed DOM sizes as well as direct drags.
