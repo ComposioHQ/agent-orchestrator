@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { PanelRightClose, PanelRightOpen, Plus } from "lucide-react";
+import { PanelRight, Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -916,11 +916,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
 						variant="icon"
 					>
-						{isInspectorOpen ? (
-							<PanelRightClose className="size-icon-lg" aria-hidden="true" />
-						) : (
-							<PanelRightOpen className="size-icon-lg" aria-hidden="true" />
-						)}
+						<PanelRight className="size-icon-md" aria-hidden="true" />
 					</TopbarButton>
 				</div>
 			) : null}
