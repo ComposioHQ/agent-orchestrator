@@ -97,6 +97,8 @@ func (m *Manager) InterfaceTransitionStatus(
 			status.ReasonCode = "INTERFACE_HANDOFF_UNSUPPORTED"
 		} else if errors.Is(err, ErrNativeConversationMissing) {
 			status.ReasonCode = "NATIVE_SESSION_MISSING"
+		} else if errors.Is(err, ErrNativeConversationUnverified) {
+			status.ReasonCode = "NATIVE_SESSION_UNVERIFIED"
 		} else {
 			return InterfaceTransitionStatus{}, err
 		}
@@ -314,7 +316,43 @@ func (m *Manager) runInterfaceTransition(
 		return
 	}
 	sourcePrepared = true
-	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionSourceStopping, "", ""); err != nil {
+	// A promptless TUI may not create a provider conversation until its first
+	// submitted turn. When the transition was admitted from positive initial-
+	// composer proof, resolve again after input is frozen and drain is complete.
+	// This closes the race where a turn starts between the admission snapshot and
+	// the terminal input gate: the new native id is transferred, or the switch
+	// fails before stopping the source if identity still cannot be proven.
+	if transition.SourceMode == domain.SessionModeTUI && transition.NativeConversationID == "" {
+		current, found, refreshErr := m.store.GetSession(ctx, rec.ID)
+		if refreshErr != nil || !found {
+			if refreshErr == nil {
+				refreshErr = ErrNotFound
+			}
+			fail("SESSION_NOT_FOUND", refreshErr)
+			return
+		}
+		if current.Metadata.RuntimeLaunchID != rec.Metadata.RuntimeLaunchID ||
+			domain.NormalizeSessionMode(current.Mode) != transition.SourceMode {
+			fail("SESSION_CHANGED", fmt.Errorf("session changed while the interface switch was draining"))
+			return
+		}
+		resolvedID, handoff, refreshErr := m.nativeConversationID(ctx, current)
+		if refreshErr == nil {
+			resolvedID, refreshErr = m.persistedNativeConversationID(ctx, current, resolvedID, handoff)
+		}
+		if refreshErr != nil {
+			fail(interfaceTransitionErrorCode(refreshErr), refreshErr)
+			return
+		}
+		transition.NativeConversationID = resolvedID
+	}
+	if err := m.moveInterfaceTransitionWithNativeID(
+		transition.ID,
+		domain.SessionInterfaceTransitionSourceStopping,
+		transition.NativeConversationID,
+		"",
+		"",
+	); err != nil {
 		fail("TRANSITION_STATE_FAILED", err)
 		return
 	}
@@ -391,19 +429,61 @@ func (m *Manager) nativeConversationID(
 		return "", nil, fmt.Errorf("%w: %s has not declared compatible TUI and Chat identities",
 			ErrInterfaceHandoffUnsupported, rec.Harness)
 	}
+	mode := domain.NormalizeSessionMode(rec.Mode)
 	ref := ports.SessionRef{
 		ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
 		Metadata: map[string]string{ports.MetadataKeyAgentSessionID: rec.Metadata.AgentSessionID},
 	}
-	id, ok, err := handoff.NativeConversationID(ctx, ref, domain.NormalizeSessionMode(rec.Mode), rec.Metadata.ProviderConversationID)
+	id, ok, err := handoff.NativeConversationID(ctx, ref, mode, rec.Metadata.ProviderConversationID)
 	if err != nil {
 		return "", handoff, err
 	}
 	id = strings.TrimSpace(id)
 	if !ok || id == "" {
+		if mode == domain.SessionModeTUI && m.terminalProvesNativeConversationNotStarted(ctx, rec, agent) {
+			return "", handoff, nil
+		}
 		return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
 	}
+	// AgentSessionID is also the resume hint used to launch a TUI, so it can
+	// legitimately outlive the runtime generation that originally reported it.
+	// That makes it insufficient as handoff proof by itself: a failed resume may
+	// leave a fresh visible TUI beside the old durable id. Only a native-id hook
+	// accepted under this exact launch generation proves the two still match.
+	if mode == domain.SessionModeTUI {
+		launchID := strings.TrimSpace(rec.Metadata.RuntimeLaunchID)
+		identityLaunchID := strings.TrimSpace(rec.Metadata.AgentSessionIDLaunchID)
+		if launchID == "" || identityLaunchID != launchID {
+			return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationUnverified, rec.Harness)
+		}
+	}
 	return id, handoff, nil
+}
+
+func (m *Manager) terminalProvesNativeConversationNotStarted(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	agent ports.Agent,
+) bool {
+	inspector, ok := agent.(ports.TerminalSurfaceInspector)
+	if !ok {
+		return false
+	}
+	styled, ok := m.runtime.(ports.StyledTerminalOutputReader)
+	if !ok || strings.TrimSpace(rec.Metadata.RuntimeHandleID) == "" {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, interfaceInterruptSettle)
+	defer cancel()
+	output, err := styled.GetStyledOutput(
+		probeCtx,
+		ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID},
+		interfaceTransitionOutputLines,
+	)
+	if err != nil {
+		return false
+	}
+	return inspector.InspectTerminalSurface(output).NativeConversationNotStarted
 }
 
 // persistedNativeConversationID turns an adapter's reserved-but-empty native
@@ -415,6 +495,9 @@ func (m *Manager) persistedNativeConversationID(
 	id string,
 	handoff ports.AgentInterfaceHandoff,
 ) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", nil
+	}
 	probe, ok := handoff.(ports.AgentInterfaceHandoffHistoryProbe)
 	if !ok {
 		return id, nil
@@ -859,6 +942,15 @@ func (m *Manager) moveInterfaceTransition(
 	next domain.SessionInterfaceTransitionPhase,
 	errorCode, errorDetail string,
 ) error {
+	return m.moveInterfaceTransitionWithNativeID(id, next, "", errorCode, errorDetail)
+}
+
+func (m *Manager) moveInterfaceTransitionWithNativeID(
+	id string,
+	next domain.SessionInterfaceTransitionPhase,
+	nativeConversationID string,
+	errorCode, errorDetail string,
+) error {
 	store, ok := m.store.(interfaceTransitionStore)
 	if !ok {
 		return ports.ErrChatUnsupported
@@ -876,8 +968,11 @@ func (m *Manager) moveInterfaceTransition(
 		if current.Phase.Terminal() {
 			return fmt.Errorf("transition %s is already %s", id, current.Phase)
 		}
+		if nativeConversationID == "" {
+			nativeConversationID = current.NativeConversationID
+		}
 		moved, err := store.AdvanceSessionInterfaceTransition(ctx, id, current.Phase, next,
-			current.NativeConversationID, errorCode, errorDetail, m.clock())
+			nativeConversationID, errorCode, errorDetail, m.clock())
 		if err != nil {
 			return err
 		}
@@ -1184,6 +1279,8 @@ func interfaceTransitionErrorCode(err error) string {
 		return "TARGET_AUTH_REQUIRED"
 	case errors.Is(err, ErrNativeConversationMissing):
 		return "NATIVE_SESSION_MISSING"
+	case errors.Is(err, ErrNativeConversationUnverified):
+		return "NATIVE_SESSION_UNVERIFIED"
 	default:
 		return "TARGET_PREFLIGHT_FAILED"
 	}

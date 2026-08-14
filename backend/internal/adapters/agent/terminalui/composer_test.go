@@ -59,6 +59,27 @@ func TestLastPromptComposerState(t *testing.T) {
 	}
 }
 
+func TestLastPromptHasBoldMarker(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "current provider prompt", output: "\x1b[1m›\x1b[0m\n", want: true},
+		{name: "dim transcript prompt", output: "\x1b[1;2m› \x1b[0mPrior request\n", want: false},
+		{name: "plain transcript text", output: "›\n", want: false},
+		{name: "colored transcript marker", output: "\x1b[38;5;1m›\x1b[0m\n", want: false},
+		{name: "bold colored current prompt", output: "\x1b[1;38;5;1m›\x1b[0m\n", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LastPromptHasBoldMarker(tt.output, "›"); got != tt.want {
+				t.Fatalf("LastPromptHasBoldMarker() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLastBorderedPromptIsEmptyOrDimPlaceholder(t *testing.T) {
 	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
 	footer := "\x1b[38;5;220mUpdate available!\x1b[39m\n\x1b[38;5;211m⏵⏵ bypass permissions on\x1b[39m"

@@ -202,6 +202,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Browser:             browserLifecycle,
 		BrowserCapabilities: browserCapabilities,
 		DataDir:             cfg.DataDir,
+		RunFilePath:         cfg.RunFilePath,
 		BackgroundContext:   ctx,
 		Logger:              log,
 	})

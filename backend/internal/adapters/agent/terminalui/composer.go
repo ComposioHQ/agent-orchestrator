@@ -14,6 +14,7 @@ const composerLookbackLines = 8
 type styledRune struct {
 	value rune
 	dim   bool
+	bold  bool
 }
 
 // PlainTerminalText removes terminal control sequences while preserving the
@@ -104,6 +105,36 @@ func LastPromptComposerState(output, marker string) ComposerState {
 	return ComposerUnknown
 }
 
+// LastPromptHasBoldMarker recognizes a provider-owned current prompt marker
+// without accepting the same visible text from plain scrollback. This is useful
+// when a constrained TUI viewport omits its normal footer but retains the SGR
+// styling that distinguishes current chrome from transcript content.
+func LastPromptHasBoldMarker(output, marker string) bool {
+	marker = strings.TrimSpace(marker)
+	if marker == "" {
+		return false
+	}
+	markerRunes := []rune(marker)
+	lines := styledTerminalLines(output)
+	start := len(lines) - composerLookbackLines
+	if start < 0 {
+		start = 0
+	}
+	for i := len(lines) - 1; i >= start; i-- {
+		line := trimLeftStyledSpace(lines[i])
+		if len(line) < len(markerRunes) || styledString(line[:len(markerRunes)]) != marker {
+			continue
+		}
+		for _, r := range line[:len(markerRunes)] {
+			if !r.bold || r.dim {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // LastBorderedPromptIsEmptyOrDimPlaceholder recognizes providers that render
 // the composer between matching full-width horizontal rules and place normal,
 // non-dim status chrome below the lower rule. Only rows inside the bordered
@@ -186,11 +217,13 @@ func styledTerminalLines(output string) [][]styledRune {
 	lines := make([][]styledRune, 0, 1)
 	lines = append(lines, nil)
 	dim := false
+	bold := false
 	for i := 0; i < len(output); {
 		if output[i] == '\x1b' {
 			if next, params, sgr := consumeEscape(output, i); next > i {
 				if sgr {
 					dim = applySGRDim(dim, params)
+					bold = applySGRBold(bold, params)
 				}
 				i = next
 				continue
@@ -205,7 +238,7 @@ func styledTerminalLines(output string) [][]styledRune {
 		if unicode.IsControl(r) {
 			continue
 		}
-		lines[len(lines)-1] = append(lines[len(lines)-1], styledRune{value: r, dim: dim})
+		lines[len(lines)-1] = append(lines[len(lines)-1], styledRune{value: r, dim: dim, bold: bold})
 	}
 	return lines
 }
@@ -252,6 +285,46 @@ func applySGRDim(current bool, params string) bool {
 		case 0, 22:
 			current = false
 		case 2:
+			current = true
+		}
+	}
+	return current
+}
+
+func applySGRBold(current bool, params string) bool {
+	if params == "" {
+		return false
+	}
+	fields := strings.Split(params, ";")
+	for i := 0; i < len(fields); i++ {
+		raw := fields[i]
+		if colon := strings.IndexByte(raw, ':'); colon >= 0 {
+			raw = raw[:colon]
+		}
+		code, err := strconv.Atoi(raw)
+		if err != nil {
+			continue
+		}
+		// Extended foreground, background, and underline colors use either
+		// 38:2:... / 38:5:... or semicolon-separated payloads. Their color values
+		// are data, not independent SGR attributes (a palette index of 1 is not
+		// bold). Skip the whole payload before examining later attributes.
+		if code == 38 || code == 48 || code == 58 {
+			if strings.Contains(fields[i], ":") || i+1 >= len(fields) {
+				continue
+			}
+			switch fields[i+1] {
+			case "5":
+				i = min(i+2, len(fields)-1)
+			case "2":
+				i = min(i+4, len(fields)-1)
+			}
+			continue
+		}
+		switch code {
+		case 0, 22:
+			current = false
+		case 1:
 			current = true
 		}
 	}

@@ -25,32 +25,35 @@ beforeEach(() => {
 });
 
 describe("interface switch readiness", () => {
-	it("rechecks a missing native session until the switch becomes supported", async () => {
-		getMock
-			.mockResolvedValueOnce({
-				data: {
-					supported: false,
-					targetMode: "chat",
-					reasonCode: "NATIVE_SESSION_MISSING",
-					reason: "no native conversation found for codex",
-				},
-				error: undefined,
-			})
-			.mockResolvedValue({
-				data: { supported: true, targetMode: "chat" },
-				error: undefined,
+	it.each(["NATIVE_SESSION_MISSING", "NATIVE_SESSION_UNVERIFIED"])(
+		"rechecks transient native-session readiness (%s) until the switch becomes supported",
+		async (reasonCode) => {
+			getMock
+				.mockResolvedValueOnce({
+					data: {
+						supported: false,
+						targetMode: "chat",
+						reasonCode,
+						reason: "no native conversation found for codex",
+					},
+					error: undefined,
+				})
+				.mockResolvedValue({
+					data: { supported: true, targetMode: "chat" },
+					error: undefined,
+				});
+
+			const { result } = renderHook(() => useSessionInterfaceTransition("session-1"), {
+				wrapper,
 			});
 
-		const { result } = renderHook(() => useSessionInterfaceTransition("session-1"), {
-			wrapper,
-		});
-
-		await waitFor(() => expect(result.current.status?.supported).toBe(false));
-		await waitFor(() => expect(result.current.status?.supported).toBe(true), {
-			timeout: 2_500,
-		});
-		expect(getMock).toHaveBeenCalledTimes(2);
-	});
+			await waitFor(() => expect(result.current.status?.supported).toBe(false));
+			await waitFor(() => expect(result.current.status?.supported).toBe(true), {
+				timeout: 2_500,
+			});
+			expect(getMock).toHaveBeenCalledTimes(2);
+		},
+	);
 
 	it("does not poll a permanently unsupported interface handoff", async () => {
 		getMock.mockResolvedValue({

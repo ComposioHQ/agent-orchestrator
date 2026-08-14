@@ -38,15 +38,46 @@ func (p *Plugin) InspectTerminalSurface(output string) ports.TerminalSurfaceObse
 		return observation
 	}
 	prompt, _ := codexPromptFooter(lines, start)
+	if prompt < 0 && terminalui.LastPromptHasBoldMarker(output, "›") {
+		// Codex hides its footer in constrained viewports but retains a bold,
+		// non-dim current-prompt marker. Plain or dim transcript prompts do not
+		// satisfy this fallback, so missing structural evidence still fails closed.
+		for i := len(lines) - 1; i >= start; i-- {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), "›") {
+				prompt = i
+				break
+			}
+		}
+	}
 	if prompt >= 0 {
+		observation.NativeConversationNotStarted = codexInitialComposer(lines, prompt)
 		if prompt > start && codexActiveStatusLine(lines[prompt-1]) {
 			observation.Work = ports.TerminalSurfaceWorkActive
+			observation.NativeConversationNotStarted = false
 			return observation
 		}
 		observation.Work = ports.TerminalSurfaceWorkIdle
 		return observation
 	}
 	return observation
+}
+
+func codexInitialComposer(lines []string, currentPrompt int) bool {
+	header := false
+	prompts := 0
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "OpenAI Codex (v") {
+			header = true
+		}
+		if strings.HasPrefix(line, "›") {
+			prompts++
+			if i != currentPrompt {
+				return false
+			}
+		}
+	}
+	return header && prompts == 1
 }
 
 func codexConfirmationFrame(lines []string, start int) bool {

@@ -463,6 +463,7 @@ func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *tra
 	} else {
 		metadata.RuntimeHandleID = "runtime-1"
 		metadata.RuntimeLaunchID = "old-tui-generation"
+		metadata.AgentSessionIDLaunchID = "old-tui-generation"
 	}
 	store.sessions["session-1"] = domain.SessionRecord{
 		ID: "session-1", ProjectID: "proj", Kind: domain.KindWorker,
@@ -525,6 +526,48 @@ func TestInterfaceTransitionStatusAllowsSwitchToTUIWhenChatUnsupported(t *testin
 	}
 	if status.ReasonCode == "CHAT_UNSUPPORTED" {
 		t.Fatal("switching back to TUI should not report CHAT_UNSUPPORTED")
+	}
+}
+
+func TestInterfaceTransitionRejectsNativeIdentityNotConfirmedByCurrentTUILaunch(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	rec := store.sessions["session-1"]
+	// MarkSpawned clears this receipt for every new runtime generation. Until a
+	// hook from that generation lands, AgentSessionID can only be an old resume
+	// hint; it is not proof that the visible TUI is still on that conversation.
+	rec.FirstSignalAt = time.Time{}
+	rec.Metadata.AgentSessionIDLaunchID = "previous-tui-generation"
+	store.sessions["session-1"] = rec
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.Supported {
+		t.Fatal("stale native identity unexpectedly enabled interface switching")
+	}
+	if status.ReasonCode != "NATIVE_SESSION_UNVERIFIED" {
+		t.Fatalf("reasonCode = %q, want NATIVE_SESSION_UNVERIFIED", status.ReasonCode)
+	}
+	if _, err := manager.StartInterfaceTransition(
+		context.Background(), "session-1", domain.SessionModeChat, domain.SessionInterfaceTransitionDrain,
+	); err == nil {
+		t.Fatal("interface transition started without current-launch native identity proof")
+	}
+}
+
+func TestInterfaceTransitionChatIdentityDoesNotDependOnTUIHookReceipt(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeChat)
+	rec := store.sessions["session-1"]
+	rec.FirstSignalAt = time.Time{}
+	store.sessions["session-1"] = rec
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if !status.Supported {
+		t.Fatalf("Chat controller identity should remain supported: %s (%s)", status.Reason, status.ReasonCode)
 	}
 }
 
@@ -1358,6 +1401,157 @@ func TestInterfaceTransitionTUIToChatStartsFreshWhenCodexRolloutIsMissing(t *tes
 	}
 }
 
+func TestInterfaceTransitionPromptlessCodexStartsFreshWithoutNativeID(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	manager.agents = singleAgent{agent: codexagent.New()}
+	useFastInterfaceTransitionTimings(manager)
+	t.Setenv("CODEX_HOME", t.TempDir())
+
+	initialSurface := "╭────────────────────────╮\n" +
+		"│ >_ OpenAI Codex (v0.147.0) │\n" +
+		"╰────────────────────────╯\n\n" +
+		"Tip: Try the Desktop app.\n\n" +
+		"\x1b[1m›\x1b[0m \x1b[2mSummarize recent commits\x1b[0m\n\n" +
+		"gpt-5.6-sol low · /ws/session-1\n"
+	runtime.outputForCall = func(int) string { return initialSurface }
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Metadata.AgentSessionID = ""
+	rec.Metadata.AgentSessionIDLaunchID = ""
+	rec.Metadata.Prompt = ""
+	store.sessions["session-1"] = rec
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Supported {
+		t.Fatalf("promptless initial Codex TUI should be switchable: %+v", status)
+	}
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, code = %s, error = %s", settled.Phase, settled.ErrorCode, settled.ErrorDetail)
+	}
+	if settled.NativeConversationID != "" || chat.start.ProviderConversationID != "" {
+		t.Fatalf("promptless Codex handoff did not start fresh: transition=%q target=%q",
+			settled.NativeConversationID, chat.start.ProviderConversationID)
+	}
+}
+
+func TestInterfaceTransitionRefreshesNativeIDAfterPromptlessAdmission(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	manager.agents = singleAgent{agent: codexagent.New()}
+	useFastInterfaceTransitionTimings(manager)
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+
+	id := "019fc430-1234-7abc-8def-0123456789ab"
+	rolloutDir := filepath.Join(codexHome, "sessions", "2026", "08", "14")
+	if err := os.MkdirAll(rolloutDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(rolloutDir, "rollout-2026-08-14T10-00-00-"+id+".jsonl"),
+		[]byte("{\"type\":\"session_meta\"}\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	initialSurface := "╭────────────────────────╮\n" +
+		"│ >_ OpenAI Codex (v0.147.0) │\n" +
+		"╰────────────────────────╯\n\n" +
+		"Tip: Try the Desktop app.\n\n" +
+		"\x1b[1m›\x1b[0m \x1b[2mSummarize recent commits\x1b[0m\n\n" +
+		"gpt-5.6-sol low · /ws/session-1\n"
+	runtime.outputForCall = func(call int) string {
+		if call == 1 {
+			// Model the provider hook arriving immediately after the admission
+			// snapshot but before the background worker freezes terminal input.
+			rec := store.sessions["session-1"]
+			rec.Metadata.AgentSessionID = id
+			rec.Metadata.AgentSessionIDLaunchID = rec.Metadata.RuntimeLaunchID
+			store.sessions["session-1"] = rec
+		}
+		return initialSurface
+	}
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Metadata.AgentSessionID = ""
+	rec.Metadata.AgentSessionIDLaunchID = ""
+	store.sessions["session-1"] = rec
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.NativeConversationID != "" {
+		t.Fatalf("admission native id = %q, want initial fresh sentinel", transition.NativeConversationID)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, code = %s, error = %s", settled.Phase, settled.ErrorCode, settled.ErrorDetail)
+	}
+	if settled.NativeConversationID != id || chat.start.ProviderConversationID != id {
+		t.Fatalf("late native id was not transferred: transition=%q target=%q, want %q",
+			settled.NativeConversationID, chat.start.ProviderConversationID, id)
+	}
+}
+
+func TestInterfaceTransitionPromptlessAdmissionFailsBeforeStoppingWhenTurnStartsWithoutNativeID(t *testing.T) {
+	manager, store, runtime, _, log := newTransitionManager(t, domain.SessionModeTUI)
+	manager.agents = singleAgent{agent: codexagent.New()}
+	useFastInterfaceTransitionTimings(manager)
+	t.Setenv("CODEX_HOME", t.TempDir())
+
+	initialSurface := "╭────────────────────────╮\n" +
+		"│ >_ OpenAI Codex (v0.147.0) │\n" +
+		"╰────────────────────────╯\n\n" +
+		"Tip: Try the Desktop app.\n\n" +
+		"\x1b[1m›\x1b[0m \x1b[2mSummarize recent commits\x1b[0m\n\n" +
+		"gpt-5.6-sol low · /ws/session-1\n"
+	completedTurnSurface := "╭────────────────────────╮\n" +
+		"│ >_ OpenAI Codex (v0.147.0) │\n" +
+		"╰────────────────────────╯\n\n" +
+		"› Do work\n\n• Done\n\n" +
+		"\x1b[1m›\x1b[0m \x1b[2mSummarize recent commits\x1b[0m\n\n" +
+		"gpt-5.6-sol low · /ws/session-1\n"
+	runtime.outputForCall = func(call int) string {
+		if call == 1 {
+			return initialSurface
+		}
+		return completedTurnSurface
+	}
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Metadata.AgentSessionID = ""
+	rec.Metadata.AgentSessionIDLaunchID = ""
+	store.sessions["session-1"] = rec
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "NATIVE_SESSION_MISSING" {
+		t.Fatalf("transition = %+v, want fail-closed missing native identity", settled)
+	}
+	if got := fmt.Sprint(*log); strings.Contains(got, "stop:tui") || strings.Contains(got, "start:chat") {
+		t.Fatalf("source was stopped or incomplete target started: %s", got)
+	}
+	if got := domain.NormalizeSessionMode(store.sessions["session-1"].Mode); got != domain.SessionModeTUI {
+		t.Fatalf("session mode = %s, want TUI source preserved", got)
+	}
+}
+
 func TestInterfaceTransitionTUIToChatReusesPersistedCodexRollout(t *testing.T) {
 	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
 	codexHome := t.TempDir()
@@ -1441,6 +1635,17 @@ func TestInterfaceTransitionChatToTUIInterruptsThenStopsBeforeStarting(t *testin
 	}
 	if rec.Metadata.AgentSessionID != "native-1" {
 		t.Fatalf("agent session = %q, want native-1", rec.Metadata.AgentSessionID)
+	}
+	if rec.Metadata.AgentSessionIDLaunchID == "" || rec.Metadata.AgentSessionIDLaunchID != rec.Metadata.RuntimeLaunchID {
+		t.Fatalf("native identity launch proof = %q, runtime launch = %q; controlled Chat-to-TUI resume must be immediately switchable",
+			rec.Metadata.AgentSessionIDLaunchID, rec.Metadata.RuntimeLaunchID)
+	}
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Supported || status.TargetMode != domain.SessionModeChat {
+		t.Fatalf("resumed TUI is not immediately switchable: %+v", status)
 	}
 	if runtime.created != 1 {
 		t.Fatalf("terminal runtime created %d times, want 1", runtime.created)

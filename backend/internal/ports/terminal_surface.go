@@ -31,6 +31,10 @@ const (
 type TerminalSurfaceObservation struct {
 	Work     TerminalSurfaceWorkState
 	Composer TerminalComposerState
+	// NativeConversationNotStarted is positive provider-owned proof that the
+	// visible TUI is still on its initial composer and has no native history to
+	// transfer. False means unknown or started; callers must fail closed.
+	NativeConversationNotStarted bool
 }
 
 // TerminalSurfaceInspector is an optional agent-adapter capability for
