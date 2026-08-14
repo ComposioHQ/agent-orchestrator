@@ -512,9 +512,16 @@ export function useConversationModels(sessionId: string | undefined, enabled: bo
  * the effort choices, for example). The daemon therefore returns the complete
  * catalog after every mutation and that response replaces the cache atomically.
  */
-export function useConversationConfigOptions(sessionId: string | undefined, enabled: boolean) {
+export function useConversationConfigOptions(
+	sessionId: string | undefined,
+	enabled: boolean,
+	providerScope = "",
+) {
 	const queryClient = useQueryClient();
-	const queryKey = ["conversation-config-options", sessionId ?? ""] as const;
+	// Agent switches keep the AO session id but replace the live provider process.
+	// Scope the cache by provider so the old agent's catalog is never reused while
+	// the replacement controller advertises its own options.
+	const queryKey = ["conversation-config-options", sessionId ?? "", providerScope] as const;
 	const query = useQuery({
 		queryKey,
 		enabled: Boolean(sessionId) && enabled,
@@ -553,6 +560,11 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 			return (data?.options ?? []) as ChatConfigOption[];
 		},
 		onSuccess: (options) => queryClient.setQueryData(queryKey, options),
+		onSettled: async () => {
+			// The provider can rebuild dependent choices after either accepting or
+			// rejecting a mutation. Always re-read its authoritative catalog.
+			await queryClient.invalidateQueries({ queryKey });
+		},
 	});
 
 	return {
@@ -560,7 +572,9 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		setOption: (optionId: string, value: ChatConfigOptionValue) =>
 			mutation.mutateAsync({ optionId, value }),
 		pending: mutation.isPending,
-		error: mutation.error ? apiErrorMessage(mutation.error) : undefined,
+		error: mutation.error
+			? `Provider rejected this setting. Choose an advertised option and try again. ${apiErrorMessage(mutation.error)}`
+			: undefined,
 	};
 }
 

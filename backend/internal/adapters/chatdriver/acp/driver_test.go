@@ -984,6 +984,140 @@ func TestACPDriverExposesAndMutatesAdvertisedConfigOptions(t *testing.T) {
 	}
 }
 
+func TestACPDriverRejectsTurnModelMissingFromAdvertisedCatalog(t *testing.T) {
+	agent := &fakeAgent{
+		newConfig:          []acpsdk.SessionConfigOption{selectConfigOption("model", "Model", "model", "sonnet", "sonnet")},
+		promptNoPermission: true,
+	}
+	driver := newModelCatalogTestDriver(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	if _, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text:     "use opus",
+		Settings: ports.ChatTurnSettings{Model: "opus"},
+	}); !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("SendTurn error = %v, want ErrChatConfigOptionInvalid", err)
+	}
+	agent.mu.Lock()
+	setCalls := agent.setCalls
+	agent.mu.Unlock()
+	if setCalls != 0 {
+		t.Fatalf("provider config setter called %d times for an unadvertised model", setCalls)
+	}
+
+	// Validation must not poison the conversation: choosing an advertised value
+	// on the same instance can still prepare and run a turn.
+	ref, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text:     "use sonnet",
+		Settings: ports.ChatTurnSettings{Model: "sonnet"},
+	})
+	if err != nil {
+		t.Fatalf("retry SendTurn: %v", err)
+	}
+	if err := conv.(ports.ChatDeferredTurnStarter).StartDeferredTurn(ref.ProviderTurnID); err != nil {
+		t.Fatalf("retry StartDeferredTurn: %v", err)
+	}
+	for {
+		event := nextEvent(t, conv.Events())
+		if event.Kind == ports.ChatEventTurnCompleted {
+			if event.TurnState != domain.TurnStateCompleted {
+				t.Fatalf("retry turn state = %q", event.TurnState)
+			}
+			break
+		}
+	}
+}
+
+func TestACPDriverRejectsStaleCrossProviderModelBeforeProviderExecution(t *testing.T) {
+	agent := &fakeAgent{
+		newConfig: []acpsdk.SessionConfigOption{selectConfigOption("model", "Model", "model", "sonnet", "sonnet")},
+	}
+	driver := newModelCatalogTestDriver(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	if _, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{
+		Text:     "stale model",
+		Settings: ports.ChatTurnSettings{Model: "gpt-5.4-mini"},
+	}); !errors.Is(err, ports.ErrChatConfigOptionInvalid) {
+		t.Fatalf("SendTurn error = %v, want ErrChatConfigOptionInvalid", err)
+	}
+	agent.mu.Lock()
+	setCalls := agent.setCalls
+	agent.mu.Unlock()
+	if setCalls != 0 {
+		t.Fatalf("provider config setter called %d times for a cross-provider model", setCalls)
+	}
+}
+
+func TestACPDriverUsesAdvertisedDefaultWhenTurnHasNoModelOverride(t *testing.T) {
+	agent := &fakeAgent{
+		newConfig:          []acpsdk.SessionConfigOption{selectConfigOption("model", "Model", "model", "provider/sonnet-default", "provider/sonnet-default")},
+		promptNoPermission: true,
+	}
+	driver := newModelCatalogTestDriver(agent)
+
+	conv, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conv.Close()
+
+	ref, err := conv.SendTurn(context.Background(), ports.ChatUserMessage{Text: "use the provider default"})
+	if err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	if err := conv.(ports.ChatDeferredTurnStarter).StartDeferredTurn(ref.ProviderTurnID); err != nil {
+		t.Fatalf("StartDeferredTurn: %v", err)
+	}
+	for {
+		event := nextEvent(t, conv.Events())
+		if event.Kind == ports.ChatEventTurnCompleted {
+			break
+		}
+	}
+
+	agent.mu.Lock()
+	gotModel, setCalls := agent.options["model"], agent.setCalls
+	agent.mu.Unlock()
+	if gotModel != "" || setCalls != 0 {
+		t.Fatalf("provider received model override %q across %d calls; want advertised default left unchanged", gotModel, setCalls)
+	}
+	options, err := conv.(ports.ChatConfigOptionController).ListConfigOptions(context.Background())
+	if err != nil {
+		t.Fatalf("ListConfigOptions: %v", err)
+	}
+	if len(options) != 1 || options[0].Current.Select != "provider/sonnet-default" {
+		t.Fatalf("effective model option = %#v", options)
+	}
+}
+
+func newModelCatalogTestDriver(agent *fakeAgent) *Driver {
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionOptions: func(settings ports.ChatTurnSettings) []SessionOption {
+			if settings.Model == "" {
+				return nil
+			}
+			return []SessionOption{{ID: "model", Value: settings.Model}}
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+	return driver
+}
+
 func TestACPDriverExposesDynamicAvailableCommandsAsSkills(t *testing.T) {
 	agent := &fakeAgent{}
 	driver := New(Config{

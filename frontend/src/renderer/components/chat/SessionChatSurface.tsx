@@ -52,6 +52,7 @@ export function SessionChatSurface({
 	const configOptions = useConversationConfigOptions(
 		session.id,
 		Boolean(snapshot && can(snapshot, "config_options")),
+		session.provider,
 	);
 	// A provider config catalog may cover only model, only mode, or both.
 	// Suppress native controls only for dimensions the provider catalog replaces;

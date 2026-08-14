@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
@@ -195,6 +196,46 @@ func choiceOffered(choices []ports.ChatConfigOptionChoice, value string) bool {
 		}
 	}
 	return false
+}
+
+// validateAdvertisedSessionOptions checks adapter-provided turn overrides
+// against the live catalog before any ACP setter runs. An empty catalog retains
+// compatibility with agents that support setters but do not advertise options;
+// once a catalog exists, it is authoritative for both option ids and values.
+func validateAdvertisedSessionOptions(catalog []ports.ChatConfigOption, requested []SessionOption) error {
+	if len(catalog) == 0 {
+		return nil
+	}
+	for _, request := range requested {
+		if request.ID == "" || request.Value == "" {
+			continue
+		}
+		var advertised *ports.ChatConfigOption
+		for i := range catalog {
+			if catalog[i].ID == request.ID {
+				advertised = &catalog[i]
+				break
+			}
+		}
+		if advertised == nil {
+			return fmt.Errorf("%w: ACP session config option %q is not advertised by the active provider", ports.ErrChatConfigOptionInvalid, request.ID)
+		}
+		if advertised.Type != ports.ChatConfigOptionSelect {
+			return fmt.Errorf("%w: ACP session config option %q does not accept a select value", ports.ErrChatConfigOptionInvalid, request.ID)
+		}
+		if choiceOffered(advertised.Choices, request.Value) {
+			continue
+		}
+		offered := make([]string, 0, len(advertised.Choices))
+		for _, choice := range advertised.Choices {
+			offered = append(offered, choice.Value)
+		}
+		return fmt.Errorf(
+			"%w: ACP session config option %q does not offer value %q; choose Agent default or an advertised value (%s)",
+			ports.ErrChatConfigOptionInvalid, request.ID, request.Value, strings.Join(offered, ", "),
+		)
+	}
+	return nil
 }
 
 func cloneConfigOptions(options []ports.ChatConfigOption) []ports.ChatConfigOption {

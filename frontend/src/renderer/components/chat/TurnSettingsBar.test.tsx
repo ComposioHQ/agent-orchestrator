@@ -86,4 +86,55 @@ describe("ACP session config options", () => {
 		await user.click(screen.getByRole("menuitem", { name: "Sonnet 5" }));
 		expect(onChange).toHaveBeenCalledWith("model", { value: "sonnet" });
 	});
+
+	it("never renders an unadvertised model as selectable", async () => {
+		const user = userEvent.setup();
+		render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[
+					{
+						...OPTIONS[0],
+						currentValue: "provider/sonnet",
+						choices: [{ value: "provider/sonnet", name: "Sonnet" }],
+					},
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+
+		await user.click(screen.getByRole("button", { name: "Model" }));
+		expect(screen.getByRole("menuitem", { name: /Sonnet/ })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: /Opus/i })).not.toBeInTheDocument();
+	});
+
+	it("updates its label to the provider current value when the catalog changes", () => {
+		const { rerender } = render(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[OPTIONS[0]]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent("Opus 5");
+
+		rerender(
+			<TurnSettingsBar
+				models={[]}
+				settings={{}}
+				configOptions={[
+					{
+						...OPTIONS[0],
+						currentValue: "sonnet",
+						choices: [{ value: "sonnet", name: "Sonnet 5" }],
+					},
+				]}
+				onChangeConfigOption={vi.fn()}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent("Sonnet 5");
+		expect(screen.queryByText("Opus 5")).not.toBeInTheDocument();
+	});
 });

@@ -4,20 +4,25 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, postMock, apiErrorCodeMock, apiErrorMessageMock } = vi.hoisted(() => ({
+const { getMock, postMock, patchMock, apiErrorCodeMock, apiErrorMessageMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	postMock: vi.fn(),
+	patchMock: vi.fn(),
 	apiErrorCodeMock: vi.fn(),
 	apiErrorMessageMock: vi.fn(),
 }));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock, POST: postMock, PATCH: vi.fn() },
+	apiClient: { GET: getMock, POST: postMock, PATCH: patchMock },
 	apiErrorCode: apiErrorCodeMock,
 	apiErrorMessage: apiErrorMessageMock,
 }));
 
-import { useConversation, useConversationCommands } from "./useConversation";
+import {
+	useConversation,
+	useConversationCommands,
+	useConversationConfigOptions,
+} from "./useConversation";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -75,8 +80,71 @@ const WIRE = {
 beforeEach(() => {
 	getMock.mockReset();
 	postMock.mockReset();
+	patchMock.mockReset();
 	apiErrorCodeMock.mockReset().mockReturnValue(undefined);
 	apiErrorMessageMock.mockReset().mockReturnValue("failed");
+});
+
+describe("ACP config option catalog", () => {
+	it("refetches for an agent change and adopts the target provider current model", async () => {
+		getMock
+			.mockResolvedValueOnce({
+				data: {
+					options: [{ id: "model", type: "select", currentValue: "opus", choices: [{ value: "opus", name: "Opus" }] }],
+				},
+				error: undefined,
+			})
+			.mockResolvedValueOnce({
+				data: {
+					options: [{ id: "model", type: "select", currentValue: "sonnet", choices: [{ value: "sonnet", name: "Sonnet" }] }],
+				},
+				error: undefined,
+			});
+
+		const { result, rerender } = renderHook(
+			({ agent }) => useConversationConfigOptions("ao-1", true, agent),
+			{ initialProps: { agent: "codex" }, wrapper },
+		);
+		await waitFor(() => expect(result.current.options[0]?.currentValue).toBe("opus"));
+
+		rerender({ agent: "claude" });
+		await waitFor(() => expect(result.current.options[0]?.currentValue).toBe("sonnet"));
+		expect(getMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("shows a retryable rejection and refreshes away the invalid selection", async () => {
+		getMock
+			.mockResolvedValueOnce({
+				data: {
+					options: [{ id: "model", type: "select", currentValue: "opus", choices: [{ value: "opus", name: "Opus" }] }],
+				},
+				error: undefined,
+			})
+			.mockResolvedValueOnce({
+				data: {
+					options: [{ id: "model", type: "select", currentValue: "sonnet", choices: [{ value: "sonnet", name: "Sonnet" }] }],
+				},
+				error: undefined,
+			});
+		patchMock.mockResolvedValue({
+			data: undefined,
+			error: { message: "model is no longer available" },
+		});
+		apiErrorMessageMock.mockReturnValue("model is no longer available");
+
+		const { result } = renderHook(
+			() => useConversationConfigOptions("ao-1", true, "claude"),
+			{ wrapper },
+		);
+		await waitFor(() => expect(result.current.options[0]?.currentValue).toBe("opus"));
+
+		await act(async () => {
+			await result.current.setOption("model", { value: "opus" }).catch(() => {});
+		});
+		await waitFor(() => expect(result.current.options[0]?.currentValue).toBe("sonnet"));
+		expect(result.current.error).toMatch(/choose an advertised option and try again/i);
+		expect(patchMock).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("useConversation snapshot mapping", () => {

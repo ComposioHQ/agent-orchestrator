@@ -230,9 +230,17 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 	sessionID := c.sessionID
 	modeFor := c.modeFor
 	optionsFor := c.optionsFor
+	configOptions := cloneConfigOptions(c.configOptions)
 	c.mu.Unlock()
 	if sessionID == "" {
 		return errors.New("ACP session is not open")
+	}
+	var sessionOptions []SessionOption
+	if optionsFor != nil {
+		sessionOptions = optionsFor(settings)
+		if err := validateAdvertisedSessionOptions(configOptions, sessionOptions); err != nil {
+			return err
+		}
 	}
 	if modeFor != nil {
 		if mode := modeFor(settings.Approval); mode != "" {
@@ -247,7 +255,7 @@ func (c *conversation) applyTurnSettings(ctx context.Context, settings ports.Cha
 		}
 	}
 	if optionsFor != nil {
-		for _, option := range optionsFor(settings) {
+		for _, option := range sessionOptions {
 			if option.ID == "" || option.Value == "" {
 				continue
 			}
