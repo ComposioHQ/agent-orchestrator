@@ -540,6 +540,14 @@ function ProjectItem({
 			selection.goSession(workspace.id, sessionId);
 		} catch (err) {
 			console.error("Failed to spawn orchestrator:", err);
+			// The button used to fail silently: a spawn the daemon refuses up front
+			// (an agent CLI that is not installed, a missing tmux) only reached the
+			// console. Park the daemon's reason on the project and go to its board so
+			// the user reads what to install instead of clicking a dead button.
+			useUiStore
+				.getState()
+				.setOrchestratorStartupError(workspace.id, err instanceof Error ? err.message : t("shell.couldNotSpawn"));
+			selection.goProject(workspace.id);
 		} finally {
 			setIsSpawning(false);
 		}
