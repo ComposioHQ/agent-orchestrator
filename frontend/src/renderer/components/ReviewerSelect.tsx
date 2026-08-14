@@ -35,6 +35,7 @@ export function ReviewerSelect({
 	defaultHarness,
 	defaultOptionLabel,
 	defaultTriggerLabel,
+	contentAlign = "start",
 	disabled = false,
 	authorized,
 	installed,
@@ -47,6 +48,7 @@ export function ReviewerSelect({
 	defaultHarness?: string;
 	defaultOptionLabel: string;
 	defaultTriggerLabel?: string;
+	contentAlign?: "start" | "end";
 	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
 	installed?: components["schemas"]["AgentInfo"][];
@@ -83,7 +85,7 @@ export function ReviewerSelect({
 			disabled={disabled}
 			menuClassName="reviews-agent-menu-surface"
 			menuItemClassName="reviews-agent-menu-item"
-			menuAlign="start"
+			menuAlign={contentAlign}
 			triggerClassName={triggerClassName}
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 			renderTrigger={(selected) => (
@@ -93,7 +95,7 @@ export function ReviewerSelect({
 					) : defaultHarness ? (
 						<AgentAvatar provider={defaultHarness} className="size-icon-lg" />
 					) : null}
-					<span className="min-w-0 truncate">
+					<span className={contentAlign === "end" ? "min-w-0 truncate text-right" : "min-w-0 truncate"}>
 						{selected && selected.value !== "__default__" ? selected.label : (defaultTriggerLabel ?? defaultOptionLabel)}
 					</span>
 				</>

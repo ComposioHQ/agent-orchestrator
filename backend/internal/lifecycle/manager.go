@@ -21,6 +21,7 @@ import (
 type sessionStore interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	// UpdateSessionFromActivitySignal is a narrow, owner-generation-fenced
 	// write. It returns false when a concurrent lifecycle/agent-switch boundary
 	// made the reducer's previously read session stale.
@@ -33,6 +34,7 @@ type sessionStore interface {
 	// when no open PR remains and at least one merged) and to suppress
 	// merge-conflict nudges on PRs stacked behind an open parent.
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
+	GetPR(ctx context.Context, prURL string) (domain.PullRequest, bool, error)
 	// ListPRReviews and ListPRComments return the effective rows committed by
 	// the SCM observer, including each item's preserved injection decision.
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)

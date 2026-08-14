@@ -30,15 +30,24 @@ export const PLATFORMS = {
 
 export const GITHUB_STARS_URL = "https://api.github.com/repos/Untrivial-ai/agent-orchestrator";
 
-// macOS still points at the .zip on purpose. The .dmg first-install artifact is
-// built by frontend/makers/maker-dmg.ts, but no published release carries it yet,
-// so flipping these two links (and the two macOS rows in README.md) to
-// "...-darwin-{arch}.dmg" would 404 until a real release publishes both formats.
-// That flip is rollout step 6 in issue #3267 and must happen only after a real
-// release has been cut and the dmg verified. The .zip keeps publishing forever
-// either way, because electron-updater cannot auto-update from a .dmg.
-export const DOWNLOAD_URL_MAC_ARM64 = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip";
-export const DOWNLOAD_URL_MAC_X64 = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip";
+// macOS points at the .dmg: this is rollout step 6 of issue #3267, taken once the
+// release conductor started publishing a signed, notarized dmg on the stable
+// channel. Mounting it gives the drag-to-Applications window, so the app lands in
+// /Applications instead of being unzipped into ~/Downloads and launched from
+// there, which is what leaves macOS running it translocated or as a stale copy
+// (#3617, #3527).
+//
+// The .zip keeps publishing forever regardless: MacUpdater can only install an
+// update from a zip (findFile(files, "zip", ["pkg", "dmg"])), so the dmg is
+// first-install only and never replaces it.
+//
+// These are static releases/latest/download links, so they 404 until a release
+// actually carries the asset. Only the STABLE channel builds a dmg; if the links
+// ever break, check that the newest non-prerelease release has both files rather
+// than assuming the pipeline is broken. The download page itself is resilient
+// here: it reads the live release list and falls back to the zip.
+export const DOWNLOAD_URL_MAC_ARM64 = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.dmg";
+export const DOWNLOAD_URL_MAC_X64 = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.dmg";
 export const DOWNLOAD_URL_WINDOWS = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe";
 export const DOWNLOAD_URL_LINUX = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage";
 

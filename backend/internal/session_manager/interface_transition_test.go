@@ -187,6 +187,15 @@ func (transitionAgent) NativeConversationID(_ context.Context, session ports.Ses
 	return id, id != "", nil
 }
 
+type failingRestoreTransitionAgent struct {
+	transitionAgent
+	err error
+}
+
+func (a failingRestoreTransitionAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
+	return nil, false, a.err
+}
+
 type transitionDetectorAgent struct{ transitionAgent }
 
 func (transitionDetectorAgent) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
@@ -211,6 +220,7 @@ type transitionRuntime struct {
 	*fakeRuntime
 	log                        *[]string
 	stopErrors                 []error
+	runtimeOccupied            bool
 	outputForCall              func(int) string
 	outputCallTimes            []time.Time
 	blockAliveUntilContextDone bool
@@ -238,12 +248,23 @@ func (r *transitionRuntime) Destroy(ctx context.Context, handle ports.RuntimeHan
 			return err
 		}
 	}
-	return r.fakeRuntime.Destroy(ctx, handle)
+	err := r.fakeRuntime.Destroy(ctx, handle)
+	if err == nil {
+		r.runtimeOccupied = false
+	}
+	return err
 }
 
 func (r *transitionRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	*r.log = append(*r.log, "start:tui")
-	return r.fakeRuntime.Create(ctx, cfg)
+	if r.runtimeOccupied {
+		return ports.RuntimeHandle{}, fmt.Errorf("session %q already exists", cfg.SessionID)
+	}
+	handle, err := r.fakeRuntime.Create(ctx, cfg)
+	if err == nil {
+		r.runtimeOccupied = true
+	}
+	return handle, err
 }
 
 func (r *transitionRuntime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
@@ -257,13 +278,22 @@ func (r *transitionRuntime) GetOutput(ctx context.Context, handle ports.RuntimeH
 
 type transitionChat struct {
 	log              *[]string
+	armed            chan domain.SessionInterfaceTransitionPolicy
+	aborted          chan struct{}
+	armErr           error
 	preparedPolicy   domain.SessionInterfaceTransitionPolicy
 	start            ChatStart
 	preflightErr     error
+	startErr         error
 	preflightStarted chan struct{}
 	preflightRelease chan struct{}
 	relayMessages    []string
 	relayIDs         []string
+	supportsChat     bool
+}
+
+func (c *transitionChat) SupportsChat(_ domain.AgentHarness) bool {
+	return c.supportsChat
 }
 
 func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarness) error {
@@ -285,6 +315,9 @@ func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarnes
 func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
 	c.start = cfg
 	*c.log = append(*c.log, "start:chat")
+	if c.startErr != nil {
+		return ChatStarted{}, c.startErr
+	}
 	started := ChatStarted{ProviderConversationID: cfg.ProviderConversationID, ControllerGeneration: "chat-generation"}
 	if cfg.ControllerReady != nil {
 		if err := cfg.ControllerReady(started); err != nil {
@@ -311,12 +344,24 @@ func (c *transitionChat) StopChat(_ context.Context, _ domain.SessionID) error {
 	*c.log = append(*c.log, "stop:chat")
 	return nil
 }
+func (c *transitionChat) ArmChatHandoff(_ context.Context, _ domain.SessionID, policy domain.SessionInterfaceTransitionPolicy) error {
+	select {
+	case c.armed <- policy:
+	default:
+	}
+	return c.armErr
+}
 func (c *transitionChat) PrepareChatHandoff(_ context.Context, _ domain.SessionID, policy domain.SessionInterfaceTransitionPolicy) error {
 	c.preparedPolicy = policy
 	*c.log = append(*c.log, "prepare:chat:"+string(policy))
 	return nil
 }
-func (*transitionChat) AbortChatHandoff(domain.SessionID) {}
+func (c *transitionChat) AbortChatHandoff(domain.SessionID) {
+	select {
+	case c.aborted <- struct{}{}:
+	default:
+	}
+}
 
 type transitionInputGate struct {
 	acquired    chan string
@@ -371,7 +416,11 @@ func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *tra
 	}
 	log := &[]string{}
 	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
-	chat := &transitionChat{log: log}
+	chat := &transitionChat{
+		log: log, supportsChat: true,
+		armed:   make(chan domain.SessionInterfaceTransitionPolicy, 1),
+		aborted: make(chan struct{}, 1),
+	}
 	messenger := &fakeMessenger{}
 	store.messenger = messenger
 	counter := 0
@@ -389,6 +438,41 @@ func useFastInterfaceTransitionTimings(manager *Manager) {
 		pollInterval:   time.Millisecond,
 		idleSettle:     5 * time.Millisecond,
 		staleIdleLimit: 60 * time.Millisecond,
+	}
+}
+
+func TestInterfaceTransitionStatusHidesSwitchWhenChatUnsupported(t *testing.T) {
+	manager, _, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	chat.supportsChat = false
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.TargetMode != domain.SessionModeChat {
+		t.Fatalf("target mode = %q, want chat", status.TargetMode)
+	}
+	if status.Supported {
+		t.Fatal("expected switch to be unsupported")
+	}
+	if status.ReasonCode != "CHAT_UNSUPPORTED" {
+		t.Fatalf("reasonCode = %q, want CHAT_UNSUPPORTED", status.ReasonCode)
+	}
+}
+
+func TestInterfaceTransitionStatusAllowsSwitchToTUIWhenChatUnsupported(t *testing.T) {
+	manager, _, _, chat, _ := newTransitionManager(t, domain.SessionModeChat)
+	chat.supportsChat = false
+
+	status, err := manager.InterfaceTransitionStatus(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("InterfaceTransitionStatus: %v", err)
+	}
+	if status.TargetMode != domain.SessionModeTUI {
+		t.Fatalf("target mode = %q, want tui", status.TargetMode)
+	}
+	if status.ReasonCode == "CHAT_UNSUPPORTED" {
+		t.Fatal("switching back to TUI should not report CHAT_UNSUPPORTED")
 	}
 }
 
@@ -431,6 +515,34 @@ func TestInterfaceTransitionTUIToChatStopsBeforeStartingAndReusesNativeConversat
 	}
 	if got := fmt.Sprint(*log); got != "[stop:tui:runtime-1 start:chat]" {
 		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionRollbackClearsStaleTUIRuntimeBeforeRestore(t *testing.T) {
+	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeTUI)
+	runtime.runtimeOccupied = true
+	runtime.stopErrors = []error{errors.New("teardown timed out")}
+	runtime.aliveByHandle = map[string]bool{"runtime-1": false}
+	chat.startErr = errors.New("ACP session/new: spawn EINVAL")
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "TARGET_RESUME_FAILED" {
+		t.Fatalf("transition = %+v, want failed target resume after successful rollback", settled)
+	}
+	if got := store.sessions["session-1"].Mode; got != domain.SessionModeTUI {
+		t.Fatalf("mode = %s, want restored TUI", got)
+	}
+	if runtime.created != 1 {
+		t.Fatalf("restored runtime create count = %d, want 1", runtime.created)
+	}
+	wantLog := "[stop:tui:runtime-1 start:chat stop:chat stop:tui:runtime-1 start:tui]"
+	if got := fmt.Sprint(*log); got != wantLog {
+		t.Fatalf("controller order = %s, want %s", got, wantLog)
 	}
 }
 
@@ -896,6 +1008,84 @@ func TestInterfaceTransitionChatToTUIInterruptsThenStopsBeforeStarting(t *testin
 	}
 	if got := fmt.Sprint(*log); got != "[prepare:chat:interrupt stop:chat start:tui]" {
 		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionChatToTUIArmsInterruptBeforeReturning(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeChat)
+	transition, err := manager.StartInterfaceTransition(
+		context.Background(), "session-1", domain.SessionModeTUI,
+		domain.SessionInterfaceTransitionInterrupt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case policy := <-chat.armed:
+		if policy != domain.SessionInterfaceTransitionInterrupt {
+			t.Fatalf("armed policy = %s, want interrupt", policy)
+		}
+	default:
+		t.Fatal("transition returned before Chat dispatch was fenced; a queued turn can still reach the provider")
+	}
+
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+}
+
+func TestInterfaceTransitionChatToTUIFailsBeforeBackgroundWorkWhenArmFails(t *testing.T) {
+	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeChat)
+	chat.armErr = errors.New("arm Chat dispatch gate: controller unavailable")
+
+	_, err := manager.StartInterfaceTransition(
+		context.Background(), "session-1", domain.SessionModeTUI,
+		domain.SessionInterfaceTransitionInterrupt,
+	)
+	if err == nil || !strings.Contains(err.Error(), "controller unavailable") {
+		t.Fatalf("start transition error = %v, want source-fence failure", err)
+	}
+	latest, found, getErr := store.GetLatestSessionInterfaceTransition(context.Background(), "session-1")
+	if getErr != nil || !found {
+		t.Fatalf("latest failed transition: found=%v err=%v", found, getErr)
+	}
+	if latest.Phase != domain.SessionInterfaceTransitionFailed || latest.ErrorCode != "SOURCE_FENCE_FAILED" {
+		t.Fatalf("transition = %+v, want failed SOURCE_FENCE_FAILED", latest)
+	}
+	if runtime.created != 0 || runtime.destroyed != 0 || len(*log) != 0 {
+		t.Fatalf("source-fence failure started background controller work: runtime=%d/%d log=%v",
+			runtime.created, runtime.destroyed, *log)
+	}
+}
+
+func TestInterfaceTransitionChatToTUIPreflightFailureReopensArmedSource(t *testing.T) {
+	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeChat)
+	manager.agents = singleAgent{agent: failingRestoreTransitionAgent{
+		transitionAgent: transitionAgent{},
+		err:             errors.New("native terminal resume unavailable"),
+	}}
+
+	transition, err := manager.StartInterfaceTransition(
+		context.Background(), "session-1", domain.SessionModeTUI,
+		domain.SessionInterfaceTransitionInterrupt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "TARGET_PREFLIGHT_FAILED" {
+		t.Fatalf("transition = %+v, want failed target preflight", settled)
+	}
+	select {
+	case <-chat.aborted:
+	default:
+		t.Fatal("target preflight failed without reopening the synchronously armed Chat source")
+	}
+	if runtime.created != 0 || runtime.destroyed != 0 || len(*log) != 0 {
+		t.Fatalf("preflight failure mutated controllers: runtime=%d/%d log=%v",
+			runtime.created, runtime.destroyed, *log)
 	}
 }
 

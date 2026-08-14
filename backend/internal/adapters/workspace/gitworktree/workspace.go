@@ -196,7 +196,7 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 			relativePath: rel,
 			repoPath:     repoPath,
 			outputPath:   outPath,
-			baseBranch:   firstNonEmpty(child.BaseBranch, cfg.BaseBranch),
+			baseBranch:   child.BaseBranch,
 		})
 	}
 	branch, err := w.workspaceProjectBranch(ctx, repos, firstNonEmpty(cfg.Branch, defaultSessionBranchName(cfg.SessionID)))

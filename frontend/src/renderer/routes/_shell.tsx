@@ -11,7 +11,7 @@ import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
-import { SessionTopbarHost, SessionTopbarProvider } from "../components/SessionTopbarPortal";
+import { SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
@@ -363,6 +363,8 @@ function ShellLayout() {
 
 	const removeProject = useCallback(
 		async (projectId: string) => {
+			const isLastWorkspace =
+              workspaces.length === 1 && workspaces[0]?.id === projectId;
 			void addRendererExceptionStep("Project removal requested", {
 				source: "project-remove",
 				operation: "project_remove",
@@ -385,8 +387,11 @@ function ShellLayout() {
 			}
 			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
 			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
+			if (isLastWorkspace) {
+              void navigate({ to: "/" });
+}
 		},
-		[updateWorkspaces],
+		[navigate, updateWorkspaces, workspaces],
 	);
 
 	const restartOrchestrator = useCallback(
@@ -730,12 +735,6 @@ function ShellLayout() {
 								) : (
 							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
 							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-								{routeParams.sessionId ? (
-									<SessionTopbarHost
-										className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-										data-testid="session-topbar-host"
-									/>
-								) : null}
 								<div className="flex min-h-0 flex-1 flex-col">
 									<Outlet />
 								</div>
@@ -743,12 +742,7 @@ function ShellLayout() {
 						)
 					) : framedAppTopbar ? (
 						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? (
-								<SessionTopbarHost
-									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-									data-testid="session-topbar-host"
-								/>
-							) : (
+							{routeParams.sessionId ? null : (
 								<ShellTopbar />
 							)}
 							<div className="flex min-h-0 flex-1 flex-col">
@@ -757,12 +751,6 @@ function ShellLayout() {
 						</CenterPanelShell>
 					) : (
 						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? (
-								<SessionTopbarHost
-									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-									data-testid="session-topbar-host"
-								/>
-							) : null}
 							<div className="flex min-h-0 flex-1 flex-col">
 								<Outlet />
 							</div>
