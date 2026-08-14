@@ -601,7 +601,7 @@ export function CloudWorkspace() {
         projectId: response.project.id,
         kind: "orchestrator",
         harness,
-        displayName: localAgentName(harness),
+        displayName: "Orchestrator",
         prompt: "",
         mode: "trusted",
         deniedCommands: [],
@@ -651,7 +651,7 @@ export function CloudWorkspace() {
         harness: input.harness,
         displayName:
           classification === "orchestrator-project"
-            ? localAgentName(input.harness)
+            ? "Orchestrator"
             : input.displayName,
         prompt: input.prompt,
         mode: "trusted",
@@ -1685,17 +1685,4 @@ function handleLoadError(
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
-function localAgentName(harness: string): string {
-  switch (harness) {
-    case "claude-code":
-      return "Claude agent";
-    case "codex":
-      return "Codex agent";
-    case "cursor":
-      return "Cursor agent";
-    default:
-      return "Agent";
-  }
 }

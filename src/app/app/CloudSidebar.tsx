@@ -277,6 +277,9 @@ export function CloudSidebar({
           const projectSessions = orchestratorsFirst(
             sessions.filter((session) => session.projectId === project.id),
           );
+          const hasOrchestrator = projectSessions.some(
+            (session) => session.kind === "orchestrator",
+          );
           return (
             <div className="mb-1" key={project.id}>
               <ContextMenu>
@@ -320,17 +323,13 @@ export function CloudSidebar({
                   <span className="min-w-0 flex-1 truncate">
                     {project.displayName}
                   </span>
+                  {hasOrchestrator ? (
+                    <OrchestratorIcon
+                      aria-label="Orchestrator project"
+                      className="size-3.5 shrink-0 text-[var(--color-text-passive)]"
+                    />
+                  ) : null}
                 </motion.button>
-                {!isScratchProject(project) ? (
-                  <button
-                    aria-label="Orchestrator"
-                    className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
-                    onClick={(e) => { e.stopPropagation(); onNewSession(project.id); }}
-                    type="button"
-                  >
-                    <OrchestratorIcon aria-hidden="true" />
-                  </button>
-                ) : null}
                 <button
                   aria-label="Share project"
                   className="grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-[var(--color-text-passive)] opacity-0 transition-[width,opacity,color] group-hover:w-5 group-hover:opacity-100 hover:text-[var(--foreground)] [&_svg]:size-3"
@@ -438,7 +437,9 @@ export function CloudSidebar({
                               >
                                 <SessionSidebarIcon session={session} />
                                 <span className="min-w-0 flex-1 truncate">
-                                  {session.displayName}
+                                  {session.kind === "orchestrator"
+                                    ? "Orchestrator"
+                                    : session.displayName}
                                 </span>
                               </button>
                             </div>
@@ -643,14 +644,6 @@ export function isStandaloneProject(project: Project): boolean {
 
 export function isIndependentProject(project: Project): boolean {
   return project.config?.source === "scratch-independent";
-}
-
-function isScratchProject(project: Project): boolean {
-  return (
-    project.config?.scratch === true ||
-    project.config?.source === "scratch" ||
-    project.repositoryUrl.includes("scratch.ao.local")
-  );
 }
 
 function activityDot(activity: Session["activityState"]): string {

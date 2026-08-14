@@ -537,6 +537,7 @@ it("starts an orchestrator when importing a GitHub repository", async () => {
       projectId: "project-imported",
       kind: "orchestrator",
       harness: "claude-code",
+      displayName: "Orchestrator",
       mode: "trusted",
     }),
     { idempotencyKey: "test-key" },
@@ -577,7 +578,7 @@ it("keeps the orchestrator first in its project and out of the task board", asyn
 
   const sidebar = await screen.findByRole("complementary");
   const orchestratorLabel = await within(sidebar).findByText(
-    "Project orchestrator",
+    "Orchestrator",
   );
   const workerLabel = within(sidebar).getByText("Worker task");
   expect(
@@ -588,9 +589,12 @@ it("keeps the orchestrator first in its project and out of the task board", asyn
     ?.parentElement;
   expect(orchestratorLabel.closest("button")?.querySelector("svg")).not.toBeNull();
   expect(
+    within(sidebar).getByLabelText("Orchestrator project"),
+  ).toBeVisible();
+  expect(
     orchestratorRow?.querySelector('[aria-label="Pin session"]'),
   ).toBeNull();
-  expect(screen.getAllByText("Project orchestrator")).toHaveLength(1);
+  expect(screen.getAllByText("Orchestrator")).toHaveLength(1);
 });
 
 it("creates and selects a workspace without reloading the page", async () => {
@@ -655,7 +659,7 @@ it("creates a standalone scratch project and worker session", async () => {
   expect(screen.getByText("Agents")).toBeVisible();
 });
 
-it("uses an agent name instead of an orchestrator name for local scratch projects", async () => {
+it("uses the canonical orchestrator name for local scratch projects", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
@@ -673,7 +677,7 @@ it("uses an agent name instead of an orchestrator name for local scratch project
       expect.objectContaining({
         kind: "orchestrator",
         harness: "claude-code",
-        displayName: "Claude agent",
+        displayName: "Orchestrator",
       }),
       { idempotencyKey: "test-key" },
     ),

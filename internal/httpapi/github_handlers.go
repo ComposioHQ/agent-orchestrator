@@ -576,7 +576,7 @@ func (s *Server) createGitHubScratchProject(
 			Session: domain.CreateSession{
 				Kind:             "orchestrator",
 				Harness:          request.Orchestrator.Harness,
-				DisplayName:      request.DisplayName + " orchestrator",
+				DisplayName:      "Orchestrator",
 				Prompt:           request.Orchestrator.Prompt,
 				Mode:             "trusted",
 				DeniedCommands:   []string{},
