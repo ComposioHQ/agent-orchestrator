@@ -115,6 +115,67 @@ func TestSyncIgnoresSupportedModeRecordsWithoutBaseRates(t *testing.T) {
 	}
 }
 
+// Break caught: decimal and scientific whole-number rates emitting a trailing
+// decimal point, then making the generated catalog fail its own validator.
+func TestSyncCanonicalizesWholeDecimalAndScientificRates(t *testing.T) {
+	root := t.TempDir()
+	upstream := []byte(`{
+"anthropic/a":{"litellm_provider":"anthropic","mode":"chat","input_cost_per_token":1,"output_cost_per_token":1},
+"openai/o":{"litellm_provider":"openai","mode":"chat","input_cost_per_token":1.0,"output_cost_per_token":2e0},
+"zai/z":{"litellm_provider":"zai","mode":"chat","input_cost_per_token":1,"output_cost_per_token":1}
+}`)
+	if _, err := Sync(root, upstream, testSource("whole-rates")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(root); err != nil {
+		t.Fatalf("Validate generated catalog: %v", err)
+	}
+
+	manifestContents, err := os.ReadFile(filepath.Join(root, "pricing/catalog/v1/manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded manifest
+	if err := json.Unmarshal(manifestContents, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	openAIPath := filepath.Join(root, "pricing/catalog/v1", findProvider(decoded.Providers, "openai").Path)
+	contents, err := os.ReadFile(openAIPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blob providerBlob
+	if err := json.Unmarshal(contents, &blob); err != nil {
+		t.Fatal(err)
+	}
+	if got := blob.Models[0].Rates.UncachedInputUSDPerToken; got != "1" {
+		t.Fatalf("input rate = %q, want %q", got, "1")
+	}
+	if got := blob.Models[0].Rates.OutputUSDPerToken; got != "2" {
+		t.Fatalf("output rate = %q, want %q", got, "2")
+	}
+}
+
+// Break caught: treating an alternate rate spelling in a reviewed provider
+// blob as canonical even though it changes the content-addressed contract.
+func TestValidateBlobRejectsNoncanonicalRateSpelling(t *testing.T) {
+	blob := providerBlob{
+		SchemaVersion: schemaVersion,
+		ProviderID:    "openai",
+		Models: []pricedModel{{
+			ModelID: "o",
+			Rates: rates{
+				UncachedInputUSDPerToken: "1.0",
+				OutputUSDPerToken:        "2e0",
+			},
+		}},
+	}
+	err := validateBlob(blob, providerRef{ProviderID: "openai", ModelCount: 1})
+	if err == nil || !strings.Contains(err.Error(), "noncanonical") {
+		t.Fatalf("validateBlob error = %v, want noncanonical rate error", err)
+	}
+}
+
 // Break caught: rewriting a reviewed manifest merely because unrelated
 // upstream content changed, or rejecting append-only historical blobs.
 func TestSyncIsSemanticNoOpForUnchangedProviderPayloads(t *testing.T) {

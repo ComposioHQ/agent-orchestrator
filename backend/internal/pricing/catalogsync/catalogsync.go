@@ -392,7 +392,8 @@ func normalizeDecimal(input string) (string, error) {
 		return "0." + strings.Repeat("0", -point) + digits, nil
 	}
 	result := digits[:point] + "." + digits[point:]
-	return strings.TrimRight(result, "0"), nil
+	result = strings.TrimRight(result, "0")
+	return strings.TrimSuffix(result, "."), nil
 }
 
 func canonicalProvider(value string) (string, bool) {
@@ -552,19 +553,30 @@ func validateBlob(blob providerBlob, ref providerRef) error {
 			return fmt.Errorf("provider %q has unsorted or noncanonical models", ref.ProviderID)
 		}
 		previous = model.ModelID
-		if _, err := normalizeDecimal(model.Rates.UncachedInputUSDPerToken); err != nil {
+		if err := validateCanonicalRate(model.Rates.UncachedInputUSDPerToken); err != nil {
 			return fmt.Errorf("provider %q invalid input rate: %w", ref.ProviderID, err)
 		}
-		if _, err := normalizeDecimal(model.Rates.OutputUSDPerToken); err != nil {
+		if err := validateCanonicalRate(model.Rates.OutputUSDPerToken); err != nil {
 			return fmt.Errorf("provider %q invalid output rate: %w", ref.ProviderID, err)
 		}
 		for _, optional := range []*string{model.Rates.CacheReadUSDPerToken, model.Rates.CacheWriteUSDPerToken, model.Rates.CacheWrite1HUSDPerToken} {
 			if optional != nil {
-				if _, err := normalizeDecimal(*optional); err != nil {
+				if err := validateCanonicalRate(*optional); err != nil {
 					return fmt.Errorf("provider %q invalid cache rate: %w", ref.ProviderID, err)
 				}
 			}
 		}
+	}
+	return nil
+}
+
+func validateCanonicalRate(value string) error {
+	normalized, err := normalizeDecimal(value)
+	if err != nil {
+		return err
+	}
+	if normalized != value {
+		return fmt.Errorf("noncanonical rate %q", value)
 	}
 	return nil
 }
