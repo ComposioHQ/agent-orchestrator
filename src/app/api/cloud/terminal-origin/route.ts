@@ -1,26 +1,24 @@
 import { NextResponse } from "next/server";
 
-import { cloudApiBaseUrl, cloudWebMode } from "@/lib/cloud-config";
+import { cloudApiBaseUrl } from "@/lib/cloud-config";
 
 export const dynamic = "force-dynamic";
 
-export function GET(request: Request) {
-  // Terminate the browser WebSocket on the page's own origin and let the
-  // Worker (open-next.wrapper.js) proxy the upgrade to the control-plane ALB.
+export function GET() {
+  // Dial the terminal WebSocket straight at the control-plane ALB.
   //
-  // Every cross-origin variant we tried failed the same way: a cold hostname
-  // costs a fresh TLS session and Firefox first probes HTTP/3, which cannot
-  // carry a WebSocket, so the upgrade landed ~30s late and the terminal ticket
-  // had already expired — the control plane answered 401 on every attempt.
-  // Same-origin reuses the connection the page is already on, so the handshake
-  // completes immediately. This is the only variant observed succeeding in
-  // production (28 upgrades in one minute versus zero for the alternatives).
-  const origin =
-    cloudWebMode() === "local"
-      ? cloudApiBaseUrl()
-      : new URL(request.url).origin;
+  // The ALB negotiates no ALPN at all, so browsers reach it over HTTP/1.1 and
+  // complete a plain Upgrade handshake. Every Cloudflare-fronted hostname we
+  // tried instead negotiates HTTP/2 and advertises h3, and Firefox never
+  // finished a socket against those — the upgrade either failed outright or
+  // landed late enough that the single-use terminal ticket was already spent,
+  // which the control plane reports as 401 on every retry.
+  //
+  // Cross-origin is intended here: the upgrade handler sets InsecureSkipVerify
+  // because the single-use ticket, not the Origin header, is the authorization
+  // boundary for this endpoint.
   return NextResponse.json(
-    { origin },
+    { origin: cloudApiBaseUrl() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
