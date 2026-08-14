@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,16 +42,50 @@ func TestSelectAgyCompletionOrchestratorRejectsUnsafeActiveHarness(t *testing.T)
 	}
 }
 
-func TestFormatAgyCompletionMessageSeparatesExecutionFromTaskSuccess(t *testing.T) {
-	msg := formatAgyCompletionMessage("worker-1", hookConversationSnapshot{
-		LatestUserPrompt:      "rebase PR #135",
-		LatestAssistantUpdate: "Rebased and resolved conflicts.",
+func TestParseAgyStopOutcome(t *testing.T) {
+	outcome := parseAgyStopOutcome([]byte(`{
+		"executionNum": 4,
+		"terminationReason": "error",
+		"error": "Out of credits",
+		"fullyIdle": true
+	}`))
+	if outcome.ExecutionNum != 4 || outcome.TerminationReason != "error" || outcome.Error != "Out of credits" {
+		t.Fatalf("unexpected outcome: %+v", outcome)
+	}
+	if outcome.FullyIdle == nil || !*outcome.FullyIdle {
+		t.Fatalf("fullyIdle = %v, want true", outcome.FullyIdle)
+	}
+	if !outcome.readyForRelay() {
+		t.Fatal("fully-idle Stop should be relayed")
+	}
+}
+
+func TestParseAgyStopOutcomeBackgroundWorkIsNotReadyForRelay(t *testing.T) {
+	outcome := parseAgyStopOutcome([]byte(`{"terminationReason":"model_stop","fullyIdle":false}`))
+	if outcome.FullyIdle == nil || *outcome.FullyIdle {
+		t.Fatalf("fullyIdle = %v, want false", outcome.FullyIdle)
+	}
+	if outcome.readyForRelay() {
+		t.Fatal("Stop with active background work must not be relayed")
+	}
+}
+
+func TestFormatAgyCompletionMessageSeparatesProviderOutcomeFromTaskSuccess(t *testing.T) {
+	fullyIdle := true
+	msg := formatAgyCompletionMessage("worker-1", hookConversationSnapshot{}, agyStopOutcome{
+		ExecutionNum:      2,
+		TerminationReason: "error",
+		Error:             "Out of credits",
+		FullyIdle:         &fullyIdle,
 	})
 	for _, want := range []string{
-		"Worker worker-1 reached its AfterAgent execution boundary",
+		"Worker worker-1 reached its native Stop execution boundary",
 		"does not prove the requested task succeeded",
-		"rebase PR #135",
-		"Rebased and resolved conflicts.",
+		"Execution: 2",
+		"Provider termination: error",
+		"Provider error: Out of credits",
+		"Provider fully idle: true",
+		"verify durable workspace state",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("message %q does not contain %q", msg, want)
@@ -58,7 +93,7 @@ func TestFormatAgyCompletionMessageSeparatesExecutionFromTaskSuccess(t *testing.
 	}
 }
 
-func TestHooksAgyAfterAgentRelaysFinalResultToCodexOrchestrator(t *testing.T) {
+func TestHooksAgyStopRelaysProviderFailureToCodexOrchestrator(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "worker-1")
 	t.Setenv("AO_PROJECT_ID", "mer")
 	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-1")
@@ -101,25 +136,87 @@ func TestHooksAgyAfterAgentRelaysFinalResultToCodexOrchestrator(t *testing.T) {
 	defer srv.Close()
 	writeRunFileFor(t, cfg, srv)
 
-	payload := `{"session_id":"agy-native-1","prompt":"rebase PR #135","prompt_response":"Rebased and resolved conflicts."}`
-	_, _, err := executeCLI(t, Deps{
+	payload := `{
+		"conversationId":"agy-native-1",
+		"transcriptPath":"/tmp/agy-transcript.jsonl",
+		"executionNum":2,
+		"terminationReason":"error",
+		"error":"Out of credits",
+		"fullyIdle":true
+	}`
+	out, _, err := executeCLI(t, Deps{
 		In:           strings.NewReader(payload),
 		ProcessAlive: func(int) bool { return true },
-	}, "hooks", "agy", "after-agent")
+	}, "hooks", "agy", "stop")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if activityRequest.State != "idle" || activityRequest.LatestAssistantUpdate != "Rebased and resolved conflicts." {
+	if activityRequest.State != "idle" || activityRequest.Event != "stop" {
 		t.Fatalf("activity request = %+v", activityRequest)
+	}
+	if activityRequest.AgentSessionID != "agy-native-1" || activityRequest.TranscriptPath != "/tmp/agy-transcript.jsonl" {
+		t.Fatalf("native metadata = %+v", activityRequest)
 	}
 	mu.Lock()
 	gotRelay := relayRequest.Message
 	mu.Unlock()
-	if !strings.Contains(gotRelay, "Worker worker-1 reached its AfterAgent execution boundary") {
-		t.Fatalf("relay = %q", gotRelay)
+	for _, want := range []string{
+		"Worker worker-1 reached its native Stop execution boundary",
+		"Provider termination: error",
+		"Provider error: Out of credits",
+	} {
+		if !strings.Contains(gotRelay, want) {
+			t.Fatalf("relay %q does not contain %q", gotRelay, want)
+		}
 	}
-	if !strings.Contains(gotRelay, "Rebased and resolved conflicts.") {
-		t.Fatalf("relay missing final result: %q", gotRelay)
+
+	var hookOutput agyStopHookOutput
+	if err := json.Unmarshal([]byte(out), &hookOutput); err != nil {
+		t.Fatalf("decode Stop hook stdout %q: %v", out, err)
+	}
+	if hookOutput.Decision != "allow" {
+		t.Fatalf("Stop decision = %q, want allow", hookOutput.Decision)
+	}
+}
+
+func TestHooksAgyStopWithBackgroundWorkDoesNotRelay(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "worker-1")
+	t.Setenv("AO_PROJECT_ID", "mer")
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-1")
+	cfg := setConfigEnv(t)
+
+	var listCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/worker-1/activity":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions":
+			listCalls.Add(1)
+			http.Error(w, "relay should not run", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected request", http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	writeRunFileFor(t, cfg, srv)
+
+	out, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"conversationId":"agy-native-1","terminationReason":"model_stop","fullyIdle":false}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "agy", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listCalls.Load() != 0 {
+		t.Fatalf("project session list calls = %d, want 0", listCalls.Load())
+	}
+	var hookOutput agyStopHookOutput
+	if err := json.Unmarshal([]byte(out), &hookOutput); err != nil {
+		t.Fatalf("decode Stop hook stdout %q: %v", out, err)
+	}
+	if hookOutput.Decision != "allow" {
+		t.Fatalf("Stop decision = %q, want allow", hookOutput.Decision)
 	}
 }
