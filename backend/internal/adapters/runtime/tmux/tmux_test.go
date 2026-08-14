@@ -852,6 +852,9 @@ func TestIsAliveReturnsTrueOnExitZero(t *testing.T) {
 	if got, want := fr.calls[0].args, hasSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("has-session args = %#v, want %#v", got, want)
 	}
+	if got, want := fr.calls[0].env, []string{"LC_ALL=C"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("has-session env = %#v, want %#v", got, want)
+	}
 }
 
 func TestIsAliveReturnsFalseNilOnCantFindSession(t *testing.T) {

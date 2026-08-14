@@ -500,7 +500,9 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	if err != nil {
 		return false, err
 	}
-	out, err := r.run(ctx, hasSessionArgs(id)...)
+	// The ENOENT suffix used below comes from strerror(3), so force a stable
+	// diagnostic locale for this probe before classifying its output.
+	out, err := r.runCommandWithEnv(ctx, []string{"LC_ALL=C"}, r.binary, hasSessionArgs(id)...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -767,9 +769,13 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (r *Runtime) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return r.runCommandWithEnv(ctx, nil, name, args...)
+}
+
+func (r *Runtime) runCommandWithEnv(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	out, err := r.runner.Run(cmdCtx, nil, name, args...)
+	out, err := r.runner.Run(cmdCtx, env, name, args...)
 	if cmdCtx.Err() != nil {
 		return out, cmdCtx.Err()
 	}
@@ -963,7 +969,8 @@ func sessionMissingOutput(out string) bool {
 // serverAbsentOutput reports tmux diagnostics that prove the server does not
 // exist. tmux versions use both spellings below for the same missing Unix
 // socket. ENOENT is authoritative even if a new server races to start later:
-// the old server's panes cannot survive its exit.
+// the old server's panes cannot survive its exit. IsAlive pins LC_ALL=C before
+// passing the diagnostic here so the strerror suffix is not localized.
 func serverAbsentOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "no server running") ||
