@@ -40,6 +40,14 @@ type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`
 }
 
+// ListReviewerHarnessesResponse is the body of GET /api/v1/reviewer-harnesses:
+// the same Supported/Installed/Authorized agent inventory contract ListAgentsResponse
+// uses, filtered to the harnesses domain.ReviewerHarness also knows about. Reusing
+// the shape (rather than a standalone reviewer id list) means a reviewer picker
+// gets labels and install/auth readiness from one catalog contract instead of
+// reconciling two.
+type ListReviewerHarnessesResponse = agentsvc.Inventory
+
 // ProjectResponse is the { project } body shared by POST /projects (201).
 type ProjectResponse struct {
 	Project projectsvc.Project `json:"project"`

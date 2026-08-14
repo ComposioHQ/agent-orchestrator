@@ -20,6 +20,7 @@ import {
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { reviewerHarnessesQueryOptions } from "../hooks/useReviewerHarnessesQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
@@ -143,6 +144,8 @@ function SettingsBody({
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const agentCatalog = agentsQuery.data;
+	const reviewerHarnessesQuery = useQuery(reviewerHarnessesQueryOptions);
+	const reviewerCatalog = reviewerHarnessesQuery.data;
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
@@ -482,12 +485,12 @@ function SettingsBody({
 										value={form.reviewerHarness}
 										onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
 										ariaLabel={t("settings.project.defaultReviewer")}
-										authorized={agentCatalog?.authorized}
+										authorized={reviewerCatalog?.authorized}
 										defaultOptionLabel={t("settings.project.default")}
 										defaultTriggerLabel={t("settings.project.default")}
-										installed={agentCatalog?.installed}
-										supported={agentCatalog?.supported}
-										disabled={agentsQuery.isFetching && agentCatalog === undefined}
+										installed={reviewerCatalog?.installed}
+										supported={reviewerCatalog?.supported}
+										disabled={reviewerHarnessesQuery.isFetching && reviewerCatalog === undefined}
 									/>
 								}
 								reviewerWarning={reviewerWarning}

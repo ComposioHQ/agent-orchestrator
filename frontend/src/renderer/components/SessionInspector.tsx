@@ -56,7 +56,7 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
-import { agentsQueryOptions } from "../hooks/useAgentsQuery";
+import { reviewerHarnessesQueryOptions } from "../hooks/useReviewerHarnessesQuery";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { appI18n } from "../i18n";
@@ -844,7 +844,7 @@ function ReviewsSection({
 			return session.autoReviewEnabled === true ? 10_000 : false;
 		},
 	});
-	const agentsQuery = useQuery(agentsQueryOptions);
+	const reviewerHarnessesQuery = useQuery(reviewerHarnessesQueryOptions);
 	const projectConfigQuery = useQuery({
 		queryKey: ["project-config", session.workspaceId],
 		enabled: hasPr,
@@ -992,7 +992,7 @@ function ReviewsSection({
 				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 				reviewStates={reviewStates}
 				notice={reviewNotice}
-				agentCatalog={agentsQuery.data}
+				reviewerCatalog={reviewerHarnessesQuery.data}
 				reviewerOverride={reviewerOverride}
 				onReviewerOverrideChange={(next) => {
 					setReviewerOverride(next);
@@ -1192,7 +1192,7 @@ function ReviewPanel({
 	isSwitchingReviewer,
 	error,
 	notice,
-	agentCatalog,
+	reviewerCatalog,
 	reviewerOverride,
 	onReviewerOverrideChange,
 	onTrigger,
@@ -1212,7 +1212,7 @@ function ReviewPanel({
 	isSwitchingReviewer: boolean;
 	error: unknown;
 	notice: string | null;
-	agentCatalog?: AgentCatalog;
+	reviewerCatalog?: AgentCatalog;
 	reviewerOverride: ReviewerHarness | "";
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
@@ -1325,15 +1325,15 @@ function ReviewPanel({
 						</span>
 						<ReviewerSelect
 							ariaLabel={t("inspector.selectReviewerAgent")}
-							authorized={agentCatalog?.authorized}
+							authorized={reviewerCatalog?.authorized}
 							contentAlign="end"
 							defaultHarness={harness}
 							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
 							defaultTriggerLabel={harness || projectDefaultLabel}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
-							installed={agentCatalog?.installed}
+							installed={reviewerCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
-							supported={agentCatalog?.supported}
+							supported={reviewerCatalog?.supported}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
 						/>
