@@ -144,87 +144,107 @@ func TestSessionInfo(t *testing.T) {
 }
 
 func TestHooksLifecycle(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "agy-test-*")
-	if err != nil {
+	tmpDir := t.TempDir()
+	plugin := &Plugin{}
+	cfg := ports.WorkspaceHookConfig{WorkspacePath: tmpDir}
+
+	hooksJSONPath := filepath.Join(tmpDir, ".agents", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksJSONPath), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
-
-	plugin := &Plugin{}
-	cfg := ports.WorkspaceHookConfig{
-		WorkspacePath: tmpDir,
+	seed := `{
+  "user-hook": {
+    "Stop": [{"type":"command","command":"./user-stop.sh"}]
+  },
+  "agent-orchestrator-chat": {
+    "PreInvocation": [{"type":"command","command":"ao agy-chat-hook pre-invocation"}]
+  }
+}
+`
+	if err := os.WriteFile(hooksJSONPath, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	// 1. Initially hooks should not be installed.
 	installed, err := plugin.AreHooksInstalled(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if installed {
-		t.Fatal("expected hooks to not be installed initially")
+		t.Fatal("user/chat hooks must not count as TUI hooks")
 	}
 
-	// 2. Install hooks.
-	err = plugin.GetAgentHooks(context.Background(), cfg)
-	if err != nil {
+	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-
 	installed, err = plugin.AreHooksInstalled(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !installed {
-		t.Fatal("expected hooks to be installed after GetAgentHooks")
+		t.Fatal("expected TUI hooks to be installed")
 	}
 
-	// Verify hooks.json structure
-	hooksJSONPath := filepath.Join(tmpDir, ".gemini", "hooks.json")
 	data, err := os.ReadFile(hooksJSONPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	var hookFile agyHookFile
-	if err := json.Unmarshal(data, &hookFile); err != nil {
+	var file agyHookFile
+	if err := json.Unmarshal(data, &file); err != nil {
 		t.Fatal(err)
 	}
-
-	if len(hookFile.Hooks) != len(agyManagedHooks) {
-		t.Fatalf("expected %d events in hooks, got %d", len(agyManagedHooks), len(hookFile.Hooks))
+	if _, ok := file["user-hook"]; !ok {
+		t.Fatal("install removed user hook set")
+	}
+	if _, ok := file["agent-orchestrator-chat"]; !ok {
+		t.Fatal("install removed Agy Chat hook set")
 	}
 
-	for _, spec := range agyManagedHooks {
-		groups, ok := hookFile.Hooks[spec.Event]
-		if !ok {
-			t.Fatalf("expected event %q in hooks.json", spec.Event)
-		}
-		found := false
-		for _, group := range groups {
-			for _, h := range group.Hooks {
-				if h.Command == spec.Command {
-					found = true
-					break
-				}
-			}
-		}
-		if !found {
-			t.Fatalf("expected command %q for event %q", spec.Command, spec.Event)
-		}
+	raw, ok := file[agyManagedHookName]
+	if !ok {
+		t.Fatalf("missing %q hook set", agyManagedHookName)
 	}
-
-	// 3. Uninstall hooks.
-	err = plugin.UninstallHooks(context.Background(), tmpDir)
-	if err != nil {
+	var definition agyHookDefinition
+	if err := json.Unmarshal(raw, &definition); err != nil {
 		t.Fatal(err)
 	}
+	if len(definition.PreInvocation) != 1 || definition.PreInvocation[0].Command != "ao hooks agy pre-invocation" {
+		t.Fatalf("unexpected PreInvocation hooks: %#v", definition.PreInvocation)
+	}
+	if len(definition.PostToolUse) != 1 || definition.PostToolUse[0].Matcher != "*" ||
+		len(definition.PostToolUse[0].Hooks) != 1 || definition.PostToolUse[0].Hooks[0].Command != "ao hooks agy post-tool-use" {
+		t.Fatalf("unexpected PostToolUse hooks: %#v", definition.PostToolUse)
+	}
+	if len(definition.Stop) != 1 || definition.Stop[0].Command != "ao hooks agy stop" {
+		t.Fatalf("unexpected Stop hooks: %#v", definition.Stop)
+	}
 
+	if err := plugin.UninstallHooks(context.Background(), tmpDir); err != nil {
+		t.Fatal(err)
+	}
 	installed, err = plugin.AreHooksInstalled(context.Background(), tmpDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if installed {
-		t.Fatal("expected hooks to be uninstalled after UninstallHooks")
+		t.Fatal("expected TUI hooks to be removed")
+	}
+
+	data, err = os.ReadFile(hooksJSONPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file = nil
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := file["user-hook"]; !ok {
+		t.Fatal("uninstall removed user hook set")
+	}
+	if _, ok := file["agent-orchestrator-chat"]; !ok {
+		t.Fatal("uninstall removed Agy Chat hook set")
+	}
+	if _, ok := file[agyManagedHookName]; ok {
+		t.Fatal("uninstall left TUI hook set behind")
 	}
 }
 
