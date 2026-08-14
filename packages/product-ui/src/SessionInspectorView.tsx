@@ -39,6 +39,7 @@ export function SessionInspectorShellView<TView extends string = InspectorView>(
 	ariaLabel,
 	browserPoppedOut,
 	browserView,
+	compactTabs = false,
 	filesView,
 	loadingText,
 	onViewChange,
@@ -50,6 +51,7 @@ export function SessionInspectorShellView<TView extends string = InspectorView>(
 	ariaLabel: string;
 	browserPoppedOut: boolean;
 	browserView?: ReactNode;
+	compactTabs?: boolean;
 	filesView?: ReactNode;
 	loadingText?: string;
 	onViewChange: (view: TView) => void;
@@ -106,6 +108,7 @@ export function SessionInspectorShellView<TView extends string = InspectorView>(
 						tabIndex={activeView === tab.id ? 0 : -1}
 						className={cn(
 							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+							compactTabs && "aspect-square px-0",
 							activeView === tab.id && "bg-interactive-active text-foreground",
 						)}
 						onClick={() => onViewChange(tab.id)}
@@ -125,7 +128,7 @@ export function SessionInspectorShellView<TView extends string = InspectorView>(
 								</span>
 							) : null}
 						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">
+						<span className={cn("truncate @max-[350px]/inspector:hidden", compactTabs && "hidden")}>
 							{tab.displayLabel ?? tab.label}
 						</span>
 					</button>
