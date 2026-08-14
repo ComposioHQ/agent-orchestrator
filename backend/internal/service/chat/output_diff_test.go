@@ -201,6 +201,59 @@ func TestCommandOutputIsCappedAndSaysSo(t *testing.T) {
 	}
 }
 
+// Once output is capped, further deltas must not touch the row at all. Every
+// revision bump fires a CDC event, an SSE push, and a full snapshot refetch in
+// the client; a dev server in watch mode streaming past the cap turned that
+// into a re-render storm that froze the session page (#3945).
+func TestCappedOutputStopsBumpingRevision(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "npm run dev", ClientMessageID: "c1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"},
+		startedCommand("provider-turn-1", "exec-1", "npm run dev"),
+	)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 1 })
+
+	// One delta larger than the cap truncates in a single append.
+	h.conv.emit(outputDelta("provider-turn-1", "exec-1",
+		strings.Repeat("x", store.MaxCommandOutputChars+1)))
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		for _, a := range s.Activities {
+			if a.ProviderItemID == "exec-1" && a.CommandOutputTruncated {
+				return true
+			}
+		}
+		return false
+	})
+	truncatedRevision := findActivity(t, snapshot, "exec-1").Revision
+
+	// The runaway command keeps printing. A later, unrelated projection is the
+	// barrier proving every delta before it has been applied.
+	for i := 0; i < 10; i++ {
+		h.conv.emit(outputDelta("provider-turn-1", "exec-1", "[vite] page reload\n"))
+	}
+	h.conv.emit(startedCommand("provider-turn-1", "exec-2", "barrier"))
+	snapshot = h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 2
+	})
+
+	after := findActivity(t, snapshot, "exec-1")
+	if after.Revision != truncatedRevision {
+		t.Errorf("revision moved from %d to %d after truncation; capped deltas must not touch the row",
+			truncatedRevision, after.Revision)
+	}
+	if len(after.CommandOutput) != store.MaxCommandOutputChars {
+		t.Errorf("stored output = %d chars, want the cap %d", len(after.CommandOutput), store.MaxCommandOutputChars)
+	}
+}
+
 // A delta whose activity does not exist is dropped, not turned into a row of its
 // own. The provider can emit output before the item/started that names the command,
 // and an activity invented from a delta would have no command on it.

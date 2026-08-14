@@ -2430,3 +2430,77 @@ func awaitStoreSnapshot(t *testing.T, st *sqlite.Store, conversationID string,
 		len(last.Messages), len(last.Activities), len(last.Turns))
 	return last
 }
+
+// The terminal is the escape hatch for a runaway command. An interrupt-policy
+// handoff whose provider accepts the cancel but never reports turn completion
+// must still finish: the durable turn is reconciled as interrupted after a
+// bounded wait instead of the switch spinning forever (#3945).
+func TestInterruptHandoffCompletesWhenProviderNeverSettlesTheTurn(t *testing.T) {
+	conv := newInterruptRecorder()
+	st := openStore(t)
+
+	var counterMu sync.Mutex
+	counter := 0
+	activity := &recordingActivity{}
+	clock := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+	svc := chatsvc.New(chatsvc.Options{
+		Store:    st,
+		Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
+		Activity: activity,
+		Log:      slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			counterMu.Lock()
+			defer counterMu.Unlock()
+			counter++
+			return fmt.Sprintf("id-%03d", counter)
+		},
+		Now:               func() time.Time { return clock },
+		HandoffSettleWait: 150 * time.Millisecond,
+	})
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID:     testSession,
+		ProjectID:     testProject,
+		Harness:       domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	ctx := context.Background()
+
+	if _, err := svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "npm run dev", ClientMessageID: "c1",
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	conv.markActive("provider-turn-1")
+	conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	awaitStoreSnapshot(t, st, ctrl.ConversationID(), func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+
+	// The provider accepts the interrupt but never emits turn/completed — the
+	// wedged state a runaway dev server can produce.
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("PrepareChatHandoff: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("handoff never completed; the terminal escape hatch is wedged")
+	}
+
+	snapshot := awaitStoreSnapshot(t, st, ctrl.ConversationID(), func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State.Terminal()
+	})
+	if got := snapshot.Turns[0].State; got != domain.TurnStateInterrupted {
+		t.Errorf("turn state = %q, want interrupted", got)
+	}
+}

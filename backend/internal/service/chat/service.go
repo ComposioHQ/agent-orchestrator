@@ -41,6 +41,9 @@ type Service struct {
 	log        *slog.Logger
 	newID      IDFactory
 	now        Clock
+	// handoffSettleWait is applied to every controller this service starts; see
+	// Options.HandoffSettleWait.
+	handoffSettleWait time.Duration
 
 	mu           sync.RWMutex
 	controllers  map[domain.SessionID]*Controller
@@ -78,6 +81,10 @@ type Options struct {
 	Log      *slog.Logger
 	NewID    IDFactory
 	Now      Clock
+	// HandoffSettleWait bounds how long an interrupt-policy handoff waits for the
+	// provider to settle the cancelled turn before reconciling it. Zero uses the
+	// production default; tests shorten it.
+	HandoffSettleWait time.Duration
 }
 
 // New builds a Chat service.
@@ -91,18 +98,19 @@ func New(opts Options) *Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{
-		store:        opts.Store,
-		reader:       opts.Reader,
-		pageReader:   opts.PageReader,
-		sessions:     opts.Sessions,
-		drivers:      opts.Drivers,
-		activity:     opts.Activity,
-		log:          log,
-		newID:        opts.NewID,
-		now:          now,
-		controllers:  make(map[domain.SessionID]*Controller),
-		startConfigs: make(map[domain.SessionID]StartConfig),
-		gates:        make(map[domain.SessionID]controllerGate),
+		store:             opts.Store,
+		reader:            opts.Reader,
+		pageReader:        opts.PageReader,
+		sessions:          opts.Sessions,
+		drivers:           opts.Drivers,
+		activity:          opts.Activity,
+		log:               log,
+		newID:             opts.NewID,
+		now:               now,
+		handoffSettleWait: opts.HandoffSettleWait,
+		controllers:       make(map[domain.SessionID]*Controller),
+		startConfigs:      make(map[domain.SessionID]StartConfig),
+		gates:             make(map[domain.SessionID]controllerGate),
 	}
 }
 
@@ -334,6 +342,9 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+	if s.handoffSettleWait > 0 {
+		controller.handoffSettleWait = s.handoffSettleWait
+	}
 	if cfg.ProviderConversationID != "" {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification

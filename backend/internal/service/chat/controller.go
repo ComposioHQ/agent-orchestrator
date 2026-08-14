@@ -173,10 +173,20 @@ type Controller struct {
 	mcpServers     map[string]domain.ConversationMCPServer
 	mcpServerOrder []string
 
+	// handoffSettleWait bounds how long an interrupt-policy handoff waits for the
+	// provider to settle the turn it was asked to cancel. The terminal is the
+	// escape hatch for a runaway command; a provider that accepted the interrupt
+	// but never reports completion must not be able to wedge the switch.
+	handoffSettleWait time.Duration
+
 	stopped  chan struct{}
 	once     sync.Once
 	closeErr error
 }
+
+// defaultHandoffSettleWait is generous for a healthy provider killing a process
+// and reporting completion, while still bounding a wedged one.
+const defaultHandoffSettleWait = 10 * time.Second
 
 // ErrNoActiveTurn reports an interrupt with nothing to cancel.
 var ErrNoActiveTurn = errors.New("no active turn")
@@ -198,19 +208,20 @@ func newController(
 	now Clock,
 ) *Controller {
 	c := &Controller{
-		sessionID:    sessionID,
-		conversation: conversation,
-		generation:   generation,
-		conv:         conv,
-		store:        store,
-		activity:     activity,
-		log:          log,
-		newID:        newID,
-		now:          now,
-		state:        ports.ChatControllerReady,
-		settings:     conversation.Settings,
-		mcpServers:   map[string]domain.ConversationMCPServer{},
-		stopped:      make(chan struct{}),
+		sessionID:         sessionID,
+		conversation:      conversation,
+		generation:        generation,
+		conv:              conv,
+		store:             store,
+		activity:          activity,
+		log:               log,
+		newID:             newID,
+		now:               now,
+		state:             ports.ChatControllerReady,
+		settings:          conversation.Settings,
+		mcpServers:        map[string]domain.ConversationMCPServer{},
+		handoffSettleWait: defaultHandoffSettleWait,
+		stopped:           make(chan struct{}),
 	}
 	// Seeded from the durable row so a reconnect merges onto what is already known
 	// rather than starting from blank and reporting a conversation as having no
@@ -909,6 +920,15 @@ func (c *Controller) BeginHandoff(
 		c.drain(ctx)
 	}
 
+	// An interrupted turn should settle within moments of the provider accepting
+	// the cancel. If it never does — the provider is wedged on the very command
+	// the user is trying to escape — the switch must not wait forever: the
+	// terminal on the other side of this handoff is the escape hatch (#3945).
+	var settleDeadline time.Time
+	if policy == domain.SessionInterfaceTransitionInterrupt {
+		settleDeadline = time.Now().Add(c.handoffSettleWait)
+	}
+
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -919,7 +939,20 @@ func (c *Controller) BeginHandoff(
 		c.sendMu.Lock()
 		c.mu.Lock()
 		busy := c.pendingTurnID != ""
+		pending := c.pendingTurnID
 		c.mu.Unlock()
+		if busy && !settleDeadline.IsZero() && time.Now().After(settleDeadline) {
+			// The user chose to stop; the durable row is settled on their behalf
+			// so the handoff can complete and the terminal can take over.
+			c.log.Warn("interrupted turn never settled before handoff; reconciling",
+				"session", c.sessionID, "turn", pending)
+			if err := c.reconcileDurableTurn(ctx, pending); err != nil {
+				c.sendMu.Unlock()
+				c.AbortHandoff()
+				return fmt.Errorf("settle interrupted turn for handoff: %w", err)
+			}
+			busy = false
+		}
 		if !busy {
 			_, err := c.store.NextQueuedTurn(ctx, c.conversation.ID)
 			switch {

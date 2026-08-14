@@ -769,6 +769,12 @@ WHERE conversation_id = ? AND kind = 'user_input' AND status = 'pending';
 --
 -- execrows so the caller can tell "appended" from "no such activity yet", which
 -- is a real case: a delta can arrive before the item/started that creates the row.
+--
+-- A row whose output is already truncated is skipped entirely: the stored text
+-- cannot change, so bumping revision would fire a CDC event, an SSE push, and a
+-- full snapshot refetch per delta for bytes nobody will ever see. A dev server in
+-- watch mode emits dozens of deltas per second past the cap; without this guard
+-- that becomes a client-side re-render storm that freezes the session page.
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: AppendConversationActivityOutput :execrows
@@ -782,7 +788,8 @@ SET command_output = substr(command_output || sqlc.arg(delta), 1, sqlc.arg(max_o
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND provider_item_id = sqlc.arg(provider_item_id)
-  AND status <> 'cancelled';
+  AND status <> 'cancelled'
+  AND command_output_truncated = 0;
 
 -- Append provider prose streamed for one activity, capped in one statement.
 --
@@ -808,7 +815,8 @@ SET streamed_text = substr(streamed_text || sqlc.arg(delta), 1, sqlc.arg(max_tex
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND provider_item_id = sqlc.arg(provider_item_id)
-  AND status <> 'cancelled';
+  AND status <> 'cancelled'
+  AND streamed_text_truncated = 0;
 
 -- Replace the streamed text with the provider's settled version.
 --
