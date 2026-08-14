@@ -78,7 +78,7 @@ export function CloudSessionWorkspace({
 }) {
   const client = useMemo(browserCloudClient, []);
   const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [tab, setTab] = useState<InspectorTab>("changes");
+  const [tab, setTab] = useState<InspectorTab>("terminal");
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
   const [directory, setDirectory] = useState("");
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
