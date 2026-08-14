@@ -1,0 +1,24 @@
+name: Pricing catalog validation
+
+on:
+  pull_request:
+    paths:
+      - "pricing/**"
+      - "backend/cmd/pricingcatalog/**"
+      - "backend/internal/pricing/**"
+      - ".github/workflows/pricing-catalog-validate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: backend/go.mod
+          cache: false
+      - name: Validate reviewed catalog
+        run: go run ./backend/cmd/pricingcatalog validate -root .
