@@ -34,7 +34,7 @@ export function readStoredThemePreference(): ThemePreference {
   try {
     const stored = getStorage()?.getItem(THEME_KEY);
     if (stored === "light" || stored === "dark" || stored === "system") return stored;
-  } catch { /* ignore */ }
+  } catch {}
   return "system";
 }
 
@@ -46,7 +46,7 @@ export function readStoredThemeStyle(): ThemeStyle {
       stored === "dracula" || stored === "tokyo-night" || stored === "rose-pine" ||
       stored === "nord" || stored === "gruvbox" || stored === "solarized"
     ) return stored;
-  } catch { /* ignore */ }
+  } catch {}
   return "orchestrate";
 }
 

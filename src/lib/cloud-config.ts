@@ -74,13 +74,6 @@ export function cloudControlEnvironment(): "development" | "staging" | "producti
   return mode === "local" ? "development" : mode;
 }
 
-// workosRedirectUri validates by mode because the two shapes are not just
-// different values, they are different threat models. local/staging always
-// run on a developer's own machine (see scripts/cloud-web-staging.sh), so a
-// loopback HTTP URL is the correct, tighter constraint there — accepting a
-// real hostname would let a misconfigured environment variable silently send
-// WorkOS auth codes to somewhere other than the machine running the server.
-// production is the one shape meant to be reached at a real public hostname.
 export function workosRedirectUri(): string {
   const value = process.env.WORKOS_REDIRECT_URI?.trim();
   if (!value) {

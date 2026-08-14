@@ -225,15 +225,7 @@ async function forward(request: NextRequest, context: RouteContext) {
   return response;
 }
 
-// setForwardedOrigin tells the Go backend the browser-facing host/scheme it
-// was actually reached through, since this fetch to it is a separate
-// server-to-server call — Go otherwise sees only cloudApiBaseUrl()'s
-// internal address (e.g. the backend's own bind address in local dev, or an
-// internal service address in hosted deployments), which is wrong for
-// anything the backend needs to embed in a link a browser will later open
-// (see shareLinkURL in the Go handler). Respects an existing
-// x-forwarded-host on THIS request first, in case Next.js itself sits
-// behind another proxy.
+// Preserve the browser-facing origin across the server-to-server proxy hop.
 function setForwardedOrigin(headers: Headers, request: NextRequest): void {
   const host =
     request.headers.get("x-forwarded-host")?.trim() ||

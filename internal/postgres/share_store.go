@@ -14,9 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// newShareToken mints a fresh bearer token for a share link. Only its hash
-// is ever persisted (see CreateProjectShareLink); the raw value is returned
-// exactly once, to be embedded in the link the creator shares out-of-band.
 func newShareToken() (token string, hash []byte, err error) {
 	value := make([]byte, 32)
 	if _, err := rand.Read(value); err != nil {
@@ -55,11 +52,7 @@ func scanShareLink(row pgx.Row, link *domain.ShareLink) error {
 	return nil
 }
 
-// CreateProjectShareLink mints a redeemable link for a project (or, if
-// input.SessionID is set, for just one session in it). Any active member of
-// the project's org may create one — see the reference implementation this
-// mirrors, where sharing is a "member", not an "admin", capability. Returns
-// the link and the one-time raw token; only its hash is stored.
+// CreateProjectShareLink mints a project or session share link.
 func (s *Store) CreateProjectShareLink(
 	ctx context.Context,
 	principal domain.Principal,
@@ -109,8 +102,7 @@ func (s *Store) CreateProjectShareLink(
 	return link, token, nil
 }
 
-// ListProjectShareLinks returns every share link ever created for a
-// project, most recent first, for its owning org's management UI.
+// ListProjectShareLinks returns a project's share links, newest first.
 func (s *Store) ListProjectShareLinks(
 	ctx context.Context,
 	principal domain.Principal,
@@ -145,8 +137,7 @@ func (s *Store) ListProjectShareLinks(
 	return links, nil
 }
 
-// RevokeProjectShareLink deactivates a link. It does not affect grants
-// already redeemed from it — only future redemptions.
+// RevokeProjectShareLink deactivates a link without changing existing grants.
 func (s *Store) RevokeProjectShareLink(
 	ctx context.Context,
 	principal domain.Principal,
@@ -170,8 +161,7 @@ func (s *Store) RevokeProjectShareLink(
 	})
 }
 
-// RevokeProjectShareGrant revokes a previously redeemed grant, immediately
-// cutting off the recipient's access.
+// RevokeProjectShareGrant revokes a previously redeemed grant.
 func (s *Store) RevokeProjectShareGrant(
 	ctx context.Context,
 	principal domain.Principal,
@@ -195,11 +185,7 @@ func (s *Store) RevokeProjectShareGrant(
 	})
 }
 
-// ListProjectShareGrants returns every active collaborator on a project —
-// everyone who has redeemed a share link for it — for its owning org's
-// management UI. Unlike ListSharedProjects (the recipient's own "shared
-// with me" view), this is scoped to one project and requires the caller to
-// already be a member of its org.
+// ListProjectShareGrants returns a project's active collaborators.
 func (s *Store) ListProjectShareGrants(
 	ctx context.Context,
 	principal domain.Principal,
@@ -276,11 +262,7 @@ func scanSharedProject(row pgx.Row) (domain.SharedProject, error) {
 	return shared, nil
 }
 
-// RedeemProjectShareLink activates a share link's token for the calling
-// user, creating (or refreshing) their grant. orgID is required because
-// tokens are looked up under row-level security scoped to one org at a
-// time — the link the client follows always carries its org alongside the
-// token for exactly this reason.
+// RedeemProjectShareLink creates or refreshes the calling user's grant.
 func (s *Store) RedeemProjectShareLink(
 	ctx context.Context,
 	principal domain.Principal,
@@ -367,10 +349,6 @@ func (s *Store) RedeemProjectShareLink(
 	return shared, nil
 }
 
-// nullEqualsClause returns a predicate that matches a nullable UUID column
-// against a possibly-empty string parameter: empty means "IS NULL", non-empty
-// means "= param::uuid". Postgres has no single operator for that, so this
-// builds the two-armed SQL fragment once rather than duplicating it inline.
 func nullEqualsClause(param string) string {
 	return "IS NOT DISTINCT FROM NULLIF(" + param + ", '')::uuid"
 }
@@ -395,11 +373,7 @@ func nonNilStrings(values []string) []string {
 	return values
 }
 
-// ListSharedProjects returns every project (or single session) actively
-// shared with the calling user, across every org — including orgs they are
-// not a member of. This is the "shared with me" view; it relies on
-// ao_project_share_grants' row-level security policy allowing a row to be
-// read either by its org or by the user it names (see migration 00021).
+// ListSharedProjects returns projects and sessions shared with the calling user.
 func (s *Store) ListSharedProjects(
 	ctx context.Context,
 	principal domain.Principal,
@@ -440,10 +414,7 @@ func (s *Store) ListSharedProjects(
 	return shared, nil
 }
 
-// ListSharedProjectSessions lists every session in a project for a caller
-// holding a whole-project grant (session_id IS NULL) — a session-scoped
-// grant only ever gives access to that one session, never a listing of its
-// siblings, so it does not qualify here.
+// ListSharedProjectSessions lists sessions covered by a whole-project grant.
 func (s *Store) ListSharedProjectSessions(
 	ctx context.Context,
 	principal domain.Principal,
@@ -502,30 +473,14 @@ func (s *Store) ListSharedProjectSessions(
 	return sessions, nil
 }
 
-// sessionAccess is what withSessionAccess resolves a caller's authority to
-// operate on one session down to. For an org member, Role is "member" and
-// ModeCap/DeniedCommands are zero (a member is bound only by the session's
-// own Mode/DeniedCommands, never by a share grant's — see effectiveMode and
-// effectiveDeniedCommands). For a shared collaborator, Role is the grant's
-// "viewer" or "editor", and ModeCap/DeniedCommands are the policy frozen
-// onto that grant at redemption time (see RedeemProjectShareLink) — a cap
-// on top of the session's own values, never a grant of more than it allows.
 type sessionAccess struct {
 	Role           string
 	ModeCap        string
 	DeniedCommands []string
 }
 
-// shareModeRank orders share-policy modes from most to least restrictive,
-// so effectiveMode can pick whichever of two modes restricts further. Not
-// a valid mode on its own; effectiveMode treats an empty modeCap ("no cap")
-// as imposing no restriction at all rather than ranking it here.
 var shareModeRank = map[string]int{"read-only": 0, "standard": 1, "trusted": 2}
 
-// effectiveMode narrows a session's own mode by a share grant's modeCap, if
-// any — the cap can only restrict further, never loosen what the session
-// itself already allows. An empty cap (no cap) leaves the session's mode
-// unchanged.
 func effectiveMode(sessionMode, modeCap string) string {
 	if modeCap == "" {
 		return sessionMode
@@ -536,8 +491,6 @@ func effectiveMode(sessionMode, modeCap string) string {
 	return sessionMode
 }
 
-// effectiveDeniedCommands unions a session's own denied-command list with a
-// share grant's — either source denying a command is enough to deny it.
 func effectiveDeniedCommands(sessionDenied, grantDenied []string) []string {
 	if len(grantDenied) == 0 {
 		return sessionDenied
@@ -559,11 +512,7 @@ func effectiveDeniedCommands(sessionDenied, grantDenied []string) []string {
 	return out
 }
 
-// withSessionAccess authorizes a session-scoped operation for either an
-// active org member (any role — identical to withTenant's own check) or,
-// failing that, the holder of an active share grant covering this exact
-// session or its whole project. fn receives the resolved sessionAccess so
-// callers can gate write operations and apply the grant's policy cap.
+// withSessionAccess authorizes members and active share-grant holders.
 func (s *Store) withSessionAccess(
 	ctx context.Context,
 	principal domain.Principal,

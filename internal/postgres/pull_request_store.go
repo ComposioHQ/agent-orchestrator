@@ -15,14 +15,7 @@ const pullRequestColumns = `id, org_id, session_id, provider, repository, author
 	ci_state, review_state, mergeability, checks, claimed_by_session_id, claimed_at, released_at,
 	ao_review_state, observed_at, created_at, updated_at`
 
-// CreatePullRequestRecord persists a pull request AO Cloud raised on GitHub's
-// behalf. It is called only after the GitHub API call itself has already
-// succeeded — this durably records something that verifiably exists on
-// GitHub, it is not an intent to create one. A freshly raised pull request is
-// never a draft, so state is always the raw GitHub "open" value. GitHub
-// computes additions/deletions/changed_files asynchronously and may return
-// zeroes for them on the create response itself — the next status refresh
-// (RefreshPullRequestStatus) corrects them once GitHub has caught up.
+// CreatePullRequestRecord persists a pull request already created on GitHub.
 func (s *Store) CreatePullRequestRecord(
 	ctx context.Context,
 	orgID, sessionID string,
@@ -76,10 +69,7 @@ func (s *Store) GetPullRequest(
 	return record, nil
 }
 
-// ListPullRequestsBySession returns every pull request a session has raised,
-// most recently created first. It verifies the caller belongs to orgID, so
-// it is the version to call from a user-facing request; control-plane code
-// with no principal should query ao_pull_requests directly instead.
+// ListPullRequestsBySession returns a session's pull requests, newest first.
 func (s *Store) ListPullRequestsBySession(
 	ctx context.Context,
 	principal domain.Principal,
@@ -114,18 +104,7 @@ func (s *Store) ListPullRequestsBySession(
 	return records, nil
 }
 
-// PRFactsBySession returns pull-request facts for every session in
-// sessionIDs, grouped by session ID, in one round trip — the input
-// contract.DeriveStatus needs to resolve a session's display status to a
-// PR-lifecycle value (pr_open, ci_failed, review_pending,
-// changes_requested, approved, mergeable, merged), the same way the local
-// desktop app's ListPRFactsForSession backs its own status derivation.
-//
-// orgID is trusted here rather than re-verified against a principal: every
-// caller already verified the caller may see this org's sessions — via
-// withTenant on the session query this supplements, or a worker epoch/
-// claims check for the orchestrator-child listing path, which has no
-// principal at all — before reaching this supplementary fetch.
+// PRFactsBySession returns pull request facts grouped by session ID.
 func (s *Store) PRFactsBySession(
 	ctx context.Context,
 	orgID string,
@@ -179,12 +158,7 @@ func (s *Store) PRFactsBySession(
 	return facts, nil
 }
 
-// OpenPullRequestRefs lists every open pull request across every
-// organization, for the background status poller to refresh. It runs with
-// the control-plane service context rather than a single org's, the same way
-// RunningSandboxSessions does for the idle-pause scanner: the poller has no
-// user principal and must scan across tenants, but every write that follows
-// still goes through withOrg so row-level security confines it again.
+// OpenPullRequestRefs lists open pull requests across organizations.
 func (s *Store) OpenPullRequestRefs(ctx context.Context) ([]domain.PullRequestRef, error) {
 	var refs []domain.PullRequestRef
 	err := s.withService(ctx, func(tx pgx.Tx) error {

@@ -93,14 +93,18 @@ export function CloudSidebar({
     try {
       const stored = localStorage.getItem("ao.pinned-sessions");
       return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
-    } catch { return new Set(); }
+    } catch {
+      return new Set();
+    }
   });
   const togglePin = (sessionId: string) => {
     setPinnedIds((prev) => {
       const next = new Set(prev);
       if (next.has(sessionId)) next.delete(sessionId);
       else next.add(sessionId);
-      try { localStorage.setItem("ao.pinned-sessions", JSON.stringify([...next])); } catch {}
+      try {
+        localStorage.setItem("ao.pinned-sessions", JSON.stringify([...next]));
+      } catch {}
       return next;
     });
   };

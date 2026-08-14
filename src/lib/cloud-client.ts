@@ -151,11 +151,6 @@ export function newIdempotencyKey(prefix: string): string {
 
 const PENDING_SHARE_STORAGE_KEY = "ao-pending-share-redemption";
 
-// A share link can be opened by someone who isn't signed in yet. Rather
-// than teach the WorkOS sign-in redirect about share-specific return
-// destinations, the redemption page stashes the link here before sending
-// the visitor to sign in, and the main workspace redeems it — once — the
-// next time it loads with a session.
 export function savePendingShareRedemption(orgId: string, token: string) {
   window.sessionStorage.setItem(
     PENDING_SHARE_STORAGE_KEY,

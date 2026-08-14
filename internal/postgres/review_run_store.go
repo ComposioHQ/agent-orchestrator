@@ -14,19 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// reviewTerminalRequestTTL bounds how long a queued terminal.open/input/close
-// worker-transport request waits to be claimed. The worker's poll loop is
-// sub-second, so this is generous slack for a live worker, not a real
-// deadline — if the worker is gone, the request simply expires unclaimed.
 const reviewTerminalRequestTTL = 30 * time.Second
 
-// CreateReviewRun records a new AO review pass against a pull request's
-// current head commit, fenced by the (pull_request_id, target_sha) unique
-// index so a review is never triggered twice against the same commit. When
-// a run for this commit already exists, it is returned unchanged with
-// created=false rather than erroring — the caller (a review trigger that
-// may itself be retried) can treat both outcomes the same way: a run for
-// this commit is now guaranteed to exist.
+// CreateReviewRun records at most one review pass per pull request commit.
 func (s *Store) CreateReviewRun(
 	ctx context.Context,
 	orgID, pullRequestID, reviewSessionID, targetSHA string,
@@ -73,41 +63,14 @@ func (s *Store) CreateReviewRun(
 	return run, created, nil
 }
 
-// OpenReviewTerminal starts an AO-triggered review as its own independent
-// agent process in the same sandbox — not a message appended to the
-// session's ongoing conversation. This mirrors the public agent-orchestrator
-// repo's local desktop app, which reviews from a dedicated reviewer process
-// that reuses the session's already-checked-out worktree rather than
-// starting a fresh conversation on the same PTY or a fresh checkout (a
-// fresh checkout would only have the target branch, not the PR's changes).
-// Cloud has no shared local disk to spawn a second process onto, so the
-// equivalent is a second terminal in the same sandbox: same harness binary,
-// same working directory (the checkout the PR's branch already lives in,
-// including whatever the worker's checkout-renewal loop has kept fresh),
-// but its own undistracted conversation whose only job is this review.
-//
-// It has no idempotency key of its own because CreateReviewRun's
-// (pull_request_id, target_sha) fence already guarantees a review is
-// triggered at most once, so this is called at most once per commit too.
+// OpenReviewTerminal starts a dedicated review process in the session sandbox.
 func (s *Store) OpenReviewTerminal(
 	ctx context.Context,
 	orgID, sessionID, reviewRunID, prompt string,
 ) error {
 	terminalID := uuid.NewString()
-	// The open and input requests are two separate transactions, not two
-	// statements in one: within a single transaction, Postgres's now() (and
-	// so every row's created_at) is frozen at transaction start, so both
-	// rows would get an identical timestamp. ClaimWorkerRequest orders by
-	// (created_at, id) — with tied timestamps that falls back to comparing
-	// UUIDs, which is effectively random, so the input could be claimed
-	// before the terminal it's meant for exists. Committing the open
-	// request first guarantees it a strictly earlier created_at.
+	// Separate transactions guarantee that open sorts before input by created_at.
 	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
-		// A sandbox the idle-pause scanner paused between the PR-raising
-		// push and this call has no live worker to open a terminal on —
-		// widen it back to running so the very next scan (or the worker's
-		// own reconnect) can catch up, the same wake createWorkerRequest's
-		// callers rely on elsewhere.
 		if _, err := tx.Exec(
 			ctx,
 			`UPDATE ao_sandboxes
@@ -150,11 +113,7 @@ func (s *Store) OpenReviewTerminal(
 	})
 }
 
-// CloseReviewTerminal tears down the dedicated process OpenReviewTerminal
-// started, once a review run has resolved (delivered or failed), so it
-// doesn't linger as an unattended live process in the sandbox. A worker
-// that's already gone (sandbox stopped/paused since) has nothing to close,
-// so that specific failure is treated as success rather than surfaced.
+// CloseReviewTerminal tears down the dedicated review process.
 func (s *Store) CloseReviewTerminal(ctx context.Context, orgID, sessionID, reviewRunID string) error {
 	return s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
 		var terminalID *string
@@ -183,17 +142,7 @@ func (s *Store) CloseReviewTerminal(ctx context.Context, orgID, sessionID, revie
 	})
 }
 
-// CompleteAndDeliverReviewRun records a review session's verdict and marks
-// it delivered to GitHub in one step — called only after the GitHub review
-// API call itself has already succeeded, the same "GitHub first, then the
-// durable record" ordering CreatePullRequestRecord uses. It is fenced by
-// reviewSessionID: only the session that owns this run (the one
-// CreateReviewRun recorded as review_session_id) can complete it, and only
-// while it is still running, so a stale retry or another session's worker
-// can never overwrite a verdict that already landed. The pull request's
-// ao_review_state is only advanced if its head_sha still matches the run's
-// target_sha — if the PR moved on to a new commit while this review was in
-// flight, the newer state (set by the next CreateReviewRun) must win.
+// CompleteAndDeliverReviewRun records a delivered verdict from the owning session.
 func (s *Store) CompleteAndDeliverReviewRun(
 	ctx context.Context,
 	orgID, reviewRunID, reviewSessionID string,
@@ -235,11 +184,7 @@ func (s *Store) CompleteAndDeliverReviewRun(
 	return run, nil
 }
 
-// FailReviewRun records that a review pass could not be delivered and
-// releases the pull request back to needing review, so a failed automated
-// pass never leaves ao_review_state stuck on "running" forever. Fenced the
-// same way CompleteAndDeliverReviewRun is: only the owning session, only
-// while still running.
+// FailReviewRun records a failed review pass from the owning session.
 func (s *Store) FailReviewRun(
 	ctx context.Context,
 	orgID, reviewRunID, reviewSessionID, lastError string,
@@ -274,9 +219,7 @@ func (s *Store) FailReviewRun(
 	return run, nil
 }
 
-// ReviewRunPullRequest returns one review run joined with the identifying
-// fields of the pull request it belongs to, so a verdict submission can
-// mint a GitHub token and post the review without a second round trip.
+// ReviewRunPullRequest returns a review run joined with its pull request.
 func (s *Store) ReviewRunPullRequest(
 	ctx context.Context,
 	orgID, reviewRunID string,
@@ -320,10 +263,7 @@ func (s *Store) ReviewRunPullRequest(
 	return out, nil
 }
 
-// ListReviewRunsBySession returns every AO review run for pull requests a
-// session has raised, most recent first, each joined with its pull
-// request's identity — the read side a session's review-state view groups
-// by pull request to show AO's review history per PR.
+// ListReviewRunsBySession returns a session's review runs, newest first.
 func (s *Store) ListReviewRunsBySession(
 	ctx context.Context,
 	principal domain.Principal,

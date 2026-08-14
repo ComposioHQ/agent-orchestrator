@@ -2,9 +2,7 @@ package domain
 
 import "time"
 
-// ShareLink is a redeemable, revocable invitation to collaborate on a
-// project, or on one specific session within it. Redeeming one creates a
-// ShareGrant for the redeemer.
+// ShareLink is a redeemable invitation to a project or session.
 type ShareLink struct {
 	ID              string
 	OrgID           string
@@ -35,10 +33,7 @@ type CreateShareLink struct {
 	ExpiresAt      *time.Time
 }
 
-// ShareGrant is one redeemed share, from the sharer's or a project admin's
-// point of view. ModeCap and DeniedCommands are frozen from the link at
-// redemption time (see RedeemProjectShareLink) — revoking or editing the
-// link afterward does not change an already-redeemed grant's policy.
+// ShareGrant is a redeemed share and its frozen access policy.
 type ShareGrant struct {
 	ID              string
 	OrgID           string
@@ -56,8 +51,7 @@ type ShareGrant struct {
 	UpdatedAt       time.Time
 }
 
-// SharedProject is one project — optionally scoped to a single session —
-// shared with the calling user. This is the "shared with me" view.
+// SharedProject is a project or session shared with the calling user.
 type SharedProject struct {
 	Grant         ShareGrant
 	Project       Project

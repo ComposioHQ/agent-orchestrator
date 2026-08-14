@@ -7,19 +7,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
-// PullRequest is the durable record of one PR AO Cloud raised or is tracking
-// on GitHub's behalf. It persists into the ao_pull_requests table that
-// predates this feature (see migration 00001), so its shape follows that
-// table's existing columns rather than inventing a parallel one. Status
-// fields reuse the public agent-orchestrator repo's contract enums directly
-// (contract.CIState, contract.ReviewDecision, contract.Mergeability,
-// contract.AOReviewState) so the same status-derivation rules the local
-// desktop app already has apply here too.
-//
-// State follows contract.PRState, including PRStateDraft, even though the
-// underlying state column only stores GitHub's raw open/closed/merged value
-// (draft-ness is tracked separately in Draft) — a draft-open row is exposed
-// here as PRStateDraft to match the public contract's derivation rules.
+// PullRequest is a durable pull request raised or tracked by AO Cloud.
 type PullRequest struct {
 	ID                 string
 	OrgID              string
@@ -59,8 +47,7 @@ type RaisePullRequest struct {
 	BaseBranch string
 }
 
-// PullRequestRef is the minimal identity a background status poller needs to
-// refresh one open pull request, without loading the rest of its record.
+// PullRequestRef identifies a pull request for background status polling.
 type PullRequestRef struct {
 	ID         string
 	OrgID      string
@@ -69,10 +56,7 @@ type PullRequestRef struct {
 	Number     int
 }
 
-// PullRequestObservation is a freshly fetched snapshot of a pull request's
-// lifecycle and status, applied over its durable record on refresh. It never
-// touches AOReviewState — that summary is owned by AO's own review runs, not
-// by observing GitHub.
+// PullRequestObservation is a freshly fetched lifecycle and status snapshot.
 type PullRequestObservation struct {
 	State        contract.PRState
 	Draft        bool
@@ -85,10 +69,7 @@ type PullRequestObservation struct {
 	Mergeability contract.Mergeability
 }
 
-// ReviewRun is one AO-triggered automated review pass against a specific
-// commit of a pull request. At most one run exists per (PullRequestID,
-// TargetSHA) — see the unique index in migration 00016 — so a review can
-// never be triggered twice against the same commit.
+// ReviewRun is one automated review of a pull request commit.
 type ReviewRun struct {
 	ID               string
 	OrgID            string
@@ -105,18 +86,13 @@ type ReviewRun struct {
 	DeliveredAt      *time.Time
 }
 
-// SubmitReviewResult is what a review session reports back once it has
-// finished an AO-triggered review pass against a pull request.
+// SubmitReviewResult is the result reported by a review session.
 type SubmitReviewResult struct {
 	Verdict contract.AOReviewVerdict
 	Body    string
 }
 
-// ReviewRunPullRequest bundles a review run with the identifying fields of
-// the pull request it belongs to — everything a verdict submission needs to
-// mint a GitHub token and post the review, in one round trip, and everything
-// a session's review-state listing needs to group runs by PR without a
-// second query.
+// ReviewRunPullRequest joins a review run with its pull request identity.
 type ReviewRunPullRequest struct {
 	ReviewRun
 	PullRequestProvider      string

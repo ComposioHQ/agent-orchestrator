@@ -16,25 +16,14 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 )
 
-// maxReviewBridgeBody bounds a review verdict posted through the local
-// bridge. Generous enough for real review findings, small enough that a
-// misbehaving agent can't tie up the socket with a huge payload.
 const maxReviewBridgeBody = 1 << 16
 
-// reviewBridgeRequest is what the agent's own shell posts to report an
-// AO-triggered review's verdict. It carries no GitHub credential — only the
-// worker process ever holds one, fetched fresh from the control plane
-// immediately before posting the review and never persisted.
 type reviewBridgeRequest struct {
 	ReviewRunID string `json:"reviewRunId"`
 	Verdict     string `json:"verdict"`
 	Body        string `json:"body"`
 }
 
-// runReviewBridge serves a small local API, reachable only from inside this
-// sandbox via a Unix socket, that lets the interactive coding agent report
-// an AO-triggered review's verdict — without the agent's own shell ever
-// touching a GitHub credential. Mirrors runPullRequestBridge.
 func runReviewBridge(
 	ctx context.Context,
 	socketPath string,

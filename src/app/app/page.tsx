@@ -20,6 +20,10 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import {
+  ConfirmProvider,
+  useConfirm,
+} from "@/components/ui/confirm-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -41,7 +45,6 @@ import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
 import { CloudSessionWorkspace } from "./CloudSessionWorkspace";
 import { CloudSidebar, isStandaloneProject } from "./CloudSidebar";
-import { useConfirm } from "@/components/ui/confirm-dialog";
 import type {
   CreateInvitationInput,
   OrganizationInvitation,
@@ -336,10 +339,7 @@ export function CloudWorkspace() {
   const loadSharedProjects = useCallback(async () => {
     try {
       setSharedProjects(await client.listSharedProjects());
-    } catch {
-      // This section supplements the primary workspace and should never
-      // prevent it from loading.
-    }
+    } catch {}
   }, [client]);
 
   const loadUserProviders = useCallback(async () => {
@@ -366,9 +366,7 @@ export function CloudWorkspace() {
         if (pending) {
           try {
             await client.redeemProjectShareLink(pending);
-          } catch {
-            // A failed deferred redemption simply does not add an item below.
-          }
+          } catch {}
         }
         void loadSharedProjects();
         void loadUserProviders();
@@ -1065,7 +1063,11 @@ export function CloudWorkspace() {
                 sidebarOpen={!sidebarCollapsed}
                 showBoardActions={!!selectedProjectId}
                 onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
-                onOrchestrator={selectedProject && !selectedProject.config?.scratch ? () => setNewSessionProjectId(selectedProjectId!) : undefined}
+                onOrchestrator={
+                  selectedProject && !selectedProject.config?.scratch
+                    ? () => setNewSessionProjectId(selectedProject.id)
+                    : undefined
+                }
                 onShare={selectedProject ? () => void openShareDialog(selectedProject) : undefined}
               />
               <div className="relative min-h-0 flex-1">
@@ -1178,7 +1180,10 @@ export function CloudWorkspace() {
         projectName={projects.find((p) => p.id === newSessionProjectId)?.displayName ?? ""}
         connectedProviders={providers.status === "available" ? providers.connections.map((c) => c.provider) : []}
         onClose={() => setNewSessionProjectId(null)}
-        onCreate={(input) => createSessionInProject(newSessionProjectId!, input)}
+        onCreate={(input) => {
+          if (!newSessionProjectId) return Promise.resolve();
+          return createSessionInProject(newSessionProjectId, input);
+        }}
       />
       {shareProject ? (
         <CloudShareDialog
@@ -1205,8 +1210,6 @@ export function CloudWorkspace() {
     </main>
   );
 }
-
-import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 
 function CloudWorkspaceWithConfirm() {
   return (

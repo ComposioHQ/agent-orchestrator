@@ -1,13 +1,4 @@
 // Package idlepause pauses sandboxes for sessions the user has gone quiet on.
-//
-// CreateOS also offers a provider-native idle timer (auto_pause_after_seconds),
-// but it only resets on an `exec` call, and AO's worker sends exactly one of
-// those — at boot, to launch the long-running worker process. Everything the
-// agent does afterwards (tool calls, generation, the user's own back-and-forth)
-// is invisible to that timer, so it counts flat wall-clock time from launch and
-// can pause a session mid-turn. This scanner replaces it with the two signals
-// the control plane actually has: whether the user has sent a message recently,
-// and whether the agent currently has a turn in flight.
 package idlepause
 
 import (
@@ -39,9 +30,6 @@ type Options struct {
 	Logger *slog.Logger
 }
 
-// Scanner defaults. IdleThreshold matches the 15-minute window the retired
-// provider-native auto-pause used, so switching mechanisms does not change the
-// idle budget users and cost projections were already tuned around.
 const (
 	DefaultInterval      = 30 * time.Second
 	DefaultIdleThreshold = 15 * time.Minute
@@ -87,9 +75,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 	}
 }
 
-// ScanOnce pauses every currently-idle running sandbox once. Each session is
-// re-checked and paused independently, so one failure does not stop the rest
-// of the scan; the next tick retries what a transient error skipped.
+// ScanOnce pauses every currently idle running sandbox once.
 func (s *Scanner) ScanOnce(ctx context.Context) error {
 	refs, err := s.store.RunningSandboxSessions(ctx)
 	if err != nil {

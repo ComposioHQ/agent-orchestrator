@@ -16,15 +16,8 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 )
 
-// maxPullRequestBridgeBody bounds a PR title/body posted through the local
-// bridge. Generous enough for a real PR description, small enough that a
-// misbehaving agent can't tie up the socket with a huge payload.
 const maxPullRequestBridgeBody = 1 << 16
 
-// pullRequestBridgeRequest is what the agent's own shell posts to ask the
-// worker to push its current branch and open a pull request. It carries no
-// GitHub credential — only the worker process ever holds one, fetched fresh
-// from the control plane immediately before use and never persisted.
 type pullRequestBridgeRequest struct {
 	Branch string `json:"branch"`
 	Title  string `json:"title"`
@@ -32,13 +25,6 @@ type pullRequestBridgeRequest struct {
 	Base   string `json:"base"`
 }
 
-// runPullRequestBridge serves a small local API, reachable only from inside
-// this sandbox via a Unix socket, that lets the interactive coding agent ask
-// the worker process to push its current branch and open a pull request —
-// without the agent's own shell ever touching a GitHub credential. The
-// worker fetches a fresh, write-scoped token immediately before the push and
-// discards it once used, the same pattern PrepareCheckout already uses for
-// cloning (see internal/worker/checkout.go).
 func runPullRequestBridge(
 	ctx context.Context,
 	socketPath string,
