@@ -2776,7 +2776,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	container: inspector-tabs / inline-size;
 }
 
-@container inspector-tabs (max-width: 359px) {
+@container inspector-tabs (max-width: 239px) {
 	.session-inspector__responsive-label {
 		max-width: 0;
 		margin-left: 0;

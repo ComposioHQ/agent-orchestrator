@@ -959,10 +959,9 @@ describe("SessionView", () => {
 		}
 	});
 
-	it("locks responsive inspector labels to the opening target throughout the transition", () => {
+	it("keeps inspector labels expanded at the default width throughout the opening transition", () => {
 		vi.useFakeTimers();
 		try {
-			window.localStorage.setItem("ao.inspector.widthPx", "500");
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
 			render(<SessionView sessionId="sess-1" />);
 
@@ -1063,7 +1062,7 @@ describe("SessionView", () => {
 		window.localStorage.setItem("ao.inspector.widthPx", "240");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("360px");
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("280px");
 	});
 
 	it("mounts the inspector in sync when navigating from an orchestrator session", () => {
