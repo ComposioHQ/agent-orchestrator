@@ -10,9 +10,12 @@ __pycache__/
 # Next.js web application
 node_modules/
 .next/
+.open-next/
+.wrangler/
 out/
 next-env.d.ts
 *.tsbuildinfo
+.dev.vars
 
 # Reference files from Electron app
 refs/
