@@ -544,11 +544,11 @@ export function ChatComposer({
 				<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
 			) : null}
 
-			<div className="flex min-h-8 items-end justify-between gap-3">
+			<div className="flex h-7 items-center gap-1.5">
 				<div
 					role="group"
 					aria-label="Message tools"
-					className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
+					className="flex min-w-0 flex-1 items-center gap-0.5"
 				>
 					{canAttach ? (
 						<>
@@ -566,14 +566,14 @@ export function ChatComposer({
 							<Button
 								type="button"
 								variant="ghost"
-								size="sm"
+								size="icon-sm"
 								disabled={disabled}
 								onClick={() => filePicker.current?.click()}
 								aria-label="Attach a file"
 								title="Attach a file"
-								className="size-8 shrink-0 rounded-full p-0"
+								className="size-7 shrink-0 rounded-full p-0"
 							>
-								<Plus aria-hidden="true" className="size-4 text-muted-foreground" />
+								<Plus aria-hidden="true" className="size-3.5 text-muted-foreground" />
 							</Button>
 						</>
 					) : null}
@@ -583,10 +583,11 @@ export function ChatComposer({
 				<div
 					role="group"
 					aria-label="Send message controls"
-					className="flex shrink-0 items-center gap-2"
+					className="flex h-7 shrink-0 items-center"
 				>
 					<Button
 						type="submit"
+						variant="ghost"
 						size="icon-sm"
 						disabled={!canSend}
 						aria-label={steering ? "Steer the running turn" : "Send message"}
@@ -595,7 +596,12 @@ export function ChatComposer({
 						// the fact is not decoration, so it moves onto the control it
 						// describes rather than being dropped.
 						title={sendHint}
-						className="size-8 rounded-full border-transparent bg-raised text-muted-foreground hover:bg-interactive-hover hover:text-foreground focus-visible:ring-ring/40"
+						className={cn(
+							"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
+							canSend
+								? "bg-foreground text-background hover:bg-foreground/90 hover:text-background"
+								: "bg-raised text-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-100",
+						)}
 					>
 						{steerPending ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowUp, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ConversationContentSummary } from "../../types/conversation";
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { ConversationContentItems } from "./ConversationContentItems";
 
@@ -99,12 +100,18 @@ export function HumanMessageEditor({
 			</Button>
 			<Button
 				type="button"
+				variant="ghost"
 				size="icon-sm"
 				onClick={submit}
 				disabled={sendDisabled}
 				aria-label={t("chat.edit.send")}
 				title={busyMessage ?? t("chat.edit.sendShortcut")}
-				className="size-7 rounded-full border-transparent bg-raised text-muted-foreground hover:bg-interactive-hover hover:text-foreground"
+				className={cn(
+					"size-7 rounded-full border-transparent",
+					sendDisabled
+						? "bg-raised text-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-100"
+						: "bg-foreground text-background hover:bg-foreground/90 hover:text-background",
+				)}
 			>
 				{pending ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <ArrowUp aria-hidden="true" className="size-3.5" />}
 			</Button>

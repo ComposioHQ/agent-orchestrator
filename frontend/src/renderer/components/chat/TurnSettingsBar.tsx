@@ -9,15 +9,22 @@
  * renamed, hidden per account and gated by entitlement AO cannot see, so a
  * hardcoded list would be wrong within a week. An agent whose provider cannot
  * enumerate models reports none and the model control hides itself.
+ *
+ * Model and effort share one left-hand control; approvals sit on the right. The
+ * lists inside the menus are the same ones the separate pickers used to show —
+ * only the grouping of the triggers changed.
  */
 
 import { Fragment } from "react";
-import { Shuffle } from "lucide-react";
+import { ChevronRight, Shuffle } from "lucide-react";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuLabel,
+	DropdownMenuSub,
+	DropdownMenuSubContent,
+	DropdownMenuSubTrigger,
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import {
@@ -53,6 +60,9 @@ const APPROVAL_ORDER: ApprovalMode[] = [
 	"auto",
 	"bypass-permissions",
 ];
+
+const TRIGGER_CLASS =
+	"h-7 gap-1 bg-transparent px-1.5 text-xs leading-none text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=open]:bg-transparent data-[state=open]:text-foreground";
 
 export function TurnSettingsBar({
 	models,
@@ -93,127 +103,52 @@ export function TurnSettingsBar({
 	const rerouted = reroute
 		? models.find((model) => model.id === reroute.toModel)?.displayName ?? reroute.toModel
 		: undefined;
+	const modelLabel = rerouted ?? chosenLabel;
 	const efforts = (selected ?? fallback)?.efforts ?? [];
 	const effortLabel =
 		settings.reasoningEffort ?? (selected ?? fallback)?.defaultEffort ?? undefined;
 	const approvalLabel = APPROVAL_COPY[settings.approvalMode ?? "default"].label;
+	const modelGroupLabel = effortLabel
+		? `${modelLabel} ${capitalize(effortLabel)}`
+		: modelLabel;
 
 	return (
-		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-col gap-0.5">
-			<div className="flex flex-wrap items-center gap-0.5">
-				{onChange && models.length > 0 ? (
-				<Picker
-					// What is answering, not what was asked for. The substitution stays
-					// visible beside it rather than replacing the choice, because the choice
-					// is still the user's and still applies to the next turn.
-					label={rerouted ?? chosenLabel}
-					title={
-						reroute
-							? `The provider answered with ${rerouted} instead of ${reroute.fromModel ?? chosenLabel}${
-									reroute.reason ? `: ${reroute.reason}` : ""
-								}`
-							: "Model for the next turn"
-					}
-					disabled={disabled}
-					badge={
-						reroute ? (
-							// A mark, not a second name. Two truncated model names side by side is
-							// less legible than one readable name plus a flag that says it is not
-							// the one that was asked for; the tooltip and the menu spell out which.
-							<Shuffle
-								className="size-3 shrink-0 text-warning"
-								aria-label={`Substituted for ${reroute.fromModel ?? chosenLabel}`}
-							/>
-						) : null
-					}
-				>
-					<DropdownMenuLabel
-						className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
-					>
-						<span>Model</span>
-						<span className="text-[11px] font-normal text-muted-foreground">
-							Applies to the next turn
-						</span>
-					</DropdownMenuLabel>
-					{/* Said inside the menu as well as on the trigger: this is where a user
-					    goes to change the model, and it is where the fact that their last
-					    choice was overridden matters most. */}
-					{reroute ? (
-						<p className="px-3 pb-1.5 text-[11px] leading-snug text-warning">
-							The provider answered with {rerouted} instead of{" "}
-							{reroute.fromModel ?? chosenLabel}
-							{reroute.reason ? ` — ${reroute.reason}` : "."}
-						</p>
+		<div role="group" aria-label="Turn settings" className="flex min-w-0 flex-1 flex-col gap-0.5">
+			<div className="flex h-7 min-w-0 flex-1 items-center justify-between gap-2">
+				<div className="flex h-7 min-w-0 flex-wrap items-center gap-0.5">
+					{onChange && models.length > 0 ? (
+						<ModelEffortPicker
+							models={models}
+							settings={settings}
+							onChange={onChange}
+							disabled={disabled}
+							modelLabel={modelLabel}
+							groupLabel={modelGroupLabel}
+							effortLabel={effortLabel}
+							efforts={efforts}
+							reroute={reroute}
+							rerouted={rerouted}
+							chosenLabel={chosenLabel}
+						/>
 					) : null}
-					{models.map((model) => (
-						<DropdownMenuItem
-							key={model.id}
-							onSelect={() =>
-								// Effort is cleared with the model: a level one model supports is
-								// not necessarily one the next model does.
-								onChange({ ...settings, model: model.id, reasoningEffort: undefined })
-							}
-							className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
-						>
-							<span className="flex w-full items-baseline gap-2">
-								<span
-									className={cn(
-										"text-xs",
-										model.id === settings.model ? "text-foreground" : "text-muted-foreground",
-									)}
-								>
-									{model.displayName}
-								</span>
-								{model.default ? (
-									<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-										default
-									</span>
-								) : null}
-								{model.id === settings.model ? (
-									<span className="ml-auto text-[10px] text-accent">selected</span>
-								) : null}
-							</span>
-							{model.description ? (
-								<span className="text-[11px] leading-snug text-muted-foreground">
-									{model.description}
-								</span>
-							) : null}
-						</DropdownMenuItem>
-					))}
-					</Picker>
-				) : null}
 
-				{onChange && efforts.length > 0 ? (
-					<Picker
-						label={effortLabel ? capitalize(effortLabel) : "Effort"}
-						title="Reasoning effort for the next turn"
-						disabled={disabled}
-					>
-						<DropdownMenuLabel className={SETTINGS_MENU_LABEL}>
-							Reasoning effort
-						</DropdownMenuLabel>
-						{efforts.map((effort) => (
-							<DropdownMenuItem
-								key={effort}
-								onSelect={() => onChange({ ...settings, reasoningEffort: effort })}
-								className={cn(SETTINGS_MENU_ROW, "text-xs")}
-							>
-								<span
-									className={cn(
-										effort === settings.reasoningEffort
-											? "text-foreground"
-											: "text-muted-foreground",
-									)}
-								>
-									{capitalize(effort)}
-								</span>
-								{effort === settings.reasoningEffort ? (
-									<span className="ml-auto text-[10px] text-accent">selected</span>
-								) : null}
-							</DropdownMenuItem>
-						))}
-					</Picker>
-				) : null}
+					{onChangeConfigOption
+						? (configOptions ?? []).map((option) => (
+								<ConfigOptionPicker
+									key={option.id}
+									option={option}
+									disabled={disabled || configPending}
+									onChange={(value) => {
+										// The hook owns and renders any rejection. Swallowing here avoids an
+										// unhandled promise without pretending the selection succeeded.
+										void Promise.resolve(onChangeConfigOption(option.id, value)).catch(
+											() => {},
+										);
+									}}
+								/>
+							))
+						: null}
+				</div>
 
 				{onChange ? (
 					<Picker
@@ -252,23 +187,6 @@ export function TurnSettingsBar({
 						))}
 					</Picker>
 				) : null}
-
-				{onChangeConfigOption
-					? (configOptions ?? []).map((option) => (
-						<ConfigOptionPicker
-							key={option.id}
-							option={option}
-							disabled={disabled || configPending}
-							onChange={(value) => {
-								// The hook owns and renders any rejection. Swallowing here avoids an
-								// unhandled promise without pretending the selection succeeded.
-								void Promise.resolve(onChangeConfigOption(option.id, value)).catch(
-									() => {},
-								);
-							}}
-						/>
-						))
-					: null}
 			</div>
 			{error ? (
 				<p role="alert" className="px-1 text-[11px] leading-snug text-destructive">
@@ -276,6 +194,170 @@ export function TurnSettingsBar({
 				</p>
 			) : null}
 		</div>
+	);
+}
+
+function ModelEffortPicker({
+	models,
+	settings,
+	onChange,
+	disabled,
+	modelLabel,
+	groupLabel,
+	effortLabel,
+	efforts,
+	reroute,
+	rerouted,
+	chosenLabel,
+}: {
+	models: ChatModel[];
+	settings: TurnSettings;
+	onChange: (next: TurnSettings) => void;
+	disabled?: boolean;
+	modelLabel: string;
+	groupLabel: string;
+	effortLabel?: string;
+	efforts: string[];
+	reroute?: ModelReroute;
+	rerouted?: string;
+	chosenLabel: string;
+}) {
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild disabled={disabled}>
+				<SettingsMenuTrigger
+					aria-label="Model and reasoning effort for the next turn"
+					title={
+						reroute
+							? `The provider answered with ${rerouted} instead of ${reroute.fromModel ?? chosenLabel}${
+									reroute.reason ? `: ${reroute.reason}` : ""
+								}`
+							: "Model and reasoning effort for the next turn"
+					}
+					className={TRIGGER_CLASS}
+				>
+					<span className="min-w-0 max-w-[22ch] truncate">{groupLabel}</span>
+					{reroute ? (
+						// A mark, not a second name. Two truncated model names side by side is
+						// less legible than one readable name plus a flag that says it is not
+						// the one that was asked for; the tooltip and the menu spell out which.
+						<Shuffle
+							className="size-3 shrink-0 text-warning"
+							aria-label={`Substituted for ${reroute.fromModel ?? chosenLabel}`}
+						/>
+					) : null}
+				</SettingsMenuTrigger>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start" side="top" className={SETTINGS_MENU_SURFACE}>
+				<DropdownMenuSub>
+					<DropdownMenuSubTrigger
+						className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
+					>
+						<span>Model</span>
+						<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+							<span className="min-w-0 truncate">{modelLabel}</span>
+							<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
+						</span>
+					</DropdownMenuSubTrigger>
+					<DropdownMenuSubContent className={SETTINGS_MENU_SURFACE}>
+						<DropdownMenuLabel
+							className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
+						>
+							<span>Model</span>
+							<span className="text-[11px] font-normal text-muted-foreground">
+								Applies to the next turn
+							</span>
+						</DropdownMenuLabel>
+						{/* Said inside the menu as well as on the trigger: this is where a user
+						    goes to change the model, and it is where the fact that their last
+						    choice was overridden matters most. */}
+						{reroute ? (
+							<p className="px-3 pb-1.5 text-[11px] leading-snug text-warning">
+								The provider answered with {rerouted} instead of{" "}
+								{reroute.fromModel ?? chosenLabel}
+								{reroute.reason ? ` — ${reroute.reason}` : "."}
+							</p>
+						) : null}
+						{models.map((model) => (
+							<DropdownMenuItem
+								key={model.id}
+								onSelect={() =>
+									// Effort is cleared with the model: a level one model supports is
+									// not necessarily one the next model does.
+									onChange({ ...settings, model: model.id, reasoningEffort: undefined })
+								}
+								className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
+							>
+								<span className="flex w-full items-baseline gap-2">
+									<span
+										className={cn(
+											"text-xs",
+											model.id === settings.model ? "text-foreground" : "text-muted-foreground",
+										)}
+									>
+										{model.displayName}
+									</span>
+									{model.default ? (
+										<span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+											default
+										</span>
+									) : null}
+									{model.id === settings.model ? (
+										<span className="ml-auto text-[10px] text-accent">selected</span>
+									) : null}
+								</span>
+								{model.description ? (
+									<span className="text-[11px] leading-snug text-muted-foreground">
+										{model.description}
+									</span>
+								) : null}
+							</DropdownMenuItem>
+						))}
+					</DropdownMenuSubContent>
+				</DropdownMenuSub>
+
+				{efforts.length > 0 ? (
+					<DropdownMenuSub>
+						<DropdownMenuSubTrigger
+							className={cn(SETTINGS_MENU_ROW, "justify-between gap-3 text-xs text-foreground")}
+						>
+							<span>Effort</span>
+							<span className="flex min-w-0 items-center gap-1 text-muted-foreground">
+								<span className="min-w-0 truncate">
+									{effortLabel ? capitalize(effortLabel) : "Effort"}
+								</span>
+								<ChevronRight aria-hidden="true" className="size-3.5 shrink-0" />
+							</span>
+						</DropdownMenuSubTrigger>
+						<DropdownMenuSubContent className={SETTINGS_MENU_SURFACE}>
+							<DropdownMenuLabel className={SETTINGS_MENU_LABEL}>
+								Reasoning effort
+							</DropdownMenuLabel>
+							{efforts.map((effort) => (
+								<DropdownMenuItem
+									key={effort}
+									onSelect={() => onChange({ ...settings, reasoningEffort: effort })}
+									className={cn(SETTINGS_MENU_ROW, "text-xs")}
+								>
+									<span
+										className={cn(
+											effort === settings.reasoningEffort
+												? "text-foreground"
+												: "text-muted-foreground",
+										)}
+									>
+										{capitalize(effort)}
+									</span>
+									{effort === settings.reasoningEffort ? (
+										<span className="ml-auto text-[10px] text-accent">selected</span>
+									) : null}
+								</DropdownMenuItem>
+							))}
+						</DropdownMenuSubContent>
+					</DropdownMenuSub>
+				) : null}
+			</DropdownMenuContent>
+		</DropdownMenu>
 	);
 }
 
@@ -393,16 +475,12 @@ function Picker({
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild disabled={disabled}>
-				<SettingsMenuTrigger
-					aria-label={title}
-					title={title}
-					className="h-8 gap-1 bg-transparent px-1.5 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=open]:bg-transparent data-[state=open]:text-foreground"
-				>
+				<SettingsMenuTrigger aria-label={title} title={title} className={TRIGGER_CLASS}>
 					<span className="min-w-0 max-w-[16ch] truncate">{label}</span>
 					{badge}
 				</SettingsMenuTrigger>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" side="top" className={SETTINGS_MENU_SURFACE}>
+			<DropdownMenuContent align="end" side="top" className={SETTINGS_MENU_SURFACE}>
 				{children}
 			</DropdownMenuContent>
 		</DropdownMenu>

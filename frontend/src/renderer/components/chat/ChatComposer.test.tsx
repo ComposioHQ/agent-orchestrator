@@ -78,14 +78,15 @@ describe("send keys", () => {
 		);
 	});
 
-	it("uses a muted circular send control", async () => {
+	it("uses a muted circular send control that lights up when armed", async () => {
 		const { field } = renderComposer();
 		const send = screen.getByRole("button", { name: "Send message" });
-		expect(send).toHaveClass("rounded-full", "bg-raised", "text-muted-foreground");
+		expect(send).toHaveClass("rounded-full", "bg-raised", "text-foreground");
+		expect(send).toBeDisabled();
 
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
-		expect(send).toHaveClass("hover:bg-interactive-hover", "hover:text-foreground");
+		expect(send).toHaveClass("bg-foreground", "text-background");
 	});
 
 	it("sends on Enter", async () => {
