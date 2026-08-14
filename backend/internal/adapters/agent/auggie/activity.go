@@ -17,12 +17,16 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 		var native struct {
 			Cause string `json:"agent_stop_cause"`
 		}
-		_ = json.Unmarshal(payload, &native)
+		if err := json.Unmarshal(payload, &native); err != nil {
+			return "", false
+		}
 		switch native.Cause {
+		case "end_turn", "interrupted":
+			return domain.ActivityIdle, true
 		case "error", "max_iterations":
 			return domain.ActivityWaitingInput, true
 		default:
-			return domain.ActivityIdle, true
+			return "", false
 		}
 	case "session-end":
 		return domain.ActivityExited, true

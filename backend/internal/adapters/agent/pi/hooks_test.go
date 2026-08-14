@@ -19,7 +19,10 @@ func TestPiExtensionOnlyEndsSessionOnQuit(t *testing.T) {
 
 func TestPiExtensionUsesSettledBeforeLegacyAgentEndFallback(t *testing.T) {
 	source := piActivityExtensionSource()
-	if !strings.Contains(source, "agent_settled") || !strings.Contains(source, "setTimeout") {
-		t.Fatal("extension must support settled and a delayed legacy fallback")
+	if !strings.Contains(source, "agent_settled") || !strings.Contains(source, "0.81.0") {
+		t.Fatal("extension must use an explicit host-version settled boundary")
+	}
+	if strings.Contains(source, "setTimeout") {
+		t.Fatal("extension must not use a zero-delay agent_end fallback")
 	}
 }

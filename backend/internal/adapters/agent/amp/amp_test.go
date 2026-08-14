@@ -277,7 +277,9 @@ func TestGetAgentHooksInstallsSystemPromptPlugin(t *testing.T) {
 		"readFile(systemPromptFile",
 		"activeThreadID",
 		"unsubscribe()",
-		"if (sessionID !== activeThreadID)",
+		"sessionID !== activeThreadID",
+		"amp.activeThread?.id",
+		"event.thread.id !== amp.activeThread?.id",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("plugin missing %q:\n%s", want, text)

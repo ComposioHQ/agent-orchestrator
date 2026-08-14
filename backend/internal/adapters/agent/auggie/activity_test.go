@@ -21,7 +21,9 @@ func TestDeriveActivityState(t *testing.T) {
 		{name: "interrupted stop", event: "stop", payload: `{"agent_stop_cause":"interrupted"}`, want: domain.ActivityIdle, wantOK: true},
 		{name: "error stop", event: "stop", payload: `{"agent_stop_cause":"error"}`, want: domain.ActivityWaitingInput, wantOK: true},
 		{name: "iteration limit", event: "stop", payload: `{"agent_stop_cause":"max_iterations"}`, want: domain.ActivityWaitingInput, wantOK: true},
-		{name: "stop without cause", event: "stop", payload: `{}`, want: domain.ActivityIdle, wantOK: true},
+		{name: "stop without cause", event: "stop", payload: `{}`, wantOK: false},
+		{name: "malformed stop", event: "stop", payload: `{`, wantOK: false},
+		{name: "unknown stop cause", event: "stop", payload: `{"agent_stop_cause":"future_cause"}`, wantOK: false},
 		{name: "session end", event: "session-end", payload: `{}`, want: domain.ActivityExited, wantOK: true},
 		{name: "unknown event", event: "notification", payload: `{}`},
 	}

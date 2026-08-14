@@ -90,8 +90,11 @@ function sessionID(ctx: any): string {
 }
 
 export default function (pi: ExtensionAPI) {
-	let settledSupported = false;
-	let legacyAgentEndTimer: ReturnType<typeof setTimeout> | undefined;
+  // Pi 0.81.0 and newer expose agent_settled as the final idle boundary.
+  const version = typeof (pi as any).version === "string" ? (pi as any).version : "";
+  const versionParts = version.match(/^(\d+)\.(\d+)/);
+  const settledSupported = versionParts !== null &&
+    (Number(versionParts[1]) > 0 || Number(versionParts[2]) >= 81);
   pi.on("session_start", async (_event, ctx) => {
     callHookSync("session-start", { session_id: sessionID(ctx) });
   });
@@ -102,14 +105,9 @@ export default function (pi: ExtensionAPI) {
   // compact, or queue follow-up work after it; a subsequent start immediately
   // reactivates AO, while agent_settled below confirms the final idle state.
   pi.on("agent_end", async (_event, ctx) => {
-	    if (settledSupported) return;
-	    legacyAgentEndTimer = setTimeout(() => {
-	      if (!settledSupported) callHookSync("stop", { session_id: sessionID(ctx) });
-	    }, 0);
+	    if (!settledSupported) callHookSync("stop", { session_id: sessionID(ctx) });
   });
   pi.on("agent_settled", async (_event, ctx) => {
-	    settledSupported = true;
-	    if (legacyAgentEndTimer) clearTimeout(legacyAgentEndTimer);
 	    callHookSync("stop", { session_id: sessionID(ctx) });
   });
   pi.on("session_shutdown", async (event, ctx) => {
