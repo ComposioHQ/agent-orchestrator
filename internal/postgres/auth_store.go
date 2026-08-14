@@ -405,7 +405,8 @@ func (s *Store) ListMemberships(
 		  AND membership.status = 'active'
 		  AND organization.status = 'active'
 		  AND (
-			$2 <> 'workos'
+			organization.external_org_id IS NULL
+			OR $2 <> 'workos'
 			OR (
 				$3 <> ''
 				AND organization.auth_provider = 'workos'

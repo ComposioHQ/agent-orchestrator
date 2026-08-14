@@ -116,6 +116,7 @@ export function CloudWorkspace() {
   const [userProviderBusy, setUserProviderBusy] = useState(false);
   const [members, setMembers] = useState<MembersCapability>(initialMembersCapability);
   const [membersBusy, setMembersBusy] = useState(false);
+  const [incomingInvitations, setIncomingInvitations] = useState<OrganizationInvitation[]>([]);
   const organizationRequest = useRef(0);
   const githubRequest = useRef(0);
   const providerRequest = useRef(0);
@@ -377,6 +378,7 @@ export function CloudWorkspace() {
         }
         void loadSharedProjects();
         void loadUserProviders();
+        void client.listMyInvitations().then(setIncomingInvitations).catch(() => {});
         const firstOrganization = value.organizations[0]?.id;
         if (!firstOrganization) {
           setError("Your account has no active workspace memberships.");
@@ -513,14 +515,32 @@ export function CloudWorkspace() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const createProjectFromGitHub = async (repository: GitHubRepository) => {
+  const createProjectFromGitHub = async (
+    repository: GitHubRepository,
+    harness: LocalAgentInput["harness"],
+  ) => {
     const response = await client.createProjectFromGitHub(
       organizationId,
       { githubRepositoryId: repository.githubRepositoryId },
       { idempotencyKey: newIdempotencyKey("github-project") },
     );
+    const sessionResponse = await client.createSession(
+      organizationId,
+      {
+        projectId: response.project.id,
+        kind: "orchestrator",
+        harness,
+        displayName: localAgentName(harness),
+        prompt: "",
+        mode: "trusted",
+        deniedCommands: [],
+      },
+      { idempotencyKey: newIdempotencyKey("github-orchestrator") },
+    );
     setProjects((current) => [...current, response.project]);
+    setSessions((current) => [...current, sessionResponse.session]);
     setSelectedProjectId(response.project.id);
+    setSelectedSessionId(sessionResponse.session.id);
   };
 
   const createScratchWork = async (
@@ -993,6 +1013,64 @@ export function CloudWorkspace() {
     }
   };
 
+  const createWorkspace = async (displayName: string) => {
+    const { organization } = await client.createOrganization({ displayName });
+    setAccount((current) => current ? {
+      ...current,
+      organizations: [...current.organizations, organization],
+    } : current);
+    setOrganizationId(organization.id);
+    setSelectedProjectId(null);
+    setSelectedSessionId(null);
+    await loadOrganization(organization.id);
+  };
+
+  const updateMemberRole = async (
+    userId: string,
+    role: "owner" | "admin" | "member",
+  ) => {
+    setMembersBusy(true);
+    try {
+      const { member } = await client.updateOrgMemberRole(
+        organizationId,
+        userId,
+        role,
+      );
+      setMembers((current) => ({
+        ...current,
+        members: current.members.map((item) =>
+          item.userId === userId ? member : item,
+        ),
+      }));
+      setAccount((current) => current ? {
+        ...current,
+        organizations: current.organizations.map((organization) =>
+          organization.id === organizationId && userId === current.user.id
+            ? { ...organization, role }
+            : organization,
+        ),
+      } : current);
+    } finally {
+      setMembersBusy(false);
+    }
+  };
+
+  const acceptInvitation = async (invitation: OrganizationInvitation) => {
+    const { organization } = await client.acceptOrgInvitation(invitation.orgId, invitation.id);
+    setIncomingInvitations((current) => current.filter(({ id }) => id !== invitation.id));
+    setAccount((current) => current ? {
+      ...current,
+      organizations: [...current.organizations, organization],
+    } : current);
+    setOrganizationId(organization.id);
+    await loadOrganization(organization.id);
+  };
+
+  const declineInvitation = async (invitation: OrganizationInvitation) => {
+    await client.declineOrgInvitation(invitation.orgId, invitation.id);
+    setIncomingInvitations((current) => current.filter(({ id }) => id !== invitation.id));
+  };
+
   const expandSharedProject = async (shared: SharedProject) => {
     if (sharedProjectSessions[shared.project.id]) return;
     try {
@@ -1093,6 +1171,31 @@ export function CloudWorkspace() {
     try {
       await client.revokeProjectShareGrant(organizationId, shareProject.id, grant.grant.id);
       setShareGrants((current) => current.filter((item) => item.grant.id !== grant.grant.id));
+    } finally {
+      setShareLinksBusy(false);
+    }
+  };
+
+  const updateShareGrant = async (
+    grant: SharedProject,
+    input: {
+      role: "viewer" | "editor";
+      modeCap: ProjectShareModeCap;
+      sessionId: string;
+    },
+  ) => {
+    if (!shareProject) return;
+    setShareLinksBusy(true);
+    try {
+      const response = await client.updateProjectShareGrant(
+        organizationId,
+        shareProject.id,
+        grant.grant.id,
+        input,
+      );
+      setShareGrants((current) => current.map((item) =>
+        item.grant.id === grant.grant.id ? response.grant : item,
+      ));
     } finally {
       setShareLinksBusy(false);
     }
@@ -1244,6 +1347,10 @@ export function CloudWorkspace() {
           onDisconnectGitHub={disconnectGitHubInstallation}
           onDisconnectGitHubUser={disconnectGitHubUser}
           onInviteMember={inviteMember}
+          incomingInvitations={incomingInvitations}
+          onAcceptInvitation={acceptInvitation}
+          onDeclineInvitation={declineInvitation}
+          onUpdateMemberRole={updateMemberRole}
           onRevokeInvitation={revokeInvitation}
           onSelectOrganization={(id) => {
             setOrganizationId(id);
@@ -1312,7 +1419,7 @@ export function CloudWorkspace() {
       <CloudCreateWorkspaceDialog
         open={createWorkspaceOpen}
         onClose={() => setCreateWorkspaceOpen(false)}
-        onCreated={() => { setCreateWorkspaceOpen(false); window.location.reload(); }}
+        onCreate={createWorkspace}
       />
       <CloudNewSessionDialog
         open={newSessionProjectId !== null}
@@ -1333,8 +1440,10 @@ export function CloudWorkspace() {
           onCreate={createShareLink}
           onRevoke={revokeShareLink}
           onRevokeGrant={revokeShareGrant}
+          onUpdateGrant={updateShareGrant}
           open
           project={shareProject}
+          sessions={sessions.filter(({ projectId }) => projectId === shareProject.id)}
         />
       ) : null}
       {projectSettings ? (

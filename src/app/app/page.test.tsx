@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   listProjects: vi.fn(),
   listSessions: vi.fn(),
   createProject: vi.fn(),
+  createProjectFromGitHub: vi.fn(),
   updateProject: vi.fn(),
   deleteProject: vi.fn(),
   createSession: vi.fn(),
@@ -33,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   deleteUserProviderConnection: vi.fn(),
   listOrgMembers: vi.fn(),
   listOrgInvitations: vi.fn(),
+  listMyInvitations: vi.fn(),
+  acceptOrgInvitation: vi.fn(),
+  declineOrgInvitation: vi.fn(),
   createOrgInvitation: vi.fn(),
   revokeOrgInvitation: vi.fn(),
   listProjectShareLinks: vi.fn(),
@@ -40,6 +44,9 @@ const mocks = vi.hoisted(() => ({
   revokeProjectShareLink: vi.fn(),
   listProjectShareGrants: vi.fn(),
   revokeProjectShareGrant: vi.fn(),
+  updateProjectShareGrant: vi.fn(),
+  createOrganization: vi.fn(),
+  updateOrgMemberRole: vi.fn(),
   redeemProjectShareLink: vi.fn(),
   listSharedProjects: vi.fn(),
   listSharedProjectSessions: vi.fn(),
@@ -56,6 +63,7 @@ vi.mock("@/lib/cloud-client", () => ({
     listProjects: mocks.listProjects,
     listSessions: mocks.listSessions,
     createProject: mocks.createProject,
+    createProjectFromGitHub: mocks.createProjectFromGitHub,
     updateProject: mocks.updateProject,
     deleteProject: mocks.deleteProject,
     createSession: mocks.createSession,
@@ -71,6 +79,9 @@ vi.mock("@/lib/cloud-client", () => ({
     deleteUserProviderConnection: mocks.deleteUserProviderConnection,
     listOrgMembers: mocks.listOrgMembers,
     listOrgInvitations: mocks.listOrgInvitations,
+    listMyInvitations: mocks.listMyInvitations,
+    acceptOrgInvitation: mocks.acceptOrgInvitation,
+    declineOrgInvitation: mocks.declineOrgInvitation,
     createOrgInvitation: mocks.createOrgInvitation,
     revokeOrgInvitation: mocks.revokeOrgInvitation,
     listProjectShareLinks: mocks.listProjectShareLinks,
@@ -78,6 +89,9 @@ vi.mock("@/lib/cloud-client", () => ({
     revokeProjectShareLink: mocks.revokeProjectShareLink,
     listProjectShareGrants: mocks.listProjectShareGrants,
     revokeProjectShareGrant: mocks.revokeProjectShareGrant,
+    updateProjectShareGrant: mocks.updateProjectShareGrant,
+    createOrganization: mocks.createOrganization,
+    updateOrgMemberRole: mocks.updateOrgMemberRole,
     redeemProjectShareLink: mocks.redeemProjectShareLink,
     listSharedProjects: mocks.listSharedProjects,
     listSharedProjectSessions: mocks.listSharedProjectSessions,
@@ -182,6 +196,15 @@ beforeEach(() => {
   mocks.listUserProviderConnections.mockResolvedValue([]);
   mocks.listOrgMembers.mockResolvedValue([]);
   mocks.listOrgInvitations.mockResolvedValue([]);
+  mocks.listMyInvitations.mockResolvedValue([]);
+  mocks.createOrganization.mockResolvedValue({
+    organization: {
+      id: "org-2",
+      slug: "workspace-org2",
+      displayName: "Platform Team",
+      role: "owner",
+    },
+  });
   mocks.listProjectShareLinks.mockResolvedValue([]);
   mocks.listProjectShareGrants.mockResolvedValue([]);
   mocks.listSharedProjects.mockResolvedValue([]);
@@ -213,6 +236,18 @@ beforeEach(() => {
       status: "idle",
       runtimeConnected: false,
       isTerminated: false,
+      createdAt: "2026-08-12T00:00:00Z",
+      updatedAt: "2026-08-12T00:00:00Z",
+    },
+  });
+  mocks.createProjectFromGitHub.mockResolvedValue({
+    project: {
+      id: "project-imported",
+      orgId: "org-1",
+      displayName: "Imported repo",
+      repositoryUrl: "https://github.com/acme/imported",
+      defaultBranch: "main",
+      config: {},
       createdAt: "2026-08-12T00:00:00Z",
       updatedAt: "2026-08-12T00:00:00Z",
     },
@@ -447,6 +482,62 @@ it("does not issue failing GitHub requests before hosted authentication", async 
   expect(mocks.listGitHubInstallations).not.toHaveBeenCalled();
   expect(mocks.listGitHubRepositories).not.toHaveBeenCalled();
   expect(mocks.getGitHubUserConnection).not.toHaveBeenCalled();
+});
+
+it("starts an orchestrator when importing a GitHub repository", async () => {
+  mocks.listGitHubRepositories.mockResolvedValue({
+    items: [{
+      githubRepositoryId: "9",
+      name: "imported",
+      fullName: "acme/imported",
+      htmlUrl: "https://github.com/acme/imported",
+      defaultBranch: "main",
+      visibility: "private",
+      isPrivate: true,
+      isArchived: false,
+      access: "active",
+      grantedAt: "2026-08-12T00:00:00Z",
+    }],
+    page: { hasMore: false },
+  });
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+  fireEvent.click(screen.getByRole("button", { name: "New project" }));
+  fireEvent.click(screen.getByRole("button", { name: /Create a Project/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /From GitHub/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+
+  await waitFor(() => expect(mocks.createSession).toHaveBeenCalledWith(
+    "org-1",
+    expect.objectContaining({
+      projectId: "project-imported",
+      kind: "orchestrator",
+      harness: "claude-code",
+      mode: "trusted",
+    }),
+    { idempotencyKey: "test-key" },
+  ));
+});
+
+it("creates and selects a workspace without reloading the page", async () => {
+  mocks.listProjects.mockResolvedValueOnce({ items: [], page: { hasMore: false } });
+  mocks.listProjects.mockResolvedValueOnce({ items: [], page: { hasMore: false } });
+  mocks.listSessions.mockResolvedValueOnce({ items: [], page: { hasMore: false } });
+  mocks.listSessions.mockResolvedValueOnce({ items: [], page: { hasMore: false } });
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+  fireEvent.click(screen.getByRole("button", { name: "Switch workspace" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /Create workspace/ }));
+  fireEvent.change(screen.getByLabelText("Workspace name"), {
+    target: { value: "Platform Team" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  await waitFor(() => expect(mocks.createOrganization).toHaveBeenCalledWith({
+    displayName: "Platform Team",
+  }));
+  expect(await screen.findByText("Platform Team")).toBeVisible();
 });
 
 it("creates a standalone scratch project and worker session", async () => {

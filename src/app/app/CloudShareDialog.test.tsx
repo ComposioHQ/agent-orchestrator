@@ -123,3 +123,42 @@ it("lists active links and revokes them", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Revoke link" }));
   expect(onRevoke).toHaveBeenCalledWith(activeLink);
 });
+
+it("updates collaborator role, sandbox policy, and agent access", () => {
+  const collaborator = {
+    project: { id: "project-1", orgId: "org-1", displayName: "Cloud platform" },
+    grant: {
+      id: "grant-1",
+      role: "editor",
+      modeCap: "standard",
+      userEmail: "dev@example.com",
+      userDisplayName: "Dev User",
+    },
+  } as const;
+  const session = {
+    id: "session-1",
+    projectId: "project-1",
+    displayName: "Orchestrator",
+  } as never;
+  const onUpdateGrant = vi.fn().mockResolvedValue(undefined);
+  render(
+    <CloudShareDialog
+      grants={[collaborator]}
+      links={[]}
+      onClose={vi.fn()}
+      onUpdateGrant={onUpdateGrant}
+      open
+      project={project}
+      sessions={[session]}
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText("Agent access for dev@example.com"), {
+    target: { value: "session-1" },
+  });
+  expect(onUpdateGrant).toHaveBeenCalledWith(collaborator, {
+    role: "editor",
+    modeCap: "standard",
+    sessionId: "session-1",
+  });
+});

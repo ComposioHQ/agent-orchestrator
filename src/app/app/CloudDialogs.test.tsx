@@ -84,7 +84,7 @@ it("imports an active repository through the GitHub project route", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Add project" }));
 
   await waitFor(() =>
-    expect(onCreateFromGitHub).toHaveBeenCalledWith(repository),
+    expect(onCreateFromGitHub).toHaveBeenCalledWith(repository, "claude-code"),
   );
 });
 

@@ -185,6 +185,35 @@ func (s *Store) RevokeProjectShareGrant(
 	})
 }
 
+func (s *Store) UpdateProjectShareGrant(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID, projectID, grantID string,
+	input domain.UpdateShareGrant,
+) (domain.SharedProject, error) {
+	var shared domain.SharedProject
+	err := s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE ao_project_share_grants
+			 SET role = $4, mode_cap = $5, session_id = NULLIF($6, '')::uuid, updated_at = now()
+			 WHERE id = $1 AND org_id = $2 AND project_id = $3 AND status = 'active'`,
+			grantID, orgID, projectID, input.Role, input.ModeCap, input.SessionID,
+		)
+		if err != nil { return normalizeConstraintError(err) }
+		if tag.RowsAffected() == 0 { return ErrNotFound }
+		updated, err := scanSharedProject(tx.QueryRow(ctx,
+			`SELECT `+sharedProjectColumns+sharedProjectFrom+`
+			 WHERE grant_row.id = $1 AND grant_row.org_id = $2 AND grant_row.project_id = $3`,
+			grantID, orgID, projectID,
+		))
+		if err != nil { return err }
+		shared = updated
+		return nil
+	})
+	if err != nil { return domain.SharedProject{}, fmt.Errorf("update project share grant: %w", err) }
+	return shared, nil
+}
+
 // ListProjectShareGrants returns a project's active collaborators.
 func (s *Store) ListProjectShareGrants(
 	ctx context.Context,
@@ -552,7 +581,8 @@ func (s *Store) withSessionAccess(
 			  AND membership.status = 'active'
 			  AND organization.status = 'active'
 			  AND (
-				$3 <> 'workos'
+				organization.external_org_id IS NULL
+				OR $3 <> 'workos'
 				OR (
 					$4 <> ''
 					AND organization.auth_provider = 'workos'

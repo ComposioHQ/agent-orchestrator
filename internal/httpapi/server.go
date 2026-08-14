@@ -36,8 +36,11 @@ type Store interface {
 	PrincipalFromLocalToken(context.Context, []byte) (domain.Principal, error)
 	RevokeLocalSession(context.Context, []byte) error
 	ListMemberships(context.Context, domain.Principal) ([]domain.Membership, error)
+	CreateOrganization(context.Context, domain.Principal, string) (domain.Membership, error)
 	ListOrgMembers(context.Context, domain.Principal, string) ([]domain.OrgMember, error)
+	UpdateOrgMemberRole(context.Context, domain.Principal, string, string, string) (domain.OrgMember, error)
 	ListOrgInvitations(context.Context, domain.Principal, string) ([]domain.Invitation, error)
+	ListMyInvitations(context.Context, domain.Principal) ([]domain.Invitation, error)
 	CreateOrgInvitation(context.Context, domain.Principal, string, domain.CreateInvitation) (domain.Invitation, error)
 	RevokeOrgInvitation(context.Context, domain.Principal, string, string) error
 	GetOrgInvitation(context.Context, domain.Principal, string, string) (domain.Invitation, error)
@@ -91,6 +94,7 @@ type Store interface {
 	CreateProjectShareLink(context.Context, domain.Principal, string, string, domain.CreateShareLink) (domain.ShareLink, string, error)
 	ListProjectShareLinks(context.Context, domain.Principal, string, string) ([]domain.ShareLink, error)
 	ListProjectShareGrants(context.Context, domain.Principal, string, string) ([]domain.SharedProject, error)
+	UpdateProjectShareGrant(context.Context, domain.Principal, string, string, string, domain.UpdateShareGrant) (domain.SharedProject, error)
 	RevokeProjectShareLink(context.Context, domain.Principal, string, string, string) error
 	RevokeProjectShareGrant(context.Context, domain.Principal, string, string, string) error
 	RedeemProjectShareLink(context.Context, domain.Principal, string, string) (domain.SharedProject, error)
@@ -263,6 +267,8 @@ func New(options Options) *Server {
 		router.Post("/auth/local/login", server.loginLocal)
 		router.With(server.authenticate).Post("/auth/local/logout", server.logoutLocal)
 		router.With(server.authenticate).Get("/me", server.me)
+		router.With(server.authenticate).Post("/orgs", server.createOrganization)
+		router.With(server.authenticate).Get("/invitations", server.listMyInvitations)
 		router.With(server.authenticate).Get("/me/providers", server.listUserProviderConnections)
 		router.With(server.authenticate).Put("/me/providers/{agent}", server.putUserAgentConnection)
 		router.With(server.authenticate).Delete("/me/providers/{agent}", server.deleteUserAgentConnection)
@@ -320,6 +326,7 @@ func New(options Options) *Server {
 			router.Get("/projects/{projectId}/shares", server.listProjectShareLinks)
 			router.Post("/projects/{projectId}/shares", server.createProjectShareLink)
 			router.Get("/projects/{projectId}/shares/grants", server.listProjectShareGrants)
+			router.Patch("/projects/{projectId}/shares/grants/{grantId}", server.updateProjectShareGrant)
 			router.Post("/projects/{projectId}/shares/{linkId}/revoke", server.revokeProjectShareLink)
 			router.Post("/projects/{projectId}/shares/grants/{grantId}/revoke", server.revokeProjectShareGrant)
 			router.Get("/shared/projects/{projectId}/sessions", server.listSharedProjectSessions)
@@ -342,6 +349,7 @@ func New(options Options) *Server {
 			router.Get("/sessions/{sessionId}/pull-requests", server.listSessionPullRequests)
 			router.Get("/sessions/{sessionId}/reviews", server.getSessionReviewState)
 			router.Get("/members", server.listOrgMembers)
+			router.Patch("/members/{userId}", server.updateOrgMemberRole)
 			router.Get("/invitations", server.listOrgInvitations)
 			router.Post("/invitations", server.createOrgInvitation)
 			router.Get("/invitations/{invitationId}", server.getOrgInvitation)

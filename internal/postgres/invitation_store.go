@@ -111,6 +111,46 @@ func (s *Store) ListOrgInvitations(
 	return invites, nil
 }
 
+func (s *Store) ListMyInvitations(
+	ctx context.Context,
+	principal domain.Principal,
+) ([]domain.Invitation, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT set_config('ao.user_id', $1, true)`, principal.UserID); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT `+invitationColumns+`
+		 FROM ao_org_invitations invite
+		 LEFT JOIN ao_users inviter ON inviter.id = invite.invited_by_user_id
+		 WHERE invite.invited_user_id = $1 AND invite.status = 'pending' AND invite.expires_at > now()
+		 ORDER BY invite.created_at DESC`, principal.UserID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list my invitations: %w", err)
+	}
+	defer rows.Close()
+	items := make([]domain.Invitation, 0)
+	for rows.Next() {
+		item, err := scanInvitation(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 // CreateOrgInvitation records a pending invitation for an organization. Only
 // owners and admins may invite; ErrConflict means the email already has a
 // pending invitation.

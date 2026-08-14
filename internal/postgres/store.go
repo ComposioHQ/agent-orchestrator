@@ -179,7 +179,8 @@ func (s *Store) withTenant(
 			  AND membership.status = 'active'
 			  AND organization.status = 'active'
 			  AND (
-				$3 <> 'workos'
+				organization.external_org_id IS NULL
+				OR $3 <> 'workos'
 				OR (
 					$4 <> ''
 					AND organization.auth_provider = 'workos'

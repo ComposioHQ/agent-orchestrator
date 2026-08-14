@@ -29,19 +29,19 @@ func toOrgMemberResponse(member domain.OrgMember) orgMemberResponse {
 }
 
 type invitationResponse struct {
-	ID              string     `json:"id"`
-	OrgID           string     `json:"orgId"`
-	Email           string     `json:"email"`
-	InvitedByEmail  string     `json:"invitedByEmail,omitempty"`
-	InvitedByName   string     `json:"invitedByName,omitempty"`
-	Role            string     `json:"role"`
-	Status          string     `json:"status"`
-	ExpiresAt       time.Time  `json:"expiresAt"`
-	AcceptedAt      *time.Time `json:"acceptedAt,omitempty"`
-	DeclinedAt      *time.Time `json:"declinedAt,omitempty"`
-	RevokedAt       *time.Time `json:"revokedAt,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ID             string     `json:"id"`
+	OrgID          string     `json:"orgId"`
+	Email          string     `json:"email"`
+	InvitedByEmail string     `json:"invitedByEmail,omitempty"`
+	InvitedByName  string     `json:"invitedByName,omitempty"`
+	Role           string     `json:"role"`
+	Status         string     `json:"status"`
+	ExpiresAt      time.Time  `json:"expiresAt"`
+	AcceptedAt     *time.Time `json:"acceptedAt,omitempty"`
+	DeclinedAt     *time.Time `json:"declinedAt,omitempty"`
+	RevokedAt      *time.Time `json:"revokedAt,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
 func toInvitationResponse(invite domain.Invitation) invitationResponse {
@@ -66,6 +66,32 @@ func invitableOrgRole(role string) bool {
 	return role == "admin" || role == "member"
 }
 
+type createOrganizationRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
+func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
+	var request createOrganizationRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	request.DisplayName = strings.TrimSpace(request.DisplayName)
+	if request.DisplayName == "" || len(request.DisplayName) > 80 {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Workspace name must be between 1 and 80 characters.")
+		return
+	}
+	membership, err := s.store.CreateOrganization(r.Context(), principalFrom(r), request.DisplayName)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"organization": organizationResponse{
+		ID: membership.OrgID, Slug: membership.OrgSlug,
+		DisplayName: membership.DisplayName, Role: membership.Role,
+	}})
+}
+
 func (s *Server) listOrgMembers(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	if requireUUID(orgID, "orgId") != nil {
@@ -84,6 +110,35 @@ func (s *Server) listOrgMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"members": items})
 }
 
+type updateOrgMemberRoleRequest struct {
+	Role string `json:"role"`
+}
+
+func (s *Server) updateOrgMemberRole(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	userID := chi.URLParam(r, "userId")
+	if requireUUID(orgID, "orgId") != nil || requireUUID(userID, "userId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId and userId must be UUIDs.")
+		return
+	}
+	var request updateOrgMemberRoleRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	request.Role = strings.TrimSpace(request.Role)
+	if request.Role != "owner" && request.Role != "admin" && request.Role != "member" {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Role must be owner, admin, or member.")
+		return
+	}
+	member, err := s.store.UpdateOrgMemberRole(r.Context(), principalFrom(r), orgID, userID, request.Role)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"member": toOrgMemberResponse(member)})
+}
+
 func (s *Server) listOrgInvitations(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	if requireUUID(orgID, "orgId") != nil {
@@ -91,6 +146,19 @@ func (s *Server) listOrgInvitations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	invitations, err := s.store.ListOrgInvitations(r.Context(), principalFrom(r), orgID)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	items := make([]invitationResponse, 0, len(invitations))
+	for _, invite := range invitations {
+		items = append(items, toInvitationResponse(invite))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invitations": items})
+}
+
+func (s *Server) listMyInvitations(w http.ResponseWriter, r *http.Request) {
+	invitations, err := s.store.ListMyInvitations(r.Context(), principalFrom(r))
 	if err != nil {
 		s.writeStoreError(w, r, err)
 		return

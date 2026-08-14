@@ -1,6 +1,6 @@
 "use client";
 
-import type { Project } from "@aoagents/cloud-client";
+import type { Project, Session } from "@aoagents/cloud-client";
 import { Check, Copy, Trash2, User, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
@@ -27,8 +27,10 @@ export function CloudShareDialog({
   onCreate = async () => { throw new Error("Sharing is unavailable."); },
   onRevoke = async () => {},
   onRevokeGrant = async () => {},
+  onUpdateGrant = async () => {},
   open = false,
   project,
+  sessions = [],
 }: {
   busy?: boolean;
   grants?: SharedProject[];
@@ -37,8 +39,13 @@ export function CloudShareDialog({
   onCreate?: (input: { accessScope: ShareScope; recipients: string[]; modeCap: ProjectShareModeCap }) => Promise<ProjectShareLink>;
   onRevoke?: (link: ProjectShareLink) => Promise<void>;
   onRevokeGrant?: (grant: SharedProject) => Promise<void>;
+  onUpdateGrant?: (
+    grant: SharedProject,
+    input: { role: "viewer" | "editor"; modeCap: ProjectShareModeCap; sessionId: string },
+  ) => Promise<void>;
   open?: boolean;
   project: Project | null;
+  sessions?: Session[];
 }) {
   const [scope, setScope] = useState<ShareScope>("anyone");
   const [policy, setPolicy] = useState<ProjectShareModeCap>("standard");
@@ -190,9 +197,49 @@ export function CloudShareDialog({
                           <p className="truncate text-sm text-[var(--foreground)]">
                             {grant.grant.userDisplayName || grant.grant.userEmail}
                           </p>
-                          <p className="mt-0.5 text-xs text-[var(--color-text-passive)]">
-                            {grant.grant.role}{grant.sessionName ? ` · ${grant.sessionName}` : ""}
-                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <select
+                              aria-label={`Project role for ${grant.grant.userEmail}`}
+                              className={collaboratorSelectClass}
+                              disabled={busy}
+                              onChange={(event) => void onUpdateGrant(grant, {
+                                role: event.target.value as "viewer" | "editor",
+                                modeCap: grant.grant.modeCap ?? "standard",
+                                sessionId: grant.sessionId ?? "",
+                              })}
+                              value={grant.grant.role}
+                            >
+                              <option value="viewer">Viewer</option>
+                              <option value="editor">Editor</option>
+                            </select>
+                            <select
+                              aria-label={`Sandbox policy for ${grant.grant.userEmail}`}
+                              className={collaboratorSelectClass}
+                              disabled={busy}
+                              onChange={(event) => void onUpdateGrant(grant, {
+                                role: grant.grant.role as "viewer" | "editor",
+                                modeCap: event.target.value as ProjectShareModeCap,
+                                sessionId: grant.sessionId ?? "",
+                              })}
+                              value={grant.grant.modeCap ?? "standard"}
+                            >
+                              {POLICIES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                            <select
+                              aria-label={`Agent access for ${grant.grant.userEmail}`}
+                              className={collaboratorSelectClass}
+                              disabled={busy}
+                              onChange={(event) => void onUpdateGrant(grant, {
+                                role: grant.grant.role as "viewer" | "editor",
+                                modeCap: grant.grant.modeCap ?? "standard",
+                                sessionId: event.target.value,
+                              })}
+                              value={grant.sessionId ?? ""}
+                            >
+                              <option value="">All agents</option>
+                              {sessions.map((session) => <option key={session.id} value={session.id}>{session.displayName}</option>)}
+                            </select>
+                          </div>
                         </div>
                         <button
                           aria-label={`Revoke access for ${grant.grant.userEmail}`}
@@ -252,3 +299,6 @@ function optionClass(selected: boolean) {
       : "border border-transparent bg-[var(--color-interactive-hover)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
   }`;
 }
+
+const collaboratorSelectClass =
+  "h-7 max-w-36 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-2 text-xs text-[var(--foreground)] outline-none disabled:opacity-50";

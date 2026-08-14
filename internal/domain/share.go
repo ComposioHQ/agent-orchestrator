@@ -33,6 +33,12 @@ type CreateShareLink struct {
 	ExpiresAt      *time.Time
 }
 
+type UpdateShareGrant struct {
+	Role      string
+	ModeCap   string
+	SessionID string
+}
+
 // ShareGrant is a redeemed share and its frozen access policy.
 type ShareGrant struct {
 	ID              string

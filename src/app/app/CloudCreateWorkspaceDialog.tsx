@@ -8,11 +8,11 @@ import { Input } from "@/components/ui/input";
 export function CloudCreateWorkspaceDialog({
   open,
   onClose,
-  onCreated,
+  onCreate,
 }: {
   open: boolean;
   onClose: () => void;
-  onCreated: () => void;
+  onCreate: (displayName: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,11 +30,11 @@ export function CloudCreateWorkspaceDialog({
     setBusy(true);
     setError("");
     try {
-      await new Promise((r) => setTimeout(r, 500));
+      await onCreate(name.trim());
       reset();
-      onCreated();
-    } catch {
-      setError("Could not create workspace.");
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not create workspace.");
       setBusy(false);
     }
   };

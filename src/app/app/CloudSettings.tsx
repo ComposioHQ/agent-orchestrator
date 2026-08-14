@@ -59,10 +59,13 @@ export function CloudSettings({
   github,
   githubUser,
   initialPanel,
+  incomingInvitations,
   members,
   membersBusy,
   open,
   onBack,
+  onAcceptInvitation,
+  onDeclineInvitation,
   onConnectGitHub,
   onConnectGitHubOrganization,
   onConnectAgent,
@@ -72,6 +75,7 @@ export function CloudSettings({
   onConnectUserAgent,
   onDisconnectUserAgent,
   onInviteMember,
+  onUpdateMemberRole,
   onRevokeInvitation,
   onSelectOrganization,
   onSyncGitHub,
@@ -87,10 +91,13 @@ export function CloudSettings({
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
   initialPanel: SettingsPanel;
+  incomingInvitations: OrganizationInvitation[];
   members: MembersCapability;
   membersBusy: boolean;
   open: boolean;
   onBack: () => void;
+  onAcceptInvitation: (invitation: OrganizationInvitation) => Promise<void>;
+  onDeclineInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onConnectGitHub: () => Promise<void>;
   onConnectGitHubOrganization: () => Promise<void>;
   onConnectAgent: (
@@ -108,6 +115,7 @@ export function CloudSettings({
   ) => Promise<void>;
   onDisconnectUserAgent: (connection: RedactedProviderConnection) => Promise<void>;
   onInviteMember: (input: CreateInvitationInput) => Promise<void>;
+  onUpdateMemberRole: (userId: string, role: "owner" | "admin" | "member") => Promise<void>;
   onRevokeInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
   onSyncGitHub: (installation: GitHubInstallation) => Promise<void>;
@@ -119,6 +127,8 @@ export function CloudSettings({
   userProviders: ProviderCapability;
 }) {
   const [panel, setPanel] = useState<SettingsPanel>(initialPanel);
+  const selectedOrganization = account.organizations.find(({ id }) => id === selectedOrganizationId);
+  const canManageMembers = selectedOrganization?.role === "owner" || selectedOrganization?.role === "admin";
 
   const lastPanelRef = useRef<SettingsPanel>(panel);
   if (open) lastPanelRef.current = panel;
@@ -225,9 +235,17 @@ export function CloudSettings({
 
                 {displayPanel === "notifications" ? (
                   <SettingsSection title="Invitations for you" titleHidden grouped>
-                    <SettingsRow label="Activity">
-                      <span className="settings-row-value">Not available</span>
-                    </SettingsRow>
+                    {incomingInvitations.length === 0 ? (
+                      <SettingsRow label="Activity"><span className="settings-row-value">No pending invitations</span></SettingsRow>
+                    ) : incomingInvitations.map((invitation) => (
+                      <SettingsRow key={invitation.id} label={invitation.invitedByName || invitation.invitedByEmail || invitation.email}>
+                        <div className="flex items-center gap-2">
+                          <span className="settings-row-value">{invitation.role}</span>
+                          <button className={buttonClass} onClick={() => void onDeclineInvitation(invitation)} type="button">Decline</button>
+                          <button className={primaryButtonClass} onClick={() => void onAcceptInvitation(invitation)} type="button">Accept</button>
+                        </div>
+                      </SettingsRow>
+                    ))}
                   </SettingsSection>
                 ) : null}
 
@@ -236,9 +254,12 @@ export function CloudSettings({
                     <WorkspacesPanel account={account} onSelectOrganization={onSelectOrganization} />
                     <MembersSettings
                       busy={membersBusy}
+                      canManage={canManageMembers}
                       members={members}
                       onInvite={onInviteMember}
                       onRevoke={onRevokeInvitation}
+                      onUpdateRole={onUpdateMemberRole}
+                      currentUserId={account.user.id}
                     />
                   </div>
                 ) : null}
@@ -703,14 +724,20 @@ function WorkspacesPanel({
 
 function MembersSettings({
   busy,
+  canManage,
+  currentUserId,
   members,
   onInvite,
   onRevoke,
+  onUpdateRole,
 }: {
   busy: boolean;
+  canManage: boolean;
+  currentUserId: string;
   members: MembersCapability;
   onInvite: (input: CreateInvitationInput) => Promise<void>;
   onRevoke: (invitation: OrganizationInvitation) => Promise<void>;
+  onUpdateRole: (userId: string, role: "owner" | "admin" | "member") => Promise<void>;
 }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<CreateInvitationInput["role"]>("member");
@@ -726,7 +753,23 @@ function MembersSettings({
         <>
           {members.members.map((member) => (
             <SettingsRow key={member.userId} label={member.displayName || member.email}>
-              <span className="settings-row-value">{member.role}</span>
+              <select
+                aria-label={`Role for ${member.email}`}
+                className={`${fieldClass} h-8 w-28`}
+                disabled={busy || !canManage || member.userId === currentUserId}
+                onChange={(event) => {
+                  setError("");
+                  void onUpdateRole(
+                    member.userId,
+                    event.target.value as "owner" | "admin" | "member",
+                  ).catch((cause) => setError(cause instanceof Error ? cause.message : "The role could not be updated."));
+                }}
+                value={member.role}
+              >
+                <option value="owner">Owner</option>
+                <option value="admin">Admin</option>
+                <option value="member">Member</option>
+              </select>
             </SettingsRow>
           ))}
           {members.invitations.map((invitation) => (
@@ -734,7 +777,7 @@ function MembersSettings({
               <div className="flex items-center gap-3">
                 <span className="settings-row-value">{invitation.status === "pending" ? "Invited" : invitation.status}</span>
                 {invitation.status === "pending" ? (
-                  <button className={buttonClass} disabled={busy} onClick={() => void onRevoke(invitation)} type="button">
+                  <button className={buttonClass} disabled={busy || !canManage} onClick={() => void onRevoke(invitation)} type="button">
                     Revoke
                   </button>
                 ) : null}
@@ -759,7 +802,7 @@ function MembersSettings({
               <option value="member">Member</option>
               <option value="admin">Admin</option>
             </select>
-            <button className={`${primaryButtonClass} h-8`} disabled={busy || !email.trim()} type="submit">
+            <button className={`${primaryButtonClass} h-8`} disabled={busy || !canManage || !email.trim()} type="submit">
               Invite
             </button>
             {error ? <p className="w-full text-xs text-[var(--color-error)]" role="alert">{error}</p> : null}

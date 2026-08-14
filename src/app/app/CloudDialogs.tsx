@@ -47,7 +47,7 @@ export function NewProjectDialog({
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
   onClose: () => void;
-  onCreateFromGitHub: (repository: GitHubRepository) => Promise<void>;
+  onCreateFromGitHub: (repository: GitHubRepository, harness: Harness) => Promise<void>;
   onCreateScratchProject: (input: ScratchProjectInput) => Promise<void>;
   onCreateStandalone: (input: LocalAgentInput) => Promise<void>;
   onOpenProviderSettings: () => void;
@@ -71,6 +71,9 @@ export function NewProjectDialog({
   const selectedRepository = activeRepositories.find(
     ({ githubRepositoryId }) => githubRepositoryId === repositoryId,
   ) ?? activeRepositories[0];
+  const importHarness =
+    AGENTS.find(({ value }) => connectedProviders.includes(value))?.value ??
+    "claude-code";
 
   return (
     <Modal onClose={onClose} open={open} title="Create new">
@@ -127,7 +130,7 @@ export function NewProjectDialog({
             setBusy(true);
             setError("");
             try {
-              await onCreateFromGitHub(selectedRepository);
+              await onCreateFromGitHub(selectedRepository, importHarness);
               onClose();
             } catch (cause) {
               setError(cause instanceof Error ? cause.message : "Could not import the GitHub repository.");

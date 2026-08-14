@@ -17,6 +17,7 @@ export type SharedProject = {
     role: string;
     userEmail?: string;
     userDisplayName?: string;
+    modeCap?: ProjectShareModeCap;
   };
   sessionId?: string;
   sessionName?: string;
@@ -31,7 +32,10 @@ export type OrganizationMember = {
 
 export type OrganizationInvitation = {
   id: string;
+  orgId: string;
   email: string;
+  invitedByEmail?: string;
+  invitedByName?: string;
   role: "member" | "admin" | "owner";
   status: "pending" | "revoked" | string;
   expiresAt: string;

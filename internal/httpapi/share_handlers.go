@@ -240,6 +240,50 @@ func (s *Server) listProjectShareGrants(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"grants": items})
 }
 
+type updateShareGrantRequest struct {
+	Role      string `json:"role"`
+	ModeCap   string `json:"modeCap"`
+	SessionID string `json:"sessionId"`
+}
+
+func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	projectID := chi.URLParam(r, "projectId")
+	grantID := chi.URLParam(r, "grantId")
+	if requireUUID(orgID, "orgId") != nil || requireUUID(projectID, "projectId") != nil || requireUUID(grantID, "grantId") != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "orgId, projectId, and grantId must be UUIDs.")
+		return
+	}
+	var request updateShareGrantRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The request body is invalid.")
+		return
+	}
+	request.Role = strings.TrimSpace(request.Role)
+	request.ModeCap = strings.TrimSpace(request.ModeCap)
+	request.SessionID = strings.TrimSpace(request.SessionID)
+	if !validShareRoles[request.Role] || request.Role == "" {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Role must be viewer or editor.")
+		return
+	}
+	if request.ModeCap == "" || !validShareModeCaps[request.ModeCap] {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "Mode cap must be read-only, standard, or trusted.")
+		return
+	}
+	if request.SessionID != "" && requireUUID(request.SessionID, "sessionId") != nil {
+		writeError(w, r, http.StatusUnprocessableEntity, "validation_error", "sessionId must be a UUID when provided.")
+		return
+	}
+	grant, err := s.store.UpdateProjectShareGrant(r.Context(), principalFrom(r), orgID, projectID, grantID, domain.UpdateShareGrant{
+		Role: request.Role, ModeCap: request.ModeCap, SessionID: request.SessionID,
+	})
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"grant": toSharedProjectResponse(grant)})
+}
+
 func (s *Server) revokeProjectShareLink(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	projectID := chi.URLParam(r, "projectId")

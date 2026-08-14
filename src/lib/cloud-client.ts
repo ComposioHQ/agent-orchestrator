@@ -6,6 +6,7 @@ import {
   type PutAgentProviderConnectionInput,
   type RedactedProviderConnection,
   type Session,
+  type OrganizationMembership,
 } from "@aoagents/cloud-client";
 import type {
   CreateInvitationInput,
@@ -25,6 +26,12 @@ type ShareClient = {
   listProjectShareGrants: (orgId: string, projectId: string) => Promise<SharedProject[]>;
   revokeProjectShareLink: (orgId: string, projectId: string, linkId: string) => Promise<void>;
   revokeProjectShareGrant: (orgId: string, projectId: string, grantId: string) => Promise<void>;
+  updateProjectShareGrant: (
+    orgId: string,
+    projectId: string,
+    grantId: string,
+    input: { role: "viewer" | "editor"; modeCap: "read-only" | "standard" | "trusted"; sessionId: string },
+  ) => Promise<{ grant: SharedProject }>;
   redeemProjectShareLink: (input: { orgId: string; token: string }) => Promise<{ shared: SharedProject }>;
   listSharedProjects: () => Promise<SharedProject[]>;
   listSharedProjectSessions: (orgId: string, projectId: string) => Promise<Session[]>;
@@ -36,11 +43,18 @@ type ShareClient = {
   deleteUserProviderConnection: (provider: "claude-code" | "codex" | "cursor") => Promise<void>;
   listOrgMembers: (orgId: string) => Promise<OrganizationMember[]>;
   listOrgInvitations: (orgId: string) => Promise<OrganizationInvitation[]>;
+  listMyInvitations: () => Promise<OrganizationInvitation[]>;
   createOrgInvitation: (
     orgId: string,
     input: CreateInvitationInput,
   ) => Promise<{ invitation: OrganizationInvitation }>;
   revokeOrgInvitation: (orgId: string, invitationId: string) => Promise<void>;
+  createOrganization: (input: { displayName: string }) => Promise<{ organization: OrganizationMembership }>;
+  updateOrgMemberRole: (
+    orgId: string,
+    userId: string,
+    role: "owner" | "admin" | "member",
+  ) => Promise<{ member: OrganizationMember }>;
 };
 
 export function browserCloudClient() {
@@ -97,6 +111,11 @@ export function browserCloudClient() {
       request<void>(orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(linkId)}/revoke`), { method: "POST" }),
     revokeProjectShareGrant: (orgId: string, projectId: string, grantId: string) =>
       request<void>(orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares/grants/${encodeURIComponent(grantId)}/revoke`), { method: "POST" }),
+    updateProjectShareGrant: (orgId, projectId, grantId, input) =>
+      request<{ grant: SharedProject }>(
+        orgPath(orgId, `/projects/${encodeURIComponent(projectId)}/shares/grants/${encodeURIComponent(grantId)}`),
+        { method: "PATCH", body: JSON.stringify(input) },
+      ),
     redeemProjectShareLink: (input: { orgId: string; token: string }) =>
       request<{ shared: SharedProject }>("/api/cloud/v1/share-links/redeem", {
         method: "POST",
@@ -135,6 +154,10 @@ export function browserCloudClient() {
       const response = await request<{ invitations: OrganizationInvitation[] }>(orgPath(orgId, "/invitations"));
       return response.invitations;
     },
+    listMyInvitations: async () => {
+      const response = await request<{ invitations: OrganizationInvitation[] }>("/api/cloud/v1/invitations");
+      return response.invitations;
+    },
     createOrgInvitation: (orgId: string, input: CreateInvitationInput) =>
       request<{ invitation: OrganizationInvitation }>(orgPath(orgId, "/invitations"), {
         method: "POST",
@@ -142,6 +165,19 @@ export function browserCloudClient() {
       }),
     revokeOrgInvitation: (orgId: string, invitationId: string) =>
       request<void>(orgPath(orgId, `/invitations/${encodeURIComponent(invitationId)}/revoke`), { method: "POST" }),
+    createOrganization: (input: { displayName: string }) =>
+      request<{ organization: OrganizationMembership }>("/api/cloud/v1/orgs", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    updateOrgMemberRole: (
+      orgId: string,
+      userId: string,
+      role: "owner" | "admin" | "member",
+    ) => request<{ member: OrganizationMember }>(
+      orgPath(orgId, `/members/${encodeURIComponent(userId)}`),
+      { method: "PATCH", body: JSON.stringify({ role }) },
+    ),
   } satisfies ShareClient);
 }
 
