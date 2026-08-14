@@ -1038,13 +1038,17 @@ describe("SessionView", () => {
 			render(<SessionView sessionId="sess-1" />);
 
 			fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
-			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-terminal-live-resize", "true");
+			const split = screen.getByTestId("panel-group");
+			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
+			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
 			act(() => vi.advanceTimersByTime(319));
-			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-terminal-live-resize", "true");
+			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
+			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "expanded");
 
 			act(() => vi.advanceTimersByTime(1));
-			expect(screen.getByTestId("panel-group")).not.toHaveAttribute("data-terminal-live-resize");
+			expect(split).not.toHaveAttribute("data-terminal-live-resize");
+			expect(split).not.toHaveAttribute("data-topbar-secondary-label-mode");
 		} finally {
 			vi.useRealTimers();
 		}
@@ -1061,12 +1065,15 @@ describe("SessionView", () => {
 			const split = screen.getByTestId("panel-group");
 			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
 			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
+			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 
 			act(() => vi.advanceTimersByTime(319));
 			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
+			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 
 			act(() => vi.advanceTimersByTime(1));
 			expect(split).not.toHaveAttribute("data-inspector-label-mode");
+			expect(split).not.toHaveAttribute("data-topbar-secondary-label-mode");
 		} finally {
 			vi.useRealTimers();
 		}
@@ -1085,7 +1092,9 @@ describe("SessionView", () => {
 
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 
-			expect(screen.getByTestId("panel-group")).toHaveAttribute("data-inspector-label-mode", "compact");
+			const split = screen.getByTestId("panel-group");
+			expect(split).toHaveAttribute("data-inspector-label-mode", "compact");
+			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 		} finally {
 			clientWidth.mockRestore();
 			vi.useRealTimers();

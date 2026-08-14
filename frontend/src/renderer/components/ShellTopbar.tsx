@@ -370,24 +370,34 @@ export function ShellTopbar({
 						) : null}
 					</>
 				) : null}
-				{/* The expanded inspector owns the notification action beside its close toggle. */}
-				{!(isSessionRoute && !isOrchestrator && isInspectorOpen) ? (
-					<NotificationCenter style={noDragStyle} />
-				) : null}
-				{/* The inspector header owns closing; the shell only restores a fully
-				    collapsed worker rail. Keep this final so it remains at the far right. */}
-				{isSessionRoute && !isOrchestrator && !isInspectorOpen ? (
-					<TopbarButton
-						aria-label={t("shell.openInspector")}
-						aria-pressed="false"
-						onClick={handleToggleInspector}
-						style={noDragStyle}
-						title={t("shell.openInspectorTitle")}
-						variant="icon"
+				{isSessionRoute && !isOrchestrator ? (
+					/* Keep one flex item mounted while the notification/toggle move between
+					   topbars. Its width follows the inspector motion, avoiding an instant
+					   intrinsic-width jump that otherwise leaves Orchestrator behind. */
+					<div
+						className="session-collapsed-inspector-actions"
+						data-state={isInspectorOpen ? "collapsed" : "expanded"}
+						data-testid="collapsed-inspector-actions"
 					>
-						<PanelRightOpen className="size-icon-md" aria-hidden="true" />
-					</TopbarButton>
-				) : null}
+						{!isInspectorOpen ? (
+							<div className="session-collapsed-inspector-actions__inner">
+								<NotificationCenter style={noDragStyle} />
+								<TopbarButton
+									aria-label={t("shell.openInspector")}
+									aria-pressed="false"
+									onClick={handleToggleInspector}
+									style={noDragStyle}
+									title={t("shell.openInspectorTitle")}
+									variant="icon"
+								>
+									<PanelRightOpen className="size-icon-md" aria-hidden="true" />
+								</TopbarButton>
+							</div>
+						) : null}
+					</div>
+				) : (
+					<NotificationCenter style={noDragStyle} />
+				)}
 			</div>
 		</motion.header>
 	</LayoutGroup>

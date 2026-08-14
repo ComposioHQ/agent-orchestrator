@@ -53,6 +53,7 @@ const INSPECTOR_COLLAPSED_SIZE = "0%";
 const INSPECTOR_MOTION_MS = 320;
 const INSPECTOR_MOTION_EASING = "cubic-bezier(0.16, 1, 0.3, 1)";
 const INSPECTOR_COMPACT_MAX_PX = 359;
+const TOPBAR_SECONDARY_COMPACT_MAX_PX = 759;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 const isMac = isMacPlatform();
@@ -79,6 +80,10 @@ function initialInspectorSize(availableWidth?: number): string {
 		: INSPECTOR_DEFAULT_PX;
 	const maxWidth = inspectorMaxWidthPx(availableWidth);
 	return maxWidth === undefined ? `${requestedWidth}px` : `${Math.min(requestedWidth, maxWidth)}px`;
+}
+
+function topbarSecondaryLabelMode(width: number): "compact" | "expanded" {
+	return width <= TOPBAR_SECONDARY_COMPACT_MAX_PX ? "compact" : "expanded";
 }
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
@@ -161,21 +166,27 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		sessionSplitRef.current?.removeAttribute("data-terminal-live-resize");
 		sessionSplitRef.current?.removeAttribute("data-inspector-label-mode");
+		sessionSplitRef.current?.removeAttribute("data-topbar-secondary-label-mode");
 	}, []);
-	const startTerminalLiveResize = useCallback((labelMode: "compact" | "expanded") => {
-		const split = sessionSplitRef.current;
-		if (!split) return;
-		if (terminalLiveResizeTimerRef.current !== null) {
-			window.clearTimeout(terminalLiveResizeTimerRef.current);
-		}
-		split.setAttribute("data-terminal-live-resize", "true");
-		split.setAttribute("data-inspector-label-mode", labelMode);
-		terminalLiveResizeTimerRef.current = window.setTimeout(() => {
-			split.removeAttribute("data-terminal-live-resize");
-			split.removeAttribute("data-inspector-label-mode");
-			terminalLiveResizeTimerRef.current = null;
-		}, INSPECTOR_MOTION_MS);
-	}, []);
+	const startTerminalLiveResize = useCallback(
+		(labelMode: "compact" | "expanded", topbarLabelMode: "compact" | "expanded") => {
+			const split = sessionSplitRef.current;
+			if (!split) return;
+			if (terminalLiveResizeTimerRef.current !== null) {
+				window.clearTimeout(terminalLiveResizeTimerRef.current);
+			}
+			split.setAttribute("data-terminal-live-resize", "true");
+			split.setAttribute("data-inspector-label-mode", labelMode);
+			split.setAttribute("data-topbar-secondary-label-mode", topbarLabelMode);
+			terminalLiveResizeTimerRef.current = window.setTimeout(() => {
+				split.removeAttribute("data-terminal-live-resize");
+				split.removeAttribute("data-inspector-label-mode");
+				split.removeAttribute("data-topbar-secondary-label-mode");
+				terminalLiveResizeTimerRef.current = null;
+			}, INSPECTOR_MOTION_MS);
+		},
+		[],
+	);
 
 	useEffect(() => stopTerminalLiveResize, [stopTerminalLiveResize]);
 
@@ -693,9 +704,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (isInspectorOpen) {
 			setInspectorMotionState("opening");
 			const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
-			const targetSize = initialInspectorSize(Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX));
+			const availableWidth = Math.max(0, groupWidth - INSPECTOR_SEPARATOR_RESERVE_PX);
+			const targetSize = initialInspectorSize(availableWidth);
+			const targetInspectorWidth = Number.parseFloat(targetSize);
 			startTerminalLiveResize(
-				Number.parseFloat(targetSize) <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
+				targetInspectorWidth <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
+				topbarSecondaryLabelMode(Math.max(0, availableWidth - targetInspectorWidth)),
 			);
 			panel.resize(targetSize);
 			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
@@ -708,8 +722,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		// next frame, when the fresh constraints have landed; collapse() is
 		// idempotent, so the double call is safe wherever the derivation lands.
 		setInspectorMotionState("closing");
+		const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
 		startTerminalLiveResize(
 			panel.getSize().inPixels <= INSPECTOR_COMPACT_MAX_PX ? "compact" : "expanded",
+			topbarSecondaryLabelMode(groupWidth),
 		);
 		panel.collapse();
 		const frame = window.requestAnimationFrame(() => panel.collapse());

@@ -372,6 +372,7 @@ describe("ShellTopbar inspector state", () => {
 	it("keeps the expanded worker inspector controls out of the center topbar", () => {
 		renderTopbarSessions([worker], "sess-1");
 
+		expect(screen.getByTestId("collapsed-inspector-actions")).toHaveAttribute("data-state", "collapsed");
 		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
 	});
@@ -400,10 +401,26 @@ describe("ShellTopbar inspector state", () => {
 
 		const toggle = screen.getByRole("button", { name: "Open inspector panel" });
 		const notification = screen.getByRole("button", { name: "Notifications" });
+		const slot = screen.getByTestId("collapsed-inspector-actions");
 		const controls = within(toggle.closest("header") as HTMLElement).getAllByRole("button");
 
+		expect(slot).toHaveAttribute("data-state", "expanded");
+		expect(slot).toContainElement(notification);
+		expect(slot).toContainElement(toggle);
 		expect(controls.indexOf(notification)).toBeLessThan(controls.indexOf(toggle));
 		expect(controls.at(-1)).toBe(toggle);
+	});
+
+	it("keeps one inspector-action slot mounted while its controls move between topbars", async () => {
+		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: false, view: "summary" } } });
+		renderTopbarSessions([worker], "sess-1");
+		const slot = screen.getByTestId("collapsed-inspector-actions");
+
+		await userEvent.click(screen.getByRole("button", { name: "Open inspector panel" }));
+
+		expect(screen.getByTestId("collapsed-inspector-actions")).toBe(slot);
+		expect(slot).toHaveAttribute("data-state", "collapsed");
+		expect(within(slot).queryByRole("button")).not.toBeInTheDocument();
 	});
 
 	it("toggles only the current worker session", async () => {
