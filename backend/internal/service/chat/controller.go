@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -1677,13 +1678,20 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.Err != nil {
 			message = event.Err.Error()
 		}
-		detail, _ := json.Marshal(map[string]string{"error": message})
+		summary := strings.TrimSpace(event.Summary)
+		if summary == "" {
+			summary = message
+		}
+		detail := event.Detail
+		if len(detail) == 0 {
+			detail, _ = json.Marshal(map[string]string{"error": message})
+		}
 		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
 			domain.ConversationActivity{
 				ID:      c.newID(),
 				Kind:    domain.ActivityKindError,
 				Status:  domain.ActivityStatusFailed,
-				Summary: message,
+				Summary: summary,
 				Detail:  detail,
 			}, now)
 

@@ -1257,15 +1257,17 @@ function RerouteRow({ activity }: { activity: ConversationActivity }) {
  * Rendering that as a generic activity label made one long unbreakable line that
  * widened the chat column under the sidebars, and five reconnect attempts painted
  * five walls of red JSON. This row unwraps the human parts and always wraps inside
- * the column.
+ * the column. New rows are normalized at the daemon; this path is the fallback
+ * for already-persisted envelopes.
+ *
+ * Not a live region: the enclosing timeline is already a `role="log"`, and the
+ * controller banner announces a terminal failure. Marking every historical
+ * reconnect row as `role="alert"` would interrupt a screen reader once per attempt.
  */
 function ErrorActivityRow({ activity }: { activity: ConversationActivity }) {
 	const { headline, detail } = providerErrorCopy(activity);
 	return (
-		<div
-			role="alert"
-			className="flex min-w-0 max-w-full items-start gap-2.5 overflow-hidden rounded-md border border-destructive/40 bg-surface px-3 py-2"
-		>
+		<div className="flex min-w-0 max-w-full items-start gap-2.5 overflow-hidden rounded-md border border-destructive/40 bg-surface px-3 py-2">
 			<AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
 			<div className="flex min-w-0 flex-1 flex-col gap-0.5">
 				<strong className="wrap-anywhere text-[11px] font-medium leading-snug text-destructive">
@@ -1287,35 +1289,56 @@ export function providerErrorCopy(activity: ConversationActivity): {
 	headline: string;
 	detail?: string;
 } {
-	const raw = String(activity.detail?.message ?? activity.summary ?? "").trim();
-	if (!raw) return { headline: "Provider error" };
+	const candidates = [activity.detail?.message, activity.summary, activity.detail?.error];
+	for (const candidate of candidates) {
+		const raw = String(candidate ?? "").trim();
+		if (!raw) continue;
+		const unwrapped = unwrapProviderErrorJson(raw);
+		if (unwrapped) return unwrapped;
+	}
 
-	const unwrapped = unwrapProviderErrorJson(raw);
-	if (unwrapped) return unwrapped;
-
-	return { headline: raw };
+	const headline = String(activity.detail?.message ?? activity.summary ?? "").trim();
+	const extra = String(activity.detail?.error ?? "").trim();
+	if (!headline) return { headline: extra || "Provider error" };
+	if (extra && extra !== headline) return { headline, detail: extra };
+	return { headline };
 }
 
 function unwrapProviderErrorJson(raw: string): { headline: string; detail?: string } | undefined {
-	if (!raw.startsWith("{")) return undefined;
+	const parsed = parseJsonObjectSuffix(raw);
+	if (!parsed) return undefined;
+	const err =
+		parsed.error && typeof parsed.error === "object" && !Array.isArray(parsed.error)
+			? (parsed.error as Record<string, unknown>)
+			: parsed;
+	const message = typeof err.message === "string" ? err.message.trim() : "";
+	const additional = typeof err.additionalDetails === "string" ? err.additionalDetails.trim() : "";
+	if (!message && !additional) return undefined;
+	if (message && additional && additional !== message) {
+		return { headline: message, detail: additional };
+	}
+	return { headline: message || additional };
+}
+
+/** AO used to persist `provider error: {…}`; parse the JSON object even when prefixed. */
+function parseJsonObjectSuffix(raw: string): Record<string, unknown> | undefined {
+	const start = raw.indexOf("{");
+	if (start < 0) return undefined;
+	const slice = raw.slice(start).trim();
+	const asObject = (value: unknown): Record<string, unknown> | undefined => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+		return value as Record<string, unknown>;
+	};
 	try {
-		const parsed = JSON.parse(raw) as unknown;
-		if (!parsed || typeof parsed !== "object") return undefined;
-		const root = parsed as Record<string, unknown>;
-		const err =
-			root.error && typeof root.error === "object"
-				? (root.error as Record<string, unknown>)
-				: root;
-		const message = typeof err.message === "string" ? err.message.trim() : "";
-		const additional =
-			typeof err.additionalDetails === "string" ? err.additionalDetails.trim() : "";
-		if (!message && !additional) return undefined;
-		if (message && additional && additional !== message) {
-			return { headline: message, detail: additional };
-		}
-		return { headline: message || additional };
+		return asObject(JSON.parse(slice));
 	} catch {
-		return undefined;
+		const end = slice.lastIndexOf("}");
+		if (end <= 0) return undefined;
+		try {
+			return asObject(JSON.parse(slice.slice(0, end + 1)));
+		} catch {
+			return undefined;
+		}
 	}
 }
 

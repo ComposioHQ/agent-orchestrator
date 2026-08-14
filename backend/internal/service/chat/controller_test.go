@@ -789,6 +789,54 @@ func TestProjectsAFullTurnIntoDurableRows(t *testing.T) {
 	}
 }
 
+func TestProviderErrorPersistsNeutralSummaryAndDetail(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "go", ClientMessageID: "c1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	detail, err := json.Marshal(map[string]string{
+		"message": "Reconnecting... [1/5]",
+		"error":   "stream disconnected before completion: You have no credits remaining",
+	})
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"},
+		ports.ChatEvent{
+			Kind:           ports.ChatEventError,
+			ProviderTurnID: "provider-turn-1",
+			Summary:        "Reconnecting... [1/5]",
+			Detail:         detail,
+			Err:            errors.New("Reconnecting... [1/5]"),
+		},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 1 && s.Activities[0].Kind == domain.ActivityKindError
+	})
+	activity := snapshot.Activities[0]
+	if activity.Summary != "Reconnecting... [1/5]" {
+		t.Fatalf("summary = %q", activity.Summary)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal(activity.Detail, &decoded); err != nil {
+		t.Fatalf("detail: %v (%s)", err, activity.Detail)
+	}
+	if decoded["message"] != "Reconnecting... [1/5]" {
+		t.Fatalf("detail.message = %q", decoded["message"])
+	}
+	if decoded["error"] != "stream disconnected before completion: You have no credits remaining" {
+		t.Fatalf("detail.error = %q", decoded["error"])
+	}
+}
+
 func TestControllerCloseHonorsContextWhenProviderStreamStaysOpen(t *testing.T) {
 	providerErr := errors.New("provider close failed")
 	conv := &stuckConversation{fakeConversation: newFakeConversation(), closeErr: providerErr}

@@ -299,22 +299,49 @@ describe("provider error", () => {
 			additionalDetails:
 				"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
 		},
+		threadId: "019fc430",
+		turnId: "turn_1",
+		willRetry: true,
 	});
+	// What AO actually persisted before the adapter started normalizing this
+	// notification: the Codex envelope, prefixed, in summary and detail.error.
+	const stored = `provider error: ${envelope}`;
 
-	it("unwraps a JSON envelope into a short headline and detail", () => {
+	it("unwraps the prefixed payload AO actually stores", () => {
 		render(
 			<ActivityRow
 				activity={activity({
 					activityKind: "error",
 					status: "failed",
-					summary: envelope,
-					detail: { message: envelope },
+					summary: stored,
+					detail: { error: stored },
 				})}
 			/>,
 		);
-		expect(screen.getByRole("alert")).toHaveTextContent("Reconnecting... [1/5]");
+		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
 		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
 		// The raw envelope must not paint as the row label — that is what overflowed the column.
+		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/provider error:/i)).not.toBeInTheDocument();
+	});
+
+	it("reads already-normalized summary and detail without a JSON dump", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: "Reconnecting... [1/5]",
+					detail: {
+						message: "Reconnecting... [1/5]",
+						error:
+							"stream disconnected before completion: You have no credits remaining. Add credits to continue using the API at https://platform.openai.com/settings/organization/billing",
+					},
+				})}
+			/>,
+		);
+		expect(screen.getByText("Reconnecting... [1/5]")).toBeInTheDocument();
+		expect(screen.getByText(/You have no credits remaining/i)).toBeInTheDocument();
 		expect(screen.queryByText(/codexErrorInfo/i)).not.toBeInTheDocument();
 	});
 
@@ -328,7 +355,7 @@ describe("provider error", () => {
 				})}
 			/>,
 		);
-		expect(screen.getByRole("alert")).toHaveTextContent(/no credits remaining/i);
+		expect(screen.getByText(/no credits remaining/i)).toBeInTheDocument();
 	});
 
 	it("stays inside the chat column instead of widening it", () => {
@@ -337,12 +364,25 @@ describe("provider error", () => {
 				activity={activity({
 					activityKind: "error",
 					status: "failed",
-					summary: envelope,
+					summary: stored,
 				})}
 			/>,
 		);
-		expect(screen.getByRole("alert").className).toMatch(/min-w-0/);
-		expect(screen.getByRole("alert").className).toMatch(/overflow-hidden/);
+		const row = screen.getByText("Reconnecting... [1/5]").closest("div.min-w-0.max-w-full");
+		expect(row?.className).toMatch(/overflow-hidden/);
+	});
+
+	it("does not mark historical reconnect rows as live alerts", () => {
+		render(
+			<ActivityRow
+				activity={activity({
+					activityKind: "error",
+					status: "failed",
+					summary: stored,
+				})}
+			/>,
+		);
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 });
 

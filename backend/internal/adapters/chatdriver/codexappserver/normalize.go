@@ -2,6 +2,7 @@ package codexappserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -643,10 +644,7 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 		}}
 
 	case codexproto.MethodError:
-		return []ports.ChatEvent{{
-			Kind: ports.ChatEventError,
-			Err:  fmt.Errorf("provider error: %s", truncateForLog(n.Params)),
-		}}
+		return []ports.ChatEvent{providerErrorEvent(n.Params)}
 
 	default:
 		// Provider bookkeeping: hook/started, hook/completed,
@@ -1091,7 +1089,8 @@ func activityFor(it threadItem) (domain.ActivityKind, string, bool) {
 		}
 		return domain.ActivityKindCommand, "Searched the web", true
 	case itemError:
-		return domain.ActivityKindError, firstNonEmpty(it.Message, "Provider error"), true
+		headline, _ := providerErrorFields(it.Message, "")
+		return domain.ActivityKindError, firstNonEmpty(headline, "Provider error"), true
 	default:
 		return "", "", false
 	}
@@ -1268,7 +1267,11 @@ func activityDetail(it threadItem) []byte {
 		detail["query"] = query
 	}
 	if it.Message != "" {
-		detail["message"] = it.Message
+		headline, extra := providerErrorFields(it.Message, "")
+		detail["message"] = firstNonEmpty(headline, it.Message)
+		if extra != "" {
+			detail["error"] = extra
+		}
 	}
 	if len(detail) == 0 {
 		return nil
@@ -1474,6 +1477,109 @@ func deref(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// providerErrorEvent turns a Codex `error` notification into a provider-neutral
+// timeline failure. The raw notification is `{error:{message, additionalDetails,
+// codexErrorInfo}, ...}`; dumping that JSON into summary made every client paint
+// the envelope, including mobile, which never learned the Codex shape.
+func providerErrorEvent(params json.RawMessage) ports.ChatEvent {
+	ev := ports.ChatEvent{Kind: ports.ChatEventError}
+
+	var p codexproto.ErrorNotification
+	if err := json.Unmarshal(params, &p); err == nil {
+		ev.ProviderTurnID = p.TurnID
+		headline, extra := providerErrorFields(p.Error.Message, deref(p.Error.AdditionalDetails))
+		if headline != "" {
+			return completeProviderError(ev, headline, extra)
+		}
+	}
+
+	headline, extra := unwrapJSONErrorEnvelope(string(params))
+	if headline == "" {
+		raw := strings.TrimSpace(truncateForLog(params))
+		if raw == "" {
+			headline = "Provider error"
+		} else {
+			headline = "provider error: " + raw
+		}
+	}
+	return completeProviderError(ev, headline, extra)
+}
+
+func completeProviderError(ev ports.ChatEvent, headline, extra string) ports.ChatEvent {
+	ev.Summary = headline
+	ev.Err = errors.New(headline)
+	detail := map[string]any{"message": headline}
+	if extra != "" {
+		detail["error"] = extra
+	}
+	ev.Detail = encodeDetail(detail)
+	return ev
+}
+
+// providerErrorFields prefers a parsed JSON envelope in `message` and otherwise
+// uses the two human strings Codex already split apart.
+func providerErrorFields(message, additional string) (headline, extra string) {
+	message = strings.TrimSpace(message)
+	additional = strings.TrimSpace(additional)
+	if parsedHeadline, parsedExtra := unwrapJSONErrorEnvelope(message); parsedHeadline != "" {
+		headline, extra = parsedHeadline, parsedExtra
+	} else {
+		headline = message
+	}
+	if extra == "" {
+		extra = additional
+	}
+	if extra == headline {
+		extra = ""
+	}
+	return headline, extra
+}
+
+// unwrapJSONErrorEnvelope reads Codex's error object, including the
+// `provider error: {…}` prefix AO used to persist verbatim.
+func unwrapJSONErrorEnvelope(raw string) (headline, extra string) {
+	obj := parseJSONObjectSuffix(raw)
+	if obj == nil {
+		return "", ""
+	}
+	errObj := obj
+	if nested, ok := obj["error"].(map[string]any); ok {
+		errObj = nested
+	}
+	message, _ := errObj["message"].(string)
+	additional, _ := errObj["additionalDetails"].(string)
+	message = strings.TrimSpace(message)
+	additional = strings.TrimSpace(additional)
+	if message == "" && additional == "" {
+		return "", ""
+	}
+	headline = firstNonEmpty(message, additional)
+	if additional != "" && additional != headline {
+		return headline, additional
+	}
+	return headline, ""
+}
+
+func parseJSONObjectSuffix(raw string) map[string]any {
+	start := strings.Index(raw, "{")
+	if start < 0 {
+		return nil
+	}
+	slice := strings.TrimSpace(raw[start:])
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(slice), &parsed); err == nil {
+		return parsed
+	}
+	end := strings.LastIndex(slice, "}")
+	if end <= 0 {
+		return nil
+	}
+	if err := json.Unmarshal([]byte(slice[:end+1]), &parsed); err != nil {
+		return nil
+	}
+	return parsed
 }
 
 // encodeDetail marshals a neutral payload, returning nil rather than a partial
