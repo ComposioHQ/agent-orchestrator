@@ -395,7 +395,7 @@ export function ChatWorkspace({
 				/>
 			</ChatLinkProvider>
 
-			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
+			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
 					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 					{snapshot.branchedFromEarlierMessage ? (
@@ -1124,7 +1124,7 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="chat-scroll-viewport cursor-chat-timeline h-full min-w-0 select-text overflow-x-hidden overflow-y-auto px-4 py-5"
+				className="chat-scroll-viewport cursor-chat-timeline h-full min-w-0 select-text overflow-x-hidden overflow-y-auto px-4 pt-5 pb-0"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
