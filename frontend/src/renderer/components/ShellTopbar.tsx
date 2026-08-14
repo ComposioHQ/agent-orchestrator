@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Folder, LayoutDashboard, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { Folder, LayoutDashboard, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -71,7 +71,6 @@ export function ShellTopbar({
 	const isInspectorOpen = useUiStore((state) =>
 		currentSessionId ? (state.inspectorSessions[currentSessionId]?.isOpen ?? true) : false,
 	);
-	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
@@ -131,11 +130,6 @@ export function ShellTopbar({
 	const openNewTask = () => {
 		if (!projectId || isProjectRestarting) return;
 		requestNewTask(projectId);
-	};
-
-	const handleToggleInspector = () => {
-		if (!currentSessionId) return;
-		toggleInspector(currentSessionId);
 	};
 
 	const openOrchestrator = async () => {
@@ -371,30 +365,15 @@ export function ShellTopbar({
 					</>
 				) : null}
 				{isSessionRoute && !isOrchestrator ? (
-					/* Keep one flex item mounted while the notification/toggle move between
-					   topbars. Its width follows the inspector motion, avoiding an instant
-					   intrinsic-width jump that otherwise leaves Orchestrator behind. */
+					/* Controls stay in one persistent overlay owned by SessionView. This
+					   spacer alone follows the inspector motion so neighboring actions do
+					   not jump as the center pane gains or loses the available width. */
 					<div
 						className="session-collapsed-inspector-actions"
 						data-state={isInspectorOpen ? "collapsed" : "expanded"}
 						data-testid="collapsed-inspector-actions"
-					>
-						{!isInspectorOpen ? (
-							<div className="session-collapsed-inspector-actions__inner">
-								<NotificationCenter style={noDragStyle} />
-								<TopbarButton
-									aria-label={t("shell.openInspector")}
-									aria-pressed="false"
-									onClick={handleToggleInspector}
-									style={noDragStyle}
-									title={t("shell.openInspectorTitle")}
-									variant="icon"
-								>
-									<PanelRightOpen className="size-icon-md" aria-hidden="true" />
-								</TopbarButton>
-							</div>
-						) : null}
-					</div>
+						aria-hidden="true"
+					/>
 				) : (
 					<NotificationCenter style={noDragStyle} />
 				)}

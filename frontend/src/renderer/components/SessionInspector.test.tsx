@@ -229,26 +229,6 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).toHaveAttribute("title", "Summary");
 	});
 
-	it("keeps the inspector actions together in its top-level header", async () => {
-		const onToggleVisibility = vi.fn();
-		renderWithQuery(
-			<SessionInspector
-				notificationAction={<button type="button">Notifications</button>}
-				onToggleVisibility={onToggleVisibility}
-				session={session([])}
-			/>,
-		);
-
-		const inspector = screen.getByRole("complementary", { name: "Session inspector" });
-		const controls = within(inspector).getAllByRole("button");
-		const notification = within(inspector).getByRole("button", { name: "Notifications" });
-		const toggle = within(inspector).getByRole("button", { name: "Close inspector panel" });
-
-		expect(controls.indexOf(notification)).toBeLessThan(controls.indexOf(toggle));
-		await userEvent.click(toggle);
-		expect(onToggleVisibility).toHaveBeenCalledTimes(1);
-	});
-
 	it("shows the glow only while real browser activity is unseen", () => {
 		const currentSession = session([]);
 		const view = renderWithQuery(<SessionInspector session={currentSession} />);

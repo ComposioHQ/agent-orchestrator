@@ -301,27 +301,19 @@ vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({
 		filesView,
 		isInspectorVisible = true,
-		notificationAction,
 		onOpenFiles,
 		onToggleBrowserPopOut,
-		onToggleVisibility,
 		view,
 	}: {
 		filesView?: ReactNode;
 		isInspectorVisible?: boolean;
-		notificationAction?: ReactNode;
 		onOpenFiles?: () => void;
 		onToggleBrowserPopOut?: () => void;
-		onToggleVisibility?: () => void;
 		view?: string;
 	}) => {
 		inspectorVisibilityRenders.push(isInspectorVisible);
 		return (
 			<div>
-				{notificationAction}
-				<button type="button" onClick={onToggleVisibility}>
-					close inspector
-				</button>
 				<button type="button" data-view={view} onClick={onToggleBrowserPopOut}>
 					pop browser
 				</button>
@@ -1014,6 +1006,16 @@ describe("SessionView", () => {
 		expect(openingRenders).not.toContain(false);
 	});
 
+	it("starts collapsing the resize handle with the inspector panel", () => {
+		render(<SessionView sessionId="sess-1" />);
+		const separator = screen.getByTestId("resize-handle");
+
+		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
+
+		expect(separator).toHaveClass("w-0", "pointer-events-none", "after:hidden");
+		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("aria-hidden", "false");
+	});
+
 	it("keeps StrictMode mount imperative-free and collapses on the first user toggle", () => {
 		render(
 			<StrictMode>
@@ -1141,17 +1143,21 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("wires the inspector header close control to the session panel state", () => {
+	it("keeps one inspector action cluster mounted while the panel opens and closes", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 		const handle = panels.get("inspector")!.handle;
+		const actions = screen.getByTestId("session-inspector-actions");
+		const notification = screen.getByRole("button", { name: "Notifications" });
+		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
 
-		expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "close inspector" }));
+		fireEvent.click(toggle);
 
 		expect(inspectorOpen("sess-1")).toBe(false);
 		expect(handle.collapse).toHaveBeenCalledTimes(1);
-		expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
+		expect(screen.getByTestId("session-inspector-actions")).toBe(actions);
+		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
+		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
 	});
 
 	it("persists drag resizes and never closes the store from a drag", () => {

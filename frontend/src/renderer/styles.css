@@ -2040,31 +2040,35 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	align-items: center;
 	justify-content: flex-end;
 	margin-left: calc(-1 * var(--space-2));
-	overflow: hidden;
-	opacity: 0;
-	pointer-events: none;
 	transition:
 		width var(--session-inspector-motion-duration, 320ms)
 			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
 		margin-left var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
-		opacity var(--session-inspector-motion-duration, 320ms)
 			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
 }
 
 .session-collapsed-inspector-actions[data-state="expanded"] {
 	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
 	margin-left: 0;
-	opacity: 1;
-	pointer-events: auto;
 }
 
-.session-collapsed-inspector-actions__inner {
+.session-inspector-persistent-actions {
+	-webkit-app-region: no-drag;
+	position: absolute;
+	top: 0;
+	right: var(--space-3);
+	z-index: var(--z-index-chrome);
 	display: flex;
-	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
-	flex: 0 0 auto;
+	height: var(--size-inspector-tabs);
 	align-items: center;
 	gap: var(--space-2);
+}
+
+.session-inspector-actions-spacer {
+	width: calc(
+		var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2) + var(--space-3)
+	);
+	flex: 0 0 auto;
 }
 
 @container workspace-topbar (max-width: 759px) {
@@ -2676,6 +2680,11 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
 }
 
+.session-inspector-separator {
+	transition-duration: var(--session-inspector-motion-duration, 320ms);
+	transition-timing-function: var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
 .session-split > .session-inspector-panel[data-panel] {
 	max-width: var(--session-inspector-max-width, 50%);
 }
@@ -2704,6 +2713,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 @media (prefers-reduced-motion: reduce) {
 	.session-split > [data-panel],
+	.session-inspector-separator,
 	.session-inspector-motion {
 		transition: none;
 	}

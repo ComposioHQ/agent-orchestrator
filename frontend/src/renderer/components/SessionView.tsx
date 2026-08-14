@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, Plus } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -152,6 +152,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [inspectorMotionState, setInspectorMotionState] = useState<"closed" | "closing" | "open" | "opening">(
 		isInspectorOpen ? "open" : "closed",
 	);
+	const inspectorPanelVisible = isInspectorOpen || inspectorMotionState !== "closed";
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
@@ -767,8 +768,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		},
 		[],
 	);
-	const inspectorPanelVisible = isInspectorOpen || inspectorMotionState !== "closed";
-
 	if (!session && !workspaceQuery.isLoading) {
 		return (
 			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
@@ -856,8 +855,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						<ResizableHandle
 							aria-hidden={!inspectorPanelVisible}
 							className={cn(
-								"w-1.75 cursor-col-resize touch-none bg-transparent transition-[width] duration-200 ease-out after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border",
-								!inspectorPanelVisible && "pointer-events-none w-0 after:hidden",
+								"session-inspector-separator w-1.75 cursor-col-resize touch-none bg-transparent transition-[width] after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border",
+								!isInspectorOpen && "pointer-events-none w-0 after:hidden",
 							)}
 							disabled={!isInspectorOpen}
 							elementRef={inspectorSeparatorRef}
@@ -890,11 +889,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										) : null
 									}
 									isInspectorVisible={inspectorPanelVisible}
-									notificationAction={isInspectorOpen ? <NotificationCenter /> : undefined}
 									onOpenFiles={handleOpenFiles}
 									onOpenReviewerTerminal={selectReviewerTerminal}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
-									onToggleVisibility={() => toggleInspector(sessionId)}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}
@@ -905,6 +902,28 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
+			{hasInspector ? (
+				<div
+					className="session-inspector-persistent-actions"
+					data-testid="session-inspector-actions"
+					style={isMac ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined}
+				>
+					<NotificationCenter />
+					<TopbarButton
+						aria-expanded={isInspectorOpen}
+						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+						onClick={() => toggleInspector(sessionId)}
+						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
+						variant="icon"
+					>
+						{isInspectorOpen ? (
+							<PanelRightClose className="size-icon-lg" aria-hidden="true" />
+						) : (
+							<PanelRightOpen className="size-icon-lg" aria-hidden="true" />
+						)}
+					</TopbarButton>
+				</div>
+			) : null}
 			<SessionInterfaceSwitchDialog
 				open={interfaceSwitchDialogOpen}
 				target={interfaceTarget}

@@ -25,7 +25,6 @@ import {
 	GitPullRequest,
 	GitMerge,
 	Info,
-	PanelRightClose,
 	Play,
 	Trash2,
 	Loader2,
@@ -62,7 +61,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
-import { TopbarButton } from "./TopbarButton";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -125,9 +123,7 @@ export function SessionInspector({
 	browserPoppedOut = false,
 	browserAnnotationQueue,
 	isInspectorVisible = true,
-	notificationAction,
 	onToggleBrowserPopOut,
-	onToggleVisibility,
 	onOpenFiles,
 	filesView,
 	browserView,
@@ -139,9 +135,7 @@ export function SessionInspector({
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
-	notificationAction?: ReactNode;
 	onToggleBrowserPopOut?: (next: boolean) => void;
-	onToggleVisibility?: () => void;
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
@@ -193,23 +187,7 @@ export function SessionInspector({
 				) : undefined
 			}
 			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
-			headerActions={
-				<>
-					{notificationAction}
-					{onToggleVisibility ? (
-						<TopbarButton
-							aria-expanded="true"
-							aria-label={t("shell.closeInspector")}
-							className="session-inspector__toggle ml-1.5 shrink-0"
-							onClick={onToggleVisibility}
-							title={t("shell.closeInspectorTitle")}
-							variant="icon"
-						>
-							<PanelRightClose className="size-icon-lg" aria-hidden="true" />
-						</TopbarButton>
-					) : null}
-				</>
-			}
+			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
 			isVisible={isInspectorVisible}
 			loadingText={session ? undefined : t("inspector.loadingSession")}
 			onViewChange={setView}
