@@ -18,7 +18,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [cloud-development.md](cloud-development.md)           | Optional private checkout workflow, current Cloud foundation, remaining implementation, and recommended build order. |
 | [cloud-refactor.md](cloud-refactor.md)                 | Public contracts, generated Cloud schema types, typed client, reusable product UI, and private implementation boundaries. |
 | [development.md](development.md)                       | Prerequisites, build steps, running tests, and troubleshooting for local development.                                 |
-| [review-state-contract.md](review-state-contract.md)   | Authoritative review facts, derived UI states, precedence, cycles, comments, auto-review, and injection cases.         |
+| [review-state-contract.md](review-state-contract.md)   | Direct review status sources for Kanban cards and the AO Reviews view.                                                 |
 | [STATUS.md](STATUS.md)                                 | What is shipped on `main` today and what is still in flight.                                                          |
 | [stack.md](stack.md)                                   | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
 | [telemetry.md](telemetry.md)                           | Telemetry collection, privacy safeguards, and configuration.                                                           |
