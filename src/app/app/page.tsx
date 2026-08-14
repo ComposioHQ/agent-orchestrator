@@ -680,6 +680,79 @@ export function CloudWorkspace() {
     }
   };
 
+  const connectGitHubUser = async () => {
+    const attempt = await client.startGitHubUserAuthorization();
+    const popup = window.open(
+      attempt.authorizeUrl,
+      "ao-github-connect",
+      "popup,width=900,height=760",
+    );
+    if (!popup) {
+      throw new Error(
+        "Allow popups for this site to connect GitHub in one flow.",
+      );
+    }
+    const deadline = Date.now() + 2 * 60 * 1000;
+    let authorized = false;
+    while (Date.now() < deadline) {
+      const connection = await client.getGitHubUserConnection();
+      if (connection.connected) {
+        authorized = true;
+        setGitHubUser({ status: "available", connection });
+        break;
+      }
+      await delay(300);
+    }
+    if (!authorized) {
+      throw new Error("GitHub account authorization did not complete.");
+    }
+    return popup;
+  };
+
+  const connectGitHubOrganization = async (existingPopup?: Window | null) => {
+    const before = new Set(
+      github.status === "available"
+        ? github.installations.map(({ githubInstallationId }) => githubInstallationId)
+        : [],
+    );
+    const attempt = await client.startGitHubInstallation(organizationId);
+    let popup = existingPopup ?? null;
+    if (popup && !popup.closed) {
+      popup.location.assign(attempt.installationUrl);
+    } else {
+      popup = window.open(
+        attempt.installationUrl,
+        "ao-github-connect",
+        "popup,width=900,height=760",
+      );
+    }
+    if (!popup) {
+      throw new Error(
+        "Allow popups for this site to finish connecting the GitHub App.",
+      );
+    }
+
+    const deadline = Date.now() + 2 * 60 * 1000;
+    let installationConnected = false;
+    while (Date.now() < deadline) {
+      const installations = await client.listGitHubInstallations(organizationId);
+      if (
+        installations.some(
+          ({ githubInstallationId }) => !before.has(githubInstallationId),
+        )
+      ) {
+        installationConnected = true;
+        break;
+      }
+      await delay(500);
+    }
+    if (!installationConnected) {
+      throw new Error("The AO GitHub App installation did not complete.");
+    }
+    popup.close();
+    await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
+  };
+
   const connectGitHub = async () => {
     if (
       github.status === "auth-required" ||
@@ -690,76 +763,50 @@ export function CloudWorkspace() {
     }
     setGitHubBusy(true);
     setError("");
-    let popup: Window | null = null;
     try {
+      let popup: Window | null = null;
       if (!githubUser.connection.connected) {
-        const attempt = await client.startGitHubUserAuthorization();
-        popup = window.open(
-          attempt.authorizeUrl,
-          "ao-github-connect",
-          "popup,width=900,height=760",
-        );
-        if (!popup) {
-          throw new Error(
-            "Allow popups for this site to connect GitHub in one flow.",
-          );
-        }
-        const deadline = Date.now() + 2 * 60 * 1000;
-        let authorized = false;
-        while (Date.now() < deadline) {
-          const connection = await client.getGitHubUserConnection();
-          if (connection.connected) {
-            authorized = true;
-            setGitHubUser({ status: "available", connection });
-            break;
-          }
-          await delay(300);
-        }
-        if (!authorized) {
-          throw new Error("GitHub account authorization did not complete.");
-        }
+        popup = await connectGitHubUser();
       }
+      const hasInstalls =
+        github.status === "available" && github.installations.length > 0;
+      if (!hasInstalls) {
+        await connectGitHubOrganization(popup);
+        return;
+      }
+      popup?.close();
+      await loadGitHubUser();
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setGitHubBusy(false);
+    }
+  };
 
-      const before = new Set(
-        github.status === "available"
-          ? github.installations.map(({ githubInstallationId }) => githubInstallationId)
-          : [],
-      );
-      const attempt = await client.startGitHubInstallation(organizationId);
-      if (popup && !popup.closed) {
-        popup.location.assign(attempt.installationUrl);
-      } else {
-        popup = window.open(
-          attempt.installationUrl,
-          "ao-github-connect",
-          "popup,width=900,height=760",
-        );
-      }
-      if (!popup) {
-        throw new Error(
-          "Allow popups for this site to finish connecting the GitHub App.",
-        );
-      }
+  const startGitHubOrganizationInstall = async () => {
+    if (
+      github.status === "auth-required" ||
+      githubUser.status === "auth-required"
+    ) {
+      window.location.assign("/github-sign-in");
+      return;
+    }
+    setGitHubBusy(true);
+    setError("");
+    try {
+      await connectGitHubOrganization();
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    } finally {
+      setGitHubBusy(false);
+    }
+  };
 
-      const deadline = Date.now() + 2 * 60 * 1000;
-      let installationConnected = false;
-      while (Date.now() < deadline) {
-        const installations = await client.listGitHubInstallations(organizationId);
-        if (
-          installations.some(
-            ({ githubInstallationId }) => !before.has(githubInstallationId),
-          )
-        ) {
-          installationConnected = true;
-          break;
-        }
-        await delay(500);
-      }
-      if (!installationConnected) {
-        throw new Error("The AO GitHub App installation did not complete.");
-      }
-      popup.close();
-      await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
+  const syncGitHubUser = async () => {
+    setGitHubBusy(true);
+    setError("");
+    try {
+      await loadGitHubUser();
     } catch (cause) {
       handleLoadError(cause, setError);
     } finally {
@@ -1188,6 +1235,7 @@ export function CloudWorkspace() {
           initialPanel={settingsTarget}
           open={settingsOpen}
           onConnectGitHub={connectGitHub}
+          onConnectGitHubOrganization={startGitHubOrganizationInstall}
           onConnectAgent={connectAgentProvider}
           onConnectUserAgent={connectUserAgentProvider}
           onDisconnectAgent={disconnectAgentProvider}
@@ -1204,6 +1252,7 @@ export function CloudWorkspace() {
             void loadOrganization(id);
           }}
           onSyncGitHub={syncGitHubInstallation}
+          onSyncGitHubUser={syncGitHubUser}
           providerBusy={providerBusy}
           providers={providers}
           members={members}

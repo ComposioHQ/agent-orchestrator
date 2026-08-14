@@ -27,7 +27,6 @@
     "AO_CLOUD_WEB_API_BASE_URL": "https://api.aoagents.dev",
     "AO_CLOUD_GITHUB_API_BASE_URL": "https://api.aoagents.dev",
     "WORKOS_REDIRECT_URI": "https://cloud.aoagents.dev/callback",
-    "NEXT_PUBLIC_AO_CLOUD_WEB_API_BASE_URL": "https://api.aoagents.dev",
     "NEXT_PUBLIC_WORKOS_REDIRECT_URI": "https://cloud.aoagents.dev/callback"
   }
 }

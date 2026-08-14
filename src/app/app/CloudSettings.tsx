@@ -64,6 +64,7 @@ export function CloudSettings({
   open,
   onBack,
   onConnectGitHub,
+  onConnectGitHubOrganization,
   onConnectAgent,
   onDisconnectAgent,
   onDisconnectGitHub,
@@ -74,6 +75,7 @@ export function CloudSettings({
   onRevokeInvitation,
   onSelectOrganization,
   onSyncGitHub,
+  onSyncGitHubUser,
   providerBusy,
   providers,
   selectedOrganizationId,
@@ -90,6 +92,7 @@ export function CloudSettings({
   open: boolean;
   onBack: () => void;
   onConnectGitHub: () => Promise<void>;
+  onConnectGitHubOrganization: () => Promise<void>;
   onConnectAgent: (
     provider: AgentProvider,
     input: PutAgentProviderConnectionInput,
@@ -108,6 +111,7 @@ export function CloudSettings({
   onRevokeInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
   onSyncGitHub: (installation: GitHubInstallation) => Promise<void>;
+  onSyncGitHubUser: () => Promise<void>;
   providerBusy: boolean;
   providers: ProviderCapability;
   selectedOrganizationId: string;
@@ -246,9 +250,11 @@ export function CloudSettings({
                       github={github}
                       githubUser={githubUser}
                       onConnect={onConnectGitHub}
+                      onConnectOrganization={onConnectGitHubOrganization}
                       onDisconnect={onDisconnectGitHub}
                       onDisconnectUser={onDisconnectGitHubUser}
                       onSync={onSyncGitHub}
+                      onSyncUser={onSyncGitHubUser}
                     />
                     <CodingAgentSettings
                       busy={providerBusy}
@@ -384,59 +390,110 @@ function GitHubSettings({
   github,
   githubUser,
   onConnect,
+  onConnectOrganization,
   onDisconnect,
   onDisconnectUser,
   onSync,
+  onSyncUser,
 }: {
   busy: boolean;
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
   onConnect: () => Promise<void>;
+  onConnectOrganization: () => Promise<void>;
   onDisconnect: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectUser: () => Promise<void>;
   onSync: (installation: GitHubInstallation) => Promise<void>;
+  onSyncUser: () => Promise<void>;
 }) {
   const hostedAuthRequired =
     github.status === "auth-required" || githubUser.status === "auth-required";
-  const connected =
-    githubUser.connection.connected &&
-    github.status === "available" &&
-    github.installations.length > 0;
+  const accountConnected = githubUser.connection.connected;
+  const orgInstallations =
+    github.status === "available"
+      ? github.installations.filter(
+          (installation) => installation.status !== "removed",
+        )
+      : [];
+  const hasOrgAccess = orgInstallations.length > 0;
+  const creationOwners = githubUser.connection.installations.filter(
+    (installation) => installation.canCreateRepository,
+  );
   return (
     <SettingsSection grouped title="GitHub">
       <SettingsRow label="GitHub account">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
           <span className="settings-row-value">
-            {connected ? githubUser.connection.login : ""}
+            {accountConnected
+              ? githubUser.connection.login
+              : "GitHub account not connected"}
           </span>
           {hostedAuthRequired ? (
             <a className={primaryButtonClass} href="/github-sign-in">Continue</a>
-          ) : connected ? (
-            <button className={buttonClass} disabled={busy} onClick={() => {
-              if (window.confirm("Revoke AO's GitHub user authorization?")) void onDisconnectUser();
-            }} type="button">Disconnect</button>
+          ) : accountConnected ? (
+            <div className="flex items-center gap-1">
+              <button className={buttonClass} disabled={busy} onClick={() => void onSyncUser()} type="button">
+                <RefreshCw className="size-3.5" aria-hidden="true" />
+                Sync
+              </button>
+              <button className={buttonClass} disabled={busy} onClick={() => {
+                if (window.confirm("Disconnect your GitHub account from AO? Existing organization grants remain, but personal actions will require reconnecting.")) void onDisconnectUser();
+              }} type="button">Disconnect</button>
+            </div>
           ) : (
-            <button className={primaryButtonClass} disabled={busy || githubUser.status === "loading" || github.status === "loading"} onClick={() => void onConnect()} type="button">Connect GitHub</button>
+            <button className={primaryButtonClass} disabled={busy || githubUser.status === "loading" || github.status === "loading"} onClick={() => void onConnect()} type="button">
+              {hasOrgAccess ? "Connect account" : "Connect GitHub"}
+            </button>
           )}
         </div>
       </SettingsRow>
       {github.status === "loading" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">Loading GitHub connection…</p> : null}
       {github.status === "unavailable" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">{github.message ?? "GitHub is disabled for this environment."}</p> : null}
       {github.status === "error" ? <p className="px-3 py-4 text-sm text-[var(--color-error)]">{github.message ?? "GitHub connection could not be loaded."}</p> : null}
-      {github.status === "available" && github.installations.length === 0 ? (
-        <SettingsRow label="App installation"><span className="settings-row-value">No GitHub installation</span></SettingsRow>
+      {accountConnected && creationOwners.length > 0 ? (
+        <SettingsRow label="Repository creation">
+          <span className="settings-row-value">
+            {creationOwners.map((installation) => installation.accountLogin).join(", ")}
+          </span>
+        </SettingsRow>
       ) : null}
-      {github.status === "available" ? github.installations.map((installation) => (
-        <SettingsRow key={installation.id} label={installation.accountLogin}>
-          <div className="flex items-center gap-2">
-            <span className="settings-row-value">{installation.repositorySelection} repositories</span>
-            <button aria-label={`Sync ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => void onSync(installation)} title="Sync repositories" type="button"><RefreshCw className="size-3.5" /></button>
-            <button aria-label={`Disconnect ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => {
-              if (window.confirm(`Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`)) void onDisconnect(installation);
-            }} title="Disconnect GitHub" type="button"><Unplug className="size-3.5" /></button>
+      {hasOrgAccess ? (
+        <>
+          <SettingsRow label="Organization repository access">
+            <button
+              aria-label="Manage organization repository access"
+              className={buttonClass}
+              disabled={busy}
+              onClick={() => void onConnectOrganization()}
+              type="button"
+            >
+              Manage
+            </button>
+          </SettingsRow>
+          {orgInstallations.map((installation) => (
+            <SettingsRow key={installation.id} label={installation.accountLogin}>
+              <div className="flex items-center gap-2">
+                <span className="settings-row-value">
+                  {installation.accountType} · {installation.repositorySelection === "all" ? "all repositories" : "selected repositories"}
+                </span>
+                <button aria-label={`Sync ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => void onSync(installation)} title="Sync repositories" type="button"><RefreshCw className="size-3.5" /></button>
+                <button aria-label={`Disconnect ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => {
+                  if (window.confirm(`Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`)) void onDisconnect(installation);
+                }} title="Disconnect GitHub" type="button"><Unplug className="size-3.5" /></button>
+              </div>
+            </SettingsRow>
+          ))}
+        </>
+      ) : accountConnected && github.status === "available" ? (
+        <SettingsRow label="Organization repository access">
+          <div className="flex items-center gap-3">
+            <span className="settings-row-value">Not connected</span>
+            <button className={primaryButtonClass} disabled={busy} onClick={() => void onConnectOrganization()} type="button">
+              Connect organization
+            </button>
           </div>
         </SettingsRow>
-      )) : null}
+      ) : null}
     </SettingsSection>
   );
 }

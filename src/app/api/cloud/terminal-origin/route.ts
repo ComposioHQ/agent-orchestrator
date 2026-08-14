@@ -1,24 +1,19 @@
 import { NextResponse } from "next/server";
 
-import { cloudApiBaseUrl } from "@/lib/cloud-config";
+import { cloudApiBaseUrl, cloudWebMode } from "@/lib/cloud-config";
 
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  // Dial the terminal WebSocket straight at the control-plane ALB.
-  //
-  // The ALB negotiates no ALPN at all, so browsers reach it over HTTP/1.1 and
-  // complete a plain Upgrade handshake. Every Cloudflare-fronted hostname we
-  // tried instead negotiates HTTP/2 and advertises h3, and Firefox never
-  // finished a socket against those — the upgrade either failed outright or
-  // landed late enough that the single-use terminal ticket was already spent,
-  // which the control plane reports as 401 on every retry.
-  //
-  // Cross-origin is intended here: the upgrade handler sets InsecureSkipVerify
-  // because the single-use ticket, not the Origin header, is the authorization
-  // boundary for this endpoint.
+  // Hosted Firefox cannot complete a WebSocket handshake against the API ALB
+  // or the OpenNext Worker (nodejs_compat + HTTP/3). A dedicated Worker
+  // without nodejs_compat terminates the socket on ws.aoagents.dev.
+  const origin =
+    cloudWebMode() === "local"
+      ? cloudApiBaseUrl()
+      : "https://ws.aoagents.dev";
   return NextResponse.json(
-    { origin: cloudApiBaseUrl() },
+    { origin },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

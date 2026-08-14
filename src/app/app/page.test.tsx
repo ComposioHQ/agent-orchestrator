@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   deleteSession: vi.fn(),
   createGitHubScratchProject: vi.fn(),
   startGitHubUserAuthorization: vi.fn(),
+  startGitHubInstallation: vi.fn(),
   disconnectGitHubUser: vi.fn(),
   putAgentProviderConnection: vi.fn(),
   deleteAgentProviderConnection: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock("@/lib/cloud-client", () => ({
     deleteSession: mocks.deleteSession,
     createGitHubScratchProject: mocks.createGitHubScratchProject,
     startGitHubUserAuthorization: mocks.startGitHubUserAuthorization,
+    startGitHubInstallation: mocks.startGitHubInstallation,
     disconnectGitHubUser: mocks.disconnectGitHubUser,
     putAgentProviderConnection: mocks.putAgentProviderConnection,
     deleteAgentProviderConnection: mocks.deleteAgentProviderConnection,
@@ -569,6 +571,46 @@ it("searches the loaded workspace without demo commands", async () => {
   expect(within(dialog).queryByText("Open Settings")).not.toBeInTheDocument();
 });
 
+it("lets a connected GitHub user add another organization from settings", async () => {
+  mocks.getGitHubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "amoreX",
+    installations: [],
+  });
+  mocks.listGitHubInstallations.mockResolvedValue([
+    {
+      id: "inst-1",
+      githubInstallationId: "123",
+      accountLogin: "amoreX",
+      accountType: "User",
+      status: "active",
+      repositorySelection: "all",
+      syncStatus: "ready",
+      createdAt: "2026-08-12T00:00:00Z",
+      updatedAt: "2026-08-12T00:00:00Z",
+    },
+  ]);
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Command palette" })).getByRole(
+      "option",
+      { name: "Settings" },
+    ),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Providers" }));
+  expect(screen.getAllByText("amoreX").length).toBeGreaterThan(0);
+  expect(
+    screen.getByRole("button", { name: "Manage organization repository access" }),
+  ).toBeVisible();
+  expect(screen.queryByText("No GitHub installation")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Sync" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Disconnect" })).toBeVisible();
+});
+
 it("connects coding-agent credentials from provider settings", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
@@ -582,7 +624,8 @@ it("connects coding-agent credentials from provider settings", async () => {
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Providers" }));
-  expect(screen.getByText("No GitHub installation")).toBeVisible();
+  expect(screen.getByText("GitHub account not connected")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Connect GitHub" })).toBeVisible();
   fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
   fireEvent.change(screen.getByLabelText("Secret"), {
     target: { value: "sk-ant-test" },
