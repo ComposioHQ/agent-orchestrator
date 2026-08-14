@@ -6,6 +6,7 @@ import type {
   PutAgentProviderConnectionInput,
   RedactedProviderConnection,
 } from "@aoagents/cloud-client";
+import { TransientToastView } from "@aoagents/product-ui";
 import {
   Bell,
   Building2,
@@ -49,6 +50,8 @@ import type {
 } from "./cloud-ui-types";
 import type { CreateInvitationInput, OrganizationInvitation } from "./share-types";
 import { WorkspaceAvatar } from "./CloudWorkspaceSwitcher";
+
+const displayedSettingsErrors = new Set<string>();
 
 type SettingsPanel = "general" | "profile" | "notifications" | "workspaces" | "providers";
 type AgentProvider = "claude-code" | "codex" | "cursor";
@@ -116,6 +119,8 @@ export function CloudSettings({
   userProviders: ProviderCapability;
 }) {
   const [panel, setPanel] = useState<SettingsPanel>(initialPanel);
+  const [toastError, setToastError] = useState("");
+  const toastTimer = useRef<number | undefined>(undefined);
   const selectedOrganization = account.organizations.find(({ id }) => id === selectedOrganizationId);
   const canManageMembers = selectedOrganization?.role === "owner" || selectedOrganization?.role === "admin";
 
@@ -126,6 +131,33 @@ export function CloudSettings({
   useEffect(() => {
     if (open) setPanel(initialPanel);
   }, [initialPanel, open]);
+
+  const showError = (message: string) => {
+    if (!message || displayedSettingsErrors.has(message)) return;
+    displayedSettingsErrors.add(message);
+    if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
+    setToastError(message);
+    toastTimer.current = window.setTimeout(() => setToastError(""), 2_000);
+  };
+
+  useEffect(() => {
+    const message =
+      github.status === "error"
+        ? github.message ?? "GitHub connection could not be loaded."
+        : userProviders.status === "error"
+          ? userProviders.message ?? "Provider connections could not be loaded."
+          : members.status === "error"
+            ? members.message ?? "Members could not be loaded."
+            : "";
+    showError(message);
+  }, [github, members, userProviders]);
+
+  useEffect(
+    () => () => {
+      if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
+    },
+    [],
+  );
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onBack()}>
@@ -241,6 +273,7 @@ export function CloudSettings({
                       onInvite={onInviteMember}
                       onRevoke={onRevokeInvitation}
                       onUpdateRole={onUpdateMemberRole}
+                      onError={showError}
                       currentUserId={account.user.id}
                     />
                   </div>
@@ -262,6 +295,7 @@ export function CloudSettings({
                       onConnect={onConnectUserAgent}
                       onDisconnect={onDisconnectUserAgent}
                       providers={userProviders}
+                      onError={showError}
                     />
                   </div>
                 ) : null}
@@ -270,6 +304,7 @@ export function CloudSettings({
           </div>
         </div>
       </DialogContent>
+      {toastError ? <TransientToastView>{toastError}</TransientToastView> : null}
     </Dialog>
   );
 }
@@ -279,6 +314,7 @@ function CodingAgentSettings({
   onConnect,
   onDisconnect,
   providers,
+  onError,
   title = "Coding agents",
 }: {
   busy: boolean;
@@ -288,13 +324,13 @@ function CodingAgentSettings({
   ) => Promise<void>;
   onDisconnect: (connection: RedactedProviderConnection) => Promise<void>;
   providers: ProviderCapability;
+  onError: (message: string) => void;
   title?: string;
 }) {
   const [editing, setEditing] = useState<AgentProvider | null>(null);
   const [credentialType, setCredentialType] =
     useState<PutAgentProviderConnectionInput["credentialType"]>("api_key");
   const [secret, setSecret] = useState("");
-  const [error, setError] = useState("");
   const agents: Array<{ id: AgentProvider; label: string }> = [
     { id: "claude-code", label: "Claude Code" },
     { id: "codex", label: "Codex" },
@@ -308,9 +344,7 @@ function CodingAgentSettings({
           Loading coding-agent connections…
         </p>
       ) : providers.status === "error" ? (
-        <div className="px-3 py-3 text-sm text-[var(--color-error)]">
-          {providers.message ?? "Provider connections could not be loaded."}
-        </div>
+        null
       ) : (
         agents.map((agent) => {
           const connection = providers.connections.find(
@@ -337,7 +371,6 @@ function CodingAgentSettings({
                       setEditing(isEditing ? null : agent.id);
                       setCredentialType("api_key");
                       setSecret("");
-                      setError("");
                     }}
                     type="button"
                   >
@@ -350,13 +383,12 @@ function CodingAgentSettings({
                   className="grid gap-3 border-t border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-3 sm:grid-cols-[180px_minmax(0,1fr)_auto]"
                   onSubmit={async (event) => {
                     event.preventDefault();
-                    setError("");
                     try {
                       await onConnect(agent.id, { credentialType, secret });
                       setEditing(null);
                       setSecret("");
                     } catch (cause) {
-                      setError(cause instanceof Error ? cause.message : "The credential could not be connected.");
+                      onError(cause instanceof Error ? cause.message : "The credential could not be connected.");
                     }
                   }}
                 >
@@ -375,7 +407,6 @@ function CodingAgentSettings({
                   <button className={`${primaryButtonClass} self-end`} disabled={busy || !secret.trim()} type="submit">
                     {busy ? "Validating…" : "Save"}
                   </button>
-                  {error ? <p className="text-xs text-[var(--color-error)] sm:col-span-3" role="alert">{error}</p> : null}
                 </form>
               ) : null}
             </div>
@@ -443,7 +474,6 @@ function GitHubSettings({
       </SettingsRow>
       {github.status === "loading" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">Loading GitHub connection…</p> : null}
       {github.status === "unavailable" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">{github.message ?? "GitHub is disabled for this environment."}</p> : null}
-      {github.status === "error" ? <p className="px-3 py-4 text-sm text-[var(--color-error)]">{github.message ?? "GitHub connection could not be loaded."}</p> : null}
       {accountConnected && github.status === "available" ? (
         <SettingsRow label="Organization repository access">
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-3">
@@ -680,6 +710,7 @@ function MembersSettings({
   onInvite,
   onRevoke,
   onUpdateRole,
+  onError,
 }: {
   busy: boolean;
   canManage: boolean;
@@ -688,17 +719,17 @@ function MembersSettings({
   onInvite: (input: CreateInvitationInput) => Promise<void>;
   onRevoke: (invitation: OrganizationInvitation) => Promise<void>;
   onUpdateRole: (userId: string, role: "owner" | "admin" | "member") => Promise<void>;
+  onError: (message: string) => void;
 }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<CreateInvitationInput["role"]>("member");
-  const [error, setError] = useState("");
 
   return (
     <SettingsSection grouped title="Members">
       {members.status === "loading" ? (
         <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">Loading members…</p>
       ) : members.status === "error" ? (
-        <p className="px-3 py-4 text-sm text-[var(--color-error)]">{members.message ?? "Members could not be loaded."}</p>
+        null
       ) : (
         <>
           {members.members.map((member) => (
@@ -708,11 +739,10 @@ function MembersSettings({
                 className={`${fieldClass} h-8 w-28`}
                 disabled={busy || !canManage || member.userId === currentUserId}
                 onChange={(event) => {
-                  setError("");
                   void onUpdateRole(
                     member.userId,
                     event.target.value as "owner" | "admin" | "member",
-                  ).catch((cause) => setError(cause instanceof Error ? cause.message : "The role could not be updated."));
+                  ).catch((cause) => onError(cause instanceof Error ? cause.message : "The role could not be updated."));
                 }}
                 value={member.role}
               >
@@ -738,12 +768,11 @@ function MembersSettings({
             className="flex flex-wrap items-center gap-2 border-t border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-3"
             onSubmit={async (event) => {
               event.preventDefault();
-              setError("");
               try {
                 await onInvite({ email, role });
                 setEmail("");
               } catch (cause) {
-                setError(cause instanceof Error ? cause.message : "The invitation could not be sent.");
+                onError(cause instanceof Error ? cause.message : "The invitation could not be sent.");
               }
             }}
           >
@@ -755,7 +784,6 @@ function MembersSettings({
             <button className={`${primaryButtonClass} h-8`} disabled={busy || !canManage || !email.trim()} type="submit">
               Invite
             </button>
-            {error ? <p className="w-full text-xs text-[var(--color-error)]" role="alert">{error}</p> : null}
           </form>
         </>
       )}

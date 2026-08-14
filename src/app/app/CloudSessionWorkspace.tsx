@@ -14,6 +14,7 @@ import {
   PRSummaryParts,
   SessionInspectorShellView,
   SessionWorkspaceTopbarView,
+  TransientToastView,
   type InspectorTab,
   type InspectorReviewGroup,
 } from "@aoagents/product-ui";
@@ -24,8 +25,6 @@ import {
   GitPullRequest,
   CircleAlert,
   Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
@@ -38,6 +37,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { browserCloudClient } from "@/lib/cloud-client";
 import { CloudExternalLink } from "./CloudBoard";
 import { CloudTerminal } from "./CloudTerminal";
+import { harnessLogoSource } from "./harness-logo";
 import { OrchestratorIcon } from "./OrchestratorIcon";
 import { pullRequestSummaryParts, toInspectorReviewGroups } from "./pr-display";
 
@@ -67,8 +67,6 @@ export function CloudSessionWorkspace({
   onDelete = () => {},
   onNewTask = () => {},
   onShare = () => {},
-  onToggleSidebar,
-  sidebarOpen = true,
   organizationId,
   session,
 }: {
@@ -76,8 +74,6 @@ export function CloudSessionWorkspace({
   onDelete?: () => void;
   onNewTask?: () => void;
   onShare?: () => void;
-  onToggleSidebar?: () => void;
-  sidebarOpen?: boolean;
   organizationId: string;
   session: Session;
 }) {
@@ -91,10 +87,20 @@ export function CloudSessionWorkspace({
   const [fileContent, setFileContent] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [toastError, setToastError] = useState("");
   const [pullRequests, setPullRequests] = useState<PullRequestSummary[]>([]);
   const [reviewGroups, setReviewGroups] = useState<InspectorReviewGroup[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const diffInFlight = useRef(false);
+  const shownErrors = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!error || error === "Too many workspace operations are already in progress." || shownErrors.current.has(error)) return;
+    shownErrors.current.add(error);
+    setToastError(error);
+    const timer = window.setTimeout(() => setToastError(""), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   const loadReviews = async () => {
     try {
@@ -231,7 +237,12 @@ export function CloudSessionWorkspace({
               {session.kind === "orchestrator" ? (
                 <OrchestratorIcon className="size-4 shrink-0" aria-hidden="true" />
               ) : (
-                <AgentAvatar className="size-4 shrink-0" decorative provider={session.harness} />
+                <AgentAvatar
+                  className="size-4 shrink-0"
+                  decorative
+                  logoSrc={harnessLogoSource(session.harness)}
+                  provider={session.harness}
+                />
               )}
               <span className="min-w-0 truncate text-xs font-medium leading-none">
                 {session.kind === "orchestrator" ? "Orchestrator" : session.displayName}
@@ -246,20 +257,6 @@ export function CloudSessionWorkspace({
           )}
           actions={(
             <div className="flex shrink-0 items-center gap-1.5">
-              {onToggleSidebar ? (
-            <button
-              type="button"
-              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-              className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-              onClick={onToggleSidebar}
-            >
-              {sidebarOpen ? (
-                <PanelLeftClose className="size-4" aria-hidden="true" />
-              ) : (
-                <PanelLeftOpen className="size-4" aria-hidden="true" />
-              )}
-            </button>
-              ) : null}
             <button
               type="button"
               aria-label="Share"
@@ -313,11 +310,11 @@ export function CloudSessionWorkspace({
           activeView={tab}
           ariaLabel="Session inspector"
           browserPoppedOut={false}
+          compactTabs
           onViewChange={setTab}
           tabs={inspectorTabs}
           summaryView={(
             <div className="space-y-5">
-              {error ? <p className="text-xs text-[var(--color-error)]">{error}</p> : null}
               <InspectorSectionHeader label="Changes" onRefresh={() => void loadDiff()} />
               <ChangesView diff={diff} onOpenFile={(path) => void openFile(path)} />
               <InspectorSectionHeader label="Pull requests" onRefresh={() => void loadReviews()} />
@@ -352,6 +349,9 @@ export function CloudSessionWorkspace({
           /> : <ProvisioningState session={session} terminal="workspace" />}
         />
       </aside>
+      {toastError ? (
+        <TransientToastView>{toastError}</TransientToastView>
+      ) : null}
     </div>
   );
 }

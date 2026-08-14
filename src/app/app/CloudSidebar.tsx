@@ -315,8 +315,13 @@ export function CloudSidebar({
                   }}
                 >
                   <span className="relative grid size-4 shrink-0 place-items-center">
+                    {open ? (
+                      <FolderOpen className="size-4 transition-opacity group-hover:opacity-0" aria-hidden="true" />
+                    ) : (
+                      <Folder className="size-4 transition-opacity group-hover:opacity-0" aria-hidden="true" />
+                    )}
                     <ChevronRight
-                      className={`size-4 transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+                      className={`absolute size-4 opacity-0 transition-[opacity,transform] duration-150 group-hover:opacity-100 ${open ? "rotate-90" : ""}`}
                       aria-hidden="true"
                     />
                   </span>

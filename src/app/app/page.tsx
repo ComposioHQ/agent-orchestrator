@@ -106,7 +106,6 @@ export function CloudWorkspace() {
   const [settingsTarget, setSettingsTarget] = useState<
     "general" | "workspaces" | "providers"
   >("general");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [addAgentProject, setAddAgentProject] = useState<Project | null>(null);
@@ -1318,7 +1317,7 @@ export function CloudWorkspace() {
       data-testid="cloud-workspace"
       className="fixed inset-0 h-dvh overflow-hidden bg-[var(--color-bg-primary)] font-sans tracking-normal text-[var(--color-text-primary)] [color-scheme:dark] [&_*]:[scrollbar-color:rgb(255_255_255_/_12%)_transparent] [&_*]:[scrollbar-width:thin]"
     >
-      <div className={`grid h-full grid-cols-1 ${sidebarCollapsed ? "lg:grid-cols-[0px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]"} transition-[grid-template-columns] duration-200 ease-out`}>
+      <div className="grid h-full grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)]">
         {previewUi && mobileNavOpen ? <button type="button" aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMobileNavOpen(false)} /> : null}
         <CloudSidebar
           account={account}
@@ -1371,7 +1370,7 @@ export function CloudWorkspace() {
           onCloseMobile={() => setMobileNavOpen(false)}
           parity={previewUi}
         />
-        <CloudMainShell parity={previewUi} sidebarCollapsed={sidebarCollapsed}>
+        <CloudMainShell parity={previewUi}>
           {activeSession ? (
             <CloudSessionWorkspace
               onClose={() => { setSelectedSessionId(null); setSharedSession(null); }}
@@ -1381,8 +1380,6 @@ export function CloudWorkspace() {
                 const project = projects.find((p) => p.id === activeSession.projectId);
                 if (project) void openShareDialog(project);
               }}
-              onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-              sidebarOpen={!sidebarCollapsed}
               organizationId={activeSessionOrgId}
               session={activeSession}
             />
@@ -1391,8 +1388,6 @@ export function CloudWorkspace() {
               <CloudTopbar
                 title={selectedProject?.displayName ?? "All projects"}
                 onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined}
-                onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-                sidebarOpen={!sidebarCollapsed}
                 showBoardActions={!!selectedProjectId}
                 onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
                 onOrchestrator={

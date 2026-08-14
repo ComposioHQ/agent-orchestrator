@@ -21,22 +21,11 @@ import {
 } from "@/components/ui/context-menu";
 import { browserCloudClient } from "@/lib/cloud-client";
 import { toBoardPullRequest } from "./pr-display";
+import { harnessLogoSource } from "./harness-logo";
 
 const columns = boardAttentionZoneOrder.map((zone) =>
   getAttentionZoneViewForZone(zone),
 );
-
-const harnessLogoNames: Readonly<Record<string, string>> = {
-  claude: "claude-code",
-  "claude-code": "claude-code",
-  codex: "codex",
-  cursor: "cursor",
-};
-
-function harnessLogoSource(provider: string) {
-  const logoName = harnessLogoNames[provider];
-  return logoName ? `/agents/${logoName}.svg` : undefined;
-}
 
 const boardLabels = {
   columnAria: (label: string) => `${label} sessions`,

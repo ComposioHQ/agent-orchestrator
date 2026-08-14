@@ -13,7 +13,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("keeps both terminal streams connected for every live session", async () => {
+it("keeps harness streams warm without eagerly consuming workspace terminal slots", async () => {
   class FakeWebSocket {
     static readonly CONNECTING = 0;
     static readonly OPEN = 1;
@@ -45,15 +45,19 @@ it("keeps both terminal streams connected for every live session", async () => {
   ]);
 
   await vi.waitFor(() =>
-    expect(client.createTerminalTicket).toHaveBeenCalledTimes(4),
+    expect(client.createTerminalTicket).toHaveBeenCalledTimes(2),
   );
   expect(client.createTerminalTicket.mock.calls).toEqual(
     expect.arrayContaining([
       ["org-one", "session-one", "agent", expect.any(Object)],
-      ["org-one", "session-one", "workspace", expect.any(Object)],
       ["org-one", "session-two", "agent", expect.any(Object)],
-      ["org-one", "session-two", "workspace", expect.any(Object)],
     ]),
+  );
+  expect(client.createTerminalTicket).not.toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    "workspace",
+    expect.anything(),
   );
 });
 

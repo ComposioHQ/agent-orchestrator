@@ -398,16 +398,18 @@ export function retainCloudSessionConnections(
 ) {
   const retainedKeys = new Set<string>();
   for (const sessionId of sessionIds) {
-    for (const kind of ["agent", "workspace"] as const) {
-      const key = connectionKey(organizationId, sessionId, kind);
-      retainedKeys.add(key);
-      ensureCloudTerminalConnection(
-        client,
-        organizationId,
-        sessionId,
-        kind,
-      ).setRetained(true);
-    }
+    // Keep harness output warm in the background. A workspace terminal is an
+    // interactive shell with its own server-side terminal slot, so creating it
+    // eagerly would consume the second slot before the inspector mounts and
+    // make the visible shell's reconnect fail.
+    const key = connectionKey(organizationId, sessionId, "agent");
+    retainedKeys.add(key);
+    ensureCloudTerminalConnection(
+      client,
+      organizationId,
+      sessionId,
+      "agent",
+    ).setRetained(true);
   }
 
   for (const [key, connection] of connections) {
