@@ -73,6 +73,77 @@ func (s *Store) AgentCredentialAvailable(
 	return available, err
 }
 
+func (s *Store) OrchestratorAgentCredentialAvailable(
+	ctx context.Context,
+	orgID, orchestratorSessionID, provider string,
+) (bool, error) {
+	var available bool
+	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
+		var createdByUserID *string
+		if err := tx.QueryRow(
+			ctx,
+			`SELECT created_by_user_id::text
+			FROM ao_sessions
+			WHERE org_id = $1 AND id = $2
+			  AND kind = 'orchestrator' AND is_terminated = false`,
+			orgID, orchestratorSessionID,
+		).Scan(&createdByUserID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if createdByUserID != nil {
+			if _, err := tx.Exec(
+				ctx, `SELECT set_config('ao.user_id', $1, true)`, *createdByUserID,
+			); err != nil {
+				return err
+			}
+		}
+		return tx.QueryRow(
+			ctx,
+			`SELECT EXISTS (
+				SELECT 1 FROM ao_provider_connections
+				WHERE org_id = $1 AND provider = $2 AND label = 'default'
+				  AND validation_state = 'valid'
+			) OR ($3::uuid IS NOT NULL AND EXISTS (
+				SELECT 1 FROM ao_user_provider_connections
+				WHERE user_id = $3::uuid AND provider = $2 AND label = 'default'
+				  AND validation_state = 'valid'
+			))`,
+			orgID, provider, createdByUserID,
+		).Scan(&available)
+	})
+	return available, err
+}
+
+// ProviderConnectionSecretForPromotion returns one valid legacy org-scoped
+// credential to an org administrator so the API can rewrap it for that
+// administrator's personal provider store. The plaintext never leaves the API.
+func (s *Store) ProviderConnectionSecretForPromotion(
+	ctx context.Context,
+	principal domain.Principal,
+	orgID, provider, label string,
+) (encrypted, nonce []byte, config json.RawMessage, err error) {
+	err = s.withTenant(ctx, principal, orgID, func(tx pgx.Tx) error {
+		if err := requireOrgAdmin(ctx, tx, orgID, principal.UserID); err != nil {
+			return err
+		}
+		return tx.QueryRow(
+			ctx,
+			`SELECT encrypted_secret, secret_nonce, config
+			FROM ao_provider_connections
+			WHERE org_id = $1 AND provider = $2 AND label = $3
+			  AND validation_state = 'valid'`,
+			orgID, provider, label,
+		).Scan(&encrypted, &nonce, &config)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return encrypted, nonce, config, err
+}
+
 func (s *Store) UpsertProviderConnection(
 	ctx context.Context,
 	principal domain.Principal,

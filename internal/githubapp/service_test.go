@@ -45,6 +45,17 @@ func TestCompletionHTMLUsesFailureStateWithoutAutoClose(t *testing.T) {
 	}
 }
 
+func TestInstallationCompletionHTMLClosesImmediately(t *testing.T) {
+	t.Parallel()
+	html := string((&Service{}).InstallationCompletionHTML(true))
+	if !strings.Contains(html, "window.close();") {
+		t.Fatal("installation completion page does not close its popup")
+	}
+	if strings.Contains(html, "window.setTimeout") {
+		t.Fatal("installation completion page waits before closing")
+	}
+}
+
 type checkoutContextStore struct {
 	Store
 	authorization domain.GitHubCheckoutContext

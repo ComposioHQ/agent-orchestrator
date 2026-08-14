@@ -41,6 +41,10 @@ type ShareClient = {
     input: PutAgentProviderConnectionInput,
   ) => Promise<{ providerConnection: RedactedProviderConnection }>;
   deleteUserProviderConnection: (provider: "claude-code" | "codex" | "cursor") => Promise<void>;
+  promoteProviderConnection: (
+    orgId: string,
+    provider: "claude-code" | "codex" | "cursor",
+  ) => Promise<{ providerConnection: RedactedProviderConnection }>;
   listOrgMembers: (orgId: string) => Promise<OrganizationMember[]>;
   listOrgInvitations: (orgId: string) => Promise<OrganizationInvitation[]>;
   listMyInvitations: () => Promise<OrganizationInvitation[]>;
@@ -146,6 +150,13 @@ export function browserCloudClient() {
     ),
     deleteUserProviderConnection: (provider: "claude-code" | "codex" | "cursor") =>
       request<void>(`/api/cloud/v1/me/providers/${encodeURIComponent(provider)}`, { method: "DELETE" }),
+    promoteProviderConnection: (
+      orgId: string,
+      provider: "claude-code" | "codex" | "cursor",
+    ) => request<{ providerConnection: RedactedProviderConnection }>(
+      orgPath(orgId, `/provider-connections/agents/${encodeURIComponent(provider)}/promote`),
+      { method: "POST" },
+    ),
     listOrgMembers: async (orgId: string) => {
       const response = await request<{ members: OrganizationMember[] }>(orgPath(orgId, "/members"));
       return response.members;

@@ -68,8 +68,6 @@ export function CloudSettings({
   onDeclineInvitation,
   onConnectGitHub,
   onConnectGitHubOrganization,
-  onConnectAgent,
-  onDisconnectAgent,
   onDisconnectGitHub,
   onDisconnectGitHubUser,
   onConnectUserAgent,
@@ -80,8 +78,6 @@ export function CloudSettings({
   onSelectOrganization,
   onSyncGitHub,
   onSyncGitHubUser,
-  providerBusy,
-  providers,
   selectedOrganizationId,
   userProviderBusy,
   userProviders,
@@ -100,13 +96,6 @@ export function CloudSettings({
   onDeclineInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onConnectGitHub: () => Promise<void>;
   onConnectGitHubOrganization: () => Promise<void>;
-  onConnectAgent: (
-    provider: AgentProvider,
-    input: PutAgentProviderConnectionInput,
-  ) => Promise<void>;
-  onDisconnectAgent: (
-    connection: RedactedProviderConnection,
-  ) => Promise<void>;
   onDisconnectGitHub: (installation: GitHubInstallation) => Promise<void>;
   onDisconnectGitHubUser: () => Promise<void>;
   onConnectUserAgent: (
@@ -120,8 +109,6 @@ export function CloudSettings({
   onSelectOrganization: (organizationId: string) => void;
   onSyncGitHub: (installation: GitHubInstallation) => Promise<void>;
   onSyncGitHubUser: () => Promise<void>;
-  providerBusy: boolean;
-  providers: ProviderCapability;
   selectedOrganizationId: string;
   userProviderBusy: boolean;
   userProviders: ProviderCapability;
@@ -135,8 +122,8 @@ export function CloudSettings({
   const displayPanel = open ? panel : lastPanelRef.current;
 
   useEffect(() => {
-    if (open) setPanel("general");
-  }, [open]);
+    if (open) setPanel(initialPanel);
+  }, [initialPanel, open]);
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onBack()}>
@@ -223,13 +210,6 @@ export function CloudSettings({
                         <span className="settings-row-value">{account.user.email}</span>
                       </SettingsRow>
                     </SettingsSection>
-                    <CodingAgentSettings
-                      busy={userProviderBusy}
-                      onConnect={onConnectUserAgent}
-                      onDisconnect={onDisconnectUserAgent}
-                      providers={userProviders}
-                      title="Personal coding agents"
-                    />
                   </>
                 ) : null}
 
@@ -278,10 +258,10 @@ export function CloudSettings({
                       onSyncUser={onSyncGitHubUser}
                     />
                     <CodingAgentSettings
-                      busy={providerBusy}
-                      onConnect={onConnectAgent}
-                      onDisconnect={onDisconnectAgent}
-                      providers={providers}
+                      busy={userProviderBusy}
+                      onConnect={onConnectUserAgent}
+                      onDisconnect={onDisconnectUserAgent}
+                      providers={userProviders}
                     />
                   </div>
                 ) : null}

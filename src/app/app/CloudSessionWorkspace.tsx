@@ -19,6 +19,8 @@ import {
   Files,
   GitCompareArrows,
   GitPullRequest,
+  CircleAlert,
+  Loader2,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -272,9 +274,7 @@ export function CloudSessionWorkspace({
             sessionId={session.id}
           />
         ) : (
-          <div className="grid min-h-0 flex-1 place-items-center text-xs text-[var(--color-text-passive)]">
-            Waiting for the isolated worker and agent terminal…
-          </div>
+          <ProvisioningState session={session} terminal="agent" />
         )}
       </section>
 
@@ -362,7 +362,11 @@ export function CloudSessionWorkspace({
             pullRequests={pullRequests}
             reviewGroups={reviewGroups}
           />
-        ) : session.mode === "trusted" && session.runtimeConnected ? (
+        ) : session.mode !== "trusted" ? (
+          <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
+            Workspace shell access requires a trusted session.
+          </div>
+        ) : session.runtimeConnected ? (
           <CloudTerminal
             kind="workspace"
             layoutKey={`${inspectorOpen ? "inspector-open" : "inspector-closed"}:${tab}`}
@@ -370,13 +374,63 @@ export function CloudSessionWorkspace({
             sessionId={session.id}
           />
         ) : (
-          <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
-            Workspace shell access requires a connected trusted session.
-          </div>
+          <ProvisioningState session={session} terminal="workspace" />
         )}
       </aside>
     </div>
   );
+}
+
+function ProvisioningState({
+  session,
+  terminal,
+}: {
+  session: Session;
+  terminal: "agent" | "workspace";
+}) {
+  const failed = session.runtimeState === "failed" || Boolean(session.runtimeError);
+  const label = failed
+    ? session.runtimeError || "The isolated worker could not start."
+    : provisioningLabel(session.runtimeState, terminal);
+
+  return (
+    <div className="grid min-h-0 flex-1 place-items-center p-6 text-center">
+      <div className="flex max-w-sm flex-col items-center gap-3">
+        {failed ? (
+          <CircleAlert className="size-5 text-[var(--color-error)]" aria-hidden="true" />
+        ) : (
+          <Loader2 className="size-5 animate-spin text-[var(--color-accent)]" aria-hidden="true" />
+        )}
+        <p
+          className={`text-xs leading-5 ${
+            failed ? "text-[var(--color-error)]" : "text-[var(--color-text-passive)]"
+          }`}
+        >
+          {label}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function provisioningLabel(
+  runtimeState: string | undefined,
+  terminal: "agent" | "workspace",
+): string {
+  switch (runtimeState) {
+    case "provisioning":
+      return "Provisioning the NodeOps VM…";
+    case "bootstrapping":
+      return "Starting the AO worker and coding-agent harness…";
+    case "ready":
+      return terminal === "workspace"
+        ? "Connecting the workspace shell…"
+        : "Connecting the coding-agent terminal…";
+    case "disconnected":
+      return "Reconnecting to the isolated worker…";
+    default:
+      return "Preparing the isolated worker…";
+  }
 }
 
 function InspectorButton({

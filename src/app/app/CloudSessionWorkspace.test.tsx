@@ -155,14 +155,34 @@ it("waits for the worker before mounting the terminal", () => {
     <CloudSessionWorkspace
       onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
       organizationId="org-1"
-      session={{ ...session, runtimeConnected: false }}
+      session={{ ...session, runtimeConnected: false, runtimeState: "provisioning" }}
     />,
   );
 
   expect(
-    screen.getByText("Waiting for the isolated worker and agent terminal…"),
+    screen.getByText("Provisioning the NodeOps VM…"),
   ).toBeVisible();
   expect(screen.queryByText("Interactive agent terminal")).not.toBeInTheDocument();
+});
+
+it("shows the worker failure instead of looping on a waiting message", () => {
+  render(
+    <CloudSessionWorkspace
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
+      organizationId="org-1"
+      session={{
+        ...session,
+        mode: "trusted",
+        runtimeConnected: false,
+        runtimeState: "failed",
+        runtimeError: "NodeOps could not start the requested rootfs.",
+      }}
+    />,
+  );
+
+  expect(screen.getAllByText("NodeOps could not start the requested rootfs.")).toHaveLength(2);
+  expect(screen.queryByText("Interactive agent terminal")).not.toBeInTheDocument();
+  expect(screen.queryByText("Interactive workspace terminal")).not.toBeInTheDocument();
 });
 
 it("shows a pull request's status and AO's review verdict in the pull requests tab", async () => {

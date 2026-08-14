@@ -184,7 +184,7 @@ func (s *Server) githubOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(s.github.CompletionHTML(true))
+	_, _ = w.Write(s.github.InstallationCompletionHTML(true))
 }
 
 func (s *Server) startGitHubUserAuthorization(

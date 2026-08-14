@@ -139,6 +139,7 @@ type WorkerCredential struct {
 	CredentialType  string
 	EncryptedSecret []byte
 	Nonce           []byte
+	OwnerUserID     string
 }
 
 // WorkerRequest is a short-lived durable command for the current worker epoch.

@@ -418,6 +418,9 @@ func (s *Store) WorkerAgentCredential(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
+		if err == nil {
+			credential.OwnerUserID = *createdByUserID
+		}
 		return err
 	})
 	return credential, err

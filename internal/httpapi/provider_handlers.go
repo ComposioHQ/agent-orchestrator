@@ -41,6 +41,7 @@ type providerConnectionStore interface {
 
 type workerCredentialAvailabilityStore interface {
 	AgentCredentialAvailable(context.Context, string, string) (bool, error)
+	OrchestratorAgentCredentialAvailable(context.Context, string, string, string) (bool, error)
 }
 
 type userProviderCredentialStore interface {
@@ -257,6 +258,27 @@ type userProviderConnectionStore interface {
 	DeleteUserProviderConnection(context.Context, domain.Principal, string, string) error
 }
 
+type providerConnectionPromotionStore interface {
+	ProviderConnectionSecretForPromotion(
+		context.Context,
+		domain.Principal,
+		string,
+		string,
+		string,
+	) ([]byte, []byte, json.RawMessage, error)
+	UserAgentCredentialAvailable(context.Context, string, string) (bool, error)
+	ListUserProviderConnections(context.Context, domain.Principal) ([]domain.UserProviderConnection, error)
+	UpsertUserProviderConnection(
+		context.Context,
+		domain.Principal,
+		string,
+		string,
+		[]byte,
+		[]byte,
+		json.RawMessage,
+	) (domain.UserProviderConnection, error)
+}
+
 func toUserProviderConnectionResponse(
 	connection domain.UserProviderConnection,
 ) providerConnectionResponse {
@@ -400,6 +422,78 @@ func (s *Server) deleteUserAgentConnection(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) promoteAgentConnection(w http.ResponseWriter, r *http.Request) {
+	orgID := chi.URLParam(r, "orgId")
+	agent := strings.TrimSpace(chi.URLParam(r, "agent"))
+	if requireUUID(orgID, "orgId") != nil || !validAgentProvider(agent) {
+		writeError(w, r, http.StatusBadRequest, "invalid_request", "The organization or coding agent is invalid.")
+		return
+	}
+	if s.secretCipher == nil {
+		writeError(w, r, http.StatusServiceUnavailable, "provider_connections_unavailable", "Provider credential storage is not configured.")
+		return
+	}
+	store, ok := s.store.(providerConnectionPromotionStore)
+	if !ok {
+		writeError(w, r, http.StatusNotImplemented, "not_implemented", "Provider connections are unavailable.")
+		return
+	}
+	principal := principalFrom(r)
+	available, err := store.UserAgentCredentialAvailable(r.Context(), principal.UserID, agent)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	if available {
+		connections, listErr := store.ListUserProviderConnections(r.Context(), principal)
+		if listErr != nil {
+			s.writeStoreError(w, r, listErr)
+			return
+		}
+		for _, connection := range connections {
+			if connection.Provider == agent && connection.Label == defaultAgentConnectionLabel {
+				writeJSON(w, http.StatusOK, map[string]any{"providerConnection": toUserProviderConnectionResponse(connection)})
+				return
+			}
+		}
+		writeError(w, r, http.StatusConflict, "provider_connection_conflict", "The personal provider connection could not be resolved.")
+		return
+	}
+	encrypted, nonce, config, err := store.ProviderConnectionSecretForPromotion(
+		r.Context(), principal, orgID, agent, defaultAgentConnectionLabel,
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	secret, err := s.secretCipher.Decrypt(
+		encrypted, nonce, providerSecretAssociatedData(orgID, agent),
+	)
+	if err != nil {
+		s.logger.Error("decrypt provider credential for promotion", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "The credential could not be promoted.")
+		return
+	}
+	defer clear(secret)
+	rewrapped, rewrappedNonce, err := s.secretCipher.Encrypt(
+		secret, providerSecretAssociatedData("user:"+principal.UserID, agent),
+	)
+	if err != nil {
+		s.logger.Error("encrypt promoted provider credential", "error", err, "request_id", requestID(r))
+		writeError(w, r, http.StatusInternalServerError, "internal_error", "The credential could not be promoted.")
+		return
+	}
+	connection, err := store.UpsertUserProviderConnection(
+		r.Context(), principal, agent, defaultAgentConnectionLabel,
+		rewrapped, rewrappedNonce, config,
+	)
+	if err != nil {
+		s.writeStoreError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"providerConnection": toUserProviderConnectionResponse(connection)})
 }
 
 func validAgentProvider(agent string) bool {

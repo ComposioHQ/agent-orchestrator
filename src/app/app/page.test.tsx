@@ -26,12 +26,14 @@ const mocks = vi.hoisted(() => ({
   createGitHubScratchProject: vi.fn(),
   startGitHubUserAuthorization: vi.fn(),
   startGitHubInstallation: vi.fn(),
+  syncGitHubInstallation: vi.fn(),
   disconnectGitHubUser: vi.fn(),
   putAgentProviderConnection: vi.fn(),
   deleteAgentProviderConnection: vi.fn(),
   listUserProviderConnections: vi.fn(),
   putUserProviderConnection: vi.fn(),
   deleteUserProviderConnection: vi.fn(),
+  promoteProviderConnection: vi.fn(),
   listOrgMembers: vi.fn(),
   listOrgInvitations: vi.fn(),
   listMyInvitations: vi.fn(),
@@ -71,12 +73,14 @@ vi.mock("@/lib/cloud-client", () => ({
     createGitHubScratchProject: mocks.createGitHubScratchProject,
     startGitHubUserAuthorization: mocks.startGitHubUserAuthorization,
     startGitHubInstallation: mocks.startGitHubInstallation,
+    syncGitHubInstallation: mocks.syncGitHubInstallation,
     disconnectGitHubUser: mocks.disconnectGitHubUser,
     putAgentProviderConnection: mocks.putAgentProviderConnection,
     deleteAgentProviderConnection: mocks.deleteAgentProviderConnection,
     listUserProviderConnections: mocks.listUserProviderConnections,
     putUserProviderConnection: mocks.putUserProviderConnection,
     deleteUserProviderConnection: mocks.deleteUserProviderConnection,
+    promoteProviderConnection: mocks.promoteProviderConnection,
     listOrgMembers: mocks.listOrgMembers,
     listOrgInvitations: mocks.listOrgInvitations,
     listMyInvitations: mocks.listMyInvitations,
@@ -185,6 +189,10 @@ beforeEach(() => {
     items: [],
     page: { hasMore: false },
   });
+  mocks.startGitHubInstallation.mockResolvedValue({
+    installationUrl: "https://github.com/apps/ao/installations/new",
+  });
+  mocks.syncGitHubInstallation.mockResolvedValue(undefined);
   mocks.getGitHubUserConnection.mockResolvedValue({
     connected: false,
     installations: [],
@@ -194,6 +202,7 @@ beforeEach(() => {
   });
   mocks.listProviderConnections.mockResolvedValue([]);
   mocks.listUserProviderConnections.mockResolvedValue([]);
+  mocks.promoteProviderConnection.mockResolvedValue({ providerConnection: null });
   mocks.listOrgMembers.mockResolvedValue([]);
   mocks.listOrgInvitations.mockResolvedValue([]);
   mocks.listMyInvitations.mockResolvedValue([]);
@@ -305,7 +314,19 @@ beforeEach(() => {
       updatedAt: "2026-08-12T00:00:00Z",
     },
   });
+  mocks.putUserProviderConnection.mockResolvedValue({
+    providerConnection: {
+      id: "user-connection-1",
+      provider: "claude-code",
+      label: "default",
+      config: { credentialType: "api_key" },
+      validationState: "valid",
+      createdAt: "2026-08-12T00:00:00Z",
+      updatedAt: "2026-08-12T00:00:00Z",
+    },
+  });
   mocks.deleteAgentProviderConnection.mockResolvedValue(undefined);
+  mocks.deleteUserProviderConnection.mockResolvedValue(undefined);
 });
 
 it("loads real account, project, and session data into shared board views", async () => {
@@ -702,6 +723,54 @@ it("lets a connected GitHub user add another organization from settings", async 
   expect(screen.getByRole("button", { name: "Disconnect" })).toBeVisible();
 });
 
+it("recognizes a reconfigured GitHub installation and closes the popup", async () => {
+  const oldInstallation = {
+    id: "inst-1",
+    githubInstallationId: "123",
+    accountLogin: "acme",
+    accountType: "Organization",
+    status: "active",
+    repositorySelection: "selected",
+    syncStatus: "ready",
+    createdAt: "2026-08-12T00:00:00Z",
+    updatedAt: "2026-08-12T00:00:00Z",
+  };
+  const updatedInstallation = {
+    ...oldInstallation,
+    repositorySelection: "all",
+    updatedAt: "2026-08-12T00:01:00Z",
+  };
+  mocks.getGitHubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "amoreX",
+    installations: [],
+  });
+  mocks.listGitHubInstallations
+    .mockResolvedValueOnce([oldInstallation])
+    .mockResolvedValue([updatedInstallation]);
+  const popup = {
+    closed: false,
+    close: vi.fn(),
+    location: { assign: vi.fn() },
+  };
+  vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Command palette" })).getByRole(
+      "option",
+      { name: "Settings" },
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Providers" }));
+  fireEvent.click(screen.getByRole("button", { name: "Manage organization repository access" }));
+
+  await waitFor(() => expect(mocks.syncGitHubInstallation).toHaveBeenCalledWith("org-1", "inst-1"));
+  expect(popup.close).toHaveBeenCalled();
+});
+
 it("connects coding-agent credentials from provider settings", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
@@ -723,8 +792,7 @@ it("connects coding-agent credentials from provider settings", async () => {
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
-    expect(mocks.putAgentProviderConnection).toHaveBeenCalledWith(
-      "org-1",
+    expect(mocks.putUserProviderConnection).toHaveBeenCalledWith(
       "claude-code",
       { credentialType: "api_key", secret: "sk-ant-test" },
     ),

@@ -200,6 +200,19 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create orchestrator: %v", err)
 	}
+	providerConfig, _ := json.Marshal(map[string]string{"credentialType": "api_key"})
+	if _, err := store.UpsertUserProviderConnection(
+		ctx, first, "claude-code", "default",
+		[]byte("personal-encrypted"), []byte("personal-nonce"), providerConfig,
+	); err != nil {
+		t.Fatalf("upsert orchestrator creator credential: %v", err)
+	}
+	available, err := store.OrchestratorAgentCredentialAvailable(
+		ctx, firstOrg, orchestrator.ID, "claude-code",
+	)
+	if err != nil || !available {
+		t.Fatalf("orchestrator personal credential available = %v, err=%v", available, err)
+	}
 	childInput := sessionInput
 	childInput.ProjectID = ""
 	childInput.DisplayName = "Delegated worker"
@@ -209,6 +222,15 @@ func TestFoundingSchemaAndTenantIsolation(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("create orchestrator child: %v", err)
+	}
+	var childCreator string
+	if err := store.pool.QueryRow(
+		ctx, `SELECT created_by_user_id::text FROM ao_sessions WHERE id = $1`, child.ID,
+	).Scan(&childCreator); err != nil {
+		t.Fatalf("load orchestrator child creator: %v", err)
+	}
+	if childCreator != first.UserID {
+		t.Fatalf("orchestrator child creator = %q, want %q", childCreator, first.UserID)
 	}
 	children, childHasMore, err := store.ListOrchestratorChildren(
 		ctx, firstOrg, orchestrator.ID, nil, 50,

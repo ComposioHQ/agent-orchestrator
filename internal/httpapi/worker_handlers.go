@@ -649,10 +649,14 @@ func (s *Server) workerCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnprocessableEntity, "INVALID_CREDENTIAL", "The selected coding-agent credential is invalid.")
 		return
 	}
+	secretOwner := claims.OrgID
+	if credential.OwnerUserID != "" {
+		secretOwner = "user:" + credential.OwnerUserID
+	}
 	plaintext, err := s.secretCipher.Decrypt(
 		credential.EncryptedSecret,
 		credential.Nonce,
-		providerSecretAssociatedData(claims.OrgID, credential.Provider),
+		providerSecretAssociatedData(secretOwner, credential.Provider),
 	)
 	if err != nil {
 		s.logger.Error("decrypt worker credential", "error", err, "request_id", requestID(r))

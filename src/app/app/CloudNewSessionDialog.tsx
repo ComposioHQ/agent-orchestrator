@@ -12,26 +12,6 @@ const AGENTS: Array<{ value: Harness; label: string }> = [
   { value: "cursor", label: "Cursor" },
 ];
 
-const MODELS: Record<Harness, Array<{ value: string; label: string; isDefault?: boolean }>> = {
-  "claude-code": [
-    { value: "sonnet", label: "Claude Sonnet 5", isDefault: true },
-    { value: "opus", label: "Claude Opus 5" },
-    { value: "fable", label: "Claude Fable 5" },
-    { value: "haiku", label: "Claude Haiku 4.5" },
-  ],
-  codex: [
-    { value: "o4-mini", label: "o4-mini", isDefault: true },
-    { value: "o3", label: "o3" },
-    { value: "codex-mini", label: "codex-mini" },
-  ],
-  cursor: [
-    { value: "auto", label: "Auto", isDefault: true },
-    { value: "claude-sonnet-5", label: "Claude Sonnet 5" },
-    { value: "claude-opus-5", label: "Claude Opus 5" },
-    { value: "gpt-4.1", label: "GPT-4.1" },
-  ],
-};
-
 export function CloudNewSessionDialog({
   open,
   projectName,
@@ -43,11 +23,10 @@ export function CloudNewSessionDialog({
   projectName: string;
   connectedProviders: string[];
   onClose: () => void;
-  onCreate: (input: { displayName: string; harness: Harness; prompt: string; model?: string }) => Promise<void>;
+  onCreate: (input: { displayName: string; harness: Harness; prompt: string }) => Promise<void>;
 }) {
   const [prompt, setPrompt] = useState("");
   const [harness, setHarness] = useState<Harness>("claude-code");
-  const [model, setModel] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -55,7 +34,6 @@ export function CloudNewSessionDialog({
   const reset = () => {
     setPrompt("");
     setHarness("claude-code");
-    setModel("");
     setIsSubmitting(false);
     setError(undefined);
   };
@@ -67,7 +45,7 @@ export function CloudNewSessionDialog({
     setError(undefined);
     try {
       const name = prompt.trim().slice(0, 60) || "New session";
-      await onCreate({ displayName: name, harness, prompt: prompt.trim(), model: model || undefined });
+      await onCreate({ displayName: name, harness, prompt: prompt.trim() });
       reset();
       onClose();
     } catch (cause) {
@@ -137,7 +115,7 @@ export function CloudNewSessionDialog({
                         <DropdownMenuPrimitive.Item
                           key={a.value}
                           disabled={disabled}
-                          onSelect={() => { setHarness(a.value); setModel(""); }}
+                          onSelect={() => setHarness(a.value)}
                           className={`flex h-8 w-full cursor-default items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none transition-colors ${
                             disabled
                               ? "opacity-40"
@@ -151,27 +129,6 @@ export function CloudNewSessionDialog({
                         </DropdownMenuPrimitive.Item>
                       );
                     })}
-                  </ComposerDropdown>
-                </div>
-                <span className="composer-toolbar-divider" aria-hidden="true" />
-                <div className="min-w-0">
-                  <ComposerDropdown
-                    label={MODELS[harness]?.find((m) => m.value === model)?.label ?? MODELS[harness]?.[0]?.label ?? "Model"}
-                    onOpenChange={setDropdownOpen}
-                  >
-                    {(MODELS[harness] ?? []).map((m) => (
-                      <DropdownMenuPrimitive.Item
-                        key={m.value}
-                        onSelect={() => setModel(m.value)}
-                        className={`flex h-8 w-full cursor-default items-center gap-2 rounded-lg px-2.5 text-[13px] outline-none transition-colors ${
-                          m.value === (model || (MODELS[harness]?.[0]?.value ?? ""))
-                            ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                            : "text-[var(--muted-foreground)] data-highlighted:bg-[var(--color-interactive-hover)] data-highlighted:text-[var(--foreground)]"
-                        }`}
-                      >
-                        {m.label}
-                      </DropdownMenuPrimitive.Item>
-                    ))}
                   </ComposerDropdown>
                 </div>
               </div>

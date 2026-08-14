@@ -114,8 +114,8 @@ func (s *Server) createWorkerChild(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	available, err := credentialStore.AgentCredentialAvailable(
-		r.Context(), claims.OrgID, request.Harness,
+	available, err := credentialStore.OrchestratorAgentCredentialAvailable(
+		r.Context(), claims.OrgID, claims.SessionID, request.Harness,
 	)
 	if err != nil {
 		s.writeStoreError(w, r, err)

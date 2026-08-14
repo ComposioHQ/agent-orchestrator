@@ -64,6 +64,8 @@ import {
   type ProviderCapability,
 } from "./cloud-ui-types";
 
+type AgentProvider = "claude-code" | "codex" | "cursor";
+
 export function CloudWorkspace() {
   const client = useMemo(browserCloudClient, []);
   const [account, setAccount] = useState<CurrentAccount | null>(null);
@@ -109,7 +111,6 @@ export function CloudWorkspace() {
   const [providers, setProviders] = useState<ProviderCapability>(
     initialProviderCapability,
   );
-  const [providerBusy, setProviderBusy] = useState(false);
   const [userProviders, setUserProviders] = useState<ProviderCapability>(
     initialProviderCapability,
   );
@@ -298,9 +299,22 @@ export function CloudWorkspace() {
         setProviders(initialProviderCapability);
         void client
           .listProviderConnections(orgId)
-          .then((connections) => {
+          .then(async (connections) => {
             if (providerRequest.current !== providerLoad) return;
             setProviders({ status: "available", connections });
+            const legacyProviders = connections
+              .filter(({ label, validationState }) => label === "default" && validationState === "valid")
+              .map(({ provider }) => provider)
+              .filter((provider): provider is AgentProvider =>
+                provider === "claude-code" || provider === "codex" || provider === "cursor",
+              );
+            if (legacyProviders.length > 0) {
+              await Promise.allSettled(
+                legacyProviders.map((provider) => client.promoteProviderConnection(orgId, provider)),
+              );
+              const personalConnections = await client.listUserProviderConnections();
+              setUserProviders({ status: "available", connections: personalConnections });
+            }
           })
           .catch((cause) => {
             if (providerRequest.current !== providerLoad) return;
@@ -491,7 +505,7 @@ export function CloudWorkspace() {
   useEffect(() => {
     const settings = new URLSearchParams(window.location.search).get("settings");
     if (settings === "providers") {
-      setSettingsTarget("general");
+      setSettingsTarget("providers");
       setSettingsOpen(true);
       window.history.replaceState(null, "", window.location.pathname);
     }
@@ -730,9 +744,12 @@ export function CloudWorkspace() {
   };
 
   const connectGitHubOrganization = async (existingPopup?: Window | null) => {
-    const before = new Set(
+    const before = new Map(
       github.status === "available"
-        ? github.installations.map(({ githubInstallationId }) => githubInstallationId)
+        ? github.installations.map(({ githubInstallationId, updatedAt }) => [
+            githubInstallationId,
+            updatedAt,
+          ])
         : [],
     );
     const attempt = await client.startGitHubInstallation(organizationId);
@@ -753,22 +770,27 @@ export function CloudWorkspace() {
     }
 
     const deadline = Date.now() + 2 * 60 * 1000;
-    let installationConnected = false;
+    let connectedInstallation: GitHubInstallation | undefined;
     while (Date.now() < deadline) {
       const installations = await client.listGitHubInstallations(organizationId);
-      if (
-        installations.some(
-          ({ githubInstallationId }) => !before.has(githubInstallationId),
-        )
-      ) {
-        installationConnected = true;
+      connectedInstallation = installations.find(
+        ({ githubInstallationId, status, updatedAt }) =>
+          status === "active" &&
+          (!before.has(githubInstallationId) ||
+            before.get(githubInstallationId) !== updatedAt),
+      );
+      if (connectedInstallation) {
         break;
       }
       await delay(500);
     }
-    if (!installationConnected) {
+    if (!connectedInstallation) {
       throw new Error("The AO GitHub App installation did not complete.");
     }
+    await client.syncGitHubInstallation(
+      organizationId,
+      connectedInstallation.id,
+    );
     popup.close();
     await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
   };
@@ -877,63 +899,6 @@ export function CloudWorkspace() {
       handleLoadError(cause, setError);
     } finally {
       setGitHubBusy(false);
-    }
-  };
-
-  const connectAgentProvider = async (
-    provider: "claude-code" | "codex" | "cursor",
-    input: PutAgentProviderConnectionInput,
-  ) => {
-    setProviderBusy(true);
-    setError("");
-    try {
-      const response = await client.putAgentProviderConnection(
-        organizationId,
-        provider,
-        input,
-      );
-      setProviders((current) => ({
-        status: "available",
-        connections: [
-          ...current.connections.filter(
-            (connection) => connection.provider !== provider,
-          ),
-          response.providerConnection,
-        ],
-      }));
-    } catch (cause) {
-      handleLoadError(cause, setError);
-      throw cause;
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-
-  const disconnectAgentProvider = async (
-    connection: RedactedProviderConnection,
-  ) => {
-    const provider = connection.provider;
-    if (
-      provider !== "claude-code" &&
-      provider !== "codex" &&
-      provider !== "cursor"
-    ) {
-      return;
-    }
-    setProviderBusy(true);
-    setError("");
-    try {
-      await client.deleteAgentProviderConnection(organizationId, provider);
-      setProviders((current) => ({
-        ...current,
-        connections: current.connections.filter(
-          (item) => item.id !== connection.id,
-        ),
-      }));
-    } catch (cause) {
-      handleLoadError(cause, setError);
-    } finally {
-      setProviderBusy(false);
     }
   };
 
@@ -1339,9 +1304,7 @@ export function CloudWorkspace() {
           open={settingsOpen}
           onConnectGitHub={connectGitHub}
           onConnectGitHubOrganization={startGitHubOrganizationInstall}
-          onConnectAgent={connectAgentProvider}
           onConnectUserAgent={connectUserAgentProvider}
-          onDisconnectAgent={disconnectAgentProvider}
           onDisconnectUserAgent={disconnectUserAgentProvider}
           onBack={() => setSettingsOpen(false)}
           onDisconnectGitHub={disconnectGitHubInstallation}
@@ -1360,8 +1323,6 @@ export function CloudWorkspace() {
           }}
           onSyncGitHub={syncGitHubInstallation}
           onSyncGitHubUser={syncGitHubUser}
-          providerBusy={providerBusy}
-          providers={providers}
           members={members}
           membersBusy={membersBusy}
           selectedOrganizationId={organizationId}
@@ -1395,7 +1356,7 @@ export function CloudWorkspace() {
         sessions={sessions}
       />
       <NewProjectDialog
-        connectedProviders={providers.status === "available" ? providers.connections.map((c) => c.provider) : []}
+        connectedProviders={connectedProviderNames(providers, userProviders)}
         github={github}
         githubUser={githubUser}
         onClose={() => setNewProjectOpen(false)}
@@ -1404,7 +1365,7 @@ export function CloudWorkspace() {
         onCreateStandalone={(input) => createScratchWork(input, "standalone-agent")}
         onOpenProviderSettings={() => {
           setNewProjectOpen(false);
-          setSettingsTarget("general");
+          setSettingsTarget("providers");
           setSettingsOpen(true);
         }}
         open={newProjectOpen}
@@ -1424,7 +1385,7 @@ export function CloudWorkspace() {
       <CloudNewSessionDialog
         open={newSessionProjectId !== null}
         projectName={projects.find((p) => p.id === newSessionProjectId)?.displayName ?? ""}
-        connectedProviders={providers.status === "available" ? providers.connections.map((c) => c.provider) : []}
+        connectedProviders={connectedProviderNames(providers, userProviders)}
         onClose={() => setNewSessionProjectId(null)}
         onCreate={(input) => {
           if (!newSessionProjectId) return Promise.resolve();
@@ -1574,6 +1535,24 @@ function activityDot(activity: Session["activityState"]): string {
   if (activity === "waiting_input" || activity === "blocked") return "bg-status-needs-you";
   if (activity === "exited") return "bg-status-exited";
   return "bg-status-idle";
+}
+
+function connectedProviderNames(
+  workspaceProviders: ProviderCapability,
+  userProviders: ProviderCapability,
+): string[] {
+  const connected = new Set<string>();
+  if (workspaceProviders.status === "available") {
+    for (const connection of workspaceProviders.connections) {
+      if (connection.validationState === "valid") connected.add(connection.provider);
+    }
+  }
+  if (userProviders.status === "available") {
+    for (const connection of userProviders.connections) {
+      if (connection.validationState === "valid") connected.add(connection.provider);
+    }
+  }
+  return Array.from(connected);
 }
 
 function handleLoadError(

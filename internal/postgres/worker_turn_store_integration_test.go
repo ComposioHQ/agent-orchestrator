@@ -240,7 +240,8 @@ func TestWorkerCredentialFallsBackToTheSessionCreatorsPersonalConnection(t *test
 	}
 	if credential.Provider != "claude-code" ||
 		credential.CredentialType != "oauth_token" ||
-		string(credential.EncryptedSecret) != "personal-encrypted" {
+		string(credential.EncryptedSecret) != "personal-encrypted" ||
+		credential.OwnerUserID != fixture.principal.UserID {
 		t.Fatalf("credential = %#v, want the personal fallback", credential)
 	}
 }
@@ -277,7 +278,7 @@ func TestWorkerCredentialPrefersTheOrgConnectionOverAPersonalOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load worker credential: %v", err)
 	}
-	if string(credential.EncryptedSecret) != "org-encrypted" {
+	if string(credential.EncryptedSecret) != "org-encrypted" || credential.OwnerUserID != "" {
 		t.Fatalf("credential = %#v, want the org connection to win", credential)
 	}
 }

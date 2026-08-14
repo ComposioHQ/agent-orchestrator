@@ -189,6 +189,51 @@ func TestWorkerCredentialIsDecryptedWithNoStore(t *testing.T) {
 	}
 }
 
+func TestWorkerPersonalCredentialUsesTheUserEncryptionScope(t *testing.T) {
+	cipher, err := secrets.New(bytes.Repeat([]byte{8}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, nonce, err := cipher.Encrypt(
+		[]byte("personal-secret"),
+		providerSecretAssociatedData("user:user-1", "codex"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{
+		store: workerHandlerStore{credential: domain.WorkerCredential{
+			Provider:        "codex",
+			CredentialType:  "api_key",
+			EncryptedSecret: encrypted,
+			Nonce:           nonce,
+			OwnerUserID:     "user-1",
+		}},
+		secretCipher: cipher,
+	}
+	request := httptest.NewRequest(http.MethodGet, "/worker/credential", nil)
+	request = request.WithContext(context.WithValue(
+		request.Context(),
+		workerContextKey{},
+		worker.Claims{
+			OrgID: "org-1", SessionID: "session-1", WorkerID: "worker-1",
+			Epoch: 1, Scopes: []string{"worker:credential:read"},
+		},
+	))
+	response := httptest.NewRecorder()
+	server.workerCredential(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body worker.CredentialResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Secret != "personal-secret" || body.Provider != "codex" {
+		t.Fatalf("credential response = %#v", body)
+	}
+}
+
 func TestWorkerCheckoutGrantEnforcesEpochScopeAndNoStore(t *testing.T) {
 	const checkoutToken = "github-token-that-must-not-be-logged"
 	tokens := worker.NewTokenManager([]byte("0123456789abcdef0123456789abcdef"))

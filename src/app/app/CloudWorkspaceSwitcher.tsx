@@ -50,7 +50,7 @@ export function WorkspaceAvatar({ name, id, size = 18 }: { name: string; id: str
 }
 
 const menuItemClass =
-  "flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] text-[var(--muted-foreground)] transition-[background-color,color] duration-75 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] active:scale-[0.98] focus-visible:outline-none";
+  "flex h-8 min-w-0 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[13px] text-[var(--muted-foreground)] transition-[background-color,color] duration-75 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] active:scale-[0.98] focus-visible:outline-none";
 
 export function CloudWorkspaceSwitcher({
   account,
@@ -105,6 +105,7 @@ export function CloudWorkspaceSwitcher({
         whileTap={prefersReducedMotion ? undefined : { scale: 0.985 }}
         transition={{ duration: 0.06, ease: "easeOut" }}
         data-state={open ? "open" : "closed"}
+        title={selectedWorkspace?.displayName ?? "No workspace"}
         className="flex h-9 w-full cursor-pointer items-center gap-2 rounded-lg bg-[color-mix(in_oklch,var(--foreground)_4%,transparent)] px-2.5 text-left text-sm font-normal text-[var(--muted-foreground)] transition-[background-color,color] duration-150 ease-out hover:bg-[color-mix(in_oklch,var(--foreground)_8%,transparent)] hover:text-[var(--foreground)] data-[state=open]:bg-[color-mix(in_oklch,var(--foreground)_8%,transparent)] data-[state=open]:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none"
         onClick={() => setOpen((current) => !current)}
       >
@@ -132,9 +133,9 @@ export function CloudWorkspaceSwitcher({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -3, scale: 0.99 }}
             transition={menuTransition}
-            className="absolute left-0 top-[calc(100%+6px)] z-50 w-[calc(100%+24px)] origin-top overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1"
+            className="absolute left-0 top-[calc(100%+6px)] z-50 w-[min(320px,calc(100vw-32px))] origin-top overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-1"
           >
-            <div className="truncate px-2 py-1.5 text-[11px] leading-4 text-[var(--color-text-passive)]">
+            <div className="truncate px-2 py-1.5 text-[11px] leading-4 text-[var(--color-text-passive)]" title={account.user.email}>
               {account.user.email}
             </div>
             {account.organizations.map((workspace) => {
@@ -145,6 +146,7 @@ export function CloudWorkspaceSwitcher({
                   type="button"
                   role="menuitemradio"
                   aria-checked={selected}
+                  title={workspace.displayName}
                   className={`${menuItemClass} ${
                     selected
                       ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
@@ -159,12 +161,14 @@ export function CloudWorkspaceSwitcher({
                   <span className="min-w-0 flex-1 truncate">
                     {workspace.displayName}
                   </span>
-                  {selected ? (
-                    <Check
-                      className="size-3.5 shrink-0 text-[var(--muted-foreground)]"
-                      aria-hidden="true"
-                    />
-                  ) : null}
+                  <span className="grid size-3.5 shrink-0 place-items-center">
+                    {selected ? (
+                      <Check
+                        className="size-3.5 text-[var(--muted-foreground)]"
+                        aria-hidden="true"
+                      />
+                    ) : null}
+                  </span>
                 </button>
               );
             })}

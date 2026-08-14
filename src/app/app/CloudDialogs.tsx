@@ -155,8 +155,8 @@ export function NewProjectDialog({
               </select>
             </label>
           ) : (
-            <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-4 text-sm text-[var(--color-text-passive)]">
-              No active repositories are granted to this workspace.
+            <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-4 text-sm leading-5 text-[var(--color-text-passive)]">
+              Connect the AO GitHub App to an organization and grant repository access before adding a GitHub project.
             </div>
           )}
           <button className="text-left text-xs text-[var(--ring)] hover:underline" onClick={onOpenProviderSettings} type="button">
@@ -360,11 +360,16 @@ function LocalAgentForm({
                 <option value="">Choose account or workspace</option>
                 {githubUser.connection.installations.map((inst) => (
                   <option disabled={!inst.canCreateRepository} key={inst.githubInstallationId} value={inst.githubInstallationId}>
-                    {inst.accountLogin}{inst.accountType.toLowerCase() === "user" ? " · personal" : " · org"}
+                    {inst.accountLogin}{inst.accountType.toLowerCase() === "user" ? " · personal" : " · org"}{inst.unavailableReason ? ` · ${inst.unavailableReason}` : ""}
                   </option>
                 ))}
               </select>
             </label>
+            {eligibleInstallations.length === 0 && githubUser.connection.installations.length > 0 ? (
+              <p className="text-xs leading-5 text-[var(--color-text-passive)]">
+                Configure the AO GitHub App for all repositories with repository administration access before creating a repository.
+              </p>
+            ) : null}
             <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">
               <input checked={privateRepository} className="mt-1 cursor-pointer" disabled={busy} onChange={(e) => setPrivateRepository(e.target.checked)} type="checkbox" />
               <span>Create the GitHub repository as private.</span>

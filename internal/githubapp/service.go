@@ -678,6 +678,14 @@ func toDomainInstallation(value Installation) domain.GitHubInstallation {
 }
 
 func (s *Service) CompletionHTML(success bool) []byte {
+	return s.completionHTML(success, false)
+}
+
+func (s *Service) InstallationCompletionHTML(success bool) []byte {
+	return s.completionHTML(success, true)
+}
+
+func (s *Service) completionHTML(success, closeImmediately bool) []byte {
 	title := "Connection failed"
 	message := "Return to AO and try connecting GitHub again."
 	statusClass := "error"
@@ -692,7 +700,11 @@ func (s *Service) CompletionHTML(success bool) []byte {
 		// Keep the popup alive long enough for the opener to advance the
 		// account-authorization step into GitHub App installation. The final
 		// step closes it immediately once the installation is visible.
-		autoClose = "window.setTimeout(function(){window.close()},10000);"
+		if closeImmediately {
+			autoClose = "window.close();"
+		} else {
+			autoClose = "window.setTimeout(function(){window.close()},10000);"
+		}
 	}
 	return []byte(fmt.Sprintf(
 		`<!doctype html>

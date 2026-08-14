@@ -60,15 +60,31 @@ func (s *Store) CreateOrchestratorChild(
 ) (domain.Session, error) {
 	var child domain.Session
 	err := s.withOrg(ctx, orgID, func(tx pgx.Tx) error {
-		projectID, err := requireActiveOrchestrator(ctx, tx, orgID, orchestratorSessionID)
+		var projectID string
+		var createdByUserID *string
+		err := tx.QueryRow(
+			ctx,
+			`SELECT project_id, created_by_user_id::text
+			FROM ao_sessions
+			WHERE org_id = $1 AND id = $2
+			  AND kind = 'orchestrator' AND is_terminated = false`,
+			orgID, orchestratorSessionID,
+		).Scan(&projectID, &createdByUserID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrForbidden
+		}
 		if err != nil {
 			return err
 		}
 		input.ProjectID = projectID
 		input.Kind = "worker"
+		creator := ""
+		if createdByUserID != nil {
+			creator = *createdByUserID
+		}
 		child, err = createSessionTx(
 			ctx, tx, orgID, idempotencyKey, maxActiveSandboxes,
-			input, orchestratorSessionID, "",
+			input, orchestratorSessionID, creator,
 		)
 		return err
 	})
