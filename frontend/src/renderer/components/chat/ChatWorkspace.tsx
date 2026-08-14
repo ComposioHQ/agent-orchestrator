@@ -44,6 +44,8 @@ import {
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
+import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
+import { useUiStore } from "../../stores/ui-store";
 import type { SessionKind } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
@@ -101,6 +103,8 @@ import {
 const CHAT_FONT_SIZE_MIN = 11;
 const CHAT_FONT_SIZE_MAX = 24;
 const CHAT_FONT_SIZE_DEFAULT = 12;
+const isMac = isMacPlatform();
+const isLinux = isLinuxPlatform();
 
 function clampChatFontSize(size: number): number {
 	return Math.min(CHAT_FONT_SIZE_MAX, Math.max(CHAT_FONT_SIZE_MIN, size));
@@ -684,12 +688,20 @@ function ChatHeader({
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
+	// Match CenterPane: when the sidebar is off-canvas, the fixed TitlebarNav
+	// cluster sits over the session tab strip. Terminal already reserves that
+	// space; chat must too or the back/forward buttons land on the tab label.
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	return (
 		<SessionTopbarPortal>
 			<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
 				<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 					<div
-						className="flex min-w-0 shrink items-center pr-1.5"
+						className={cn(
+							"flex min-w-0 shrink items-center pr-3",
+							!isFullscreen && !isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
+							!isFullscreen && !isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
+						)}
 						data-testid="session-terminal-region"
 						style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
 					>

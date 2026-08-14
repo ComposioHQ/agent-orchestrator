@@ -13,6 +13,7 @@ import {
 } from "../../lib/chat-fixture";
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
 import { setApiBaseUrl } from "../../lib/api-client";
+import { useUiStore } from "../../stores/ui-store";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
@@ -22,6 +23,11 @@ vi.mock("../../lib/bridge", () => ({
 		clipboard: { writeText: (text: string) => writeText(text) },
 		menu: { action: (action: string) => menuAction(action) },
 	},
+}));
+
+vi.mock("../../lib/platform", () => ({
+	isMacPlatform: () => true,
+	isLinuxPlatform: () => false,
 }));
 
 /** A refetch: identical content, all-new objects, which is what JSON parsing gives. */
@@ -56,6 +62,7 @@ beforeEach(() => {
 	writeText.mockClear();
 	menuAction.mockClear();
 	setApiBaseUrl("http://127.0.0.1:3001");
+	useUiStore.setState({ isSidebarOpen: true });
 });
 
 afterEach(() => setApiBaseUrl(null));
@@ -168,6 +175,22 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
 		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
 		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
+	});
+
+	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const { rerender } = render(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByTestId("session-terminal-region")).toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
+
+		useUiStore.setState({ isSidebarOpen: true });
+		rerender(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
 	});
 
 	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {
