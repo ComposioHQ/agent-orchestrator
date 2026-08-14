@@ -676,6 +676,7 @@ type fakeWorkspace struct {
 	// so tests can assert teardown fed it the persisted repo path.
 	lastDestroyInfo   ports.WorkspaceInfo
 	lastCfg           ports.WorkspaceConfig
+	restoreConfigs    []ports.WorkspaceConfig
 	projectErr        error
 	projectDestroyed  int
 	lastProjectCfg    ports.WorkspaceProjectConfig
@@ -779,6 +780,8 @@ func (w *fakeWorkspace) DestroyWorkspaceProject(context.Context, ports.Workspace
 	return w.destroyErr
 }
 func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	w.lastCfg = cfg
+	w.restoreConfigs = append(w.restoreConfigs, cfg)
 	if cfg.RepoPath != "" {
 		entry := "Restore:" + fakeWorkspaceRepoName(ports.WorkspaceInfo{
 			Path:      cfg.Path,
@@ -786,7 +789,7 @@ func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) 
 			RepoPath:  cfg.RepoPath,
 		})
 		w.calls = append(w.calls, entry)
-		return ports.WorkspaceInfo{Path: cfg.Path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: cfg.RepoPath}, nil
+		return ports.WorkspaceInfo{Path: cfg.Path, Branch: cfg.Branch, BaseRef: cfg.BaseRef, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: cfg.RepoPath}, nil
 	}
 	return w.Create(ctx, cfg)
 }
@@ -5907,6 +5910,45 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 }
 
+func TestRestoreAllCarriesConfiguredAndRecordedBaseToWorkspaceRestore(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	project := st.projects["mer"]
+	project.Config.DefaultBranch = "trunk"
+	st.projects["mer"] = project
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:  "/ws/mer-1",
+			Branch:         "ao/mer-1/root",
+			DiffBaseRef:    "refs/remotes/origin/trunk",
+			AgentSessionID: "agent-w",
+		},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{
+		SessionID: "mer-1",
+		RepoName:  domain.RootWorkspaceRepoName,
+		State:     "removed",
+	}}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if len(ws.restoreConfigs) != 1 {
+		t.Fatalf("restore configs = %d, want 1", len(ws.restoreConfigs))
+	}
+	if got := ws.restoreConfigs[0].BaseBranch; got != "trunk" {
+		t.Fatalf("restore BaseBranch = %q, want trunk", got)
+	}
+	if got := ws.restoreConfigs[0].BaseRef; got != "refs/remotes/origin/trunk" {
+		t.Fatalf("restore BaseRef = %q, want refs/remotes/origin/trunk", got)
+	}
+}
+
 func TestRestoreAll_RestoresLegacyShutdownMarkerWithoutState(t *testing.T) {
 	m, st, rt, _ := newLifecycleManager()
 	st.sessions["mer-1"] = domain.SessionRecord{
@@ -6160,8 +6202,8 @@ func TestRestoreAll_WorkspaceProjectRestoresAndAppliesEachRepo(t *testing.T) {
 		Activity:     domain.Activity{State: domain.ActivityExited},
 	}
 	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
-		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", WorktreePath: "/ws/mer-1", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
-		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/api", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", BaseRef: "refs/remotes/origin/main", WorktreePath: "/ws/mer-1", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
+		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", BaseRef: "refs/remotes/origin/dev", WorktreePath: "/ws/mer-1/api", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
 	}
 
 	if err := m.RestoreAll(ctx); err != nil {
@@ -6170,6 +6212,9 @@ func TestRestoreAll_WorkspaceProjectRestoresAndAppliesEachRepo(t *testing.T) {
 	wantPrefix := []string{"Restore:__root__", "Restore:api"}
 	if got := ws.calls[:2]; strings.Join(got, ",") != strings.Join(wantPrefix, ",") {
 		t.Fatalf("restore prefix = %v, want %v; all calls %v", got, wantPrefix, ws.calls)
+	}
+	if len(ws.restoreConfigs) != 2 || ws.restoreConfigs[0].BaseRef != "refs/remotes/origin/main" || ws.restoreConfigs[1].BaseRef != "refs/remotes/origin/dev" {
+		t.Fatalf("restore base refs = %#v, want root main and api dev", ws.restoreConfigs)
 	}
 	applied := strings.Join(ws.calls, ",")
 	if !strings.Contains(applied, "ApplyPreserved:__root__:refs/ao/preserved/mer-1") ||

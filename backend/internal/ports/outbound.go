@@ -326,6 +326,10 @@ type WorkspaceConfig struct {
 	// created from. Empty asks the workspace adapter to resolve an authoritative
 	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
+	// BaseRef is the authoritative ref recorded when this workspace was first
+	// created. Restore carries it forward without re-resolving repository
+	// defaults; Create ignores it and resolves the current base itself.
+	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
 	// Path optionally supplies an existing managed worktree path for restore.

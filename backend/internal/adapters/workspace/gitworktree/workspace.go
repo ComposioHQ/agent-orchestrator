@@ -141,7 +141,7 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 		info.BaseRef = baseRef
 		return info, nil
 	}
-	baseRef, err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch)
+	baseRef, err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch, "", true)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -751,7 +751,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 			if branch == "" {
 				branch = cfg.Branch
 			}
-			return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
+			return ports.WorkspaceInfo{Path: path, Branch: branch, BaseRef: cfg.BaseRef, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 		}
 		// The registration outlived its directory (issue #2775: a session's git
 		// worktree registration and DB row survived a deletion that removed only
@@ -779,7 +779,7 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err := w.validateBranch(ctx, repo, recreateBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	baseRef, err := w.addWorktree(ctx, repo, path, recreateBranch, cfg.BaseBranch)
+	baseRef, err := w.addWorktree(ctx, repo, path, recreateBranch, cfg.BaseBranch, cfg.BaseRef, false)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
@@ -872,7 +872,7 @@ func registeredWorktreeDirMissing(rec worktreeRecord) (bool, error) {
 	return false, nil
 }
 
-func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch string) (string, error) {
+func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch, baseRef string, resolveExistingBase bool) (string, error) {
 	// Refuse early if the branch is already checked out in another worktree:
 	// `git worktree add` will fail, but its stderr leaks through as an opaque
 	// 500. A typed sentinel lets the HTTP layer surface a 409.
@@ -897,18 +897,33 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 	if err != nil {
 		return "", err
 	}
-	baseRef, err := w.resolveBaseRefWithBudget(ctx, repo, branch, baseBranch)
-	if err != nil {
-		if errors.Is(err, errNoBaseRef) {
-			return "", fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
-		}
-		return "", err
-	}
 	if localBranch {
+		// Create needs a freshly resolved base for accurate initial diffs even
+		// when the requested branch already exists. Restore already has durable
+		// base metadata and only needs to reattach that branch; making it resolve
+		// again can fail after remote metadata becomes unavailable.
+		if resolveExistingBase {
+			baseRef, err = w.resolveBaseRefWithBudget(ctx, repo, branch, baseBranch)
+			if err != nil {
+				if errors.Is(err, errNoBaseRef) {
+					return "", fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
+				}
+				return "", err
+			}
+		}
 		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch, force)...); err != nil {
 			return "", fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
 		}
 		return baseRef, nil
+	}
+	if baseRef == "" {
+		baseRef, err = w.resolveBaseRefWithBudget(ctx, repo, branch, baseBranch)
+		if err != nil {
+			if errors.Is(err, errNoBaseRef) {
+				return "", fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
+			}
+			return "", err
+		}
 	}
 
 	// `worktree add -b <branch> <path> <base>` creates a fresh local branch from

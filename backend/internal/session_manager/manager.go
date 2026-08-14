@@ -2129,6 +2129,8 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 				Kind:          rec.Kind,
 				SessionPrefix: sessionPrefix(project),
 				Branch:        rec.Metadata.Branch,
+				BaseBranch:    project.Config.WorktreeBaseBranch(),
+				BaseRef:       rec.Metadata.DiffBaseRef,
 				Path:          rec.Metadata.WorkspacePath,
 			})
 			if restoreErr != nil {
@@ -2235,6 +2237,8 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
+			BaseBranch:    project.Config.WorktreeBaseBranch(),
+			BaseRef:       rec.Metadata.DiffBaseRef,
 			Path:          rec.Metadata.WorkspacePath,
 		})
 	}
@@ -2450,6 +2454,7 @@ func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.
 			ProjectID: row.ProjectID,
 			SessionID: row.SessionID,
 			Branch:    row.Branch,
+			BaseRef:   row.BaseRef,
 			RepoPath:  row.RepoPath,
 			Path:      row.Path,
 		})

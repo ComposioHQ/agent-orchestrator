@@ -62,6 +62,52 @@ func TestWorkspaceIntegrationCreateRestoreDestroy(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationRestoreExistingBranchDoesNotResolveDefault(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{
+		Binary:       git,
+		ManagedRoot:  filepath.Join(tmp, "managed"),
+		RepoResolver: StaticRepoResolver{"proj": repo},
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	cfg := ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/resume"}
+	created, err := ws.Create(ctx, cfg)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := ws.Destroy(ctx, created); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+
+	// Simulate restoring after the repository's authoritative remote metadata
+	// became unavailable. The session branch still exists locally, so restore
+	// only needs to reattach it and must not attempt automatic default
+	// resolution again.
+	runGit(t, git, repo, "remote", "remove", "origin")
+	_, err = ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "probe", Branch: "feature/new"})
+	if !errors.Is(err, ports.ErrWorkspaceDefaultBranchUnresolved) {
+		t.Fatalf("Create without remote metadata error = %v, want ErrWorkspaceDefaultBranchUnresolved", err)
+	}
+
+	cfg.Path = created.Path
+	cfg.BaseRef = created.BaseRef
+	restored, err := ws.Restore(ctx, cfg)
+	if err != nil {
+		t.Fatalf("restore existing session branch: %v", err)
+	}
+	if restored.Path != created.Path || restored.Branch != created.Branch || restored.BaseRef != created.BaseRef {
+		t.Fatalf("restored = %#v, want path %q branch %q base ref %q", restored, created.Path, created.Branch, created.BaseRef)
+	}
+	if got := gitOutput(t, git, restored.Path, "rev-parse", "--abbrev-ref", "HEAD"); got != created.Branch {
+		t.Fatalf("restored branch = %q, want %q", got, created.Branch)
+	}
+}
+
 func TestWorkspaceIntegrationDestroyRefusesLockedWorktree(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()
