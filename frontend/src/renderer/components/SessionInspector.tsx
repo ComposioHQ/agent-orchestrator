@@ -799,6 +799,20 @@ type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]
 type AgentInfo = components["schemas"]["AgentInfo"];
 type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
 
+const WORKER_DEFAULT_REVIEWERS: Partial<Record<WorkspaceSession["provider"], ReviewerHarness>> = {
+	"claude-code": "claude-code",
+	codex: "codex",
+	opencode: "opencode",
+	muse: "muse",
+	kimchi: "kimchi",
+};
+
+function resolveDefaultReviewerHarness(config: ProjectConfig | undefined, workerHarness: WorkspaceSession["provider"]): ReviewerHarness {
+	const configuredHarness = config?.reviewers?.[0]?.harness;
+	if (configuredHarness) return configuredHarness as ReviewerHarness;
+	return WORKER_DEFAULT_REVIEWERS[workerHarness] ?? "claude-code";
+}
+
 function ReviewsSection({
 	session,
 	onOpenReviewerTerminal,
@@ -1342,9 +1356,9 @@ function ReviewPanel({
 		.filter((run): run is NonNullable<typeof run> => Boolean(run))
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
-	const projectDefaultHarness = config?.reviewers?.[0]?.harness || "claude-code";
-	const harness = latest?.harness || projectDefaultHarness;
-	const projectDefaultLabel = t("newTask.projectDefault");
+	const resolvedDefaultHarness = resolveDefaultReviewerHarness(config, session.provider);
+	const harness = latest?.harness || resolvedDefaultHarness;
+	const defaultLabel = t("settings.models.default");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1404,15 +1418,15 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							defaultHarness={harness}
-							defaultOptionLabel={`${projectDefaultLabel} (${projectDefaultHarness})`}
-							defaultTriggerLabel={harness || projectDefaultLabel}
+							defaultOptionLabel={`${defaultLabel} (${resolvedDefaultHarness})`}
+							defaultTriggerLabel={harness || defaultLabel}
 							disabled={reviewRunning || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
 							value={reviewerOverride}
-							excludedHarness={projectDefaultHarness}
+							excludedHarness={resolvedDefaultHarness}
 						/>
 						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
