@@ -31,6 +31,31 @@ The default mode is `tui`, which works with installed native harnesses. Use `--m
 
 The runner exits 0 only when every stage passes. Exit 1 means an observable assertion failed or a required fact was `unobservable`. Exit 2 means configuration or preflight could not start the test. Use `--allow-unobservable` only to produce a diagnostic baseline against a CLI/API that cannot yet expose every fact; do not treat that run as acceptance.
 
+## Modular runs
+
+Use `--stages all` for the full flow. Use a comma-separated list to run parts independently:
+
+```bash
+node .agents/skills/ao-agent-e2e/scripts/run_agent_e2e.mjs \
+  --project agent-orchestrator \
+  --harness codex \
+  --stages preflight,orchestrator
+```
+
+Supported stages are `preflight`, `orchestrator`, `delegation`, `work-pr`, and `reviewer`. Preflight always runs because later stages need daemon/project metadata.
+
+To resume or test later stages against existing sessions:
+
+```bash
+node .agents/skills/ao-agent-e2e/scripts/run_agent_e2e.mjs \
+  --project agent-orchestrator \
+  --harness codex \
+  --stages work-pr,reviewer \
+  --worker-session <worker-session-id>
+```
+
+Use `--orchestrator-session`, `--worker-session`, and `--reviewer-session` to inspect known sessions instead of requiring the runner to create every session in the same process.
+
 ## What the runner checks
 
 - Preflight: AO binary, daemon, project, and harness configuration.
