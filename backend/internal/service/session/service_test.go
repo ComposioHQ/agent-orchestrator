@@ -2936,6 +2936,8 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("review url = %q", reviewer.ReviewURL)
 	} else if reviewer.Links[0].AutoInjectReview || !reviewer.Links[1].AutoInjectReview {
 		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
+	} else if reviewer.Links[0].Body != "raw body must stay private" || reviewer.Links[1].Body != "another raw body" {
+		t.Fatalf("comment bodies = %+v", reviewer.Links)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)
@@ -2948,10 +2950,15 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		entry.URL != "https://github.com/acme/repo/pull/7#pullrequestreview-1" || entry.AutoInjectReview {
 		t.Fatalf("review summary entry = %+v", entry)
 	}
-	// The review summary body is surfaced, but inline comment bodies and CI log
-	// tails must never leak into the PR summary.
+	// Human inline review comment bodies are surfaced for display, but bot bodies
+	// and CI log tails must still stay out of the PR summary.
 	blob := fmt.Sprintf("%+v", got)
-	for _, secret := range []string{"raw body must stay private", "another raw body", "bot body", "panic: secret"} {
+	for _, text := range []string{"raw body must stay private", "another raw body"} {
+		if !strings.Contains(blob, text) {
+			t.Fatalf("summary omitted review comment body %q", text)
+		}
+	}
+	for _, secret := range []string{"bot body", "panic: secret"} {
 		if strings.Contains(blob, secret) {
 			t.Fatalf("summary leaked private text %q", secret)
 		}

@@ -7476,6 +7476,8 @@ components:
       properties:
         autoInjectReview:
           type: boolean
+        body:
+          type: string
         file:
           type: string
         line:

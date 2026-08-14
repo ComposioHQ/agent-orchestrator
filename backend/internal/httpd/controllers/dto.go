@@ -696,6 +696,7 @@ type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
 	Line             int    `json:"line,omitempty"`
+	Body             string `json:"body,omitempty"`
 	AutoInjectReview bool   `json:"autoInjectReview"`
 }
 
@@ -768,7 +769,7 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 	for _, reviewer := range in.UnresolvedBy {
 		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
 		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, AutoInjectReview: link.AutoInjectReview})
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
 		}
 		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}

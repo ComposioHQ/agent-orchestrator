@@ -408,6 +408,7 @@ export type InspectorUnresolvedReviewer = {
 	count: number;
 	isBot?: boolean;
 	links: {
+		body?: string;
 		file?: string;
 		line?: number;
 		url?: string;
@@ -482,7 +483,7 @@ export function InspectorReviewsView({
 				{groups.map((group, index) => (
 					<ReviewDisclosure
 						collapsible={groups.length > 1}
-						defaultOpen={index === 0}
+						defaultOpen={index === 0 || Boolean(group.github?.unresolved)}
 						key={group.number}
 						meta={group.meta}
 						title={group.title}
@@ -902,38 +903,49 @@ function GithubInlineComments({
 	const count = active.reduce((total, reviewer) => total + reviewer.count, 0);
 	if (count === 0) return null;
 	return (
-		<div className="rounded-md border border-error/20 bg-error/6 px-2.5 py-2.5" data-testid="github-inline-comments">
-			<div className="flex min-w-0 items-center gap-1.5 text-2xs font-semibold text-foreground">
-				<MessageSquareIcon className="size-icon-xs shrink-0 text-error" />
+		<div className="rounded-md border border-border bg-overlay/40 px-2.5 py-2.5" data-testid="github-inline-comments">
+			<div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-foreground">
+				<MessageSquareIcon className="size-icon-xs shrink-0 text-muted-foreground" />
 				<span>{labels.openComments}</span>
-				<span className="ml-auto shrink-0 font-mono text-micro font-normal text-error">
+				<span className="ml-auto shrink-0 font-mono text-micro font-semibold text-error">
 					{labels.unresolvedCount(count)}
 				</span>
 			</div>
-			<div className="mt-2 flex min-w-0 flex-col gap-2">
+			<div className="mt-2.5 flex min-w-0 flex-col gap-3">
 				{active.map((reviewer) => (
 					<div className="min-w-0" key={reviewer.reviewerId}>
 						<div className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
 							<span className="min-w-0 truncate font-medium text-foreground">{reviewer.reviewerId}</span>
 							{reviewer.isBot ? <span className="font-mono text-passive">{labels.bot}</span> : null}
 						</div>
-						<div className="mt-1 flex min-w-0 flex-wrap gap-1">
+						<div className="mt-1.5 min-w-0 rounded-md border border-border/70 bg-background/35">
 							{reviewer.links.map((link, index) => {
 								const label = link.file
 									? `${link.file}${link.line ? `:${link.line}` : ""}`
 									: labels.commentNumber(index + 1);
 								const href = link.url || reviewer.reviewUrl;
-								const contents = (
+								const body = link.body?.trim();
+								const heading = (
 									<>
-										<FileCodeIcon className="size-2.5 shrink-0" />
+										<FileCodeIcon className="size-2.5 shrink-0 text-muted-foreground" />
 										<span className="truncate" title={label}>{label}</span>
 									</>
 								);
 								const className =
-									"inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-background/35 px-1.5 py-1 font-mono text-micro text-muted-foreground";
+									"flex max-w-full min-w-0 flex-col gap-1.5 border-b border-border/60 px-2 py-2 font-mono text-[9px] leading-none text-muted-foreground last:border-b-0";
+								const contents = (
+									<>
+										<span className="inline-flex min-w-0 items-center gap-1">{heading}</span>
+										{body ? (
+											<span className="whitespace-pre-wrap break-words font-sans text-xs leading-snug text-foreground/90">
+												{body}
+											</span>
+										) : null}
+									</>
+								);
 								return href ? (
 									<ExternalLink
-										className={cn(className, "no-underline transition-colors hover:bg-background/60 hover:text-foreground")}
+										className={cn(className, "no-underline transition-colors hover:bg-background/55 hover:text-foreground")}
 										href={href}
 										key={`${href}:${index}`}
 									>
@@ -945,7 +957,7 @@ function GithubInlineComments({
 							})}
 							{reviewer.links.length === 0 && reviewer.reviewUrl ? (
 								<ExternalLink
-									className="inline-flex items-center gap-0.5 rounded-sm bg-background/35 px-1.5 py-1 font-medium text-muted-foreground no-underline transition-colors hover:text-foreground"
+									className="inline-flex items-center gap-0.5 rounded-md border border-border/70 bg-background/45 px-2 py-1.5 font-medium text-[9px] leading-none text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-background/70 hover:text-foreground"
 									href={reviewer.reviewUrl}
 								>
 									{labels.viewOnPR}

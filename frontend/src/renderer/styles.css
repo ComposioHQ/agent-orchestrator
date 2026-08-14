@@ -3816,7 +3816,9 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 /* Reviewer picker menu: the agent list needs more room than the default option
    menu so harness names are not truncated mid-word. */
 @utility reviews-agent-menu-surface {
-	min-width: 13rem;
+	width: max-content;
+	min-width: 0;
+	max-width: min(13rem, calc(100vw - 2rem));
 	padding: var(--space-1_5);
 	gap: var(--space-1);
 }

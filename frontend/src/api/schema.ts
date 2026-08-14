@@ -2581,6 +2581,7 @@ export interface components {
         };
         SessionPRReviewCommentLink: {
             autoInjectReview: boolean;
+            body?: string;
             file?: string;
             line?: number;
             url?: string;

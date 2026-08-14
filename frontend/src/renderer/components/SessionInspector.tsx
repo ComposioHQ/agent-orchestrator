@@ -1092,6 +1092,7 @@ function MergedReviewsSection({
 							count: reviewer.count,
 							isBot: reviewer.isBot,
 							links: reviewer.links.map((link) => ({
+								body: link.body,
 								file: link.file,
 								line: link.line,
 								url: link.url,
@@ -1317,8 +1318,7 @@ function ReviewPanel({
 						</Tooltip>
 					</TooltipProvider>
 				) : null}
-				<div className="review-run-controls-container min-w-0 divide-y divide-border/70">
-					<AutoInjectReviewPolicyControl session={session} />
+				<div className="review-run-controls-container min-w-0 divide-y divide-border/70 text-xs">
 					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
 						<span className="min-w-0 text-xs font-medium text-foreground">
 							{t("inspector.selectReviewerAgent")}
@@ -1334,28 +1334,25 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select ml-auto h-control-md w-36 min-w-24 max-w-36 shrink-0 justify-end text-right text-xs"
+							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
 						/>
 					</div>
-					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
-						<label className="text-xs font-medium text-foreground" htmlFor={`auto-review-${session.id}`}>
-							{t("inspector.autoReview")}
-						</label>
-						<Switch
-							aria-label={t("inspector.autoReview")}
-							checked={autoReviewEnabled}
-							disabled={isAutoReviewSaving}
-							id={`auto-review-${session.id}`}
-							onCheckedChange={onAutoReviewChange}
-						/>
-					</div>
+					<InspectorPolicyRow
+						checked={autoReviewEnabled}
+						description={t("inspector.autoReviewDescription")}
+						disabled={isAutoReviewSaving}
+						id={`auto-review-${session.id}`}
+						label={t("inspector.autoReview")}
+						onCheckedChange={onAutoReviewChange}
+						tooltipClassName="max-w-64"
+					/>
 					<div className="flex min-h-10 items-center justify-between gap-3 py-2">
 						<span className="text-xs font-medium text-foreground">{t("inspector.review.session")}</span>
 						<div className="flex shrink-0 items-center gap-1.5">
 							<Button
 								aria-label={primaryReviewActionLabel}
-								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
+								className="shrink-0 gap-1 px-1.5 text-xs [&_svg]:size-icon-sm"
 								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled || autoReviewEnabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
@@ -1382,6 +1379,7 @@ function ReviewPanel({
 							) : null}
 						</div>
 					</div>
+					<AutoInjectReviewPolicyControl session={session} />
 					</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">

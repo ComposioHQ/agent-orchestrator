@@ -275,6 +275,46 @@ describe("portable inspector presentations", () => {
 			"line-clamp-4",
 		);
 	});
+	it("shows unresolved inline review comment bodies with their file location", () => {
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [],
+							unresolved: 1,
+							unresolvedBy: [
+								{
+									count: 1,
+									links: [
+										{
+											body: "This branch leaks the resize listener on unmount.",
+											file: "src/panel.tsx",
+											line: 42,
+											url: "https://example.com/comment",
+										},
+									],
+									reviewerId: "maya",
+								},
+							],
+						},
+						meta: "#12 · 1 unresolved",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
+		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
+	});
+
 });
 
 const reviewLabels: InspectorReviewLabels = {
