@@ -31,6 +31,7 @@ ARG TARGETARCH
 ARG CLAUDE_CODE_VERSION=2.1.228
 ARG CODEX_VERSION=0.147.0
 ARG CURSOR_AGENT_VERSION=2026.08.11-e8db854
+ARG GH_VERSION=2.97.0
 RUN apt-get update && \
     apt-get upgrade --yes && \
     apt-get install --yes --no-install-recommends \
@@ -38,17 +39,25 @@ RUN apt-get update && \
         ca-certificates \
         curl \
         git \
-        gh \
         jq \
         openssh-client \
         procps \
         tar && \
+    case "${TARGETARCH}" in \
+        amd64|arm64) gh_arch="${TARGETARCH}" ;; \
+        *) echo "unsupported GitHub CLI architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
+    curl --fail --location --silent --show-error \
+        "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gh_arch}.tar.gz" \
+        | tar --strip-components=2 -xzf - -C /usr/local/bin \
+            "gh_${GH_VERSION}_linux_${gh_arch}/bin/gh" && \
     rm -rf /var/lib/apt/lists/* && \
     npm install --global \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "@openai/codex@${CODEX_VERSION}" && \
     claude --version && \
     codex --version && \
+    gh --version && \
     groupadd --gid 10001 ao-worker && \
     useradd --uid 10001 --gid ao-worker --home-dir /workspace/.ao/home --shell /bin/bash ao-worker && \
     mkdir -p /workspace/repository /workspace/.ao/home && \

@@ -6,7 +6,6 @@ RUN apt-get update && \
         ca-certificates \
         curl \
         git \
-        gh \
         gnupg \
         jq \
         openssh-client \
@@ -21,6 +20,12 @@ RUN apt-get update && \
         > /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
     apt-get install --yes --no-install-recommends nodejs && \
+    architecture="$(dpkg --print-architecture)" && \
+    gh_version=2.97.0 && \
+    curl --fail --location --silent --show-error \
+        "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_${architecture}.tar.gz" \
+        | tar --strip-components=2 -xzf - -C /usr/local/bin \
+            "gh_${gh_version}_linux_${architecture}/bin/gh" && \
     npm install --global \
         @anthropic-ai/claude-code@2.1.228 \
         @openai/codex@0.147.0 && \
