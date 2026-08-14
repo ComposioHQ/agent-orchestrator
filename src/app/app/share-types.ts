@@ -15,7 +15,7 @@ export type SharedProject = {
   grant: {
     id: string;
     role: string;
-    userEmail: string;
+    userEmail?: string;
     userDisplayName?: string;
   };
   sessionId?: string;
@@ -32,7 +32,7 @@ export type OrganizationMember = {
 export type OrganizationInvitation = {
   id: string;
   email: string;
-  role: "member" | "admin";
+  role: "member" | "admin" | "owner";
   status: "pending" | "revoked" | string;
   expiresAt: string;
 };
