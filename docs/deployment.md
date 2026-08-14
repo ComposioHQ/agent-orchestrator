@@ -110,11 +110,13 @@ Both ECS execution roles need `secretsmanager:GetSecretValue` for this one
 secret in addition to their environment-scoped secrets.
 
 The configured NodeOps `default_rootfs` must provide `bash`, `git`, `claude`,
-`codex`, and `cursor-agent`. The reconciler copies the release's fenced
-`ao-worker` binary into that rootfs; the worker refuses to publish
-`worker.ready` when the selected harness binary is absent. The separately
-scanned worker image is the canonical local/reference runtime, but CreateOS
-does not consume that OCI image directly.
+`codex`, and `cursor-agent`. Build the versioned AO rootfs from
+`nodeops/Sandbox.Dockerfile` with `scripts/publish-nodeops-template.sh`, verify
+it in staging, then set `default_rootfs` to that template name. The reconciler
+copies the release's fenced `ao-worker` binary into the rootfs. A missing
+harness disables that agent terminal but does not stop workspace transport.
+The separately scanned worker image is the canonical local/reference runtime,
+but CreateOS does not consume that OCI image directly.
 
 Database password rotation must update the corresponding URL secret before the
 next rollout. For an immediate WorkOS or runtime database secret rotation,
