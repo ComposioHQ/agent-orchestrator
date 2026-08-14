@@ -28,6 +28,8 @@ const (
 	agentTerminalTTL     = 24 * time.Hour
 )
 
+var errTerminalProcessUnavailable = errors.New("terminal process unavailable")
+
 func (s *Server) createTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	sessionID := chi.URLParam(r, "sessionId")
@@ -141,6 +143,9 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 }
 
 func terminalStreamClose(err error) (websocket.StatusCode, string) {
+	if errors.Is(err, errTerminalProcessUnavailable) {
+		return websocket.StatusPolicyViolation, "terminal process unavailable"
+	}
 	if err != nil && !errors.Is(err, context.Canceled) &&
 		websocket.CloseStatus(err) == -1 {
 		return websocket.StatusInternalError, "terminal stream interrupted"
@@ -246,7 +251,10 @@ func (s *Server) writeTerminalOutput(
 			}
 			after = frame.Sequence
 		}
-		if state == "closed" || state == "failed" {
+		if state == "failed" {
+			return errTerminalProcessUnavailable
+		}
+		if state == "closed" {
 			return connection.Close(websocket.StatusNormalClosure, "terminal process exited")
 		}
 		select {

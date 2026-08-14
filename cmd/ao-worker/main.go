@@ -152,10 +152,6 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("prepare repository checkout: %w", err)
 		}
 	}
-	if err := verifyHarnessAvailable(bootstrap.Launch.Harness); err != nil {
-		return err
-	}
-
 	// Heartbeat before waiting out the first interval. Bootstrap registration is
 	// not a check-in, so a repaired worker can otherwise be replaced again
 	// before the control plane ever observes it.
@@ -164,37 +160,47 @@ func run(logger *slog.Logger) error {
 	} else if err := client.setToken(renewed); err != nil {
 		return err
 	}
-	credential, err := client.Credential(ctx)
-	if err != nil {
-		return fmt.Errorf("load coding-agent credential: %w", err)
-	}
-	agentCommand, err := (workerexec.HarnessBuilder{
-		DataDir: dataDir,
-	}).BuildInteractive(bootstrap.Launch, credential, workspace)
-	if err != nil {
-		return fmt.Errorf("build interactive coding-agent command: %w", err)
-	}
-	agentCommand.Env["AO_CLOUD_WORKER_API_URL"] = client.baseURL
-	agentCommand.Env["AO_CLOUD_WORKER_TOKEN_FILE"] = client.tokenFile
-	agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
-	agentCommand.Env["AO_PROJECT_ID"] = bootstrap.Launch.ProjectID
-	agentCommand.Env["AO_SESSION_KIND"] = bootstrap.Launch.Kind
+	var agentCommand workerexec.Command
+	agentTerminalID := ""
 	pullRequestSocketPath := filepath.Join(dataDir, "ao-pull-request.sock")
-	agentCommand.Env["AO_PULL_REQUEST_SOCKET"] = pullRequestSocketPath
-	agentCommand.Env["AO_PULL_REQUEST_HELP"] = "curl --unix-socket $AO_PULL_REQUEST_SOCKET " +
-		`-X POST http://localhost/pull-request -H 'Content-Type: application/json' ` +
-		`-d '{"branch":"<pushed branch name>","title":"<PR title>","body":"<PR body>"}' ` +
-		"to push the current branch and open a pull request against the repository's default branch."
 	reviewSocketPath := filepath.Join(dataDir, "ao-review.sock")
-	agentCommand.Env["AO_REVIEW_SOCKET"] = reviewSocketPath
-	agentCommand.Env["AO_REVIEW_HELP"] = "curl --unix-socket $AO_REVIEW_SOCKET " +
-		`-X POST http://localhost/review -H 'Content-Type: application/json' ` +
-		`-d '{"reviewRunId":"<review run id from the prompt>","verdict":"approved|changes_requested","body":"<your findings>"}' ` +
-		"to submit an AO-triggered review verdict."
-	agentTerminal, err := client.ensureAgentTerminal(ctx)
-	if err != nil {
-		agentCommand.Cleanup()
-		return fmt.Errorf("initialize agent terminal: %w", err)
+	if err := verifyHarnessAvailable(bootstrap.Launch.Harness); err != nil {
+		// Workspace files and shell terminals use the same worker transport as the
+		// coding agent. Keep that transport alive when a rootfs is missing the
+		// selected harness instead of making the whole sandbox unreachable.
+		logger.Warn("coding-agent harness unavailable; continuing with workspace transport", "error", err)
+	} else {
+		credential, err := client.Credential(ctx)
+		if err != nil {
+			return fmt.Errorf("load coding-agent credential: %w", err)
+		}
+		agentCommand, err = (workerexec.HarnessBuilder{
+			DataDir: dataDir,
+		}).BuildInteractive(bootstrap.Launch, credential, workspace)
+		if err != nil {
+			return fmt.Errorf("build interactive coding-agent command: %w", err)
+		}
+		agentCommand.Env["AO_CLOUD_WORKER_API_URL"] = client.baseURL
+		agentCommand.Env["AO_CLOUD_WORKER_TOKEN_FILE"] = client.tokenFile
+		agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
+		agentCommand.Env["AO_PROJECT_ID"] = bootstrap.Launch.ProjectID
+		agentCommand.Env["AO_SESSION_KIND"] = bootstrap.Launch.Kind
+		agentCommand.Env["AO_PULL_REQUEST_SOCKET"] = pullRequestSocketPath
+		agentCommand.Env["AO_PULL_REQUEST_HELP"] = "curl --unix-socket $AO_PULL_REQUEST_SOCKET " +
+			`-X POST http://localhost/pull-request -H 'Content-Type: application/json' ` +
+			`-d '{"branch":"<pushed branch name>","title":"<PR title>","body":"<PR body>"}' ` +
+			"to push the current branch and open a pull request against the repository's default branch."
+		agentCommand.Env["AO_REVIEW_SOCKET"] = reviewSocketPath
+		agentCommand.Env["AO_REVIEW_HELP"] = "curl --unix-socket $AO_REVIEW_SOCKET " +
+			`-X POST http://localhost/review -H 'Content-Type: application/json' ` +
+			`-d '{"reviewRunId":"<review run id from the prompt>","verdict":"approved|changes_requested","body":"<your findings>"}' ` +
+			"to submit an AO-triggered review verdict."
+		agentTerminal, err := client.ensureAgentTerminal(ctx)
+		if err != nil {
+			agentCommand.Cleanup()
+			return fmt.Errorf("initialize agent terminal: %w", err)
+		}
+		agentTerminalID = agentTerminal.TerminalID
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -202,7 +208,7 @@ func run(logger *slog.Logger) error {
 	started := make(chan error, 1)
 	transportSupervisor := workertransport.Supervisor{
 		Control: client, Workspace: workspace, Logger: logger,
-		AgentCommand: agentCommand, AgentTerminalID: agentTerminal.TerminalID,
+		AgentCommand: agentCommand, AgentTerminalID: agentTerminalID,
 		Started: started,
 	}
 	results := make(chan error, 5)

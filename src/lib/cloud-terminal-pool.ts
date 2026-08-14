@@ -155,6 +155,17 @@ class CloudTerminalConnection {
         this.emit({ type: "output", data });
       });
       socket.addEventListener("close", (event) => {
+		if (event.code === 1008) {
+		  if (this.socket !== socket || this.closed || failureHandled) return;
+		  failureHandled = true;
+		  this.socket = null;
+		  this.setState("error");
+		  this.emit({
+		    type: "notice",
+		    message: event.reason || "Terminal process is unavailable in this VM.",
+		  });
+		  return;
+		}
         if (event.code === 1000) {
           this.emit({
             type: "notice",
@@ -167,7 +178,7 @@ class CloudTerminalConnection {
         reconnectOnce("disconnected");
       });
       socket.addEventListener("error", () => {
-        reconnectOnce("error");
+		if (this.socket === socket && !this.closed) this.setState("error");
       });
     } catch (cause) {
       if (!this.closed && !abortController.signal.aborted) {
@@ -247,7 +258,6 @@ class CloudTerminalConnection {
   }
 }
 
-let poolClient: CloudClient | null = null;
 const connections = new Map<string, CloudTerminalConnection>();
 
 export function ensureCloudTerminalConnection(
@@ -256,8 +266,6 @@ export function ensureCloudTerminalConnection(
   sessionId: string,
   kind: CloudTerminalKind = "agent",
 ) {
-  if (poolClient && poolClient !== client) clearCloudTerminalConnections();
-  poolClient = client;
   const key = connectionKey(organizationId, sessionId, kind);
   const existing = connections.get(key);
   if (existing) return existing;
@@ -274,7 +282,6 @@ export function ensureCloudTerminalConnection(
 export function clearCloudTerminalConnections() {
   for (const connection of connections.values()) connection.close();
   connections.clear();
-  poolClient = null;
 }
 
 function deleteCloudTerminalConnection(
@@ -287,7 +294,6 @@ function deleteCloudTerminalConnection(
   if (!connection) return;
   connection.close();
   connections.delete(key);
-  if (connections.size === 0) poolClient = null;
 }
 
 function connectionKey(

@@ -115,6 +115,11 @@ func TestTerminalStreamFailureUsesRetryableCloseStatus(t *testing.T) {
 	if status != websocket.StatusNormalClosure || reason != "terminal closed" {
 		t.Fatalf("close = %d %q, want normal terminal closure", status, reason)
 	}
+
+	status, reason = terminalStreamClose(errTerminalProcessUnavailable)
+	if status != websocket.StatusPolicyViolation || reason != "terminal process unavailable" {
+		t.Fatalf("close = %d %q, want non-retryable terminal process failure", status, reason)
+	}
 }
 
 func TestTerminalResizeWaitsForOpeningShell(t *testing.T) {
