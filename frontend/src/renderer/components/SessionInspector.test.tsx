@@ -626,6 +626,26 @@ describe("SessionInspector Activity section", () => {
 		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
 	});
 
+	it("does not offer agent resume while an agent switch owns the exited source", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+					activeAgentSwitch: {
+						id: "switch-1",
+						fromHarness: "claude-code",
+						targetHarness: "codex",
+						state: "source_stopped",
+						agentHandoffStatus: "received",
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+	});
+
 	it("keeps resume failures visible beside the action", async () => {
 		postMock.mockResolvedValueOnce({ error: new Error("agent restart failed"), response: { status: 500 } });
 		renderWithQuery(

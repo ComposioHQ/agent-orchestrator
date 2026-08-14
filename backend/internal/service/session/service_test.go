@@ -28,30 +28,53 @@ func (f *fakeTelemetrySink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 func (f *fakeTelemetrySink) Close(context.Context) error { return nil }
 
 type fakeStore struct {
-	sessions  map[domain.SessionID]domain.SessionRecord
-	pr        map[domain.SessionID]domain.PRFacts
-	prs       map[domain.SessionID][]domain.PullRequest
-	projects  map[string]domain.ProjectRecord
-	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
-	checks    map[string][]domain.PullRequestCheck
-	reviews   map[string][]domain.PullRequestReview
-	threads   map[string][]domain.PullRequestReviewThread
-	comments  map[string][]domain.PullRequestComment
-	num       int
+	sessions            map[domain.SessionID]domain.SessionRecord
+	activeSwitches      map[domain.SessionID]domain.AgentSwitch
+	activeSwitchGetErr  error
+	activeSwitchListErr error
+	pr                  map[domain.SessionID]domain.PRFacts
+	prs                 map[domain.SessionID][]domain.PullRequest
+	projects            map[string]domain.ProjectRecord
+	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
+	checks              map[string][]domain.PullRequestCheck
+	reviews             map[string][]domain.PullRequestReview
+	threads             map[string][]domain.PullRequestReviewThread
+	comments            map[string][]domain.PullRequestComment
+	num                 int
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions:  map[domain.SessionID]domain.SessionRecord{},
-		pr:        map[domain.SessionID]domain.PRFacts{},
-		prs:       map[domain.SessionID][]domain.PullRequest{},
-		projects:  map[string]domain.ProjectRecord{},
-		worktrees: map[domain.SessionID][]domain.SessionWorktreeRecord{},
-		checks:    map[string][]domain.PullRequestCheck{},
-		reviews:   map[string][]domain.PullRequestReview{},
-		threads:   map[string][]domain.PullRequestReviewThread{},
-		comments:  map[string][]domain.PullRequestComment{},
+		sessions:       map[domain.SessionID]domain.SessionRecord{},
+		activeSwitches: map[domain.SessionID]domain.AgentSwitch{},
+		pr:             map[domain.SessionID]domain.PRFacts{},
+		prs:            map[domain.SessionID][]domain.PullRequest{},
+		projects:       map[string]domain.ProjectRecord{},
+		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		checks:         map[string][]domain.PullRequestCheck{},
+		reviews:        map[string][]domain.PullRequestReview{},
+		threads:        map[string][]domain.PullRequestReviewThread{},
+		comments:       map[string][]domain.PullRequestComment{},
 	}
+}
+
+func (f *fakeStore) GetActiveAgentSwitch(_ context.Context, id domain.SessionID) (domain.AgentSwitch, bool, error) {
+	if f.activeSwitchGetErr != nil {
+		return domain.AgentSwitch{}, false, f.activeSwitchGetErr
+	}
+	sw, ok := f.activeSwitches[id]
+	return sw, ok, nil
+}
+
+func (f *fakeStore) ListActiveAgentSwitches(context.Context) ([]domain.AgentSwitch, error) {
+	if f.activeSwitchListErr != nil {
+		return nil, f.activeSwitchListErr
+	}
+	out := make([]domain.AgentSwitch, 0, len(f.activeSwitches))
+	for _, sw := range f.activeSwitches {
+		out = append(out, sw)
+	}
+	return out, nil
 }
 
 func newWorkspaceRepo(t *testing.T) string {
@@ -293,6 +316,43 @@ func TestSessionListAppliesActivityBeforePRFacts(t *testing.T) {
 				t.Fatalf("got %+v, want status %q", list, tt.want)
 			}
 		})
+	}
+}
+
+func TestSessionListProjectsActiveAgentSwitch(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityExited}}
+	st.sessions["other-1"] = domain.SessionRecord{ID: "other-1", ProjectID: "other", Activity: domain.Activity{State: domain.ActivityIdle}}
+	st.activeSwitches["mer-1"] = domain.AgentSwitch{
+		ID: "switch-1", SessionID: "mer-1", FromHarness: domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex, State: domain.AgentSwitchPreparingHandoff,
+	}
+	st.activeSwitches["other-1"] = domain.AgentSwitch{ID: "switch-other", SessionID: "other-1", State: domain.AgentSwitchPreparingHandoff}
+
+	list, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ActiveAgentSwitch == nil || list[0].ActiveAgentSwitch.ID != "switch-1" {
+		t.Fatalf("list active switch projection = %+v", list)
+	}
+	if list[0].Status != domain.StatusExited {
+		t.Fatalf("session status = %q, want durable activity-derived exited", list[0].Status)
+	}
+	got, err := (&Service{store: st}).Get(context.Background(), "mer-1")
+	if err != nil || got.ActiveAgentSwitch == nil || got.ActiveAgentSwitch.ID != "switch-1" {
+		t.Fatalf("get active switch projection = %+v, err=%v", got.ActiveAgentSwitch, err)
+	}
+
+	st.activeSwitchListErr = errors.New("active switch read failed")
+	if _, err := (&Service{store: st}).List(context.Background(), ListFilter{ProjectID: "mer"}); err == nil || !strings.Contains(err.Error(), "active switch") {
+		t.Fatalf("active switch list error = %v", err)
+	}
+
+	st.activeSwitchListErr = nil
+	st.activeSwitchGetErr = errors.New("active switch read failed")
+	if _, err := (&Service{store: st}).Get(context.Background(), "mer-1"); err == nil || !strings.Contains(err.Error(), "active switch") {
+		t.Fatalf("active switch get error = %v", err)
 	}
 }
 
@@ -1317,6 +1377,10 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 func (*fakeCommander) SwitchAgent(context.Context, domain.SessionID, sessionmanager.SwitchAgentConfig) (domain.AgentSwitch, error) {
 	return domain.AgentSwitch{}, nil
 }
+
+func (*fakeCommander) RecoverAgentSwitch(context.Context, domain.SessionID, domain.AgentSwitchID) (domain.AgentSwitch, error) {
+	return domain.AgentSwitch{}, nil
+}
 func (*fakeCommander) ListAgentSwitches(context.Context, domain.SessionID) ([]domain.AgentSwitch, error) {
 	return nil, nil
 }
@@ -2039,6 +2103,8 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"invalid handoff", fmt.Errorf("submit handoff: %w", sessionmanager.ErrInvalidAgentHandoff), apierr.KindInvalid, "INVALID_AGENT_HANDOFF"},
 		{"switch delivery unconfirmed", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchDeliveryUnconfirmed), apierr.KindConflict, "AGENT_SWITCH_DELIVERY_UNCONFIRMED"},
 		{"manager switch in progress", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
+		{"manager switch shutting down", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchShuttingDown), apierr.KindConflict, "AGENT_SWITCH_UNAVAILABLE"},
+		{"manager switch unavailable", fmt.Errorf("switch agent mer-1: %w", sessionmanager.ErrSwitchUnavailable), apierr.KindConflict, "AGENT_SWITCH_UNAVAILABLE"},
 		{"switch in progress", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchInProgress), apierr.KindConflict, "AGENT_SWITCH_IN_PROGRESS"},
 		{"switch idempotency conflict", fmt.Errorf("switch agent mer-1: %w", domain.ErrAgentSwitchIdempotencyConflict), apierr.KindConflict, "AGENT_SWITCH_IDEMPOTENCY_CONFLICT"},
 		{"chat mode unsupported", fmt.Errorf("spawn: %w", ports.ErrChatUnsupported), apierr.KindConflict, "SESSION_MODE_UNSUPPORTED"},

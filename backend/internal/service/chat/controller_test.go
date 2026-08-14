@@ -604,6 +604,14 @@ func newHarness(t *testing.T) *harness {
 // cases where the interesting behavior is how the provider answers rather than
 // what it streams. A nil conv gets the plain fake.
 func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harness {
+	return newHarnessWithConversationAndStore(t, conv, func(st *sqlite.Store) chatsvc.Store { return st })
+}
+
+func newHarnessWithConversationAndStore(
+	t *testing.T,
+	conv ports.ChatConversation,
+	wrapStore func(*sqlite.Store) chatsvc.Store,
+) *harness {
 	t.Helper()
 	st := openStore(t)
 	base := newFakeConversation()
@@ -628,8 +636,9 @@ func newHarnessWithConversation(t *testing.T, conv ports.ChatConversation) *harn
 		counterMu sync.Mutex
 		counter   int
 	)
+	chatStore := wrapStore(st)
 	svc := chatsvc.New(chatsvc.Options{
-		Store:    st,
+		Store:    chatStore,
 		Sessions: st,
 		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
 		Activity: h.activity,
@@ -1264,6 +1273,310 @@ func TestChatHandoffDrainFinishesAcceptedQueueAndClosesNewIntake(t *testing.T) {
 		Text: "source reopened", ClientMessageID: "handoff-4",
 	}); err != nil {
 		t.Fatalf("send after aborting handoff: %v", err)
+	}
+}
+
+func TestChatHandoffInterruptArmBlocksCompletionFromPromotingQueue(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "run the dev server", ClientMessageID: "handoff-arm-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "touch /tmp/ao3945-queued-ran", ClientMessageID: "handoff-arm-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+	// Once intake is fenced, eventual cancellation must cover the whole queue
+	// rather than trusting wall-clock ordering. A host clock correction cannot
+	// make an older accepted command look newer than the handoff cutoff.
+	h.advance(-time.Hour)
+
+	// Session Manager performs this fast step before returning the accepted
+	// transition and before target preflight. It is a reversible dispatch fence:
+	// the active turn can finish, but its completion must not release the queue.
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("arm interrupt handoff: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateInterrupted,
+	})
+	fenced := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["run the dev server"].Terminal()
+	})
+	if got := turnStateByText(t, fenced)["touch /tmp/ao3945-queued-ran"]; got != domain.TurnStateQueued {
+		t.Fatalf("queued command while target preflights = %q, want reversibly fenced", got)
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v before handoff preparation; armed completion released the queue", got)
+	}
+
+	// Target preflight has now succeeded. Preparation makes the fence durable
+	// before touching the provider and remains independent of clock movement.
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("prepare armed handoff: %v", err)
+	}
+	if err := h.svc.Stop(ctx, testSession); err != nil {
+		t.Fatalf("stop source controller: %v", err)
+	}
+
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; the queued command crossed the armed handoff", got)
+	}
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load stopped conversation: %v", err)
+	}
+	if got := turnStateByText(t, snapshot)["touch /tmp/ao3945-queued-ran"]; got != domain.TurnStateInterrupted {
+		t.Fatalf("queued command = %q, want interrupted without provider dispatch", got)
+	}
+}
+
+func TestChatHandoffInterruptAbortAfterPreflightFailureResumesFencedQueue(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "run the dev server", ClientMessageID: "handoff-abort-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued work survives preflight", ClientMessageID: "handoff-abort-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("arm interrupt handoff: %v", err)
+	}
+
+	// Completion while target preflight is running cannot dispatch the queue.
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		states := turnStateByText(t, s)
+		return states["run the dev server"] == domain.TurnStateCompleted &&
+			states["queued work survives preflight"] == domain.TurnStateQueued
+	})
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v while target preflight was fenced", got)
+	}
+
+	// A failed target preflight reopens the source and explicitly resumes the
+	// queue; there may be no later completion event to trigger this drain.
+	h.svc.AbortChatHandoff(testSession)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["queued work survives preflight"] == domain.TurnStateRunning
+	})
+	if got := h.conv.sentTexts(); len(got) != 2 || got[1] != "queued work survives preflight" {
+		t.Fatalf("provider received %v after abort, want preserved queue to resume", got)
+	}
+}
+
+type completionOnInterruptConversation struct{ *fakeConversation }
+
+func (c *completionOnInterruptConversation) Interrupt(_ context.Context, turn string) error {
+	// ACP completes its prompt goroutine from the same cancellation handshake;
+	// this event can therefore be queued before session/cancel returns.
+	c.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: turn,
+		TurnState: domain.TurnStateInterrupted,
+	})
+	return nil
+}
+
+func TestChatHandoffInterruptCompletionDuringProviderCancellationCannotPromoteQueue(t *testing.T) {
+	provider := &completionOnInterruptConversation{fakeConversation: newFakeConversation()}
+	h := newHarnessWithConversation(t, provider)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "run the dev server", ClientMessageID: "handoff-during-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	provider.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "touch /tmp/ao3945-queued-ran", ClientMessageID: "handoff-during-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("prepare interrupt handoff: %v", err)
+	}
+	if err := h.svc.Stop(ctx, testSession); err != nil {
+		t.Fatalf("stop source controller: %v", err)
+	}
+	if got := provider.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; ACP-style completion promoted the queue", got)
+	}
+}
+
+func TestChatHandoffInterruptDoesNotWaitForTurnCompletion(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "run the dev server", ClientMessageID: "handoff-interrupt-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued behind it", ClientMessageID: "handoff-interrupt-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("prepare interrupt handoff: %v", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		// Unblock the old implementation before failing so the test leaves no
+		// handoff goroutine behind. A force switch must not need this completion.
+		h.conv.emit(ports.ChatEvent{
+			Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+			TurnState: domain.TurnStateInterrupted,
+		})
+		<-done
+		t.Fatal("interrupt handoff waited for the running turn to report completion")
+	}
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["queued behind it"].Terminal()
+	})
+	if got := turnStateByText(t, snapshot)["queued behind it"]; got != domain.TurnStateInterrupted {
+		t.Fatalf("queued turn = %q, want interrupted before the source controller stops", got)
+	}
+	// Codex may deliver turn/completed after turn/interrupt has already answered.
+	// The armed dispatch gate must still make that late completion a no-op for the
+	// queue.
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateInterrupted,
+	})
+	if err := h.svc.Stop(ctx, testSession); err != nil {
+		t.Fatalf("stop armed controller: %v", err)
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; late completion promoted an interrupted queue", got)
+	}
+}
+
+type failFirstQueueCancellationStore struct {
+	*sqlite.Store
+
+	mu    sync.Mutex
+	calls int
+}
+
+func (s *failFirstQueueCancellationStore) CancelAllQueuedTurns(
+	ctx context.Context,
+	conversationID string,
+	now time.Time,
+) error {
+	s.mu.Lock()
+	s.calls++
+	call := s.calls
+	s.mu.Unlock()
+	if call == 1 {
+		return errors.New("injected queue cancellation failure")
+	}
+	return s.Store.CancelAllQueuedTurns(ctx, conversationID, now)
+}
+
+func (s *failFirstQueueCancellationStore) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func TestChatHandoffInterruptDoesNotReachProviderUntilQueueCancellationSucceeds(t *testing.T) {
+	provider := newInterruptRecorder()
+	var flakyStore *failFirstQueueCancellationStore
+	h := newHarnessWithConversationAndStore(t, provider, func(st *sqlite.Store) chatsvc.Store {
+		flakyStore = &failFirstQueueCancellationStore{Store: st}
+		return flakyStore
+	})
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "run the dev server", ClientMessageID: "handoff-race-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	provider.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	provider.markActive("provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued behind it", ClientMessageID: "handoff-race-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("arm reversible handoff fence: %v", err)
+	}
+	if got := flakyStore.callCount(); got != 0 {
+		t.Fatalf("queue cancellation calls during reversible arm = %d, want 0", got)
+	}
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err == nil {
+		t.Fatal("first handoff preparation error = nil, want injected queue cancellation failure")
+	}
+	if got := provider.attemptCount(); got != 0 {
+		t.Fatalf("provider interrupt attempts = %d before durable queue cancellation, want 0", got)
+	}
+
+	// Preparation aborts the reversible fence after a local-store failure. A
+	// caller may re-arm and retry; provider I/O begins only after the durable queue
+	// is terminal.
+	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("re-arm handoff after preparation failure: %v", err)
+	}
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+		t.Fatalf("prepare armed interrupt handoff: %v", err)
+	}
+	if got := flakyStore.callCount(); got != 2 {
+		t.Fatalf("queue cancellation calls = %d, want one failed arm and one successful retry", got)
+	}
+	if got := provider.attemptCount(); got != 1 {
+		t.Fatalf("provider interrupt attempts = %d, want 1 after queue cancellation", got)
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["queued behind it"].Terminal()
+	})
+	if got := turnStateByText(t, snapshot)["queued behind it"]; got != domain.TurnStateInterrupted {
+		t.Fatalf("queued turn = %q, want interrupted before provider cancellation", got)
 	}
 }
 

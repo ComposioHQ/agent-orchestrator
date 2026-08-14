@@ -56,6 +56,14 @@ export function conversationQueryKey(sessionId: string) {
 	return ["conversation", sessionId] as const;
 }
 
+export function conversationModelsQueryKey(sessionId: string) {
+	return ["conversation-models", sessionId] as const;
+}
+
+export function conversationConfigOptionsQueryKey(sessionId: string) {
+	return ["conversation-config-options", sessionId] as const;
+}
+
 const CONVERSATION_PAGE_SIZE = 200;
 const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
 
@@ -482,7 +490,7 @@ function steerRefusal(error: unknown): string | undefined {
  */
 export function useConversationModels(sessionId: string | undefined, enabled: boolean) {
 	const query = useQuery({
-		queryKey: ["conversation-models", sessionId ?? ""],
+		queryKey: conversationModelsQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId) && enabled,
 		// The catalog changes on the scale of provider releases, not turns.
 		staleTime: 5 * 60 * 1000,
@@ -514,7 +522,7 @@ export function useConversationModels(sessionId: string | undefined, enabled: bo
  */
 export function useConversationConfigOptions(sessionId: string | undefined, enabled: boolean) {
 	const queryClient = useQueryClient();
-	const queryKey = ["conversation-config-options", sessionId ?? ""] as const;
+	const queryKey = conversationConfigOptionsQueryKey(sessionId ?? "");
 	const query = useQuery({
 		queryKey,
 		enabled: Boolean(sessionId) && enabled,

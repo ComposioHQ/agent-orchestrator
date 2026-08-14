@@ -59,9 +59,11 @@ var (
 	// teardown/relaunch cycles over one worktree.
 	ErrSwitchInProgress = errors.New("session: switch already in progress")
 	// ErrSwitchUnavailable means the configured store does not expose the
-	// durable agent-switch contract. Production SQLite always does; the sentinel
-	// keeps deliberately narrow embedders and tests from panicking.
+	// durable agent-switch contract.
 	ErrSwitchUnavailable = errors.New("session: agent switching unavailable")
+	// ErrSwitchShuttingDown means daemon shutdown has closed background worker
+	// admission, so no new switch can be accepted safely.
+	ErrSwitchShuttingDown = errors.New("session: agent switching unavailable during shutdown")
 	// ErrUnsupportedSwitchHarness keeps the first release deliberately bounded
 	// to providers whose standing-instruction and native-resume behavior AO has
 	// verified end to end.
@@ -88,6 +90,9 @@ var (
 	// ErrSwitchNotFound is returned for a switch id outside the requested AO
 	// session (the same response is used for absent and cross-session ids).
 	ErrSwitchNotFound = errors.New("session: agent switch not found")
+	// ErrSwitchRecoveryNotRequired rejects recovery requests for switches that
+	// are terminal or do not carry a durable source-restore marker.
+	ErrSwitchRecoveryNotRequired = errors.New("session: agent switch does not require source recovery")
 	// ErrStaleHandoff rejects semantic handoff submissions from an old provider
 	// generation or after the collection window has closed.
 	ErrStaleHandoff = errors.New("session: stale agent handoff")
@@ -325,8 +330,9 @@ type Manager struct {
 	retainedSwitches map[domain.SessionID]struct{}
 	inputLeases      map[domain.SessionID]int
 	inputDrained     map[domain.SessionID]chan struct{}
-	// handoffWait bounds optional source-agent enrichment. Deterministic AO
-	// context is sufficient, so expiry never prevents the actual switch.
+	// handoffWait bounds optional source-agent enrichment. Time spent waiting
+	// for a human permission decision is paused and charged only against the
+	// separate switchPermissionDecisionWait budget below.
 	handoffWait time.Duration
 	// switchPermissionDecisionWait is a separate human-response budget used only
 	// while the source agent is blocked on a permission prompt. The semantic
@@ -335,9 +341,18 @@ type Manager struct {
 	// switchTargetStartWait bounds proof that the newly-created supervised
 	// provider generation is actually alive before durable ownership transfers.
 	switchTargetStartWait time.Duration
+	// switchPostStopWait bounds aggregate target setup after source ownership is
+	// conclusively stopped. Tests shorten it to exercise phase-budget isolation.
+	switchPostStopWait time.Duration
 	// switchDeliveryAckWait bounds the target generation's prompt-submit hook.
 	// Timeout is an explicit failed/ambiguous delivery, never implicit success.
 	switchDeliveryAckWait time.Duration
+	// backgroundContext owns asynchronous agent-switch execution independently
+	// of the admitting request. The daemon cancels it before waiting for workers.
+	backgroundContext        context.Context
+	agentSwitchWorkers       sync.WaitGroup
+	agentSwitchWorkerMu      sync.Mutex
+	agentSwitchWorkersClosed bool
 
 	transitionMu sync.Mutex
 	transitions  map[domain.SessionID]*interfaceTransitionRun
@@ -554,6 +569,9 @@ type Deps struct {
 	Executable func() (string, error)
 	// NewLaunchID overrides supervised-process generation for deterministic tests.
 	NewLaunchID func() string
+	// BackgroundContext owns work admitted by request-scoped methods. Nil keeps
+	// focused tests and embedders compatible by defaulting to Background.
+	BackgroundContext context.Context
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
@@ -579,18 +597,19 @@ func New(d Deps) *Manager {
 		lookPath:                     d.LookPath,
 		executable:                   d.Executable,
 		newLaunchID:                  d.NewLaunchID,
+		backgroundContext:            d.BackgroundContext,
 		agentOperations:              make(map[domain.SessionID]agentOperationKind),
 		switchDecisionInput:          make(map[domain.SessionID]domain.AgentSwitchID),
 		retainedSwitches:             make(map[domain.SessionID]struct{}),
 		inputLeases:                  make(map[domain.SessionID]int),
 		inputDrained:                 make(map[domain.SessionID]chan struct{}),
-		handoffWait:                  60 * time.Second,
-		switchPermissionDecisionWait: 2 * time.Minute,
+		handoffWait:                  90 * time.Second,
+		switchPermissionDecisionWait: time.Minute,
 		switchTargetStartWait:        3 * time.Second,
+		switchPostStopWait:           switchPostStopWait,
 		// Provider startup, including slow MCP initialization, can delay the
 		// prompt-submit hook even though the continuation is correctly buffered.
-		// Keep the acknowledgement wait below the CLI's seven-minute switch timeout
-		// while leaving enough headroom to avoid a false delivery failure.
+		// Leave enough headroom to avoid a false delivery failure.
 		switchDeliveryAckWait:  150 * time.Second,
 		transitions:            make(map[domain.SessionID]*interfaceTransitionRun),
 		transitionDeliveryWake: make(chan struct{}, 1),
@@ -611,6 +630,9 @@ func New(d Deps) *Manager {
 		// write (rename, activity) — all of which use time.Now().UTC(). A local
 		// default produced mixed-timezone timestamps in `ao session get`.
 		m.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if m.backgroundContext == nil {
+		m.backgroundContext = context.Background()
 	}
 	if m.lookPath == nil {
 		m.lookPath = exec.LookPath

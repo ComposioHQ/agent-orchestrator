@@ -1120,12 +1120,12 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="chat-scroll-viewport cursor-chat-timeline h-full select-text overflow-y-auto px-4 py-5"
+				className="chat-scroll-viewport cursor-chat-timeline h-full min-w-0 select-text overflow-x-hidden overflow-y-auto px-4 py-5"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
 			>
-				<div ref={scrollContent} className="mx-auto flex max-w-3xl flex-col gap-4.5">
+				<div ref={scrollContent} className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4.5">
 					{hasOlder ? (
 						<div className="flex justify-center pb-1">
 							<Button
@@ -1351,7 +1351,7 @@ const TurnGroup = memo(function TurnGroup({
 		: undefined;
 	const latestItemId = group.items.at(-1)?.id;
 	return (
-		<div className="flex flex-col gap-2.5">
+		<div className="flex min-w-0 flex-col gap-2.5">
 			{runs.map((run) =>
 				run.kind === "activities" ? (
 					<ActivityRun

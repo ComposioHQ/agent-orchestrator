@@ -31,7 +31,6 @@ import {
 } from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
 import { SessionTopbarHost } from "./SessionTopbarPortal";
-import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TopbarButton } from "./TopbarButton";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useResizable } from "../hooks/useResizable";
@@ -48,6 +47,7 @@ import {
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { hidesShellTopbar, isMacPlatform } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
@@ -64,8 +64,6 @@ const INSPECTOR_COMPACT_MAX_PX = 359;
 const TOPBAR_SECONDARY_COMPACT_MAX_PX = 759;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const inspectorWidthVar = "--ao-inspector-w";
-// Same spring as the left sidebar (`ui/sidebar.tsx`).
-const INSPECTOR_SPRING = { type: "spring", stiffness: 420, damping: 40, mass: 0.6 } as const;
 const INSPECTOR_SPRING_MS = 400;
 const INSPECTOR_SPRING_EASING =
 	"linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)";
@@ -121,18 +119,20 @@ type SessionViewProps = {
 };
 
 // Mirrors the left sidebar: a Motion gap takes layout width while a sibling
-// panel slides on `x` with INSPECTOR_SPRING. Dragging uses useResizable
+// panel slides on `x` with SHELL_PANEL_SPRING. Dragging uses useResizable
 // (clamped at min, never auto-collapse). Collapse is the explicit toggle only.
 function SessionInspectorRail({
 	children,
 	isOpen,
 	onExpand,
+	onCloseAnimationComplete,
 	settledClosed,
 	splitRef,
 }: {
 	children: ReactNode;
 	isOpen: boolean;
 	onExpand: () => void;
+	onCloseAnimationComplete?: () => void;
 	settledClosed: boolean;
 	splitRef: RefObject<HTMLDivElement | null>;
 }) {
@@ -164,8 +164,12 @@ function SessionInspectorRail({
 		return () => observer.disconnect();
 	}, [splitRef]);
 
-	const transition = prefersReducedMotion ? { duration: 0 } : INSPECTOR_SPRING;
+	const transition = prefersReducedMotion ? { duration: 0 } : SHELL_PANEL_SPRING;
 	const hidden = !isOpen && settledClosed;
+
+	const handleAnimationComplete = useCallback(() => {
+		if (!isOpen) onCloseAnimationComplete?.();
+	}, [isOpen, onCloseAnimationComplete]);
 
 	return (
 		<>
@@ -190,6 +194,7 @@ function SessionInspectorRail({
 				inert={hidden}
 				initial={false}
 				animate={{ x: isOpen ? "0%" : "100%" }}
+				onAnimationComplete={handleAnimationComplete}
 				style={{ width: `var(${inspectorWidthVar}, ${INSPECTOR_DEFAULT_PX}px)` }}
 				transition={transition}
 			>
@@ -239,10 +244,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
-	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
 	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const { daemonStatus } = useShell();
+	const previewBaselineRef = useRef<{ sessionId: string; key: string } | null>(null);
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
 	const terminalLiveResizeTimerRef = useRef<number | null>(null);
 	const initializedInspectorSessionIdRef = useRef<string | null>(null);
@@ -466,6 +471,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
+	const chatToTerminal = session?.mode === "chat" && interfaceTarget === "tui";
 	const interfaceBusy = Boolean(
 		session &&
 		(session.status === "working" ||
@@ -487,19 +493,28 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				setInterfaceSwitchDialogOpen(false);
 			} catch {
 				// The mutation owns the typed error. A policy dialog that was already
-				// open stays open; a direct idle switch must not open one on failure.
+				// open stays open; a direct switch must not open one on failure.
 			}
 		},
 		[interfaceSwitch, interfaceTarget],
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
+		// Terminal UI is the escape hatch for a runaway Chat turn. The session
+		// projection can briefly report idle while the Chat controller is busy, so
+		// this direction must always apply the explicit interrupt policy instead
+		// of relying on interfaceBusy. TUI -> Chat keeps the choice dialog because
+		// leaving a live terminal is not itself a recovery action.
+		if (chatToTerminal) {
+			void beginInterfaceSwitch("interrupt");
+			return;
+		}
 		if (!interfaceBusy) {
 			void beginInterfaceSwitch("drain");
 			return;
 		}
 		setInterfaceSwitchDialogOpen(true);
-	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+	}, [beginInterfaceSwitch, chatToTerminal, interfaceBusy, interfaceSwitch]);
 	// Adapters without a Chat driver cannot offer a switch into Chat UI; hide
 	// the button entirely rather than showing a permanently disabled control.
 	const interfaceSwitchUnsupported = interfaceSwitch.status?.reasonCode === "CHAT_UNSUPPORTED";
@@ -540,7 +555,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					<Plus aria-hidden="true" className="size-icon-md" />
 				</TopbarButton>
 			) : null}
-			<TerminalSwitchAgentButton session={session} />
 			{interfaceSwitchAction}
 		</SessionInterfaceActionGroup>
 	) : null;
@@ -582,15 +596,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (current?.browserContentRevealed === undefined) {
 			setBrowserContentRevealed(sessionId, hasBrowserContent);
 		}
-		if (current?.previewKey === undefined) {
-			markInspectorPreviewSeen(sessionId, previewRevealKey(previewUrl, previewRevision));
-		}
 	}, [
 		hasBrowserContent,
 		hasInspector,
-		markInspectorPreviewSeen,
-		previewRevision,
-		previewUrl,
 		session,
 		sessionId,
 		setBrowserContentRevealed,
@@ -645,11 +653,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[sessionId],
 	);
 
-	// Reveal the first real content in each non-empty browser lifecycle. Once the
-	// user leaves Browser, subsequent work respects that choice and uses the
-	// unseen indicator instead of repeatedly stealing the active inspector tab.
-	// previewRevision intentionally retriggers the empty branch so an explicit
-	// clear consumes unseen activity even when the browser was already empty.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const current = useUiStore.getState().inspectorSessions[sessionId];
@@ -660,8 +663,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		if (current?.browserContentRevealed) return;
 		setBrowserContentRevealed(sessionId, true);
-		setInspectorViewForSession(sessionId, "browser");
-		setInspectorOpenForSession(sessionId, true);
 	}, [
 		hasBrowserContent,
 		hasInspector,
@@ -669,36 +670,37 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId,
 		setBrowserContentRevealed,
 		setBrowserUnseen,
-		setInspectorOpenForSession,
-		setInspectorViewForSession,
 		terminated,
 	]);
 
-	// `ao preview` is authoritative browser work, including a same-URL rerun
-	// whose revision advances. The first target is handled by the lifecycle
-	// effect above; later targets glow only while Browser is not visible.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const previewKey = previewRevealKey(previewUrl, previewRevision);
-		const seenKey = useUiStore.getState().inspectorSessions[sessionId]?.previewKey;
-		if (seenKey === undefined) {
-			markInspectorPreviewSeen(sessionId, previewKey);
+		const baseline = previewBaselineRef.current;
+		if (!baseline || baseline.sessionId !== sessionId) {
+			previewBaselineRef.current = { sessionId, key: previewKey };
 			return;
 		}
-		if (seenKey === previewKey) return;
-		markInspectorPreviewSeen(sessionId, previewKey);
+		if (baseline.key === previewKey) return;
+		previewBaselineRef.current = { sessionId, key: previewKey };
 		if (!previewKey) return;
-		const current = useUiStore.getState().inspectorSessions[sessionId];
-		const viewingBrowser = browserIsVisible(sessionId, browserPoppedOut);
-		if (current?.browserContentRevealed && !viewingBrowser) setBrowserUnseen(sessionId, true);
+		setBrowserContentRevealed(sessionId, true);
+		if (browserIsVisible(sessionId, browserPoppedOut)) {
+			setBrowserUnseen(sessionId, false);
+			return;
+		}
+		setInspectorViewForSession(sessionId, "browser");
+		setInspectorOpenForSession(sessionId, true);
 	}, [
 		browserPoppedOut,
 		hasInspector,
-		markInspectorPreviewSeen,
 		previewRevision,
 		previewUrl,
 		sessionId,
+		setBrowserContentRevealed,
 		setBrowserUnseen,
+		setInspectorOpenForSession,
+		setInspectorViewForSession,
 	]);
 
 	// Agent browser commands are genuine browser activity even when they do not
@@ -740,6 +742,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [hasInspector, sessionId, toggleInspector]);
 
 	const inspectorMotionReadyRef = useRef(false);
+	const handleInspectorCloseAnimationComplete = useCallback(() => {
+		setInspectorSettledClosed(true);
+	}, []);
 	useLayoutEffect(() => {
 		if (!hasInspector) {
 			setInspectorSettledClosed(true);
@@ -765,8 +770,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		}
 		const groupWidth = sessionSplitRef.current?.clientWidth || window.innerWidth;
 		startTerminalLiveResize("expanded", topbarSecondaryLabelMode(groupWidth));
-		const timer = window.setTimeout(() => setInspectorSettledClosed(true), INSPECTOR_SPRING_MS);
-		return () => window.clearTimeout(timer);
 	}, [hasInspector, isInspectorOpen, startTerminalLiveResize]);
 	useEffect(() => {
 		if (!hasInspector) {
@@ -858,6 +861,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{hasInspector ? (
 					<SessionInspectorRail
 						isOpen={isInspectorOpen}
+						onCloseAnimationComplete={handleInspectorCloseAnimationComplete}
 						onExpand={() => setInspectorOpenForSession(sessionId, true)}
 						settledClosed={!isInspectorOpen && inspectorSettledClosed}
 						splitRef={sessionSplitRef}

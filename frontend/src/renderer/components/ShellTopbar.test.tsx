@@ -96,6 +96,19 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
+function activeAgentSwitch(
+	overrides: Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>> = {},
+): NonNullable<WorkspaceSession["activeAgentSwitch"]> {
+	return {
+		agentHandoffStatus: "received",
+		fromHarness: "claude-code",
+		id: "switch-1",
+		state: "starting_target",
+		targetHarness: "codex",
+		...overrides,
+	};
+}
+
 function renderTopbar(session: WorkspaceSession, embedded = false, sessionAction?: ReactNode) {
 	return renderTopbarSessions([session], session.id, embedded, sessionAction);
 }
@@ -263,6 +276,22 @@ describe("ShellTopbar status pill", () => {
 
 		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
 		expect(screen.getByText("Working")).toBeInTheDocument();
+	});
+
+	it("shows switch progress instead of the exited source in the status pill", () => {
+		renderTopbar(sessionWith({
+			status: "exited",
+			activity: {
+				state: "exited",
+				lastActivityAt: "2026-06-10T00:00:00Z",
+			},
+			activeAgentSwitch: activeAgentSwitch(),
+		}));
+
+		const pill = screen.getByText("Switching to Codex").closest("span") as HTMLElement;
+		expect(pill).toHaveStyle({ color: "var(--color-status-working)" });
+		expect(pill.querySelector("span")).toHaveClass("animate-status-pulse");
+		expect(screen.queryByText("Exited")).not.toBeInTheDocument();
 	});
 });
 

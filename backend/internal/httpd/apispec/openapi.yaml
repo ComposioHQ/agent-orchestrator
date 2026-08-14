@@ -1860,6 +1860,58 @@ paths:
       summary: Submit a generation-fenced source-agent handoff
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover:
+    post:
+      operationId: recoverSessionAgentSwitch
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable agent-switch identifier.
+        in: path
+        name: switchId
+        required: true
+        schema:
+          description: Durable agent-switch identifier.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSwitchResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Retry safe source restoration for an agent switch
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/attachments:
     post:
       operationId: stageSessionAttachments
@@ -4369,12 +4421,12 @@ paths:
               $ref: '#/components/schemas/SwitchAgentRequest'
         required: true
       responses:
-        "200":
+        "202":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AgentSwitchResponse'
-          description: OK
+          description: Accepted
         "400":
           content:
             application/json:
@@ -5014,6 +5066,7 @@ components:
           - target_binary_missing
           - target_agent_unauthorized
           - target_start_unconfirmed
+          - source_restore_unconfirmed
           - request_cancelled
           - source_blocked
           - failed_pre_stop
@@ -5268,6 +5321,8 @@ components:
       type: object
     ControllersSessionView:
       properties:
+        activeAgentSwitch:
+          $ref: '#/components/schemas/AgentSwitch'
         activity:
           $ref: '#/components/schemas/DomainActivity'
         autoInjectCI:
@@ -8120,9 +8175,9 @@ components:
             rejected.
           maxLength: 128
           type: string
-        note:
-          description: Optional user guidance included in the bounded handoff context.
-          maxLength: 4096
+        model:
+          description: Optional model override for the target agent launch or resume.
+          maxLength: 256
           type: string
         targetHarness:
           description: Agent harness to continue the logical AO session with.

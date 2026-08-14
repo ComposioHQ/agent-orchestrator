@@ -990,7 +990,18 @@ func (s *Store) AppendActivityStreamedText(
 	if err != nil {
 		return false, fmt.Errorf("append streamed text to %s: %w", providerItemID, err)
 	}
-	return rows > 0, nil
+	if rows > 0 {
+		return true, nil
+	}
+	found, err := q.ConversationActivityExistsForProviderItem(ctx,
+		gen.ConversationActivityExistsForProviderItemParams{
+			ConversationID: conversationID,
+			ProviderItemID: providerItemID,
+		})
+	if err != nil {
+		return false, fmt.Errorf("find streamed text activity %s after no-op append: %w", providerItemID, err)
+	}
+	return found, nil
 }
 
 // SettleActivityStreamedText replaces streamed prose with the provider's settled
@@ -1156,6 +1167,25 @@ func (s *Store) CancelQueuedTurns(
 		RequestedAt:    cutoff,
 	}); err != nil {
 		return fmt.Errorf("cancel queued turns for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
+// CancelAllQueuedTurns closes the whole durable queue after an interface
+// handoff has synchronously fenced intake and promotion. Unlike an ordinary Stop
+// action, there is no post-request message to preserve with a timestamp cutoff.
+func (s *Store) CancelAllQueuedTurns(
+	ctx context.Context,
+	conversationID string,
+	now time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.CancelAllQueuedConversationTurns(ctx, gen.CancelAllQueuedConversationTurnsParams{
+		CompletedAt:    sql.NullTime{Time: now, Valid: true},
+		ConversationID: conversationID,
+	}); err != nil {
+		return fmt.Errorf("cancel all queued turns for %s: %w", conversationID, err)
 	}
 	return nil
 }
@@ -1402,7 +1432,18 @@ func (s *Store) AppendCommandOutput(
 	if err != nil {
 		return false, fmt.Errorf("append command output to %s: %w", providerItemID, err)
 	}
-	return rows > 0, nil
+	if rows > 0 {
+		return true, nil
+	}
+	found, err := q.ConversationActivityExistsForProviderItem(ctx,
+		gen.ConversationActivityExistsForProviderItemParams{
+			ConversationID: conversationID,
+			ProviderItemID: providerItemID,
+		})
+	if err != nil {
+		return false, fmt.Errorf("find command output activity %s after no-op append: %w", providerItemID, err)
+	}
+	return found, nil
 }
 
 // SetTurnDiff overwrites a turn's changed-file summary.

@@ -94,6 +94,19 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
+function activeAgentSwitch(
+	overrides: Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>> = {},
+): NonNullable<WorkspaceSession["activeAgentSwitch"]> {
+	return {
+		agentHandoffStatus: "received",
+		fromHarness: "claude-code",
+		id: "switch-1",
+		state: "starting_target",
+		targetHarness: "codex",
+		...overrides,
+	};
+}
+
 function sidebarPR(overrides: Partial<WorkspaceSession["prs"][number]> = {}): WorkspaceSession["prs"][number] {
 	return {
 		url: "https://github.com/acme/project-one/pull/7",
@@ -1307,6 +1320,27 @@ describe("Sidebar", () => {
 		expect(idleDraftDot).toHaveClass("bg-status-idle");
 		expect(idleActivityDot).not.toHaveClass("animate-status-pulse");
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
+	});
+
+	it("keeps runtime activity on the dot while showing switch progress separately", () => {
+		renderSidebar({
+			workspaces: [{
+				...workspace,
+				sessions: [{
+					...session,
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-30T00:00:00Z" },
+					activeAgentSwitch: activeAgentSwitch(),
+				}],
+			}],
+		});
+
+		const row = screen.getByLabelText("Open fix login");
+		expect(row).toHaveAccessibleDescription("Switching to Codex");
+		expect(within(row).getByText("Switching to Codex")).toBeInTheDocument();
+		const dot = row.querySelector<HTMLElement>("[data-session-status]");
+		expect(dot).toHaveClass("bg-status-exited");
+		expect(dot).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("shows sessions on load and hides them once collapsed", async () => {

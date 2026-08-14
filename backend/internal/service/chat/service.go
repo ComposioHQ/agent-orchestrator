@@ -485,6 +485,24 @@ func (s *Service) Interrupt(ctx context.Context, id domain.SessionID) error {
 	return controller.Interrupt(ctx)
 }
 
+// ArmChatHandoff closes source intake and queue dispatch at
+// interface-transition acceptance time. It is a reversible fence; durable queue
+// settlement waits until target preflight succeeds.
+func (s *Service) ArmChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	controller, err := s.Controller(id)
+	if errors.Is(err, ErrNoController) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return controller.ArmHandoff(ctx, policy)
+}
+
 // PrepareChatHandoff closes source intake and makes the controller quiescent.
 // Session Manager remains responsible for stopping it and starting the target;
 // keeping that sequencing outside this package preserves the one-writer rule.

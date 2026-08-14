@@ -304,6 +304,12 @@
 	backdrop-filter: blur(var(--blur-overlay));
 }
 
+@utility agent-switch-terminal-scrim {
+	background-color: color-mix(in srgb, var(--color-terminal) 95%, transparent);
+	-webkit-backdrop-filter: blur(3px);
+	backdrop-filter: blur(3px);
+}
+
 @utility w-daemon-failure-toast {
 	width: min(var(--size-daemon-failure-toast), calc(100vw - var(--space-6)));
 }
@@ -1455,6 +1461,48 @@ textarea,
 	animation: agent-switch-transfer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+.agent-switch-progress-step:not(:last-child)::before {
+	position: absolute;
+	top: 0.21875rem;
+	left: calc(50% + 0.25rem);
+	width: calc(100% - 0.5rem);
+	height: 1px;
+	background: var(--color-border-strong);
+	content: "";
+	transition: background-color 320ms var(--ease-out);
+}
+
+.agent-switch-progress-dot {
+	transition:
+		border-color 280ms var(--ease-out),
+		background-color 280ms var(--ease-out),
+		box-shadow 280ms var(--ease-out);
+}
+
+.agent-switch-progress-step.is-complete::before,
+.agent-switch-progress-step.is-complete .agent-switch-progress-dot,
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	border-color: var(--color-accent);
+	background: var(--color-accent);
+}
+
+.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+	animation: agent-switch-step-pulse 1.4s ease-in-out infinite;
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+@keyframes agent-switch-step-pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.55;
+		transform: scale(0.72);
+	}
+}
+
 @keyframes agent-switch-transfer {
 	0% {
 		left: -2.5rem;
@@ -1477,6 +1525,19 @@ textarea,
 		left: calc(50% - 1.25rem);
 		opacity: 0.85;
 		animation: none;
+	}
+
+	.agent-switch-progress-step.is-current .agent-switch-progress-dot {
+		animation: none;
+	}
+
+	.agent-switch-toolbar-spinner {
+		animation: none;
+	}
+
+	.agent-switch-progress-dot,
+	.agent-switch-progress-step::before {
+		transition: none;
 	}
 }
 
