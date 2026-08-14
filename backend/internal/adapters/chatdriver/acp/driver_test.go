@@ -683,6 +683,41 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	}
 }
 
+func TestACPDriverRejectsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
+	userID := "55555555-5555-4555-8555-555555555555"
+	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
+	user.UserMessageChunk.MessageId = &userID
+	agent := &fakeAgent{
+		capabilities: &acpsdk.AgentCapabilities{
+			LoadSession: true,
+			SessionCapabilities: acpsdk.SessionCapabilities{
+				Resume: &acpsdk.SessionResumeCapabilities{},
+			},
+		},
+		loadUpdates: []acpsdk.SessionUpdate{user},
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+
+	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnsettled", err)
+	}
+}
+
 func TestACPDriverParksAndResolvesStructuredElicitation(t *testing.T) {
 	request := acpsdk.NewUnstableCreateElicitationRequestForm(acpsdk.UnstableElicitationSchema{
 		Type:       acpsdk.UnstableElicitationSchemaTypeObject,

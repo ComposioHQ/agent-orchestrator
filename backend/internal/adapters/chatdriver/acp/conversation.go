@@ -111,6 +111,7 @@ type conversation struct {
 	historyMu     sync.Mutex
 	history       *historyCapture
 	historyEvents []ports.ChatEvent
+	historyErr    error
 	historyLoaded bool
 }
 

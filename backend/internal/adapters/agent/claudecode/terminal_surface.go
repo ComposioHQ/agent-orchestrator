@@ -71,7 +71,36 @@ func claudeActiveFrameVisible(output string) bool {
 	if !strings.ContainsRune("✢✳✶✻✽", first) {
 		return false
 	}
-	return strings.Contains(strings.ToLower(line), "esc to interrupt")
+	if strings.Contains(strings.ToLower(line), "esc to interrupt") {
+		return true
+	}
+
+	// Claude 2.1.232 moved the interrupt hint out of the spinner row and into
+	// the provider footer below the composer. Require the lower composer border
+	// before accepting that footer so transcript or wrapped draft text cannot
+	// make an idle surface look active.
+	lowerBorder := -1
+	for i := prompt + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
+		}
+		if !claudeHorizontalRule(lines[i]) {
+			return false
+		}
+		lowerBorder = i
+		break
+	}
+	if lowerBorder < 0 {
+		return false
+	}
+	for i := lowerBorder + 1; i < len(lines); i++ {
+		line = strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		return strings.Contains(strings.ToLower(line), "esc to interrupt")
+	}
+	return false
 }
 
 func previousClaudeSurfaceLine(lines []string, before int) int {

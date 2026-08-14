@@ -1033,6 +1033,20 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerEmpty,
 		},
 		{
+			name: "active with interrupt hint in footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "spinner transcript above idle composer without active footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
 			name:       "permission dialog",
 			output:     "Do you want to proceed?\n❯ 1. Yes\n  2. No\nPress enter to confirm",
 			wantWork:   ports.TerminalSurfaceWorkBlocked,
