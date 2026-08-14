@@ -1150,6 +1150,7 @@ describe("SessionView", () => {
 		const actions = screen.getByTestId("session-inspector-actions");
 		const notification = screen.getByRole("button", { name: "Notifications" });
 		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
+		expect(toggle).toHaveAttribute("aria-pressed", "true");
 
 		fireEvent.click(toggle);
 
@@ -1158,6 +1159,7 @@ describe("SessionView", () => {
 		expect(screen.getByTestId("session-inspector-actions")).toBe(actions);
 		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
 		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
+		expect(toggle).toHaveAttribute("aria-pressed", "false");
 	});
 
 	it("persists drag resizes and never closes the store from a drag", () => {

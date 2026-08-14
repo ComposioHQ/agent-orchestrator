@@ -57,6 +57,7 @@ const TOPBAR_SECONDARY_COMPACT_MAX_PX = 759;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 const isMac = isMacPlatform();
+const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined;
 const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
@@ -906,13 +907,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				<div
 					className="session-inspector-persistent-actions"
 					data-testid="session-inspector-actions"
-					style={isMac ? ({ WebkitAppRegion: "no-drag" } as CSSProperties) : undefined}
+					style={noDragStyle}
 				>
-					<NotificationCenter />
+					<NotificationCenter style={noDragStyle} />
 					<TopbarButton
-						aria-expanded={isInspectorOpen}
 						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
+						aria-pressed={isInspectorOpen}
 						onClick={() => toggleInspector(sessionId)}
+						style={noDragStyle}
 						title={isInspectorOpen ? t("shell.closeInspectorTitle") : t("shell.openInspectorTitle")}
 						variant="icon"
 					>
