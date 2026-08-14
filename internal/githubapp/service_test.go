@@ -58,13 +58,32 @@ func TestInstallationCompletionHTMLClosesImmediately(t *testing.T) {
 
 type checkoutContextStore struct {
 	Store
-	authorization domain.GitHubCheckoutContext
+	authorization       domain.GitHubCheckoutContext
+	authorizationErr    error
+	remoteAuthorization domain.RemoteGitHubCheckoutContext
+	capability          domain.GitHubRepositoryCapability
 }
 
 func (s checkoutContextStore) WorkerGitHubCheckoutContext(
 	context.Context, string, string,
 ) (domain.GitHubCheckoutContext, error) {
-	return s.authorization, nil
+	return s.authorization, s.authorizationErr
+}
+
+func (s checkoutContextStore) WorkerRemoteGitHubCheckoutContext(
+	context.Context, string, string,
+) (domain.RemoteGitHubCheckoutContext, error) {
+	return s.remoteAuthorization, nil
+}
+
+func (s checkoutContextStore) GitHubRepositoryCapability(
+	_ context.Context, capabilityHash []byte, targetEnvironment string,
+) (domain.GitHubRepositoryCapability, error) {
+	if !bytes.Equal(capabilityHash, s.capability.CapabilityHash) ||
+		targetEnvironment != s.capability.TargetEnvironment {
+		return domain.GitHubRepositoryCapability{}, postgres.ErrForbidden
+	}
+	return s.capability, nil
 }
 
 func (s checkoutContextStore) CreatePullRequestRecord(
@@ -761,6 +780,112 @@ func TestIssuePushGrantRequestsWriteScopedToken(t *testing.T) {
 	if grant.Token != "write-secret" ||
 		!ok || permissions["contents"] != "write" || permissions["pull_requests"] != "write" {
 		t.Fatalf("grant = %#v, request permissions = %#v", grant, body["permissions"])
+	}
+}
+
+func TestCapabilityBackedProjectSupportsCheckoutPushAndPullRequest(t *testing.T) {
+	credentialKey := bytes.Repeat([]byte{7}, 32)
+	capability := "capability-secret"
+	remote := domain.RemoteGitHubCheckoutContext{
+		OrgID:                "org",
+		SessionID:            "session",
+		ProjectID:            "project",
+		GitHubInstallationID: 123,
+		GitHubRepositoryID:   456,
+		UserExternalID:       "user-external",
+		TargetEnvironment:    "production",
+		RepositoryURL:        "https://github.com/acme/api",
+	}
+	var err error
+	remote.CapabilityCiphertext, remote.CapabilityNonce, err = Encrypt(
+		credentialKey,
+		[]byte(capability),
+		[]byte(RepositoryCapabilityAssociatedData(remote)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := domain.GitHubRepositoryCapability{
+		UserExternalID:       remote.UserExternalID,
+		GitHubUserID:         99,
+		TargetEnvironment:    remote.TargetEnvironment,
+		GitHubInstallationID: remote.GitHubInstallationID,
+		GitHubRepositoryID:   remote.GitHubRepositoryID,
+		CapabilityHash:       HashState(capability),
+		Repository: domain.GitHubRepository{
+			GitHubRepositoryID: remote.GitHubRepositoryID,
+			GitHubOwnerID:      88,
+			Name:               "api",
+			FullName:           "acme/api",
+			HTMLURL:            remote.RepositoryURL,
+			CloneURL:           remote.RepositoryURL + ".git",
+			DefaultBranch:      "main",
+		},
+	}
+	var tokenPermissions []map[string]any
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/access_tokens"):
+			var body struct {
+				Permissions map[string]any `json:"permissions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			tokenPermissions = append(tokenPermissions, body.Permissions)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token": "repository-token", "expires_at": time.Now().UTC().Add(time.Hour),
+			})
+		case r.URL.Path == "/repos/acme/api/pulls":
+			response := PullRequestResponse{
+				Number: 9, HTMLURL: "https://github.com/acme/api/pull/9",
+			}
+			response.Head.SHA = "deadbeef"
+			_ = json.NewEncoder(w).Encode(response)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer github.Close()
+	service, err := NewService(
+		checkoutContextStore{
+			authorizationErr:    postgres.ErrForbidden,
+			remoteAuthorization: remote,
+			capability:          authority,
+		},
+		testClient(t, github.URL), make([]byte, 32), credentialKey,
+		"webhook-secret", time.Minute, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkout, err := service.IssueCheckoutGrant(context.Background(), "org", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	push, err := service.IssuePushGrant(context.Background(), "org", "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pullRequest, err := service.RaisePullRequest(
+		context.Background(),
+		"org",
+		"session",
+		domain.RaisePullRequest{Title: "Fix it", HeadBranch: "ao/fix"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkout.CloneURL != authority.Repository.CloneURL ||
+		push.CloneURL != authority.Repository.CloneURL ||
+		pullRequest.Number != 9 || pullRequest.TargetBranch != "main" {
+		t.Fatalf("checkout = %#v, push = %#v, pull request = %#v", checkout, push, pullRequest)
+	}
+	if len(tokenPermissions) != 3 ||
+		tokenPermissions[0]["contents"] != "read" ||
+		tokenPermissions[1]["contents"] != "write" ||
+		tokenPermissions[2]["contents"] != "write" {
+		t.Fatalf("token permissions = %#v", tokenPermissions)
 	}
 }
 

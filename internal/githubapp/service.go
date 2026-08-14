@@ -47,6 +47,7 @@ type Store interface {
 	GitHubInstallationByRoute(context.Context, string, string) (domain.GitHubInstallation, error)
 	ApplyGitHubInstallationEvent(context.Context, string, string, string) error
 	WorkerGitHubCheckoutContext(context.Context, string, string) (domain.GitHubCheckoutContext, error)
+	WorkerRemoteGitHubCheckoutContext(context.Context, string, string) (domain.RemoteGitHubCheckoutContext, error)
 	CreatePullRequestRecord(
 		ctx context.Context,
 		orgID, sessionID string,
@@ -396,6 +397,9 @@ func (s *Service) resolveWorkerCheckoutAuthorization(
 	orgID, sessionID string,
 ) (domain.GitHubCheckoutContext, error) {
 	authorization, err := s.store.WorkerGitHubCheckoutContext(ctx, orgID, sessionID)
+	if errors.Is(err, postgres.ErrForbidden) || errors.Is(err, postgres.ErrNotFound) {
+		authorization, err = s.resolveCapabilityCheckoutAuthorization(ctx, orgID, sessionID)
+	}
 	if err != nil {
 		return domain.GitHubCheckoutContext{}, err
 	}
@@ -408,6 +412,64 @@ func (s *Service) resolveWorkerCheckoutAuthorization(
 		return domain.GitHubCheckoutContext{}, postgres.ErrForbidden
 	}
 	return authorization, nil
+}
+
+// resolveCapabilityCheckoutAuthorization maps a capability-backed project to
+// the same repository authorization used by directly granted projects. This
+// is required in production too: projects created through the environment
+// control endpoint retain the production authority as an encrypted capability
+// instead of a local repository-grant row.
+func (s *Service) resolveCapabilityCheckoutAuthorization(
+	ctx context.Context,
+	orgID, sessionID string,
+) (domain.GitHubCheckoutContext, error) {
+	remote, err := s.store.WorkerRemoteGitHubCheckoutContext(ctx, orgID, sessionID)
+	if err != nil {
+		return domain.GitHubCheckoutContext{}, err
+	}
+	if remote.OrgID != orgID ||
+		remote.SessionID != sessionID ||
+		remote.ProjectID == "" ||
+		remote.GitHubInstallationID <= 0 ||
+		remote.GitHubRepositoryID <= 0 ||
+		!validCapabilityEnvironment(remote.TargetEnvironment) ||
+		strings.TrimSpace(remote.UserExternalID) == "" {
+		return domain.GitHubCheckoutContext{}, postgres.ErrForbidden
+	}
+	plaintext, err := Decrypt(
+		s.credentialKey,
+		remote.CapabilityCiphertext,
+		remote.CapabilityNonce,
+		[]byte(RepositoryCapabilityAssociatedData(remote)),
+	)
+	if err != nil {
+		return domain.GitHubCheckoutContext{}, postgres.ErrForbidden
+	}
+	defer clear(plaintext)
+	authority, err := s.ValidateRepositoryCapability(
+		ctx,
+		string(plaintext),
+		remote.TargetEnvironment,
+		remote.GitHubInstallationID,
+		remote.GitHubRepositoryID,
+		remote.UserExternalID,
+	)
+	if err != nil {
+		return domain.GitHubCheckoutContext{}, err
+	}
+	if !strings.EqualFold(strings.TrimRight(remote.RepositoryURL, "/"), strings.TrimRight(authority.Repository.HTMLURL, "/")) {
+		return domain.GitHubCheckoutContext{}, postgres.ErrForbidden
+	}
+	return domain.GitHubCheckoutContext{
+		OrgID:                orgID,
+		SessionID:            sessionID,
+		ProjectID:            remote.ProjectID,
+		GitHubInstallationID: authority.GitHubInstallationID,
+		GitHubRepositoryID:   authority.GitHubRepositoryID,
+		FullName:             authority.Repository.FullName,
+		CloneURL:             authority.Repository.CloneURL,
+		DefaultBranch:        authority.Repository.DefaultBranch,
+	}, nil
 }
 
 // RaisePullRequest opens a pull request for a session's already-pushed branch

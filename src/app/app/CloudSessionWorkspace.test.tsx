@@ -159,9 +159,7 @@ it("waits for the worker before mounting the terminal", () => {
     />,
   );
 
-  expect(
-    screen.getByText("Provisioning the NodeOps VM…"),
-  ).toBeVisible();
+  expect(screen.getAllByText("Provisioning the NodeOps VM…")).toHaveLength(2);
   expect(screen.queryByText("Interactive agent terminal")).not.toBeInTheDocument();
 });
 

@@ -234,6 +234,7 @@ export function browserTerminalUrl(
   url.searchParams.set("ticket", ticket);
   url.searchParams.set("after", String(after));
   url.searchParams.set("kind", kind);
+  url.searchParams.set("protocol", "2");
   return url.toString();
 }
 

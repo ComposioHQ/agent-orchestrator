@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   mode: vi.fn<() => "local" | "staging" | "production">(),
+  controlEnvironment: vi.fn<() => "development" | "staging" | "production">(),
   withAuth: vi.fn(),
 }));
 
@@ -12,7 +13,7 @@ vi.mock("@workos-inc/authkit-nextjs", () => ({
 
 vi.mock("@/lib/cloud-config", () => ({
   cloudApiBaseUrl: () => "https://staging-api.example.com",
-  cloudControlEnvironment: () => "staging",
+  cloudControlEnvironment: mocks.controlEnvironment,
   cloudWebMode: mocks.mode,
   environmentControlToken: () => "environment-control-token-32-bytes",
   githubApiBaseUrl: () => "https://api.example.com",
@@ -25,9 +26,60 @@ import { DELETE, GET, POST, PUT } from "./route";
 beforeEach(() => {
   vi.restoreAllMocks();
   mocks.mode.mockReturnValue("staging");
+  mocks.controlEnvironment.mockReturnValue("staging");
   mocks.withAuth.mockResolvedValue({
     user: { id: "user-1" },
     accessToken: "workos-token",
+  });
+});
+
+it("creates production GitHub projects directly without capability brokerage", async () => {
+  mocks.mode.mockReturnValue("production");
+  mocks.controlEnvironment.mockReturnValue("production");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+    Response.json(
+      { project: { id: "project-1" }, session: { id: "session-1" } },
+      { status: 201 },
+    ),
+  );
+  const request = new NextRequest(
+    "https://cloud.example.com/api/cloud/v1/orgs/prod-org/projects/scratch",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": "scratch-key",
+        origin: "https://cloud.example.com",
+      },
+      body: JSON.stringify({
+        displayName: "Private work",
+        githubInstallationId: "7",
+        orchestrator: { harness: "claude-code" },
+      }),
+    },
+  );
+
+  const response = await POST(request, {
+    params: Promise.resolve({
+      path: ["orgs", "prod-org", "projects", "scratch"],
+    }),
+  });
+
+  expect(response.status).toBe(201);
+  expect(fetchMock).toHaveBeenCalledOnce();
+  expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+    "https://staging-api.example.com/api/cloud/v1/orgs/prod-org/projects/scratch",
+  );
+  const upstream = fetchMock.mock.calls[0]?.[1];
+  expect(new Headers(upstream?.headers).get("authorization")).toBe(
+    "Bearer workos-token",
+  );
+  expect(
+    JSON.parse(new TextDecoder().decode(upstream?.body as ArrayBuffer)),
+  ).toEqual({
+    displayName: "Private work",
+    githubInstallationId: "7",
+    orchestrator: { harness: "claude-code" },
   });
 });
 

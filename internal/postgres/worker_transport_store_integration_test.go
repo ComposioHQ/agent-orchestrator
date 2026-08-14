@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -308,6 +309,70 @@ func TestTerminalTicketAndFramesAreDurableAndEpochFenced(t *testing.T) {
 	}
 }
 
+func TestTerminalTicketWakesPausedSandboxAndWaitsForResumedWorker(t *testing.T) {
+	fixture := newSandboxFixture(t, "terminal-resume")
+	ctx := context.Background()
+	workerID, epoch := registerTestWorker(t, fixture)
+
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes
+			SET desired_state = 'paused', observed_state = 'stopped',
+				reconcile_after = now() + interval '1 day'
+			WHERE org_id = $1 AND session_id = $2`,
+			fixture.orgID, fixture.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := fixture.store.IssueTerminalTicket(
+		ctx, fixture.principal, fixture.orgID, fixture.sessionID, "workspace", time.Minute,
+	); !errors.Is(err, ErrWorkerUnavailable) {
+		t.Fatalf("paused terminal ticket error = %v, want ErrWorkerUnavailable", err)
+	}
+
+	var desiredState string
+	var reconcileDue bool
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT desired_state, reconcile_after <= now()
+			FROM ao_sandboxes WHERE org_id = $1 AND session_id = $2`,
+			fixture.orgID, fixture.sessionID,
+		).Scan(&desiredState, &reconcileDue)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if desiredState != "running" || !reconcileDue {
+		t.Fatalf("wake intent = %q due=%v, want running and immediately due", desiredState, reconcileDue)
+	}
+
+	// The reconciler observes the provider resume before the worker's next
+	// heartbeat proves that the snapshotted process is alive again.
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes SET observed_state = 'bootstrapping'
+			WHERE org_id = $1 AND session_id = $2`,
+			fixture.orgID, fixture.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.MarkWorkerSeen(
+		ctx, fixture.orgID, fixture.sessionID, workerID, "test", epoch,
+		[]string{"worker.turns", "worker.transport"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := fixture.store.IssueTerminalTicket(
+		ctx, fixture.principal, fixture.orgID, fixture.sessionID, "workspace", time.Minute,
+	); err != nil {
+		t.Fatalf("resumed terminal ticket: %v", err)
+	}
+}
+
 func TestTerminalOpenHasReservedCapacityAndPriority(t *testing.T) {
 	fixture := newSandboxFixture(t, "terminal-priority")
 	ctx := context.Background()
@@ -582,7 +647,7 @@ func TestReadOnlySessionRejectsWorkspaceWritesAndTerminalInputScope(t *testing.T
 	); !errors.Is(err, ErrWorkspaceReadOnly) {
 		t.Fatalf("read-only write error = %v", err)
 	}
-	_, _, err := fixture.store.IssueTerminalTicket(
+	_, scopes, err := fixture.store.IssueTerminalTicket(
 		ctx,
 		fixture.principal,
 		fixture.orgID,
@@ -590,8 +655,11 @@ func TestReadOnlySessionRejectsWorkspaceWritesAndTerminalInputScope(t *testing.T
 		"workspace",
 		time.Minute,
 	)
-	if !errors.Is(err, ErrForbidden) {
+	if err != nil {
 		t.Fatalf("read-only terminal ticket error = %v", err)
+	}
+	if !slices.Equal(scopes, []string{"terminal:read"}) {
+		t.Fatalf("read-only terminal scopes = %v, want terminal:read only", scopes)
 	}
 	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
@@ -604,14 +672,16 @@ func TestReadOnlySessionRejectsWorkspaceWritesAndTerminalInputScope(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := fixture.store.IssueTerminalTicket(
+	if _, scopes, err := fixture.store.IssueTerminalTicket(
 		ctx,
 		fixture.principal,
 		fixture.orgID,
 		fixture.sessionID,
 		"workspace",
 		time.Minute,
-	); !errors.Is(err, ErrForbidden) {
+	); err != nil {
 		t.Fatalf("denied-command terminal ticket error = %v", err)
+	} else if !slices.Equal(scopes, []string{"terminal:read"}) {
+		t.Fatalf("denied-command terminal scopes = %v, want terminal:read only", scopes)
 	}
 }

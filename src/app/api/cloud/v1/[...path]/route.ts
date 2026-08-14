@@ -123,7 +123,8 @@ async function forward(request: NextRequest, context: RouteContext) {
     scratchRoute &&
     request.method === "POST" &&
     environmentAccessToken &&
-    workosAccessToken
+    workosAccessToken &&
+    cloudControlEnvironment() !== "production"
   ) {
     return createSplitAuthorityScratchProject(
       request,

@@ -458,7 +458,7 @@ func scratchInstallationEligibility(installation Installation) (bool, string) {
 	contents := installation.Permissions["contents"]
 	if !strings.EqualFold(contents, "read") &&
 		!strings.EqualFold(contents, "write") {
-		return false, "Repository contents access is required."
+		return false, "Approve the GitHub App's Repository contents permission for this installation."
 	}
 	return true, ""
 }

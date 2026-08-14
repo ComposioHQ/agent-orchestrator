@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -118,13 +119,22 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	structured := r.URL.Query().Get("protocol") == "2"
+	if structured && terminal.Kind == "workspace" {
+		// Workspace reconnects create a fresh shell. Tell the client to discard
+		// output from the previous shell and replay this one from sequence zero.
+		after = 0
+		if err := writeTerminalMessage(ctx, connection, terminalServerMessage{Type: "reset"}); err != nil {
+			return
+		}
+	}
 	readResult := make(chan error, 1)
 	go func() {
 		readResult <- s.readTerminalInput(ctx, connection, terminal)
 	}()
 	writeResult := make(chan error, 1)
 	go func() {
-		writeResult <- s.writeTerminalOutput(ctx, connection, terminal, after)
+		writeResult <- s.writeTerminalOutput(ctx, connection, terminal, after, structured)
 	}()
 
 	select {
@@ -138,12 +148,18 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 		websocket.CloseStatus(err) == -1 {
 		s.logger.Warn("terminal stream ended unexpectedly", "error", err, "terminal_id", terminal.ID)
 	}
-	status, reason := terminalStreamClose(err)
+	status, reason := terminalStreamClose(err, terminal.Kind)
 	_ = connection.Close(status, reason)
 }
 
-func terminalStreamClose(err error) (websocket.StatusCode, string) {
+func terminalStreamClose(err error, kind string) (websocket.StatusCode, string) {
 	if errors.Is(err, errTerminalProcessUnavailable) {
+		// An agent harness can be permanently absent from an image, so surface
+		// that as a stable policy failure. A workspace shell open can instead
+		// race a worker restart/resume and must remain reconnectable.
+		if kind == "workspace" {
+			return websocket.StatusTryAgainLater, "workspace terminal is restarting"
+		}
 		return websocket.StatusPolicyViolation, "terminal process unavailable"
 	}
 	if err != nil && !errors.Is(err, context.Canceled) &&
@@ -234,22 +250,42 @@ func (s *Server) writeTerminalOutput(
 	connection *websocket.Conn,
 	terminal domain.TerminalSession,
 	after int64,
+	structured bool,
 ) error {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
+	replayComplete := false
 	for {
 		frames, state, err := s.store.ListTerminalOutput(ctx, terminal, after, 100)
 		if err != nil {
 			return err
 		}
 		for _, frame := range frames {
-			// PTY reads are arbitrary byte chunks and can split a multi-byte
-			// UTF-8 sequence. Sending them as text makes the WebSocket library
-			// reject otherwise valid terminal output and disconnect the viewer.
-			if err := connection.Write(ctx, websocket.MessageBinary, frame.Data); err != nil {
+			var err error
+			if structured {
+				err = writeTerminalMessage(ctx, connection, terminalServerMessage{
+					Type:     "output",
+					Data:     base64.StdEncoding.EncodeToString(frame.Data),
+					Sequence: frame.Sequence,
+				})
+			} else {
+				// PTY reads are arbitrary byte chunks and can split a multi-byte
+				// UTF-8 sequence. Legacy clients receive binary frames so partial
+				// code points never make the WebSocket library reject the output.
+				err = connection.Write(ctx, websocket.MessageBinary, frame.Data)
+			}
+			if err != nil {
 				return err
 			}
 			after = frame.Sequence
+		}
+		if structured && !replayComplete {
+			if err := writeTerminalMessage(ctx, connection, terminalServerMessage{
+				Type: "replay_complete", Sequence: after,
+			}); err != nil {
+				return err
+			}
+			replayComplete = true
 		}
 		if state == "failed" {
 			return errTerminalProcessUnavailable
@@ -263,6 +299,25 @@ func (s *Server) writeTerminalOutput(
 		case <-ticker.C:
 		}
 	}
+}
+
+type terminalServerMessage struct {
+	Type     string `json:"type"`
+	Data     string `json:"data,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Sequence int64  `json:"sequence,omitempty"`
+}
+
+func writeTerminalMessage(
+	ctx context.Context,
+	connection *websocket.Conn,
+	message terminalServerMessage,
+) error {
+	data, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	return connection.Write(ctx, websocket.MessageText, data)
 }
 
 func (s *Server) closeTerminal(r *http.Request, terminal domain.TerminalSession) {

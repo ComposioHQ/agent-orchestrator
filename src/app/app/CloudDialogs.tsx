@@ -367,7 +367,7 @@ function LocalAgentForm({
             </label>
             {eligibleInstallations.length === 0 && githubUser.connection.installations.length > 0 ? (
               <p className="text-xs leading-5 text-[var(--color-text-passive)]">
-                Configure the AO GitHub App for all repositories with repository administration access before creating a repository.
+                Configure the AO GitHub App for all repositories, then approve Repository administration and Repository contents access before creating a repository.
               </p>
             ) : null}
             <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs leading-5 text-[var(--muted-foreground)]">

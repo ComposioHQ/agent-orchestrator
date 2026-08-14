@@ -324,6 +324,23 @@ func (s *Store) IssueTerminalTicket(
 	orgID, sessionID, kind string,
 	ttl time.Duration,
 ) (string, []string, error) {
+	// Terminal access is an explicit proof of life. Wake an idle-paused sandbox
+	// in a committed transaction before checking worker readiness so a missing
+	// worker can return ErrWorkerUnavailable without rolling the wake intent
+	// back. The browser retries ticket creation while the reconciler resumes the
+	// provider and the worker heartbeats again.
+	if err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes
+			SET desired_state = 'running', reconcile_after = now(), updated_at = now()
+			WHERE org_id = $1 AND session_id = $2 AND desired_state = 'paused'`,
+			orgID, sessionID,
+		)
+		return err
+	}); err != nil {
+		return "", nil, err
+	}
+
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, fmt.Errorf("generate terminal ticket: %w", err)
@@ -340,11 +357,17 @@ func (s *Store) IssueTerminalTicket(
 			`SELECT worker.epoch, session.mode, session.is_terminated,
 				session.denied_commands
 			FROM ao_sessions session
+			JOIN ao_sandboxes sandbox
+			  ON sandbox.org_id = session.org_id
+			 AND sandbox.session_id = session.id
 			JOIN ao_worker_connections worker
 			  ON worker.org_id = session.org_id
 			 AND worker.session_id = session.id
 			 AND worker.disconnected_at IS NULL
-			WHERE session.org_id = $1 AND session.id = $2`,
+			 AND worker.ready_at IS NOT NULL
+			WHERE session.org_id = $1 AND session.id = $2
+			  AND sandbox.desired_state = 'running'
+			  AND sandbox.observed_state = 'running'`,
 			orgID, sessionID,
 		).Scan(&epoch, &mode, &terminated, &deniedCommands)
 		if errors.Is(err, pgx.ErrNoRows) || terminated {
@@ -355,15 +378,15 @@ func (s *Store) IssueTerminalTicket(
 		}
 		mode = effectiveMode(mode, access.ModeCap)
 		deniedCommands = effectiveDeniedCommands(deniedCommands, access.DeniedCommands)
-		// A workspace shell is unrestricted. Agent TUIs can enforce their
-		// native standard/trusted approval mode, but neither surface can
-		// faithfully enforce AO's command-prefix deny rules.
-		if len(deniedCommands) != 0 ||
-			(kind == "workspace" && mode != "trusted") {
-			return ErrForbidden
-		}
 		scopes = []string{"terminal:read"}
-		if access.Role != "viewer" && mode != "read-only" {
+		// Authorized users may always observe a terminal. Operating a workspace
+		// shell is only safe in trusted mode, and neither terminal surface can
+		// faithfully enforce AO's command-prefix deny rules.
+		canOperate := access.Role != "viewer" &&
+			mode != "read-only" &&
+			len(deniedCommands) == 0 &&
+			(kind != "workspace" || mode == "trusted")
+		if canOperate {
 			scopes = append(scopes, "terminal:operate")
 		}
 		_, err = tx.Exec(ctx,

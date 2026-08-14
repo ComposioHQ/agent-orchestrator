@@ -838,9 +838,6 @@ export function CloudWorkspace() {
       const userConnection = await client.getGitHubUserConnection();
       const changedExistingInstallation = userConnection.installations.find(
         (installation) =>
-          installation.accountType === "Organization" &&
-          !before.has(installation.githubInstallationId) &&
-          beforeUserInstallations.has(installation.githubInstallationId) &&
           beforeUserInstallations.get(installation.githubInstallationId) !==
             [
               installation.repositorySelection,
@@ -849,14 +846,23 @@ export function CloudWorkspace() {
             ].join(":"),
       );
       if (changedExistingInstallation) {
-        const claimed = await client.claimGitHubInstallation(
-          organizationId,
-          changedExistingInstallation.githubInstallationId,
-        );
-        connectedInstallation = claimed.installation;
-        claimedExistingInstallation = true;
         setGitHubUser({ status: "available", connection: userConnection });
-        break;
+        if (changedExistingInstallation.accountType === "Organization") {
+          const claimed = await client.claimGitHubInstallation(
+            organizationId,
+            changedExistingInstallation.githubInstallationId,
+          );
+          connectedInstallation = claimed.installation;
+          claimedExistingInstallation = true;
+          break;
+        }
+        popup.close();
+        await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
+        return;
+      }
+      if (popup.closed) {
+        await Promise.all([loadGitHubUser(), loadGitHub(organizationId)]);
+        return;
       }
       await delay(500);
     }
@@ -1273,9 +1279,6 @@ export function CloudWorkspace() {
     sessions.find(({ id }) => id === selectedSessionId) ?? null;
   const activeSession = sharedSession ?? selectedSession;
   const activeSessionOrgId = sharedSession ? sharedSessionOrgId : organizationId;
-  const activeSharedProject = sharedSession
-    ? sharedProjects.find(({ project }) => project.id === sharedSession.projectId)
-    : undefined;
 
   return (
     <main
@@ -1348,11 +1351,6 @@ export function CloudWorkspace() {
               sidebarOpen={!sidebarCollapsed}
               organizationId={activeSessionOrgId}
               session={activeSession}
-              workspaceTerminalDisabledReason={
-                activeSharedProject?.grant.role === "viewer"
-                  ? "Workspace terminal access is not available for read-only shares."
-                  : ""
-              }
             />
           ) : (
             <>

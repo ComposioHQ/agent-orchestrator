@@ -398,6 +398,13 @@ func TestTerminalTicketScopesAndPolicyCapForSharedSessions(t *testing.T) {
 	if !slices.Equal(viewerScopes, []string{"terminal:read"}) {
 		t.Fatalf("viewer scopes = %v, want terminal:read only", viewerScopes)
 	}
+	_, viewerWorkspaceScopes, err := f.store.IssueTerminalTicket(ctx, f.other, f.ownerOrgID, f.sessionID, "workspace", time.Minute)
+	if err != nil {
+		t.Fatalf("viewer workspace terminal ticket: %v", err)
+	}
+	if !slices.Equal(viewerWorkspaceScopes, []string{"terminal:read"}) {
+		t.Fatalf("viewer workspace scopes = %v, want terminal:read only", viewerWorkspaceScopes)
+	}
 
 	// An editor grant with no cap leaves the session's own trusted mode
 	// alone, so a ticket issues — but scoped to read-only, since role

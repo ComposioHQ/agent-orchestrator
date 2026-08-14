@@ -845,6 +845,59 @@ it("claims an existing GitHub organization installation after it is configured",
   expect(popup.close).toHaveBeenCalled();
 });
 
+it("refreshes a configured personal GitHub installation without trying to claim it", async () => {
+  const beforeConnection = {
+    connected: true,
+    login: "amoreX",
+    installations: [
+      {
+        githubInstallationId: "153691581",
+        accountLogin: "amoreX",
+        accountType: "User",
+        repositorySelection: "selected",
+        canCreateRepository: false,
+        unavailableReason: "Configure the GitHub App for all repositories first.",
+      },
+    ],
+  };
+  const afterConnection = {
+    ...beforeConnection,
+    installations: [
+      {
+        ...beforeConnection.installations[0],
+        repositorySelection: "all",
+        canCreateRepository: true,
+        unavailableReason: "",
+      },
+    ],
+  };
+  mocks.getGitHubUserConnection.mockResolvedValue(beforeConnection);
+  mocks.listGitHubInstallations.mockResolvedValue([]);
+  const popup = {
+    closed: false,
+    close: vi.fn(),
+    location: { assign: vi.fn() },
+  };
+  vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+
+  render(<CloudWorkspace />);
+  await screen.findByText("Dev Team");
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Command palette" })).getByRole(
+      "option",
+      { name: "Settings" },
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Providers" }));
+  mocks.getGitHubUserConnection.mockResolvedValue(afterConnection);
+  fireEvent.click(screen.getByRole("button", { name: "Connect organization" }));
+
+  await waitFor(() => expect(popup.close).toHaveBeenCalled());
+  expect(mocks.claimGitHubInstallation).not.toHaveBeenCalled();
+  expect(mocks.getGitHubUserConnection).toHaveBeenCalled();
+});
+
 it("connects coding-agent credentials from provider settings", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");

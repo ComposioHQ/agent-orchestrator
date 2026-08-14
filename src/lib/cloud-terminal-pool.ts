@@ -22,6 +22,13 @@ export type CloudTerminalEvent =
 type CloudClient = ReturnType<typeof browserCloudClient>;
 type Listener = (event: CloudTerminalEvent) => void;
 
+interface TerminalServerMessage {
+  type: "output" | "error" | "reset" | "replay_complete";
+  data?: string;
+  message?: string;
+  sequence?: number;
+}
+
 const maximumHistoryBytes = 4 << 20;
 const reconnectMaxDelayMs = 30_000;
 const idleCloseDelayMs = 60_000;
@@ -34,6 +41,7 @@ class CloudTerminalConnection {
   private listeners = new Set<Listener>();
   private history: Uint8Array[] = [];
   private historyBytes = 0;
+  private lastSequence = 0;
   private reconnectTimer: number | undefined;
   private idleCloseTimer: number | undefined;
   private connectInFlight = false;
@@ -130,7 +138,6 @@ class CloudTerminalConnection {
 
     this.connectInFlight = true;
     this.setState("connecting");
-    this.resetReplayBuffer();
     const abortController = new AbortController();
     try {
       const { ticket, scopes } = await this.client.createTerminalTicket(
@@ -142,7 +149,9 @@ class CloudTerminalConnection {
       this.canOperate = !scopes || scopes.includes("terminal:operate");
       if (this.closed) return;
 
-      const socket = new WebSocket(browserTerminalUrl(ticket, 0, this.kind));
+      const socket = new WebSocket(
+        browserTerminalUrl(ticket, this.lastSequence, this.kind),
+      );
       socket.binaryType = "arraybuffer";
       this.socket = socket;
       let failureHandled = false;
@@ -166,23 +175,52 @@ class CloudTerminalConnection {
       });
       socket.addEventListener("message", async (event) => {
         if (this.socket !== socket || this.closed) return;
+        if (typeof event.data === "string") {
+          let message: TerminalServerMessage;
+          try {
+            message = JSON.parse(event.data) as TerminalServerMessage;
+          } catch {
+            return;
+          }
+          this.lastSequence = Math.max(this.lastSequence, message.sequence ?? 0);
+          if (message.type === "reset") {
+            this.lastSequence = 0;
+            this.resetReplayBuffer();
+            return;
+          }
+          if (message.type === "error") {
+            this.emit({
+              type: "notice",
+              message: message.message ?? "Terminal command could not be queued.",
+            });
+            return;
+          }
+          if (message.type !== "output" || !message.data) return;
+          const data = base64ToBytes(message.data);
+          this.pushHistory(data);
+          this.emit({ type: "output", data });
+          return;
+        }
+        // Compatibility for an older API replica during a rolling deploy.
         const data = await terminalMessageBytes(event.data);
-        if (!data) return;
-        this.pushHistory(data);
-        this.emit({ type: "output", data });
+        if (data) {
+          this.pushHistory(data);
+          this.emit({ type: "output", data });
+        }
       });
       socket.addEventListener("close", (event) => {
-		if (event.code === 1008) {
-		  if (this.socket !== socket || this.closed || failureHandled) return;
-		  failureHandled = true;
-		  this.socket = null;
-		  this.setState("error");
-		  this.emit({
-		    type: "notice",
-		    message: event.reason || "Terminal process is unavailable in this VM.",
-		  });
-		  return;
-		}
+        if (event.code === 1008) {
+          if (this.socket !== socket || this.closed || failureHandled) return;
+          failureHandled = true;
+          this.socket = null;
+          this.setState("error");
+          this.emit({
+            type: "notice",
+            message:
+              event.reason || "Terminal process is unavailable in this VM.",
+          });
+          return;
+        }
         if (event.code === 1000) {
           this.emit({
             type: "notice",
@@ -195,7 +233,7 @@ class CloudTerminalConnection {
         reconnectOnce("disconnected");
       });
       socket.addEventListener("error", () => {
-		if (this.socket === socket && !this.closed) this.setState("error");
+        if (this.socket === socket && !this.closed) this.setState("error");
       });
     } catch (cause) {
       if (!this.closed && !abortController.signal.aborted) {
@@ -332,4 +370,9 @@ async function terminalMessageBytes(data: unknown): Promise<Uint8Array | null> {
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
   return null;
+}
+
+function base64ToBytes(value: string) {
+  const binary = window.atob(value);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }

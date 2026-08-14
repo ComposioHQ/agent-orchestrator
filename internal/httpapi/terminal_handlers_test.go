@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +79,7 @@ func TestTerminalOutputUsesBinaryFramesForPartialUTF8(t *testing.T) {
 			connection,
 			domain.TerminalSession{},
 			0,
+			true,
 		)
 	}))
 	t.Cleanup(httpServer.Close)
@@ -97,28 +100,41 @@ func TestTerminalOutputUsesBinaryFramesForPartialUTF8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read terminal output: %v", err)
 	}
-	if messageType != websocket.MessageBinary {
-		t.Fatalf("message type = %v, want binary", messageType)
+	if messageType != websocket.MessageText {
+		t.Fatalf("message type = %v, want text", messageType)
 	}
-	if string(data) != string([]byte{0xe2, 0x82}) {
-		t.Fatalf("data = %v, want partial UTF-8 bytes", data)
+	var message terminalServerMessage
+	if err := json.Unmarshal(data, &message); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(message.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Type != "output" || message.Sequence != 1 || string(decoded) != string([]byte{0xe2, 0x82}) {
+		t.Fatalf("message = %#v data = %v, want sequence 1 with partial UTF-8 bytes", message, decoded)
 	}
 }
 
 func TestTerminalStreamFailureUsesRetryableCloseStatus(t *testing.T) {
-	status, reason := terminalStreamClose(errors.New("database unavailable"))
+	status, reason := terminalStreamClose(errors.New("database unavailable"), "workspace")
 	if status != websocket.StatusInternalError || reason != "terminal stream interrupted" {
 		t.Fatalf("close = %d %q, want retryable internal error", status, reason)
 	}
 
-	status, reason = terminalStreamClose(nil)
+	status, reason = terminalStreamClose(nil, "workspace")
 	if status != websocket.StatusNormalClosure || reason != "terminal closed" {
 		t.Fatalf("close = %d %q, want normal terminal closure", status, reason)
 	}
 
-	status, reason = terminalStreamClose(errTerminalProcessUnavailable)
+	status, reason = terminalStreamClose(errTerminalProcessUnavailable, "agent")
 	if status != websocket.StatusPolicyViolation || reason != "terminal process unavailable" {
 		t.Fatalf("close = %d %q, want non-retryable terminal process failure", status, reason)
+	}
+
+	status, reason = terminalStreamClose(errTerminalProcessUnavailable, "workspace")
+	if status != websocket.StatusTryAgainLater || reason != "workspace terminal is restarting" {
+		t.Fatalf("close = %d %q, want retryable workspace terminal failure", status, reason)
 	}
 }
 

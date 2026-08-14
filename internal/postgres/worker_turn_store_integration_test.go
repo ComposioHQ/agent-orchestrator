@@ -312,6 +312,17 @@ func registerTestWorker(t *testing.T, fixture sandboxFixture) (string, int64) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if err := fixture.store.MarkWorkerSeen(
+		context.Background(),
+		fixture.orgID,
+		fixture.sessionID,
+		workerID,
+		"test",
+		ticket.WorkerEpoch,
+		[]string{"worker.turns"},
+	); err != nil {
+		t.Fatal(err)
+	}
 	return workerID, ticket.WorkerEpoch
 }
 
