@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
@@ -64,6 +65,16 @@ type Options struct {
 	// LeaseDuration bounds exclusive ownership of one reconciliation. It is
 	// renewed while provider calls are in flight.
 	LeaseDuration time.Duration
+	// MaxConcurrentOperations caps slow provider operations per control-plane
+	// replica. Keeping this bounded lets a login wake every session promptly
+	// without overwhelming the provider API.
+	MaxConcurrentOperations int
+	// MaxConcurrentOperationsPerProvider caps provider work for one provider
+	// within a reconciliation pass.
+	MaxConcurrentOperationsPerProvider int
+	// MaxConcurrentOperationsPerOrganization caps provider work for one
+	// organization within a reconciliation pass.
+	MaxConcurrentOperationsPerOrganization int
 	// Logger receives lifecycle events.
 	Logger *slog.Logger
 }
@@ -75,6 +86,7 @@ const (
 	DefaultStartupTimeout          = 180 * time.Second
 	DefaultHeartbeatTimeout        = time.Minute
 	DefaultBatchSize               = 20
+	DefaultMaxConcurrentOperations = 4
 	defaultLease                   = 30 * time.Second
 	defaultWorkerDestination       = "/usr/local/bin/ao-worker"
 	defaultWorkerHelperDestination = "/usr/local/bin/ao"
@@ -110,6 +122,15 @@ func New(store Store, providers Resolver, options Options) *Reconciler {
 	}
 	if options.LeaseDuration <= 0 {
 		options.LeaseDuration = defaultLease
+	}
+	if options.MaxConcurrentOperations <= 0 {
+		options.MaxConcurrentOperations = DefaultMaxConcurrentOperations
+	}
+	if options.MaxConcurrentOperationsPerProvider <= 0 {
+		options.MaxConcurrentOperationsPerProvider = options.MaxConcurrentOperations
+	}
+	if options.MaxConcurrentOperationsPerOrganization <= 0 {
+		options.MaxConcurrentOperationsPerOrganization = options.MaxConcurrentOperations
 	}
 	if strings.TrimSpace(options.WorkerDestination) == "" {
 		options.WorkerDestination = defaultWorkerDestination
@@ -160,19 +181,165 @@ func (r *Reconciler) ReconcileOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	gate := newReconcileGate(
+		r.options.MaxConcurrentOperations,
+		r.options.MaxConcurrentOperationsPerProvider,
+		r.options.MaxConcurrentOperationsPerOrganization,
+	)
+	var group sync.WaitGroup
 	for _, record := range sandboxes {
-		if err := r.reconcileClaim(ctx, record); err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
+		record := record
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			if err := r.reconcileQueuedClaim(ctx, gate, record); err != nil {
+				if errors.Is(err, context.Canceled) {
+					return
+				}
+				r.log.Warn("sandbox reconciliation attempt failed",
+					"session_id", record.SessionID,
+					"provider_id", record.ProviderEnvironmentID,
+					"err", err,
+				)
 			}
-			r.log.Warn("sandbox reconciliation attempt failed",
-				"session_id", record.SessionID,
-				"provider_id", record.ProviderEnvironmentID,
-				"err", err,
-			)
+		}()
+	}
+	group.Wait()
+	return nil
+}
+
+// reconcileQueuedClaim retains a claimed row while it waits for a bounded
+// provider slot. A batch may contain more sandboxes than can safely execute at
+// once; without this renewal a row near the end could lose its lease and be
+// duplicated by another replica before it ever reaches the provider.
+func (r *Reconciler) reconcileQueuedClaim(
+	ctx context.Context,
+	gate *reconcileGate,
+	record domain.Sandbox,
+) error {
+	waitCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	renewalErr := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		interval := r.lease / 3
+		if interval < time.Millisecond {
+			interval = time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-waitCtx.Done():
+				return
+			case <-ticker.C:
+				if err := r.store.RenewSandboxClaim(
+					waitCtx,
+					r.owner,
+					record.OrgID,
+					record.SessionID,
+					r.lease,
+				); err != nil {
+					renewalErr <- err
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	err := gate.acquire(waitCtx, record)
+	cancel()
+	<-done
+	if err != nil {
+		select {
+		case renewErr := <-renewalErr:
+			return renewErr
+		default:
+			return err
+		}
+	}
+	defer gate.release(record)
+	select {
+	case renewErr := <-renewalErr:
+		return renewErr
+	default:
+	}
+	return r.reconcileClaim(ctx, record)
+}
+
+type reconcileGate struct {
+	global       chan struct{}
+	providerSize int
+	orgSize      int
+
+	mu        sync.Mutex
+	providers map[string]chan struct{}
+	orgs      map[string]chan struct{}
+}
+
+func newReconcileGate(global, provider, org int) *reconcileGate {
+	return &reconcileGate{
+		global:       make(chan struct{}, global),
+		providerSize: provider,
+		orgSize:      org,
+		providers:    make(map[string]chan struct{}),
+		orgs:         make(map[string]chan struct{}),
+	}
+}
+
+func (g *reconcileGate) acquire(ctx context.Context, record domain.Sandbox) error {
+	provider := g.provider(record.Provider)
+	organization := g.organization(record.OrgID)
+	acquired := make([]chan struct{}, 0, 3)
+	for _, slot := range []chan struct{}{g.global, provider, organization} {
+		select {
+		case slot <- struct{}{}:
+			acquired = append(acquired, slot)
+		case <-ctx.Done():
+			for index := len(acquired) - 1; index >= 0; index-- {
+				<-acquired[index]
+			}
+			return ctx.Err()
 		}
 	}
 	return nil
+}
+
+func (g *reconcileGate) release(record domain.Sandbox) {
+	<-g.organization(record.OrgID)
+	<-g.provider(record.Provider)
+	<-g.global
+}
+
+func (g *reconcileGate) provider(key string) chan struct{} {
+	if strings.TrimSpace(key) == "" {
+		key = "unknown"
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if slot := g.providers[key]; slot != nil {
+		return slot
+	}
+	slot := make(chan struct{}, g.providerSize)
+	g.providers[key] = slot
+	return slot
+}
+
+func (g *reconcileGate) organization(key string) chan struct{} {
+	if strings.TrimSpace(key) == "" {
+		key = "unknown"
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if slot := g.orgs[key]; slot != nil {
+		return slot
+	}
+	slot := make(chan struct{}, g.orgSize)
+	g.orgs[key] = slot
+	return slot
 }
 
 func (r *Reconciler) reconcileClaim(ctx context.Context, record domain.Sandbox) error {

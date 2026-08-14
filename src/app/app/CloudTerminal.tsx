@@ -11,15 +11,19 @@ import {
 } from "@/lib/cloud-terminal-pool";
 import { buildTerminalTheme } from "@/lib/terminal-themes";
 
+import { terminalWaitingLabel } from "./cloud-terminal-status";
+
 export function CloudTerminal({
   organizationId,
   sessionId,
   kind = "agent",
+  runtimeState,
 }: {
   organizationId: string;
   sessionId: string;
   layoutKey?: string;
   kind?: "agent" | "workspace";
+  runtimeState?: string;
 }) {
   const client = useMemo(browserCloudClient, []);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -186,26 +190,14 @@ export function CloudTerminal({
               <span className="absolute inset-1 animate-spin rounded-full border border-transparent border-t-[var(--color-status-working)] motion-reduce:animate-none" />
             </div>
             <p className="text-xs text-[var(--muted-foreground)]">
-              {connection === "connecting"
-                ? "Connecting terminal…"
-                : connection === "waking"
-                  ? kind === "workspace"
-                    ? "Starting workspace shell…"
-                    : "Waking coding-agent session…"
-                : connection === "disconnected"
-                  ? "Reconnecting terminal…"
-                  : "Terminal unavailable"}
+              {terminalWaitingLabel(connection, kind, runtimeState)}
             </p>
           </div>
         </div>
       ) : null}
       {connection !== "connected" && hasConnected ? (
         <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)]/95 px-2 py-1 text-[10px] text-[var(--muted-foreground)] shadow-sm">
-          {connection === "waking"
-            ? kind === "workspace"
-              ? "Starting workspace shell…"
-              : "Waking VM…"
-            : "Reconnecting terminal…"}
+          {terminalWaitingLabel(connection, kind, runtimeState)}
         </div>
       ) : null}
       {notice ? (

@@ -180,6 +180,31 @@ func (p *slowProvider) Create(
 	}
 }
 
+// blockingCreateProvider lets concurrency tests observe exactly how many
+// provider operations enter Create before the test releases them.
+type blockingCreateProvider struct {
+	*fakeProvider
+	started chan string
+	release <-chan struct{}
+}
+
+func (p *blockingCreateProvider) Create(
+	ctx context.Context,
+	spec sandbox.Spec,
+) (sandbox.Environment, error) {
+	select {
+	case p.started <- spec.SessionID:
+	case <-ctx.Done():
+		return sandbox.Environment{}, ctx.Err()
+	}
+	select {
+	case <-p.release:
+		return p.fakeProvider.Create(ctx, spec)
+	case <-ctx.Done():
+		return sandbox.Environment{}, ctx.Err()
+	}
+}
+
 type observation struct {
 	providerID string
 	state      string
@@ -573,6 +598,88 @@ func TestSlowProviderCallRenewsItsLease(t *testing.T) {
 	}
 	if len(provider.created) != 1 {
 		t.Fatalf("Create called %d times, want 1", len(provider.created))
+	}
+}
+
+func TestReconcileOnceCapsConcurrentProviderOperations(t *testing.T) {
+	release := make(chan struct{})
+	provider := &blockingCreateProvider{
+		fakeProvider: newFakeProvider(),
+		started:      make(chan string, 8),
+		release:      release,
+	}
+	records := make([]domain.Sandbox, 8)
+	for index := range records {
+		records[index] = runningSandbox()
+		records[index].SessionID = fmt.Sprintf("session-%d", index)
+		records[index].OrgID = fmt.Sprintf("org-%d", index)
+	}
+	store := &fakeStore{pending: records}
+	reconciler := newReconciler(store, provider)
+	reconciler.options.MaxConcurrentOperations = 4
+	reconciler.options.MaxConcurrentOperationsPerProvider = 4
+	reconciler.options.MaxConcurrentOperationsPerOrganization = 4
+
+	done := make(chan error, 1)
+	go func() { done <- reconciler.ReconcileOnce(context.Background()) }()
+	for index := 0; index < 4; index++ {
+		select {
+		case <-provider.started:
+		case <-time.After(time.Second):
+			t.Fatalf("provider operation %d did not start", index+1)
+		}
+	}
+	select {
+	case sessionID := <-provider.started:
+		t.Fatalf("started %q before one of the first four provider calls completed", sessionID)
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.created) != len(records) {
+		t.Fatalf("Create called %d times, want %d", len(provider.created), len(records))
+	}
+}
+
+func TestReconcileOnceCapsConcurrentOperationsPerOrganization(t *testing.T) {
+	release := make(chan struct{})
+	provider := &blockingCreateProvider{
+		fakeProvider: newFakeProvider(),
+		started:      make(chan string, 4),
+		release:      release,
+	}
+	records := make([]domain.Sandbox, 4)
+	for index := range records {
+		records[index] = runningSandbox()
+		records[index].SessionID = fmt.Sprintf("session-%d", index)
+	}
+	store := &fakeStore{pending: records}
+	reconciler := newReconciler(store, provider)
+	reconciler.options.MaxConcurrentOperations = 4
+	reconciler.options.MaxConcurrentOperationsPerProvider = 4
+	reconciler.options.MaxConcurrentOperationsPerOrganization = 2
+
+	done := make(chan error, 1)
+	go func() { done <- reconciler.ReconcileOnce(context.Background()) }()
+	for index := 0; index < 2; index++ {
+		select {
+		case <-provider.started:
+		case <-time.After(time.Second):
+			t.Fatalf("provider operation %d did not start", index+1)
+		}
+	}
+	select {
+	case sessionID := <-provider.started:
+		t.Fatalf("started %q before an organization slot opened", sessionID)
+	case <-time.After(75 * time.Millisecond):
+	}
+
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
 	}
 }
 

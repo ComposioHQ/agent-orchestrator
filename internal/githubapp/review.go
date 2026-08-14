@@ -22,6 +22,14 @@ func (s *Service) triggerReview(ctx context.Context, orgID, sessionID string, pr
 	}
 	if err := s.store.OpenReviewTerminal(ctx, orgID, sessionID, run.ID, reviewPrompt(run.ID, pr)); err != nil {
 		s.logger.Error("open review terminal", "error", err, "pull_request_id", pr.ID, "review_run_id", run.ID)
+		// A run is durable before the terminal is queued. Queue failures must
+		// resolve that durable record too; otherwise every client truthfully
+		// renders a review as running forever even though it never started.
+		if _, failErr := s.store.FailReviewRun(ctx, orgID, run.ID, sessionID, err.Error()); failErr != nil {
+			s.logger.Error("fail review run after terminal open failure",
+				"error", failErr, "pull_request_id", pr.ID, "review_run_id", run.ID)
+		}
+		s.closeReviewTerminal(ctx, orgID, sessionID, run.ID)
 	}
 }
 

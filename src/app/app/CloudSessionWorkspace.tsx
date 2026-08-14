@@ -335,6 +335,7 @@ export function CloudSessionWorkspace({
             kind="agent"
             layoutKey={inspectorOpen ? "inspector-open" : "inspector-closed"}
             organizationId={organizationId}
+            runtimeState={session.runtimeState}
             sessionId={session.id}
           />
         ) : (
@@ -392,6 +393,7 @@ export function CloudSessionWorkspace({
             kind="workspace"
             layoutKey={`${inspectorOpen ? "inspector-open" : "inspector-closed"}:${tab}`}
             organizationId={organizationId}
+            runtimeState={session.runtimeState}
             sessionId={session.id}
           /> : <ProvisioningState session={session} terminal="workspace" />}
         />
@@ -441,7 +443,7 @@ function provisioningLabel(
 ): string {
   switch (runtimeState) {
     case "provisioning":
-      return "Provisioning the NodeOps VM…";
+      return "Creating a new NodeOps VM…";
     case "bootstrapping":
       return "Starting the AO worker and coding-agent harness…";
     case "ready":
@@ -451,7 +453,8 @@ function provisioningLabel(
     case "disconnected":
       return "Reconnecting to the isolated worker…";
     case "paused":
-      return "Waking the NodeOps VM…";
+    case "stopped":
+      return "Waking the existing NodeOps VM…";
     default:
       return "Preparing the isolated worker…";
   }

@@ -1182,6 +1182,9 @@ type reviewTriggerStore struct {
 	queuedPrompt  string
 	queueErr      error
 	sawQueueCall  bool
+	sawFail       bool
+	failedError   string
+	sawClose      bool
 }
 
 func (s *reviewTriggerStore) CreateReviewRun(
@@ -1198,6 +1201,19 @@ func (s *reviewTriggerStore) OpenReviewTerminal(_ context.Context, _, _, _, prom
 	s.sawQueueCall = true
 	s.queuedPrompt = prompt
 	return s.queueErr
+}
+
+func (s *reviewTriggerStore) FailReviewRun(
+	_ context.Context, _, _, _, lastError string,
+) (domain.ReviewRun, error) {
+	s.sawFail = true
+	s.failedError = lastError
+	return domain.ReviewRun{ID: s.createdRun.ID, Status: contract.AOReviewRunFailed}, nil
+}
+
+func (s *reviewTriggerStore) CloseReviewTerminal(context.Context, string, string, string) error {
+	s.sawClose = true
+	return nil
 }
 
 func TestTriggerReviewQueuesAPromptOnlyWhenARunIsNewlyCreated(t *testing.T) {
@@ -1238,6 +1254,30 @@ func TestTriggerReviewSkipsQueueingWhenARunAlreadyExists(t *testing.T) {
 	})
 	if store.sawQueueCall {
 		t.Fatal("OpenReviewTerminal was called for an already-existing review run")
+	}
+}
+
+func TestTriggerReviewMarksRunFailedWhenTerminalCannotQueue(t *testing.T) {
+	store := &reviewTriggerStore{
+		createdRun: domain.ReviewRun{ID: "run-1"},
+		created:    true,
+		queueErr:   errors.New("terminal queue is unavailable"),
+	}
+	service, err := NewService(
+		store, testClient(t, "https://example.invalid"), make([]byte, 32), make([]byte, 32),
+		"webhook-secret", time.Minute, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.triggerReview(context.Background(), "org", "session", domain.PullRequest{
+		ID: "pr-1", Repository: "acme/api", Number: 7, HeadSHA: "deadbeef",
+	})
+	if !store.sawQueueCall || !store.sawFail || !store.sawClose {
+		t.Fatalf("queue=%v fail=%v close=%v, want all true", store.sawQueueCall, store.sawFail, store.sawClose)
+	}
+	if !strings.Contains(store.failedError, "terminal queue") {
+		t.Fatalf("failed error = %q, want queue failure", store.failedError)
 	}
 }
 
