@@ -434,4 +434,27 @@ describe("unavailable states", () => {
 		const { field } = renderComposer({ willQueue: true });
 		expect(field.placeholder).toContain("sends when it finishes");
 	});
+
+	it("turns the primary composer action into stop while the agent is working and the draft is empty", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Stop turn" }));
+
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("keeps the primary action as queue while the agent is working and a draft exists", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.type(screen.getByLabelText("Message the agent"), "follow up");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+		expect(onSend).toHaveBeenCalledWith("follow up");
+		expect(onInterrupt).not.toHaveBeenCalled();
+	});
 });

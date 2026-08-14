@@ -33,7 +33,6 @@ import {
 	GitBranch,
 	Loader2,
 	MessageSquare,
-	Square,
 	TriangleAlert,
 	Undo2,
 } from "lucide-react";
@@ -77,8 +76,6 @@ import {
 	can,
 	isCompaction,
 	isSteer,
-	pendingApproval,
-	pendingUserInput,
 	queuedTurnIds,
 	type ConversationPlan,
 	type ConversationSnapshot,
@@ -270,9 +267,6 @@ export function ChatWorkspace({
 	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
-	const approval = pendingApproval(snapshot);
-	const userInput = pendingUserInput(snapshot);
-	const queuedCount = queuedTurnIds(snapshot).size;
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
 			snapshot.items
@@ -413,14 +407,6 @@ export function ChatWorkspace({
 							Conversation branched; worktree files were left unchanged.
 						</p>
 					) : null}
-					{turn ? (
-						<LiveTurnBar
-							startedAt={turn.startedAt ?? turn.requestedAt}
-							blocked={Boolean(approval || userInput)}
-							queuedCount={queuedCount}
-							onInterrupt={onInterrupt}
-						/>
-					) : null}
 					{turn?.state === "running" && queuedMessages.length > 0 ? (
 						<QueuedMessageDock
 							messages={queuedMessages}
@@ -430,6 +416,7 @@ export function ChatWorkspace({
 					<ChatComposer
 						attachedTop={turn?.state === "running" && queuedMessages.length > 0}
 						onSend={(text, attachments) => onSend?.(text, attachments)}
+						onInterrupt={turn ? onInterrupt : undefined}
 						commandError={commandError}
 						settings={
 							onChooseSettings || onChooseConfigOption ? (
@@ -1397,6 +1384,9 @@ const TurnGroup = memo(function TurnGroup({
 			{/* Above the outcome divider: the changed files are part of what the turn
 			    did, and belong inside it rather than after it closes. */}
 			{group.diff ? <TurnChangedFiles diff={group.diff} live={group.live} /> : null}
+			{group.live ? (
+				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
+			) : null}
 			{group.outcome ? (
 				<TurnOutcome
 					state={group.outcome.state}
@@ -1408,6 +1398,48 @@ const TurnGroup = memo(function TurnGroup({
 		</div>
 	);
 });
+
+function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: boolean }) {
+	const [elapsed, setElapsed] = useState(() => elapsedSince(startedAt));
+
+	useEffect(() => {
+		if (blocked) return;
+		const timer = setInterval(() => setElapsed(elapsedSince(startedAt)), 1000);
+		return () => clearInterval(timer);
+	}, [blocked, startedAt]);
+
+	if (blocked) {
+		return (
+			<div className="border-b border-border pb-2 pt-0.5">
+				<span role="alert" className="sr-only">
+					The agent is waiting for your decision.
+				</span>
+				<span className="text-sm font-normal leading-5 text-muted-foreground">
+					Waiting for your decision
+				</span>
+			</div>
+		);
+	}
+
+	return (
+		<div className="border-b border-border pb-2 pt-0.5">
+			<span role="status" aria-live="polite" className="text-sm font-normal leading-5 text-muted-foreground">
+				Working for {elapsed}
+			</span>
+		</div>
+	);
+}
+
+function elapsedSince(iso?: string): string {
+	if (!iso) return "0s";
+	const start = new Date(iso).getTime();
+	if (Number.isNaN(start)) return "0s";
+	const seconds = Math.max(0, Math.round((Date.now() - start) / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m`;
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 function TimelineItem({
 	item,
@@ -1594,6 +1626,8 @@ type TimelineGroup = {
 	plan?: ConversationPlan;
 	/** The turn is still running, so its diff and plan can still change. */
 	live?: boolean;
+	liveStartedAt?: string;
+	blocked?: boolean;
 	/** The provider accepted this turn, so there is history it can be asked to drop. */
 	rollbackable?: boolean;
 };
@@ -1703,6 +1737,13 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 		group.diff = turn.diff;
 		group.plan = turn.plan?.steps.length ? turn.plan : undefined;
 		group.live = turn.state === "running";
+		group.liveStartedAt = turn.startedAt ?? turn.requestedAt;
+		group.blocked = group.items.some(
+			(item) =>
+				item.kind === "activity" &&
+				(item.activityKind === "approval" || item.activityKind === "user_input") &&
+				item.status === "pending",
+		);
 		if (turn.state === "running" || turn.state === "queued") continue;
 		group.rollbackable = Boolean(turn.providerTurnId);
 		group.outcome = {
@@ -1807,76 +1848,4 @@ function QueuedMessageDock({
 			})}
 		</div>
 	);
-}
-
-/**
- * The in-flight turn. Elapsed time is shown because a long silence is otherwise
- * indistinguishable from a hang, and "waiting on you" is called out so a blocked
- * turn is not mistaken for a slow one.
- */
-function LiveTurnBar({
-	startedAt,
-	blocked,
-	queuedCount = 0,
-	onInterrupt,
-}: {
-	startedAt: string;
-	blocked?: boolean;
-	/** Messages typed during this turn, waiting to be sent after it. */
-	queuedCount?: number;
-	onInterrupt?: () => void;
-}) {
-	const [elapsed, setElapsed] = useState(() => since(startedAt));
-
-	useEffect(() => {
-		const timer = setInterval(() => setElapsed(since(startedAt)), 1000);
-		return () => clearInterval(timer);
-	}, [startedAt]);
-
-	return (
-		<div className="flex items-center gap-2.5 rounded-md border border-border bg-surface px-3 py-2">
-			{blocked ? (
-				<span role="alert" className="sr-only">
-					The agent is waiting for your decision.
-				</span>
-			) : null}
-			{blocked ? (
-				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
-			) : (
-				<Loader2
-					aria-hidden="true"
-					className="size-3.5 shrink-0 animate-spin text-status-working opacity-100"
-				/>
-			)}
-			<strong className={cn("text-xs font-medium", blocked ? "text-warning" : "text-foreground")}>
-				{blocked ? "Waiting for your decision" : "Working"}
-			</strong>
-			<span className="text-[11px] tabular-nums text-muted-foreground">{elapsed}</span>
-			{queuedCount > 0 ? (
-				<span className="text-[11px] text-muted-foreground">
-					{queuedCount} {queuedCount === 1 ? "message" : "messages"} queued
-				</span>
-			) : null}
-			<Button
-				type="button"
-				size="sm"
-				variant="ghost"
-				onClick={onInterrupt}
-				className="ml-auto gap-1.5"
-			>
-				<Square aria-hidden="true" className="size-3" />
-				{queuedCount > 0 ? "Stop and clear queue" : "Stop turn"}
-			</Button>
-		</div>
-	);
-}
-
-function since(iso: string): string {
-	const start = new Date(iso).getTime();
-	if (Number.isNaN(start)) return "";
-	const seconds = Math.max(0, Math.round((Date.now() - start) / 1000));
-	if (seconds < 60) return `${seconds}s`;
-	const minutes = Math.floor(seconds / 60);
-	if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

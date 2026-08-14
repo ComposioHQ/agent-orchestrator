@@ -65,6 +65,7 @@ type fakeConversation struct {
 	resolved  map[string]ports.ChatDecision
 	turnSeq   int
 	sendErr   error
+	onSend    func(providerTurnID string)
 	closeOnce sync.Once
 }
 
@@ -126,13 +127,19 @@ func (f *fakeConversation) Events() <-chan ports.ChatEvent       { return f.even
 
 func (f *fakeConversation) SendTurn(_ context.Context, msg ports.ChatUserMessage) (ports.ChatTurnRef, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if f.sendErr != nil {
+		f.mu.Unlock()
 		return ports.ChatTurnRef{}, f.sendErr
 	}
 	f.sent = append(f.sent, msg)
 	f.turnSeq++
-	return ports.ChatTurnRef{ProviderTurnID: fmt.Sprintf("provider-turn-%d", f.turnSeq)}, nil
+	providerTurnID := fmt.Sprintf("provider-turn-%d", f.turnSeq)
+	onSend := f.onSend
+	f.mu.Unlock()
+	if onSend != nil {
+		onSend(providerTurnID)
+	}
+	return ports.ChatTurnRef{ProviderTurnID: providerTurnID}, nil
 }
 
 // sentTexts is what actually reached the provider, in order. Queuing is only real
@@ -795,6 +802,46 @@ func TestProjectsAFullTurnIntoDurableRows(t *testing.T) {
 
 	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Summary != "git status --short" {
 		t.Fatalf("activities = %+v", snapshot.Activities)
+	}
+}
+
+func TestEarlyTurnStartedBindsDispatchingTurn(t *testing.T) {
+	conv := newFakeConversation()
+	conv.onSend = func(providerTurnID string) {
+		conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: providerTurnID})
+	}
+	h := newHarnessWithConversation(t, conv)
+	ctx := context.Background()
+
+	turn, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text:            "race turn/start",
+		ClientMessageID: "early-start-1",
+		Origin:          domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if turn.ProviderTurnID != "provider-turn-1" {
+		t.Fatalf("provider turn = %q, want provider-turn-1", turn.ProviderTurnID)
+	}
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		if len(s.Turns) != 1 {
+			return false
+		}
+		turn := s.Turns[0]
+		return turn.ProviderTurnID == "provider-turn-1" && turn.State == domain.TurnStateRunning
+	})
+
+	conv.emit(ports.ChatEvent{
+		Kind:           ports.ChatEventTurnCompleted,
+		ProviderTurnID: "provider-turn-1",
+		TurnState:      domain.TurnStateCompleted,
+	})
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateCompleted
+	})
+	if len(snapshot.Turns) != 1 {
+		t.Fatalf("turns = %d, want 1: %+v", len(snapshot.Turns), snapshot.Turns)
 	}
 }
 

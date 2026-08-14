@@ -155,6 +155,10 @@ type Controller struct {
 	// activeTurn maps a provider turn id to AO's turn id for the turn currently
 	// in flight, so a completion can be attributed without a round trip.
 	pendingTurnID string
+	// dispatchingTurnID is AO's durable turn row while SendTurn is in flight.
+	// Eager providers can emit turn/started before SendTurn returns with the
+	// provider id; that event must bind this row instead of adopting a duplicate.
+	dispatchingTurnID string
 	// ackedTurnID is the turn the PROVIDER has confirmed it started, which lags
 	// pendingTurnID by the round trip between turn/start returning and the
 	// turn-started notification arriving. Interrupt needs the distinction: a
@@ -746,8 +750,16 @@ func (c *Controller) dispatch(
 	// applying exactly when they were not watching.
 	msg.Settings = c.turnSettings()
 
+	c.mu.Lock()
+	c.dispatchingTurnID = turnID
+	c.mu.Unlock()
 	ref, err := c.conv.SendTurn(ctx, msg)
 	if err != nil {
+		c.mu.Lock()
+		if c.dispatchingTurnID == turnID {
+			c.dispatchingTurnID = ""
+		}
+		c.mu.Unlock()
 		// The provider may or may not have accepted it. Settle the turn as failed
 		// rather than retrying: a duplicate turn would run the work twice. Settling
 		// by AO's own turn id is required here — an undispatched turn has no
@@ -770,6 +782,11 @@ func (c *Controller) dispatch(
 	}
 
 	if err := c.store.BindTurnToProvider(ctx, turnID, ref.ProviderTurnID, c.now()); err != nil {
+		c.mu.Lock()
+		if c.dispatchingTurnID == turnID {
+			c.dispatchingTurnID = ""
+		}
+		c.mu.Unlock()
 		if deferred, ok := c.conv.(ports.ChatDeferredTurnStarter); ok {
 			deferred.DiscardDeferredTurn(ref.ProviderTurnID)
 		}
@@ -778,6 +795,9 @@ func (c *Controller) dispatch(
 
 	c.mu.Lock()
 	c.pendingTurnID = ref.ProviderTurnID
+	if c.dispatchingTurnID == turnID {
+		c.dispatchingTurnID = ""
+	}
 	// Dispatched, not yet acknowledged: turn/start returning is AO's fact, and the
 	// provider's own turn-started notification is the one an interrupt needs.
 	c.ackedTurnID = ""
@@ -1447,6 +1467,7 @@ func (c *Controller) applyCommittedTurnLifecycle(event ports.ChatEvent) bool {
 			return false
 		}
 		c.pendingTurnID = ""
+		c.dispatchingTurnID = ""
 		if c.ackedTurnID == event.ProviderTurnID {
 			c.ackedTurnID = ""
 		}
@@ -1462,15 +1483,25 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 
 	switch event.Kind {
 	case ports.ChatEventTurnStarted:
-		// A turn AO dispatched already has a row, bound in dispatch. This covers the
-		// turn AO did NOT dispatch: a compaction, or work the provider resumed from its
-		// own history. Adopting it is what keeps every item it emits correlated, and
-		// without that the activities arrive with no turn and the timeline quietly
-		// stops grouping them.
+		c.mu.Lock()
+		dispatchingTurnID := c.dispatchingTurnID
+		c.mu.Unlock()
 		if event.ProviderTurnID != "" {
-			if err := c.store.AdoptProviderTurn(ctx, c.conversation.ID, c.sessionID,
-				c.generation, c.newID(), event.ProviderTurnID, now); err != nil {
-				return fmt.Errorf("adopt provider-started turn %s: %w", event.ProviderTurnID, err)
+			rootConversation := event.ProviderConversationID == "" || event.ProviderConversationID == c.conv.ProviderConversationID()
+			if dispatchingTurnID != "" && rootConversation {
+				if err := c.store.BindTurnToProvider(ctx, dispatchingTurnID, event.ProviderTurnID, now); err != nil {
+					return fmt.Errorf("bind early provider-started turn %s: %w", event.ProviderTurnID, err)
+				}
+			} else {
+				// A turn AO dispatched already has a row, bound in dispatch. This covers
+				// the turn AO did NOT dispatch: a compaction, or work the provider resumed
+				// from its own history. Adopting it is what keeps every item it emits
+				// correlated, and without that the activities arrive with no turn and the
+				// timeline quietly stops grouping them.
+				if err := c.store.AdoptProviderTurn(ctx, c.conversation.ID, c.sessionID,
+					c.generation, c.newID(), event.ProviderTurnID, now); err != nil {
+					return fmt.Errorf("adopt provider-started turn %s: %w", event.ProviderTurnID, err)
+				}
 			}
 		}
 		return nil

@@ -42,7 +42,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 } from "react";
-import { ArrowUp, CornerDownRight, Loader2, Paperclip, X } from "lucide-react";
+import { ArrowUp, CornerDownRight, Loader2, Paperclip, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
@@ -87,6 +87,7 @@ export function ChatComposer({
 	onStageAttachments,
 	nativeImages,
 	onSteer,
+	onInterrupt,
 	canSteer,
 	steerPending,
 	steerRefusal,
@@ -121,6 +122,8 @@ export function ChatComposer({
 	 * cannot steer and the choice is never offered.
 	 */
 	onSteer?: (text: string) => Promise<unknown>;
+	/** Stop the turn already running when there is no draft to send. */
+	onInterrupt?: () => void;
 	/** A turn is actually running, so there is something to steer into. */
 	canSteer?: boolean;
 	steerPending?: boolean;
@@ -201,6 +204,7 @@ export function ChatComposer({
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
 	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && text.trim() === "" && !staged);
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -588,13 +592,16 @@ export function ChatComposer({
 									: "Enter to send"}
 					</span>
 					<Button
-						type="submit"
+						type={canStopTurn ? "button" : "submit"}
 						size="icon-sm"
-						disabled={!canSend}
-						aria-label={steering ? "Steer the running turn" : "Send message"}
+						disabled={canStopTurn ? false : !canSend}
+						onClick={canStopTurn ? onInterrupt : undefined}
+						aria-label={canStopTurn ? "Stop turn" : steering ? "Steer the running turn" : "Send message"}
 						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
 					>
-						{steerPending ? (
+						{canStopTurn ? (
+							<Square aria-hidden="true" className="size-3.5 fill-current" />
+						) : steerPending ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 						) : steering ? (
 							<CornerDownRight aria-hidden="true" className="size-3.5" />
