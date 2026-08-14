@@ -5284,7 +5284,6 @@ components:
           - type: "null"
           - $ref: '#/components/schemas/EstimatedCostResponse'
             type: object
-          type: object
         incomplete:
           type: boolean
         sessionId:
@@ -8412,7 +8411,6 @@ components:
           - type: "null"
           - $ref: '#/components/schemas/EstimatedCostResponse'
             type: object
-          type: object
         inputTokens:
           type:
           - "null"

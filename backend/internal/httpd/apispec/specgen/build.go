@@ -43,6 +43,7 @@ func Build() ([]byte, error) {
 		func(rc *jsonschema.ReflectContext) { rc.EnvelopNullability = true },
 		jsonschema.InterceptProp(requiredFromJSONTag),
 		jsonschema.InterceptNullability(nonNullableSlices),
+		jsonschema.InterceptNullability(validNullableReferenceUnions),
 		// Clean component schema names (which become the generated TS type names):
 		// swaggest defaults to PackageType, e.g. "ProjectProject", "EnvelopeAPIError".
 		jsonschema.InterceptDefName(schemaName),
@@ -378,6 +379,21 @@ func nonNullableSlices(p jsonschema.InterceptNullabilityParams) {
 	}
 	p.Schema.TypeEns().WithSimpleTypes(jsonschema.Array)
 	p.Schema.Type.SliceOfSimpleTypeValues = nil
+}
+
+// validNullableReferenceUnions removes the original concrete type left beside
+// an enveloped null-or-reference anyOf. Keeping that sibling type would apply
+// it conjunctively and reject null despite the explicit null branch.
+func validNullableReferenceUnions(p jsonschema.InterceptNullabilityParams) {
+	if p.Schema.Type == nil || len(p.Schema.AnyOf) == 0 {
+		return
+	}
+	for _, option := range p.Schema.AnyOf {
+		if option.TypeObject != nil && option.TypeObject.HasType(jsonschema.Null) {
+			p.Schema.Type = nil
+			return
+		}
+	}
 }
 
 // requiredFromJSONTag marks a property required when its json tag lacks

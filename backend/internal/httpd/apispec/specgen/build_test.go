@@ -109,6 +109,9 @@ func TestBuild_UsageEstimatedCostIsNamedReusableAndNullable(t *testing.T) {
 		"UsageTotalsResponse":         "estimatedCost",
 	} {
 		property := doc.Components.Schemas[schemaName].Properties[propertyName]
+		if property.Type != nil {
+			t.Fatalf("%s.%s has contradictory outer type %v", schemaName, propertyName, property.Type)
+		}
 		if !schemaContainsRef(property, costRef) || !schemaAllowsNull(property) {
 			t.Fatalf("%s.%s = %+v, want nullable %s", schemaName, propertyName, property, costRef)
 		}
@@ -142,15 +145,30 @@ func schemaAllowsNull(node openAPISchemaNode) bool {
 			return false
 		}
 	}
-	if containsNull(node.Type) {
-		return true
+	if node.Type != nil && !containsNull(node.Type) {
+		return false
 	}
-	for _, child := range append(node.AnyOf, node.OneOf...) {
-		if containsNull(child.Type) {
-			return true
+	if len(node.AnyOf) > 0 {
+		for _, child := range node.AnyOf {
+			if schemaAllowsNull(child) {
+				return true
+			}
 		}
+		return false
 	}
-	return false
+	if len(node.OneOf) > 0 {
+		matches := 0
+		for _, child := range node.OneOf {
+			if schemaAllowsNull(child) {
+				matches++
+			}
+		}
+		return matches == 1
+	}
+	if node.Ref != "" {
+		return false
+	}
+	return containsNull(node.Type)
 }
 
 // TestBuild_Deterministic guards against nondeterministic output (which would
