@@ -43,13 +43,14 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
+import { type DaemonLaunchSpec, bundledDaemonIdentityError, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
 	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
+	SET_TERMINAL_FOCUSED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
 import { createTrayController, type TrayController } from "./main/tray";
@@ -157,6 +158,7 @@ let browserRuntimeLinkIdentity: BrowserRuntimeIdentity | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
 let closeShellTerminalShortcutEnabled = false;
+let terminalFocused = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
@@ -446,6 +448,7 @@ async function createWindowInternal(): Promise<void> {
 			if (id !== "toggle-browser-devtools") return;
 			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
 		},
+		() => terminalFocused,
 	);
 
 	browserViewHost = createBrowserViewHost({
@@ -486,8 +489,12 @@ async function createWindowInternal(): Promise<void> {
 	});
 	shellWebContents.on("render-process-gone", () => {
 		keybindingRecordingActive = false;
+		terminalFocused = false;
 	});
-	shellWebContents.on("did-start-loading", () => trayLifecycle.clear());
+	shellWebContents.on("did-start-loading", () => {
+		terminalFocused = false;
+		trayLifecycle.clear();
+	});
 	shellWebContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
@@ -661,6 +668,11 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 		// same-UID worker could inspect the parent process.
 		AO_BROWSER_RUNTIME_TOKEN: "",
 		AO_BROWSER_RUNTIME_TOKEN_STDIN: "1",
+		// Under AppImage, APPIMAGE is the stable outer .AppImage file path (the
+		// FUSE mount in executablePath is random per launch). The daemon echoes
+		// it as appImagePath in /healthz|/readyz so the identity check can
+		// recognise its own daemon across a relaunch-to-update.
+		...(process.env.APPIMAGE ? { AO_APPIMAGE: process.env.APPIMAGE } : {}),
 		// Claude Code Chat uses AO's packaged ACP adapter + Node runtime. The
 		// provider executable itself is resolved by the daemon from the user's PATH
 		// and passed through CLAUDE_CODE_EXECUTABLE; it is not part of this resource.
@@ -743,12 +755,7 @@ function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): stri
 	}
 
 	if (launch.source === "bundled") {
-		if (!probe.executablePath) {
-			return "An older AO daemon is already running, but it does not report its binary path. Stop it and restart this app.";
-		}
-		if (!samePath(probe.executablePath, launch.command)) {
-			return `Another AO daemon is already running from ${probe.executablePath}; expected ${launch.command}. Stop the other daemon before using this app.`;
-		}
+		return bundledDaemonIdentityError(probe, launch.command, process.env.APPIMAGE, samePath);
 	}
 	return null;
 }
@@ -1504,6 +1511,11 @@ ipcMain.on("browser:overlay", (event, open: unknown) => {
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
 	closeShellTerminalShortcutEnabled = enabled === true;
+});
+
+ipcMain.on(SET_TERMINAL_FOCUSED_CHANNEL, (event, focused: unknown) => {
+	if (event.sender !== getShellWebContents() || typeof focused !== "boolean") return;
+	terminalFocused = focused;
 });
 
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same

@@ -52,6 +52,8 @@ type recordingLauncher struct {
 	stopped []domain.SessionID
 }
 
+func (l *recordingLauncher) SupportsChat(_ domain.AgentHarness) bool { return true }
+
 func (l *recordingLauncher) PreflightChat(_ context.Context, harness domain.AgentHarness) error {
 	l.preflighted = append(l.preflighted, harness)
 	return l.preflightErr
@@ -387,6 +389,31 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 
 	if len(launcher.turns) != 1 || launcher.turns[0] == "" {
 		t.Fatalf("initial prompt was not delivered as a turn: %v", launcher.turns)
+	}
+}
+
+func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Model = "project-model"
+	store.projects[string(chatTestProject)] = project
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		AgentConfig:   ports.AgentConfig{Model: "request-model"},
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Model; got != "request-model" {
+		t.Fatalf("controller model = %q, want request-model", got)
 	}
 }
 
