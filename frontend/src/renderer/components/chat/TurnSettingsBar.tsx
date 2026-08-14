@@ -12,11 +12,7 @@
  */
 
 import { Fragment } from "react";
-import {
-	ChevronUp,
-	Shuffle,
-} from "lucide-react";
-import { Button } from "../ui/button";
+import { Shuffle } from "lucide-react";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -24,6 +20,12 @@ import {
 	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
+import {
+	SETTINGS_MENU_LABEL,
+	SETTINGS_MENU_ROW,
+	SETTINGS_MENU_SURFACE,
+	SettingsMenuTrigger,
+} from "../settings/SettingsMenuTrigger";
 import { cn } from "../../lib/utils";
 import type {
 	ApprovalMode,
@@ -113,7 +115,6 @@ export function TurnSettingsBar({
 							: "Model for the next turn"
 					}
 					disabled={disabled}
-					width="w-80"
 					badge={
 						reroute ? (
 							// A mark, not a second name. Two truncated model names side by side is
@@ -126,7 +127,9 @@ export function TurnSettingsBar({
 						) : null
 					}
 				>
-					<DropdownMenuLabel className="flex items-baseline justify-between gap-2">
+					<DropdownMenuLabel
+						className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
+					>
 						<span>Model</span>
 						<span className="text-[11px] font-normal text-muted-foreground">
 							Applies to the next turn
@@ -136,7 +139,7 @@ export function TurnSettingsBar({
 					    goes to change the model, and it is where the fact that their last
 					    choice was overridden matters most. */}
 					{reroute ? (
-						<p className="px-2 pb-1.5 text-[11px] leading-snug text-warning">
+						<p className="px-3 pb-1.5 text-[11px] leading-snug text-warning">
 							The provider answered with {rerouted} instead of{" "}
 							{reroute.fromModel ?? chosenLabel}
 							{reroute.reason ? ` — ${reroute.reason}` : "."}
@@ -150,7 +153,7 @@ export function TurnSettingsBar({
 								// not necessarily one the next model does.
 								onChange({ ...settings, model: model.id, reasoningEffort: undefined })
 							}
-							className="flex flex-col items-start gap-0.5"
+							className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
 						>
 							<span className="flex w-full items-baseline gap-2">
 								<span
@@ -185,14 +188,15 @@ export function TurnSettingsBar({
 						label={effortLabel ? capitalize(effortLabel) : "Effort"}
 						title="Reasoning effort for the next turn"
 						disabled={disabled}
-						width="w-56"
 					>
-						<DropdownMenuLabel>Reasoning effort</DropdownMenuLabel>
+						<DropdownMenuLabel className={SETTINGS_MENU_LABEL}>
+							Reasoning effort
+						</DropdownMenuLabel>
 						{efforts.map((effort) => (
 							<DropdownMenuItem
 								key={effort}
 								onSelect={() => onChange({ ...settings, reasoningEffort: effort })}
-								className="text-xs"
+								className={cn(SETTINGS_MENU_ROW, "text-xs")}
 							>
 								<span
 									className={cn(
@@ -216,9 +220,10 @@ export function TurnSettingsBar({
 						label={approvalLabel}
 						title="What the agent may do without asking"
 						disabled={disabled}
-						width="w-72"
 					>
-						<DropdownMenuLabel className="flex items-baseline justify-between gap-2">
+						<DropdownMenuLabel
+							className={cn(SETTINGS_MENU_LABEL, "flex items-baseline justify-between gap-2")}
+						>
 							<span>Approvals</span>
 							<span className="text-[11px] font-normal text-muted-foreground">
 								Applies to the next turn
@@ -228,7 +233,7 @@ export function TurnSettingsBar({
 							<DropdownMenuItem
 								key={mode}
 								onSelect={() => onChange({ ...settings, approvalMode: mode })}
-								className="flex flex-col items-start gap-0.5"
+								className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
 							>
 								<span
 									className={cn(
@@ -292,13 +297,8 @@ function ConfigOptionPicker({
 			: currentChoice?.name ?? option.currentValue ?? option.name;
 
 	return (
-		<Picker
-			label={label}
-			title={option.description || option.name}
-			disabled={disabled}
-			width="w-72"
-		>
-			<DropdownMenuLabel className="flex flex-col gap-0.5">
+		<Picker label={label} title={option.description || option.name} disabled={disabled}>
+			<DropdownMenuLabel className={cn(SETTINGS_MENU_LABEL, "flex flex-col gap-0.5")}>
 				<span>{option.name}</span>
 				{option.description ? (
 					<span className="text-[11px] font-normal leading-snug text-muted-foreground">
@@ -311,7 +311,7 @@ function ConfigOptionPicker({
 					<DropdownMenuItem
 						key={String(enabled)}
 						onSelect={() => onChange({ enabled })}
-						className="text-xs"
+						className={cn(SETTINGS_MENU_ROW, "text-xs")}
 					>
 						<span
 							className={cn(
@@ -333,13 +333,13 @@ function ConfigOptionPicker({
 					return (
 						<Fragment key={choice.value}>
 							{choice.group && choice.group !== previousGroup ? (
-								<DropdownMenuLabel className="pb-1 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+								<DropdownMenuLabel className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
 									{choice.groupName || choice.group}
 								</DropdownMenuLabel>
 							) : null}
 							<DropdownMenuItem
 								onSelect={() => onChange({ value: choice.value })}
-								className="flex flex-col items-start gap-0.5"
+								className={cn(SETTINGS_MENU_ROW, "flex-col items-start gap-0.5")}
 							>
 								<span className="flex w-full items-baseline gap-2">
 									<span
@@ -370,40 +370,35 @@ function ConfigOptionPicker({
 	);
 }
 
+/**
+ * One dropdown, wearing the chrome Settings uses. These controls are the same
+ * kind of thing as a settings row's — pick one of a list — so they are drawn the
+ * same way, and the panel sizes itself from the shared surface rather than each
+ * picker naming a width of its own.
+ */
 function Picker({
 	label,
 	title,
 	disabled,
-	width,
 	badge,
 	children,
 }: {
 	label: string;
 	title: string;
 	disabled?: boolean;
-	width: string;
 	/** A note that belongs on the trigger, e.g. the model that was overridden. */
 	badge?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	return (
 		<DropdownMenu>
-			<DropdownMenuTrigger asChild>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					disabled={disabled}
-					aria-label={title}
-					title={title}
-					className="h-8 gap-1.5 px-2"
-				>
-					<span className="max-w-[13ch] truncate text-[11px]">{label}</span>
+			<DropdownMenuTrigger asChild disabled={disabled}>
+				<SettingsMenuTrigger aria-label={title} title={title} className="h-8 px-2.5">
+					<span className="min-w-0 max-w-[16ch] truncate">{label}</span>
 					{badge}
-					<ChevronUp aria-hidden="true" className="size-3 text-muted-foreground" />
-				</Button>
+				</SettingsMenuTrigger>
 			</DropdownMenuTrigger>
-			<DropdownMenuContent align="start" side="top" className={cn("max-h-80 overflow-y-auto", width)}>
+			<DropdownMenuContent align="start" side="top" className={SETTINGS_MENU_SURFACE}>
 				{children}
 			</DropdownMenuContent>
 		</DropdownMenu>

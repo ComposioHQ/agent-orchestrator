@@ -24,7 +24,10 @@ describe("ChatComposer steering", () => {
 
 	it("defaults Enter to the durable queue path used by ao send", () => {
 		composer();
-		expect(screen.getByText("Enter to queue")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+			"title",
+			"Enter to queue",
+		);
 	});
 
 	it("queues by default while a turn is running", async () => {
@@ -43,7 +46,10 @@ describe("ChatComposer steering", () => {
 		composer({ onSteer, onSend });
 
 		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-		expect(screen.getByText("Enter to steer")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Steer the running turn" })).toHaveAttribute(
+			"title",
+			"Enter to steer",
+		);
 
 		await userEvent.type(screen.getByRole("combobox"), "and then ship it{Enter}");
 		expect(onSteer).toHaveBeenCalledWith("and then ship it");
@@ -105,13 +111,19 @@ describe("ChatComposer steering", () => {
 	it("offers nothing when the harness cannot steer", () => {
 		composer({ onSteer: undefined, canSteer: false });
 		expect(screen.queryByRole("button", { name: "Steer this turn" })).not.toBeInTheDocument();
-		expect(screen.getByText("Enter to queue")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+			"title",
+			"Enter to queue",
+		);
 	});
 
 	it("offers nothing when no turn is in flight to steer", () => {
 		composer({ canSteer: false, willQueue: false });
 		expect(screen.queryByRole("button", { name: "Steer this turn" })).not.toBeInTheDocument();
-		expect(screen.getByText("Enter to send")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
+			"title",
+			"Enter to send",
+		);
 	});
 });
 
@@ -166,7 +178,7 @@ describe("ChatWorkspace steering", () => {
 		const dock = screen.getByTestId("queued-message-dock");
 		expect(within(dock).getByText("first queued")).toBeVisible();
 		expect(within(dock).getByText("second queued")).toBeVisible();
-		expect(dock).toHaveClass("rounded-t-[10px]");
+		expect(dock).toHaveClass("rounded-t-[14px]");
 		expect(dock.nextElementSibling).toHaveClass("rounded-t-none");
 		const actions = within(dock).getAllByRole("button", { name: "Steer" });
 		expect(actions).toHaveLength(2);

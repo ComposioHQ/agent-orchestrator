@@ -70,8 +70,12 @@ describe("send keys", () => {
 		expect(within(tools).getByRole("button", { name: "Model" })).toBeInTheDocument();
 
 		const actions = screen.getByRole("group", { name: "Send message controls" });
-		expect(within(actions).getByRole("button", { name: "Send message" })).toBeInTheDocument();
-		expect(within(actions).getByText("Enter to send")).toBeInTheDocument();
+		// The destination Enter is armed with rides on the send control itself rather
+		// than as a line of prose beside it.
+		expect(within(actions).getByRole("button", { name: "Send message" })).toHaveAttribute(
+			"title",
+			"Enter to send",
+		);
 	});
 
 	it("uses the AO logo palette for the send control", async () => {

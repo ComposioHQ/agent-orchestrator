@@ -1768,7 +1768,7 @@ function QueuedMessageDock({
 
 	return (
 		<div
-			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[10px] border border-b-0 border-border-strong bg-surface"
+			className="-mb-2 max-h-40 overflow-y-auto rounded-t-[14px] border border-b-0 border-border-strong bg-surface"
 			data-testid="queued-message-dock"
 		>
 			{messages.map(({ turnId, message }) => {

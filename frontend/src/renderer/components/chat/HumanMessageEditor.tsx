@@ -57,7 +57,7 @@ export function HumanMessageEditor({
 	}
 
 	return (
-		<div className="cursor-chat-composer relative flex w-full max-w-3xl flex-col gap-2 rounded-[10px] border border-border-strong p-2.5 transition-[background,border-color,box-shadow]">
+		<div className="cursor-chat-composer relative flex w-full max-w-3xl flex-col gap-2 rounded-[14px] border p-3 transition-[background,border-color,box-shadow]">
 		<textarea
 			ref={textarea}
 			value={draft}

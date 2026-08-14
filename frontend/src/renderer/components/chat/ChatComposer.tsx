@@ -42,7 +42,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 } from "react";
-import { ArrowUp, CornerDownRight, Loader2, Paperclip, X } from "lucide-react";
+import { ArrowUp, CornerDownRight, Loader2, Plus, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
@@ -201,6 +201,13 @@ export function ChatComposer({
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
 	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+	const sendHint = menuOpen
+		? "Enter to insert"
+		: steering
+			? "Enter to steer"
+			: willQueue
+				? "Enter to queue"
+				: "Enter to send";
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -433,10 +440,13 @@ export function ChatComposer({
 			}}
 			onDragLeave={() => setDragging(false)}
 			onDrop={onDrop}
+			// The border colors for rest, hover, focus and drag are one set of states
+			// on one surface, so they are declared together in CSS rather than half
+			// here and half there.
+			data-dragging={dragging || undefined}
 			className={cn(
-				"cursor-chat-composer relative flex flex-col gap-2 border p-2.5 transition-[background,border-color,box-shadow]",
-				attachedTop ? "rounded-b-[10px] rounded-t-none" : "rounded-[10px]",
-				dragging ? "border-logo-accent" : "border-border-strong",
+				"cursor-chat-composer relative flex flex-col gap-2 border p-3 transition-[background,border-color,box-shadow]",
+				attachedTop ? "rounded-b-[14px] rounded-t-none" : "rounded-[14px]",
 			)}
 		>
 			{menuOpen && trigger ? (
@@ -561,14 +571,11 @@ export function ChatComposer({
 								onClick={() => filePicker.current?.click()}
 								aria-label="Attach a file"
 								title="Attach a file"
-								className="size-8 shrink-0 p-0"
+								className="size-8 shrink-0 rounded-full p-0"
 							>
-								<Paperclip aria-hidden="true" className="size-4 text-muted-foreground" />
+								<Plus aria-hidden="true" className="size-4 text-muted-foreground" />
 							</Button>
 						</>
-					) : null}
-					{canAttach && settings ? (
-						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
 					) : null}
 					{settings}
 				</div>
@@ -578,21 +585,17 @@ export function ChatComposer({
 					aria-label="Send message controls"
 					className="flex shrink-0 items-center gap-2"
 				>
-					<span className="hidden text-[11px] text-muted-foreground sm:inline">
-						{menuOpen
-							? "Enter to insert"
-							: steering
-								? "Enter to steer"
-								: willQueue
-									? "Enter to queue"
-									: "Enter to send"}
-					</span>
 					<Button
 						type="submit"
 						size="icon-sm"
 						disabled={!canSend}
 						aria-label={steering ? "Steer the running turn" : "Send message"}
-						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
+						// The destination Enter is armed with used to be spelled out beside
+						// the button. The row reads better without a line of prose in it, but
+						// the fact is not decoration, so it moves onto the control it
+						// describes rather than being dropped.
+						title={sendHint}
+						className="size-8 rounded-full border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
 					>
 						{steerPending ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
