@@ -27,7 +27,7 @@ func TestDeriveActivityState(t *testing.T) {
 			got, ok := DeriveActivityState(tt.event, []byte(tt.payload))
 			if got != tt.want || ok != tt.wantOK {
 				t.Fatalf("DeriveActivityState(%q) = (%q, %v), want (%q, %v)",
-					t.event, got, ok, tt.want, tt.wantOK)
+					tt.event, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}
