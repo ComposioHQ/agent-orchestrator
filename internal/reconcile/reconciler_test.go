@@ -757,11 +757,6 @@ func TestStoppedDockerWorkerIsRecreatedWithFreshBootstrapTicket(t *testing.T) {
 	record.Provider = sandbox.ProviderDocker
 	record.ProviderEnvironmentID = "container-1"
 	record.ObservedState = domain.SandboxObservedStopped
-	// This attempt has been alive well past the boot-crash window, so it had
-	// time to actually run before unexpectedly stopping (a one-off crash) —
-	// which is what should get the fast, unconditional repair below, as
-	// opposed to a worker that dies within the window on every attempt,
-	// covered by TestDockerWorkerThatNeverBecomesReadyBacksOffInsteadOfLoopingForever.
 	record.UpdatedAt = time.Now().Add(-time.Minute)
 	seenAt := time.Now().Add(-time.Minute)
 	record.WorkerLastSeenAt = &seenAt
@@ -793,16 +788,6 @@ func TestDockerWorkerThatNeverBecomesReadyBacksOffInsteadOfLoopingForever(t *tes
 	record.ProviderEnvironmentID = "container-1"
 	record.ObservedState = domain.SandboxObservedStopped
 	record.LastError = "load coding-agent credential: /worker/credential returned 404"
-	// UpdatedAt (left at runningSandbox()'s time.Now()) models the recreate
-	// that started this attempt landing just moments ago. The worker
-	// deliberately heartbeats before doing anything that can fail — loading
-	// its credential, launching the harness — specifically so a repaired
-	// worker isn't mistaken for one that never started; that means
-	// WorkerLastSeenAt gets set even on this deterministic, every-attempt
-	// failure, and can't be the signal. Recreating on every tick regardless
-	// would hammer the provider and reset the terminal's backlog forever for
-	// no gain — an attempt that dies this fast after being (re)created
-	// should back off like any other failure instead.
 	seenAt := time.Now()
 	record.WorkerLastSeenAt = &seenAt
 	store := &fakeStore{pending: []domain.Sandbox{record}}
@@ -891,7 +876,6 @@ func TestWorkerSpecReadsShapeFromTheStoredProfile(t *testing.T) {
 func TestCreateAtCapacityRetriesInsteadOfFailing(t *testing.T) {
 	store := &fakeStore{pending: []domain.Sandbox{runningSandbox()}}
 	provider := newFakeProvider()
-	// A quota rejection, wrapped so errors.Is finds the capacity sentinel.
 	provider.createErr = fmt.Errorf("%w: concurrent quota reached", sandbox.ErrAtCapacity)
 	reconciler := newReconciler(store, provider)
 

@@ -72,17 +72,8 @@ const (
 	defaultLease             = 30 * time.Second
 	defaultWorkerDestination = "/usr/local/bin/ao-worker"
 	bootstrapTicketTTL       = 10 * time.Minute
-	// capacityRetryBackoff paces retries when the provider is at its
-	// concurrency quota. Short enough that a session queues rather than stalls,
-	// long enough not to hammer the provider while the account stays full.
-	capacityRetryBackoff = 15 * time.Second
-	// dockerBootCrashWindow is how long a Docker worker's attempt must have
-	// lived, measured from the recreate that started it, before a stopped
-	// container is treated as a one-off crash worth an instant retry rather
-	// than a boot-time failure worth backing off. Comfortably longer than a
-	// real bootstrap-to-heartbeat cycle takes, so it never mistakes a slow
-	// but healthy start for a crash loop.
-	dockerBootCrashWindow = 20 * time.Second
+	capacityRetryBackoff     = 15 * time.Second
+	dockerBootCrashWindow    = 20 * time.Second
 )
 
 // Reconciler converges durable sandbox intent with provider state.
@@ -279,37 +270,11 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedDeleting, "", 2*time.Second)
 	case sandbox.StateStopped, sandbox.StatePaused:
 		if record.Provider == sandbox.ProviderDocker {
-			// desired_state is still "running" here (the deliberate-pause path
-			// above already returned), so a stopped container this deep means
-			// the worker process exited on its own. WorkerLastSeenAt is no use
-			// as a signal here: the worker deliberately heartbeats once before
-			// doing anything that can fail (loading its coding-agent
-			// credential, launching the harness — see cmd/ao-worker/main.go),
-			// specifically so a repaired worker isn't mistaken for one that
-			// never started. That means a worker crashing on any of those
-			// steps still leaves WorkerLastSeenAt set. What a boot-time crash
-			// actually looks like is this attempt's whole lifetime, from the
-			// recreate that started it (record.UpdatedAt, bumped exactly at
-			// that transition) to now, being implausibly short — recreating
-			// unconditionally on that pattern retries a deterministic failure
-			// (bad credential, broken image) every reconcile tick forever,
-			// hammering the provider and wiping the terminal's backlog each
-			// time for nothing. Route it through the same exponential backoff
-			// as any other failure instead. An attempt that ran long enough to
-			// plausibly have done real work before crashing keeps the normal
-			// instant-recreate repair.
+			// Short-lived workers usually indicate a deterministic boot failure.
 			if time.Since(record.UpdatedAt) < dockerBootCrashWindow {
-				// Backing off (instead of recreating) means no fresh bootstrap
-				// ticket gets issued this cycle, so nothing else will fence the
-				// crashed worker's connection row — it would otherwise sit
-				// "connected" for the whole backoff window and mislead the UI
-				// into showing a live terminal that isn't there.
 				if err := r.store.DisconnectSessionWorkers(ctx, record.OrgID, record.SessionID); err != nil {
 					r.log.Warn("disconnect crashed worker", "session_id", record.SessionID, "err", err)
 				}
-				// record.LastError is whatever this same failure path wrote
-				// last cycle, not fresh information from the container — folding
-				// it in here would just nest the same message deeper each retry.
 				return r.fail(ctx, record, fmt.Errorf(
 					"worker exited %s after being (re)created, before the boot-crash window elapsed",
 					time.Since(record.UpdatedAt).Round(time.Millisecond),
@@ -513,10 +478,6 @@ func (r *Reconciler) provision(
 	startedAt := time.Now()
 	environment, err := provider.Create(ctx, spec)
 	if err != nil {
-		// A concurrency-quota rejection is not a failed session — the account
-		// is simply full. Leave the sandbox desired-running and re-observe as
-		// still provisioning so a later tick retries once a slot frees, which
-		// turns "over the ceiling" into a queue instead of a dead session.
 		if errors.Is(err, sandbox.ErrAtCapacity) {
 			r.log.Info("provider at capacity; will retry",
 				"session_id", record.SessionID, "provider", record.Provider)
@@ -650,11 +611,6 @@ func (r *Reconciler) workerSpec(ctx context.Context, record domain.Sandbox) (san
 	}, nil
 }
 
-// fail records a reconcile failure and schedules the next retry with
-// exponential backoff (internal/postgres/sandbox_store.go's
-// RecordSandboxFailure) rather than a flat interval — a persistently broken
-// provider integration backs off instead of hammering it every 15s forever,
-// while a transient failure still gets retried quickly.
 func (r *Reconciler) fail(ctx context.Context, record domain.Sandbox, cause error) error {
 	updateErr := r.store.RecordSandboxFailure(
 		ctx, r.owner, record.OrgID, record.SessionID, record.ProviderEnvironmentID, cause.Error(),

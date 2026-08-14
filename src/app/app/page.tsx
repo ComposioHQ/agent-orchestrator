@@ -2,21 +2,28 @@
 
 import {
   CloudApiError,
-  type CreateInvitationInput,
   type CurrentAccount,
   type GitHubInstallation,
   type GitHubRepository,
-  type OrganizationInvitation,
   type Project,
-  type ProjectShareLink,
-  type ProjectShareModeCap,
   type PutAgentProviderConnectionInput,
   type RedactedProviderConnection,
   type Session,
-  type SharedProject,
   type UpdateProjectInput,
 } from "@aoagents/cloud-client";
-import { Search, X } from "lucide-react";
+import { Folder, Menu, Plus, Search, Settings, X } from "lucide-react";
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
+  ConfirmProvider,
+  useConfirm,
+} from "@/components/ui/confirm-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -31,24 +38,31 @@ import {
   type LocalAgentInput,
   type ScratchProjectInput,
 } from "./CloudDialogs";
+import { CloudCreateWorkspaceDialog } from "./CloudCreateWorkspaceDialog";
+import { CloudNewSessionDialog } from "./CloudNewSessionDialog";
 import { CloudSettings } from "./CloudSettings";
 import { CloudProjectSettingsDialog } from "./CloudProjectSettingsDialog";
 import { CloudShareDialog } from "./CloudShareDialog";
 import { CloudMainShell, CloudTopbar } from "./CloudShell";
 import { CloudSessionWorkspace } from "./CloudSessionWorkspace";
 import { CloudSidebar, isStandaloneProject } from "./CloudSidebar";
+import type {
+  CreateInvitationInput,
+  OrganizationInvitation,
+  ProjectShareLink,
+  ProjectShareModeCap,
+  SharedProject,
+} from "./share-types";
 import {
   initialGitHubCapability,
   initialGitHubUserCapability,
+  initialMembersCapability,
   type GitHubCapability,
   type GitHubUserCapability,
-  initialMembersCapability,
   type MembersCapability,
   initialProviderCapability,
   type ProviderCapability,
 } from "./cloud-ui-types";
-
-type CloudView = "board" | "settings";
 
 export function CloudWorkspace() {
   const client = useMemo(browserCloudClient, []);
@@ -64,15 +78,16 @@ export function CloudWorkspace() {
   );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [view, setView] = useState<CloudView>("board");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTarget, setSettingsTarget] = useState<
-    "organization" | "providers"
-  >("organization");
+    "general" | "workspaces" | "providers"
+  >("general");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [addAgentProject, setAddAgentProject] = useState<Project | null>(
-    null,
-  );
+  const [addAgentProject, setAddAgentProject] = useState<Project | null>(null);
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [newSessionProjectId, setNewSessionProjectId] = useState<string | null>(null);
   const [projectSettings, setProjectSettings] = useState<Project | null>(null);
   const [projectSettingsBusy, setProjectSettingsBusy] = useState(false);
   const [shareProject, setShareProject] = useState<Project | null>(null);
@@ -80,13 +95,8 @@ export function CloudWorkspace() {
   const [shareGrants, setShareGrants] = useState<SharedProject[]>([]);
   const [shareLinksBusy, setShareLinksBusy] = useState(false);
   const [sharedProjects, setSharedProjects] = useState<SharedProject[]>([]);
-  const [sharedProjectSessions, setSharedProjectSessions] = useState<
-    Record<string, Session[]>
-  >({});
+  const [sharedProjectSessions, setSharedProjectSessions] = useState<Record<string, Session[]>>({});
   const sharedProjectSessionsRef = useRef(sharedProjectSessions);
-  useEffect(() => {
-    sharedProjectSessionsRef.current = sharedProjectSessions;
-  }, [sharedProjectSessions]);
   const [sharedSession, setSharedSession] = useState<Session | null>(null);
   const [sharedSessionOrgId, setSharedSessionOrgId] = useState("");
   const [github, setGitHub] = useState<GitHubCapability>(
@@ -104,15 +114,23 @@ export function CloudWorkspace() {
     initialProviderCapability,
   );
   const [userProviderBusy, setUserProviderBusy] = useState(false);
-  const [members, setMembers] = useState<MembersCapability>(
-    initialMembersCapability,
-  );
+  const [members, setMembers] = useState<MembersCapability>(initialMembersCapability);
   const [membersBusy, setMembersBusy] = useState(false);
   const organizationRequest = useRef(0);
   const githubRequest = useRef(0);
   const providerRequest = useRef(0);
   const membersRequest = useRef(0);
   const deletingSessionIds = useRef(new Set<string>());
+  const [previewUi, setPreviewUi] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    sharedProjectSessionsRef.current = sharedProjectSessions;
+  }, [sharedProjectSessions]);
+
+  useEffect(() => {
+    setPreviewUi(new URLSearchParams(window.location.search).get("ui") === "next");
+  }, []);
 
   const loadGitHubUser = useCallback(async () => {
     setGitHubUser(initialGitHubUserCapability);
@@ -291,7 +309,7 @@ export function CloudWorkspace() {
               message:
                 cause instanceof Error
                   ? cause.message
-                  : "Could not load provider connections.",
+                : "Could not load provider connections.",
             });
           });
         const membersLoad = membersRequest.current + 1;
@@ -311,10 +329,7 @@ export function CloudWorkspace() {
               status: "error",
               members: [],
               invitations: [],
-              message:
-                cause instanceof Error
-                  ? cause.message
-                  : "Could not load organization members.",
+              message: cause instanceof Error ? cause.message : "Could not load workspace members.",
             });
           });
       } catch (cause) {
@@ -331,11 +346,7 @@ export function CloudWorkspace() {
   const loadSharedProjects = useCallback(async () => {
     try {
       setSharedProjects(await client.listSharedProjects());
-    } catch {
-      // "Shared with me" is a courtesy sidebar section, not the primary
-      // workspace — a failure here should not block or error the rest of
-      // the app.
-    }
+    } catch {}
   }, [client]);
 
   const loadUserProviders = useCallback(async () => {
@@ -346,10 +357,7 @@ export function CloudWorkspace() {
       setUserProviders({
         status: "error",
         connections: [],
-        message:
-          cause instanceof Error
-            ? cause.message
-            : "Could not load your personal provider connections.",
+        message: cause instanceof Error ? cause.message : "Could not load personal coding agents.",
       });
     }
   }, [client]);
@@ -365,15 +373,13 @@ export function CloudWorkspace() {
         if (pending) {
           try {
             await client.redeemProjectShareLink(pending);
-          } catch {
-            // Surfaced organically: the project just won't appear below.
-          }
+          } catch {}
         }
         void loadSharedProjects();
         void loadUserProviders();
         const firstOrganization = value.organizations[0]?.id;
         if (!firstOrganization) {
-          setError("Your account has no active organization memberships.");
+          setError("Your account has no active workspace memberships.");
           setLoading(false);
           return;
         }
@@ -431,12 +437,6 @@ export function CloudWorkspace() {
     };
   }, [client, organizationId]);
 
-  // "Shared with me" otherwise only ever loads once at sign-in: a brand-new
-  // share, or a session the owner adds after the recipient already expanded
-  // the project, would sit invisible until a manual reload. Poll the list
-  // itself plus the session list for whichever shared projects are already
-  // expanded, so the connection feels live in both directions like the
-  // owner's own session list above.
   useEffect(() => {
     let active = true;
     let refreshing = false;
@@ -468,14 +468,10 @@ export function CloudWorkspace() {
                   [shared.project.id]: sessionItems,
                 }));
               }
-            } catch {
-              // Best-effort, same as the initial expand fetch.
-            }
+            } catch {}
           }),
         );
       } catch {
-        // "Shared with me" is a courtesy sidebar section — a failed refresh
-        // just tries again next tick rather than surfacing an error.
       } finally {
         refreshing = false;
       }
@@ -493,8 +489,8 @@ export function CloudWorkspace() {
   useEffect(() => {
     const settings = new URLSearchParams(window.location.search).get("settings");
     if (settings === "providers") {
-      setSettingsTarget("providers");
-      setView("settings");
+      setSettingsTarget("general");
+      setSettingsOpen(true);
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
@@ -527,13 +523,6 @@ export function CloudWorkspace() {
     setSelectedProjectId(response.project.id);
   };
 
-  // "orchestrator-project": a real Git workspace (GitHub or AO-managed
-  // local) with an orchestrator that checks out workers into it.
-  // "standalone-agent": no repo, a single independent agent — the
-  // top-level "Create a Standalone Agent" flow.
-  // "independent-project": no repo, but a named project you can keep
-  // adding independent sibling agents to (no orchestrator, since there's
-  // no shared workspace for one to check workers out of).
   const createScratchWork = async (
     input: LocalAgentInput,
     classification:
@@ -585,17 +574,34 @@ export function CloudWorkspace() {
     setSelectedSessionId(sessionResponse.session.id);
   };
 
+  const createSessionInProject = async (
+    projectId: string,
+    input: { displayName: string; harness: string; prompt: string },
+  ) => {
+    const sessionResponse = await client.createSession(
+      organizationId,
+      {
+        projectId,
+        kind: "worker",
+        harness: input.harness,
+        displayName: input.displayName,
+        prompt: input.prompt,
+        mode: "trusted",
+        deniedCommands: [],
+      },
+      { idempotencyKey: newIdempotencyKey("project-session") },
+    );
+    setSessions((current) => [...current, sessionResponse.session]);
+    setSelectedProjectId(projectId);
+    setSelectedSessionId(sessionResponse.session.id);
+  };
+
   const createScratchProject = async (input: ScratchProjectInput) => {
     if (input.noRepository) {
       await createScratchWork(input, "independent-project");
       return;
     }
     if (!input.githubInstallationId) {
-      // Leaving GitHub unchecked doesn't mean "no repo" — AO still
-      // initializes a real, persistent AO-managed local Git workspace for
-      // it (see the "Create scratch project" dialog copy), so the
-      // orchestrator/worker-VM model applies here exactly as it does for a
-      // GitHub-backed scratch project below.
       await createScratchWork(input, "orchestrator-project");
       return;
     }
@@ -623,22 +629,7 @@ export function CloudWorkspace() {
     project: Project,
     input: LocalAgentInput,
   ) => {
-    const sessionResponse = await client.createSession(
-      organizationId,
-      {
-        projectId: project.id,
-        kind: "worker",
-        harness: input.harness,
-        displayName: input.displayName,
-        prompt: input.prompt,
-        mode: "trusted",
-        deniedCommands: [],
-      },
-      { idempotencyKey: newIdempotencyKey("independent-project-agent") },
-    );
-    setSessions((current) => [...current, sessionResponse.session]);
-    setSelectedProjectId(project.id);
-    setSelectedSessionId(sessionResponse.session.id);
+    await createSessionInProject(project.id, input);
   };
 
   const updateProject = async (
@@ -886,16 +877,11 @@ export function CloudWorkspace() {
     setUserProviderBusy(true);
     setError("");
     try {
-      const response = await client.putUserProviderConnection(
-        provider,
-        input,
-      );
+      const response = await client.putUserProviderConnection(provider, input);
       setUserProviders((current) => ({
         status: "available",
         connections: [
-          ...current.connections.filter(
-            (connection) => connection.provider !== provider,
-          ),
+          ...current.connections.filter((connection) => connection.provider !== provider),
           response.providerConnection,
         ],
       }));
@@ -907,26 +893,16 @@ export function CloudWorkspace() {
     }
   };
 
-  const disconnectUserAgentProvider = async (
-    connection: RedactedProviderConnection,
-  ) => {
+  const disconnectUserAgentProvider = async (connection: RedactedProviderConnection) => {
     const provider = connection.provider;
-    if (
-      provider !== "claude-code" &&
-      provider !== "codex" &&
-      provider !== "cursor"
-    ) {
-      return;
-    }
+    if (provider !== "claude-code" && provider !== "codex" && provider !== "cursor") return;
     setUserProviderBusy(true);
     setError("");
     try {
       await client.deleteUserProviderConnection(provider);
       setUserProviders((current) => ({
         ...current,
-        connections: current.connections.filter(
-          (item) => item.id !== connection.id,
-        ),
+        connections: current.connections.filter((item) => item.id !== connection.id),
       }));
     } catch (cause) {
       handleLoadError(cause, setError);
@@ -939,10 +915,7 @@ export function CloudWorkspace() {
     setMembersBusy(true);
     setError("");
     try {
-      const response = await client.createOrgInvitation(
-        organizationId,
-        input,
-      );
+      const response = await client.createOrgInvitation(organizationId, input);
       setMembers((current) => ({
         ...current,
         invitations: [response.invitation, ...current.invitations],
@@ -970,6 +943,44 @@ export function CloudWorkspace() {
       handleLoadError(cause, setError);
     } finally {
       setMembersBusy(false);
+    }
+  };
+
+  const expandSharedProject = async (shared: SharedProject) => {
+    if (sharedProjectSessions[shared.project.id]) return;
+    try {
+      const items = await client.listSharedProjectSessions(shared.project.orgId, shared.project.id);
+      setSharedProjectSessions((current) => ({ ...current, [shared.project.id]: items }));
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    }
+  };
+
+  const selectSharedSession = async (shared: SharedProject, sessionId: string) => {
+    setSelectedSessionId(null);
+    try {
+      const response = await client.getSession(shared.project.orgId, sessionId);
+      setSharedSessionOrgId(shared.project.orgId);
+      setSharedSession(response.session);
+    } catch (cause) {
+      handleLoadError(cause, setError);
+    }
+  };
+
+  const deleteSession = async (session: Session) => {
+    setError("");
+    try {
+      await client.deleteSession(organizationId, session.id);
+      deletingSessionIds.current.add(session.id);
+      const remaining = sessions.filter(({ id }) => id !== session.id);
+      setSessions(remaining);
+      if (selectedSessionId === session.id) setSelectedSessionId(null);
+      if (!remaining.some(({ projectId }) => projectId === session.projectId)) {
+        const project = projects.find(({ id }) => id === session.projectId);
+        if (project) await deleteProject(project);
+      }
+    } catch (cause) {
+      handleLoadError(cause, setError);
     }
   };
 
@@ -1022,12 +1033,8 @@ export function CloudWorkspace() {
     try {
       await client.revokeProjectShareLink(organizationId, shareProject.id, link.id);
       setShareLinks((current) =>
-        current.map((item) =>
-          item.id === link.id ? { ...item, status: "revoked" } : item,
-        ),
+        current.map((item) => item.id === link.id ? { ...item, status: "revoked" } : item),
       );
-    } catch (cause) {
-      handleLoadError(cause, setError);
     } finally {
       setShareLinksBusy(false);
     }
@@ -1038,64 +1045,9 @@ export function CloudWorkspace() {
     setShareLinksBusy(true);
     try {
       await client.revokeProjectShareGrant(organizationId, shareProject.id, grant.grant.id);
-      setShareGrants((current) =>
-        current.filter((item) => item.grant.id !== grant.grant.id),
-      );
-    } catch (cause) {
-      handleLoadError(cause, setError);
+      setShareGrants((current) => current.filter((item) => item.grant.id !== grant.grant.id));
     } finally {
       setShareLinksBusy(false);
-    }
-  };
-
-  const expandSharedProject = async (shared: SharedProject) => {
-    if (sharedProjectSessions[shared.project.id]) return;
-    try {
-      const items = await client.listSharedProjectSessions(
-        shared.project.orgId,
-        shared.project.id,
-      );
-      setSharedProjectSessions((current) => ({
-        ...current,
-        [shared.project.id]: items,
-      }));
-    } catch (cause) {
-      handleLoadError(cause, setError);
-    }
-  };
-
-  const selectSharedSession = async (shared: SharedProject, sessionId: string) => {
-    setView("board");
-    setSelectedSessionId(null);
-    try {
-      const response = await client.getSession(shared.project.orgId, sessionId);
-      setSharedSessionOrgId(shared.project.orgId);
-      setSharedSession(response.session);
-    } catch (cause) {
-      handleLoadError(cause, setError);
-    }
-  };
-
-  const deleteSession = async (session: Session) => {
-    setError("");
-    try {
-      await client.deleteSession(organizationId, session.id);
-      deletingSessionIds.current.add(session.id);
-      const remaining = sessions.filter(({ id }) => id !== session.id);
-      setSessions(remaining);
-      if (selectedSessionId === session.id) setSelectedSessionId(null);
-      // An empty project shell left behind reads as "delete didn't work" —
-      // the agent is gone but its folder lingers. Take the project with it
-      // once nothing else in it survives the delete.
-      const projectStillHasSessions = remaining.some(
-        ({ projectId }) => projectId === session.projectId,
-      );
-      if (!projectStillHasSessions) {
-        const project = projects.find(({ id }) => id === session.projectId);
-        if (project) await deleteProject(project);
-      }
-    } catch (cause) {
-      handleLoadError(cause, setError);
     }
   };
 
@@ -1111,23 +1063,29 @@ export function CloudWorkspace() {
   const selectedSession =
     sessions.find(({ id }) => id === selectedSessionId) ?? null;
   const activeSession = sharedSession ?? selectedSession;
-  const activeOrgId = sharedSession ? sharedSessionOrgId : organizationId;
+  const activeSessionOrgId = sharedSession ? sharedSessionOrgId : organizationId;
 
   return (
     <main
       data-testid="cloud-workspace"
       className="fixed inset-0 h-dvh overflow-hidden bg-[var(--color-bg-primary)] font-sans tracking-normal text-[var(--color-text-primary)] [color-scheme:dark] [&_*]:[scrollbar-color:rgb(255_255_255_/_12%)_transparent] [&_*]:[scrollbar-width:thin]"
     >
-      <div className="grid h-full grid-cols-[240px_minmax(0,1fr)]">
+      <div className={`grid h-full grid-cols-1 ${sidebarCollapsed ? "lg:grid-cols-[0px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]"} transition-[grid-template-columns] duration-200 ease-out`}>
+        {previewUi && mobileNavOpen ? <button type="button" aria-label="Close navigation overlay" className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setMobileNavOpen(false)} /> : null}
         <CloudSidebar
           account={account}
           onAddAgentToProject={setAddAgentProject}
+          onCreateWorkspace={() => setCreateWorkspaceOpen(true)}
+          onDeleteProject={(project) => void deleteProject(project)}
           onDeleteSession={(session) => void deleteSession(session)}
           onNewProject={() => setNewProjectOpen(true)}
+          onNewSession={(projectId) => {
+            setNewSessionProjectId(projectId);
+          }}
           onOpenCommand={() => setCommandOpen(true)}
           onOpenSettings={() => {
-            setSettingsTarget("organization");
-            setView("settings");
+            setSettingsTarget("general");
+            setSettingsOpen(true);
             setSelectedSessionId(null);
             setSharedSession(null);
           }}
@@ -1139,147 +1097,162 @@ export function CloudWorkspace() {
             void loadOrganization(id);
           }}
           onSelectProject={(id) => {
-            setView("board");
             setSelectedProjectId(id);
             setSelectedSessionId(null);
             setSharedSession(null);
           }}
           onSelectSession={(id) => {
-            setView("board");
             const session = sessions.find((item) => item.id === id);
             if (session) setSelectedProjectId(session.projectId);
             setSelectedSessionId(id);
             setSharedSession(null);
           }}
-          onExpandSharedProject={expandSharedProject}
+          onExpandSharedProject={(shared) => void expandSharedProject(shared)}
+          onSelectSharedSession={(shared, sessionId) => void selectSharedSession(shared, sessionId)}
           onProjectSettings={setProjectSettings}
-          onSelectSharedSession={selectSharedSession}
           onShareProject={(project) => void openShareDialog(project)}
           projects={projects}
           selectedOrganizationId={organizationId}
           selectedProjectId={selectedProjectId}
-          selectedSessionId={sharedSession ? sharedSession.id : selectedSessionId}
+          selectedSessionId={activeSession?.id ?? null}
           sessions={sessions}
           sharedProjectSessions={sharedProjectSessions}
           sharedProjects={sharedProjects}
+          mobileOpen={mobileNavOpen}
+          onCloseMobile={() => setMobileNavOpen(false)}
+          parity={previewUi}
         />
-        <CloudMainShell>
-          {view === "settings" ? (
-            <div className="relative min-h-0 flex-1">
-              {error ? (
-                <div
-                  className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
-                  role="alert"
-                >
-                  {error}
-                </div>
-              ) : null}
-              <CloudSettings
-                account={account}
-                busy={githubBusy}
-                github={github}
-                githubUser={githubUser}
-                initialPanel={settingsTarget}
-                members={members}
-                membersBusy={membersBusy}
-                onConnectGitHub={connectGitHub}
-                onConnectAgent={connectAgentProvider}
-                onConnectUserAgent={connectUserAgentProvider}
-                onDisconnectAgent={disconnectAgentProvider}
-                onDisconnectUserAgent={disconnectUserAgentProvider}
-                onBack={() => setView("board")}
-                onDisconnectGitHub={disconnectGitHubInstallation}
-                onDisconnectGitHubUser={disconnectGitHubUser}
-                onInviteMember={inviteMember}
-                onRevokeInvitation={revokeInvitation}
-                onSelectOrganization={(id) => {
-                  setOrganizationId(id);
-                  setSelectedProjectId(null);
-                  setSelectedSessionId(null);
-                  void loadOrganization(id);
-                }}
-                onSyncGitHub={syncGitHubInstallation}
-                providerBusy={providerBusy}
-                providers={providers}
-                selectedOrganizationId={organizationId}
-                userProviderBusy={userProviderBusy}
-                userProviders={userProviders}
-              />
-            </div>
+        <CloudMainShell parity={previewUi} sidebarCollapsed={sidebarCollapsed}>
+          {activeSession ? (
+            <CloudSessionWorkspace
+              onClose={() => { setSelectedSessionId(null); setSharedSession(null); }}
+              onDelete={() => { if (!sharedSession) void deleteSession(activeSession); setSelectedSessionId(null); setSharedSession(null); }}
+              onNewTask={() => { if (!sharedSession) setNewSessionProjectId(activeSession.projectId); }}
+              onShare={() => {
+                const project = projects.find((p) => p.id === activeSession.projectId);
+                if (project) void openShareDialog(project);
+              }}
+              onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+              sidebarOpen={!sidebarCollapsed}
+              organizationId={activeSessionOrgId}
+              session={activeSession}
+            />
           ) : (
-            activeSession ? (
-              <CloudSessionWorkspace
-                onClose={() => {
-                  setSelectedSessionId(null);
-                  setSharedSession(null);
-                }}
-                organizationId={activeOrgId}
-                session={activeSession}
+            <>
+              <CloudTopbar
+                title={selectedProject?.displayName ?? "All projects"}
+                onOpenSidebar={previewUi ? () => setMobileNavOpen(true) : undefined}
+                onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
+                sidebarOpen={!sidebarCollapsed}
+                showBoardActions={!!selectedProjectId}
+                onNewTask={selectedProjectId ? () => setNewSessionProjectId(selectedProjectId) : undefined}
+                onOrchestrator={
+                  selectedProject && !selectedProject.config?.scratch
+                    ? () => setNewSessionProjectId(selectedProject.id)
+                    : undefined
+                }
+                onShare={selectedProject ? () => void openShareDialog(selectedProject) : undefined}
               />
-            ) : (
-              <>
-                <CloudTopbar title={selectedProject?.displayName ?? "All projects"} />
-                <div className="relative min-h-0 flex-1">
-                  {error ? (
-                    <div
-                      className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
-                      role="alert"
-                    >
-                      {error}
-                    </div>
-                  ) : null}
-                  {loading ? (
-                    <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
-                      Loading workspace…
-                    </div>
-                  ) : (
-                    <CloudBoard
-                      onSelectSession={setSelectedSessionId}
-                      organizationId={organizationId}
-                      sessions={visibleSessions}
-                    />
-                  )}
-                </div>
-              </>
-            )
+              <div className="relative min-h-0 flex-1">
+                {error ? (
+                  <div
+                    className="absolute inset-x-4 top-4 z-20 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-xs text-[var(--color-error)]"
+                    role="alert"
+                  >
+                    {error}
+                  </div>
+                ) : null}
+                {loading ? (
+                  <div className="grid h-full place-items-center text-xs text-[var(--color-text-passive)]">
+                    Loading workspace…
+                  </div>
+                ) : (
+                  <CloudBoard
+                    onDeleteSession={(session) => void deleteSession(session)}
+                    onPinSession={() => {}}
+                    onSelectSession={setSelectedSessionId}
+                    organizationId={organizationId}
+                    sessions={visibleSessions}
+                  />
+                )}
+              </div>
+            </>
           )}
         </CloudMainShell>
       </div>
-      {commandOpen ? (
-        <CloudSearch
-          onClose={() => setCommandOpen(false)}
-          onSelectProject={(id) => {
-            setSelectedProjectId(id);
-            setSelectedSessionId(null);
-            setCommandOpen(false);
-          }}
-          onSelectSession={(id) => {
-            const session = sessions.find((item) => item.id === id);
-            if (session) setSelectedProjectId(session.projectId);
-            setSelectedSessionId(id);
-            setCommandOpen(false);
-          }}
-          projects={projects}
-          sessions={sessions}
-        />
-      ) : null}
-      {newProjectOpen ? (
-        <NewProjectDialog
+      <CloudSettings
+          account={account}
+          busy={githubBusy}
           github={github}
           githubUser={githubUser}
-          onClose={() => setNewProjectOpen(false)}
-          onCreateFromGitHub={createProjectFromGitHub}
-          onCreateScratchProject={createScratchProject}
-          onCreateStandalone={(input) =>
-            createScratchWork(input, "standalone-agent")
-          }
-          onOpenProviderSettings={() => {
-            setNewProjectOpen(false);
-            setSettingsTarget("providers");
-            setView("settings");
+          initialPanel={settingsTarget}
+          open={settingsOpen}
+          onConnectGitHub={connectGitHub}
+          onConnectAgent={connectAgentProvider}
+          onConnectUserAgent={connectUserAgentProvider}
+          onDisconnectAgent={disconnectAgentProvider}
+          onDisconnectUserAgent={disconnectUserAgentProvider}
+          onBack={() => setSettingsOpen(false)}
+          onDisconnectGitHub={disconnectGitHubInstallation}
+          onDisconnectGitHubUser={disconnectGitHubUser}
+          onInviteMember={inviteMember}
+          onRevokeInvitation={revokeInvitation}
+          onSelectOrganization={(id) => {
+            setOrganizationId(id);
+            setSelectedProjectId(null);
+            setSelectedSessionId(null);
+            void loadOrganization(id);
           }}
-        />
-      ) : null}
+          onSyncGitHub={syncGitHubInstallation}
+          providerBusy={providerBusy}
+          providers={providers}
+          members={members}
+          membersBusy={membersBusy}
+          selectedOrganizationId={organizationId}
+          userProviderBusy={userProviderBusy}
+          userProviders={userProviders}
+      />
+      <CloudSearch
+        open={commandOpen}
+        onOpenChange={setCommandOpen}
+        onSelectProject={(id) => {
+          setSelectedProjectId(id);
+          setSelectedSessionId(null);
+          setCommandOpen(false);
+        }}
+        onSelectSession={(id) => {
+          const session = sessions.find((item) => item.id === id);
+          if (session) setSelectedProjectId(session.projectId);
+          setSelectedSessionId(id);
+          setCommandOpen(false);
+        }}
+        onNewProject={() => {
+          setCommandOpen(false);
+          setNewProjectOpen(true);
+        }}
+        onOpenSettings={() => {
+          setCommandOpen(false);
+          setSettingsTarget("general");
+          setSettingsOpen(true);
+        }}
+        projects={projects}
+        sessions={sessions}
+      />
+      <NewProjectDialog
+        connectedProviders={providers.status === "available" ? providers.connections.map((c) => c.provider) : []}
+        github={github}
+        githubUser={githubUser}
+        onClose={() => setNewProjectOpen(false)}
+        onCreateFromGitHub={createProjectFromGitHub}
+        onCreateScratchProject={createScratchProject}
+        onCreateStandalone={(input) => createScratchWork(input, "standalone-agent")}
+        onOpenProviderSettings={() => {
+          setNewProjectOpen(false);
+          setSettingsTarget("general");
+          setSettingsOpen(true);
+        }}
+        open={newProjectOpen}
+      />
       {addAgentProject ? (
         <AddAgentToProjectDialog
           onClose={() => setAddAgentProject(null)}
@@ -1287,6 +1260,21 @@ export function CloudWorkspace() {
           projectName={addAgentProject.displayName}
         />
       ) : null}
+      <CloudCreateWorkspaceDialog
+        open={createWorkspaceOpen}
+        onClose={() => setCreateWorkspaceOpen(false)}
+        onCreated={() => { setCreateWorkspaceOpen(false); window.location.reload(); }}
+      />
+      <CloudNewSessionDialog
+        open={newSessionProjectId !== null}
+        projectName={projects.find((p) => p.id === newSessionProjectId)?.displayName ?? ""}
+        connectedProviders={providers.status === "available" ? providers.connections.map((c) => c.provider) : []}
+        onClose={() => setNewSessionProjectId(null)}
+        onCreate={(input) => {
+          if (!newSessionProjectId) return Promise.resolve();
+          return createSessionInProject(newSessionProjectId, input);
+        }}
+      />
       {shareProject ? (
         <CloudShareDialog
           busy={shareLinksBusy}
@@ -1296,6 +1284,7 @@ export function CloudWorkspace() {
           onCreate={createShareLink}
           onRevoke={revokeShareLink}
           onRevokeGrant={revokeShareGrant}
+          open
           project={shareProject}
         />
       ) : null}
@@ -1312,7 +1301,15 @@ export function CloudWorkspace() {
   );
 }
 
-export default CloudWorkspace;
+function CloudWorkspaceWithConfirm() {
+  return (
+    <ConfirmProvider>
+      <CloudWorkspace />
+    </ConfirmProvider>
+  );
+}
+
+export default CloudWorkspaceWithConfirm;
 
 function LoadingState({
   error,
@@ -1341,113 +1338,84 @@ function LoadingState({
 }
 
 function CloudSearch({
-  onClose,
+  open,
+  onOpenChange,
   onSelectProject,
   onSelectSession,
+  onNewProject,
+  onOpenSettings,
   projects,
   sessions,
 }: {
-  onClose: () => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onSelectProject: (id: string) => void;
   onSelectSession: (id: string) => void;
+  onNewProject: () => void;
+  onOpenSettings: () => void;
   projects: Project[];
   sessions: Session[];
 }) {
-  const [query, setQuery] = useState("");
-  const normalized = query.trim().toLowerCase();
-  const filteredProjects = projects.filter(
-    (project) =>
-      !isStandaloneProject(project) &&
-      `${project.displayName} ${project.repositoryUrl}`
-        .toLowerCase()
-        .includes(normalized),
-  );
-  const filteredSessions = sessions.filter(({ displayName, branch }) =>
-    `${displayName} ${branch}`.toLowerCase().includes(normalized),
-  );
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/55 px-4 pt-[14vh]"
-      onMouseDown={(event) => {
-        if (event.currentTarget === event.target) onClose();
-      }}
-    >
-      <section
-        aria-label="Search workspace"
-        aria-modal="true"
-        className="w-full max-w-[680px] overflow-hidden rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-bg-elevated)] shadow-2xl"
-        role="dialog"
-      >
-        <div className="flex items-center gap-3 border-b border-[var(--color-border-strong)] px-4 py-3">
-          <Search className="size-4 text-[var(--color-text-passive)]" />
-          <input
-            aria-label="Search"
-            autoFocus
-            className="h-7 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-text-passive)]"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search projects and sessions…"
-            value={query}
-          />
-          <button aria-label="Close search" onClick={onClose} type="button">
-            <X className="size-4 text-[var(--color-text-passive)]" />
-          </button>
-        </div>
-        <div className="max-h-[50vh] overflow-y-auto p-2">
-          {[...filteredProjects, ...filteredSessions].length === 0 ? (
-            <p className="p-6 text-center text-xs text-[var(--color-text-passive)]">
-              No matching projects or sessions.
-            </p>
-          ) : null}
-          {filteredProjects.map((project) => (
-            <SearchResult
-              detail={project.repositoryUrl}
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
+      <CommandInput placeholder="Search projects, sessions, and commands…" />
+      <CommandList>
+        <CommandEmpty>No results found.</CommandEmpty>
+        <CommandGroup heading="Projects">
+          {projects.filter((p) => !isStandaloneProject(p)).map((project) => (
+            <CommandItem
               key={project.id}
-              label={project.displayName}
-              onClick={() => onSelectProject(project.id)}
-              type="Project"
-            />
+              value={`project ${project.displayName} ${project.repositoryUrl}`}
+              onSelect={() => onSelectProject(project.id)}
+            >
+              <Folder className="size-3.5" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
+              <span className="max-w-[45%] truncate text-xs text-[var(--color-text-passive)]">
+                {project.repositoryUrl}
+              </span>
+            </CommandItem>
           ))}
-          {filteredSessions.map((session) => (
-            <SearchResult
-              detail={session.branch}
-              key={session.id}
-              label={session.displayName}
-              onClick={() => onSelectSession(session.id)}
-              type="Session"
-            />
-          ))}
-        </div>
-      </section>
-    </div>
+        </CommandGroup>
+        {sessions.length > 0 ? (
+          <CommandGroup heading="Sessions">
+            {sessions.map((session) => (
+              <CommandItem
+                key={session.id}
+                value={`session ${session.displayName} ${session.branch}`}
+                onSelect={() => onSelectSession(session.id)}
+              >
+                <span
+                  className={`size-2 shrink-0 rounded-full ${activityDot(session.activityState)}`}
+                  aria-hidden="true"
+                />
+                <span className="min-w-0 flex-1 truncate">{session.displayName}</span>
+                <span className="max-w-[45%] truncate text-xs text-[var(--color-text-passive)]">
+                  {session.branch}
+                </span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ) : null}
+        <CommandGroup heading="Actions">
+          <CommandItem value="new project create" onSelect={onNewProject}>
+            <Plus className="size-3.5" aria-hidden="true" />
+            New project
+          </CommandItem>
+          <CommandItem value="settings preferences" onSelect={onOpenSettings}>
+            <Settings className="size-3.5" aria-hidden="true" />
+            Settings
+          </CommandItem>
+        </CommandGroup>
+      </CommandList>
+    </CommandDialog>
   );
 }
 
-function SearchResult({
-  detail,
-  label,
-  onClick,
-  type,
-}: {
-  detail: string;
-  label: string;
-  onClick: () => void;
-  type: string;
-}) {
-  return (
-    <button
-      className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-[var(--color-interactive-hover)]"
-      onClick={onClick}
-      type="button"
-    >
-      <span className="w-14 shrink-0 font-mono text-[9px] uppercase tracking-wider text-[var(--color-text-passive)]">
-        {type}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-      <span className="max-w-[45%] truncate text-xs text-[var(--color-text-passive)]">
-        {detail}
-      </span>
-    </button>
-  );
+function activityDot(activity: Session["activityState"]): string {
+  if (activity === "active") return "bg-status-working";
+  if (activity === "waiting_input" || activity === "blocked") return "bg-status-needs-you";
+  if (activity === "exited") return "bg-status-exited";
+  return "bg-status-idle";
 }
 
 function handleLoadError(

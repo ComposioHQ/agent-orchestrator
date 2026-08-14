@@ -10,7 +10,11 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export default async function CloudEntryPage() {
+export default async function CloudEntryPage({
+  searchParams,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+} = {}) {
   const mode = cloudWebMode();
   if (mode === "local") {
     const token = (await cookies()).get(localAuthCookie)?.value;
@@ -24,5 +28,8 @@ export default async function CloudEntryPage() {
       }
     }
   }
-  return <CloudEntryClient mode={mode} />;
+  const params = await searchParams;
+  const uiParam = params?.ui;
+  const nextUi = Array.isArray(uiParam) ? uiParam.includes("next") : uiParam === "next";
+  return <CloudEntryClient mode={mode} nextUi={nextUi} />;
 }

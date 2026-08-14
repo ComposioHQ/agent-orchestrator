@@ -327,16 +327,15 @@ it("shows one search result per standalone agent", async () => {
   });
 
   render(<CloudWorkspace />);
-  await screen.findByText("Standalone Agents");
+  await screen.findByText("Agents");
   fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
-  const dialog = screen.getByRole("dialog", { name: "Search workspace" });
+  const dialog = screen.getByRole("dialog", { name: "Command palette" });
   expect(within(dialog).getAllByText("Solo agent")).toHaveLength(1);
-  expect(within(dialog).queryByText("Project")).not.toBeInTheDocument();
-  expect(within(dialog).getByText("Session")).toBeVisible();
+  expect(within(dialog).getByRole("group", { name: "Sessions" })).toBeVisible();
 });
 
-it("shares a standalone agent the same way as a normal project", async () => {
+it("shares a standalone agent", async () => {
   mocks.listProjects.mockResolvedValue({
     items: [
       {
@@ -397,11 +396,8 @@ it("shares a standalone agent the same way as a normal project", async () => {
   });
 
   render(<CloudWorkspace />);
-  await screen.findByText("Standalone Agents");
-  fireEvent.click(
-    screen.getByRole("button", { name: "Actions for Solo agent" }),
-  );
-  fireEvent.click(screen.getByRole("menuitem", { name: "Share agent" }));
+  await screen.findByText("Agents");
+  fireEvent.click(screen.getByRole("button", { name: "Share" }));
 
   const dialog = await screen.findByRole("dialog", { name: "Share Solo agent" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Create link" }));
@@ -423,7 +419,7 @@ it("shares a standalone agent the same way as a normal project", async () => {
 
 it("does not expose the obsolete per-project worker button", async () => {
   render(<CloudWorkspace />);
-  await screen.findByText("Dev Team");
+  await screen.findByRole("button", { name: "Cloud platform" });
 
   expect(
     screen.queryByRole("button", { name: "New worker" }),
@@ -439,7 +435,7 @@ it("does not issue failing GitHub requests before hosted authentication", async 
   );
 
   render(<CloudWorkspace />);
-  await screen.findByText("Dev Team");
+  await screen.findByRole("button", { name: "Cloud platform" });
   await waitFor(() =>
     expect(fetch).toHaveBeenCalledWith("/api/cloud/github-auth-status", {
       cache: "no-store",
@@ -490,15 +486,10 @@ it("creates a standalone scratch project and worker session", async () => {
     }),
     { idempotencyKey: "test-key" },
   );
-  expect(screen.getByText("Standalone Agents")).toBeVisible();
+  expect(screen.getByText("Agents")).toBeVisible();
 });
 
 it("uses an agent name instead of an orchestrator name for local scratch projects", async () => {
-  // Leaving GitHub unchecked in "Create scratch project" still gets a real,
-  // persistent AO-managed local Git workspace (per the dialog's own copy),
-  // not "no repo" — so it gets the same orchestrator treatment as a
-  // GitHub-backed scratch project, unlike "Create a Standalone Agent"
-  // (which is genuinely repo-less and uses kind: "worker").
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
@@ -523,18 +514,55 @@ it("uses an agent name instead of an orchestrator name for local scratch project
   );
 });
 
-it("searches the loaded workspace without demo commands", async () => {
+it("creates a no-repository project with an independent worker", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
+  fireEvent.click(screen.getByRole("button", { name: "New project" }));
+  fireEvent.click(screen.getByRole("button", { name: /Create a Project/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Start from scratch/ }));
+  fireEvent.change(screen.getByLabelText("Project name"), {
+    target: { value: "Loose agents" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^No repository/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+  await waitFor(() =>
+    expect(mocks.createProject).toHaveBeenCalledWith(
+      "org-1",
+      expect.objectContaining({
+        displayName: "Loose agents",
+        config: {
+          source: "scratch-independent",
+          scratch: true,
+          standalone: false,
+        },
+      }),
+      { idempotencyKey: "test-key" },
+    ),
+  );
+  expect(mocks.createSession).toHaveBeenCalledWith(
+    "org-1",
+    expect.objectContaining({
+      kind: "worker",
+      displayName: "Loose agents",
+    }),
+    { idempotencyKey: "test-key" },
+  );
+});
+
+it("searches the loaded workspace without demo commands", async () => {
+  render(<CloudWorkspace />);
+  await screen.findByRole("button", { name: "Cloud platform" });
+
   fireEvent.keyDown(window, { key: "k", metaKey: true });
-  const dialog = screen.getByRole("dialog", { name: "Search workspace" });
-  fireEvent.change(within(dialog).getByLabelText("Search"), {
+  const dialog = screen.getByRole("dialog", { name: "Command palette" });
+  fireEvent.change(within(dialog).getByRole("combobox"), {
     target: { value: "authentication" },
   });
 
   expect(
-    within(dialog).getByRole("button", {
+    within(dialog).getByRole("option", {
       name: /Build cloud authentication/,
     }),
   ).toBeVisible();
@@ -545,14 +573,15 @@ it("connects coding-agent credentials from provider settings", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
-  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  fireEvent.click(
+    within(screen.getByRole("dialog", { name: "Command palette" })).getByRole(
+      "option",
+      { name: "Settings" },
+    ),
+  );
 
-  expect(screen.getByRole("heading", { name: "Organization" })).toBeVisible();
-  expect(
-    screen.getByRole("button", { name: "Add organization" }),
-  ).toBeDisabled();
-
-  fireEvent.click(screen.getByRole("button", { name: "Provider connections" }));
+  fireEvent.click(screen.getByRole("button", { name: "Providers" }));
   expect(screen.getByText("No GitHub installation")).toBeVisible();
   fireEvent.click(screen.getAllByRole("button", { name: "Connect" })[0]);
   fireEvent.change(screen.getByLabelText("Secret"), {
@@ -590,10 +619,7 @@ it("opens project actions and creates a real share link", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
-  fireEvent.click(
-    screen.getByRole("button", { name: "Actions for Cloud platform" }),
-  );
-  fireEvent.click(screen.getByRole("menuitem", { name: "Share project" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Share project" }));
 
   const dialog = await screen.findByRole("dialog", {
     name: "Share Cloud platform",
@@ -618,9 +644,7 @@ it("updates project settings from the project action menu", async () => {
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
-  fireEvent.click(
-    screen.getByRole("button", { name: "Actions for Cloud platform" }),
-  );
+  fireEvent.contextMenu(await screen.findByRole("button", { name: "Cloud platform" }));
   fireEvent.click(
     screen.getByRole("menuitem", { name: "Project settings" }),
   );
@@ -661,9 +685,7 @@ it("deletes a project and removes all of its sessions from the workspace", async
   render(<CloudWorkspace />);
   await screen.findByText("Dev Team");
 
-  fireEvent.click(
-    screen.getByRole("button", { name: "Actions for Cloud platform" }),
-  );
+  fireEvent.contextMenu(await screen.findByRole("button", { name: "Cloud platform" }));
   fireEvent.click(
     screen.getByRole("menuitem", { name: "Project settings" }),
   );
@@ -686,18 +708,10 @@ it("deletes a project and removes all of its sessions from the workspace", async
   ).not.toBeInTheDocument();
 });
 
-it("deletes a session from its hover action menu, and its now-empty project with it", async () => {
-  // The default fixture's "project-1" has exactly one session
-  // ("session-1"), so deleting it should also take the emptied-out project
-  // with it rather than leaving a lingering empty folder behind.
+it("deletes a session and its now-empty project", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
   render(<CloudWorkspace />);
-  fireEvent.click(
-    await screen.findByRole("button", {
-      name: "Actions for Build cloud authentication",
-    }),
-  );
-  fireEvent.click(screen.getByRole("menuitem", { name: "Delete session" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete session" }));
 
   await waitFor(() =>
     expect(mocks.deleteSession).toHaveBeenCalledWith("org-1", "session-1"),

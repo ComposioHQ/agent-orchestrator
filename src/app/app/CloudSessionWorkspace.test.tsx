@@ -96,7 +96,7 @@ beforeEach(() => {
 it("uses the interactive agent terminal as the primary session surface", async () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
       organizationId="org-1"
       session={session}
     />,
@@ -104,14 +104,18 @@ it("uses the interactive agent terminal as the primary session surface", async (
 
   expect(screen.getByText("Interactive agent terminal")).toBeVisible();
   expect(screen.queryByLabelText("Message")).not.toBeInTheDocument();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Changes 1" }));
+  expect(await screen.findByText("diff --git a/README.md b/README.md")).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Files" }));
   expect(await screen.findByText("README.md")).toBeVisible();
-  expect(screen.getByText("diff --git a/README.md b/README.md")).toBeVisible();
 });
 
 it("opens and edits repository files in the right inspector", async () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
       organizationId="org-1"
       session={session}
     />,
@@ -135,7 +139,7 @@ it("opens and edits repository files in the right inspector", async () => {
 it("opens a separate trusted workspace shell in the right inspector", () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
       organizationId="org-1"
       session={{ ...session, mode: "trusted" }}
     />,
@@ -149,7 +153,7 @@ it("opens a separate trusted workspace shell in the right inspector", () => {
 it("waits for the worker before mounting the terminal", () => {
   render(
     <CloudSessionWorkspace
-      onClose={vi.fn()}
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
       organizationId="org-1"
       session={{ ...session, runtimeConnected: false }}
     />,

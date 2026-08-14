@@ -105,30 +105,13 @@ func (c GitHubConfig) Enabled() bool {
 // grant to write onto someone else's session stream.
 const minWorkerSigningKeyLength = 32
 
-// defaultNodeOpsAutoPauseSeconds is the idle timeout stamped onto sandboxes when
-// AO_CLOUD_NODEOPS_AUTO_PAUSE_SECONDS is unset. It defaults to 0 (disabled):
-// CreateOS only resets this timer on an `exec` call, and the worker sends
-// exactly one — at boot — so the provider's own clock cannot tell an actively
-// working agent from an abandoned one and would pause mid-turn. The
-// control-plane idle-pause scanner (internal/idlepause) is the mechanism that
-// actually understands session activity; this knob exists only for a
-// deployment that wants a redundant provider-side timer on top of it.
+// Provider-side auto-pause is opt-in; the control plane tracks real activity.
 const defaultNodeOpsAutoPauseSeconds = 0
 
-// defaultIdlePauseThreshold is how long a session must have had no user
-// message, with no turn in flight, before the control plane pauses its
-// sandbox. It matches the idle window the retired provider-side auto-pause
-// used, so this change does not itself shift the cost/latency tradeoff users
-// were already tuned around — it only fixes which signal decides.
 const defaultIdlePauseThreshold = 15 * time.Minute
 
-// defaultIdlePauseInterval is how often the idle-pause scanner looks for
-// sessions to pause.
 const defaultIdlePauseInterval = 30 * time.Second
 
-// defaultPRStatusPollInterval matches the local desktop app's fast
-// metadata/CI poll tick, so cloud sessions get the same status freshness the
-// local app already gives users.
 const defaultPRStatusPollInterval = 30 * time.Second
 
 func Load() (Config, error) {

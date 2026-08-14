@@ -127,18 +127,14 @@ type sandboxView struct {
 }
 
 type createSandboxRequest struct {
-	Shape          string            `json:"shape"`
-	RootFS         string            `json:"rootfs,omitempty"`
-	Name           string            `json:"name,omitempty"`
-	Envs           map[string]string `json:"envs,omitempty"`
-	SSHPubKeys     []string          `json:"ssh_pubkeys,omitempty"`
-	Region         string            `json:"region,omitempty"`
-	IngressEnabled bool              `json:"ingress_enabled,omitempty"`
-	// AutoPauseAfterSeconds is the CreateOS idle timeout. The API silently
-	// ignores an unknown field, so this name must match the control plane
-	// exactly (verified against the createos-sandbox SDK); a typo would leave
-	// idle sandboxes running forever with no error to notice.
-	AutoPauseAfterSeconds int `json:"auto_pause_after_seconds,omitempty"`
+	Shape                 string            `json:"shape"`
+	RootFS                string            `json:"rootfs,omitempty"`
+	Name                  string            `json:"name,omitempty"`
+	Envs                  map[string]string `json:"envs,omitempty"`
+	SSHPubKeys            []string          `json:"ssh_pubkeys,omitempty"`
+	Region                string            `json:"region,omitempty"`
+	IngressEnabled        bool              `json:"ingress_enabled,omitempty"`
+	AutoPauseAfterSeconds int               `json:"auto_pause_after_seconds,omitempty"`
 }
 
 // Create provisions one sandbox for a session.
@@ -485,9 +481,6 @@ func statusError(response *http.Response) error {
 	}
 	snippet, _ := io.ReadAll(io.LimitReader(response.Body, maxErrorBody))
 	body := truncate(strings.TrimSpace(string(snippet)), maxErrorBody)
-	// A concurrency rejection is a wait, not a failure. 429 is unambiguous; a
-	// 403 is overloaded (auth vs quota), so it only counts when the body names
-	// the quota — the CreateOS message is "sandbox concurrent quota reached".
 	if response.StatusCode == http.StatusTooManyRequests ||
 		(response.StatusCode == http.StatusForbidden &&
 			strings.Contains(strings.ToLower(body), "quota")) {

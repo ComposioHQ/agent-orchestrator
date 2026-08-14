@@ -168,7 +168,7 @@ it("creates a private GitHub-backed scratch project for the selected owner", asy
     target: { value: "New service" },
   });
   fireEvent.click(screen.getByRole("button", { name: /^GitHub/ }));
-  expect(screen.getByRole("option", { name: "acme · organization" })).toBeVisible();
+  expect(screen.getByRole("option", { name: "acme · org" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
   await waitFor(() =>
@@ -178,11 +178,12 @@ it("creates a private GitHub-backed scratch project for the selected owner", asy
       prompt: "",
       githubInstallationId: "9007199254740993",
       private: true,
+      noRepository: undefined,
     }),
   );
 });
 
-it("flags a scratch project as no-repository when that option is chosen", async () => {
+it("flags a scratch project when no repository is selected", async () => {
   const onCreateScratchProject = vi.fn().mockResolvedValue(undefined);
   render(
     <NewProjectDialog

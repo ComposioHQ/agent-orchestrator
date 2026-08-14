@@ -9,11 +9,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
-// RefreshPullRequestStatus fetches a pull request's current lifecycle, CI,
-// review, and mergeability state from GitHub and applies it over the durable
-// record. It resolves the installation by the pull request's repository
-// rather than by session, so it keeps working after the session that raised
-// the PR has terminated — the PR itself lives on until closed or merged.
+// RefreshPullRequestStatus refreshes a pull request's durable GitHub status.
 func (s *Service) RefreshPullRequestStatus(
 	ctx context.Context,
 	ref domain.PullRequestRef,
@@ -72,11 +68,6 @@ func pullRequestLifecycleState(detail PullRequestDetail) contract.PRState {
 	}
 }
 
-// aggregateCIState rolls up every check run against a commit into the single
-// CIState the public agent-orchestrator repo's local desktop app already
-// derives: any failure-class conclusion wins outright, then any run still in
-// progress, then a pass only once every run has concluded successfully, and
-// unknown when there is nothing to aggregate yet.
 func aggregateCIState(checks []CheckRun) contract.CIState {
 	if len(checks) == 0 {
 		return contract.CIUnknown
@@ -102,18 +93,7 @@ func aggregateCIState(checks []CheckRun) contract.CIState {
 	return contract.CIPassing
 }
 
-// aggregateReviewState takes each reviewer's most recent decisive verdict
-// (approved or changes_requested) and folds them into one decision: any
-// outstanding changes-requested wins, otherwise any approval, otherwise
-// none. GitHub's REST reviews endpoint (unlike its GraphQL reviewDecision
-// field) cannot say whether branch protection requires a review that has not
-// been submitted yet, so review_required is never produced here — only what
-// reviewers actually submitted.
-//
-// A reviewer's dismissed review must still be tracked chronologically
-// (rather than simply ignored like commented/pending reviews), because a
-// dismissal clears whatever verdict that reviewer had standing before it —
-// otherwise a dismissed changes-request would keep blocking forever.
+// aggregateReviewState uses each reviewer's latest decisive or dismissed review.
 func aggregateReviewState(reviews []PullRequestReview) contract.ReviewDecision {
 	latest := map[string]PullRequestReview{}
 	for _, review := range reviews {
@@ -156,11 +136,6 @@ func reviewAfter(a, b PullRequestReview) bool {
 	return a.SubmittedAt.After(b.SubmittedAt)
 }
 
-// mapMergeability translates GitHub's mergeable_state into the shared
-// Mergeability enum. "behind" (the base branch has moved and the PR must be
-// updated before it can merge) is surfaced as blocked, matching "conflicting"
-// and "blocked" itself as the three states that mean "not mergeable right
-// now, and the caller should say why" rather than merely unstable.
 func mapMergeability(detail PullRequestDetail) contract.Mergeability {
 	switch detail.MergeableState {
 	case "dirty":

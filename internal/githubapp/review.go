@@ -10,18 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 )
 
-// triggerReview starts an AO-triggered review pass for a freshly raised pull
-// request as its own dedicated agent process in the same sandbox that
-// raised it (see OpenReviewTerminal) — not a message appended to that
-// session's ongoing conversation. That sandbox is already checked out on
-// the PR's branch, so this needs no new checkout mechanism. It is fenced by
-// CreateReviewRun's (pull_request_id, target_sha) uniqueness, so calling it
-// twice for the same commit is harmless.
-//
-// A review is a courtesy on top of an already-successful pull request, not
-// a condition of it: any failure here is logged and swallowed rather than
-// returned, so a review-triggering problem never turns a successful
-// RaisePullRequest into a failed one.
+// triggerReview starts a best-effort review in a dedicated sandbox process.
 func (s *Service) triggerReview(ctx context.Context, orgID, sessionID string, pr domain.PullRequest) {
 	run, created, err := s.store.CreateReviewRun(ctx, orgID, pr.ID, sessionID, pr.HeadSHA)
 	if err != nil {
@@ -36,12 +25,6 @@ func (s *Service) triggerReview(ctx context.Context, orgID, sessionID string, pr
 	}
 }
 
-// reviewPrompt is the first (and only) input a fresh review terminal
-// receives. Unlike a message appended to an ongoing conversation, this
-// process has no memory of raising the PR — it starts knowing nothing but
-// what's in this prompt and what it can see in the checked-out workspace,
-// so it's told explicitly to look at the diff itself rather than assumed
-// to already know what changed.
 func reviewPrompt(reviewRunID string, pr domain.PullRequest) string {
 	return fmt.Sprintf(
 		"You are AO's automated reviewer for one pull request: %s, #%d: %q, "+
@@ -59,12 +42,7 @@ func reviewPrompt(reviewRunID string, pr domain.PullRequest) string {
 	)
 }
 
-// SubmitReview records a review session's verdict on the pull request it
-// was asked to review, posts it to GitHub as a comment (the same identity
-// that raised the pull request cannot APPROVE or REQUEST_CHANGES its own
-// PR — see CreatePullRequestReview), and marks the run delivered. It is the
-// counterpart to triggerReview: the only way a review run's verdict ever
-// gets recorded.
+// SubmitReview posts and records a review session's verdict.
 func (s *Service) SubmitReview(
 	ctx context.Context,
 	orgID, sessionID, reviewRunID string,
@@ -117,11 +95,6 @@ func (s *Service) SubmitReview(
 	return delivered, nil
 }
 
-// failReview records a review run's failure and, best-effort, tears down
-// the dedicated terminal OpenReviewTerminal started for it — its job is
-// done whether the review succeeded or not. Returns the same (run, cause)
-// shape SubmitReview's three failure sites already returned before this was
-// factored out.
 func (s *Service) failReview(
 	ctx context.Context, orgID, sessionID, reviewRunID string, cause error,
 ) (domain.ReviewRun, error) {
@@ -133,10 +106,6 @@ func (s *Service) failReview(
 	return domain.ReviewRun{}, cause
 }
 
-// closeReviewTerminal is best-effort cleanup: a failure here means the
-// dedicated review process may linger in the sandbox until the session
-// itself ends, not that the review's own outcome (already recorded) is
-// wrong, so it's logged rather than propagated.
 func (s *Service) closeReviewTerminal(ctx context.Context, orgID, sessionID, reviewRunID string) {
 	if err := s.store.CloseReviewTerminal(ctx, orgID, sessionID, reviewRunID); err != nil {
 		s.logger.Error("close review terminal", "error", err, "review_run_id", reviewRunID)

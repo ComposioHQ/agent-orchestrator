@@ -9,16 +9,6 @@ import (
 	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 )
 
-// The response types below mirror contracts/cloud/openapi.yaml's
-// PullRequestSummary/SessionPullRequests schemas field for field, so the
-// existing packages/cloud-client TypeScript client — and the
-// packages/product-ui review components already built against it — can
-// consume this endpoint unmodified. Fields the schema requires but AO Cloud
-// does not yet track (individual failing checks, unresolved review comment
-// threads, merge-conflict file lists) are always empty arrays rather than
-// fabricated data; AOReviewState, which is not part of this schema, is
-// exposed separately by GET .../sessions/{sessionId}/reviews.
-
 type pullRequestFailingCheckResponse struct {
 	Name       string `json:"name"`
 	Status     string `json:"status"`
@@ -141,10 +131,6 @@ func toPullRequestSummaryResponse(pr domain.PullRequest) pullRequestSummaryRespo
 	}
 }
 
-// listSessionPullRequests lists every pull request a session has raised,
-// with its most recently observed CI, review, and mergeability state — the
-// read side a client polls to show a session's PRs and whether any need
-// attention.
 func (s *Server) listSessionPullRequests(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	sessionID := chi.URLParam(r, "sessionId")
@@ -164,13 +150,6 @@ func (s *Server) listSessionPullRequests(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"sessionId": sessionID, "pullRequests": items})
 }
 
-// The response types below mirror contracts/cloud/openapi.yaml's
-// SessionReviewState/AOPullRequestReviewState/AOReviewRun schemas. AO Cloud
-// v1 always reviews with the same identity that raised the pull request (no
-// separate reviewer bot, no reviewer-harness selection, no review batching),
-// so reviewId mirrors id, and batchId/harness/autoInjectReview are always
-// their zero values rather than fabricated — a distinct reviewer identity is
-// a possible later step, not something this response should imply exists.
 type aoReviewRunResponse struct {
 	ID               string     `json:"id"`
 	ReviewID         string     `json:"reviewId"`
@@ -214,11 +193,6 @@ type aoPullRequestReviewStateResponse struct {
 	PreviousRun       *aoReviewRunResponse `json:"previousRun,omitempty"`
 }
 
-// getSessionReviewState returns AO's own review history for every pull
-// request a session has raised — grouped by PR, most recent run first —
-// distinct from listSessionPullRequests's GitHub-observed CI/review/
-// mergeability state. This is what answers "did AO already review this,
-// and what did it say."
 func (s *Server) getSessionReviewState(w http.ResponseWriter, r *http.Request) {
 	orgID := chi.URLParam(r, "orgId")
 	sessionID := chi.URLParam(r, "sessionId")

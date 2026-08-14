@@ -14,15 +14,6 @@ import type {
   InspectorVerdict,
 } from "@aoagents/product-ui";
 
-// Derives the review UI's display data from AO Cloud's API responses. This
-// mirrors, in a deliberately smaller form, the derivation the local desktop
-// app's frontend/src/renderer/lib/pr-display.ts does for the same
-// product-ui components: AO Cloud v1 always reviews with the session that
-// raised the PR (no separate reviewer bot, no per-reviewer batching), and
-// does not yet fetch individual GitHub review comment threads, so the
-// "one primary headline" card treatment and GitHub-side review history the
-// desktop app renders are intentionally left out rather than approximated.
-
 const ciLabel: Record<string, { status: string; tone: PRDisplayTone }> = {
   passing: { status: "Passing", tone: "success" },
   failing: { status: "Failing", tone: "error" },

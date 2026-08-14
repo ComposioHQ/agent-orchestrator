@@ -1,40 +1,56 @@
 "use client";
 
 import type {
-  CreateInvitationInput,
   CurrentAccount,
   GitHubInstallation,
-  OrganizationInvitation,
   PutAgentProviderConnectionInput,
   RedactedProviderConnection,
 } from "@aoagents/cloud-client";
 import {
   Bell,
   Building2,
-  ChevronLeft,
   GitFork,
   KeyRound,
-  Mail,
-  Plus,
   RefreshCw,
-  Settings,
+  Settings2,
   Unplug,
   User,
-  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
-
+import { useEffect, useRef, useState } from "react";
+import {
+  type ThemePreference,
+  type ThemeStyle,
+  readStoredThemePreference,
+  readStoredThemeStyle,
+  saveThemePreference,
+  saveThemeStyle,
+} from "@/lib/theme";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  settingsDialogBodyClass,
+  settingsDialogContentClass,
+  settingsDialogHeaderClass,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { SettingsOptionMenu } from "@/components/settings/SettingsOptionMenu";
 import type {
   GitHubCapability,
   GitHubUserCapability,
   MembersCapability,
   ProviderCapability,
 } from "./cloud-ui-types";
+import type { CreateInvitationInput, OrganizationInvitation } from "./share-types";
+import { WorkspaceAvatar } from "./CloudWorkspaceSwitcher";
 
-type SettingsPanel = "profile" | "notifications" | "organization" | "providers";
+type SettingsPanel = "general" | "profile" | "notifications" | "workspaces" | "providers";
 type AgentProvider = "claude-code" | "codex" | "cursor";
 
 export function CloudSettings({
@@ -45,6 +61,7 @@ export function CloudSettings({
   initialPanel,
   members,
   membersBusy,
+  open,
   onBack,
   onConnectGitHub,
   onConnectAgent,
@@ -67,9 +84,10 @@ export function CloudSettings({
   busy: boolean;
   github: GitHubCapability;
   githubUser: GitHubUserCapability;
-  initialPanel: "organization" | "providers";
+  initialPanel: SettingsPanel;
   members: MembersCapability;
   membersBusy: boolean;
+  open: boolean;
   onBack: () => void;
   onConnectGitHub: () => Promise<void>;
   onConnectAgent: (
@@ -85,9 +103,7 @@ export function CloudSettings({
     provider: AgentProvider,
     input: PutAgentProviderConnectionInput,
   ) => Promise<void>;
-  onDisconnectUserAgent: (
-    connection: RedactedProviderConnection,
-  ) => Promise<void>;
+  onDisconnectUserAgent: (connection: RedactedProviderConnection) => Promise<void>;
   onInviteMember: (input: CreateInvitationInput) => Promise<void>;
   onRevokeInvitation: (invitation: OrganizationInvitation) => Promise<void>;
   onSelectOrganization: (organizationId: string) => void;
@@ -99,228 +115,166 @@ export function CloudSettings({
   userProviders: ProviderCapability;
 }) {
   const [panel, setPanel] = useState<SettingsPanel>(initialPanel);
-  const membership =
-    account.organizations.find(({ id }) => id === selectedOrganizationId) ??
-    account.organizations[0];
+
+  const lastPanelRef = useRef<SettingsPanel>(panel);
+  if (open) lastPanelRef.current = panel;
+  const displayPanel = open ? panel : lastPanelRef.current;
 
   useEffect(() => {
-    setPanel(initialPanel);
-  }, [initialPanel]);
+    if (open) setPanel("general");
+  }, [open]);
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[240px_minmax(0,1fr)] bg-[var(--color-bg-primary)]">
-      <nav className="min-h-0 overflow-auto border-r border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-3">
-        <button
-          className="mb-4 flex h-8 items-center gap-2 rounded-md px-2 text-sm text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-          onClick={onBack}
-          type="button"
-        >
-          <ChevronLeft className="size-3.5" aria-hidden="true" />
-          Back to app
-        </button>
-
-        <SettingsGroup label="Personal">
-          <SettingsNavItem
-            active={panel === "profile"}
-            icon={User}
-            label="Profile"
-            onClick={() => setPanel("profile")}
-          />
-          <SettingsNavItem
-            active={panel === "notifications"}
-            icon={Bell}
-            label="Notifications"
-            onClick={() => setPanel("notifications")}
-          />
-        </SettingsGroup>
-
-        <SettingsGroup count={account.organizations.length} label="Organizations">
-          <button
-            className="flex h-8 w-full cursor-not-allowed items-center gap-2 rounded-md px-2 text-left text-sm text-[var(--color-text-passive)] opacity-50"
-            disabled
-            title="Organization creation is not implemented by this control plane"
-            type="button"
-          >
-            <Plus className="size-3.5" aria-hidden="true" />
-            Add organization
-          </button>
-          {account.organizations.map((organization) => (
-            <button
-              aria-current={
-                organization.id === selectedOrganizationId ? "true" : undefined
-              }
-              className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm ${
-                organization.id === selectedOrganizationId
-                  ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-                  : "text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-              }`}
-              key={organization.id}
-              onClick={() => {
-                onSelectOrganization(organization.id);
-                setPanel("organization");
-              }}
-              type="button"
-            >
-              <Building2 className="size-3.5 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate">
-                {organization.displayName}
-              </span>
-              <span className="font-mono text-[9px] uppercase text-[var(--color-text-passive)]">
-                {organization.role}
-              </span>
-            </button>
-          ))}
-        </SettingsGroup>
-
-        <SettingsGroup label="Admin">
-          <SettingsNavItem
-            active={panel === "providers"}
-            icon={KeyRound}
-            label="Provider connections"
-            onClick={() => setPanel("providers")}
-          />
-        </SettingsGroup>
-      </nav>
-
-      <div className="min-h-0 overflow-auto p-8">
-        <div className="mx-auto max-w-3xl space-y-8">
-          <section>
-            <h2 className="text-base font-medium text-[var(--foreground)]">
-              {settingsTitle(panel)}
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-[var(--color-text-passive)]">
-              {settingsDescription(panel)}
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onBack()}>
+      <DialogContent
+        className={cn(
+          settingsDialogContentClass,
+          "h-(--size-settings-dialog-height) w-(--size-settings-dialog-wide) max-h-none origin-center overflow-hidden p-0",
+        )}
+        style={{
+          height: "min(680px, calc(100svh - 32px))",
+          width: "min(920px, calc(100vw - 32px))",
+          maxWidth: "calc(100vw - 32px)",
+        }}
+        showCloseButton={false}
+      >
+        <div className="flex h-full min-h-0">
+          <aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-card">
+            <p className="px-3 pb-1 pt-3 text-2xs font-semibold tracking-wider text-muted-foreground/60">
+              Settings
             </p>
-          </section>
+            <nav aria-label="Settings sections" className="flex flex-col gap-0.5 p-2 pt-0">
+              <SettingsNavItem
+                active={displayPanel === "general"}
+                icon={Settings2}
+                label="General"
+                onClick={() => setPanel("general")}
+              />
+              <SettingsNavItem
+                active={displayPanel === "profile"}
+                icon={User}
+                label="Profile"
+                onClick={() => setPanel("profile")}
+              />
+              <SettingsNavItem
+                active={displayPanel === "notifications"}
+                icon={Bell}
+                label="Notifications"
+                onClick={() => setPanel("notifications")}
+              />
+              <SettingsNavItem
+                active={displayPanel === "workspaces"}
+                icon={Building2}
+                label="Workspaces"
+                onClick={() => setPanel("workspaces")}
+              />
+              <SettingsNavItem
+                active={displayPanel === "providers"}
+                icon={KeyRound}
+                label="Providers"
+                onClick={() => setPanel("providers")}
+              />
+            </nav>
+          </aside>
 
-          {panel === "profile" ? (
-            <SettingsSection
-              description="Your hosted identity is managed by WorkOS."
-              title="Profile"
-            >
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <label className="text-xs text-[var(--muted-foreground)]">
-                  Name
-                  <input
-                    className={`${fieldClass} mt-1.5`}
-                    disabled
-                    value={account.user.displayName}
-                    readOnly
-                  />
-                </label>
-                <button
-                  className={`${buttonClass} self-end`}
-                  disabled
-                  title="Profile updates are not implemented"
-                  type="button"
-                >
-                  Save profile
-                </button>
-                <p className="text-xs leading-5 text-[var(--color-text-passive)] sm:col-span-2">
-                  Email is used for login and invitations:{" "}
-                  <span className="text-[var(--muted-foreground)]">
-                    {account.user.email}
-                  </span>
-                </p>
-              </div>
-            </SettingsSection>
-          ) : null}
+          <div className="flex min-w-0 flex-1 flex-col bg-card">
+            <DialogHeader className={cn(settingsDialogHeaderClass, "flex h-auto shrink-0 flex-row items-center justify-between border-b-0")}>
+              <DialogTitle className="text-2xl font-bold text-foreground">
+                {settingsTitle(displayPanel)}
+              </DialogTitle>
+              <DialogDescription className="sr-only">
+                {settingsDescription(displayPanel)}
+              </DialogDescription>
+              <DialogClose
+                aria-label="Close settings"
+                className="settings-close-button border border-transparent transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)]"
+              >
+                <X className="size-4" aria-hidden="true" />
+              </DialogClose>
+            </DialogHeader>
+            <div className={cn(settingsDialogBodyClass, "flex-1")}>
+              <div className="w-full space-y-8">
 
-          {panel === "profile" ? (
-            <CodingAgentSettings
-              busy={userProviderBusy}
-              description="Connect a credential once and it works in every organization you belong to — no need to reconnect it per org."
-              onConnect={onConnectUserAgent}
-              onDisconnect={onDisconnectUserAgent}
-              providers={userProviders}
-              title="Your personal coding agents"
-            />
-          ) : null}
+                {displayPanel === "general" ? (
+                  <GeneralSettingsPanel />
+                ) : null}
 
-          {panel === "notifications" ? (
-            <SettingsSection
-              description="Organization invitation APIs are not available yet."
-              title="Invitations for you"
-            >
-              <EmptyCapability message="No notification feed is exposed by the current control plane." />
-            </SettingsSection>
-          ) : null}
-
-          {panel === "organization" ? (
-            <SettingsSection
-              description={`Projects and sessions are scoped to this organization. Your role is ${membership?.role ?? "unknown"}.`}
-              title={membership?.displayName ?? "Organization"}
-            >
-              <div className="space-y-6">
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <label className="text-xs text-[var(--muted-foreground)]">
-                    Organization name
-                    <input
-                      className={`${fieldClass} mt-1.5`}
-                      disabled
-                      readOnly
-                      value={membership?.displayName ?? ""}
+                {displayPanel === "profile" ? (
+                  <>
+                    <SettingsSection title="Profile" titleHidden grouped>
+                      <SettingsRow label="Display name">
+                        <span className="settings-row-value">{account.user.displayName}</span>
+                      </SettingsRow>
+                      <SettingsRow label="Email">
+                        <span className="settings-row-value">{account.user.email}</span>
+                      </SettingsRow>
+                    </SettingsSection>
+                    <CodingAgentSettings
+                      busy={userProviderBusy}
+                      onConnect={onConnectUserAgent}
+                      onDisconnect={onDisconnectUserAgent}
+                      providers={userProviders}
+                      title="Personal coding agents"
                     />
-                  </label>
-                  <button
-                    className={`${buttonClass} self-end`}
-                    disabled
-                    title="Organization updates are not implemented"
-                    type="button"
-                  >
-                    Save
-                  </button>
-                </div>
-                <MembersSettings
-                  busy={membersBusy}
-                  members={members}
-                  onInvite={onInviteMember}
-                  onRevoke={onRevokeInvitation}
-                  viewerRole={membership?.role}
-                />
-                <UnavailableRow
-                  description="Credential inheritance is not exposed by this control plane."
-                  title="Coding agent credential source"
-                />
-              </div>
-            </SettingsSection>
-          ) : null}
+                  </>
+                ) : null}
 
-          {panel === "providers" ? (
-            <div className="space-y-8">
-              <GitHubSettings
-                busy={busy}
-                github={github}
-                githubUser={githubUser}
-                onConnect={onConnectGitHub}
-                onDisconnect={onDisconnectGitHub}
-                onDisconnectUser={onDisconnectGitHubUser}
-                onSync={onSyncGitHub}
-              />
-              <CodingAgentSettings
-                busy={providerBusy}
-                onConnect={onConnectAgent}
-                onDisconnect={onDisconnectAgent}
-                providers={providers}
-              />
+                {displayPanel === "notifications" ? (
+                  <SettingsSection title="Invitations for you" titleHidden grouped>
+                    <SettingsRow label="Activity">
+                      <span className="settings-row-value">Not available</span>
+                    </SettingsRow>
+                  </SettingsSection>
+                ) : null}
+
+                {displayPanel === "workspaces" ? (
+                  <div className="space-y-8">
+                    <WorkspacesPanel account={account} onSelectOrganization={onSelectOrganization} />
+                    <MembersSettings
+                      busy={membersBusy}
+                      members={members}
+                      onInvite={onInviteMember}
+                      onRevoke={onRevokeInvitation}
+                    />
+                  </div>
+                ) : null}
+
+                {displayPanel === "providers" ? (
+                  <div className="space-y-8">
+                    <GitHubSettings
+                      busy={busy}
+                      github={github}
+                      githubUser={githubUser}
+                      onConnect={onConnectGitHub}
+                      onDisconnect={onDisconnectGitHub}
+                      onDisconnectUser={onDisconnectGitHubUser}
+                      onSync={onSyncGitHub}
+                    />
+                    <CodingAgentSettings
+                      busy={providerBusy}
+                      onConnect={onConnectAgent}
+                      onDisconnect={onDisconnectAgent}
+                      providers={providers}
+                    />
+                  </div>
+                ) : null}
+              </div>
             </div>
-          ) : null}
+          </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function CodingAgentSettings({
   busy,
-  description = "Credentials are validated, encrypted, and never returned by the API.",
   onConnect,
   onDisconnect,
   providers,
   title = "Coding agents",
 }: {
   busy: boolean;
-  description?: string;
   onConnect: (
     provider: AgentProvider,
     input: PutAgentProviderConnectionInput,
@@ -341,144 +295,85 @@ function CodingAgentSettings({
   ];
 
   return (
-    <SettingsSection description={description} title={title}>
+    <SettingsSection grouped title={title}>
       {providers.status === "loading" ? (
-        <p className="text-sm text-[var(--color-text-passive)]">
+        <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">
           Loading coding-agent connections…
         </p>
       ) : providers.status === "error" ? (
-        <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-sm text-[var(--color-error)]">
+        <div className="px-3 py-3 text-sm text-[var(--color-error)]">
           {providers.message ?? "Provider connections could not be loaded."}
         </div>
       ) : (
-        <div className="divide-y divide-[var(--color-border-strong)] border-y border-[var(--color-border-strong)]">
-          {agents.map((agent) => {
-            const connection = providers.connections.find(
-              ({ provider }) => provider === agent.id,
-            );
-            const isEditing = editing === agent.id;
-            return (
-              <div className="py-3" key={agent.id}>
+        agents.map((agent) => {
+          const connection = providers.connections.find(
+            ({ provider }) => provider === agent.id,
+          );
+          const isEditing = editing === agent.id;
+          return (
+            <div key={agent.id}>
+              <SettingsRow label={agent.label}>
                 <div className="flex items-center gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-[var(--foreground)]">
-                      {agent.label}
-                    </p>
-                    <p className="mt-0.5 text-xs text-[var(--color-text-passive)]">
-                      {connection
-                        ? `Connected · ${connection.validationState}`
-                        : "Not connected"}
-                    </p>
-                  </div>
-                  {connection ? (
-                    <button
-                      className={buttonClass}
-                      disabled={busy}
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `Disconnect ${agent.label} credentials from this organization?`,
-                          )
-                        ) {
+                  <span className="settings-row-value">
+                    {connection ? `Connected · ${connection.validationState}` : ""}
+                  </span>
+                  <button
+                    className={buttonClass}
+                    disabled={busy}
+                    onClick={() => {
+                      if (connection) {
+                        if (window.confirm(`Disconnect ${agent.label} credentials from this workspace?`)) {
                           void onDisconnect(connection);
                         }
-                      }}
-                      type="button"
-                    >
-                      Disconnect
-                    </button>
-                  ) : (
-                    <button
-                      className={buttonClass}
-                      disabled={busy}
-                      onClick={() => {
-                        setEditing(isEditing ? null : agent.id);
-                        setCredentialType("api_key");
-                        setSecret("");
-                        setError("");
-                      }}
-                      type="button"
-                    >
-                      Connect
-                    </button>
-                  )}
-                </div>
-                {isEditing && !connection ? (
-                  <form
-                    className="mt-3 grid gap-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-3 sm:grid-cols-[180px_minmax(0,1fr)_auto]"
-                    onSubmit={async (event) => {
-                      event.preventDefault();
-                      setError("");
-                      try {
-                        await onConnect(agent.id, {
-                          credentialType,
-                          secret,
-                        });
-                        setEditing(null);
-                        setSecret("");
-                      } catch (cause) {
-                        setError(
-                          cause instanceof Error
-                            ? cause.message
-                            : "The credential could not be connected.",
-                        );
+                        return;
                       }
+                      setEditing(isEditing ? null : agent.id);
+                      setCredentialType("api_key");
+                      setSecret("");
+                      setError("");
                     }}
+                    type="button"
                   >
-                    <label className="text-xs text-[var(--muted-foreground)]">
-                      Credential type
-                      <select
-                        className={`${fieldClass} mt-1.5`}
-                        onChange={(event) =>
-                          setCredentialType(
-                            event.target
-                              .value as PutAgentProviderConnectionInput["credentialType"],
-                          )
-                        }
-                        value={credentialType}
-                      >
-                        <option value="api_key">API key</option>
-                        {agent.id === "claude-code" ? (
-                          <option value="oauth_token">OAuth token</option>
-                        ) : null}
-                        {agent.id === "codex" ? (
-                          <option value="access_token">Access token</option>
-                        ) : null}
-                      </select>
-                    </label>
-                    <label className="text-xs text-[var(--muted-foreground)]">
-                      Secret
-                      <input
-                        autoComplete="off"
-                        className={`${fieldClass} mt-1.5 font-mono`}
-                        onChange={(event) => setSecret(event.target.value)}
-                        placeholder="Paste credential"
-                        required
-                        type="password"
-                        value={secret}
-                      />
-                    </label>
-                    <button
-                      className={`${primaryButtonClass} self-end`}
-                      disabled={busy || !secret.trim()}
-                      type="submit"
-                    >
-                      {busy ? "Validating…" : "Save"}
-                    </button>
-                    {error ? (
-                      <p
-                        className="text-xs text-[var(--color-error)] sm:col-span-3"
-                        role="alert"
-                      >
-                        {error}
-                      </p>
-                    ) : null}
-                  </form>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+                    {connection ? "Disconnect" : "Connect"}
+                  </button>
+                </div>
+              </SettingsRow>
+              {isEditing && !connection ? (
+                <form
+                  className="grid gap-3 border-t border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-3 sm:grid-cols-[180px_minmax(0,1fr)_auto]"
+                  onSubmit={async (event) => {
+                    event.preventDefault();
+                    setError("");
+                    try {
+                      await onConnect(agent.id, { credentialType, secret });
+                      setEditing(null);
+                      setSecret("");
+                    } catch (cause) {
+                      setError(cause instanceof Error ? cause.message : "The credential could not be connected.");
+                    }
+                  }}
+                >
+                  <label className="text-xs text-[var(--muted-foreground)]">
+                    Credential type
+                    <select className={`${fieldClass} mt-1.5`} onChange={(event) => setCredentialType(event.target.value as PutAgentProviderConnectionInput["credentialType"])} value={credentialType}>
+                      <option value="api_key">API key</option>
+                      {agent.id === "claude-code" ? <option value="oauth_token">OAuth token</option> : null}
+                      {agent.id === "codex" ? <option value="access_token">Access token</option> : null}
+                    </select>
+                  </label>
+                  <label className="text-xs text-[var(--muted-foreground)]">
+                    Secret
+                    <input autoComplete="off" className={`${fieldClass} mt-1.5 font-mono`} onChange={(event) => setSecret(event.target.value)} placeholder="Paste credential" required type="password" value={secret} />
+                  </label>
+                  <button className={`${primaryButtonClass} self-end`} disabled={busy || !secret.trim()} type="submit">
+                    {busy ? "Validating…" : "Save"}
+                  </button>
+                  {error ? <p className="text-xs text-[var(--color-error)] sm:col-span-3" role="alert">{error}</p> : null}
+                </form>
+              ) : null}
+            </div>
+          );
+        })
       )}
     </SettingsSection>
   );
@@ -508,354 +403,41 @@ function GitHubSettings({
     github.status === "available" &&
     github.installations.length > 0;
   return (
-    <SettingsSection
-      description="Controls which repositories this organization can use for Cloud projects."
-      title="GitHub"
-    >
-      <div className="mb-5 flex items-start gap-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3">
-        <GitFork className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-[var(--foreground)]">
-            {connected
-              ? `Connected as ${githubUser.connection.login}`
-              : "Connect GitHub"}
-          </p>
-          <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
-            {connected
-              ? `${github.installations.length} App installation${github.installations.length === 1 ? "" : "s"} available to this organization.`
-              : "One connection flow authorizes your GitHub account, then installs the AO GitHub App for repository access."}
-          </p>
-        </div>
-        {hostedAuthRequired ? (
-          <a className={primaryButtonClass} href="/github-sign-in">
-            Continue
-          </a>
-        ) : connected ? (
-          <button
-            className={buttonClass}
-            disabled={busy}
-            onClick={() => {
-              if (window.confirm("Revoke AO's GitHub user authorization?")) {
-                void onDisconnectUser();
-              }
-            }}
-            type="button"
-          >
-            Disconnect
-          </button>
-        ) : (
-          <button
-            className={primaryButtonClass}
-            disabled={
-              busy ||
-              githubUser.status === "loading" ||
-              github.status === "loading"
-            }
-            onClick={() => void onConnect()}
-            type="button"
-          >
-            Connect GitHub
-          </button>
-        )}
-      </div>
-      {github.status === "loading" ? (
-        <p className="text-sm text-[var(--color-text-passive)]">
-          Loading GitHub connection…
-        </p>
-      ) : github.status === "auth-required" ? null : github.status ===
-        "unavailable" ? (
-        <UnavailableRow
-          description={
-            github.message ??
-            "GitHub is intentionally disabled outside the production control plane."
-          }
-          title="GitHub is disabled"
-        />
-      ) : github.status === "error" ? (
-        <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-sm text-[var(--color-error)]">
-          {github.message ?? "GitHub connection could not be loaded."}
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {github.installations.length === 0 ? (
-            <div className="flex items-start gap-3">
-              <GitFork className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-[var(--foreground)]">
-                  No GitHub installation
-                </p>
-                <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
-                  Install the AO GitHub App to grant repository access.
-                </p>
-              </div>
-            </div>
-          ) : (
-            github.installations.map((installation) => (
-              <div
-                className="flex items-center gap-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3"
-                key={installation.id}
-              >
-                <GitFork className="size-4 text-[var(--muted-foreground)]" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-[var(--foreground)]">
-                    {installation.accountLogin}
-                  </p>
-                  <p className="mt-0.5 text-xs text-[var(--color-text-passive)]">
-                    {installation.status} · {installation.syncStatus} ·{" "}
-                    {installation.repositorySelection} repositories
-                  </p>
-                </div>
-                <button
-                  aria-label={`Sync ${installation.accountLogin}`}
-                  className={iconButtonClass}
-                  disabled={busy}
-                  onClick={() => void onSync(installation)}
-                  title="Sync repositories"
-                  type="button"
-                >
-                  <RefreshCw className="size-3.5" />
-                </button>
-                <button
-                  aria-label={`Disconnect ${installation.accountLogin}`}
-                  className={iconButtonClass}
-                  disabled={busy}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
-                      )
-                    ) {
-                      void onDisconnect(installation);
-                    }
-                  }}
-                  title="Disconnect GitHub"
-                  type="button"
-                >
-                  <Unplug className="size-3.5" />
-                </button>
-              </div>
-            ))
-          )}
-          {github.installations.length > 0 ? (
-            <button
-              className={buttonClass}
-              disabled={busy}
-              onClick={() => void onConnect()}
-              type="button"
-            >
-              Add GitHub installation
-            </button>
-          ) : null}
-          <p className="text-xs text-[var(--color-text-passive)]">
-            {github.repositories.filter(({ access }) => access === "active").length}{" "}
-            active repositories available for project import.
-          </p>
-        </div>
-      )}
-    </SettingsSection>
-  );
-}
-
-function MembersSettings({
-  busy,
-  members,
-  onInvite,
-  onRevoke,
-  viewerRole,
-}: {
-  busy: boolean;
-  members: MembersCapability;
-  onInvite: (input: CreateInvitationInput) => Promise<void>;
-  onRevoke: (invitation: OrganizationInvitation) => Promise<void>;
-  viewerRole: string | undefined;
-}) {
-  const canManage = viewerRole === "owner" || viewerRole === "admin";
-  const [email, setEmail] = useState("");
-  const [role, setRole] =
-    useState<CreateInvitationInput["role"]>("member");
-  const [error, setError] = useState("");
-
-  return (
-    <div className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3">
-      <div className="flex items-start gap-3">
-        <Users className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
-        <div className="min-w-0 flex-1">
-          <p className="text-sm text-[var(--foreground)]">
-            Members and invitations
-          </p>
-          <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
-            {canManage
-              ? "Invite teammates and manage who has access to this organization."
-              : "Only owners and admins can invite or remove members."}
-          </p>
-        </div>
-      </div>
-
-      {members.status === "loading" ? (
-        <p className="mt-3 text-sm text-[var(--color-text-passive)]">
-          Loading members…
-        </p>
-      ) : members.status === "error" ? (
-        <div className="mt-3 rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-error)]/10 px-3 py-2 text-sm text-[var(--color-error)]">
-          {members.message ?? "Members could not be loaded."}
-        </div>
-      ) : (
-        <div className="mt-4 space-y-5">
-          <div className="divide-y divide-[var(--color-border-strong)] rounded-md border border-[var(--color-border-strong)]">
-            {members.members.map((member) => (
-              <div
-                className="flex items-center gap-3 px-3 py-2.5"
-                key={member.userId}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-[var(--foreground)]">
-                    {member.displayName || member.email}
-                  </p>
-                  <p className="mt-0.5 truncate text-xs text-[var(--color-text-passive)]">
-                    {member.email}
-                  </p>
-                </div>
-                <span className="font-mono text-[9px] uppercase tracking-wide text-[var(--color-text-passive)]">
-                  {member.role}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          {members.invitations.filter(
-            (invitation) => invitation.status === "pending",
-          ).length > 0 ? (
-            <div>
-              <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-passive)]">
-                Pending invitations
-              </p>
-              <div className="divide-y divide-[var(--color-border-strong)] rounded-md border border-[var(--color-border-strong)]">
-                {members.invitations
-                  .filter((invitation) => invitation.status === "pending")
-                  .map((invitation) => (
-                    <div
-                      className="flex items-center gap-3 px-3 py-2.5"
-                      key={invitation.id}
-                    >
-                      <Mail className="size-3.5 shrink-0 text-[var(--color-text-passive)]" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm text-[var(--foreground)]">
-                          {invitation.email}
-                        </p>
-                        <p className="mt-0.5 text-xs text-[var(--color-text-passive)]">
-                          Invited as {invitation.role} · expires{" "}
-                          {new Date(invitation.expiresAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                      {canManage ? (
-                        <button
-                          aria-label={`Revoke invitation to ${invitation.email}`}
-                          className={iconButtonClass}
-                          disabled={busy}
-                          onClick={() => void onRevoke(invitation)}
-                          title="Revoke invitation"
-                          type="button"
-                        >
-                          <X className="size-3.5" />
-                        </button>
-                      ) : null}
-                    </div>
-                  ))}
-              </div>
-            </div>
-          ) : null}
-
-          {canManage ? (
-            <form
-              className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto]"
-              onSubmit={async (event) => {
-                event.preventDefault();
-                setError("");
-                try {
-                  await onInvite({ email: email.trim(), role });
-                  setEmail("");
-                  setRole("member");
-                } catch (cause) {
-                  setError(
-                    cause instanceof Error
-                      ? cause.message
-                      : "The invitation could not be created.",
-                  );
-                }
-              }}
-            >
-              <label className="text-xs text-[var(--muted-foreground)]">
-                Invite by email
-                <input
-                  className={`${fieldClass} mt-1.5`}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="teammate@example.com"
-                  required
-                  type="email"
-                  value={email}
-                />
-              </label>
-              <label className="text-xs text-[var(--muted-foreground)]">
-                Role
-                <select
-                  className={`${fieldClass} mt-1.5`}
-                  onChange={(event) =>
-                    setRole(
-                      event.target.value as CreateInvitationInput["role"],
-                    )
-                  }
-                  value={role}
-                >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </label>
-              <button
-                className={`${primaryButtonClass} self-end`}
-                disabled={busy || !email.trim()}
-                type="submit"
-              >
-                {busy ? "Inviting…" : "Invite"}
-              </button>
-              {error ? (
-                <p
-                  className="text-xs text-[var(--color-error)] sm:col-span-3"
-                  role="alert"
-                >
-                  {error}
-                </p>
-              ) : null}
-            </form>
-          ) : null}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SettingsGroup({
-  children,
-  count,
-  label,
-}: {
-  children: ReactNode;
-  count?: number;
-  label: string;
-}) {
-  return (
-    <div className="mb-5">
-      <div className="flex items-center px-2">
-        <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-passive)]">
-          {label}
-        </p>
-        {count !== undefined ? (
-          <span className="ml-auto font-mono text-[10px] text-[var(--color-text-passive)]">
-            {count}
+    <SettingsSection grouped title="GitHub">
+      <SettingsRow label="GitHub account">
+        <div className="flex items-center gap-3">
+          <span className="settings-row-value">
+            {connected ? githubUser.connection.login : ""}
           </span>
-        ) : null}
-      </div>
-      <div className="mt-1 space-y-0.5">{children}</div>
-    </div>
+          {hostedAuthRequired ? (
+            <a className={primaryButtonClass} href="/github-sign-in">Continue</a>
+          ) : connected ? (
+            <button className={buttonClass} disabled={busy} onClick={() => {
+              if (window.confirm("Revoke AO's GitHub user authorization?")) void onDisconnectUser();
+            }} type="button">Disconnect</button>
+          ) : (
+            <button className={primaryButtonClass} disabled={busy || githubUser.status === "loading" || github.status === "loading"} onClick={() => void onConnect()} type="button">Connect GitHub</button>
+          )}
+        </div>
+      </SettingsRow>
+      {github.status === "loading" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">Loading GitHub connection…</p> : null}
+      {github.status === "unavailable" ? <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">{github.message ?? "GitHub is disabled for this environment."}</p> : null}
+      {github.status === "error" ? <p className="px-3 py-4 text-sm text-[var(--color-error)]">{github.message ?? "GitHub connection could not be loaded."}</p> : null}
+      {github.status === "available" && github.installations.length === 0 ? (
+        <SettingsRow label="App installation"><span className="settings-row-value">No GitHub installation</span></SettingsRow>
+      ) : null}
+      {github.status === "available" ? github.installations.map((installation) => (
+        <SettingsRow key={installation.id} label={installation.accountLogin}>
+          <div className="flex items-center gap-2">
+            <span className="settings-row-value">{installation.repositorySelection} repositories</span>
+            <button aria-label={`Sync ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => void onSync(installation)} title="Sync repositories" type="button"><RefreshCw className="size-3.5" /></button>
+            <button aria-label={`Disconnect ${installation.accountLogin}`} className={iconButtonClass} disabled={busy} onClick={() => {
+              if (window.confirm(`Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`)) void onDisconnect(installation);
+            }} title="Disconnect GitHub" type="button"><Unplug className="size-3.5" /></button>
+          </div>
+        </SettingsRow>
+      )) : null}
+    </SettingsSection>
   );
 }
 
@@ -872,15 +454,17 @@ function SettingsNavItem({
 }) {
   return (
     <button
-      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm ${
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-left text-sm font-medium transition-[background-color,color,transform] duration-fast ease-out active:scale-press focus:outline-none focus-visible:outline-none focus-visible:ring-0",
         active
-          ? "bg-[var(--color-interactive-active)] text-[var(--foreground)]"
-          : "text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-      }`}
+          ? "bg-interactive-active text-foreground"
+          : "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+      )}
       onClick={onClick}
       type="button"
     >
-      <Icon className="size-3.5" aria-hidden="true" />
+      <Icon className="size-4 shrink-0" aria-hidden="true" />
       {label}
     </button>
   );
@@ -888,69 +472,73 @@ function SettingsNavItem({
 
 function SettingsSection({
   children,
-  description,
+  grouped = false,
   title,
+  titleHidden = false,
 }: {
   children: ReactNode;
-  description: string;
+  grouped?: boolean;
   title: string;
+  titleHidden?: boolean;
 }) {
   return (
-    <section>
-      <div className="border-b border-[var(--color-border-strong)] pb-3">
-        <h3 className="text-sm font-medium text-[var(--foreground)]">{title}</h3>
-        <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
-          {description}
-        </p>
+    <section className="flex w-full flex-col items-stretch gap-(--size-settings-section-inner-gap)">
+      {!titleHidden ? (
+        <h2 className="px-3 text-xs font-medium leading-4 text-settings-muted">
+          {title}
+        </h2>
+      ) : null}
+      <div
+        className={
+          grouped
+            ? "settings-grouped-rows flex w-full flex-col"
+            : "flex w-full flex-col gap-1.5"
+        }
+      >
+        {children}
       </div>
-      <div className="pt-4">{children}</div>
     </section>
   );
 }
 
-function UnavailableRow({
-  description,
-  title,
+function SettingsRow({
+  children,
+  label,
 }: {
-  description: string;
-  title: string;
+  children: ReactNode;
+  label: string;
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-3">
-      <Settings className="mt-0.5 size-4 text-[var(--color-text-passive)]" />
-      <div>
-        <p className="text-sm text-[var(--muted-foreground)]">{title}</p>
-        <p className="mt-1 text-xs leading-5 text-[var(--color-text-passive)]">
-          {description}
-        </p>
+    <div className="settings-row-bar">
+      <div className="flex shrink-0 items-center gap-(--size-settings-row-icon-gap)">
+        <span className="whitespace-nowrap text-sm leading-5 text-settings-label">
+          {label}
+        </span>
       </div>
+      <div className="flex min-w-0 flex-1 items-center justify-end">{children}</div>
     </div>
-  );
-}
-
-function EmptyCapability({ message }: { message: string }) {
-  return (
-    <p className="rounded-lg border border-dashed border-[var(--color-border-strong)] px-3 py-4 text-sm text-[var(--color-text-passive)]">
-      {message}
-    </p>
   );
 }
 
 function settingsTitle(panel: SettingsPanel) {
   switch (panel) {
+    case "general":
+      return "General";
     case "profile":
       return "Profile";
     case "notifications":
       return "Notifications";
     case "providers":
-      return "Provider connections";
+      return "Providers";
     default:
-      return "Organization";
+      return "Workspaces";
   }
 }
 
 function settingsDescription(panel: SettingsPanel) {
   switch (panel) {
+    case "general":
+      return "Appearance and display preferences.";
     case "profile":
       return "Manage how your account appears in AO Cloud.";
     case "notifications":
@@ -958,15 +546,178 @@ function settingsDescription(panel: SettingsPanel) {
     case "providers":
       return "Manage GitHub and coding-agent connections.";
     default:
-      return "Review organization membership and workspace configuration.";
+      return "Manage your workspaces.";
   }
 }
 
+const COLOR_THEMES: Array<{ value: ThemeStyle; label: string }> = [
+  { value: "orchestrate", label: "Orchestrate" },
+  { value: "github", label: "GitHub" },
+  { value: "catppuccin", label: "Catppuccin" },
+  { value: "dracula", label: "Dracula" },
+  { value: "tokyo-night", label: "Tokyo Night" },
+  { value: "rose-pine", label: "Rosé Pine" },
+  { value: "nord", label: "Nord" },
+  { value: "gruvbox", label: "Gruvbox" },
+  { value: "solarized", label: "Solarized" },
+];
+
+const APPEARANCE_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+];
+
+function GeneralSettingsPanel() {
+  const [themeStyle, setThemeStyle] = useState<ThemeStyle>(readStoredThemeStyle);
+  const [themePref, setThemePref] = useState<ThemePreference>(readStoredThemePreference);
+
+  return (
+    <SettingsSection title="Appearance" grouped>
+      <SettingsRow label="Color theme">
+        <SettingsOptionMenu
+          aria-label="Color theme"
+          value={themeStyle}
+          options={COLOR_THEMES}
+          onChange={(v) => {
+            setThemeStyle(v);
+            saveThemeStyle(v);
+          }}
+        />
+      </SettingsRow>
+      <SettingsRow label="Appearance">
+        <SettingsOptionMenu
+          aria-label="Appearance"
+          value={themePref}
+          options={APPEARANCE_OPTIONS}
+          onChange={(v) => {
+            setThemePref(v);
+            saveThemePreference(v);
+          }}
+        />
+      </SettingsRow>
+    </SettingsSection>
+  );
+}
+
+function WorkspacesPanel({
+  account,
+  onSelectOrganization,
+}: {
+  account: CurrentAccount;
+  onSelectOrganization: (id: string) => void;
+}) {
+  return (
+    <div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-[var(--border)]">
+            <th className="pb-2 text-left text-xs font-medium text-[var(--muted-foreground)]">Name</th>
+            <th className="pb-2 text-left text-xs font-medium text-[var(--muted-foreground)]">Role</th>
+            <th className="pb-2 text-right text-xs font-medium text-[var(--muted-foreground)]" />
+          </tr>
+        </thead>
+        <tbody>
+          {account.organizations.map((org) => (
+            <tr key={org.id} className="group/org border-b border-[var(--border)]/40">
+              <td className="py-3 text-[var(--foreground)]">
+                <div className="flex items-center gap-2.5">
+                  <WorkspaceAvatar name={org.displayName} id={org.id} size={20} />
+                  {org.displayName}
+                </div>
+              </td>
+              <td className="py-3 text-[var(--muted-foreground)]">{org.role}</td>
+              <td className="py-3 text-right">
+                <button
+                  type="button"
+                  className="cursor-pointer text-xs text-[var(--muted-foreground)] opacity-0 transition-opacity group-hover/org:opacity-100 hover:text-[var(--foreground)]"
+                  onClick={() => onSelectOrganization(org.id)}
+                >
+                  Switch
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MembersSettings({
+  busy,
+  members,
+  onInvite,
+  onRevoke,
+}: {
+  busy: boolean;
+  members: MembersCapability;
+  onInvite: (input: CreateInvitationInput) => Promise<void>;
+  onRevoke: (invitation: OrganizationInvitation) => Promise<void>;
+}) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<CreateInvitationInput["role"]>("member");
+  const [error, setError] = useState("");
+
+  return (
+    <SettingsSection grouped title="Members">
+      {members.status === "loading" ? (
+        <p className="px-3 py-4 text-sm text-[var(--color-text-passive)]">Loading members…</p>
+      ) : members.status === "error" ? (
+        <p className="px-3 py-4 text-sm text-[var(--color-error)]">{members.message ?? "Members could not be loaded."}</p>
+      ) : (
+        <>
+          {members.members.map((member) => (
+            <SettingsRow key={member.userId} label={member.displayName || member.email}>
+              <span className="settings-row-value">{member.role}</span>
+            </SettingsRow>
+          ))}
+          {members.invitations.map((invitation) => (
+            <SettingsRow key={invitation.id} label={invitation.email}>
+              <div className="flex items-center gap-3">
+                <span className="settings-row-value">{invitation.status === "pending" ? "Invited" : invitation.status}</span>
+                {invitation.status === "pending" ? (
+                  <button className={buttonClass} disabled={busy} onClick={() => void onRevoke(invitation)} type="button">
+                    Revoke
+                  </button>
+                ) : null}
+              </div>
+            </SettingsRow>
+          ))}
+          <form
+            className="flex flex-wrap items-center gap-2 border-t border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] p-3"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setError("");
+              try {
+                await onInvite({ email, role });
+                setEmail("");
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "The invitation could not be sent.");
+              }
+            }}
+          >
+            <input className={`${fieldClass} h-8 min-w-40 flex-1`} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" required type="email" value={email} />
+            <select className={`${fieldClass} h-8 w-28`} onChange={(event) => setRole(event.target.value as CreateInvitationInput["role"])} value={role}>
+              <option value="member">Member</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button className={`${primaryButtonClass} h-8`} disabled={busy || !email.trim()} type="submit">
+              Invite
+            </button>
+            {error ? <p className="w-full text-xs text-[var(--color-error)]" role="alert">{error}</p> : null}
+          </form>
+        </>
+      )}
+    </SettingsSection>
+  );
+}
+
 const fieldClass =
-  "h-10 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--foreground)] outline-none disabled:cursor-not-allowed disabled:opacity-55";
+  "h-10 w-full rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 text-sm text-[var(--foreground)] outline-none disabled:cursor-not-allowed disabled:opacity-55";
 const buttonClass =
-  "inline-flex h-9 items-center justify-center rounded-md border border-[var(--color-border-strong)] px-3 text-xs text-[var(--muted-foreground)] hover:bg-[var(--color-interactive-hover)] disabled:cursor-not-allowed disabled:opacity-45";
+  "inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-[var(--color-border-strong)] bg-[var(--color-bg-settings-input)] px-3 text-sm text-[var(--foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
 const primaryButtonClass =
-  "inline-flex h-9 items-center justify-center rounded-md bg-[var(--color-accent-strong)] px-3 text-xs font-semibold text-[var(--color-accent-foreground)] disabled:opacity-45";
+  "inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-2xl border border-transparent bg-[var(--color-accent-strong)] px-3 text-sm font-semibold text-[var(--color-accent-foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45";
 const iconButtonClass =
-  "grid size-8 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] disabled:opacity-45";
+  "grid size-8 cursor-pointer place-items-center rounded-2xl text-[var(--color-text-passive)] transition-opacity duration-150 hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)] disabled:opacity-45";

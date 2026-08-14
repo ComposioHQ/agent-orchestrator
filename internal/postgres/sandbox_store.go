@@ -185,23 +185,13 @@ func (s *Store) UpdateSandboxObservation(
 	})
 }
 
-// Failure backoff bounds for RecordSandboxFailure: base * 2^min(failures,
-// failureBackoffMaxShift), capped at failureBackoffCapSeconds — 15s, 30s,
-// 60s, 120s, 240s, then held at the 5-minute cap. A persistently broken
-// provider integration is retried periodically rather than essentially
-// never, while a transient blip still gets its very next retry quickly.
 const (
 	failureBackoffBaseSeconds = 15
 	failureBackoffMaxShift    = 5
 	failureBackoffCapSeconds  = 300
 )
 
-// RecordSandboxFailure marks a sandbox's most recent reconcile attempt as
-// failed and schedules the next retry with exponential backoff based on how
-// many consecutive failures it's had. The backoff is computed server-side
-// from the row's pre-update consecutive_failures value, so incrementing the
-// counter and scheduling the matching retry happen atomically. A later
-// non-failed observation (UpdateSandboxObservation) resets the counter.
+// RecordSandboxFailure records a failure and schedules an exponential-backoff retry.
 func (s *Store) RecordSandboxFailure(
 	ctx context.Context,
 	owner, orgID, sessionID string,
@@ -302,11 +292,7 @@ func (s *Store) SetSandboxDesiredState(
 	})
 }
 
-// RunningSandboxSessions lists every session whose sandbox is fully up
-// (desired and observed both `running`) across every organization, for the
-// idle-pause scanner. Only ao_sandboxes grants withService a cross-tenant
-// view, so this reads nothing else — a caller must re-enter a specific org's
-// tenant context (withOrg) before it can act on what it finds here.
+// RunningSandboxSessions lists running session sandboxes across organizations.
 func (s *Store) RunningSandboxSessions(ctx context.Context) ([]domain.SandboxRef, error) {
 	var refs []domain.SandboxRef
 	err := s.withService(ctx, func(tx pgx.Tx) error {
@@ -334,11 +320,7 @@ func (s *Store) RunningSandboxSessions(ctx context.Context) ([]domain.SandboxRef
 	return refs, nil
 }
 
-// PauseIfIdle pauses one session's sandbox when the user has been silent for
-// at least idleThreshold and the agent has no active turn. The idle check and
-// the state flip are one statement, so a user message or a turn claim that
-// lands mid-scan simply fails the WHERE clause instead of racing it — the next
-// scan tick re-evaluates from scratch. Reports whether it paused.
+// PauseIfIdle atomically pauses a session with no recent message or active turn.
 func (s *Store) PauseIfIdle(
 	ctx context.Context,
 	orgID, sessionID string,
@@ -402,16 +384,7 @@ func (s *Store) CountActiveSandboxes(
 	return count, err
 }
 
-// DisconnectSessionWorkers marks every still-connected worker connection for
-// a session as disconnected without touching the sandbox's own observed
-// state. A session's runtimeConnected flag (what the frontend uses to decide
-// whether the terminal and workspace are usable) is read straight off these
-// rows, so a worker process that exits on its own — as opposed to being
-// superseded by a fresh bootstrap ticket, which already fences the old
-// connection — leaves a stale "connected" row behind unless something calls
-// this. The reconciler uses it when it backs off a Docker worker that keeps
-// crashing before becoming ready, so the UI stops claiming a connection that
-// no longer exists for the length of the backoff.
+// DisconnectSessionWorkers marks a session's live worker connections disconnected.
 func (s *Store) DisconnectSessionWorkers(
 	ctx context.Context,
 	orgID, sessionID string,
@@ -877,15 +850,7 @@ func upsertWorkerConnection(
 	); err != nil {
 		return fmt.Errorf("retire superseded worker connections: %w", err)
 	}
-	// A request created against a prior epoch can never be claimed or
-	// completed once that worker is retired — the new worker only ever
-	// claims rows stamped with its own epoch. Left alone, an orphaned row
-	// sits "pending"/"claimed" until its TTL passes, and every request the
-	// client keeps polling with in the meantime (e.g. the diff panel's
-	// 2s refresh) piles up a fresh row on top of it, which can trip the
-	// per-session outstanding-request cap right after a restart. Failing
-	// them immediately here, in the same transaction as the epoch bump,
-	// frees that headroom right away instead of waiting out the TTL.
+	// Retired epochs cannot complete their outstanding requests.
 	if _, err := tx.Exec(
 		ctx,
 		`UPDATE ao_worker_requests

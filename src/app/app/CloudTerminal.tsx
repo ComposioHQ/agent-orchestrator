@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { browserCloudClient } from "@/lib/cloud-client";
+import { buildTerminalTheme } from "@/lib/terminal-themes";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
@@ -19,6 +20,7 @@ export function CloudTerminal({
 }) {
   const client = useMemo(browserCloudClient, []);
   const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
   const [connection, setConnection] =
     useState<ConnectionState>("connecting");
   const [notice, setNotice] = useState("");
@@ -34,30 +36,9 @@ export function CloudTerminal({
         '"JetBrainsMono Nerd Font Mono", "FiraCode Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 12,
       scrollback: 10_000,
-      theme: {
-        background: "#101317",
-        foreground: "#d7d7d2",
-        cursor: "#4d8dff",
-        cursorAccent: "#101317",
-        selectionBackground: "#4d8dff4d",
-        black: "#1f2329",
-        red: "#f05d5e",
-        green: "#44c97a",
-        yellow: "#e5c34b",
-        blue: "#5b9cff",
-        magenta: "#c678dd",
-        cyan: "#56b6c2",
-        white: "#d7dae0",
-        brightBlack: "#7f8792",
-        brightRed: "#ff7b7c",
-        brightGreen: "#62df91",
-        brightYellow: "#f2d66d",
-        brightBlue: "#79b1ff",
-        brightMagenta: "#d99aee",
-        brightCyan: "#79d4df",
-        brightWhite: "#f4f5f7",
-      },
+      theme: buildTerminalTheme(),
     });
+    termRef.current = terminal;
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
@@ -129,7 +110,9 @@ export function CloudTerminal({
           reconnectTimer = window.setTimeout(() => void connect(), 1_000);
         });
         socket.addEventListener("error", () => {
+          if (!active) return;
           setConnection("error");
+          reconnectTimer = window.setTimeout(() => void connect(), 2_000);
         });
       } catch (cause) {
         if (!active) return;
@@ -137,6 +120,7 @@ export function CloudTerminal({
         setNotice(
           cause instanceof Error ? cause.message : "Could not open terminal.",
         );
+        reconnectTimer = window.setTimeout(() => void connect(), 3_000);
       }
     };
 
@@ -154,11 +138,22 @@ export function CloudTerminal({
     });
     const observer = new ResizeObserver(() => fit.fit());
     observer.observe(host);
+
+    const themeObserver = new MutationObserver(() => {
+      terminal.options.theme = buildTerminalTheme();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "data-style-theme"],
+    });
+
     void connect();
 
     return () => {
       active = false;
+      termRef.current = null;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      themeObserver.disconnect();
       observer.disconnect();
       input.dispose();
       resize.dispose();
@@ -174,15 +169,15 @@ export function CloudTerminal({
   }, [notice]);
 
   return (
-    <div className="relative min-h-0 flex-1 bg-[#101317]">
+    <div className="relative min-h-0 flex-1 bg-[var(--color-bg-terminal-opaque)]">
       {connection !== "connected" ? (
-        <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-[#101317]/92">
+        <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-[var(--color-bg-terminal-opaque)]/92">
           <div className="text-center">
             <div className="relative mx-auto mb-3 size-8">
-              <span className="absolute inset-0 rounded-full border border-[#4d8dff]/20" />
-              <span className="absolute inset-1 animate-spin rounded-full border border-transparent border-t-[#6f9eff] motion-reduce:animate-none" />
+              <span className="absolute inset-0 rounded-full border border-[var(--color-status-working)]/20" />
+              <span className="absolute inset-1 animate-spin rounded-full border border-transparent border-t-[var(--color-status-working)] motion-reduce:animate-none" />
             </div>
-            <p className="text-xs text-[#c4c8cf]">
+            <p className="text-xs text-[var(--muted-foreground)]">
               {connection === "connecting"
                 ? "Connecting terminal…"
                 : connection === "disconnected"
@@ -190,7 +185,7 @@ export function CloudTerminal({
                   : "Terminal unavailable"}
             </p>
             {notice ? (
-              <p className="mt-2 max-w-72 text-[10px] leading-4 text-[#ef9b9b]">
+              <p className="mt-2 max-w-72 text-[10px] leading-4 text-[var(--error)]">
                 {notice}
               </p>
             ) : null}

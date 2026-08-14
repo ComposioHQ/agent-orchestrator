@@ -44,13 +44,7 @@ const (
 	maxResponseBody      = 1 << 20
 )
 
-// checkoutGrant is fetched exactly once, at bootstrap, and PrepareCheckout
-// never touches it again on its own — a session running longer than the
-// grant's GitHub-issued lifetime (~1h) would otherwise have no path back to
-// working git credentials. This interval re-fetches a fresh grant and
-// re-runs the checkout's fetch step comfortably inside that lifetime. It's a
-// var, not a const, so a test can shrink it and exercise the loop without
-// actually waiting through it.
+// Kept mutable so tests can exercise renewal without waiting 45 minutes.
 var checkoutRenewalInterval = 45 * time.Minute
 
 var workerCapabilities = []string{
@@ -185,20 +179,12 @@ func run(logger *slog.Logger) error {
 	agentCommand.Env["AO_SESSION_ID"] = bootstrap.SessionID
 	agentCommand.Env["AO_PROJECT_ID"] = bootstrap.Launch.ProjectID
 	agentCommand.Env["AO_SESSION_KIND"] = bootstrap.Launch.Kind
-	// The agent never receives a GitHub credential directly (see
-	// PushBranch/checkout.go) — to push a branch and open a pull request it
-	// posts to this local Unix socket instead, and the worker process does
-	// the actual push+API-call using a token it fetches and discards itself.
 	pullRequestSocketPath := filepath.Join(dataDir, "ao-pull-request.sock")
 	agentCommand.Env["AO_PULL_REQUEST_SOCKET"] = pullRequestSocketPath
 	agentCommand.Env["AO_PULL_REQUEST_HELP"] = "curl --unix-socket $AO_PULL_REQUEST_SOCKET " +
 		`-X POST http://localhost/pull-request -H 'Content-Type: application/json' ` +
 		`-d '{"branch":"<pushed branch name>","title":"<PR title>","body":"<PR body>"}' ` +
 		"to push the current branch and open a pull request against the repository's default branch."
-	// Set unconditionally, like the pull-request socket above: a review is
-	// only ever requested after this session raises a pull request, but the
-	// agent doesn't know that in advance, so the socket must already be live
-	// for the whole session's lifetime.
 	reviewSocketPath := filepath.Join(dataDir, "ao-review.sock")
 	agentCommand.Env["AO_REVIEW_SOCKET"] = reviewSocketPath
 	agentCommand.Env["AO_REVIEW_HELP"] = "curl --unix-socket $AO_REVIEW_SOCKET " +
@@ -331,11 +317,6 @@ func (c *client) heartbeatLoop(ctx context.Context, logger *slog.Logger) error {
 	}
 }
 
-// checkoutRenewalLoop keeps the workspace's git credentials from silently
-// going stale in a long-running session. Scratch workspaces have no real git
-// remote to refresh, so they idle for the session's lifetime instead of
-// ticking — this keeps the goroutine/results bookkeeping in run() uniform
-// regardless of session kind.
 func (c *client) checkoutRenewalLoop(
 	ctx context.Context, logger *slog.Logger, workspace, repositoryURL string,
 ) error {
@@ -355,10 +336,6 @@ func (c *client) checkoutRenewalLoop(
 	}
 }
 
-// renewCheckout fetches a fresh checkout grant and re-runs the checkout's
-// fetch step. A failure here is not fatal to the worker — losing a moment of
-// git freshness is far less severe than losing worker liveness, which is what
-// the heartbeat loop guards — so it logs and lets the next tick retry.
 func (c *client) renewCheckout(ctx context.Context, logger *slog.Logger, workspace string) {
 	grant, err := c.checkoutGrant(ctx)
 	if err != nil {

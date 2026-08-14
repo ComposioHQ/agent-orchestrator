@@ -2,10 +2,9 @@ import type {
   GitHubInstallation,
   GitHubRepository,
   GitHubUserConnection,
-  OrganizationInvitation,
-  OrganizationMember,
   RedactedProviderConnection,
 } from "@aoagents/cloud-client";
+import type { OrganizationInvitation, OrganizationMember } from "./share-types";
 
 export type GitHubCapabilityStatus =
   | "loading"

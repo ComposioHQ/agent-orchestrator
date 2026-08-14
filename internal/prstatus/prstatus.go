@@ -1,6 +1,4 @@
-// Package prstatus periodically refreshes the CI, review, and mergeability
-// state of every pull request AO Cloud is tracking, so a session's PR list
-// stays current without a worker or user having to ask GitHub directly.
+// Package prstatus refreshes tracked pull request status.
 package prstatus
 
 import (
@@ -32,9 +30,6 @@ type Options struct {
 	Logger *slog.Logger
 }
 
-// DefaultInterval matches the local desktop app's fast metadata/CI poll tick
-// (backend/internal/observe/scm.DefaultTickInterval), so cloud sessions get
-// the same status freshness the local app already gives users.
 const DefaultInterval = 30 * time.Second
 
 // Scanner periodically refreshes every open pull request's status.
@@ -75,9 +70,7 @@ func (s *Scanner) Run(ctx context.Context) error {
 	}
 }
 
-// ScanOnce refreshes every currently open pull request once. Each pull
-// request is refreshed independently, so one failure does not stop the rest
-// of the scan; the next tick retries what a transient error skipped.
+// ScanOnce refreshes every currently open pull request once.
 func (s *Scanner) ScanOnce(ctx context.Context) error {
 	refs, err := s.store.OpenPullRequestRefs(ctx)
 	if err != nil {

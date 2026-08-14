@@ -19,9 +19,14 @@ import {
   Files,
   GitCompareArrows,
   GitPullRequest,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   RefreshCw,
+  Share2,
   Terminal,
-  X,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -54,15 +59,26 @@ const reviewLabels = {
 
 export function CloudSessionWorkspace({
   onClose,
+  onDelete = () => {},
+  onNewTask = () => {},
+  onShare = () => {},
+  onToggleSidebar,
+  sidebarOpen = true,
   organizationId,
   session,
 }: {
   onClose: () => void;
+  onDelete?: () => void;
+  onNewTask?: () => void;
+  onShare?: () => void;
+  onToggleSidebar?: () => void;
+  sidebarOpen?: boolean;
   organizationId: string;
   session: Session;
 }) {
   const client = useMemo(browserCloudClient, []);
-  const [tab, setTab] = useState<InspectorTab>("changes");
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [tab, setTab] = useState<InspectorTab>("terminal");
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
   const [directory, setDirectory] = useState("");
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
@@ -165,8 +181,12 @@ export function CloudSessionWorkspace({
   }, [organizationId, session.id, session.runtimeConnected]);
 
   useEffect(() => {
-    if (tab === "files" && entries.length === 0) void loadDirectory("");
-  }, [tab]);
+    if (tab === "files") {
+      if (entries.length === 0) void loadDirectory("");
+      const timer = window.setInterval(() => void loadDirectory(directory), 5_000);
+      return () => window.clearInterval(timer);
+    }
+  }, [tab, directory]);
 
   useEffect(() => {
     void loadReviews();
@@ -175,39 +195,65 @@ export function CloudSessionWorkspace({
   }, [organizationId, session.id]);
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(320px,38%)]">
-      <section className="flex min-h-0 min-w-0 flex-col bg-[#101317]">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] px-4">
-          {session.kind === "orchestrator" ? (
-            <OrchestratorIcon
-              className="size-4 shrink-0 text-[var(--color-text-passive)]"
-              aria-hidden="true"
-            />
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--color-bg-terminal-opaque)]">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] pl-1.5 pr-2.5">
+          {onToggleSidebar ? (
+            <button
+              type="button"
+              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+              className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={onToggleSidebar}
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="size-4" aria-hidden="true" />
+              ) : (
+                <PanelLeftOpen className="size-4" aria-hidden="true" />
+              )}
+            </button>
           ) : null}
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold tracking-[-0.02em]">
+            <h1 className="truncate text-sm font-semibold leading-none tracking-[-0.02em]">
               {session.kind === "orchestrator" ? "Orchestrator" : session.displayName}
             </h1>
-            <p className="mt-0.5 truncate font-mono text-[9px] text-[var(--color-text-passive)]">
-              {session.branch} · {session.harness} · {session.mode}
-            </p>
           </div>
           <span
             className={`size-1.5 rounded-full ${
-              session.runtimeConnected ? "bg-[#60a5fa]" : "bg-[#646a73]"
+              session.runtimeConnected ? "bg-[var(--color-status-working)]" : "bg-[var(--color-status-idle)]"
             }`}
           />
-          <span className="text-[10px] text-[var(--color-text-passive)]">
-            {session.runtimeConnected ? "Connected" : "Connecting"}
-          </span>
-          <button
-            aria-label="Close session"
-            className="grid size-7 place-items-center rounded-md text-[var(--color-text-passive)] hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
-            onClick={onClose}
-            type="button"
-          >
-            <X className="size-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              aria-label="Share"
+              className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={onShare}
+            >
+              <Share2 className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="Kill session"
+              className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--error)]/70 transition-colors hover:bg-[var(--error)]/10 hover:text-[var(--error)]"
+              onClick={() => {
+                if (window.confirm(`Terminate ${session.displayName}?`)) onDelete();
+              }}
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label={inspectorOpen ? "Close inspector" : "Open inspector"}
+              className="grid size-7 cursor-pointer place-items-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--color-interactive-hover)] hover:text-[var(--foreground)]"
+              onClick={() => setInspectorOpen((c) => !c)}
+            >
+              {inspectorOpen ? (
+                <PanelRightClose className="size-4" aria-hidden="true" />
+              ) : (
+                <PanelRightOpen className="size-4" aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </header>
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3">
           <Terminal className="size-3.5 text-[var(--color-accent)]" />
@@ -231,11 +277,14 @@ export function CloudSessionWorkspace({
         )}
       </section>
 
-      <aside className="flex min-h-0 min-w-0 flex-col border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)]">
-        <div className="flex h-12 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
+      <aside
+        className="flex min-h-0 flex-col overflow-hidden border-l border-[var(--color-border-strong)] bg-[var(--color-bg-primary)] transition-[width] duration-200 ease-out"
+        style={{ width: inspectorOpen ? "38%" : 0, minWidth: inspectorOpen ? 320 : 0 }}
+      >
+        <div className="flex h-10 shrink-0 items-center gap-1 border-b border-[var(--color-border-strong)] px-3">
           <InspectorButton
             active={tab === "changes"}
-            label={`Changes ${diff?.files.length ?? 0}`}
+            label={`Changes ${diff?.files.filter((f) => !f.path.split("/").some((s) => s.startsWith("."))).length ?? 0}`}
             onClick={() => setTab("changes")}
           >
             <GitCompareArrows className="size-3.5" />
@@ -431,7 +480,10 @@ function ChangesView({
       </div>
     );
   }
-  if (diff.files.length === 0 && diff.untrackedFiles.length === 0) {
+  const visibleFiles = diff.files.filter((f) => !f.path.split("/").some((seg) => seg.startsWith(".")));
+  const visibleUntracked = diff.untrackedFiles.filter((p) => !p.split("/").some((seg) => seg.startsWith(".")));
+
+  if (visibleFiles.length === 0 && visibleUntracked.length === 0) {
     return (
       <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
         No workspace changes yet.
@@ -441,7 +493,7 @@ function ChangesView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="max-h-44 shrink-0 overflow-y-auto border-b border-[var(--color-border-strong)] p-2">
-        {diff.files.map((file) => (
+        {visibleFiles.map((file) => (
           <button
             className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
             key={file.path}
@@ -458,7 +510,7 @@ function ChangesView({
             </span>
           </button>
         ))}
-        {diff.untrackedFiles.map((path) => (
+        {visibleUntracked.map((path) => (
           <button
             className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
             key={path}
@@ -547,7 +599,7 @@ function FileBrowser({
       {!busy && entries.length === 0 ? (
         <p className="p-3 text-xs text-[var(--color-text-passive)]">No files found.</p>
       ) : null}
-      {entries.map((entry) => (
+      {entries.filter((entry) => !entry.name.startsWith(".")).map((entry) => (
         <button
           className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
           key={entry.path}

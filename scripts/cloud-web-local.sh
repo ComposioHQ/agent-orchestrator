@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly root
-public_root="$(cd "$root/../.." && pwd)"
+public_root="${AO_CLOUD_PUBLIC_ROOT:-$(cd "$root/../.." && pwd)}"
 readonly public_root
 readonly api_url="http://127.0.0.1:${AO_CLOUD_PORT:-8081}"
 readonly web_port="${AO_CLOUD_WEB_PORT:-3000}"
@@ -13,8 +13,9 @@ readonly worker_key_file="${AO_DATA_DIR:-$HOME/.ao}/cloud/worker-signing-key"
 readonly control_key_file="${AO_DATA_DIR:-$HOME/.ao}/cloud/environment-control-token"
 source "$root/scripts/lib/docker-local.sh"
 
-if [[ ! -f "$public_root/packages/product-ui/src/index.ts" || ! -f "$public_root/packages/cloud-client/src/index.ts" ]]; then
-	echo "The Cloud web UI must run from private/ao-cloud inside an Agent Orchestrator checkout." >&2
+if [[ ! -f "$public_root/packages/product-ui/src/index.ts" && ! -f "$public_root/packages/product-ui/dist/index.js" ]] ||
+	[[ ! -f "$public_root/packages/cloud-client/src/index.ts" && ! -f "$public_root/packages/cloud-client/dist/index.js" ]]; then
+	echo "The Cloud web UI must run with the shared product-ui and cloud-client packages available." >&2
 	exit 1
 fi
 if ! ao_docker_available; then

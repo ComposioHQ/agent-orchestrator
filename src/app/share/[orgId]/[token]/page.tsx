@@ -4,10 +4,7 @@ import { CloudApiError } from "@aoagents/cloud-client";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import {
-  browserCloudClient,
-  savePendingShareRedemption,
-} from "@/lib/cloud-client";
+import { savePendingShareRedemption } from "@/lib/cloud-client";
 
 type RedeemState = "redeeming" | "error";
 
@@ -19,9 +16,24 @@ export default function ShareRedemptionPage() {
 
   useEffect(() => {
     let active = true;
-    const client = browserCloudClient();
-    void client
-      .redeemProjectShareLink({ orgId: params.orgId, token: params.token })
+    void fetch("/api/cloud/v1/share-links/redeem", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer same-origin-session",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ orgId: params.orgId, token: params.token }),
+    })
+      .then(async (response) => {
+        if (response.ok) return;
+        const body = await response.json().catch(() => null) as { message?: string } | null;
+        throw new CloudApiError(response.status, {
+          error: response.statusText,
+          code: "SHARE_REDEMPTION_FAILED",
+          message: body?.message ?? "This share link could not be opened.",
+          requestId: "",
+        });
+      })
       .then(() => {
         if (active) router.replace("/app");
       })
