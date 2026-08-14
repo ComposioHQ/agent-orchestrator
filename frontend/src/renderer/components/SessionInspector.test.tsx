@@ -399,7 +399,7 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 
-	it("renders PRs and reviews before the stacked compact policy rows", async () => {
+	it("keeps PR and session policies in Summary while review policies live in Reviews", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		expect(screen.getByText("Session controls")).toBeInTheDocument();
@@ -407,24 +407,16 @@ describe("SessionInspector PR section", () => {
 		const policyRow = (name: string) =>
 			screen.getByRole("switch", { name }).closest("[data-slot='inspector-policy-row']") as HTMLElement;
 		const ciRow = policyRow("Automatically send CI failures");
-		const reviewRow = policyRow("Automatically send reviews");
 		const terminateRow = policyRow("Terminate session when pull requests merge");
 		const prCard = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
-		const runReview = await screen.findByRole("button", { name: "Run review" });
 		const appearsBefore = (first: HTMLElement, second: HTMLElement) =>
 			Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-		expect(ciRow.nextElementSibling).toBe(reviewRow);
 		expect(appearsBefore(prCard, ciRow)).toBe(true);
-		expect(appearsBefore(runReview, ciRow)).toBe(true);
 		expect(ciRow.className).toBe(terminateRow.className);
-		expect(reviewRow.className).toBe(terminateRow.className);
 		expect(ciRow.parentElement).not.toHaveClass("rounded-lg", "border", "bg-surface");
-		for (const name of [
-			"Automatically send CI failures",
-			"Automatically send reviews",
-			"Terminate session when pull requests merge",
-		]) {
+		expect(screen.queryByRole("switch", { name: "Automatically send reviews" })).not.toBeInTheDocument();
+		for (const name of ["Automatically send CI failures", "Terminate session when pull requests merge"]) {
 			const toggle = screen.getByRole("switch", { name });
 			expect(toggle).toHaveClass("h-4", "w-8", "rounded-full");
 			expect(toggle.querySelector("[data-slot='switch-thumb']")).toHaveClass("size-3", "rounded-full");
@@ -439,6 +431,10 @@ describe("SessionInspector PR section", () => {
 				name: "When disabled, AO keeps this session open after all pull requests merge.",
 			}),
 		).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(screen.getByRole("switch", { name: "Automatically send reviews" })).toBeInTheDocument();
 	});
 
 	it("persists the CI injection default before a PR exists", async () => {
@@ -956,11 +952,17 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector tabs", () => {
-	it("exposes Summary, Browser, and Files as inspector tabs", () => {
+	it("exposes Reviews after Summary and keeps review content out of Summary", async () => {
+		mockCommonGets([], "", [reviewState(1, "needs_review")]);
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
-		expect(tabs).toEqual(["Summary", "Browser", "Files"]);
-		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
+		expect(screen.queryByText("Review controls")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+
+		expect(await screen.findByText("Review controls")).toBeInTheDocument();
+		expect(screen.queryByText("Pull request")).not.toBeInTheDocument();
 	});
 
 	it("does not render the overview card in the summary", () => {
@@ -974,9 +976,10 @@ describe("SessionInspector tabs", () => {
 });
 
 describe("SessionInspector summary reviews", () => {
-	// PR rows start collapsed, so opening the Summary tab alone shows only their titles.
-	// Reveal every row, since these tests are about what a review says.
+	// Review rows start collapsed. Open the Reviews tab and reveal every row,
+	// since these tests are about what a review says.
 	const openReviewsSection = async () => {
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
 		// Rows arrive with the reviews query, so wait for them before expanding.
 		const rows = await screen.findAllByTestId("review-pr-row").catch(() => []);
 		for (const row of rows) {
@@ -1181,10 +1184,11 @@ describe("SessionInspector summary reviews", () => {
 		mockCommonGets([], "reviewer-pane", [running]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
 		await screen.findByText("Review in progress · codex");
 
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
-		expect(screen.queryByText("Reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("Review summary")).not.toBeInTheDocument();
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -1799,11 +1803,13 @@ describe("SessionInspector summary reviews", () => {
 		);
 	});
 
-	it("does not expose the Reviews tab when the session has no PRs", async () => {
+	it("keeps the Reviews tab available when the session has no PRs", async () => {
 		mockCommonGets();
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		await screen.findByRole("tab", { name: /Summary/ });
-		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+		expect(screen.getByRole("switch", { name: "Automatically send reviews" })).toBeInTheDocument();
+		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 });

@@ -13,6 +13,7 @@ import {
 } from "../../lib/chat-fixture";
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
 import { setApiBaseUrl } from "../../lib/api-client";
+import { useUiStore } from "../../stores/ui-store";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
@@ -22,6 +23,11 @@ vi.mock("../../lib/bridge", () => ({
 		clipboard: { writeText: (text: string) => writeText(text) },
 		menu: { action: (action: string) => menuAction(action) },
 	},
+}));
+
+vi.mock("../../lib/platform", () => ({
+	isMacPlatform: () => true,
+	isLinuxPlatform: () => false,
 }));
 
 /** A refetch: identical content, all-new objects, which is what JSON parsing gives. */
@@ -56,6 +62,7 @@ beforeEach(() => {
 	writeText.mockClear();
 	menuAction.mockClear();
 	setApiBaseUrl("http://127.0.0.1:3001");
+	useUiStore.setState({ isSidebarOpen: true });
 });
 
 afterEach(() => setApiBaseUrl(null));
@@ -170,28 +177,37 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
 	});
 
-	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
+	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const { rerender } = render(<ChatWorkspace snapshot={chatFixture} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+		expect(screen.getByTestId("session-terminal-region")).toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
 
-		expect(menuAction).not.toHaveBeenCalled();
+		useUiStore.setState({ isSidebarOpen: true });
+		rerender(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
 	});
 
-	it("starts chat text at 12px and updates its scoped font size with the controls", () => {
+	it("leaves new-terminal and display controls out of the chat strip, like the terminal session", () => {
+		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
+
+		const terminalRegion = screen.getByTestId("session-terminal-region");
+		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Chat tabs" }));
+		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
+		expect(screen.queryByRole("toolbar", { name: "Chat display controls" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Decrease font size" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Fullscreen" })).not.toBeInTheDocument();
+	});
+
+	it("starts chat text at 12px without a topbar font control", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const chat = screen.getByLabelText("Chat");
 
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-		expect(screen.getByLabelText("Chat font size: 13 pixels")).toHaveTextContent("13px");
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("13px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
 		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
 	});
 

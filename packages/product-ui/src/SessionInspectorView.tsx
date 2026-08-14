@@ -19,7 +19,7 @@ import type {
 } from "./pull-request-models";
 import { cn } from "./utils";
 
-export type InspectorView = "summary" | "browser" | "files";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
 export type InspectorTab = {
 	badge?: boolean;
@@ -44,6 +44,7 @@ export function SessionInspectorShellView({
 	isVisible = true,
 	loadingText,
 	onViewChange,
+	reviewsView,
 	summaryView,
 	tabs,
 }: {
@@ -56,6 +57,7 @@ export function SessionInspectorShellView({
 	isVisible?: boolean;
 	loadingText?: string;
 	onViewChange: (view: InspectorView) => void;
+	reviewsView?: ReactNode;
 	summaryView?: ReactNode;
 	tabs: InspectorTab[];
 }) {
@@ -153,6 +155,7 @@ export function SessionInspectorShellView({
 				inert={!isVisible}
 			>
 				{activeView === "summary" ? summaryView : null}
+				{activeView === "reviews" ? reviewsView : null}
 				{activeView === "browser" ? browserView : null}
 				{activeView === "files" ? filesView : null}
 			</div>

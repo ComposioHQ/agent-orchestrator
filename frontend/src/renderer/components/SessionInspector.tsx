@@ -28,6 +28,7 @@ import {
 	Play,
 	Trash2,
 	Loader2,
+	MessageSquare,
 	X,
 } from "lucide-react";
 import type { components } from "../../api/schema";
@@ -72,7 +73,7 @@ export type { InspectorView } from "@aoagents/product-ui";
 
 const VIEW_DEFS: {
 	id: InspectorView;
-	labelKey: "inspector.summary" | "inspector.browser" | "inspector.files";
+	labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files";
 	icon: ReactNode;
 }[] = [
 	{
@@ -88,6 +89,11 @@ const VIEW_DEFS: {
 				<circle cx="4" cy="17" r="1" />
 			</svg>
 		),
+	},
+	{
+		id: "reviews",
+		labelKey: "inspector.reviewTab",
+		icon: <MessageSquare aria-hidden="true" />,
 	},
 	{
 		id: "browser",
@@ -115,7 +121,7 @@ const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
 };
 
 /**
- * Tabbed inspector rail beside the terminal (Summary · Browser · Files).
+ * Tabbed inspector rail beside the terminal (Summary · Reviews · Browser · Files).
  */
 export function SessionInspector({
 	session,
@@ -191,21 +197,18 @@ export function SessionInspector({
 			isVisible={isInspectorVisible}
 			loadingText={session ? undefined : t("inspector.loadingSession")}
 			onViewChange={setView}
+			reviewsView={
+				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+			}
 			summaryView={
-				session ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+				session ? <SummaryView session={session} /> : undefined
 			}
 			tabs={tabs}
 		/>
 	);
 }
 
-function SummaryView({
-	session,
-	onOpenReviewerTerminal,
-}: {
-	session: WorkspaceSession;
-	onOpenReviewerTerminal?: OpenReviewerTerminal;
-}) {
+function SummaryView({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
@@ -233,8 +236,21 @@ function SummaryView({
 				</div>
 			}
 			pullRequestTitle={prSectionTitle}
-			reviews={hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 		/>
+	);
+}
+
+function ReviewsView({
+	session,
+	onOpenReviewerTerminal,
+}: {
+	session: WorkspaceSession;
+	onOpenReviewerTerminal?: OpenReviewerTerminal;
+}) {
+	return (
+		<div role="tabpanel">
+			<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+		</div>
 	);
 }
 
@@ -513,7 +529,6 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 	return (
 		<Section title={t("inspector.sessionControls")}>
 			<AutoInjectCIPolicyControl session={session} />
-			<AutoInjectReviewPolicyControl session={session} />
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
@@ -946,9 +961,15 @@ function ReviewsSection({
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
+	const hasPRs = sortedPRs(session).length > 0;
 
 	return (
 		<div className="p-2">
+			{hasPRs ? null : (
+				<Section surface title={t("inspector.review.controls")}>
+					<AutoInjectReviewPolicyControl session={session} />
+				</Section>
+			)}
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 			<ReviewPanel
@@ -1453,6 +1474,7 @@ function ReviewPanel({
 					</TooltipProvider>
 				) : null}
 				<div className="review-run-controls-container min-w-0 divide-y divide-border/70">
+					<AutoInjectReviewPolicyControl session={session} />
 					<div className="flex min-h-10 min-w-0 items-center justify-between gap-3 py-2">
 						<span className="min-w-0 text-xs font-medium text-foreground">
 							{t("inspector.selectReviewerAgent")}

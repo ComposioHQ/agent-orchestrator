@@ -266,6 +266,7 @@
 	"inspector.earlierPass": "较早的评审",
 	"inspector.previousLabel": "上一次：",
 	"inspector.reviews": "评审摘要",
+	"inspector.reviewTab": "评审",
 	"inspector.session": "会话",
 	"inspector.started": "开始时间",
 	"inspector.startedFromPrompt": "从已保存的提示启动",

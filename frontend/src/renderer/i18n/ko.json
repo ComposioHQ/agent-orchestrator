@@ -266,6 +266,7 @@
 	"inspector.earlierPass": "이전 실행",
 	"inspector.previousLabel": "이전:",
 	"inspector.reviews": "리뷰 요약",
+	"inspector.reviewTab": "리뷰",
 	"inspector.session": "세션",
 	"inspector.started": "시작됨",
 	"inspector.startedFromPrompt": "저장된 프롬프트에서 시작됨",
