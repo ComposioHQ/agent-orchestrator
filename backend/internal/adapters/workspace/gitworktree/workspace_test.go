@@ -51,15 +51,15 @@ func TestCommandArgs(t *testing.T) {
 	}
 }
 
-func TestBaseRefCandidates(t *testing.T) {
-	got := baseRefCandidates("feature/test", "main")
-	want := []string{"origin/feature/test", "origin/main", "refs/heads/main", "feature/test"}
+func TestConfiguredBaseRefCandidates(t *testing.T) {
+	got := configuredBaseRefCandidates("main")
+	want := []string{"origin/main", "refs/heads/main"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("candidates = %#v, want %#v", got, want)
 	}
 
-	got = baseRefCandidates("feature/test", "upstream/main")
-	want = []string{"origin/feature/test", "upstream/main", "feature/test"}
+	got = configuredBaseRefCandidates("upstream/main")
+	want = []string{"upstream/main"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
 	}
@@ -1058,7 +1058,7 @@ func TestAddWorktreeReportsBranchNotFetched(t *testing.T) {
 	}
 }
 
-func TestResolveBaseRefInfersRepoDefaultBranchWhenUnset(t *testing.T) {
+func TestResolveWorktreeRefsInfersRepoDefaultBranchWhenUnset(t *testing.T) {
 	ws, err := New(Options{ManagedRoot: t.TempDir(), RepoResolver: StaticRepoResolver{"proj": t.TempDir()}})
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -1087,12 +1087,12 @@ func TestResolveBaseRefInfersRepoDefaultBranchWhenUnset(t *testing.T) {
 			return nil, nil
 		}
 	}
-	ref, err := ws.resolveBaseRef(context.Background(), context.Background(), "/repo/child", "ao/work", "")
+	refs, err := ws.resolveWorktreeRefs(context.Background(), context.Background(), "/repo/child", "ao/work", "")
 	if err != nil {
-		t.Fatalf("resolveBaseRef err = %v", err)
+		t.Fatalf("resolveWorktreeRefs err = %v", err)
 	}
-	if ref != "refs/remotes/origin/master" {
-		t.Fatalf("base ref = %q, want child refs/remotes/origin/master", ref)
+	if refs.seedRef != "refs/remotes/origin/master" || refs.baseRef != "refs/remotes/origin/master" {
+		t.Fatalf("refs = %#v, want child default for both seed and base", refs)
 	}
 }
 

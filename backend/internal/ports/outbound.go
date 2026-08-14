@@ -326,9 +326,10 @@ type WorkspaceConfig struct {
 	// created from. Empty asks the workspace adapter to resolve an authoritative
 	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
-	// BaseRef is the authoritative ref recorded when this workspace was first
-	// created. Restore carries it forward without re-resolving repository
-	// defaults; Create ignores it and resolves the current base itself.
+	// BaseRef is the repository-default comparison ref recorded when this
+	// workspace was first created. Restore carries it forward without
+	// re-resolving repository defaults; Create ignores it and resolves the
+	// current base itself.
 	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
@@ -340,8 +341,8 @@ type WorkspaceConfig struct {
 type WorkspaceInfo struct {
 	Path   string
 	Branch string
-	// BaseRef is the authoritative ref selected when the worktree was created.
-	// Session diff metadata uses it instead of reinterpreting an auto sentinel.
+	// BaseRef is the repository-default ref selected for session comparisons.
+	// It can differ from the remote session ref used to seed the worktree.
 	BaseRef   string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
@@ -392,8 +393,9 @@ type WorkspaceRepoInfo struct {
 	Path     string
 	Branch   string
 	BaseSHA  string
-	// BaseRef is persisted with BaseSHA so comparisons can recompute a merge
-	// base after the repository default advances or the session is rebased.
+	// BaseRef is the repository-default ref persisted with BaseSHA so comparisons
+	// can recompute a merge base after that default advances or the session is
+	// rebased. It can differ from the remote session ref used to seed the worktree.
 	BaseRef      string
 	SessionID    domain.SessionID
 	ProjectID    domain.ProjectID

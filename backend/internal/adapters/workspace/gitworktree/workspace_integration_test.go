@@ -568,12 +568,54 @@ func TestWorkspaceIntegrationAutoUsesRequestedRemoteBranchWithoutRemoteHead(t *t
 	}
 }
 
+func TestWorkspaceIntegrationRequestedRemoteBranchKeepsDefaultComparisonBase(t *testing.T) {
+	git := requireGit(t)
+	for _, tc := range []struct {
+		name        string
+		baseBranch  string
+		wantBaseRef string
+	}{
+		{name: "automatic default", wantBaseRef: "refs/remotes/origin/main"},
+		{name: "explicit default", baseBranch: "main", wantBaseRef: "origin/main"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			repo := setupOriginClone(t, git, tmp)
+			branch := "feature/resume"
+			defaultSHA, featureSHA := pushRemoteBranchCommit(t, git, repo, "main", branch)
+
+			ws, err := New(Options{
+				Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo},
+			})
+			if err != nil {
+				t.Fatalf("new: %v", err)
+			}
+			info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+				ProjectID: "proj", SessionID: "sess", Branch: branch, BaseBranch: tc.baseBranch,
+			})
+			if err != nil {
+				t.Fatalf("create from requested remote branch: %v", err)
+			}
+			if info.BaseRef != tc.wantBaseRef {
+				t.Fatalf("base ref = %q, want repository default %q", info.BaseRef, tc.wantBaseRef)
+			}
+			if got := gitOutput(t, git, info.Path, "rev-parse", "HEAD"); got != featureSHA {
+				t.Fatalf("worktree HEAD = %s, want requested remote branch %s", got, featureSHA)
+			}
+			if got := gitOutput(t, git, info.Path, "merge-base", "HEAD", info.BaseRef); got != defaultSHA {
+				t.Fatalf("comparison merge-base = %s, want repository default %s", got, defaultSHA)
+			}
+		})
+	}
+}
+
 func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()
 	rootRepo := setupOriginCloneOnBranch(t, git, filepath.Join(tmp, "root"), "trunk")
 	devChildRepo := setupOriginCloneOnBranch(t, git, filepath.Join(tmp, "dev-child"), "dev")
 	mainChildRepo := setupOriginClone(t, git, filepath.Join(tmp, "main-child"))
+	devDefaultSHA, devSessionSHA := pushRemoteBranchCommit(t, git, devChildRepo, "dev", "ao/proj-1")
 
 	root := filepath.Join(tmp, "managed")
 	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": rootRepo}})
@@ -614,6 +656,9 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *tes
 		if wt.BaseRef != wantRefs[wt.RepoName] {
 			t.Fatalf("worktree %q base ref = %q, want %q", wt.RepoName, wt.BaseRef, wantRefs[wt.RepoName])
 		}
+		if got := gitOutput(t, git, wt.RepoPath, "rev-parse", wt.BaseRef); wt.BaseSHA != got {
+			t.Fatalf("worktree %q base SHA = %q, want default SHA %q", wt.RepoName, wt.BaseSHA, got)
+		}
 	}
 	devChildPath := filepath.Join(info.Root.Path, "services", "api")
 	if _, err := os.Stat(filepath.Join(devChildPath, "README.md")); err != nil {
@@ -621,8 +666,11 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *tes
 	}
 	devChildHead := gitOutput(t, git, devChildRepo, "rev-parse", "refs/heads/ao/proj-1")
 	devChildBase := gitOutput(t, git, devChildRepo, "rev-parse", "origin/dev")
-	if devChildHead != devChildBase {
-		t.Fatalf("dev child branch base = %s, want origin/dev %s", devChildHead, devChildBase)
+	if devChildBase != devDefaultSHA {
+		t.Fatalf("dev child default = %s, want original default %s", devChildBase, devDefaultSHA)
+	}
+	if devChildHead != devSessionSHA {
+		t.Fatalf("dev child branch seed = %s, want requested remote branch %s", devChildHead, devSessionSHA)
 	}
 	mainChildHead := gitOutput(t, git, mainChildRepo, "rev-parse", "refs/heads/ao/proj-1")
 	mainChildBase := gitOutput(t, git, mainChildRepo, "rev-parse", "origin/main")
@@ -689,6 +737,22 @@ func setupOriginCloneOnBranch(t *testing.T, git, tmp, branch string) string {
 	runGit(t, git, origin, "symbolic-ref", "HEAD", "refs/heads/"+branch)
 	runGit(t, git, repo, "remote", "set-head", "origin", branch)
 	return repo
+}
+
+func pushRemoteBranchCommit(t *testing.T, git, repo, defaultBranch, branch string) (defaultSHA, branchSHA string) {
+	t.Helper()
+	defaultSHA = gitOutput(t, git, repo, "rev-parse", "refs/heads/"+defaultBranch)
+	runGit(t, git, repo, "switch", "-c", branch)
+	if err := os.WriteFile(filepath.Join(repo, "SESSION.md"), []byte("remote session work\n"), 0o644); err != nil {
+		t.Fatalf("write session file: %v", err)
+	}
+	runGit(t, git, repo, "add", "SESSION.md")
+	runGit(t, git, repo, "commit", "-m", "session work")
+	runGit(t, git, repo, "push", "-u", "origin", branch)
+	branchSHA = gitOutput(t, git, repo, "rev-parse", "HEAD")
+	runGit(t, git, repo, "switch", defaultBranch)
+	runGit(t, git, repo, "branch", "-D", branch)
+	return defaultSHA, branchSHA
 }
 
 func gitOutput(t *testing.T, git, dir string, args ...string) string {

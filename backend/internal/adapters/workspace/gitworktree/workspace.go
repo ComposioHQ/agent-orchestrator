@@ -134,11 +134,11 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if info, ok, err := w.existingWorktree(ctx, repo, path, cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	} else if ok {
-		baseRef, err := w.resolveBaseRefWithBudget(ctx, repo, cfg.Branch, cfg.BaseBranch)
+		refs, err := w.resolveWorktreeRefsWithBudget(ctx, repo, cfg.Branch, cfg.BaseBranch)
 		if err != nil {
 			return ports.WorkspaceInfo{}, err
 		}
-		info.BaseRef = baseRef
+		info.BaseRef = refs.baseRef
 		return info, nil
 	}
 	baseRef, err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch, "", true)
@@ -209,11 +209,12 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 	remoteCtx, cancelRemote := context.WithTimeout(ctx, defaultBranchResolutionBudget)
 	defer cancelRemote()
 	for i := range repos {
-		baseRef, err := w.resolveBaseRef(ctx, remoteCtx, repos[i].repoPath, branch, repos[i].baseBranch)
+		refs, err := w.resolveWorktreeRefs(ctx, remoteCtx, repos[i].repoPath, branch, repos[i].baseBranch)
 		if err != nil {
 			return ports.WorkspaceProjectInfo{}, fmt.Errorf("gitworktree: resolve workspace repo %q base: %w", repos[i].name, err)
 		}
-		repos[i].baseRef = baseRef
+		repos[i].seedRef = refs.seedRef
+		repos[i].baseRef = refs.baseRef
 	}
 	created := make([]workspaceProjectRepo, 0, len(repos))
 	out := ports.WorkspaceProjectInfo{Worktrees: make([]ports.WorkspaceRepoInfo, 0, len(repos))}
@@ -903,13 +904,14 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		// base metadata and only needs to reattach that branch; making it resolve
 		// again can fail after remote metadata becomes unavailable.
 		if resolveExistingBase {
-			baseRef, err = w.resolveBaseRefWithBudget(ctx, repo, branch, baseBranch)
+			refs, err := w.resolveWorktreeRefsWithBudget(ctx, repo, branch, baseBranch)
 			if err != nil {
 				if errors.Is(err, errNoBaseRef) {
 					return "", fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
 				}
 				return "", err
 			}
+			baseRef = refs.baseRef
 		}
 		if _, err := w.run(ctx, w.binary, worktreeAddBranchArgs(repo, path, branch, force)...); err != nil {
 			return "", fmt.Errorf("gitworktree: worktree add existing branch %q: %w", branch, err)
@@ -917,21 +919,24 @@ func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBra
 		return baseRef, nil
 	}
 	if baseRef == "" {
-		baseRef, err = w.resolveBaseRefWithBudget(ctx, repo, branch, baseBranch)
+		refs, resolveErr := w.resolveWorktreeRefsWithBudget(ctx, repo, branch, baseBranch)
+		err = resolveErr
 		if err != nil {
 			if errors.Is(err, errNoBaseRef) {
 				return "", fmt.Errorf("%w: %q has no local head, no remote, and no tag — run `git fetch` then retry", ErrBranchNotFetched, branch)
 			}
 			return "", err
 		}
+		baseRef = refs.baseRef
+		if err := w.addNewBranchWorktree(ctx, repo, branch, path, refs.seedRef, force); err != nil {
+			return "", fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, refs.seedRef, err)
+		}
+		return baseRef, nil
 	}
 
-	// `worktree add -b <branch> <path> <base>` creates a fresh local branch from
-	// <base>. resolveBaseRef tries `origin/<branch>` first, so a fetched-but-
-	// not-checked-out remote branch auto-tracks cleanly via that path. If
-	// neither origin/<branch>, the default branch, nor any tag is reachable,
-	// the branch genuinely has no base — surface ErrBranchNotFetched so callers
-	// can suggest `git fetch`.
+	// Restore reaches this path when its local branch is gone but its durable
+	// comparison ref remains. Fresh creation returns above after resolving its
+	// seed and comparison refs independently.
 	if err := w.addNewBranchWorktree(ctx, repo, branch, path, baseRef, force); err != nil {
 		return "", fmt.Errorf("gitworktree: worktree add branch %q from %q: %w", branch, baseRef, err)
 	}
@@ -1016,6 +1021,7 @@ type workspaceProjectRepo struct {
 	repoPath     string
 	outputPath   string
 	baseBranch   string
+	seedRef      string
 	baseRef      string
 }
 
@@ -1068,6 +1074,7 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	if baseRef == "" {
 		return "", errors.New("gitworktree: workspace repository base was not resolved before creation")
 	}
+	seedRef := firstNonEmpty(strings.TrimSpace(repo.seedRef), baseRef)
 	baseSHA, err := w.revParse(ctx, repo.repoPath, baseRef)
 	if err != nil {
 		return "", err
@@ -1089,8 +1096,8 @@ func (w *Workspace) createWorkspaceProjectRepo(ctx context.Context, repo workspa
 	// addNewBranchWorktree's job: git's own --force override, not the repo-wide
 	// prune this used to run, which would also drop sibling sessions'
 	// registrations.
-	if err := w.addNewBranchWorktree(ctx, repo.repoPath, branch, repo.outputPath, baseRef, force); err != nil {
-		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, baseRef, err)
+	if err := w.addNewBranchWorktree(ctx, repo.repoPath, branch, repo.outputPath, seedRef, force); err != nil {
+		return "", fmt.Errorf("gitworktree: workspace repo %q worktree add branch %q from %q: %w", repo.name, branch, seedRef, err)
 	}
 	return baseSHA, nil
 }
@@ -1140,33 +1147,39 @@ func (w *Workspace) validateBranch(ctx context.Context, repo, branch string) err
 // addWorktree translates it into ErrBranchNotFetched.
 var errNoBaseRef = errors.New("gitworktree: no base ref found")
 
-func (w *Workspace) resolveBaseRef(ctx, remoteCtx context.Context, repo, branch, baseBranch string) (string, error) {
+// worktreeRefs keeps the ref used to seed a session branch separate from the
+// repository-default ref used for diffs. A fetched session branch may be ahead
+// of the default; returning it as the diff base would hide all of those commits.
+type worktreeRefs struct {
+	seedRef string
+	baseRef string
+}
+
+func (w *Workspace) resolveWorktreeRefs(ctx, remoteCtx context.Context, repo, branch, baseBranch string) (worktreeRefs, error) {
 	if strings.TrimSpace(baseBranch) != "" {
-		return w.resolveBaseRefFromDefault(ctx, repo, branch, baseBranch)
+		return w.resolveWorktreeRefsFromDefault(ctx, repo, branch, baseBranch)
 	}
 	resolver := gitdefault.New(w.binary, gitdefault.Runner(w.run))
 	remote, requestedRef, requestedExists, requestedErr := resolver.FindCachedRemoteBranch(ctx, repo, branch)
-	if requestedErr == nil && requestedExists {
-		slog.Debug("gitworktree: resolved requested remote branch",
-			"repo", repo,
-			"remote", remote,
-			"branch", branch,
-		)
-		return requestedRef, nil
-	}
 	if requestedErr != nil && !errors.Is(requestedErr, gitdefault.ErrUnresolved) {
-		return "", fmt.Errorf("gitworktree: inspect requested branch for %q: %w", repo, requestedErr)
+		return worktreeRefs{}, fmt.Errorf("gitworktree: inspect requested branch for %q: %w", repo, requestedErr)
 	}
 	resolution, err := resolver.Resolve(ctx, remoteCtx, repo)
 	if err != nil {
 		if errors.Is(err, gitdefault.ErrUnresolved) {
-			return "", fmt.Errorf(
+			// A fetched requested branch remains a valid seed when the remote
+			// exposes no default metadata. There is no authoritative comparison
+			// ref in this case, so preserve the legacy fallback to that branch.
+			if requestedExists {
+				return worktreeRefs{seedRef: requestedRef, baseRef: requestedRef}, nil
+			}
+			return worktreeRefs{}, fmt.Errorf(
 				"%w: %s; configure this repository's primary remote and cached HEAD (for example, `git -C %q remote set-head <remote> <branch>`) and retry",
 				ErrDefaultBranchUnresolved, strings.TrimPrefix(err.Error(), gitdefault.ErrUnresolved.Error()+": "),
 				repo,
 			)
 		}
-		return "", fmt.Errorf("gitworktree: resolve repository default for %q: %w", repo, err)
+		return worktreeRefs{}, fmt.Errorf("gitworktree: resolve repository default for %q: %w", repo, err)
 	}
 	slog.Debug("gitworktree: resolved automatic default branch",
 		"repo", repo,
@@ -1175,53 +1188,72 @@ func (w *Workspace) resolveBaseRef(ctx, remoteCtx context.Context, repo, branch,
 		"source", resolution.Source,
 	)
 
-	// Preserve the existing resume behavior: a fetched remote session branch
-	// wins over starting a fresh branch from the repository default. The remote
-	// comes from the same authoritative resolution, never from a hardcoded name.
-	if resolution.Remote != "" {
-		remoteSessionRef := "refs/remotes/" + resolution.Remote + "/" + branch
-		if exists, err := w.refExists(ctx, repo, remoteSessionRef); err != nil {
-			return "", err
-		} else if exists {
-			return remoteSessionRef, nil
-		}
-	}
 	if exists, err := w.refExists(ctx, repo, resolution.Ref); err != nil {
-		return "", err
+		return worktreeRefs{}, err
 	} else if exists {
-		return resolution.Ref, nil
+		seedRef := resolution.Ref
+		if requestedExists {
+			slog.Debug("gitworktree: resolved requested remote branch",
+				"repo", repo,
+				"remote", remote,
+				"branch", branch,
+			)
+			seedRef = requestedRef
+		}
+		return worktreeRefs{seedRef: seedRef, baseRef: resolution.Ref}, nil
 	}
-	return "", fmt.Errorf("%w: resolved default branch %q from %q, but ref %q is unavailable", errNoBaseRef, resolution.Branch, resolution.Source, resolution.Ref)
+	return worktreeRefs{}, fmt.Errorf("%w: resolved default branch %q from %q, but ref %q is unavailable", errNoBaseRef, resolution.Branch, resolution.Source, resolution.Ref)
 }
 
-func (w *Workspace) resolveBaseRefWithBudget(ctx context.Context, repo, branch, baseBranch string) (string, error) {
+func (w *Workspace) resolveWorktreeRefsWithBudget(ctx context.Context, repo, branch, baseBranch string) (worktreeRefs, error) {
 	remoteCtx, cancelRemote := context.WithTimeout(ctx, defaultBranchResolutionBudget)
 	defer cancelRemote()
-	return w.resolveBaseRef(ctx, remoteCtx, repo, branch, baseBranch)
+	return w.resolveWorktreeRefs(ctx, remoteCtx, repo, branch, baseBranch)
 }
 
-func (w *Workspace) resolveBaseRefFromDefault(ctx context.Context, repo, branch, defaultBranch string) (string, error) {
-	candidates := baseRefCandidates(branch, defaultBranch)
-	for _, ref := range candidates {
+func (w *Workspace) resolveWorktreeRefsFromDefault(ctx context.Context, repo, branch, defaultBranch string) (worktreeRefs, error) {
+	requestedRef := "origin/" + branch
+	requestedExists, err := w.refExists(ctx, repo, requestedRef)
+	if err != nil {
+		return worktreeRefs{}, err
+	}
+	baseCandidates := configuredBaseRefCandidates(defaultBranch)
+	for _, ref := range baseCandidates {
 		exists, err := w.refExists(ctx, repo, ref)
 		if err != nil {
-			return "", err
+			return worktreeRefs{}, err
 		}
 		if exists {
-			return ref, nil
+			seedRef := ref
+			if requestedExists {
+				seedRef = requestedRef
+			}
+			return worktreeRefs{seedRef: seedRef, baseRef: ref}, nil
 		}
+	}
+
+	// Preserve the adapter's fallback when the configured default is missing:
+	// an already-fetched session branch or same-named tag can still be resumed,
+	// but is used as the comparison ref only because no default ref is available.
+	if requestedExists {
+		return worktreeRefs{seedRef: requestedRef, baseRef: requestedRef}, nil
 	}
 	// Also probe a same-named tag so requests like `--branch v1.2.3` can
 	// auto-track when the tag is fetched but no branch ref exists.
 	tagRef := "refs/tags/" + branch
-	exists, err := w.refExists(ctx, repo, tagRef)
-	if err != nil {
-		return "", err
+	fallbackCandidates := []string{branch, tagRef}
+	for _, ref := range fallbackCandidates {
+		exists, err := w.refExists(ctx, repo, ref)
+		if err != nil {
+			return worktreeRefs{}, err
+		}
+		if exists {
+			return worktreeRefs{seedRef: ref, baseRef: ref}, nil
+		}
 	}
-	if exists {
-		return tagRef, nil
-	}
-	return "", fmt.Errorf("%w for branch %q (tried %s, %s)", errNoBaseRef, branch, strings.Join(candidates, ", "), tagRef)
+	allCandidates := append([]string{requestedRef}, baseCandidates...)
+	allCandidates = append(allCandidates, fallbackCandidates...)
+	return worktreeRefs{}, fmt.Errorf("%w for branch %q (tried %s)", errNoBaseRef, branch, strings.Join(allCandidates, ", "))
 }
 
 func (w *Workspace) refExists(ctx context.Context, repo, ref string) (bool, error) {
