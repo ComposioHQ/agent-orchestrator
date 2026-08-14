@@ -1592,7 +1592,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List compact token usage for session cards */
+        /** List compact token and estimated cost usage for session cards */
         get: operations["listCompactSessionUsage"];
         put?: never;
         post?: never;
@@ -1609,7 +1609,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get detailed token usage for one session */
+        /** Get detailed token and estimated cost usage for one session */
         get: operations["getSessionUsage"];
         put?: never;
         post?: never;
@@ -1761,6 +1761,7 @@ export interface components {
             tokensBefore?: number;
         };
         CompactSessionUsageResponse: {
+            estimatedCost: null | components["schemas"]["EstimatedCostResponse"];
             incomplete: boolean;
             sessionId: string;
             /** Format: int64 */
@@ -2115,6 +2116,20 @@ export interface components {
             /** @enum {string} */
             state?: "queued" | "running" | "completed" | "interrupted" | "failed";
             turnId?: string;
+        };
+        EstimatedCostResponse: {
+            /** Format: int64 */
+            cacheReadNanos: null | number;
+            /** Format: int64 */
+            cacheWriteNanos: null | number;
+            /** @enum {string} */
+            coverage: "complete" | "partial";
+            /** Format: int64 */
+            outputNanos: null | number;
+            /** Format: int64 */
+            totalNanos: number;
+            /** Format: int64 */
+            uncachedInputNanos: null | number;
         };
         ImportReport: {
             dryRun: boolean;
@@ -2920,11 +2935,13 @@ export interface components {
         };
         UsageModelResponse: {
             modelId: string;
+            providerId: string;
             totals: components["schemas"]["UsageTotalsResponse"];
         };
         UsageTotalsResponse: {
             cacheReadTokens: null | number;
             cacheWriteTokens: null | number;
+            estimatedCost: null | components["schemas"]["EstimatedCostResponse"];
             inputTokens: null | number;
             outputTokens: null | number;
             reasoningTokens: null | number;

@@ -12,6 +12,17 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec/specgen"
 )
 
+type openAPISchemaNode struct {
+	Ref        string                       `yaml:"$ref"`
+	Type       any                          `yaml:"type"`
+	Format     string                       `yaml:"format"`
+	Enum       []string                     `yaml:"enum"`
+	Required   []string                     `yaml:"required"`
+	Properties map[string]openAPISchemaNode `yaml:"properties"`
+	AnyOf      []openAPISchemaNode          `yaml:"anyOf"`
+	OneOf      []openAPISchemaNode          `yaml:"oneOf"`
+}
+
 // TestBuild_MatchesEmbedded is the drift guard: the committed (embedded)
 // openapi.yaml must equal fresh Build() output. If this fails, run
 // `go generate ./...` and commit the result.
@@ -58,6 +69,88 @@ func TestBuild_DelegateAgentEnumIncludesPrimeAgent(t *testing.T) {
 	if !slices.Contains(agents, "prime-agent") {
 		t.Fatalf("DelegateTaskRequest agent enum = %v, want prime-agent", agents)
 	}
+}
+
+func TestBuild_UsageEstimatedCostIsNamedReusableAndNullable(t *testing.T) {
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	var doc struct {
+		Components struct {
+			Schemas map[string]openAPISchemaNode `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("parse generated OpenAPI: %v", err)
+	}
+
+	cost, ok := doc.Components.Schemas["EstimatedCostResponse"]
+	if !ok {
+		t.Fatal("EstimatedCostResponse is not a named schema")
+	}
+	for _, field := range []string{"totalNanos", "uncachedInputNanos", "cacheReadNanos", "cacheWriteNanos", "outputNanos", "coverage"} {
+		if !slices.Contains(cost.Required, field) {
+			t.Fatalf("EstimatedCostResponse required = %v, missing %s", cost.Required, field)
+		}
+	}
+	for _, field := range []string{"totalNanos", "uncachedInputNanos", "cacheReadNanos", "cacheWriteNanos", "outputNanos"} {
+		if cost.Properties[field].Format != "int64" {
+			t.Fatalf("EstimatedCostResponse.%s format = %q, want int64", field, cost.Properties[field].Format)
+		}
+	}
+	if want := []string{"complete", "partial"}; !slices.Equal(cost.Properties["coverage"].Enum, want) {
+		t.Fatalf("coverage enum = %v, want %v", cost.Properties["coverage"].Enum, want)
+	}
+
+	const costRef = "#/components/schemas/EstimatedCostResponse"
+	for schemaName, propertyName := range map[string]string{
+		"CompactSessionUsageResponse": "estimatedCost",
+		"UsageTotalsResponse":         "estimatedCost",
+	} {
+		property := doc.Components.Schemas[schemaName].Properties[propertyName]
+		if !schemaContainsRef(property, costRef) || !schemaAllowsNull(property) {
+			t.Fatalf("%s.%s = %+v, want nullable %s", schemaName, propertyName, property, costRef)
+		}
+	}
+	model := doc.Components.Schemas["UsageModelResponse"]
+	if !slices.Contains(model.Required, "providerId") {
+		t.Fatalf("UsageModelResponse required = %v, missing providerId", model.Required)
+	}
+}
+
+func schemaContainsRef(node openAPISchemaNode, want string) bool {
+	if node.Ref == want {
+		return true
+	}
+	for _, child := range append(node.AnyOf, node.OneOf...) {
+		if child.Ref == want {
+			return true
+		}
+	}
+	return false
+}
+
+func schemaAllowsNull(node openAPISchemaNode) bool {
+	containsNull := func(value any) bool {
+		switch typed := value.(type) {
+		case string:
+			return typed == "null"
+		case []any:
+			return slices.Contains(typed, any("null"))
+		default:
+			return false
+		}
+	}
+	if containsNull(node.Type) {
+		return true
+	}
+	for _, child := range append(node.AnyOf, node.OneOf...) {
+		if containsNull(child.Type) {
+			return true
+		}
+	}
+	return false
 }
 
 // TestBuild_Deterministic guards against nondeterministic output (which would

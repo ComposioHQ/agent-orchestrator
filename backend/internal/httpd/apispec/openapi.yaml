@@ -4872,7 +4872,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: List compact token usage for session cards
+      summary: List compact token and estimated cost usage for session cards
       tags:
       - usage
   /api/v1/usage/sessions/{sessionId}:
@@ -4911,7 +4911,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Get detailed token usage for one session
+      summary: Get detailed token and estimated cost usage for one session
       tags:
       - usage
 components:
@@ -5279,6 +5279,12 @@ components:
       type: object
     CompactSessionUsageResponse:
       properties:
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
+          type: object
         incomplete:
           type: boolean
         sessionId:
@@ -5291,6 +5297,7 @@ components:
       - sessionId
       - totalTokens
       - incomplete
+      - estimatedCost
       type: object
     ContainerReapConfig:
       properties:
@@ -6265,6 +6272,49 @@ components:
       required:
       - sourceBranchId
       - activeBranchId
+      type: object
+    EstimatedCostResponse:
+      properties:
+        cacheReadNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        cacheWriteNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        coverage:
+          enum:
+          - complete
+          - partial
+          type: string
+        outputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+        totalNanos:
+          format: int64
+          minimum: 0
+          type: integer
+        uncachedInputNanos:
+          format: int64
+          minimum: 0
+          type:
+          - "null"
+          - integer
+      required:
+      - totalNanos
+      - uncachedInputNanos
+      - cacheReadNanos
+      - cacheWriteNanos
+      - outputNanos
+      - coverage
       type: object
     ImportReport:
       properties:
@@ -8338,9 +8388,12 @@ components:
       properties:
         modelId:
           type: string
+        providerId:
+          type: string
         totals:
           $ref: '#/components/schemas/UsageTotalsResponse'
       required:
+      - providerId
       - modelId
       - totals
       type: object
@@ -8354,6 +8407,12 @@ components:
           type:
           - "null"
           - integer
+        estimatedCost:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/EstimatedCostResponse'
+            type: object
+          type: object
         inputTokens:
           type:
           - "null"
@@ -8377,6 +8436,7 @@ components:
       - cacheWriteTokens
       - outputTokens
       - reasoningTokens
+      - estimatedCost
       type: object
     WorkspaceFileResponse:
       properties:

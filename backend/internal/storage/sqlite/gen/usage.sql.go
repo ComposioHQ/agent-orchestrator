@@ -16,6 +16,7 @@ import (
 const aggregateUsageBySessionHarnessModel = `-- name: AggregateUsageBySessionHarnessModel :many
 SELECT
     ub.harness,
+    COALESCE(mue.provider_id, 'unknown') AS provider_id,
     mue.model_id,
     CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
     CAST(SUM(mue.uncached_input_tokens) AS INTEGER) AS uncached_input_tokens,
@@ -23,24 +24,55 @@ SELECT
     CAST(SUM(mue.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
     CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
     CAST(COALESCE(SUM(mue.reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
-    COUNT(mue.reasoning_tokens) AS reasoning_event_count
+    CAST(COUNT(mue.reasoning_tokens) AS INTEGER) AS reasoning_event_count,
+    CAST(COUNT(*) AS INTEGER) AS event_count,
+    CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
+    CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
+    CAST(COUNT(mue.uncached_input_cost_nanos) AS INTEGER) AS known_uncached_input_count,
+    CAST(COALESCE(SUM(mue.uncached_input_cost_nanos), 0) AS INTEGER) AS known_uncached_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.uncached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_uncached_input_nanos,
+    CAST(COUNT(mue.cache_read_cost_nanos) AS INTEGER) AS known_cache_read_count,
+    CAST(COALESCE(SUM(mue.cache_read_cost_nanos), 0) AS INTEGER) AS known_cache_read_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_read_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_read_nanos,
+    CAST(COUNT(mue.cache_write_cost_nanos) AS INTEGER) AS known_cache_write_count,
+    CAST(COALESCE(SUM(mue.cache_write_cost_nanos), 0) AS INTEGER) AS known_cache_write_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_write_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_write_nanos,
+    CAST(COUNT(mue.output_cost_nanos) AS INTEGER) AS known_output_count,
+    CAST(COALESCE(SUM(mue.output_cost_nanos), 0) AS INTEGER) AS known_output_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.output_cost_nanos END), 0) AS INTEGER) AS unpriced_known_output_nanos
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
 WHERE ub.session_id = ?
-GROUP BY ub.harness, mue.model_id
-ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, mue.model_id
+GROUP BY ub.harness, COALESCE(mue.provider_id, 'unknown'), mue.model_id
+ORDER BY ub.harness, provider_id, mue.model_id
 `
 
 type AggregateUsageBySessionHarnessModelRow struct {
-	Harness             domain.AgentHarness
-	ModelID             string
-	InputTokens         int64
-	UncachedInputTokens int64
-	CacheReadTokens     int64
-	CacheWriteTokens    int64
-	OutputTokens        int64
-	ReasoningTokens     int64
-	ReasoningEventCount int64
+	Harness                         domain.AgentHarness
+	ProviderID                      string
+	ModelID                         string
+	InputTokens                     int64
+	UncachedInputTokens             int64
+	CacheReadTokens                 int64
+	CacheWriteTokens                int64
+	OutputTokens                    int64
+	ReasoningTokens                 int64
+	ReasoningEventCount             int64
+	EventCount                      int64
+	PricedEventCount                int64
+	PricedTotalNanos                int64
+	KnownUncachedInputCount         int64
+	KnownUncachedInputNanos         int64
+	UnpricedKnownUncachedInputNanos int64
+	KnownCacheReadCount             int64
+	KnownCacheReadNanos             int64
+	UnpricedKnownCacheReadNanos     int64
+	KnownCacheWriteCount            int64
+	KnownCacheWriteNanos            int64
+	UnpricedKnownCacheWriteNanos    int64
+	KnownOutputCount                int64
+	KnownOutputNanos                int64
+	UnpricedKnownOutputNanos        int64
 }
 
 func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessionID domain.SessionID) ([]AggregateUsageBySessionHarnessModelRow, error) {
@@ -54,6 +86,7 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 		var i AggregateUsageBySessionHarnessModelRow
 		if err := rows.Scan(
 			&i.Harness,
+			&i.ProviderID,
 			&i.ModelID,
 			&i.InputTokens,
 			&i.UncachedInputTokens,
@@ -62,6 +95,21 @@ func (q *Queries) AggregateUsageBySessionHarnessModel(ctx context.Context, sessi
 			&i.OutputTokens,
 			&i.ReasoningTokens,
 			&i.ReasoningEventCount,
+			&i.EventCount,
+			&i.PricedEventCount,
+			&i.PricedTotalNanos,
+			&i.KnownUncachedInputCount,
+			&i.KnownUncachedInputNanos,
+			&i.UnpricedKnownUncachedInputNanos,
+			&i.KnownCacheReadCount,
+			&i.KnownCacheReadNanos,
+			&i.UnpricedKnownCacheReadNanos,
+			&i.KnownCacheWriteCount,
+			&i.KnownCacheWriteNanos,
+			&i.UnpricedKnownCacheWriteNanos,
+			&i.KnownOutputCount,
+			&i.KnownOutputNanos,
+			&i.UnpricedKnownOutputNanos,
 		); err != nil {
 			return nil, err
 		}
@@ -562,21 +610,53 @@ func (q *Queries) InsertUsageSource(ctx context.Context, arg InsertUsageSourcePa
 const listCompactSessionUsage = `-- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
-    CAST(SUM(mue.input_tokens + mue.output_tokens) AS INTEGER) AS total_tokens,
-    CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete
+    CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
+    CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete,
+    CAST(COUNT(*) AS INTEGER) AS event_count,
+    CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
+    CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
+    CAST(COUNT(mue.uncached_input_cost_nanos) AS INTEGER) AS known_uncached_input_count,
+    CAST(COALESCE(SUM(mue.uncached_input_cost_nanos), 0) AS INTEGER) AS known_uncached_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.uncached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_uncached_input_nanos,
+    CAST(COUNT(mue.cache_read_cost_nanos) AS INTEGER) AS known_cache_read_count,
+    CAST(COALESCE(SUM(mue.cache_read_cost_nanos), 0) AS INTEGER) AS known_cache_read_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_read_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_read_nanos,
+    CAST(COUNT(mue.cache_write_cost_nanos) AS INTEGER) AS known_cache_write_count,
+    CAST(COALESCE(SUM(mue.cache_write_cost_nanos), 0) AS INTEGER) AS known_cache_write_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_write_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_write_nanos,
+    CAST(COUNT(mue.output_cost_nanos) AS INTEGER) AS known_output_count,
+    CAST(COALESCE(SUM(mue.output_cost_nanos), 0) AS INTEGER) AS known_output_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.output_cost_nanos END), 0) AS INTEGER) AS unpriced_known_output_nanos
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
 JOIN sessions s ON s.id = ub.session_id
 LEFT JOIN usage_session_integrity integrity ON integrity.session_id = ub.session_id
 WHERE (?1 = '' OR s.project_id = ?1)
-GROUP BY ub.session_id
+GROUP BY ub.session_id, s.project_id, s.num, integrity.incomplete
 ORDER BY s.project_id, s.num
 `
 
 type ListCompactSessionUsageRow struct {
-	SessionID   domain.SessionID
-	TotalTokens int64
-	Incomplete  int64
+	SessionID                       domain.SessionID
+	InputTokens                     int64
+	OutputTokens                    int64
+	Incomplete                      int64
+	EventCount                      int64
+	PricedEventCount                int64
+	PricedTotalNanos                int64
+	KnownUncachedInputCount         int64
+	KnownUncachedInputNanos         int64
+	UnpricedKnownUncachedInputNanos int64
+	KnownCacheReadCount             int64
+	KnownCacheReadNanos             int64
+	UnpricedKnownCacheReadNanos     int64
+	KnownCacheWriteCount            int64
+	KnownCacheWriteNanos            int64
+	UnpricedKnownCacheWriteNanos    int64
+	KnownOutputCount                int64
+	KnownOutputNanos                int64
+	UnpricedKnownOutputNanos        int64
 }
 
 func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interface{}) ([]ListCompactSessionUsageRow, error) {
@@ -588,7 +668,27 @@ func (q *Queries) ListCompactSessionUsage(ctx context.Context, projectID interfa
 	items := []ListCompactSessionUsageRow{}
 	for rows.Next() {
 		var i ListCompactSessionUsageRow
-		if err := rows.Scan(&i.SessionID, &i.TotalTokens, &i.Incomplete); err != nil {
+		if err := rows.Scan(
+			&i.SessionID,
+			&i.InputTokens,
+			&i.OutputTokens,
+			&i.Incomplete,
+			&i.EventCount,
+			&i.PricedEventCount,
+			&i.PricedTotalNanos,
+			&i.KnownUncachedInputCount,
+			&i.KnownUncachedInputNanos,
+			&i.UnpricedKnownUncachedInputNanos,
+			&i.KnownCacheReadCount,
+			&i.KnownCacheReadNanos,
+			&i.UnpricedKnownCacheReadNanos,
+			&i.KnownCacheWriteCount,
+			&i.KnownCacheWriteNanos,
+			&i.UnpricedKnownCacheWriteNanos,
+			&i.KnownOutputCount,
+			&i.KnownOutputNanos,
+			&i.UnpricedKnownOutputNanos,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

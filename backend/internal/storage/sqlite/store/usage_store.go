@@ -703,17 +703,29 @@ func (s *Store) GetUsageSessionIncomplete(ctx context.Context, sessionID domain.
 	return incomplete != 0, nil
 }
 
-// ListCompactSessionUsage returns sessions with observed usage in one grouped
-// read. projectID optionally limits the rows to one dashboard board.
-func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.ProjectID) ([]domain.CompactSessionUsage, error) {
+// ListCompactSessionUsageAggregates returns sessions with observed usage in
+// one grouped read. projectID optionally limits the rows to one dashboard board.
+func (s *Store) ListCompactSessionUsageAggregates(ctx context.Context, projectID domain.ProjectID) ([]domain.CompactSessionUsageAggregate, error) {
 	rows, err := s.qr.ListCompactSessionUsage(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list compact session usage for project %s: %w", projectID, err)
 	}
-	out := make([]domain.CompactSessionUsage, 0, len(rows))
+	out := make([]domain.CompactSessionUsageAggregate, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.CompactSessionUsage{
-			SessionID: row.SessionID, TotalTokens: row.TotalTokens, Incomplete: row.Incomplete != 0,
+		out = append(out, domain.CompactSessionUsageAggregate{
+			SessionID: row.SessionID, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens,
+			Incomplete: row.Incomplete != 0,
+			Cost: domain.UsageCostAggregate{
+				EventCount: row.EventCount, PricedEventCount: row.PricedEventCount, PricedTotalNanos: row.PricedTotalNanos,
+				KnownUncachedInputCount: row.KnownUncachedInputCount, KnownUncachedInputNanos: row.KnownUncachedInputNanos,
+				UnpricedKnownUncachedInputNanos: row.UnpricedKnownUncachedInputNanos,
+				KnownCacheReadCount:             row.KnownCacheReadCount, KnownCacheReadNanos: row.KnownCacheReadNanos,
+				UnpricedKnownCacheReadNanos: row.UnpricedKnownCacheReadNanos,
+				KnownCacheWriteCount:        row.KnownCacheWriteCount, KnownCacheWriteNanos: row.KnownCacheWriteNanos,
+				UnpricedKnownCacheWriteNanos: row.UnpricedKnownCacheWriteNanos,
+				KnownOutputCount:             row.KnownOutputCount, KnownOutputNanos: row.KnownOutputNanos,
+				UnpricedKnownOutputNanos: row.UnpricedKnownOutputNanos,
+			},
 		})
 	}
 	return out, nil
@@ -845,8 +857,9 @@ func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.Mod
 
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {
 	return domain.UsageModelAggregate{
-		Harness: row.Harness,
-		ModelID: row.ModelID,
+		Harness:    row.Harness,
+		ProviderID: row.ProviderID,
+		ModelID:    row.ModelID,
 		Tokens: domain.UsageTokenMetrics{
 			InputTokens:         row.InputTokens,
 			UncachedInputTokens: row.UncachedInputTokens,
@@ -856,6 +869,17 @@ func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domai
 			ReasoningTokens:     int64PtrWhen(row.ReasoningTokens, row.ReasoningEventCount > 0),
 		},
 		ReasoningEventCount: row.ReasoningEventCount,
+		Cost: domain.UsageCostAggregate{
+			EventCount: row.EventCount, PricedEventCount: row.PricedEventCount, PricedTotalNanos: row.PricedTotalNanos,
+			KnownUncachedInputCount: row.KnownUncachedInputCount, KnownUncachedInputNanos: row.KnownUncachedInputNanos,
+			UnpricedKnownUncachedInputNanos: row.UnpricedKnownUncachedInputNanos,
+			KnownCacheReadCount:             row.KnownCacheReadCount, KnownCacheReadNanos: row.KnownCacheReadNanos,
+			UnpricedKnownCacheReadNanos: row.UnpricedKnownCacheReadNanos,
+			KnownCacheWriteCount:        row.KnownCacheWriteCount, KnownCacheWriteNanos: row.KnownCacheWriteNanos,
+			UnpricedKnownCacheWriteNanos: row.UnpricedKnownCacheWriteNanos,
+			KnownOutputCount:             row.KnownOutputCount, KnownOutputNanos: row.KnownOutputNanos,
+			UnpricedKnownOutputNanos: row.UnpricedKnownOutputNanos,
+		},
 	}
 }
 

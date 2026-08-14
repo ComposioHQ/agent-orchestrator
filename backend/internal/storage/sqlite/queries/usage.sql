@@ -481,6 +481,7 @@ RETURNING binding_id;
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
     ub.harness,
+    COALESCE(mue.provider_id, 'unknown') AS provider_id,
     mue.model_id,
     CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
     CAST(SUM(mue.uncached_input_tokens) AS INTEGER) AS uncached_input_tokens,
@@ -488,12 +489,27 @@ SELECT
     CAST(SUM(mue.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
     CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
     CAST(COALESCE(SUM(mue.reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
-    COUNT(mue.reasoning_tokens) AS reasoning_event_count
+    CAST(COUNT(mue.reasoning_tokens) AS INTEGER) AS reasoning_event_count,
+    CAST(COUNT(*) AS INTEGER) AS event_count,
+    CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
+    CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
+    CAST(COUNT(mue.uncached_input_cost_nanos) AS INTEGER) AS known_uncached_input_count,
+    CAST(COALESCE(SUM(mue.uncached_input_cost_nanos), 0) AS INTEGER) AS known_uncached_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.uncached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_uncached_input_nanos,
+    CAST(COUNT(mue.cache_read_cost_nanos) AS INTEGER) AS known_cache_read_count,
+    CAST(COALESCE(SUM(mue.cache_read_cost_nanos), 0) AS INTEGER) AS known_cache_read_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_read_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_read_nanos,
+    CAST(COUNT(mue.cache_write_cost_nanos) AS INTEGER) AS known_cache_write_count,
+    CAST(COALESCE(SUM(mue.cache_write_cost_nanos), 0) AS INTEGER) AS known_cache_write_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_write_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_write_nanos,
+    CAST(COUNT(mue.output_cost_nanos) AS INTEGER) AS known_output_count,
+    CAST(COALESCE(SUM(mue.output_cost_nanos), 0) AS INTEGER) AS known_output_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.output_cost_nanos END), 0) AS INTEGER) AS unpriced_known_output_nanos
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
 WHERE ub.session_id = ?
-GROUP BY ub.harness, mue.model_id
-ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, mue.model_id;
+GROUP BY ub.harness, COALESCE(mue.provider_id, 'unknown'), mue.model_id
+ORDER BY ub.harness, provider_id, mue.model_id;
 
 -- name: GetUsageSessionIncomplete :one
 SELECT CAST(COALESCE((
@@ -503,12 +519,28 @@ SELECT CAST(COALESCE((
 -- name: ListCompactSessionUsage :many
 SELECT
     ub.session_id,
-    CAST(SUM(mue.input_tokens + mue.output_tokens) AS INTEGER) AS total_tokens,
-    CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete
+    CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
+    CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete,
+    CAST(COUNT(*) AS INTEGER) AS event_count,
+    CAST(COUNT(mue.estimated_cost_nanos) AS INTEGER) AS priced_event_count,
+    CAST(COALESCE(SUM(mue.estimated_cost_nanos), 0) AS INTEGER) AS priced_total_nanos,
+    CAST(COUNT(mue.uncached_input_cost_nanos) AS INTEGER) AS known_uncached_input_count,
+    CAST(COALESCE(SUM(mue.uncached_input_cost_nanos), 0) AS INTEGER) AS known_uncached_input_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.uncached_input_cost_nanos END), 0) AS INTEGER) AS unpriced_known_uncached_input_nanos,
+    CAST(COUNT(mue.cache_read_cost_nanos) AS INTEGER) AS known_cache_read_count,
+    CAST(COALESCE(SUM(mue.cache_read_cost_nanos), 0) AS INTEGER) AS known_cache_read_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_read_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_read_nanos,
+    CAST(COUNT(mue.cache_write_cost_nanos) AS INTEGER) AS known_cache_write_count,
+    CAST(COALESCE(SUM(mue.cache_write_cost_nanos), 0) AS INTEGER) AS known_cache_write_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.cache_write_cost_nanos END), 0) AS INTEGER) AS unpriced_known_cache_write_nanos,
+    CAST(COUNT(mue.output_cost_nanos) AS INTEGER) AS known_output_count,
+    CAST(COALESCE(SUM(mue.output_cost_nanos), 0) AS INTEGER) AS known_output_nanos,
+    CAST(COALESCE(SUM(CASE WHEN mue.estimated_cost_nanos IS NULL THEN mue.output_cost_nanos END), 0) AS INTEGER) AS unpriced_known_output_nanos
 FROM model_usage_events mue
 JOIN usage_bindings ub ON ub.id = mue.binding_id
 JOIN sessions s ON s.id = ub.session_id
 LEFT JOIN usage_session_integrity integrity ON integrity.session_id = ub.session_id
 WHERE (sqlc.arg(project_id) = '' OR s.project_id = sqlc.arg(project_id))
-GROUP BY ub.session_id
+GROUP BY ub.session_id, s.project_id, s.num, integrity.incomplete
 ORDER BY s.project_id, s.num;

@@ -195,20 +195,74 @@ type LegacyUsageRepair struct {
 	PricingVersion          string
 }
 
+// EstimatedCostCoverage describes how much of a usage scope has a durable
+// estimate. Token collection integrity is reported separately.
+type EstimatedCostCoverage string
+
+const (
+	EstimatedCostCoverageComplete EstimatedCostCoverage = "complete"
+	EstimatedCostCoveragePartial  EstimatedCostCoverage = "partial"
+)
+
+// EstimatedCost is the user-facing nano-USD estimate for one usage scope.
+// Components remain nullable when only part of that component is known.
+type EstimatedCost struct {
+	TotalNanos         int64
+	UncachedInputNanos *int64
+	CacheReadNanos     *int64
+	CacheWriteNanos    *int64
+	OutputNanos        *int64
+	Coverage           EstimatedCostCoverage
+}
+
+// UsageCostAggregate contains the independent SQL sums and coverage counts
+// needed to derive a scope estimate without double-counting priced events.
+type UsageCostAggregate struct {
+	EventCount       int64
+	PricedEventCount int64
+	PricedTotalNanos int64
+
+	KnownUncachedInputCount         int64
+	KnownUncachedInputNanos         int64
+	UnpricedKnownUncachedInputNanos int64
+	KnownCacheReadCount             int64
+	KnownCacheReadNanos             int64
+	UnpricedKnownCacheReadNanos     int64
+	KnownCacheWriteCount            int64
+	KnownCacheWriteNanos            int64
+	UnpricedKnownCacheWriteNanos    int64
+	KnownOutputCount                int64
+	KnownOutputNanos                int64
+	UnpricedKnownOutputNanos        int64
+}
+
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
 	Harness             AgentHarness
+	ProviderID          string
 	ModelID             string
 	Tokens              UsageTokenMetrics
 	ReasoningEventCount int64
+	Cost                UsageCostAggregate
 }
 
-// CompactSessionUsage is the token-only dashboard read model.
+// CompactSessionUsageAggregate is one batched storage row before checked token
+// and cost derivation.
+type CompactSessionUsageAggregate struct {
+	SessionID    SessionID
+	InputTokens  int64
+	OutputTokens int64
+	Incomplete   bool
+	Cost         UsageCostAggregate
+}
+
+// CompactSessionUsage is the dashboard usage read model.
 type CompactSessionUsage struct {
-	SessionID   SessionID
-	TotalTokens int64
-	Incomplete  bool
+	SessionID     SessionID
+	TotalTokens   int64
+	Incomplete    bool
+	EstimatedCost *EstimatedCost
 }
 
 // UsageMetricTotals is the aggregate metric block used by session, harness,
@@ -220,12 +274,14 @@ type UsageMetricTotals struct {
 	CacheWriteTokens    *int64
 	OutputTokens        *int64
 	ReasoningTokens     *int64
+	EstimatedCost       *EstimatedCost
 }
 
-// ModelUsageSummary is a per-exact-model aggregate.
+// ModelUsageSummary is a per-exact-provider-and-model aggregate.
 type ModelUsageSummary struct {
-	ModelID string
-	Totals  UsageMetricTotals
+	ProviderID string
+	ModelID    string
+	Totals     UsageMetricTotals
 }
 
 // HarnessUsageSummary groups model summaries by AO harness.

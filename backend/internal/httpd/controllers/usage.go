@@ -42,6 +42,7 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		out = append(out, CompactSessionUsageResponse{
 			SessionID: item.SessionID, TotalTokens: item.TotalTokens, Incomplete: item.Incomplete,
+			EstimatedCost: estimatedCostResponse(item.EstimatedCost),
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})
@@ -66,7 +67,7 @@ func sessionUsageResponse(summary domain.SessionUsageSummary) SessionUsageRespon
 		models := make([]UsageModelResponse, 0, len(harness.Models))
 		for _, model := range harness.Models {
 			models = append(models, UsageModelResponse{
-				ModelID: model.ModelID, Totals: usageTotalsResponse(model.Totals),
+				ProviderID: model.ProviderID, ModelID: model.ModelID, Totals: usageTotalsResponse(model.Totals),
 			})
 		}
 		harnesses = append(harnesses, UsageHarnessResponse{
@@ -84,5 +85,17 @@ func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
 		InputTokens: totals.InputTokens, UncachedInputTokens: totals.UncachedInputTokens,
 		CacheReadTokens: totals.CacheReadTokens, CacheWriteTokens: totals.CacheWriteTokens,
 		OutputTokens: totals.OutputTokens, ReasoningTokens: totals.ReasoningTokens,
+		EstimatedCost: estimatedCostResponse(totals.EstimatedCost),
+	}
+}
+
+func estimatedCostResponse(cost *domain.EstimatedCost) *EstimatedCostResponse {
+	if cost == nil {
+		return nil
+	}
+	return &EstimatedCostResponse{
+		TotalNanos: cost.TotalNanos, UncachedInputNanos: cost.UncachedInputNanos,
+		CacheReadNanos: cost.CacheReadNanos, CacheWriteNanos: cost.CacheWriteNanos,
+		OutputNanos: cost.OutputNanos, Coverage: string(cost.Coverage),
 	}
 }

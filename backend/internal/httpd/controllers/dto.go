@@ -937,11 +937,23 @@ type ListUsageSessionsQuery struct {
 	ProjectID domain.ProjectID `query:"projectId,omitempty" description:"Optional project id filter for dashboard cards."`
 }
 
-// CompactSessionUsageResponse is one session card's token-only usage summary.
+// EstimatedCostResponse is a coverage-aware nano-USD estimate reused at every
+// usage summary scope.
+type EstimatedCostResponse struct {
+	TotalNanos         int64  `json:"totalNanos" minimum:"0" format:"int64"`
+	UncachedInputNanos *int64 `json:"uncachedInputNanos" minimum:"0" format:"int64"`
+	CacheReadNanos     *int64 `json:"cacheReadNanos" minimum:"0" format:"int64"`
+	CacheWriteNanos    *int64 `json:"cacheWriteNanos" minimum:"0" format:"int64"`
+	OutputNanos        *int64 `json:"outputNanos" minimum:"0" format:"int64"`
+	Coverage           string `json:"coverage" enum:"complete,partial"`
+}
+
+// CompactSessionUsageResponse is one session card's usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID   domain.SessionID `json:"sessionId"`
-	TotalTokens int64            `json:"totalTokens" minimum:"0"`
-	Incomplete  bool             `json:"incomplete"`
+	SessionID     domain.SessionID       `json:"sessionId"`
+	TotalTokens   int64                  `json:"totalTokens" minimum:"0"`
+	Incomplete    bool                   `json:"incomplete"`
+	EstimatedCost *EstimatedCostResponse `json:"estimatedCost"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -951,18 +963,20 @@ type ListCompactSessionUsageResponse struct {
 
 // UsageTotalsResponse is the normalized telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         *int64 `json:"inputTokens"`
-	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
-	CacheReadTokens     *int64 `json:"cacheReadTokens"`
-	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
-	OutputTokens        *int64 `json:"outputTokens"`
-	ReasoningTokens     *int64 `json:"reasoningTokens"`
+	InputTokens         *int64                 `json:"inputTokens"`
+	UncachedInputTokens *int64                 `json:"uncachedInputTokens"`
+	CacheReadTokens     *int64                 `json:"cacheReadTokens"`
+	CacheWriteTokens    *int64                 `json:"cacheWriteTokens"`
+	OutputTokens        *int64                 `json:"outputTokens"`
+	ReasoningTokens     *int64                 `json:"reasoningTokens"`
+	EstimatedCost       *EstimatedCostResponse `json:"estimatedCost"`
 }
 
-// UsageModelResponse is telemetry grouped by exact model id.
+// UsageModelResponse is telemetry grouped by exact provider and model ids.
 type UsageModelResponse struct {
-	ModelID string              `json:"modelId"`
-	Totals  UsageTotalsResponse `json:"totals"`
+	ProviderID string              `json:"providerId"`
+	ModelID    string              `json:"modelId"`
+	Totals     UsageTotalsResponse `json:"totals"`
 }
 
 // UsageHarnessResponse groups model telemetry under one AO harness.

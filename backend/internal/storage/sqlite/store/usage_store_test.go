@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1238,6 +1239,85 @@ func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 	}
 }
 
+func TestUsageAggregatesSeparateProvidersAndPreserveCostCoverageFacts(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	source := seedUsageSource(t, s, sess, now)
+	value := func(n int64) *int64 { return &n }
+	events := []domain.ModelUsageEvent{
+		{
+			ProviderID: "openai", ModelID: "shared-model", SourceEventKey: "complete",
+			Tokens:                 domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 6, CacheReadTokens: 4, OutputTokens: 2},
+			UncachedInputCostNanos: value(20), CacheReadCostNanos: value(10), CacheWriteCostNanos: value(0),
+			OutputCostNanos: value(70), EstimatedCostNanos: value(100), PricingVersion: "openai-v1",
+		},
+		{
+			ProviderID: "zai", ModelID: "shared-model", SourceEventKey: "partial",
+			Tokens:                 domain.UsageTokenMetrics{InputTokens: 5, UncachedInputTokens: 5, OutputTokens: 1},
+			UncachedInputCostNanos: value(30), CacheWriteCostNanos: value(0), OutputCostNanos: value(5),
+			PricingVersion: "zai-v1",
+		},
+	}
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceComplete, UpdatedAt: now,
+	}, events); err != nil {
+		t.Fatalf("apply cost events: %v", err)
+	}
+
+	models, err := s.ListUsageModelAggregates(ctx, sess.ID)
+	mustNoError(t, err)
+	if len(models) != 2 || models[0].ProviderID != "openai" || models[1].ProviderID != "zai" {
+		t.Fatalf("provider/model rows = %+v", models)
+	}
+	complete := models[0].Cost
+	if complete.EventCount != 1 || complete.PricedEventCount != 1 || complete.PricedTotalNanos != 100 ||
+		complete.KnownUncachedInputNanos != 20 || complete.UnpricedKnownUncachedInputNanos != 0 {
+		t.Fatalf("complete cost facts = %+v", complete)
+	}
+	partial := models[1].Cost
+	if partial.EventCount != 1 || partial.PricedEventCount != 0 || partial.PricedTotalNanos != 0 ||
+		partial.KnownUncachedInputCount != 1 || partial.KnownUncachedInputNanos != 30 || partial.UnpricedKnownUncachedInputNanos != 30 ||
+		partial.KnownCacheReadCount != 0 || partial.KnownCacheWriteCount != 1 || partial.UnpricedKnownOutputNanos != 5 {
+		t.Fatalf("partial cost facts = %+v", partial)
+	}
+
+	compact, err := s.ListCompactSessionUsageAggregates(ctx, sess.ProjectID)
+	mustNoError(t, err)
+	if len(compact) != 1 || compact[0].InputTokens != 15 || compact[0].OutputTokens != 3 {
+		t.Fatalf("compact rows = %+v", compact)
+	}
+	cost := compact[0].Cost
+	if cost.EventCount != 2 || cost.PricedEventCount != 1 || cost.PricedTotalNanos != 100 ||
+		cost.KnownUncachedInputCount != 2 || cost.KnownUncachedInputNanos != 50 || cost.UnpricedKnownUncachedInputNanos != 30 ||
+		cost.KnownCacheReadCount != 1 || cost.KnownOutputNanos != 75 || cost.UnpricedKnownOutputNanos != 5 {
+		t.Fatalf("compact cost facts = %+v", cost)
+	}
+}
+
+func TestUsageAggregatesReturnSQLiteIntegerOverflow(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1700000000, 0).UTC()
+	sess := seedUsageSession(t, s, domain.HarnessCodex)
+	source := seedUsageSource(t, s, sess, now)
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 10, State: domain.UsageSourceComplete, UpdatedAt: now,
+	}, []domain.ModelUsageEvent{
+		usageEvent("overflow-1", domain.UsageTokenMetrics{InputTokens: math.MaxInt64}),
+		usageEvent("overflow-2", domain.UsageTokenMetrics{InputTokens: math.MaxInt64}),
+	}); err != nil {
+		t.Fatalf("apply overflow events: %v", err)
+	}
+	if _, err := s.ListUsageModelAggregates(ctx, sess.ID); err == nil || !strings.Contains(err.Error(), "integer overflow") {
+		t.Fatalf("detail overflow error = %v", err)
+	}
+	if _, err := s.ListCompactSessionUsageAggregates(ctx, sess.ProjectID); err == nil || !strings.Contains(err.Error(), "integer overflow") {
+		t.Fatalf("compact overflow error = %v", err)
+	}
+}
+
 func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -1278,16 +1358,16 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 		t.Fatalf("complete replacement binding: %v", err)
 	}
 
-	got, err := s.ListCompactSessionUsage(ctx, "usage")
+	got, err := s.ListCompactSessionUsageAggregates(ctx, "usage")
 	mustNoError(t, err, "list compact usage")
 	if len(got) != 1 || got[0].SessionID != usageSession.ID {
 		t.Fatalf("filtered rows = %+v, want only %s (not %s)", got, usageSession.ID, otherSession.ID)
 	}
 	row := got[0]
-	if row.TotalTokens != 180 || row.Incomplete {
+	if row.InputTokens != 150 || row.OutputTokens != 30 || row.Incomplete {
 		t.Fatalf("aggregate = %+v", row)
 	}
-	all, err := s.ListCompactSessionUsage(ctx, "")
+	all, err := s.ListCompactSessionUsageAggregates(ctx, "")
 	mustNoError(t, err, "list all compact usage")
 	if len(all) != 1 {
 		t.Fatalf("all rows = %d, want only sessions with usage", len(all))
@@ -1342,9 +1422,9 @@ func TestListCompactSessionUsageSeparatesRetriesFromIntegrityFailures(t *testing
 		t.Fatalf("mark integrity failure: %v", err)
 	}
 
-	rows, err := s.ListCompactSessionUsage(ctx, transientSession.ProjectID)
+	rows, err := s.ListCompactSessionUsageAggregates(ctx, transientSession.ProjectID)
 	mustNoError(t, err)
-	bySession := make(map[domain.SessionID]domain.CompactSessionUsage, len(rows))
+	bySession := make(map[domain.SessionID]domain.CompactSessionUsageAggregate, len(rows))
 	for _, row := range rows {
 		bySession[row.SessionID] = row
 	}
@@ -1419,13 +1499,13 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 		t.Fatalf("model aggregates = %+v, want input=180 output=35 events=3", models)
 	}
 
-	compact, err := s.ListCompactSessionUsage(ctx, sess.ProjectID)
+	compact, err := s.ListCompactSessionUsageAggregates(ctx, sess.ProjectID)
 	mustNoError(t, err, "list compact usage")
 	if len(compact) != 1 {
 		t.Fatalf("compact rows = %+v, want one", compact)
 	}
 	row := compact[0]
-	if row.TotalTokens != 215 || row.Incomplete {
+	if row.InputTokens != 180 || row.OutputTokens != 35 || row.Incomplete {
 		t.Fatalf("compact aggregate = %+v", row)
 	}
 }
