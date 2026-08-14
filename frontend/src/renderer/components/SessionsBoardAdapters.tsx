@@ -289,10 +289,20 @@ function DesktopUsageMetric({
 }) {
 	const { t } = useTranslation();
 	const total = formatEstimatedCost(estimatedCost);
+	const triggerLabel = total
+		? `${t("usage.estimatedCost")}: ${usage.accessibleLabel}`
+		: usage.accessibleLabel;
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<SessionUsageMetricView usage={usage} />
+				<button
+					aria-label={triggerLabel}
+					className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					onClick={(event) => event.stopPropagation()}
+					type="button"
+				>
+					<SessionUsageMetricView aria-hidden="true" usage={usage} />
+				</button>
 			</TooltipTrigger>
 			<TooltipContent side="top">
 				{estimatedCost && total ? (

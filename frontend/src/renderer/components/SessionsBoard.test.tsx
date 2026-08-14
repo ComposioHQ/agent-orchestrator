@@ -361,6 +361,59 @@ describe("SessionsBoard", () => {
 		expect(within(archivedTooltip).getAllByText("—")).toHaveLength(2);
 	});
 
+	it("makes the exact cost breakdown keyboard-readable without opening the card", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-keyboard", title: "keyboard worker", status: "idle" }),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		usageQueryMock.mockReturnValue({
+			data: new Map([
+				[
+					"s-keyboard",
+					{
+						estimatedCost: {
+							cacheReadNanos: 100_000_000,
+							cacheWriteNanos: 140_000_000,
+							coverage: "complete",
+							outputNanos: 600_000_000,
+							totalNanos: 1_240_000_000,
+							uncachedInputNanos: 400_000_000,
+						},
+						incomplete: false,
+						sessionId: "s-keyboard",
+						totalTokens: 12_400,
+					},
+				],
+			]),
+		});
+
+		renderBoard("p1");
+
+		const card = screen.getByText("keyboard worker").closest('[data-testid="board-session-card"]') as HTMLElement;
+		within(card).getByRole("button", { name: "keyboard worker" }).focus();
+		await userEvent.tab();
+		expect(within(card).getByRole("button", { name: "Terminate keyboard worker" })).toHaveFocus();
+		await userEvent.tab();
+
+		const costTrigger = within(card).getByRole("button", {
+			name: "Estimated cost: ≈$1.24 · 12,400 tokens",
+		});
+		expect(costTrigger).toHaveFocus();
+		const tooltip = await screen.findByRole("tooltip");
+		expect(within(tooltip).getByText("Estimated cost")).toBeInTheDocument();
+		expect(within(tooltip).getByText("Input").nextElementSibling).toHaveTextContent("$0.40");
+		expect(within(tooltip).getByText("Cache read").nextElementSibling).toHaveTextContent("$0.10");
+		expect(within(tooltip).getByText("Cache write").nextElementSibling).toHaveTextContent("$0.14");
+		expect(within(tooltip).getByText("Output").nextElementSibling).toHaveTextContent("$0.60");
+		await userEvent.keyboard("{Enter}");
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
 	it("pulses the shared activity indicator on an actively working session card", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [
