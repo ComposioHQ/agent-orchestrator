@@ -1381,6 +1381,7 @@ export function CloudWorkspace() {
                 if (project) void openShareDialog(project);
               }}
               organizationId={activeSessionOrgId}
+              projectSessions={sessions.filter((candidate) => candidate.projectId === activeSession.projectId)}
               session={activeSession}
             />
           ) : (

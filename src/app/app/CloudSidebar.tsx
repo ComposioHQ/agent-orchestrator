@@ -278,7 +278,7 @@ export function CloudSidebar({
           const projectSessions = orchestratorsFirst(
             sessions.filter((session) => session.projectId === project.id),
           );
-          const hasOrchestrator = projectSessions.some(
+          const orchestrator = projectSessions.find(
             (session) => session.kind === "orchestrator",
           );
           return (
@@ -330,11 +330,15 @@ export function CloudSidebar({
                   </span>
                 </motion.button>
                 <div className="absolute inset-y-0 right-1.5 z-10 flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
-                  {hasOrchestrator ? (
-                    <OrchestratorIcon
-                      aria-label="Orchestrator project"
-                      className="size-3.5 shrink-0 text-[var(--color-text-passive)]"
-                    />
+                  {orchestrator ? (
+                    <button
+                      aria-label={`Open orchestrator for ${project.displayName}`}
+                      className="grid size-6 shrink-0 place-items-center rounded-md text-[var(--color-text-passive)] transition-[color,transform] duration-150 hover:scale-125 hover:text-[var(--foreground)] motion-reduce:hover:scale-100"
+                      onClick={() => onSelectSession(orchestrator.id)}
+                      type="button"
+                    >
+                      <OrchestratorIcon className="size-3.5" aria-hidden="true" />
+                    </button>
                   ) : null}
                 <DropdownMenuPrimitive.Root>
                   <DropdownMenuPrimitive.Trigger asChild>

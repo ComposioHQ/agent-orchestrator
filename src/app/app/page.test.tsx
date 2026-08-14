@@ -589,7 +589,7 @@ it("keeps the orchestrator first in its project and out of the task board", asyn
     ?.parentElement;
   expect(orchestratorLabel.closest("button")?.querySelector("svg")).not.toBeNull();
   expect(
-    within(sidebar).getByLabelText("Orchestrator project"),
+    within(sidebar).getByLabelText("Open orchestrator for Cloud platform"),
   ).toBeVisible();
   expect(
     orchestratorRow?.querySelector('[aria-label="Pin session"]'),

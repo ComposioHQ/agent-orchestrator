@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Untrivial-ai/ao-cloud/internal/domain"
 	"github.com/Untrivial-ai/ao-cloud/internal/worker"
 	"github.com/aoagents/agent-orchestrator/backend/pkg/contract"
 	"github.com/jackc/pgx/v5"
@@ -481,6 +482,77 @@ func TestOpenTerminalIgnoresStaleEpochTerminalCapacity(t *testing.T) {
 	}
 	if terminal.WorkerEpoch != currentEpoch {
 		t.Fatalf("terminal epoch = %d, want %d", terminal.WorkerEpoch, currentEpoch)
+	}
+}
+
+func TestOpenTerminalReplacesSameKindTerminalDuringBrowserRefresh(t *testing.T) {
+	fixture := newSandboxFixture(t, "terminal-refresh-replacement")
+	ctx := context.Background()
+	workerID, epoch := registerTestWorker(t, fixture)
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sessions SET mode = 'trusted', denied_commands = '{}'
+			WHERE id = $1`,
+			fixture.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	openWorkspace := func() domain.TerminalSession {
+		t.Helper()
+		token, _, err := fixture.store.IssueTerminalTicket(
+			ctx, fixture.principal, fixture.orgID, fixture.sessionID, "workspace", time.Minute,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		terminal, err := fixture.store.OpenTerminal(ctx, token, "workspace", time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return terminal
+	}
+
+	first := openWorkspace()
+	request, ok, err := fixture.store.ClaimWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, time.Minute,
+	)
+	if err != nil || !ok || request.Kind != "terminal.open" {
+		t.Fatalf("first open request = %+v, ok = %v, err = %v", request, ok, err)
+	}
+	if err := fixture.store.CompleteWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, request.ID, epoch,
+		request.Attempt, json.RawMessage(`{"open":true}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	second := openWorkspace()
+	if first.ID == second.ID {
+		t.Fatalf("replacement reused terminal %q", first.ID)
+	}
+	if err := fixture.store.QueueTerminalInput(ctx, first, "stale", []byte("pwd\n")); !errors.Is(err, ErrWorkerUnavailable) {
+		t.Fatalf("stale terminal input error = %v", err)
+	}
+	closeRequest, ok, err := fixture.store.ClaimWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, time.Minute,
+	)
+	if err != nil || !ok || closeRequest.Kind != "terminal.close" {
+		t.Fatalf("replacement close request = %+v, ok = %v, err = %v", closeRequest, ok, err)
+	}
+	if err := fixture.store.CompleteWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, closeRequest.ID, epoch,
+		closeRequest.Attempt, json.RawMessage(`{"closed":true}`),
+	); err != nil {
+		t.Fatal(err)
+	}
+	openRequest, ok, err := fixture.store.ClaimWorkerRequest(
+		ctx, fixture.orgID, fixture.sessionID, workerID, epoch, time.Minute,
+	)
+	if err != nil || !ok || openRequest.Kind != "terminal.open" {
+		t.Fatalf("replacement open request = %+v, ok = %v, err = %v", openRequest, ok, err)
 	}
 }
 

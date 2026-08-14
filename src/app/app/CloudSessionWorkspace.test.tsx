@@ -150,6 +150,53 @@ it("opens a separate trusted workspace shell in the right inspector", () => {
   expect(screen.getByText("Interactive workspace terminal")).toBeVisible();
 });
 
+it("shows child worker changes in the orchestrator inspector", async () => {
+  const orchestrator = {
+    ...session,
+    id: "orchestrator-1",
+    kind: "orchestrator" as const,
+    displayName: "Orchestrator",
+  };
+  const worker = {
+    ...session,
+    id: "worker-1",
+    displayName: "random-file-pr",
+  };
+  mocks.getWorkspaceDiff.mockImplementation(async (_orgID: string, sessionID: string) => ({
+    status: sessionID === worker.id ? "?? random-fact.txt" : "",
+    unstaged: "",
+    staged: "",
+    combined: "",
+    diffBaseRef: "main",
+    files: [],
+    untrackedFiles: sessionID === worker.id ? ["random-fact.txt"] : [],
+    truncated: { combined: false, stats: false },
+  }));
+  mocks.readWorkspaceFile.mockResolvedValue({
+    path: "random-fact.txt",
+    content: "Honey never spoils.\n",
+    size: 20,
+  });
+
+  render(
+    <CloudSessionWorkspace
+      onClose={vi.fn()}
+      organizationId="org-1"
+      projectSessions={[orchestrator, worker]}
+      session={orchestrator}
+    />,
+  );
+
+  fireEvent.click(await screen.findByRole("tab", { name: "Summary" }));
+  expect(await screen.findByText("random-file-pr")).toBeVisible();
+  fireEvent.click(screen.getByText("random-fact.txt"));
+  await waitFor(() => expect(mocks.readWorkspaceFile).toHaveBeenCalledWith(
+    "org-1",
+    "worker-1",
+    "random-fact.txt",
+  ));
+});
+
 it("waits for the worker before mounting the terminal", () => {
   render(
     <CloudSessionWorkspace

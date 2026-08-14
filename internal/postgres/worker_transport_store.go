@@ -519,6 +519,43 @@ func (s *Store) OpenTerminal(
 				return err
 			}
 		}
+		if kind == "workspace" || kind == "agent" {
+			var retiredIDs []string
+			if err := tx.QueryRow(ctx,
+				`WITH retired AS (
+					UPDATE ao_terminal_sessions
+					SET state = 'closed', closed_at = now(), updated_at = now()
+					WHERE org_id = $1 AND session_id = $2 AND worker_epoch = $3
+					  AND kind = $4 AND state IN ('opening', 'open')
+					RETURNING id
+				)
+				SELECT COALESCE(array_agg(id::text), ARRAY[]::text[]) FROM retired`,
+				ticket.OrgID, ticket.SessionID, ticket.WorkerEpoch, kind,
+			).Scan(&retiredIDs); err != nil {
+				return err
+			}
+			for _, terminalID := range retiredIDs {
+				if _, err := tx.Exec(ctx,
+					`UPDATE ao_worker_requests
+					SET status = 'cancelled', updated_at = now()
+					WHERE org_id = $1 AND session_id = $2 AND worker_epoch = $3
+					  AND status IN ('pending', 'claimed')
+					  AND payload->>'terminalId' = $4`,
+					ticket.OrgID, ticket.SessionID, ticket.WorkerEpoch, terminalID,
+				); err != nil {
+					return err
+				}
+				payload, _ := json.Marshal(map[string]any{"terminalId": terminalID})
+				if _, err := tx.Exec(ctx,
+					`INSERT INTO ao_worker_requests (
+						org_id, session_id, worker_epoch, kind, payload, expires_at
+					) VALUES ($1, $2, $3, 'terminal.close', $4, now() + interval '15 seconds')`,
+					ticket.OrgID, ticket.SessionID, ticket.WorkerEpoch, payload,
+				); err != nil {
+					return err
+				}
+			}
+		}
 		var active int
 		if err := tx.QueryRow(ctx,
 			`SELECT count(*) FROM ao_terminal_sessions

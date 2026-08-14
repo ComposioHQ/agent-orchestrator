@@ -68,6 +68,7 @@ export function CloudSessionWorkspace({
   onNewTask = () => {},
   onShare = () => {},
   organizationId,
+  projectSessions = [],
   session,
 }: {
   onClose: () => void;
@@ -75,15 +76,18 @@ export function CloudSessionWorkspace({
   onNewTask?: () => void;
   onShare?: () => void;
   organizationId: string;
+  projectSessions?: Session[];
   session: Session;
 }) {
   const client = useMemo(browserCloudClient, []);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [tab, setTab] = useState<CloudInspectorTab>("terminal");
   const [diff, setDiff] = useState<WorkspaceDiff | null>(null);
+  const [workerDiffs, setWorkerDiffs] = useState<Array<{ session: Session; diff: WorkspaceDiff }>>([]);
   const [directory, setDirectory] = useState("");
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
+  const [selectedFileSessionId, setSelectedFileSessionId] = useState(session.id);
   const [fileContent, setFileContent] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -93,6 +97,9 @@ export function CloudSessionWorkspace({
   const [reviewsLoading, setReviewsLoading] = useState(true);
   const diffInFlight = useRef(false);
   const shownErrors = useRef(new Set<string>());
+  const projectRuntimeKey = projectSessions
+    .map((candidate) => `${candidate.id}:${candidate.runtimeConnected}:${candidate.isTerminated}`)
+    .join("|");
 
   useEffect(() => {
     if (!error || error === "Too many workspace operations are already in progress." || shownErrors.current.has(error)) return;
@@ -121,8 +128,23 @@ export function CloudSessionWorkspace({
     if (!session.runtimeConnected || diffInFlight.current) return;
     diffInFlight.current = true;
     try {
-      const next = await client.getWorkspaceDiff(organizationId, session.id);
-      setDiff(next);
+      if (session.kind === "orchestrator") {
+        const workers = projectSessions.filter(
+          (candidate) => candidate.kind !== "orchestrator" && candidate.runtimeConnected && !candidate.isTerminated,
+        );
+        const results = await Promise.allSettled(
+          workers.map(async (worker) => ({
+            session: worker,
+            diff: await client.getWorkspaceDiff(organizationId, worker.id),
+          })),
+        );
+        setWorkerDiffs(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
+        setDiff(null);
+      } else {
+        const next = await client.getWorkspaceDiff(organizationId, session.id);
+        setDiff(next);
+        setWorkerDiffs([]);
+      }
       setError("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load changes.");
@@ -151,15 +173,16 @@ export function CloudSessionWorkspace({
     }
   };
 
-  const openFile = async (path: string) => {
+  const openFile = async (path: string, sourceSessionId = session.id) => {
     setBusy(true);
     try {
       const file = await client.readWorkspaceFile(
         organizationId,
-        session.id,
+        sourceSessionId,
         path,
       );
       setSelectedFile(file);
+      setSelectedFileSessionId(sourceSessionId);
       setFileContent(file.content);
       setTab("files");
       setError("");
@@ -176,7 +199,7 @@ export function CloudSessionWorkspace({
     try {
       const file = await client.writeWorkspaceFile(
         organizationId,
-        session.id,
+        selectedFileSessionId,
         { path: selectedFile.path, content: fileContent },
       );
       setSelectedFile(file);
@@ -193,7 +216,7 @@ export function CloudSessionWorkspace({
     void loadDiff();
     const timer = window.setInterval(() => void loadDiff(), 2_000);
     return () => window.clearInterval(timer);
-  }, [organizationId, session.id, session.runtimeConnected]);
+  }, [organizationId, session.id, session.runtimeConnected, projectRuntimeKey]);
 
   useEffect(() => {
     if (tab === "files") {
@@ -213,7 +236,9 @@ export function CloudSessionWorkspace({
     {
       id: "summary",
       label: "Summary",
-      displayLabel: `Summary ${diff?.files.length ?? 0}`,
+      displayLabel: `Summary ${session.kind === "orchestrator"
+        ? workerDiffs.reduce((count, item) => count + item.diff.files.length + item.diff.untrackedFiles.length, 0)
+        : (diff?.files.length ?? 0) + (diff?.untrackedFiles.length ?? 0)}`,
       icon: <SummaryIcon />,
     },
     {
@@ -316,7 +341,14 @@ export function CloudSessionWorkspace({
           summaryView={(
             <div className="space-y-5">
               <InspectorSectionHeader label="Changes" onRefresh={() => void loadDiff()} />
-              <ChangesView diff={diff} onOpenFile={(path) => void openFile(path)} />
+              {session.kind === "orchestrator" ? (
+                <WorkerChangesView
+                  workerDiffs={workerDiffs}
+                  onOpenFile={(sessionId, path) => void openFile(path, sessionId)}
+                />
+              ) : (
+                <ChangesView diff={diff} onOpenFile={(path) => void openFile(path)} />
+              )}
               <InspectorSectionHeader label="Pull requests" onRefresh={() => void loadReviews()} />
               <PullRequestsView isLoading={reviewsLoading} pullRequests={pullRequests} reviewGroups={reviewGroups} />
             </div>
@@ -556,6 +588,75 @@ function ChangesView({
       </pre>
     </div>
   );
+}
+
+function WorkerChangesView({
+  onOpenFile,
+  workerDiffs,
+}: {
+  onOpenFile: (sessionId: string, path: string) => void;
+  workerDiffs: Array<{ session: Session; diff: WorkspaceDiff }>;
+}) {
+  const changedWorkers = workerDiffs.filter(({ diff }) => {
+    const visibleFiles = diff.files.filter((file) => !isHiddenPath(file.path));
+    const visibleUntracked = diff.untrackedFiles.filter((path) => !isHiddenPath(path));
+    return visibleFiles.length > 0 || visibleUntracked.length > 0;
+  });
+
+  if (changedWorkers.length === 0) {
+    return (
+      <div className="grid min-h-0 flex-1 place-items-center p-6 text-center text-xs leading-5 text-[var(--color-text-passive)]">
+        No worker changes yet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      {changedWorkers.map(({ session: worker, diff }) => {
+        const visibleFiles = diff.files.filter((file) => !isHiddenPath(file.path));
+        const visibleUntracked = diff.untrackedFiles.filter((path) => !isHiddenPath(path));
+        return (
+          <section key={worker.id} className="overflow-hidden rounded-md border border-[var(--color-border-strong)]">
+            <div className="border-b border-[var(--color-border-strong)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs font-medium text-[var(--foreground)]">
+              {worker.displayName}
+            </div>
+            <div className="p-1">
+              {visibleFiles.map((file) => (
+                <button
+                  className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
+                  key={file.path}
+                  onClick={() => onOpenFile(worker.id, file.path)}
+                  type="button"
+                >
+                  <FileCode2 className="size-3.5 text-[var(--color-text-passive)]" />
+                  <span className="min-w-0 flex-1 truncate text-xs">{file.path}</span>
+                  <span className="font-mono text-[9px] text-[#4ade80]">+{file.additions}</span>
+                  <span className="font-mono text-[9px] text-[#f87171]">-{file.deletions}</span>
+                </button>
+              ))}
+              {visibleUntracked.map((path) => (
+                <button
+                  className="flex h-8 w-full items-center gap-2 rounded px-2 text-left hover:bg-[var(--color-interactive-hover)]"
+                  key={path}
+                  onClick={() => onOpenFile(worker.id, path)}
+                  type="button"
+                >
+                  <FileCode2 className="size-3.5 text-[var(--color-text-passive)]" />
+                  <span className="min-w-0 flex-1 truncate text-xs">{path}</span>
+                  <span className="font-mono text-[9px] text-[#4ade80]">new</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function isHiddenPath(path: string): boolean {
+  return path.split("/").some((segment) => segment.startsWith("."));
 }
 
 function FileBrowser({

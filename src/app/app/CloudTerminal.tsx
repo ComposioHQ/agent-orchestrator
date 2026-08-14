@@ -14,7 +14,6 @@ import { buildTerminalTheme } from "@/lib/terminal-themes";
 export function CloudTerminal({
   organizationId,
   sessionId,
-  layoutKey = "",
   kind = "agent",
 }: {
   organizationId: string;
@@ -39,6 +38,7 @@ export function CloudTerminal({
       fontFamily:
         '"JetBrainsMono Nerd Font Mono", "FiraCode Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 12,
+      lineHeight: 1.35,
       scrollback: 10_000,
       theme: buildTerminalTheme(),
     });
@@ -46,12 +46,14 @@ export function CloudTerminal({
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
-    const fitTerminal = () => fit.fit();
-    fitTerminal();
-    const firstFrame = window.requestAnimationFrame(fitTerminal);
-    const secondFrame = window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(fitTerminal);
-    });
+    const fitTerminal = () => {
+      if (host.clientWidth < 40 || host.clientHeight < 40) return;
+      try {
+        fit.fit();
+      } catch {
+        // A later layout or font event retries transient zero-sized hosts.
+      }
+    };
 
     const persistentConnection = ensureCloudTerminalConnection(
       client,
@@ -79,23 +81,64 @@ export function CloudTerminal({
     const resize = terminal.onResize(({ cols, rows }) => {
       persistentConnection.resize(rows, cols);
     });
-    const observer = new ResizeObserver(() => {
+    const FIT_QUIET_MS = 120;
+    const FIT_CAP_MS = 500;
+    let fitQuietTimer: number | undefined;
+    let fitCapTimer: number | undefined;
+    let disposed = false;
+    const flushScheduledFit = () => {
+      if (disposed) return;
+      if (fitQuietTimer !== undefined) window.clearTimeout(fitQuietTimer);
+      if (fitCapTimer !== undefined) window.clearTimeout(fitCapTimer);
+      fitQuietTimer = undefined;
+      fitCapTimer = undefined;
       fitTerminal();
       persistentConnection.resize(terminal.rows, terminal.cols);
-    });
+    };
+    const scheduleStableFit = () => {
+      if (disposed) return;
+      if (fitQuietTimer !== undefined) window.clearTimeout(fitQuietTimer);
+      fitQuietTimer = window.setTimeout(flushScheduledFit, FIT_QUIET_MS);
+      if (fitCapTimer === undefined) {
+        fitCapTimer = window.setTimeout(flushScheduledFit, FIT_CAP_MS);
+      }
+    };
+
+    const firstFrame = window.requestAnimationFrame(fitTerminal);
+    const settleTimers = [50, 250, 600, 1200].map((delay) =>
+      window.setTimeout(scheduleStableFit, delay),
+    );
+    const observer = new ResizeObserver(scheduleStableFit);
     observer.observe(host);
-    if (host.parentElement) observer.observe(host.parentElement);
-    let active = true;
     void document.fonts?.ready.then(() => {
-      if (!active) return;
-      fitTerminal();
-      persistentConnection.resize(terminal.rows, terminal.cols);
+      if (!disposed) scheduleStableFit();
     });
-    const settledLayout = window.setTimeout(() => {
-      fitTerminal();
-      persistentConnection.resize(terminal.rows, terminal.cols);
-      terminal.refresh(0, terminal.rows - 1);
-    }, 250);
+    const STABLE_FRAMES_TARGET = 3;
+    const MAX_REFITS = 20;
+    let stableFrames = 0;
+    let refits = 0;
+    let pending: { cols: number; rows: number } | null = null;
+    const stabilizer = terminal.onRender(() => {
+      const proposed = fit.proposeDimensions();
+      if (!proposed || proposed.cols < 20 || proposed.rows < 4) return;
+      if (proposed.cols !== terminal.cols || proposed.rows !== terminal.rows) {
+        stableFrames = 0;
+        if (pending && pending.cols === proposed.cols && pending.rows === proposed.rows) {
+          pending = null;
+          if (refits++ >= MAX_REFITS) {
+            stabilizer.dispose();
+            return;
+          }
+          fitTerminal();
+          return;
+        }
+        pending = proposed;
+        return;
+      }
+      pending = null;
+      if (++stableFrames >= STABLE_FRAMES_TARGET) stabilizer.dispose();
+    });
+    window.addEventListener("resize", scheduleStableFit);
 
     const themeObserver = new MutationObserver(() => {
       terminal.options.theme = buildTerminalTheme();
@@ -106,11 +149,14 @@ export function CloudTerminal({
     });
 
     return () => {
-      active = false;
+      disposed = true;
       termRef.current = null;
-      window.clearTimeout(settledLayout);
+      if (fitQuietTimer !== undefined) window.clearTimeout(fitQuietTimer);
+      if (fitCapTimer !== undefined) window.clearTimeout(fitCapTimer);
+      for (const timer of settleTimers) window.clearTimeout(timer);
       window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
+      window.removeEventListener("resize", scheduleStableFit);
+      stabilizer.dispose();
       themeObserver.disconnect();
       observer.disconnect();
       unsubscribe();
@@ -118,7 +164,7 @@ export function CloudTerminal({
       resize.dispose();
       terminal.dispose();
     };
-  }, [client, kind, layoutKey, organizationId, sessionId]);
+  }, [client, kind, organizationId, sessionId]);
 
   useEffect(() => {
     if (!notice) return;
