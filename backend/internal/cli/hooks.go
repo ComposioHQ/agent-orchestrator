@@ -175,12 +175,21 @@ func hookConversationFacts(payload []byte) hookConversationSnapshot {
 		LastAssistantMessageCamel string `json:"lastAssistantMessage"`
 		AssistantMessage          string `json:"assistant_message"`
 		AssistantMessageCamel     string `json:"assistantMessage"`
+		PromptResponse            string `json:"prompt_response"`
+		PromptResponseCamel       string `json:"promptResponse"`
 		TranscriptPath            string `json:"transcript_path"`
 		TranscriptPathCamel       string `json:"transcriptPath"`
 	}
 	_ = json.Unmarshal(payload, &p)
 	userPrompt := firstHookValue(p.Prompt, p.UserPrompt, p.UserPromptCamel)
-	assistant := firstHookValue(p.LastAssistantMessage, p.LastAssistantMessageCamel, p.AssistantMessage, p.AssistantMessageCamel)
+	assistant := firstHookValue(
+		p.LastAssistantMessage,
+		p.LastAssistantMessageCamel,
+		p.AssistantMessage,
+		p.AssistantMessageCamel,
+		p.PromptResponse,
+		p.PromptResponseCamel,
+	)
 	// AO's own handoff request and continuation kickoff are coordination turns,
 	// not the latest real user instruction. They remain in provider history but
 	// must not overwrite deterministic user intent.
@@ -295,7 +304,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	toolName, toolUseID := activityMeta(payload)
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
-	case domain.HarnessClaudeCode, domain.HarnessCodex:
+	case domain.HarnessClaudeCode, domain.HarnessCodex, domain.HarnessAgy:
 		conversation = hookConversationFacts(payload)
 	}
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
