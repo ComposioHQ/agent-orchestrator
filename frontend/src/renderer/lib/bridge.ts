@@ -27,6 +27,8 @@ export const aoBridge: AoBridge =
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
+			setFocused: () => undefined,
+			onFontSizeShortcut: () => () => undefined,
 		},
 		window: {
 			setOverlay: async () => undefined,
@@ -178,5 +180,11 @@ export const aoBridge: AoBridge =
 		featureBuilds: {
 			list: async () => [],
 			getActive: async () => null,
+		},
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
 		},
 	} satisfies AoBridge);

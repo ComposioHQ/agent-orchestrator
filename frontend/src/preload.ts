@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, SET_TERMINAL_FOCUSED_CHANNEL, TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type {
 	BrowserAgentActivityState,
 	BrowserDevToolsInput,
@@ -19,6 +19,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { CloudAccount } from "./shared/cloud-account";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -66,6 +67,7 @@ export type ImportRepoScan = {
 	hasRemote: boolean;
 	status?: "ok" | "error";
 	reason?: string;
+	needsGitInit?: boolean;
 };
 
 export type ImportFolderScan = {
@@ -164,6 +166,14 @@ const api = {
 	terminal: {
 		saveDroppedFile: (input: { name: string; bytes: Uint8Array }) =>
 			ipcRenderer.invoke("terminal:saveDroppedFile", input) as Promise<string>,
+		setFocused: (focused: boolean) => ipcRenderer.send(SET_TERMINAL_FOCUSED_CHANNEL, focused),
+		onFontSizeShortcut: (listener: (delta: -1 | 1) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, delta: -1 | 1) => listener(delta);
+			ipcRenderer.on(TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
 	},
 	window: {
 		setOverlay: (overlay: { color: string; symbolColor: string }) =>
@@ -343,6 +353,18 @@ const api = {
 	featureBuilds: {
 		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
+	},
+	cloud: {
+		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudAccount | null>,
+		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
+		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
+		onSessionChanged: (listener: (account: CloudAccount | null) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, account: CloudAccount | null) => listener(account);
+			ipcRenderer.on("cloud:sessionChanged", wrapped);
+			return () => {
+				ipcRenderer.off("cloud:sessionChanged", wrapped);
+			};
+		},
 	},
 };
 

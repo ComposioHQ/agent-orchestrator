@@ -159,11 +159,12 @@ type ListSessionsResponse struct {
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
-	ProjectID domain.ProjectID    `json:"projectId"`
-	IssueID   domain.IssueID      `json:"issueId,omitempty"`
-	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand"`
-	Branch    string              `json:"branch,omitempty"`
+	ProjectID       domain.ProjectID       `json:"projectId"`
+	IssueID         domain.IssueID         `json:"issueId,omitempty"`
+	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab"`
+	Kind            domain.SessionKind     `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand"`
+	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
 	// Omitted resolves to the daemon default (tui), which is why an upgrade
@@ -173,6 +174,7 @@ type SpawnSessionRequest struct {
 	// producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
+
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
@@ -333,6 +335,28 @@ type SetSessionReviewerRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
 
+// SetSessionAutoReviewRequest configures daemon-side review automation.
+type SetSessionAutoReviewRequest struct {
+	Enabled        bool `json:"enabled"`
+	enabledPresent bool
+}
+
+// UnmarshalJSON distinguishes an omitted required boolean from an explicit
+// false without making the generated API schema nullable.
+func (r *SetSessionAutoReviewRequest) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	r.enabledPresent = wire.Enabled != nil
+	if wire.Enabled != nil {
+		r.Enabled = *wire.Enabled
+	}
+	return nil
+}
+
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
 // session workspace; a non-empty url is used verbatim as the preview target.
@@ -429,6 +453,20 @@ type SetSessionAutoInjectReviewResponse struct {
 	SessionID        domain.SessionID `json:"sessionId"`
 	AutoInjectReview bool             `json:"autoInjectReview"`
 	Session          SessionView      `json:"session"`
+}
+
+// SetSessionAutoInjectCIRequest updates the default automatic CI delivery
+// policy captured by PRs created after the change.
+type SetSessionAutoInjectCIRequest struct {
+	AutoInjectCI bool `json:"autoInjectCI"`
+}
+
+// SetSessionAutoInjectCIResponse confirms the persisted session default.
+type SetSessionAutoInjectCIResponse struct {
+	OK           bool             `json:"ok"`
+	SessionID    domain.SessionID `json:"sessionId"`
+	AutoInjectCI bool             `json:"autoInjectCI"`
+	Session      SessionView      `json:"session"`
 }
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
@@ -588,7 +626,7 @@ type SessionPRSummary struct {
 	Number           int                          `json:"number"`
 	Title            string                       `json:"title"`
 	State            domain.PRState               `json:"state" enum:"draft,open,merged,closed"`
-	Provider         string                       `json:"provider" enum:"github"`
+	Provider         string                       `json:"provider" enum:"github,gitlab"`
 	Repo             string                       `json:"repo"`
 	Author           string                       `json:"author"`
 	SourceBranch     string                       `json:"sourceBranch"`
@@ -612,6 +650,7 @@ type SessionPRSummary struct {
 type SessionPRCISummary struct {
 	State         domain.CIState          `json:"state" enum:"unknown,pending,passing,failing"`
 	FailingChecks []SessionPRFailingCheck `json:"failingChecks"`
+	AutoInjectCI  bool                    `json:"autoInjectCI"`
 }
 
 // SessionPRFailingCheck is one failed or cancelled CI check for a PR.
@@ -720,7 +759,7 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 	for _, ch := range in.FailingChecks {
 		checks = append(checks, SessionPRFailingCheck{Name: ch.Name, Status: ch.Status, Conclusion: ch.Conclusion, URL: ch.URL})
 	}
-	return SessionPRCISummary{State: in.State, FailingChecks: checks}
+	return SessionPRCISummary{State: in.State, FailingChecks: checks, AutoInjectCI: in.AutoInjectCI}
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {
@@ -1107,11 +1146,45 @@ type ResolveCommentsResponse struct {
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
 type MobileStatusResponse struct {
-	Enabled  bool   `json:"enabled"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Password string `json:"password"`
-	Warning  string `json:"warning"`
+	Enabled bool   `json:"enabled"`
+	Host    string `json:"host"`
+	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
+	// Tailscale is not up. The renderer encodes it into the pairing QR when the
+	// user selects the Tailscale tab, and shows a hint instead when it is empty.
+	TailscaleHost string              `json:"tailscaleHost"`
+	Port          int                 `json:"port"`
+	Password      string              `json:"password"`
+	Warning       string              `json:"warning"`
+	SecurePairing SecurePairingStatus `json:"securePairing"`
+}
+
+// SecurePairingStatus describes the optional TLS-over-Tailscale pairing mode,
+// in which `tailscale serve` fronts the bridge with a real certificate so iOS
+// can pair by scanning (App Transport Security blocks cleartext to Tailscale's
+// 100.64.0.0/10 range).
+type SecurePairingStatus struct {
+	Enabled   bool   `json:"enabled"`   // the user turned the mode on
+	Available bool   `json:"available"` // CLI present, MagicDNS name known, certs enabled
+	Active    bool   `json:"active"`    // proxy verified pointing at the live bridge port
+	Host      string `json:"host"`      // MagicDNS name; "" when unknown
+	Port      int    `json:"port"`      // 443 when active, else 0
+	// Reason is a fixed enum the renderer maps to localized setup steps:
+	// no_cli, no_magicdns, no_certs, serve_failed, port_mismatch, clear_failed.
+	// Empty when Available. Never a raw error string — those are untranslated
+	// and can leak paths.
+	Reason string `json:"reason"`
+}
+
+// SetSecurePairingRequest is the body of POST /api/v1/mobile/secure-pairing.
+type SetSecurePairingRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// PushPairingIDParam is the {id} path parameter for the unpair route. It accepts
+// either the phone's install ID or, from builds that predate install IDs, its
+// push token.
+type PushPairingIDParam struct {
+	ID string `path:"id" description:"The phone's install id, or its push token for older builds."`
 }
 
 // PushDeviceTokenParam is the {token} path parameter for push-device routes.
@@ -1121,16 +1194,26 @@ type PushDeviceTokenParam struct {
 
 // RegisterPushDeviceRequest is the body of POST /api/v1/push/devices. The phone
 // sends its Expo push token plus a bit of descriptive metadata; the daemon keys
-// the registry on the token and re-registering is an idempotent upsert.
+// the registry on the install ID (the token is an attribute and is now optional)
+// and re-registering is an idempotent upsert.
 type RegisterPushDeviceRequest struct {
-	Token      string `json:"token" description:"Expo push token, e.g. ExponentPushToken[...]."`
+	// Optional so the published contract matches what the daemon actually
+	// accepts: app builds predating install IDs send none, and the handler
+	// synthesizes a legacy one rather than rejecting them. Marking it required
+	// would generate clients unable to express a request the server handles.
+	InstallID string `json:"installId,omitempty" description:"Stable per-install device id, keying the registry so a rotated push token updates the same row. Optional: older app builds omit it and the daemon synthesizes one."`
+	// Optional: a row represents a paired phone, not a push registration. Omitted
+	// (or empty) when the phone is only announcing its identity — permission not
+	// yet granted, or a build that can't mint a token. When present it must still
+	// be a well-formed Expo push token.
+	Token      string `json:"token,omitempty" description:"Expo push token, e.g. ExponentPushToken[...]. Optional: omitted when the phone has no push token yet."`
 	Platform   string `json:"platform,omitempty" enum:"ios,android" description:"Device platform."`
 	DeviceName string `json:"deviceName,omitempty" description:"Human-friendly device label."`
 }
 
 // PushDeviceResponse is the stored view of a registered push device.
 type PushDeviceResponse struct {
-	Token      string    `json:"token"`
+	Token      string    `json:"token,omitempty"`
 	Platform   string    `json:"platform,omitempty"`
 	DeviceName string    `json:"deviceName,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
@@ -1736,4 +1819,34 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+}
+
+// MobileDeviceResponse is one row of the desktop's mobile-device roster: the
+// stored registration plus whether that phone is running the app right now.
+type MobileDeviceResponse struct {
+	InstallID            string    `json:"installId"`
+	Token                string    `json:"token,omitempty"`
+	Platform             string    `json:"platform,omitempty" enum:"ios,android"`
+	DeviceName           string    `json:"deviceName,omitempty"`
+	Muted                bool      `json:"muted"`
+	Live                 bool      `json:"live" description:"True when the phone's app is open and polling."`
+	NotificationsEnabled bool      `json:"notificationsEnabled" description:"True when this device has a push token registered."`
+	CreatedAt            time.Time `json:"createdAt"`
+	LastSeenAt           time.Time `json:"lastSeenAt"`
+}
+
+// MobileDevicesResponse is the { devices } envelope for the roster.
+type MobileDevicesResponse struct {
+	Devices []MobileDeviceResponse `json:"devices"`
+}
+
+// MuteDeviceRequest is the body of PATCH /api/v1/mobile/devices/{installId}.
+type MuteDeviceRequest struct {
+	Muted bool `json:"muted" description:"True to stop sending push notifications to this device."`
+}
+
+// InstallIDParam is the {installId} path parameter for mobile-device roster
+// routes.
+type InstallIDParam struct {
+	InstallID string `path:"installId" description:"The device's stable install id."`
 }

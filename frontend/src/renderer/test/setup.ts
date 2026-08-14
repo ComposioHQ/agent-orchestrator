@@ -76,6 +76,8 @@ if (typeof window !== "undefined") {
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
+			setFocused: () => undefined,
+			onFontSizeShortcut: () => () => undefined,
 		},
 		window: {
 			setOverlay: async () => undefined,
@@ -222,6 +224,12 @@ if (typeof window !== "undefined") {
 		featureBuilds: {
 			list: async () => [],
 			getActive: async () => null,
+		},
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
 		},
 	};
 } // end if (typeof window !== "undefined")

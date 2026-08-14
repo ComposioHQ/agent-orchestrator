@@ -30,6 +30,11 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import {
+	decideRelocation,
+	inspectInstalledBundle,
+	installedBundlePath,
+} from "./main/relocation";
 import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -38,13 +43,14 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
+import { type DaemonLaunchSpec, bundledDaemonIdentityError, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
 	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
+	SET_TERMINAL_FOCUSED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
 import { createTrayController, type TrayController } from "./main/tray";
@@ -62,6 +68,12 @@ import {
 } from "./shared/daemon-attach";
 import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import {
+	handleCloudDeepLink,
+	installCloudIPC,
+	registerCloudProtocol,
+	showCloudSignInFailure,
+} from "./main/cloud-auth";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
@@ -146,6 +158,7 @@ let browserRuntimeLinkIdentity: BrowserRuntimeIdentity | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
 let closeShellTerminalShortcutEnabled = false;
+let terminalFocused = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
@@ -203,6 +216,13 @@ protocol.registerSchemesAsPrivileged([
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
+
+// Register ao-app:// as the deep-link protocol for WorkOS auth callbacks.
+// Must run before app.whenReady().
+registerCloudProtocol();
+if (!app.requestSingleInstanceLock()) {
+	app.exit(0);
+}
 
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
@@ -428,6 +448,7 @@ async function createWindowInternal(): Promise<void> {
 			if (id !== "toggle-browser-devtools") return;
 			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
 		},
+		() => terminalFocused,
 	);
 
 	browserViewHost = createBrowserViewHost({
@@ -468,8 +489,12 @@ async function createWindowInternal(): Promise<void> {
 	});
 	shellWebContents.on("render-process-gone", () => {
 		keybindingRecordingActive = false;
+		terminalFocused = false;
 	});
-	shellWebContents.on("did-start-loading", () => trayLifecycle.clear());
+	shellWebContents.on("did-start-loading", () => {
+		terminalFocused = false;
+		trayLifecycle.clear();
+	});
 	shellWebContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
@@ -643,6 +668,11 @@ function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv 
 		// same-UID worker could inspect the parent process.
 		AO_BROWSER_RUNTIME_TOKEN: "",
 		AO_BROWSER_RUNTIME_TOKEN_STDIN: "1",
+		// Under AppImage, APPIMAGE is the stable outer .AppImage file path (the
+		// FUSE mount in executablePath is random per launch). The daemon echoes
+		// it as appImagePath in /healthz|/readyz so the identity check can
+		// recognise its own daemon across a relaunch-to-update.
+		...(process.env.APPIMAGE ? { AO_APPIMAGE: process.env.APPIMAGE } : {}),
 		// Claude Code Chat uses AO's packaged ACP adapter + Node runtime. The
 		// provider executable itself is resolved by the daemon from the user's PATH
 		// and passed through CLAUDE_CODE_EXECUTABLE; it is not part of this resource.
@@ -725,12 +755,7 @@ function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): stri
 	}
 
 	if (launch.source === "bundled") {
-		if (!probe.executablePath) {
-			return "An older AO daemon is already running, but it does not report its binary path. Stop it and restart this app.";
-		}
-		if (!samePath(probe.executablePath, launch.command)) {
-			return `Another AO daemon is already running from ${probe.executablePath}; expected ${launch.command}. Stop the other daemon before using this app.`;
-		}
+		return bundledDaemonIdentityError(probe, launch.command, process.env.APPIMAGE, samePath);
 	}
 	return null;
 }
@@ -1488,6 +1513,11 @@ ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: 
 	closeShellTerminalShortcutEnabled = enabled === true;
 });
 
+ipcMain.on(SET_TERMINAL_FOCUSED_CHANNEL, (event, focused: unknown) => {
+	if (event.sender !== getShellWebContents() || typeof focused !== "boolean") return;
+	terminalFocused = focused;
+});
+
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.
 ipcMain.handle("menu:action", (_event, action: string) => {
@@ -1770,7 +1800,62 @@ ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.han
 
 ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
 
-// Auto-update only runs for packaged builds reading the GitHub Releases feed
+// Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
+// Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
+function cloudDataDir(): string {
+	return isDev
+		? path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR)
+		: path.join(os.homedir(), ".ao");
+}
+
+function notifyRenderersOfCloudSession(account: import("./shared/cloud-account").CloudAccount | null): void {
+	const contents = getShellWebContents();
+	if (!contents || contents.isDestroyed()) return;
+	contents.send("cloud:sessionChanged", account);
+}
+
+installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+function focusCloudWindow(): void {
+	const window = BaseWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+}
+
+async function handleCloudDeepLinkAndFocus(url: string): Promise<void> {
+	focusCloudWindow();
+	try {
+		const session = await handleCloudDeepLink(url, cloudDataDir());
+		if (!session) return;
+		notifyRenderersOfCloudSession(session);
+	} catch (error) {
+		console.error("WorkOS callback failed:", error);
+		await showCloudSignInFailure(error);
+	}
+}
+
+// macOS: the OS sends the ao-app:// URL via the open-url event when the app is
+// already running. If the app is not running, the URL is passed in process.argv
+// on first launch (handled in app.whenReady below).
+app.on("open-url", (event, url) => {
+	event.preventDefault();
+	void handleCloudDeepLinkAndFocus(url);
+});
+
+app.on("second-instance", (_event, argv) => {
+	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
+	if (deepLink) {
+		void handleCloudDeepLinkAndFocus(deepLink);
+		return;
+	}
+	const window = BaseWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+});
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
 // A live updater additionally requires a signed + notarized build — see
 // frontend/docs/desktop-release.md.
@@ -1844,12 +1929,32 @@ app.whenReady().then(async () => {
 	}
 
 	if (process.platform === "darwin" && app.isPackaged) {
-		try {
-			// On success this restarts the app from /Applications, so code past
-			// here only runs when no move happened (already there, or declined).
-			app.moveToApplicationsFolder();
-		} catch (err) {
-			console.error("relocation to Applications failed:", err);
+		const bundlePath = resolveBundlePath();
+		const action = decideRelocation({
+			inApplicationsFolder: app.isInApplicationsFolder(),
+			runningVersion: app.getVersion(),
+			...inspectInstalledBundle(bundlePath),
+		});
+		if (action === "handoff") {
+			// A stale copy (the original download, a mounted dmg) launching while a
+			// newer build sits in /Applications. Relocating here would trash that
+			// build and pin the user to this bundle's version forever, so open the
+			// install and quit instead. Return before the marker write below: the
+			// instance we just launched records the path and version.
+			const installed = installedBundlePath(bundlePath);
+			console.info(`newer install at ${installed}; handing off and quitting`);
+			await shell.openPath(installed);
+			app.quit();
+			return;
+		}
+		if (action === "relocate") {
+			try {
+				// On success this restarts the app from /Applications, so code past
+				// here only runs when no move happened (already there, or declined).
+				app.moveToApplicationsFolder();
+			} catch (err) {
+				console.error("relocation to Applications failed:", err);
+			}
 		}
 	}
 
@@ -1880,6 +1985,13 @@ app.whenReady().then(async () => {
 	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
+
+	// Windows/Linux: on first launch, the deep-link URL may arrive as a
+	// process.argv entry (e.g. ao-app://callback?token=...).
+	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
+	if (deepLinkArg) {
+		void handleCloudDeepLinkAndFocus(deepLinkArg);
+	}
 
 	app.on("activate", () => {
 		if (BaseWindow.getAllWindows().length === 0) {

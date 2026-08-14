@@ -318,6 +318,33 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 	});
 
+	it("limits conversation minimap navigation to human prompts", () => {
+		const snapshot = structuredClone(chatFixtureLongHistory(2));
+		snapshot.items.splice(1, 0, {
+			kind: "activity",
+			id: "loose-status",
+			sequence: 1.5,
+			revision: 1,
+			activityKind: "system",
+			status: "completed",
+			summary: "Automatic compaction completed",
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 1800, clientHeight: 600, scrollTop: 0 });
+		stubGeometry(scrollbar, { scrollHeight: 600, clientHeight: 600, scrollTop: 0 });
+		fireEvent.scroll(log);
+
+		const markers = Array.from(
+			scrollbar.querySelectorAll<HTMLElement>("[data-chat-scroll-marker]"),
+		);
+		expect(markers).toHaveLength(2);
+		fireEvent.pointerEnter(markers[1]!);
+		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
+	});
+
 	it("explains itself instead of showing an empty scroller", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
 		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
