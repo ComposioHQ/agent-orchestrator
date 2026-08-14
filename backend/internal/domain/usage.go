@@ -200,8 +200,10 @@ type LegacyUsageRepair struct {
 type EstimatedCostCoverage string
 
 const (
+	// EstimatedCostCoverageComplete means every event in the scope has a stored total.
 	EstimatedCostCoverageComplete EstimatedCostCoverage = "complete"
-	EstimatedCostCoveragePartial  EstimatedCostCoverage = "partial"
+	// EstimatedCostCoveragePartial means the scope has a positive known lower bound.
+	EstimatedCostCoveragePartial EstimatedCostCoverage = "partial"
 )
 
 // EstimatedCost is the user-facing nano-USD estimate for one usage scope.

@@ -585,7 +585,8 @@ WHERE provider_id IS NOT NULL
       END = ?
   AND estimated_cost_nanos IS NULL
   AND pricing_version <> ?
-	ORDER BY id LIMIT 256`, "openai", "active")
+	AND id > ?
+	ORDER BY id LIMIT 256`, "openai", "active", 0)
 	mustNoError(t, err)
 	defer func() { _ = planRows.Close() }()
 	usesCanonicalIndex := false
@@ -593,7 +594,8 @@ WHERE provider_id IS NOT NULL
 		var id, parent, unused int
 		var detail string
 		mustNoError(t, planRows.Scan(&id, &parent, &unused, &detail))
-		usesCanonicalIndex = usesCanonicalIndex || strings.Contains(detail, "idx_model_usage_events_canonical_cost_candidates")
+		usesCanonicalIndex = usesCanonicalIndex ||
+			(strings.Contains(detail, "idx_model_usage_events_canonical_cost_candidates") && strings.Contains(detail, "id>?"))
 	}
 	mustNoError(t, planRows.Err())
 	if !usesCanonicalIndex {
@@ -624,7 +626,7 @@ INSERT INTO model_usage_events (
 	}
 	insert("other-provider", "anthropic", "old", nil)
 
-	candidates, err := s.ListUsageCostCandidates(ctx, "openai", "active")
+	candidates, err := s.ListUsageCostCandidates(ctx, "openai", "active", 0)
 	mustNoError(t, err)
 	if len(candidates) != 256 {
 		t.Fatalf("candidate count = %d, want exact batch of 256", len(candidates))
@@ -635,9 +637,14 @@ INSERT INTO model_usage_events (
 			t.Fatalf("candidate[%d] = %+v, want id %d source-exact provider and old version", index, candidate, wantID)
 		}
 	}
+	remaining, err := s.ListUsageCostCandidates(ctx, "openai", "active", candidates[len(candidates)-1].ID)
+	mustNoError(t, err)
+	if len(remaining) != 1 || remaining[0].ID != firstWant+256 {
+		t.Fatalf("keyset remainder = %+v, want final candidate id %d", remaining, firstWant+256)
+	}
 
 	insert("zai-alias", "Z.AI", "old", nil)
-	zai, err := s.ListUsageCostCandidates(ctx, "zai", "active")
+	zai, err := s.ListUsageCostCandidates(ctx, "zai", "active", 0)
 	mustNoError(t, err)
 	if len(zai) != 1 || zai[0].ProviderID != "Z.AI" {
 		t.Fatalf("zai alias candidates = %+v", zai)
@@ -670,7 +677,7 @@ func TestApplyUsageCostUpdatesCommitsBatchAndTouchesEachBindingOnce(t *testing.T
 			ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
 		}, seeded.events))
 	}
-	candidates, err := s.ListUsageCostCandidates(ctx, "openai", "catalog-v2")
+	candidates, err := s.ListUsageCostCandidates(ctx, "openai", "catalog-v2", 0)
 	mustNoError(t, err)
 	if len(candidates) != 3 {
 		t.Fatalf("candidates = %+v, want three", candidates)
@@ -754,7 +761,7 @@ func TestApplyUsageCostUpdatesRefusesStaleFactsVersionAndKnownZero(t *testing.T)
 	mustNoError(t, s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 10, State: domain.UsageSourceActive, UpdatedAt: now,
 	}, events))
-	candidates, err := s.ListUsageCostCandidates(ctx, "openai", "catalog-v2")
+	candidates, err := s.ListUsageCostCandidates(ctx, "openai", "catalog-v2", 0)
 	mustNoError(t, err)
 	if len(candidates) != 3 {
 		t.Fatalf("candidates = %+v", candidates)

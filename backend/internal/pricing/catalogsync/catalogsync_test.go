@@ -1,13 +1,16 @@
 package catalogsync
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Break caught: emitting raw upstream names, floating-point spellings, or a
@@ -153,6 +156,30 @@ func TestSyncCanonicalizesWholeDecimalAndScientificRates(t *testing.T) {
 	}
 	if got := blob.Models[0].Rates.OutputUSDPerToken; got != "2" {
 		t.Fatalf("output rate = %q, want %q", got, "2")
+	}
+}
+
+// Break caught: trusting an in-range int64 exponent could make normalization
+// panic or attempt an enormous allocation while expanding scientific notation.
+func TestNormalizeDecimalRejectsUnboundedScientificExponent(t *testing.T) {
+	const helperEnv = "AO_CATALOGSYNC_HUGE_EXPONENT_HELPER"
+	if os.Getenv(helperEnv) == "1" {
+		if _, err := normalizeDecimal("1e9223372036854775807"); err == nil {
+			os.Exit(2)
+		}
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNormalizeDecimalRejectsUnboundedScientificExponent$")
+	cmd.Env = append(os.Environ(), helperEnv+"=1")
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("normalization did not reject the huge exponent promptly: %v", ctx.Err())
+	}
+	if err != nil {
+		t.Fatalf("normalization panicked or failed its helper process: %v\n%s", err, output)
 	}
 }
 

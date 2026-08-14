@@ -11,16 +11,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 const (
 	catalogRelativePath = "pricing/catalog/v1"
 	schemaVersion       = 1
+	maxCanonicalRateLen = 128
 )
 
 // Source identifies the immutable upstream file from which a catalog was
@@ -353,14 +354,14 @@ func normalizeDecimal(input string) (string, error) {
 	mantissa := parts[0]
 	exponent := 0
 	if len(parts) == 2 {
-		if _, ok := new(big.Int).SetString(parts[1], 10); !ok {
+		parsed, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil {
 			return "", errors.New("rate has invalid exponent")
 		}
-		parsed, ok := new(big.Int).SetString(parts[1], 10)
-		if !ok || !parsed.IsInt64() {
+		if parsed < -maxCanonicalRateLen || parsed > maxCanonicalRateLen {
 			return "", errors.New("rate exponent is out of range")
 		}
-		exponent = int(parsed.Int64())
+		exponent = int(parsed)
 	}
 	decimal := strings.Split(mantissa, ".")
 	if len(decimal) > 2 || len(decimal) == 0 || (len(decimal) == 2 && decimal[1] == "") {
@@ -369,6 +370,9 @@ func normalizeDecimal(input string) (string, error) {
 	digits := strings.Join(decimal, "")
 	if digits == "" {
 		return "", errors.New("rate is not a decimal")
+	}
+	if len(digits) > maxCanonicalRateLen {
+		return "", errors.New("rate exceeds supported precision")
 	}
 	for _, r := range digits {
 		if r < '0' || r > '9' {
@@ -385,11 +389,21 @@ func normalizeDecimal(input string) (string, error) {
 		return "0", nil
 	}
 	if shift >= 0 {
+		if shift > maxCanonicalRateLen-len(digits) {
+			return "", errors.New("rate exceeds supported precision")
+		}
 		return digits + strings.Repeat("0", shift), nil
 	}
 	point := len(digits) + shift
 	if point <= 0 {
-		return "0." + strings.Repeat("0", -point) + digits, nil
+		zeroes := -point
+		if len(digits) > maxCanonicalRateLen-2 || zeroes > maxCanonicalRateLen-2-len(digits) {
+			return "", errors.New("rate exceeds supported precision")
+		}
+		return "0." + strings.Repeat("0", zeroes) + digits, nil
+	}
+	if len(digits) >= maxCanonicalRateLen {
+		return "", errors.New("rate exceeds supported precision")
 	}
 	result := digits[:point] + "." + digits[point:]
 	result = strings.TrimRight(result, "0")

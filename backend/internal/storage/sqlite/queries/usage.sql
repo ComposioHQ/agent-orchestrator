@@ -379,9 +379,10 @@ WHERE provider_id IS NOT NULL
   AND CASE lower(trim(provider_id))
         WHEN 'z.ai' THEN 'zai'
         ELSE lower(trim(provider_id))
-      END = sqlc.arg(provider_id)
+  END = sqlc.arg(provider_id)
   AND estimated_cost_nanos IS NULL
   AND pricing_version <> sqlc.arg(pricing_version)
+  AND id > sqlc.arg(after_id)
 ORDER BY id
 LIMIT 256;
 

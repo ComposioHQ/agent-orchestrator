@@ -12,7 +12,7 @@ import (
 )
 
 type costBackfillStore interface {
-	ListUsageCostCandidates(context.Context, string, string) ([]domain.UsageCostCandidate, error)
+	ListUsageCostCandidates(context.Context, string, string, int64) ([]domain.UsageCostCandidate, error)
 	ApplyUsageCostUpdates(context.Context, []domain.UsageCostUpdate, time.Time) (int, error)
 }
 
@@ -172,6 +172,7 @@ func (b *CostBackfiller) superseded(job costBackfillJob) bool {
 }
 
 func (b *CostBackfiller) process(ctx context.Context, job costBackfillJob) error {
+	afterID := int64(0)
 	for {
 		if b.superseded(job) {
 			return nil
@@ -182,7 +183,7 @@ func (b *CostBackfiller) process(ctx context.Context, job costBackfillJob) error
 				complete = true
 				return nil
 			}
-			candidates, err := b.store.ListUsageCostCandidates(ctx, job.providerID, job.version)
+			candidates, err := b.store.ListUsageCostCandidates(ctx, job.providerID, job.version, afterID)
 			if err != nil {
 				return err
 			}
@@ -216,6 +217,7 @@ func (b *CostBackfiller) process(ctx context.Context, job costBackfillJob) error
 			if _, err := b.store.ApplyUsageCostUpdates(ctx, updates, b.config.Clock()); err != nil {
 				return err
 			}
+			afterID = candidates[len(candidates)-1].ID
 			complete = len(candidates) < 256
 			return nil
 		})

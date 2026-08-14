@@ -18,12 +18,13 @@ import (
 // SQLite writer and make restart progress depend on map/row iteration order.
 func TestCostBackfillerProcessesExact256RowPages(t *testing.T) {
 	tests := []struct {
-		count int
-		want  string
+		count       int
+		want        string
+		wantAfterID string
 	}{
-		{count: 256, want: "[256]"},
-		{count: 257, want: "[256 1]"},
-		{count: 513, want: "[256 256 1]"},
+		{count: 256, want: "[256]", wantAfterID: "[0 256]"},
+		{count: 257, want: "[256 1]", wantAfterID: "[0 256]"},
+		{count: 513, want: "[256 256 1]", wantAfterID: "[0 256 512]"},
 	}
 	for _, test := range tests {
 		t.Run(fmt.Sprintf("rows_%d", test.count), func(t *testing.T) {
@@ -53,6 +54,9 @@ func TestCostBackfillerProcessesExact256RowPages(t *testing.T) {
 			defer store.mu.Unlock()
 			if fmt.Sprint(store.batchSizes) != test.want {
 				t.Fatalf("batch sizes = %v, want %s", store.batchSizes, test.want)
+			}
+			if fmt.Sprint(store.listAfterIDs) != test.wantAfterID {
+				t.Fatalf("list cursors = %v, want %s", store.listAfterIDs, test.wantAfterID)
 			}
 			for _, candidate := range store.candidates {
 				if candidate.PricingVersion != version {
@@ -269,6 +273,7 @@ type fakeBackfillStore struct {
 	batchSizes        []int
 	batchVersions     []string
 	listVersions      []string
+	listAfterIDs      []int64
 	complete          chan struct{}
 	applied           chan string
 	doneOnce          sync.Once
@@ -316,6 +321,7 @@ func newFakeBackfillStore(count int) *fakeBackfillStore {
 func (s *fakeBackfillStore) ListUsageCostCandidates(
 	ctx context.Context,
 	providerID, version string,
+	afterID int64,
 ) ([]domain.UsageCostCandidate, error) {
 	if s.listEntered != nil {
 		s.listOnce.Do(func() { close(s.listEntered) })
@@ -331,9 +337,10 @@ func (s *fakeBackfillStore) ListUsageCostCandidates(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.listVersions = append(s.listVersions, version)
+	s.listAfterIDs = append(s.listAfterIDs, afterID)
 	batch := make([]domain.UsageCostCandidate, 0, 256)
 	for _, candidate := range s.candidates {
-		if !s.totalKnown[candidate.ID] && pricing.CanonicalProviderID(candidate.ProviderID) == providerID &&
+		if candidate.ID > afterID && !s.totalKnown[candidate.ID] && pricing.CanonicalProviderID(candidate.ProviderID) == providerID &&
 			candidate.PricingVersion != version && len(batch) < 256 {
 			batch = append(batch, candidate)
 		}

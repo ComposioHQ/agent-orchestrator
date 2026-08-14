@@ -442,10 +442,12 @@ func (s *Store) ApplyUsageChunk(
 func (s *Store) ListUsageCostCandidates(
 	ctx context.Context,
 	providerID, version string,
+	afterID int64,
 ) ([]domain.UsageCostCandidate, error) {
 	rows, err := s.qr.ListUsageCostCandidates(ctx, gen.ListUsageCostCandidatesParams{
 		ProviderID:     sql.NullString{String: providerID, Valid: true},
 		PricingVersion: version,
+		AfterID:        afterID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list %s usage cost candidates: %w", providerID, err)

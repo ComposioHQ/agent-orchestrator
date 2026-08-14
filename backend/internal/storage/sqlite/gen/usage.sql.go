@@ -984,9 +984,10 @@ WHERE provider_id IS NOT NULL
   AND CASE lower(trim(provider_id))
         WHEN 'z.ai' THEN 'zai'
         ELSE lower(trim(provider_id))
-      END = ?1
+  END = ?1
   AND estimated_cost_nanos IS NULL
   AND pricing_version <> ?2
+  AND id > ?3
 ORDER BY id
 LIMIT 256
 `
@@ -994,6 +995,7 @@ LIMIT 256
 type ListUsageCostCandidatesParams struct {
 	ProviderID     sql.NullString
 	PricingVersion string
+	AfterID        int64
 }
 
 type ListUsageCostCandidatesRow struct {
@@ -1014,7 +1016,7 @@ type ListUsageCostCandidatesRow struct {
 }
 
 func (q *Queries) ListUsageCostCandidates(ctx context.Context, arg ListUsageCostCandidatesParams) ([]ListUsageCostCandidatesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listUsageCostCandidates, arg.ProviderID, arg.PricingVersion)
+	rows, err := q.db.QueryContext(ctx, listUsageCostCandidates, arg.ProviderID, arg.PricingVersion, arg.AfterID)
 	if err != nil {
 		return nil, err
 	}
