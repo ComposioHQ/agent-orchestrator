@@ -267,6 +267,7 @@ export function CloudSessionWorkspace({
         {session.runtimeConnected ? (
           <CloudTerminal
             kind="agent"
+            layoutKey={inspectorOpen ? "inspector-open" : "inspector-closed"}
             organizationId={organizationId}
             sessionId={session.id}
           />
@@ -364,6 +365,7 @@ export function CloudSessionWorkspace({
         ) : session.mode === "trusted" && session.runtimeConnected ? (
           <CloudTerminal
             kind="workspace"
+            layoutKey={`${inspectorOpen ? "inspector-open" : "inspector-closed"}:${tab}`}
             organizationId={organizationId}
             sessionId={session.id}
           />

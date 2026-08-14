@@ -763,8 +763,10 @@ async function createEnvironmentProjectFromGitHub(
         displayName: input.displayName?.trim() || repository.name,
         repositoryUrl: repository.htmlUrl,
         defaultBranch: repository.defaultBranch,
-        githubRepositoryId: repository.githubRepositoryId,
-        config: input.config ?? {},
+        config: {
+          ...input.config,
+          githubRepositoryId: repository.githubRepositoryId,
+        },
       }),
       cache: "no-store",
       signal: request.signal,

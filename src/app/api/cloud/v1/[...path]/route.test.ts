@@ -197,8 +197,7 @@ it("brokers GitHub repository imports through production", async () => {
     displayName: "cloud",
     repositoryUrl: "https://github.com/acme/cloud",
     defaultBranch: "main",
-    githubRepositoryId: "9007199254740993",
-    config: {},
+    config: { githubRepositoryId: "9007199254740993" },
   });
 });
 

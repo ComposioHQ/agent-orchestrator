@@ -14,10 +14,12 @@ import { buildTerminalTheme } from "@/lib/terminal-themes";
 export function CloudTerminal({
   organizationId,
   sessionId,
+  layoutKey = "",
   kind = "agent",
 }: {
   organizationId: string;
   sessionId: string;
+  layoutKey?: string;
   kind?: "agent" | "workspace";
 }) {
   const client = useMemo(browserCloudClient, []);
@@ -32,7 +34,7 @@ export function CloudTerminal({
     if (!host) return;
 
     const terminal = new Terminal({
-      convertEol: true,
+      convertEol: false,
       cursorBlink: true,
       fontFamily:
         '"JetBrainsMono Nerd Font Mono", "FiraCode Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
@@ -83,6 +85,17 @@ export function CloudTerminal({
     });
     observer.observe(host);
     if (host.parentElement) observer.observe(host.parentElement);
+    let active = true;
+    void document.fonts?.ready.then(() => {
+      if (!active) return;
+      fitTerminal();
+      persistentConnection.resize(terminal.rows, terminal.cols);
+    });
+    const settledLayout = window.setTimeout(() => {
+      fitTerminal();
+      persistentConnection.resize(terminal.rows, terminal.cols);
+      terminal.refresh(0, terminal.rows - 1);
+    }, 250);
 
     const themeObserver = new MutationObserver(() => {
       terminal.options.theme = buildTerminalTheme();
@@ -93,7 +106,9 @@ export function CloudTerminal({
     });
 
     return () => {
+      active = false;
       termRef.current = null;
+      window.clearTimeout(settledLayout);
       window.cancelAnimationFrame(firstFrame);
       window.cancelAnimationFrame(secondFrame);
       themeObserver.disconnect();
@@ -103,7 +118,7 @@ export function CloudTerminal({
       resize.dispose();
       terminal.dispose();
     };
-  }, [client, kind, organizationId, sessionId]);
+  }, [client, kind, layoutKey, organizationId, sessionId]);
 
   useEffect(() => {
     if (!notice) return;
