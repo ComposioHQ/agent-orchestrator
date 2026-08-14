@@ -58,7 +58,7 @@ export function HumanMessageEditor({
 	}
 
 	return (
-		<div className="cursor-chat-composer relative flex w-full max-w-3xl flex-col gap-2 rounded-[14px] border p-3 transition-[background,border-color,box-shadow]">
+		<div className="cursor-chat-composer relative flex w-full max-w-3xl flex-col gap-1.5 border px-4 py-3 transition-[background,border-color,box-shadow]">
 		<textarea
 			ref={textarea}
 			value={draft}
@@ -70,7 +70,7 @@ export function HumanMessageEditor({
 			aria-label={t("chat.edit.label")}
 			autoFocus
 			rows={2}
-			className="chat-composer-scrollbar max-h-56 min-h-[3.25rem] w-full resize-none overflow-y-auto overscroll-contain bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none"
+			className="chat-composer-scrollbar max-h-56 min-h-[3.25rem] w-full resize-none overflow-y-auto overscroll-contain bg-transparent px-0 py-1 text-sm leading-relaxed text-foreground outline-none"
 		/>
 		<ConversationContentItems
 			content={content}
@@ -110,7 +110,7 @@ export function HumanMessageEditor({
 					"size-7 rounded-full border-transparent",
 					sendDisabled
 						? "bg-raised text-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-100"
-						: "bg-foreground text-background hover:bg-foreground/90 hover:text-background",
+						: "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background",
 				)}
 			>
 				{pending ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : <ArrowUp aria-hidden="true" className="size-3.5" />}

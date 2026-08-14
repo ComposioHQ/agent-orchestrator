@@ -178,8 +178,8 @@ describe("ChatWorkspace steering", () => {
 		const dock = screen.getByTestId("queued-message-dock");
 		expect(within(dock).getByText("first queued")).toBeVisible();
 		expect(within(dock).getByText("second queued")).toBeVisible();
-		expect(dock).toHaveClass("rounded-t-[14px]");
-		expect(dock.nextElementSibling).toHaveClass("rounded-t-none");
+		expect(dock).toHaveClass("rounded-t-[var(--radius-chat-composer)]");
+		expect(dock.nextElementSibling).toHaveAttribute("data-attached-top", "true");
 		const actions = within(dock).getAllByRole("button", { name: "Steer" });
 		expect(actions).toHaveLength(2);
 		await userEvent.click(actions[1]!);

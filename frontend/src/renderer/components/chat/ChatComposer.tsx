@@ -444,10 +444,8 @@ export function ChatComposer({
 			// on one surface, so they are declared together in CSS rather than half
 			// here and half there.
 			data-dragging={dragging || undefined}
-			className={cn(
-				"cursor-chat-composer relative flex flex-col gap-2 border p-3 transition-[background,border-color,box-shadow]",
-				attachedTop ? "rounded-b-[14px] rounded-t-none" : "rounded-[14px]",
-			)}
+			data-attached-top={attachedTop || undefined}
+			className="cursor-chat-composer relative flex flex-col gap-1.5 border px-4 py-3 transition-[background,border-color,box-shadow]"
 		>
 			{menuOpen && trigger ? (
 				<ComposerSuggestMenu
@@ -522,7 +520,7 @@ export function ChatComposer({
 									? "Ask the agent…  /  for skills, @ for files"
 									: "Ask the agent…  @ for files"
 				}
-				className="chat-composer-scrollbar max-h-40 min-h-[3.25rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
+				className="chat-composer-scrollbar max-h-40 min-h-[4.5rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent px-0 py-1 text-sm leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
 			/>
 
 			{attachmentError ? (
@@ -599,7 +597,7 @@ export function ChatComposer({
 						className={cn(
 							"size-7 rounded-full border-transparent focus-visible:ring-ring/40",
 							canSend
-								? "bg-foreground text-background hover:bg-foreground/90 hover:text-background"
+								? "bg-foreground text-background hover:bg-foreground/90 hover:text-background dark:hover:bg-foreground/90 dark:hover:text-background"
 								: "bg-raised text-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-100",
 						)}
 					>

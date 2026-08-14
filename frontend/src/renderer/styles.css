@@ -1737,13 +1737,19 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .cursor-chat-composer {
 	--composer-bg: color-mix(in srgb, var(--color-bg-secondary) 82%, var(--color-bg-elevated));
 	--composer-bg-active: color-mix(in srgb, var(--color-bg-secondary) 70%, var(--color-bg-elevated));
-	--composer-border: color-mix(in oklch, var(--color-border-strong) 55%, transparent);
-	--composer-border-hover: color-mix(in oklch, var(--color-border-strong) 85%, transparent);
-	--composer-border-focus: var(--color-border-strong);
+	--composer-border: color-mix(in oklch, var(--color-border-strong) 36%, transparent);
+	--composer-border-hover: color-mix(in oklch, var(--color-border-strong) 68%, transparent);
+	--composer-border-focus: color-mix(in oklch, var(--color-border-strong) 88%, transparent);
 
+	border-radius: var(--radius-chat-composer);
 	border-color: var(--composer-border);
 	background: var(--composer-bg);
 	box-shadow: none;
+}
+
+.cursor-chat-composer[data-attached-top] {
+	border-top-left-radius: 0;
+	border-top-right-radius: 0;
 }
 
 .cursor-chat-composer:hover:not(:focus-within) {
@@ -1838,9 +1844,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 :root[data-theme="light"] .cursor-chat-composer {
 	--composer-bg: color-mix(in srgb, var(--color-bg-secondary) 96%, var(--color-bg-tertiary));
 	--composer-bg-active: var(--color-bg-secondary);
-	--composer-border: color-mix(in oklch, var(--color-text-primary) 12%, transparent);
-	--composer-border-hover: color-mix(in oklch, var(--color-text-primary) 20%, transparent);
-	--composer-border-focus: color-mix(in oklch, var(--color-text-primary) 28%, transparent);
+	--composer-border: color-mix(in oklch, var(--color-text-primary) 10%, transparent);
+	--composer-border-hover: color-mix(in oklch, var(--color-text-primary) 16%, transparent);
+	--composer-border-focus: color-mix(in oklch, var(--color-text-primary) 24%, transparent);
 
 	box-shadow: none;
 }
