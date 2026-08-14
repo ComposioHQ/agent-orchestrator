@@ -4,12 +4,12 @@ How to set up, build, run, and test Agent Orchestrator locally.
 
 ## Prerequisites
 
-| Tool       | Minimum version | Notes                                                                  |
-| ---------- | --------------- | ---------------------------------------------------------------------- |
-| Go         | 1.25.7          | `go version` to check; install via [go.dev](https://go.dev/dl/)        |
-| Node.js    | 20.19.0         | `node --version`; install via [nodejs.org](https://nodejs.org/)        |
-| npm        | 10              | Ships with Node.js                                                     |
-| Nix (opt.) | -               | `nix develop` drops you into a shell with all deps; see `../flake.nix` |
+| Tool       | Minimum version       | Notes                                                                     |
+| ---------- | --------------------- | ------------------------------------------------------------------------- |
+| Go         | 1.25.7                | `go version` to check; install via [go.dev](https://go.dev/dl/)           |
+| Node.js    | 20.19, 22.12, or 24.x | Node 24 is pinned in `frontend/.nvmrc`; newer unverified majors fail fast |
+| npm        | 10                    | Ships with Node.js                                                        |
+| Nix (opt.) | -                     | `nix develop` drops you into a shell with all deps; see `../flake.nix`    |
 
 Additional runtime dependencies for the daemon:
 
@@ -43,7 +43,7 @@ agent-orchestrator/
 ## Getting the code
 
 ```bash
-git clone https://github.com/AgentWrapper/agent-orchestrator.git
+git clone https://github.com/Untrivial-ai/agent-orchestrator.git
 cd agent-orchestrator
 npm ci
 ```
@@ -142,9 +142,16 @@ npm run api
 ### Install dependencies
 
 ```bash
-cd frontend
-npm install
+cd packages/product-ui
+npm ci
+cd ../../frontend
+nvm use || nvm install
+npm ci
 ```
+
+The renderer imports the local `packages/product-ui` source, so install that
+package's dependencies as well as the frontend's before starting or packaging
+Electron.
 
 ### Run in development mode
 
@@ -153,6 +160,11 @@ cd frontend
 npm run dev            # Electron dev mode
 npm run dev:web        # Web-only (no Electron, for quick UI iteration)
 ```
+
+`npm run dev` verifies Electron's downloaded executable before Forge starts. If
+an interrupted download, proxy, or antivirus left only the npm package behind,
+the check reruns Electron's installer once and verifies the executable. You can
+also run it directly with `npm run electron:ensure`.
 
 ### Build
 

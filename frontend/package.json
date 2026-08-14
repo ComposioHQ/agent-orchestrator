@@ -6,6 +6,9 @@
 	"description": "Electron + TypeScript frontend for the agent-orchestrator rewrite",
 	"author": "Agent Orchestrator",
 	"license": "MIT",
+	"engines": {
+		"node": "^20.19.0 || ^22.12.0 || ^24.0.0"
+	},
 	"homepage": "https://github.com/aoagents/agent-orchestrator",
 	"main": ".vite/build/main.js",
 	"repository": {
@@ -13,17 +16,18 @@
 		"url": "https://github.com/aoagents/agent-orchestrator"
 	},
 	"scripts": {
+		"electron:ensure": "node ./scripts/ensure-electron.mjs",
 		"build:acp-runtime": "node ./scripts/build-acp-runtime.mjs",
 		"browser-runtime:prepare": "node ./scripts/prepare-agent-browser.mjs",
 		"build:daemon": "node ./scripts/build-daemon.mjs",
 		"predev": "npm run build:daemon && node ./scripts/ensure-browser-runtime.mjs && npm run build:acp-runtime",
-		"dev": "electron-forge start",
+		"dev": "npm run electron:ensure && electron-forge start",
 		"dev:web": "VITE_NO_ELECTRON=1 vite --config vite.renderer.config.ts",
-		"prepackage": "npm run build:daemon && npm run browser-runtime:prepare && npm run build:acp-runtime",
+		"prepackage": "npm run electron:ensure && npm run build:daemon && npm run browser-runtime:prepare && npm run build:acp-runtime",
 		"package": "electron-forge package",
-		"premake": "npm run build:daemon && npm run browser-runtime:prepare && npm run build:acp-runtime",
+		"premake": "npm run electron:ensure && npm run build:daemon && npm run browser-runtime:prepare && npm run build:acp-runtime",
 		"make": "electron-forge make",
-		"publish": "npm run build:daemon && npm run browser-runtime:prepare && npm run build:acp-runtime && electron-forge publish",
+		"publish": "npm run electron:ensure && npm run build:daemon && npm run browser-runtime:prepare && npm run build:acp-runtime && electron-forge publish",
 		"typecheck": "tsc --noEmit",
 		"typecheck:e2e": "tsc --noEmit -p tsconfig.e2e.json",
 		"test": "vitest run --config vite.renderer.config.ts",

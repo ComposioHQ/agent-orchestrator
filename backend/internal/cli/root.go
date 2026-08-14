@@ -71,6 +71,10 @@ type Deps struct {
 	LookPath           func(file string) (string, error)
 	CommandOutput      func(ctx context.Context, name string, args ...string) ([]byte, error)
 	CommandOutputInDir func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
+	// RunInteractive runs a child process attached to the real terminal, for
+	// commands that may need to prompt (for example, sudo asking for a password).
+	// CommandOutput captures output and would hang on those prompts.
+	RunInteractive func(ctx context.Context, name string, args ...string) error
 	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
 	// httptest without mutating package-global state.
 	DoctorGitHubRESTBase string
@@ -94,6 +98,7 @@ func DefaultDeps() Deps {
 		LookPath:             exec.LookPath,
 		CommandOutput:        commandOutput,
 		CommandOutputInDir:   commandOutputInDir,
+		RunInteractive:       runInteractive,
 		DoctorGitHubRESTBase: defaultDoctorGitHubRESTBase,
 		DoctorGitLabRESTBase: defaultDoctorGitLabRESTBase,
 		Now:                  time.Now,
@@ -109,6 +114,16 @@ func commandOutputInDir(ctx context.Context, dir, name string, args ...string) (
 	cmd := aoprocess.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.CombinedOutput()
+}
+
+// runInteractive keeps installer prompts attached to the user's terminal. Its
+// stdout intentionally goes to stderr so `ao start --json` remains valid JSON.
+func runInteractive(ctx context.Context, name string, args ...string) error {
+	cmd := aoprocess.CommandContext(ctx, name, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func (d Deps) withDefaults() Deps {
@@ -142,6 +157,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.CommandOutputInDir == nil {
 		d.CommandOutputInDir = def.CommandOutputInDir
+	}
+	if d.RunInteractive == nil {
+		d.RunInteractive = def.RunInteractive
 	}
 	if d.DoctorGitHubRESTBase == "" {
 		d.DoctorGitHubRESTBase = def.DoctorGitHubRESTBase

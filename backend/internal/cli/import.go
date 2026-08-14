@@ -162,9 +162,10 @@ func confirm(in io.Reader, out io.Writer, prompt string, defaultYes bool) (bool,
 }
 
 // stdinIsInteractive reports whether in is an interactive terminal. It only
-// treats the real os.Stdin as potentially interactive; a piped reader or test
-// buffer is non-interactive.
-func stdinIsInteractive(in io.Reader) bool {
+// treats an os.File character device as potentially interactive; a pipe or test
+// buffer is non-interactive. It is a var so prompt behavior can be unit tested
+// without a real tty.
+var stdinIsInteractive = func(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	if !ok {
 		return false
@@ -173,5 +174,14 @@ func stdinIsInteractive(in io.Reader) bool {
 	if err != nil {
 		return false
 	}
-	return info.Mode()&os.ModeCharDevice != 0
+	if info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	// /dev/null is also a character device, and is the stdin supplied by a
+	// non-interactive `docker run`. Treating EOF there as the default "yes"
+	// would start a package install nobody approved.
+	if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(info, devNull) {
+		return false
+	}
+	return true
 }

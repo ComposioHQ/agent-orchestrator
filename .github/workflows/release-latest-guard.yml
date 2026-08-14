@@ -48,6 +48,10 @@ jobs:
           printf 'Assets:\n%s\n' "${assets[@]}"
 
           required_assets=(
+            agent-orchestrator-darwin-arm64.zip
+            agent-orchestrator-darwin-x64.zip
+            agent-orchestrator-linux-x64.AppImage
+            agent-orchestrator-win32-x64.exe
             latest.yml
             latest-mac.yml
             latest-linux.yml
@@ -55,7 +59,7 @@ jobs:
 
           for required in "${required_assets[@]}"; do
             if ! printf '%s\n' "${assets[@]}" | grep -Fxq "$required"; then
-              echo "::error::Latest stable release '$tag' is missing updater feed asset '$required'."
+              echo "::error::Latest stable release '$tag' is missing required install/update asset '$required'."
               exit 1
             fi
           done

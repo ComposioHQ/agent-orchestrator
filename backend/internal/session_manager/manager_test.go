@@ -6533,6 +6533,63 @@ func TestReconcile_AdoptAcrossDaemonRestart(t *testing.T) {
 	}
 }
 
+func TestReconcile_MissingTmuxServerBootsAndRestores(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/ws/s1", RuntimeHandleID: "tmux-s1", AgentSessionID: "agent-s1",
+		},
+	}
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("tmux socket ENOENT: %w", ports.ErrRuntimeServerAbsent)}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/s1"}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if lcm.terminated["s1"] != 1 || rt.created != 1 || st.sessions["s1"].IsTerminated {
+		t.Fatalf("boot recovery term/create/terminated = %d/%d/%t, want 1/1/false",
+			lcm.terminated["s1"], rt.created, st.sessions["s1"].IsTerminated)
+	}
+}
+
+func TestReconcile_AmbiguousTmuxOutageIsNotConsumedAsAbsence(t *testing.T) {
+	st := newFakeStore()
+	st.projects["p1"] = domain.ProjectRecord{ID: "p1", Config: testRoleAgents()}
+	st.sessions["s1"] = domain.SessionRecord{
+		ID: "s1", ProjectID: "p1", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			Branch: "ao/s1/root", WorkspacePath: "/ws/s1", RuntimeHandleID: "tmux-s1",
+		},
+	}
+	rt := &fakeRuntime{aliveErr: fmt.Errorf("tmux permission denied: %w", ports.ErrRuntimeUnavailable)}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/s1"}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if err := m.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile remains best-effort for an inconclusive session probe: %v", err)
+	}
+	if ws.stashCalls != 0 || lcm.terminated["s1"] != 0 || rt.created != 0 || rt.destroyed != 0 {
+		t.Fatalf("ambiguous outage mutated session: stash/term/create/destroy = %d/%d/%d/%d",
+			ws.stashCalls, lcm.terminated["s1"], rt.created, rt.destroyed)
+	}
+	if st.sessions["s1"].IsTerminated {
+		t.Fatal("ambiguous outage must leave the durable session live")
+	}
+}
+
 func TestReconcileReap_TerminatedButAliveTmuxDestroyed(t *testing.T) {
 	st := newFakeStore()
 	rt := &fakeRuntime{aliveByHandle: map[string]bool{"t1": true}}
