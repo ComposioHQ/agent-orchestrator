@@ -94,6 +94,19 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
+function activeAgentSwitch(
+	overrides: Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>> = {},
+): NonNullable<WorkspaceSession["activeAgentSwitch"]> {
+	return {
+		agentHandoffStatus: "received",
+		fromHarness: "claude-code",
+		id: "switch-1",
+		state: "starting_target",
+		targetHarness: "codex",
+		...overrides,
+	};
+}
+
 function sidebarPR(overrides: Partial<WorkspaceSession["prs"][number]> = {}): WorkspaceSession["prs"][number] {
 	return {
 		url: "https://github.com/acme/project-one/pull/7",
@@ -263,6 +276,16 @@ describe("Sidebar", () => {
 		const footer = document.querySelector('[data-sidebar="footer"]');
 		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
+		// Windowed: lift the hairline by the framed panel inset + 1px surface
+		// border. macOS also collapses that inset in native fullscreen.
+		if (footer?.className.includes("--size-center-panel-inset-mac")) {
+			expect(footer).toHaveClass(
+				"mb-[calc(var(--size-center-panel-inset-mac)+1px)]",
+				"in-[.native-fullscreen]:mb-px",
+			);
+		} else {
+			expect(footer).toHaveClass("mb-[calc(var(--size-center-panel-bottom-inset)+1px)]");
+		}
 	});
 
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
@@ -297,7 +320,7 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const content = document.querySelector('[data-sidebar="content"]');
-		expect(content).toHaveClass("overflow-y-auto");
+		expect(content).toHaveClass("overflow-y-auto", "project-sidebar-scrollbar");
 		expect(content).not.toHaveClass("scrollbar-none");
 		expect(content).not.toContainElement(screen.getByText("Projects"));
 	});
@@ -1307,6 +1330,27 @@ describe("Sidebar", () => {
 		expect(idleDraftDot).toHaveClass("bg-status-idle");
 		expect(idleActivityDot).not.toHaveClass("animate-status-pulse");
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
+	});
+
+	it("keeps runtime activity on the dot while showing switch progress separately", () => {
+		renderSidebar({
+			workspaces: [{
+				...workspace,
+				sessions: [{
+					...session,
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-30T00:00:00Z" },
+					activeAgentSwitch: activeAgentSwitch(),
+				}],
+			}],
+		});
+
+		const row = screen.getByLabelText("Open fix login");
+		expect(row).toHaveAccessibleDescription("Switching to Codex");
+		expect(within(row).getByText("Switching to Codex")).toBeInTheDocument();
+		const dot = row.querySelector<HTMLElement>("[data-session-status]");
+		expect(dot).toHaveClass("bg-status-exited");
+		expect(dot).not.toHaveClass("animate-status-pulse");
 	});
 
 	it("shows sessions on load and hides them once collapsed", async () => {

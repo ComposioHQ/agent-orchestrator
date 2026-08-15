@@ -24,6 +24,10 @@ describe("ChatComposer steering", () => {
 
 	it("defaults Enter to the durable queue path used by ao send", () => {
 		composer();
+		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
 		expect(screen.getByRole("button", { name: "Send message" })).toHaveAttribute(
 			"title",
 			"Enter to queue",
@@ -46,6 +50,10 @@ describe("ChatComposer steering", () => {
 		composer({ onSteer, onSend });
 
 		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
+		expect(screen.getByRole("button", { name: "Steer this turn" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
 		expect(screen.getByRole("button", { name: "Steer the running turn" })).toHaveAttribute(
 			"title",
 			"Enter to steer",

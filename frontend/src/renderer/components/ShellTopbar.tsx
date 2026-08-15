@@ -27,10 +27,15 @@ import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
+import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import {
+	agentSwitchStatusVisual,
+	deriveSessionAgentSwitchPresentation,
+} from "../lib/agent-switch-presentation";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 const isMac = isMacPlatform();
@@ -88,9 +93,7 @@ export function ShellTopbar({
 		const controls = animate(
 			paddingLeft,
 			targetPaddingLeft,
-			prefersReducedMotion
-				? { duration: 0 }
-				: { type: "spring", stiffness: 420, damping: 40, mass: 0.6 },
+			prefersReducedMotion ? { duration: 0 } : SHELL_PANEL_SPRING,
 		);
 		return controls.stop;
 	}, [targetPaddingLeft, paddingLeft, prefersReducedMotion]);
@@ -365,13 +368,12 @@ export function ShellTopbar({
 					</>
 				) : null}
 				{isSessionRoute && !isOrchestrator ? (
-					/* Controls stay in one persistent overlay owned by SessionView. This
-					   spacer alone follows the inspector motion so neighboring actions do
-					   not jump as the center pane gains or loses the available width. */
+					/* The pinned controls are owned by SessionView so they stay at the
+					   window's right edge. Reserve their width only when the rail is closed. */
 					<div
-						className="session-collapsed-inspector-actions"
+						className="session-pinned-actions-reserve"
 						data-state={isInspectorOpen ? "collapsed" : "expanded"}
-						data-testid="collapsed-inspector-actions"
+						data-testid="session-pinned-actions-reserve"
 						aria-hidden="true"
 					/>
 				) : (
@@ -462,6 +464,19 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
 	const { t } = useTranslation();
+	const switchPresentation = deriveSessionAgentSwitchPresentation(session);
+	if (switchPresentation) {
+		const visual = agentSwitchStatusVisual(switchPresentation);
+		return (
+			<StatusPill
+				label={t(switchPresentation.compactLabelKey, switchPresentation.values)}
+				tone={visual.tone}
+				breathe={visual.breathe}
+				leading="none"
+				className="px-2 py-1 text-micro"
+			/>
+		);
+	}
 	const { label, tone, breathe } = getAgentActivityView(session.activity, t);
 	return (
 		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-2 py-1 text-micro" />

@@ -96,6 +96,19 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
+function activeAgentSwitch(
+	overrides: Partial<NonNullable<WorkspaceSession["activeAgentSwitch"]>> = {},
+): NonNullable<WorkspaceSession["activeAgentSwitch"]> {
+	return {
+		agentHandoffStatus: "received",
+		fromHarness: "claude-code",
+		id: "switch-1",
+		state: "starting_target",
+		targetHarness: "codex",
+		...overrides,
+	};
+}
+
 function renderTopbar(session: WorkspaceSession, embedded = false, sessionAction?: ReactNode) {
 	return renderTopbarSessions([session], session.id, embedded, sessionAction);
 }
@@ -264,6 +277,22 @@ describe("ShellTopbar status pill", () => {
 		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
 		expect(screen.getByText("Working")).toBeInTheDocument();
 	});
+
+	it("shows switch progress instead of the exited source in the status pill", () => {
+		renderTopbar(sessionWith({
+			status: "exited",
+			activity: {
+				state: "exited",
+				lastActivityAt: "2026-06-10T00:00:00Z",
+			},
+			activeAgentSwitch: activeAgentSwitch(),
+		}));
+
+		const pill = screen.getByText("Switching to Codex").closest("span") as HTMLElement;
+		expect(pill).toHaveStyle({ color: "var(--color-status-working)" });
+		expect(pill.querySelector("span")).toHaveClass("animate-status-pulse");
+		expect(screen.queryByText("Exited")).not.toBeInTheDocument();
+	});
 });
 
 describe("ShellTopbar orchestrator actions", () => {
@@ -369,15 +398,15 @@ describe("ShellTopbar orchestrator actions", () => {
 });
 
 describe("ShellTopbar inspector state", () => {
-	it("keeps the expanded worker inspector controls out of the center topbar", () => {
+	it("keeps the expanded worker controls out of the center topbar", () => {
 		renderTopbarSessions([worker], "sess-1");
 
-		expect(screen.getByTestId("collapsed-inspector-actions")).toHaveAttribute("data-state", "collapsed");
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toHaveAttribute("data-state", "collapsed");
 		expect(screen.queryByRole("button", { name: "Close inspector panel" })).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Open inspector panel" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Notifications" })).not.toBeInTheDocument();
 	});
 
-	it("sizes the persistent action spacer for the current worker inspector state", () => {
+	it("sizes the pinned-action reserve for the current worker inspector state", () => {
 		useUiStore.setState({
 			inspectorSessions: {
 				"sess-1": { isOpen: true, view: "summary" },
@@ -386,25 +415,25 @@ describe("ShellTopbar inspector state", () => {
 		});
 		const view = renderTopbarSessions([worker, secondWorker], "sess-1");
 
-		expect(screen.getByTestId("collapsed-inspector-actions")).toHaveAttribute("data-state", "collapsed");
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toHaveAttribute("data-state", "collapsed");
 
 		paramsMock.sessionId = "sess-2";
 		view.rerenderTopbar();
 
-		expect(screen.getByTestId("collapsed-inspector-actions")).toHaveAttribute("data-state", "expanded");
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toHaveAttribute("data-state", "expanded");
 	});
 
-	it("keeps one spacer mounted while the inspector changes state", () => {
+	it("keeps one reserve mounted while the inspector changes state", () => {
 		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: false, view: "summary" } } });
 		const view = renderTopbarSessions([worker], "sess-1");
-		const slot = screen.getByTestId("collapsed-inspector-actions");
+		const reserve = screen.getByTestId("session-pinned-actions-reserve");
 
 		useUiStore.setState({ inspectorSessions: { "sess-1": { isOpen: true, view: "summary" } } });
 		view.rerenderTopbar();
 
-		expect(screen.getByTestId("collapsed-inspector-actions")).toBe(slot);
-		expect(slot).toHaveAttribute("data-state", "collapsed");
-		expect(within(slot).queryByRole("button")).not.toBeInTheDocument();
+		expect(screen.getByTestId("session-pinned-actions-reserve")).toBe(reserve);
+		expect(reserve).toHaveAttribute("data-state", "collapsed");
+		expect(within(reserve).queryByRole("button")).not.toBeInTheDocument();
 	});
 });
 

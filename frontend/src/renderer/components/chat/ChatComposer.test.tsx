@@ -78,6 +78,12 @@ describe("send keys", () => {
 		);
 	});
 
+	it("keeps a taller resting field for the redesigned composer", () => {
+		const { field } = renderComposer();
+		expect(field).toHaveAttribute("rows", "1");
+		expect(field).toHaveClass("min-h-[4.5rem]");
+	});
+
 	it("uses a muted circular send control that lights up when armed", async () => {
 		const { field } = renderComposer();
 		const send = screen.getByRole("button", { name: "Send message" });
@@ -87,6 +93,20 @@ describe("send keys", () => {
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
 		expect(send).toHaveClass("bg-foreground", "text-background");
+	});
+
+	it("turns the empty send action into Stop while the agent is working", async () => {
+		const onInterrupt = vi.fn();
+		const { field } = renderComposer({ willQueue: true, onInterrupt });
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+		await userEvent.click(stop);
+		expect(onInterrupt).toHaveBeenCalledOnce();
+
+		await userEvent.type(field, "queue this next");
+		expect(screen.queryByRole("button", { name: "Stop turn" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
 	});
 
 	it("sends on Enter", async () => {
@@ -438,5 +458,28 @@ describe("unavailable states", () => {
 	it("says a mid-turn message will be held", () => {
 		const { field } = renderComposer({ willQueue: true });
 		expect(field.placeholder).toContain("sends when it finishes");
+	});
+
+	it("turns the primary composer action into stop while the agent is working and the draft is empty", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Stop turn" }));
+
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("keeps the primary action as queue while the agent is working and a draft exists", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.type(screen.getByLabelText("Message the agent"), "follow up");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+		expect(onSend).toHaveBeenCalledWith("follow up");
+		expect(onInterrupt).not.toHaveBeenCalled();
 	});
 });

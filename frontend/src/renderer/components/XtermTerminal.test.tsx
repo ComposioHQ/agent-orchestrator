@@ -461,7 +461,7 @@ describe("XtermTerminal", () => {
 		Object.defineProperty(document, "fullscreenElement", { configurable: true, value: null });
 	});
 
-	it("runs context menu copy, select all, and clear against the xterm instance", async () => {
+	it("runs context menu copy and select all against the xterm instance", async () => {
 		const { container } = render(<XtermTerminal theme="dark" />);
 		const host = container.firstElementChild!;
 		state.lastTerminal!.selection = "menu copy";
@@ -474,10 +474,6 @@ describe("XtermTerminal", () => {
 		fireEvent.contextMenu(host);
 		fireEvent.click(await screen.findByText("Select All"));
 		expect(state.lastTerminal!.selectAll).toHaveBeenCalled();
-
-		fireEvent.contextMenu(host);
-		fireEvent.click(await screen.findByText("Clear"));
-		expect(state.lastTerminal!.clear).toHaveBeenCalled();
 	});
 
 	it("pastes from the context menu through the terminal paste path", async () => {

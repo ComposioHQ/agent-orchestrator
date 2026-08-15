@@ -1637,7 +1637,7 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			reqBody:    controllers.SwitchAgentRequest{},
 			resps: []respUnit{
-				{http.StatusOK, controllers.AgentSwitchResponse{}},
+				{http.StatusAccepted, controllers.AgentSwitchResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
@@ -1652,6 +1652,18 @@ func sessionOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListAgentSwitchesResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover", id: "recoverSessionAgentSwitch", tag: "sessions",
+			summary:    "Retry safe source restoration for an agent switch",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.AgentSwitchIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.AgentSwitchResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

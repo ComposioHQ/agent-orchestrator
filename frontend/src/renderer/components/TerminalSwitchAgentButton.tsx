@@ -1,14 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, Repeat2, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import {
-	findActiveAgentSwitch,
-	findRecoveryRequiredAgentSwitch,
-	useAgentSwitches,
-} from "../hooks/useAgentSwitches";
-import { clearSwitchAgentState, useSwitchAgentState } from "../hooks/useSwitchAgent";
-import { agentLabel } from "../lib/agent-options";
+import { clearSwitchAgentState } from "../hooks/useSwitchAgent";
+import type { AgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import { cn } from "../lib/utils";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { canSwitchAgentHarness, SwitchAgentDialog } from "./SwitchAgentDialog";
@@ -16,41 +11,48 @@ import { TopbarButton } from "./TopbarButton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type TerminalSwitchAgentButtonProps = {
+	container: HTMLElement | null | undefined;
+	onOpenChange: ((open: boolean) => void) | undefined;
+	open: boolean;
+	presentation?: AgentSwitchPresentation;
 	session: WorkspaceSession;
+	switchError: string | null;
 };
 
-export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButtonProps) {
+export function TerminalSwitchAgentButton({
+	container,
+	onOpenChange,
+	open,
+	presentation,
+	session,
+	switchError,
+}: TerminalSwitchAgentButtonProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const [open, setOpen] = useState(false);
-	const switches = useAgentSwitches(session.id).data ?? [];
-	const activeSwitch = findActiveAgentSwitch(switches);
-	const recoverySwitch = findRecoveryRequiredAgentSwitch(switches);
-	const switchMutation = useSwitchAgentState(session.id);
-	const targetHarness = activeSwitch?.targetHarness ?? switchMutation.input?.targetHarness;
-	const switching = Boolean(!recoverySwitch && (activeSwitch || (switchMutation.isPending && targetHarness)));
+	const controlPresentation = presentation?.outcome === "success" ? undefined : presentation;
+	const switching = controlPresentation?.outcome === "in_progress";
+	const warning = controlPresentation?.outcome === "failure" || controlPresentation?.outcome === "recovery";
+	const blocksNewSwitch = switching;
 
 	useEffect(() => {
-		if (switchMutation.error) setOpen(true);
-	}, [switchMutation.error]);
+		if (switchError) onOpenChange?.(true);
+	}, [onOpenChange, switchError]);
 
 	if (
 		session.kind !== "worker" ||
 		session.isTerminated ||
 		!canSwitchAgentHarness(session.provider) ||
-		(!recoverySwitch && !switching && !sessionIsActive(session))
+		(!controlPresentation && !sessionIsActive(session))
 	) {
 		return null;
 	}
 
-	const label = recoverySwitch
-		? t("switchAgent.recovery.action")
-		: switching && targetHarness
-			? t("switchAgent.inProgress", { target: agentLabel(targetHarness) })
-			: t("switchAgent.action");
+	const label = controlPresentation
+		? t(controlPresentation.compactLabelKey, controlPresentation.values)
+		: t("switchAgent.action");
 	const handleOpenChange = (nextOpen: boolean) => {
-		setOpen(nextOpen);
-		if (!nextOpen && switchMutation.error) {
+		onOpenChange?.(nextOpen);
+		if (!nextOpen && switchError) {
 			clearSwitchAgentState(queryClient, session.id);
 		}
 	};
@@ -60,19 +62,20 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<TopbarButton
-						aria-busy={switching ? true : undefined}
+						aria-busy={switching && controlPresentation?.animate ? true : undefined}
 						aria-label={label}
 						className={cn(
-							recoverySwitch && "text-warning hover:bg-warning/10 hover:text-warning",
+							warning && "text-warning hover:bg-warning/10 hover:text-warning",
 						)}
-						onClick={() => setOpen(true)}
+						disabled={blocksNewSwitch}
+						onClick={() => handleOpenChange(true)}
 						type="button"
 						variant="icon"
 					>
-						{recoverySwitch ? (
+						{warning ? (
 							<TriangleAlert aria-hidden="true" className="size-icon-sm" />
 						) : switching ? (
-							<LoaderCircle aria-hidden="true" className="size-icon-sm animate-spin" />
+							<LoaderCircle aria-hidden="true" className="agent-switch-toolbar-spinner size-icon-sm animate-spin" />
 						) : (
 							<Repeat2 aria-hidden="true" className="size-4 stroke-[1.8]" />
 						)}
@@ -80,8 +83,8 @@ export function TerminalSwitchAgentButton({ session }: TerminalSwitchAgentButton
 				</TooltipTrigger>
 				<TooltipContent>{label}</TooltipContent>
 			</Tooltip>
-			{open ? (
-				<SwitchAgentDialog onOpenChange={handleOpenChange} open session={session} />
+			{open && container ? (
+				<SwitchAgentDialog container={container} onOpenChange={handleOpenChange} open session={session} />
 			) : null}
 		</>
 	);
