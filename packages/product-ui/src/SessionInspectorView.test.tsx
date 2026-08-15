@@ -282,7 +282,7 @@ describe("portable inspector presentations", () => {
 		expect(screen.queryByText(newerBody)).not.toBeInTheDocument();
 	});
 
-	it("shows unresolved inline review comment bodies together above external reviews", async () => {
+	it("shows unresolved inline review comments inside each reviewer dropdown", async () => {
 		const onSendInlineComment = vi.fn().mockResolvedValue(undefined);
 		render(
 			<InspectorReviewsView
@@ -299,6 +299,19 @@ describe("portable inspector presentations", () => {
 									submittedAt: "2026-08-09T10:00:00Z",
 									submittedAtLabel: "1h ago",
 									verdict: { label: "Commented", tone: "neutral" },
+									inlineComments: [
+										{
+											body: "This branch leaks the resize listener on unmount.",
+											file: "src/panel.tsx",
+											line: 42,
+											url: "https://example.com/comment",
+										},
+										{
+											body: "This was sent to the worker already.",
+											autoInjectReview: true,
+											url: "https://example.com/comment-sent",
+										},
+									],
 								},
 							],
 							unresolved: 2,
@@ -336,9 +349,13 @@ describe("portable inspector presentations", () => {
 			/>,
 		);
 
+		expect(screen.queryByTestId("github-inline-comments")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /maya.*2 unresolved/i })).toHaveAttribute("aria-expanded", "false");
+		expect(screen.queryByText("This branch leaks the resize listener on unmount.")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /maya.*2 unresolved/i }));
 		expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
 		expect(screen.getByText("Open comments")).toBeInTheDocument();
-		expect(screen.getByText("2 unresolved")).toBeInTheDocument();
+		expect(screen.getAllByText("2 unresolved").length).toBeGreaterThanOrEqual(1);
 		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
@@ -368,7 +385,23 @@ describe("portable inspector presentations", () => {
 				groups={[
 					{
 						github: {
-							entries: [],
+							entries: [
+								{
+									body: undefined,
+									id: "unresolved-maya",
+									inlineComments: [
+										{
+											body: "Please tighten this spacing.",
+											url: "https://example.com/comment",
+										},
+									],
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+									submittedAt: "",
+									submittedAtLabel: "",
+									verdict: { label: "Commented", tone: "neutral" },
+								},
+							],
 							unresolved: 1,
 							unresolvedBy: [
 								{
@@ -396,6 +429,7 @@ describe("portable inspector presentations", () => {
 			/>,
 		);
 
+		fireEvent.click(screen.getByRole("button", { name: /maya.*1 unresolved/i }));
 		fireEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
 
 		await waitFor(() => expect(screen.getByText("Unable to send. Retry.")).toHaveClass("text-error"));

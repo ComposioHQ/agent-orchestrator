@@ -1486,10 +1486,12 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
-		expect(screen.getAllByText(/2 unresolved/)).toHaveLength(2);
+		expect(screen.getAllByText(/2 unresolved/).length).toBeGreaterThanOrEqual(2);
+		expect(screen.queryByTestId("github-inline-comments")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /maya.*2 unresolved/i }));
 		const comments = screen.getByTestId("github-inline-comments");
 		expect(comments).toHaveTextContent("Open comments");
-		expect(comments).toHaveTextContent("maya");
+		expect(comments).not.toHaveTextContent("maya");
 		expect(comments).toHaveTextContent("Sent to worker agent");
 		expect(comments).not.toHaveTextContent("a.ts:3");
 		expect(comments).not.toHaveTextContent("a.ts:9");
@@ -1609,6 +1611,8 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
 		expect(screen.getByText("External reviews")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Send to worker agent" })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /maya.*2 unresolved/i }));
 		const sendButton = screen.getByRole("button", { name: "Send to worker agent" });
 		expect(sendButton).toBeEnabled();
 		await userEvent.click(sendButton);

@@ -403,6 +403,7 @@ export type InspectorInlineComment = {
 export type InspectorGithubReview = {
 	body?: string;
 	id: string;
+	inlineComments?: InspectorInlineComment[];
 	isBot?: boolean;
 	reviewerId: string;
 	reviewUrl?: string;
@@ -532,16 +533,11 @@ export function InspectorReviewsView({
 								>
 									{labels.githubSource}
 								</ReviewSourceLabel>
-								<GithubInlineComments
-									externalLink={externalLink}
-									labels={labels}
-									onSendInlineComment={onSendInlineComment}
-									reviewers={group.github.unresolvedBy}
-								/>
 								<GithubReviewHistory
 									entries={group.github.entries}
 									externalLink={externalLink}
 									labels={labels}
+									onSendInlineComment={onSendInlineComment}
 									renderAvatar={renderAvatar}
 									renderMarkdown={renderMarkdown}
 								/>
@@ -800,12 +796,14 @@ function GithubReviewHistory({
 	entries,
 	externalLink,
 	labels,
+	onSendInlineComment,
 	renderAvatar,
 	renderMarkdown,
 }: {
 	entries: InspectorGithubReview[];
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
@@ -820,6 +818,7 @@ function GithubReviewHistory({
 					externalLink={externalLink}
 					key={entry.id}
 					labels={labels}
+					onSendInlineComment={onSendInlineComment}
 					renderAvatar={renderAvatar}
 					renderMarkdown={renderMarkdown}
 				/>
@@ -833,6 +832,7 @@ function ExternalReviewCard({
 	entry,
 	externalLink,
 	labels,
+	onSendInlineComment,
 	renderAvatar,
 	renderMarkdown,
 }: {
@@ -840,11 +840,14 @@ function ExternalReviewCard({
 	entry: InspectorGithubReview;
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
 	const [open, setOpen] = useState(defaultOpen);
 	const body = entry.body?.trim();
+	const inlineComments = entry.inlineComments ?? [];
+	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
 	return (
 		<article className="overflow-hidden rounded-md border border-border bg-overlay/45" data-testid="github-review-card">
 			<button
@@ -862,9 +865,13 @@ function ExternalReviewCard({
 						</span>
 						{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
 					</span>
-					{entry.submittedAtLabel ? (
-						<span className="font-mono text-micro text-passive">{labels.reviewedAt(entry.submittedAtLabel)}</span>
-					) : null}
+					<span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-micro text-passive">
+						{entry.submittedAtLabel ? <span>{labels.reviewedAt(entry.submittedAtLabel)}</span> : null}
+						{entry.submittedAtLabel && openInlineCount > 0 ? <span aria-hidden="true">·</span> : null}
+						{openInlineCount > 0 ? (
+							<span className="font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
+						) : null}
+					</span>
 				</span>
 				<VerdictBadge verdict={entry.verdict} />
 			</button>
@@ -881,6 +888,23 @@ function ExternalReviewCard({
 						onExpandedChange={() => undefined}
 						url={entry.reviewUrl}
 					/>
+					{openInlineCount > 0 ? (
+						<GithubInlineComments
+							externalLink={externalLink}
+							labels={labels}
+							onSendInlineComment={onSendInlineComment}
+							reviewers={[
+								{
+									count: openInlineCount,
+									isBot: entry.isBot,
+									links: inlineComments,
+									reviewerId: entry.reviewerId,
+									reviewUrl: entry.reviewUrl,
+								},
+							]}
+							showReviewer={false}
+						/>
+					) : null}
 				</div>
 			) : null}
 		</article>
@@ -892,11 +916,13 @@ function GithubInlineComments({
 	labels,
 	onSendInlineComment,
 	reviewers,
+	showReviewer = true,
 }: {
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	reviewers: InspectorUnresolvedReviewer[];
+	showReviewer?: boolean;
 }) {
 	// Manual sends are reflected immediately in local UI state after /send succeeds;
 	// persisted autoInjectReview still comes from the next backend PR observation.
@@ -948,6 +974,7 @@ function GithubInlineComments({
 							}
 						} : undefined}
 						sendError={sendErrorCommentIds.has(comment.id)}
+						showReviewer={showReviewer}
 						sent={Boolean(comment.autoInjectReview) || manuallySentCommentIds.has(comment.id)}
 						sending={sendingCommentIds.has(comment.id)}
 					/>
@@ -964,6 +991,7 @@ function InlineCommentRow({
 	onSend,
 	sendError = false,
 	sending = false,
+	showReviewer = true,
 	sent,
 }: {
 	comment: InspectorInlineComment & { reviewerId?: string };
@@ -972,12 +1000,13 @@ function InlineCommentRow({
 	onSend?: () => void;
 	sendError?: boolean;
 	sending?: boolean;
+	showReviewer?: boolean;
 	sent: boolean;
 }) {
 	const body = comment.body?.trim();
 	return (
 		<div className="flex min-w-0 flex-col gap-1.5 px-2.5 py-2 text-xs">
-			{comment.reviewerId ? <span className="font-medium text-muted-foreground">{comment.reviewerId}</span> : null}
+			{showReviewer && comment.reviewerId ? <span className="font-medium text-muted-foreground">{comment.reviewerId}</span> : null}
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{sent ? (
