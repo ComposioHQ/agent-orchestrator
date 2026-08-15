@@ -93,10 +93,10 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
                   <span className="min-w-0 text-left leading-5 sm:leading-6 xl:whitespace-nowrap">
                     <span className="sm:hidden">
                       <span className="block">Live on Product Hunt today.</span>
-                      <span className="block text-muted-foreground">An upvote or note would mean a lot.</span>
+                      <span className="block text-muted-foreground">An upvote or a note would mean a lot.</span>
                     </span>
                     <span className="hidden sm:inline">Today, Agent Orchestrator is live on Product Hunt.</span>
-                    <span className="hidden text-muted-foreground sm:inline"> An upvote or note would mean a lot.</span>
+                    <span className="hidden text-muted-foreground sm:inline"> An upvote or a note would mean a lot.</span>
                   </span>
                 </span>
                 <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#da552f]/35 bg-background/70 px-2 py-1 font-mono text-[11px] tracking-[0.3px] text-[#ff805d] sm:gap-2 sm:px-3 sm:py-1.5 sm:text-sm">
