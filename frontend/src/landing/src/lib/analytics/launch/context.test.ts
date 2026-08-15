@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { classifySource, deviceType, launchContext } from "./context";
+import { LAUNCH_CHANNELS } from "./utm";
 
 describe("classifySource", () => {
 	it("prefers an explicit utm_source and normalizes its spellings", () => {
@@ -8,12 +9,26 @@ describe("classifySource", () => {
 			expect(classifySource(s, "https://google.com")).toBe("product_hunt");
 		}
 		expect(classifySource("twitter", undefined)).toBe("x");
+		expect(classifySource("yt", undefined)).toBe("youtube");
+		expect(classifySource("instagram", undefined)).toBe("instagram");
 	});
 
 	it("falls back to the referrer hostname when there is no utm_source", () => {
 		expect(classifySource(undefined, "https://www.producthunt.com/posts/x")).toBe("product_hunt");
 		expect(classifySource(undefined, "https://t.co/abc")).toBe("x");
 		expect(classifySource(undefined, "https://lnkd.in/abc")).toBe("linkedin");
+		expect(classifySource(undefined, "https://m.youtube.com/watch?v=x")).toBe("youtube");
+	});
+
+	it("matches referrer hostnames on domain boundaries, never substrings", () => {
+		// Regression: naive includes() matched these — netflix/dropbox contain
+		// "x.com", graph.company contains "ph.co".
+		expect(classifySource(undefined, "https://netflix.com/title/1")).toBe("other");
+		expect(classifySource(undefined, "https://dropbox.com/home")).toBe("other");
+		expect(classifySource(undefined, "https://graph.company/")).toBe("other");
+		// ...while real subdomains still match.
+		expect(classifySource(undefined, "https://news.x.com/aoagents")).toBe("x");
+		expect(classifySource(undefined, "https://api.producthunt.com/")).toBe("product_hunt");
 	});
 
 	it("treats an empty referrer with no utm as a direct visit", () => {
@@ -24,6 +39,16 @@ describe("classifySource", () => {
 	it("returns other for an unknown source", () => {
 		expect(classifySource("newsletter", undefined)).toBe("other");
 		expect(classifySource(undefined, "https://example.com")).toBe("other");
+	});
+
+	it("keeps the referrer rules in sync with the channel registry", () => {
+		// Drift guard: every channel in LAUNCH_CHANNELS must be classifiable
+		// both by its own utm_source and by its profile hostname, so adding a
+		// channel there cannot silently produce an unattributable source here.
+		for (const channel of LAUNCH_CHANNELS) {
+			expect(classifySource(channel.source, undefined)).toBe(channel.source);
+			expect(classifySource(undefined, channel.profileUrl)).toBe(channel.source);
+		}
 	});
 });
 
@@ -38,6 +63,13 @@ describe("deviceType", () => {
 		expect(deviceType("Mozilla/5.0 (Linux; Android 14; Tab)")).toBe("tablet");
 		expect(deviceType("Mozilla/5.0 (Linux; Android 14; Pixel Mobile)")).toBe("mobile");
 	});
+
+	it("counts an iPadOS 13+ desktop-style UA as a tablet when touch is reported", () => {
+		const iPadOS =
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+		expect(deviceType(iPadOS, 5)).toBe("tablet");
+		expect(deviceType(iPadOS, 0)).toBe("desktop");
+	});
 });
 
 describe("launchContext", () => {
@@ -45,6 +77,7 @@ describe("launchContext", () => {
 		expect(
 			launchContext({
 				utmSource: "product_hunt",
+				utmCampaign: "launch_day",
 				referrer: "https://www.producthunt.com/",
 				ua: "iPhone Mobile",
 			}),
@@ -54,5 +87,23 @@ describe("launchContext", () => {
 			user_type: "anonymous",
 			device: "mobile",
 		});
+	});
+
+	it("passes the visit's own utm_campaign through instead of assuming the launch one", () => {
+		expect(
+			launchContext({ utmSource: "x", utmCampaign: "spring_share", ua: "Mac" }).campaign,
+		).toBe("spring_share");
+	});
+
+	it("omits campaign entirely when the visit carried none", () => {
+		// Direct and untagged traffic must not be relabeled launch_day: the
+		// property is unregistered, not defaulted.
+		expect(launchContext({ referrer: "", ua: "Mac" })).toEqual({
+			source: "direct",
+			user_type: "anonymous",
+			device: "desktop",
+		});
+		expect("campaign" in launchContext({ referrer: "", ua: "Mac" })).toBe(false);
+		expect(launchContext({ utmCampaign: "   ", ua: "Mac" }).campaign).toBeUndefined();
 	});
 });

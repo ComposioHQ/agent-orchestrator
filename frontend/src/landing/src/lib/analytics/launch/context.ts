@@ -5,74 +5,99 @@
  *
  * `campaign.ts` already captures the raw `utm_*` params. This layer adds a
  * single normalized `source` (so `product_hunt`, a `producthunt.com` referrer,
- * and `utm_source=product-hunt` all collapse to one value), plus the campaign,
- * a coarse device class, and the visitor's user type. These are registered as
- * PostHog super-properties, so they ride on autocaptured pageviews too.
+ * and `utm_source=product-hunt` all collapse to one value), the visit's own
+ * `utm_campaign` when present, and a coarse device class. These are registered
+ * as PostHog super-properties from the init `loaded` callback (see
+ * `instrumentation-client.ts`), so they ride on every event including the very
+ * first pageview.
  *
- * The functions are pure (they take the URL search, referrer, and user-agent as
+ * The channel set is derived from `LAUNCH_CHANNELS` so the registry stays the
+ * single source of truth: a channel added there is classifiable here, and
+ * `context.test.ts` fails if the two drift apart.
+ *
+ * The functions are pure (they take the URL params, referrer, and user-agent as
  * arguments) so the classification rules are testable without a browser.
  */
 
-import { LAUNCH_CAMPAIGN } from "./utm";
+import { LAUNCH_CHANNELS, type LaunchSourceName } from "./utm";
 
-export type LaunchSource =
-	| "product_hunt"
-	| "x"
-	| "linkedin"
-	| "youtube"
-	| "discord"
-	| "github"
-	| "reddit"
-	| "direct"
-	| "other";
+export type LaunchSource = LaunchSourceName | "direct" | "other";
 
 export type DeviceType = "mobile" | "tablet" | "desktop";
 
 export type LaunchContext = {
 	source: LaunchSource;
-	campaign: string;
+	/** The visit's own utm_campaign, when it carried one. Absent otherwise —
+	 * never defaulted to LAUNCH_CAMPAIGN, so non-launch traffic (direct, Reddit
+	 * ads, ...) is not silently relabeled. */
+	campaign?: string;
 	/** Always `anonymous` on the marketing site (no auth here). The app sets
 	 * `signed_up` / `activated` for its own events. */
 	user_type: "anonymous";
 	device: DeviceType;
 };
 
-const UTM_SOURCE_MAP: Record<string, LaunchSource> = {
-	product_hunt: "product_hunt",
+/** utm_source spellings that normalize onto a channel's canonical source. */
+const UTM_ALIASES: Record<string, LaunchSourceName> = {
 	producthunt: "product_hunt",
 	"product-hunt": "product_hunt",
 	ph: "product_hunt",
-	x: "x",
 	twitter: "x",
-	linkedin: "linkedin",
-	youtube: "youtube",
 	yt: "youtube",
-	discord: "discord",
-	github: "github",
-	reddit: "reddit",
 };
 
-/** Referrer hostname substrings, most specific first. */
-const REFERRER_RULES: Array<[string, LaunchSource]> = [
-	["producthunt.com", "product_hunt"],
-	["ph.co", "product_hunt"],
-	["linkedin.com", "linkedin"],
-	["lnkd.in", "linkedin"],
-	["youtube.com", "youtube"],
-	["youtu.be", "youtube"],
-	["discord.com", "discord"],
-	["discord.gg", "discord"],
-	["github.com", "github"],
-	["reddit.com", "reddit"],
-	["t.co", "x"],
-	["twitter.com", "x"],
-	["x.com", "x"],
-];
+/** Referrer hostnames that attribute onto a channel's canonical source. */
+const REFERRER_ALIASES: Record<string, LaunchSourceName> = {
+	"producthunt.com": "product_hunt",
+	"ph.co": "product_hunt",
+	"lnkd.in": "linkedin",
+	"youtu.be": "youtube",
+	"discord.gg": "discord",
+	"t.co": "x",
+	"twitter.com": "x",
+	"reddit.com": "reddit",
+};
+
+/** utm_source value -> canonical source, one row per channel plus aliases. */
+const UTM_SOURCE_MAP: Record<string, LaunchSourceName> = {
+	...Object.fromEntries(
+		LAUNCH_CHANNELS.map((channel) => [channel.source, channel.source]),
+	),
+	...UTM_ALIASES,
+};
+
+/** Referrer hostname -> canonical source. Needles never suffix-contain one
+ * another, so order is irrelevant; matching is on domain boundaries. */
+function referrerHostname(url: string): string {
+	try {
+		// Strip the leading "www." so the needle matches the apex and every
+		// subdomain (www., m., news., ...) of it.
+		return new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return "";
+	}
+}
+
+const REFERRER_RULES: Array<[string, LaunchSourceName]> = [
+	...LAUNCH_CHANNELS.map((channel) => {
+		return [referrerHostname(channel.profileUrl), channel.source] as const;
+	}),
+	...Object.entries(REFERRER_ALIASES),
+].filter(([needle]) => needle !== "") as Array<[string, LaunchSourceName]>;
+
+/** A campaign longer than this is treated as junk and dropped. */
+const MAX_CAMPAIGN_LENGTH = 200;
+
+/** True when `host` is `needle` or a subdomain of it — never a substring. */
+function hostMatches(host: string, needle: string): boolean {
+	return host === needle || host.endsWith("." + needle);
+}
 
 /**
  * Classifies the visit's source. A UTM source wins when present (it is the
  * intentional tag on our own links); otherwise the referrer hostname is
- * matched; an empty referrer is a direct visit; anything else is `other`.
+ * matched on domain boundaries (so `netflix.com` is not `x.com`); an empty
+ * referrer is a direct visit; anything else is `other`.
  */
 export function classifySource(
 	utmSource: string | undefined,
@@ -90,30 +115,46 @@ export function classifySource(
 		// Not a full URL; match against the raw string below.
 	}
 	for (const [needle, source] of REFERRER_RULES) {
-		if (host.includes(needle)) return source;
+		if (hostMatches(host, needle)) return source;
 	}
 	return "other";
 }
 
-/** Coarse device class from a user-agent string. */
-export function deviceType(ua: string | undefined): DeviceType {
+/**
+ * Coarse device class from a user-agent string. `touchPoints` (from
+ * `navigator.maxTouchPoints`) distinguishes iPadOS 13+, whose Safari presents
+ * a desktop "Macintosh" user-agent, from an actual Mac.
+ */
+export function deviceType(ua: string | undefined, touchPoints = 0): DeviceType {
 	const s = (ua ?? "").toLowerCase();
 	if (/ipad|tablet|kindle|playbook|silk/.test(s)) return "tablet";
+	if (/macintosh/.test(s) && touchPoints > 1) return "tablet";
 	if (/mobi|iphone|ipod|android.*mobile|windows phone/.test(s)) return "mobile";
 	if (/android/.test(s)) return "tablet"; // Android without "mobile" is a tablet.
 	return "desktop";
 }
 
+/** The visit's utm_campaign, normalized; undefined when absent or junk. */
+function normalizeCampaign(utmCampaign: string | undefined): string | undefined {
+	const value = utmCampaign?.trim();
+	if (!value || value.length > MAX_CAMPAIGN_LENGTH) return undefined;
+	return value;
+}
+
 /** The normalized launch context to register as PostHog super-properties. */
 export function launchContext(input: {
 	utmSource?: string;
+	utmCampaign?: string;
 	referrer?: string;
 	ua?: string;
+	touchPoints?: number;
 }): LaunchContext {
-	return {
+	const context: LaunchContext = {
 		source: classifySource(input.utmSource, input.referrer),
-		campaign: LAUNCH_CAMPAIGN,
 		user_type: "anonymous",
-		device: deviceType(input.ua),
+		device: deviceType(input.ua, input.touchPoints),
 	};
+	const campaign = normalizeCampaign(input.utmCampaign);
+	if (campaign) context.campaign = campaign;
+	return context;
 }

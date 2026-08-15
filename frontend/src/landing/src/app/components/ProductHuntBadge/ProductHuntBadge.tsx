@@ -2,8 +2,27 @@
 
 import type { ReactNode } from "react";
 
-import { trackPhBadgeClick } from "@/lib/analytics/launch/events";
+import { track } from "@/lib/analytics";
+import { LAUNCH_EVENTS } from "@/lib/analytics/launch/events";
 import { PRODUCT_HUNT_URL } from "@/lib/analytics/launch/utm";
+
+/** Which Product Hunt CTA this is; selects the event fired on click. */
+export type ProductHuntIntent = keyof typeof INTENT_EVENT;
+
+const INTENT_EVENT = {
+	/** The badge itself ("find us on PH"). */
+	badge: LAUNCH_EVENTS.phBadgeClick,
+	/** A CTA sending the visitor back to upvote. */
+	upvote: LAUNCH_EVENTS.phUpvoteCtaClick,
+	/** A CTA sending the visitor to comment/review. */
+	comment: LAUNCH_EVENTS.phCommentCtaClick,
+} as const;
+
+const INTENT_LABEL: Record<ProductHuntIntent, string> = {
+	badge: "Find Agent Orchestrator on Product Hunt",
+	upvote: "Upvote us on Product Hunt",
+	comment: "Review us on Product Hunt",
+};
 
 type ProductHuntBadgeProps = {
 	/**
@@ -13,15 +32,22 @@ type ProductHuntBadgeProps = {
 	 */
 	children?: ReactNode;
 	className?: string;
+	/** Which CTA this instance is; defaults to the plain badge. */
+	intent?: ProductHuntIntent;
 };
 
 /**
- * A drop-in Product Hunt badge for launch day. It links to our Product Hunt
- * page and fires `ph_badge_click` on click. Place it in the hero or header
+ * A drop-in Product Hunt CTA for launch day. It links to our Product Hunt page
+ * and fires the event matching `intent` on click (`ph_badge_click`,
+ * `ph_upvote_cta_click`, or `ph_comment_cta_click`). Mounted in the header
  * during the launch; remove it after. It intentionally does not carry UTM back
  * to Product Hunt (the destination is Product Hunt, not our site).
  */
-export function ProductHuntBadge({ children, className }: ProductHuntBadgeProps) {
+export function ProductHuntBadge({
+	children,
+	className,
+	intent = "badge",
+}: ProductHuntBadgeProps) {
 	return (
 		<a
 			href={PRODUCT_HUNT_URL}
@@ -29,9 +55,9 @@ export function ProductHuntBadge({ children, className }: ProductHuntBadgeProps)
 			rel="noopener noreferrer"
 			className={className}
 			aria-label="Agent Orchestrator on Product Hunt"
-			onClick={() => trackPhBadgeClick()}
+			onClick={() => track(INTENT_EVENT[intent])}
 		>
-			{children ?? "Find Agent Orchestrator on Product Hunt"}
+			{children ?? INTENT_LABEL[intent]}
 		</a>
 	);
 }

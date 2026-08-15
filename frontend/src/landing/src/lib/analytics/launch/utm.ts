@@ -51,9 +51,21 @@ export function buildUtmUrl(base: string, params: UtmParams): string {
 	return url.toString();
 }
 
+/** Canonical launch sources. One per registry channel, plus the sources the
+ * site already buys/links from but that have no inbound-link row (reddit). */
+export type LaunchSourceName =
+	| "product_hunt"
+	| "x"
+	| "linkedin"
+	| "youtube"
+	| "discord"
+	| "github"
+	| "instagram"
+	| "reddit";
+
 export type LaunchChannel = {
 	/** `utm_source` value. Canonical and lowercase; never changes per channel. */
-	source: string;
+	source: LaunchSourceName;
 	/** Human label for docs/dashboards. */
 	label: string;
 	/** `utm_medium` value. */
@@ -66,7 +78,7 @@ export type LaunchChannel = {
 	todo?: boolean;
 };
 
-function inbound(source: string, medium: string): string {
+function inbound(source: LaunchSourceName, medium: string): string {
 	return buildUtmUrl(COMPANY.MARKETING_URL, {
 		source,
 		medium,
@@ -137,6 +149,6 @@ export const LAUNCH_CHANNELS: LaunchChannel[] = [
 ];
 
 /** Look up a channel's tagged inbound link by its `utm_source`. */
-export function launchLink(source: string): string | undefined {
+export function launchLink(source: LaunchSourceName): string | undefined {
 	return LAUNCH_CHANNELS.find((c) => c.source === source)?.link;
 }

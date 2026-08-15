@@ -8,6 +8,7 @@ import {
 import { ANALYTICS_CONSENT_KEY } from "@/lib/constants";
 import { applyMarketingConsent } from "@/lib/analytics/marketing-consent";
 import { campaignProperties } from "@/lib/analytics/campaign";
+import { launchContext } from "@/lib/analytics/launch/context";
 
 // NEXT_PUBLIC_* is inlined at build time. Until the deploy workflow passed this
 // through, it was undefined on the deployed site and init was skipped entirely,
@@ -23,6 +24,7 @@ if (POSTHOG_KEY) {
     // properties here, before the opt-in, keeps those first events tagged with
     // app_name=marketing rather than leaking untagged into the shared project.
     loaded: (posthog) => {
+      registerLaunchContext(posthog);
       applyMarketingConsent(
         posthog,
         localStorage.getItem(ANALYTICS_CONSENT_KEY),
@@ -39,3 +41,44 @@ if (POSTHOG_KEY) {
 }
 
 export const onRouterTransitionStart = () => {};
+
+/**
+ * Registers the launch attribution (normalized source, the visit's own
+ * utm_campaign, device class) as super-properties.
+ *
+ * Must run before `applyMarketingConsent`: for an already-consented visitor,
+ * `opt_in_capturing()` emits the initial pageview synchronously inside `loaded`,
+ * so registering from a later React effect would send that first pageview — the
+ * landing event of the whole launch funnel — unattributed. Same lesson as the
+ * `app_name` registration in `marketing-consent.ts`.
+ *
+ * `campaign` is only set when the visit actually carried a utm_campaign, and is
+ * actively unregistered otherwise: registered super-properties persist in the
+ * PostHog cookie, so a stale `launch_day` from an earlier visit must not ride
+ * along on later direct visits.
+ */
+function registerLaunchContext(posthog: import("posthog-js").PostHog): void {
+  const params = new URLSearchParams(window.location.search);
+  const context = launchContext({
+    utmSource: params.get("utm_source") ?? undefined,
+    utmCampaign: params.get("utm_campaign") ?? undefined,
+    referrer: document.referrer,
+    ua: navigator.userAgent,
+    touchPoints: navigator.maxTouchPoints,
+  });
+  if (context.campaign) {
+    posthog.register({
+      source: context.source,
+      campaign: context.campaign,
+      user_type: context.user_type,
+      device: context.device,
+    });
+  } else {
+    posthog.unregister("campaign");
+    posthog.register({
+      source: context.source,
+      user_type: context.user_type,
+      device: context.device,
+    });
+  }
+}
