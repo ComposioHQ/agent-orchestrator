@@ -218,6 +218,10 @@ describe("portable inspector presentations", () => {
 		const row = screen.getByTestId("review-pr-row");
 		expect(row).not.toHaveAttribute("aria-expanded");
 		expect(screen.getByText("Looks good.")).toBeInTheDocument();
+		expect(screen.queryByText("Ship it.")).not.toBeInTheDocument();
+		const externalReview = screen.getByRole("button", { name: /review-bot.*Approved/ });
+		expect(externalReview).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(externalReview);
 		expect(screen.getByText("Ship it.")).toBeInTheDocument();
 		expect(screen.getByText("Not injected")).toBeInTheDocument();
 		expect(renderAvatar).toHaveBeenCalledWith("codex");
@@ -225,8 +229,8 @@ describe("portable inspector presentations", () => {
 	});
 
 	it("shows the newest GitHub review when history prepends", () => {
-		const olderBody = "Older review ".repeat(30).trim();
-		const newerBody = "Newer review ".repeat(30).trim();
+		const olderBody = "Older review";
+		const newerBody = "Newer review";
 		const olderReview = {
 			body: olderBody,
 			id: "github-review-old",
@@ -254,10 +258,10 @@ describe("portable inspector presentations", () => {
 			/>
 		);
 		const { rerender } = render(view([olderReview]));
-		fireEvent.click(screen.getByRole("button", { name: "Show more" }));
-
-		const olderSummary = screen.getByText(olderBody).closest('[data-testid="github-review-summary"]');
-		expect(olderSummary).not.toHaveClass("line-clamp-4");
+		const olderButton = screen.getByRole("button", { name: /ada.*Changes requested/ });
+		expect(olderButton).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(olderButton);
+		expect(screen.getByText(olderBody)).toBeInTheDocument();
 
 		rerender(
 			view([
@@ -273,23 +277,33 @@ describe("portable inspector presentations", () => {
 			]),
 		);
 
-		expect(screen.queryByText(olderBody)).not.toBeInTheDocument();
-		expect(screen.getByText(newerBody).closest('[data-testid="github-review-summary"]')).toHaveClass(
-			"line-clamp-4",
-		);
+		const cards = screen.getAllByTestId("github-review-card");
+		expect(within(cards[0]).getByRole("button", { name: /grace.*Changes requested/ })).toHaveAttribute("aria-expanded", "false");
+		expect(screen.queryByText(newerBody)).not.toBeInTheDocument();
 	});
-	it("shows unresolved inline review comment bodies with their file location", () => {
+
+	it("shows unresolved inline review comment bodies together above external reviews", () => {
 		render(
 			<InspectorReviewsView
 				externalLink={ExternalLink}
 				groups={[
 					{
 						github: {
-							entries: [],
-							unresolved: 1,
+							entries: [
+								{
+									body: "Please address the inline notes before merge.",
+									id: "github-review-1",
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+									submittedAt: "2026-08-09T10:00:00Z",
+									submittedAtLabel: "1h ago",
+									verdict: { label: "Commented", tone: "neutral" },
+								},
+							],
+							unresolved: 2,
 							unresolvedBy: [
 								{
-									count: 1,
+									count: 2,
 									links: [
 										{
 											body: "This branch leaks the resize listener on unmount.",
@@ -297,12 +311,18 @@ describe("portable inspector presentations", () => {
 											line: 42,
 											url: "https://example.com/comment",
 										},
+										{
+											body: "This was sent to the worker already.",
+											autoInjectReview: true,
+											url: "https://example.com/comment-sent",
+										},
 									],
 									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
 								},
 							],
 						},
-						meta: "#12 · 1 unresolved",
+						meta: "#12 · 2 unresolved",
 						number: 12,
 						title: "Portable inspector",
 					},
@@ -314,48 +334,16 @@ describe("portable inspector presentations", () => {
 			/>,
 		);
 
-		expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
+		expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
+		expect(screen.getByText("Open comments")).toBeInTheDocument();
+		expect(screen.getByText("2 unresolved")).toBeInTheDocument();
+		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
+		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-success");
+		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(2);
 	});
 
-	it("pages unresolved comments like review history", () => {
-		const comments = Array.from({ length: 5 }, (_, index) => ({
-			body: `Unresolved comment ${index + 1}`,
-			file: "src/panel.tsx",
-			line: index + 1,
-			url: `https://example.com/comment/${index + 1}`,
-		}));
-		render(
-			<InspectorReviewsView
-				externalLink={ExternalLink}
-				groups={[
-					{
-						github: {
-							entries: [],
-							unresolved: 5,
-							unresolvedBy: [{ count: 5, links: comments, reviewerId: "maya" }],
-						},
-						meta: "#12 · 5 unresolved",
-						number: 12,
-						title: "Portable inspector",
-					},
-				]}
-				isLoading={false}
-				labels={reviewLabels}
-				renderAvatar={() => null}
-				renderMarkdown={(body) => <p>{body}</p>}
-			/>,
-		);
-
-		expect(screen.getByText("Unresolved comment 1")).toBeInTheDocument();
-		expect(screen.queryByText("Unresolved comment 2")).not.toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "Load 4 more" }));
-		expect(screen.getByText("Unresolved comment 4")).toBeInTheDocument();
-		expect(screen.queryByText("Unresolved comment 5")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Load 1 more" })).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "Show latest only" }));
-		expect(screen.queryByText("Unresolved comment 2")).not.toBeInTheDocument();
-	});
 
 });
 
@@ -369,11 +357,17 @@ const reviewLabels: InspectorReviewLabels = {
 	noPastReviewSummaries: "No summaries",
 	notInjected: "Not injected",
 	openComments: "Open comments",
+	openInlineComments: (count) => `${count} open inline comments`,
 	reviews: "Reviews",
+	reviewedAt: (time) => `Reviewed ${time}`,
+	resolvedComments: (count) => `Resolved comments · ${count}`,
+	sendToWorkerAgent: "Send to worker agent",
+	sentToWorkerAgent: "Sent to worker agent",
 	showLatestReviewOnly: "Show latest only",
 	showLess: "Show less",
 	showMore: "Show more",
 	commentNumber: (number) => `Comment ${number}`,
 	unresolvedCount: (count) => `${count} unresolved`,
+	viewInFile: "View in file",
 	viewOnPR: "View on PR",
 };

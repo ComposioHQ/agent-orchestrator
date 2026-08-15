@@ -1422,10 +1422,12 @@ describe("SessionInspector summary reviews", () => {
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
 		expect(screen.getAllByText(/2 unresolved/)).toHaveLength(2);
-		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:3");
-		expect(screen.getByTestId("github-inline-comments")).not.toHaveTextContent("a.ts:9");
-		await userEvent.click(screen.getByRole("button", { name: "Load more · 1 earlier" }));
-		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:9");
+		const comments = screen.getByTestId("github-inline-comments");
+		expect(comments).toHaveTextContent("Open comments");
+		expect(comments).toHaveTextContent("maya");
+		expect(comments).toHaveTextContent("Sent to worker agent");
+		expect(comments).not.toHaveTextContent("a.ts:3");
+		expect(comments).not.toHaveTextContent("a.ts:9");
 		// AO's runs and the PR's own reviews share one section keyed by PR, so the
 		// unresolved count rides the same row as the AO verdict.
 		expect(screen.getByText("Review summary")).toBeInTheDocument();
@@ -1483,12 +1485,15 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
+		const reviewCard = await screen.findByRole("button", { name: /maya.*Approved/ });
+		expect(reviewCard).toHaveAttribute("aria-expanded", "false");
+		await userEvent.click(reviewCard);
 		const summary = await screen.findByTestId("github-review-summary");
 		const externalReview = summary.closest("article") as HTMLElement;
 		expect(within(summary).getByText("ready").tagName).toBe("STRONG");
 		expect(within(summary).getByText("Ship it").tagName).toBe("LI");
 		expect(summary).not.toHaveTextContent("**ready**");
-		expect(within(externalReview).getByText("3d ago")).toBeInTheDocument();
+		expect(within(externalReview).getByText("Reviewed 3d ago")).toBeInTheDocument();
 		expect(within(externalReview).getByRole("link", { name: "View on PR" })).toHaveAttribute(
 			"href",
 			"https://example.com/pr/3#pullrequestreview-456",
