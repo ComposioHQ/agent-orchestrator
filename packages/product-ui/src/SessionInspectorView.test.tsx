@@ -223,7 +223,7 @@ describe("portable inspector presentations", () => {
 		expect(externalReview).toHaveAttribute("aria-expanded", "false");
 		fireEvent.click(externalReview);
 		expect(screen.getByText("Ship it.")).toBeInTheDocument();
-		expect(screen.getByText("Not injected")).toBeInTheDocument();
+		expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
 		expect(renderAvatar).toHaveBeenCalledWith("codex");
 		expect(renderMarkdown).toHaveBeenCalledTimes(2);
 	});
@@ -352,8 +352,10 @@ describe("portable inspector presentations", () => {
 			}),
 		);
 		await waitFor(() => {
-			expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
-			expect(screen.getAllByText("Sent to worker agent")[0]).toHaveClass("text-success");
+			const sentLabels = screen.getAllByText("Sent to worker agent");
+			expect(sentLabels).toHaveLength(2);
+			expect(sentLabels[0]?.closest("span")).toHaveClass("bg-overlay/80", "border-border-strong");
+			expect(sentLabels[0]?.closest("span")?.querySelector("svg")).toHaveClass("text-success");
 		});
 		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(2);
 	});
@@ -400,7 +402,6 @@ describe("portable inspector presentations", () => {
 		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
 		expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
 	});
-
 
 });
 

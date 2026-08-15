@@ -1607,9 +1607,11 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
 		expect(screen.getByText("External reviews")).toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+		const sendButton = screen.getByRole("button", { name: "Send to worker agent" });
+		expect(sendButton).toBeEnabled();
+		await userEvent.click(sendButton);
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
 				params: { path: { sessionId: "sess-1" } },
@@ -1642,7 +1644,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
 		expect(screen.getByText("Agent reviews")).toBeInTheDocument();
 	});
 

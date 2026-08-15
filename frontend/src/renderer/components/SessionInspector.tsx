@@ -1091,7 +1091,6 @@ function MergedReviewsSection({
 	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
 	const labels = reviewLabels(t);
 	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
-		if (usePreviewData) return;
 		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 			params: { path: { sessionId: session.id } },
 			body: { message: formatInlineReviewCommentMessage(comment) },

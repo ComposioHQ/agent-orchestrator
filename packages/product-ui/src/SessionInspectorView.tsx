@@ -3,6 +3,7 @@ import type { ExternalLinkComponent } from "./external-link";
 import {
 	ArrowUpRightIcon,
 	BotIcon,
+	CheckIcon,
 	ChevronIcon,
 	GitPullRequestIcon,
 } from "./icons";
@@ -510,7 +511,6 @@ export function InspectorReviewsView({
 							<div className="flex min-w-0 flex-col gap-2">
 								<ReviewSourceLabel
 									icon={<BotIcon />}
-									marker={group.ao.notInjected ? labels.notInjected : undefined}
 								>
 									{labels.aoSource}
 								</ReviewSourceLabel>
@@ -529,7 +529,6 @@ export function InspectorReviewsView({
 							<div className="flex min-w-0 flex-col gap-2">
 								<ReviewSourceLabel
 									icon={<GitPullRequestIcon />}
-									marker={group.github.notInjected ? labels.notInjected : undefined}
 								>
 									{labels.githubSource}
 								</ReviewSourceLabel>
@@ -899,7 +898,9 @@ function GithubInlineComments({
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	reviewers: InspectorUnresolvedReviewer[];
 }) {
-	const [sentCommentIds, setSentCommentIds] = useState<Set<string>>(() => new Set());
+	// Manual sends are reflected immediately in local UI state after /send succeeds;
+	// persisted autoInjectReview still comes from the next backend PR observation.
+	const [manuallySentCommentIds, setManuallySentCommentIds] = useState<Set<string>>(() => new Set());
 	const [sendingCommentIds, setSendingCommentIds] = useState<Set<string>>(() => new Set());
 	const [sendErrorCommentIds, setSendErrorCommentIds] = useState<Set<string>>(() => new Set());
 	const comments = reviewers.flatMap((reviewer) =>
@@ -935,7 +936,7 @@ function GithubInlineComments({
 							});
 							try {
 								await onSendInlineComment(comment);
-								setSentCommentIds((current) => new Set(current).add(comment.id));
+								setManuallySentCommentIds((current) => new Set(current).add(comment.id));
 							} catch {
 								setSendErrorCommentIds((current) => new Set(current).add(comment.id));
 							} finally {
@@ -947,7 +948,7 @@ function GithubInlineComments({
 							}
 						} : undefined}
 						sendError={sendErrorCommentIds.has(comment.id)}
-						sent={Boolean(comment.autoInjectReview) || sentCommentIds.has(comment.id)}
+						sent={Boolean(comment.autoInjectReview) || manuallySentCommentIds.has(comment.id)}
 						sending={sendingCommentIds.has(comment.id)}
 					/>
 				))}
@@ -980,7 +981,10 @@ function InlineCommentRow({
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{sent ? (
-					<span className="font-medium text-success">{labels.sentToWorkerAgent}</span>
+					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm [&_svg]:size-icon-xs">
+						<CheckIcon className="shrink-0 text-success" />
+						{labels.sentToWorkerAgent}
+					</span>
 				) : (
 					<button
 						className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60 [&_svg]:size-icon-xs"
