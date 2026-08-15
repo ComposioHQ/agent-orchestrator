@@ -1024,7 +1024,7 @@ describe("SessionInspector summary reviews", () => {
 		);
 		await openReviewsSection();
 
-		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+		await userEvent.click(await screen.findByRole("button", { name: "Review latest commit" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -1096,7 +1096,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
 		await openReviewsSection();
 
-		expect(screen.getByRole("button", { name: "Run review" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Select reviewer agent" })).toBeDisabled();
 		const toggle = screen.getByRole("switch", { name: "Auto review" });
 		expect(toggle).toBeChecked();
@@ -1181,7 +1181,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Review latest commit" })).toBeInTheDocument();
 		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 	});
@@ -1231,7 +1231,7 @@ describe("SessionInspector summary reviews", () => {
 		).not.toHaveLength(0);
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
@@ -1589,7 +1589,7 @@ describe("SessionInspector summary reviews", () => {
 				body: { harness: "opencode" },
 			}),
 		);
-		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
+		await userEvent.click(screen.getByRole("button", { name: "Review latest commit" }));
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
 			params: { path: { sessionId: "sess-1" } },
@@ -1776,7 +1776,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.queryByText("reviewer crashed")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeEnabled();
 	});
 
 	it("shows the reviewer identity and aggregate verdict", async () => {
@@ -1797,7 +1797,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("does not list a failed run without a verdict and still allows rerun", async () => {
+	it("does not list a failed run without a verdict and still allows reviewing the latest commit", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
 		]);
@@ -1806,7 +1806,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeEnabled();
 	});
 
 	it("surfaces the latest automatic review failure while auto review is enabled", async () => {
