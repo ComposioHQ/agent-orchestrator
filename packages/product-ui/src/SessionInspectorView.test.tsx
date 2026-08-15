@@ -315,6 +315,45 @@ describe("portable inspector presentations", () => {
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
 	});
 
+	it("pages unresolved comments like review history", () => {
+		const comments = Array.from({ length: 5 }, (_, index) => ({
+			body: `Unresolved comment ${index + 1}`,
+			file: "src/panel.tsx",
+			line: index + 1,
+			url: `https://example.com/comment/${index + 1}`,
+		}));
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [],
+							unresolved: 5,
+							unresolvedBy: [{ count: 5, links: comments, reviewerId: "maya" }],
+						},
+						meta: "#12 · 5 unresolved",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		expect(screen.getByText("Unresolved comment 1")).toBeInTheDocument();
+		expect(screen.queryByText("Unresolved comment 2")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Load 4 more" }));
+		expect(screen.getByText("Unresolved comment 4")).toBeInTheDocument();
+		expect(screen.queryByText("Unresolved comment 5")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Load 1 more" })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Show latest only" }));
+		expect(screen.queryByText("Unresolved comment 2")).not.toBeInTheDocument();
+	});
+
 });
 
 const reviewLabels: InspectorReviewLabels = {

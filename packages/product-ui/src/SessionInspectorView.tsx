@@ -908,6 +908,14 @@ function GithubInlineComments({
 }) {
 	const active = reviewers.filter((reviewer) => reviewer.count > 0);
 	const count = active.reduce((total, reviewer) => total + reviewer.count, 0);
+	const comments = active.flatMap((reviewer) =>
+		reviewer.links.map((link, index) => ({ index, link, reviewer })),
+	);
+	const latestKey = comments[0]?.link.url || comments[0]?.link.file || comments[0]?.link.body || "";
+	const [visibleCount, setVisibleCount] = useState(1);
+	useEffect(() => setVisibleCount(1), [latestKey]);
+	const visible = comments.slice(0, visibleCount);
+	const remaining = Math.max(0, comments.length - visible.length);
 	if (count === 0) return null;
 	return (
 		<div className="rounded-md border border-border bg-overlay/40 px-2.5 py-2.5" data-testid="github-inline-comments">
@@ -919,61 +927,58 @@ function GithubInlineComments({
 				</span>
 			</div>
 			<div className="mt-2.5 flex min-w-0 flex-col gap-3">
-				{active.map((reviewer) => (
-					<div className="min-w-0" key={reviewer.reviewerId}>
+				{visible.map(({ index, link, reviewer }) => {
+					const label = link.file
+						? `${link.file}${link.line ? `:${link.line}` : ""}`
+						: labels.commentNumber(index + 1);
+					const href = link.url || reviewer.reviewUrl;
+					const body = link.body?.trim();
+					const className =
+						"flex max-w-full min-w-0 flex-col gap-1.5 px-2 py-2 font-mono text-[9px] leading-none text-muted-foreground";
+					const contents = (
+						<>
+							<span className="inline-flex min-w-0 items-center gap-1">
+								<FileCodeIcon className="size-2.5 shrink-0 text-muted-foreground" />
+								<span className="truncate" title={label}>{label}</span>
+							</span>
+							{body ? (
+								<span className="whitespace-pre-wrap break-words font-sans text-xs leading-snug text-foreground/90">
+									{body}
+								</span>
+							) : null}
+						</>
+					);
+					return (
+					<div className="min-w-0" key={`${reviewer.reviewerId}:${href || label}:${index}`}>
 						<div className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
 							<span className="min-w-0 truncate font-medium text-foreground">{reviewer.reviewerId}</span>
 							{reviewer.isBot ? <span className="font-mono text-passive">{labels.bot}</span> : null}
 						</div>
 						<div className="mt-1.5 min-w-0 rounded-md border border-border/70 bg-background/35">
-							{reviewer.links.map((link, index) => {
-								const label = link.file
-									? `${link.file}${link.line ? `:${link.line}` : ""}`
-									: labels.commentNumber(index + 1);
-								const href = link.url || reviewer.reviewUrl;
-								const body = link.body?.trim();
-								const heading = (
-									<>
-										<FileCodeIcon className="size-2.5 shrink-0 text-muted-foreground" />
-										<span className="truncate" title={label}>{label}</span>
-									</>
-								);
-								const className =
-									"flex max-w-full min-w-0 flex-col gap-1.5 border-b border-border/60 px-2 py-2 font-mono text-[9px] leading-none text-muted-foreground last:border-b-0";
-								const contents = (
-									<>
-										<span className="inline-flex min-w-0 items-center gap-1">{heading}</span>
-										{body ? (
-											<span className="whitespace-pre-wrap break-words font-sans text-xs leading-snug text-foreground/90">
-												{body}
-											</span>
-										) : null}
-									</>
-								);
-								return href ? (
+							{href ? (
 									<ExternalLink
 										className={cn(className, "no-underline transition-colors hover:bg-background/55 hover:text-foreground")}
 										href={href}
-										key={`${href}:${index}`}
 									>
 										{contents}
 									</ExternalLink>
 								) : (
-									<span className={className} key={`${label}:${index}`}>{contents}</span>
-								);
-							})}
-							{reviewer.links.length === 0 && reviewer.reviewUrl ? (
-								<ExternalLink
-									className="inline-flex items-center gap-0.5 rounded-md border border-border/70 bg-background/45 px-2 py-1.5 font-medium text-[9px] leading-none text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-background/70 hover:text-foreground"
-									href={reviewer.reviewUrl}
-								>
-									{labels.viewOnPR}
-									<ArrowUpRightIcon className="size-2.5" />
-								</ExternalLink>
-							) : null}
+									<span className={className}>{contents}</span>
+								)}
 						</div>
 					</div>
-				))}
+					);
+				})}
+				<ReviewHistoryPager
+					labels={labels}
+					onCollapse={visibleCount > 1 ? () => setVisibleCount(1) : undefined}
+					onLoadMore={
+						remaining > 0
+							? () => setVisibleCount((current) => Math.min(comments.length, current + REVIEW_HISTORY_PAGE_SIZE))
+							: undefined
+					}
+					remaining={remaining}
+				/>
 			</div>
 		</div>
 	);
