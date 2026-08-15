@@ -99,6 +99,7 @@ describe("SessionsBoardView", () => {
 		const mergeLane = screen.getByRole("region", { name: "Ready / Merged sessions" });
 		expect(within(mergeLane).getByLabelText("1 ready session")).toHaveTextContent("1");
 		expect(within(mergeLane).getByLabelText("1 merged session")).toHaveTextContent("1");
+		expect(screen.getByTestId("board-horizontal-scroll")).toHaveClass("board-horizontal-scrollbar");
 	});
 
 	it("renders a neutral card with grouped multi-PR, usage, and action presentation", () => {

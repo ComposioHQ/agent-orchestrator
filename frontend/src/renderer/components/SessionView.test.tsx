@@ -983,7 +983,7 @@ describe("SessionView", () => {
 		}
 	});
 
-	it("locks responsive inspector labels to the opening target throughout the transition", () => {
+	it("keeps inspector labels expanded at the default width throughout the opening transition", () => {
 		vi.useFakeTimers();
 		try {
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
@@ -1063,18 +1063,20 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("keeps one inspector action cluster mounted while the panel opens and closes", () => {
+	it("keeps the inspector toggle and trailing notification pinned while the panel changes state", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		const actions = screen.getByTestId("session-inspector-actions");
-		const notification = screen.getByRole("button", { name: "Notifications" });
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
+		const actions = screen.getByTestId("session-pinned-actions");
+		const toggle = within(actions).getByRole("button", { name: "Close inspector panel" });
+		const notification = within(actions).getByRole("button", { name: "Notifications" });
+		const buttons = within(actions).getAllByRole("button");
+		expect(buttons.indexOf(notification)).toBeGreaterThan(buttons.indexOf(toggle));
 		expect(toggle).toHaveAttribute("aria-pressed", "true");
 
 		fireEvent.click(toggle);
 
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(screen.getByTestId("session-inspector-actions")).toBe(actions);
+		expect(screen.getByTestId("session-pinned-actions")).toBe(actions);
 		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
 		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
 		expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -1084,7 +1086,7 @@ describe("SessionView", () => {
 		window.localStorage.setItem("ao.inspector.widthPx", "240");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("360px");
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("280px");
 	});
 
 	it("mounts the inspector in sync when navigating from an orchestrator session", () => {

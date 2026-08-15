@@ -5,6 +5,7 @@ export const COMPANY = {
   DOCS_URL: "https://aoagents.dev/docs",
   GITHUB_URL: "https://github.com/Untrivial-ai/agent-orchestrator",
   GITHUB_REPO: "Untrivial-ai/agent-orchestrator",
+  PRODUCT_HUNT_URL: "https://www.producthunt.com/products/agent-orchestrator?launch=agent-orchestrator",
   STATUS_URL: "https://status.aoagents.dev",
   TRUST_URL: "https://aoagents.dev/privacy/",
   MAIL_TO: "mailto:prateek@untrivial.ai",

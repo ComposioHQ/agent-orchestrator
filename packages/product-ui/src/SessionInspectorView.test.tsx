@@ -46,11 +46,14 @@ describe("SessionInspectorShellView", () => {
 		);
 
 		expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
+		expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist");
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
+		expect(screen.getByRole("tab", { name: "Summary" })).toHaveClass("min-w-0");
+		expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("flex-1");
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("tabindex", "0");
 		expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("tabindex", "-1");
 		const filesLabel = within(screen.getByRole("tab", { name: "Files" })).getByText("2 Files");
-		expect(filesLabel).toHaveClass("session-inspector__responsive-label");
+		expect(filesLabel).toHaveClass("session-inspector__responsive-label", "min-w-0");
 		expect(filesLabel).not.toHaveClass("@max-[350px]/inspector:hidden");
 		expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
@@ -313,6 +316,45 @@ describe("portable inspector presentations", () => {
 
 		expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
+	});
+
+	it("pages unresolved comments like review history", () => {
+		const comments = Array.from({ length: 5 }, (_, index) => ({
+			body: `Unresolved comment ${index + 1}`,
+			file: "src/panel.tsx",
+			line: index + 1,
+			url: `https://example.com/comment/${index + 1}`,
+		}));
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [],
+							unresolved: 5,
+							unresolvedBy: [{ count: 5, links: comments, reviewerId: "maya" }],
+						},
+						meta: "#12 · 5 unresolved",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		expect(screen.getByText("Unresolved comment 1")).toBeInTheDocument();
+		expect(screen.queryByText("Unresolved comment 2")).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Load 4 more" }));
+		expect(screen.getByText("Unresolved comment 4")).toBeInTheDocument();
+		expect(screen.queryByText("Unresolved comment 5")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Load 1 more" })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Show latest only" }));
+		expect(screen.queryByText("Unresolved comment 2")).not.toBeInTheDocument();
 	});
 
 });

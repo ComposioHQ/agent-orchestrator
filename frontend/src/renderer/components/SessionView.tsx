@@ -57,10 +57,13 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
 const INSPECTOR_DEFAULT_PX = 360;
-const INSPECTOR_MIN_PX = 360;
+const INSPECTOR_MIN_PX = 280;
 const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_SEPARATOR_RESERVE_PX = 8;
-const INSPECTOR_COMPACT_MAX_PX = 359;
+// The inspector tab labels respond to the tablist's remaining width. The
+// 239px tablist breakpoint plus the 76px pinned-action reserve and 10px leading
+// inset gives a 325px inspector breakpoint for the animation lock.
+const INSPECTOR_COMPACT_MAX_PX = 325;
 const TOPBAR_SECONDARY_COMPACT_MAX_PX = 759;
 const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const inspectorWidthVar = "--ao-inspector-w";
@@ -232,7 +235,7 @@ function SessionInspectorRail({
 // The inspector uses the same Motion spring as the left sidebar (gap width +
 // x-transform). Dragging is useResizable and clamps at the responsive minimum;
 // only the explicit controls (topbar button / ⌘⇧B) collapse it. The preferred
-// 360px floor is clamped to the 50% maximum on narrow session splits, where
+// 280px floor is clamped to the 50% maximum on narrow session splits, where
 // the inspector tabs compact to icons.
 export function SessionView({ sessionId }: SessionViewProps) {
 	const { t } = useTranslation();
@@ -895,12 +898,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				) : null}
 			</div>
 			{hasInspector ? (
-				<div
-					className="session-inspector-persistent-actions"
-					data-testid="session-inspector-actions"
-					style={noDragStyle}
-				>
-					<NotificationCenter style={noDragStyle} />
+				<div className="session-pinned-actions" data-testid="session-pinned-actions" style={noDragStyle}>
 					<TopbarButton
 						aria-label={isInspectorOpen ? t("shell.closeInspector") : t("shell.openInspector")}
 						aria-pressed={isInspectorOpen}
@@ -911,6 +909,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					>
 						<PanelRight className="size-icon-md" aria-hidden="true" />
 					</TopbarButton>
+					{/* Keep the global notification action trailing at the window edge. */}
+					<NotificationCenter style={noDragStyle} />
 				</div>
 			) : null}
 			<SessionInterfaceSwitchDialog

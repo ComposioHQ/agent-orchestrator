@@ -320,7 +320,7 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const content = document.querySelector('[data-sidebar="content"]');
-		expect(content).toHaveClass("overflow-y-auto");
+		expect(content).toHaveClass("overflow-y-auto", "project-sidebar-scrollbar");
 		expect(content).not.toHaveClass("scrollbar-none");
 		expect(content).not.toContainElement(screen.getByText("Projects"));
 	});
