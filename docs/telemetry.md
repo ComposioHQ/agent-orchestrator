@@ -63,8 +63,8 @@ an email address there, it is used to manage that waitlist as described in the
   Hashing hides the plain text but still allows related events to be grouped.
 - Absolute local paths and local application URLs detected in desktop events
   are replaced with redaction markers before the events are sent.
-- Daemon and mobile events accept a fixed set of properties; unexpected fields
-  are discarded.
+- Daemon events sent to PostHog and mobile events accept a fixed set of
+  properties; unexpected fields are discarded.
 - Event rates are limited to reduce repeated background activity and error
   loops.
 - Person profiles and session recording are disabled in the desktop and mobile
