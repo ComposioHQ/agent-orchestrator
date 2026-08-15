@@ -144,6 +144,10 @@ func TestSessionInfo(t *testing.T) {
 }
 
 func TestHooksLifecycle(t *testing.T) {
+	originalExecutable := agyCurrentExecutable
+	agyCurrentExecutable = func() (string, error) { return "/opt/agent orchestrator/ao", nil }
+	t.Cleanup(func() { agyCurrentExecutable = originalExecutable })
+
 	tmpDir := t.TempDir()
 	plugin := &Plugin{}
 	cfg := ports.WorkspaceHookConfig{WorkspacePath: tmpDir}
@@ -199,6 +203,10 @@ func TestHooksLifecycle(t *testing.T) {
 		t.Fatal("install removed Agy Chat hook set")
 	}
 
+	prefix, err := agyHookCommandPrefix()
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw, ok := file[agyManagedHookName]
 	if !ok {
 		t.Fatalf("missing %q hook set", agyManagedHookName)
@@ -207,14 +215,14 @@ func TestHooksLifecycle(t *testing.T) {
 	if err := json.Unmarshal(raw, &definition); err != nil {
 		t.Fatal(err)
 	}
-	if len(definition.PreInvocation) != 1 || definition.PreInvocation[0].Command != "ao hooks agy pre-invocation" {
+	if len(definition.PreInvocation) != 1 || definition.PreInvocation[0].Command != prefix+"pre-invocation" {
 		t.Fatalf("unexpected PreInvocation hooks: %#v", definition.PreInvocation)
 	}
 	if len(definition.PostToolUse) != 1 || definition.PostToolUse[0].Matcher != "*" ||
-		len(definition.PostToolUse[0].Hooks) != 1 || definition.PostToolUse[0].Hooks[0].Command != "ao hooks agy post-tool-use" {
+		len(definition.PostToolUse[0].Hooks) != 1 || definition.PostToolUse[0].Hooks[0].Command != prefix+"post-tool-use" {
 		t.Fatalf("unexpected PostToolUse hooks: %#v", definition.PostToolUse)
 	}
-	if len(definition.Stop) != 1 || definition.Stop[0].Command != "ao hooks agy stop" {
+	if len(definition.Stop) != 1 || definition.Stop[0].Command != prefix+"stop" {
 		t.Fatalf("unexpected Stop hooks: %#v", definition.Stop)
 	}
 
@@ -245,6 +253,49 @@ func TestHooksLifecycle(t *testing.T) {
 	}
 	if _, ok := file[agyManagedHookName]; ok {
 		t.Fatal("uninstall left TUI hook set behind")
+	}
+}
+
+func TestAreHooksInstalledRejectsLegacyBareAOCommands(t *testing.T) {
+	originalExecutable := agyCurrentExecutable
+	agyCurrentExecutable = func() (string, error) { return "/opt/ao/bin/ao", nil }
+	t.Cleanup(func() { agyCurrentExecutable = originalExecutable })
+
+	tmpDir := t.TempDir()
+	hooksJSONPath := filepath.Join(tmpDir, ".agents", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksJSONPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{
+  "agent-orchestrator-tui": {
+    "PreInvocation": [{"type":"command","command":"ao hooks agy pre-invocation","timeout":30}],
+    "PostToolUse": [{"matcher":"*","hooks":[{"type":"command","command":"ao hooks agy post-tool-use","timeout":30}]}],
+    "Stop": [{"type":"command","command":"ao hooks agy stop","timeout":30}]
+  }
+}
+`
+	if err := os.WriteFile(hooksJSONPath, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plugin := &Plugin{}
+	installed, err := plugin.AreHooksInstalled(context.Background(), tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed {
+		t.Fatal("legacy PATH-dependent hook commands must be refreshed")
+	}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: tmpDir}); err != nil {
+		t.Fatal(err)
+	}
+	installed, err = plugin.AreHooksInstalled(context.Background(), tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("expected refreshed absolute hook commands to be installed")
 	}
 }
 
