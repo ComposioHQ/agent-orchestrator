@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
@@ -14,12 +15,14 @@ import (
 )
 
 const (
-	agyHooksDirName     = ".agents"
-	agyHooksFileName    = "hooks.json"
-	agyManagedHookName  = "agent-orchestrator-tui"
-	agyHookCommandPrefix = "ao hooks agy "
+	agyHooksDirName      = ".agents"
+	agyHooksFileName     = "hooks.json"
+	agyManagedHookName   = "agent-orchestrator-tui"
+	agyHookCommandSuffix = " hooks agy "
 	agyHookTimeout       = 30
 )
+
+var agyCurrentExecutable = os.Executable
 
 // Antigravity workspace hooks use a named hook-set at the top level of
 // <workspace>/.agents/hooks.json. Pre/PostToolUse use matcher groups; the
@@ -27,9 +30,9 @@ const (
 type agyHookFile map[string]json.RawMessage
 
 type agyHookDefinition struct {
-	PreInvocation []agyHookEntry       `json:"PreInvocation,omitempty"`
+	PreInvocation []agyHookEntry        `json:"PreInvocation,omitempty"`
 	PostToolUse   []agyHookMatcherGroup `json:"PostToolUse,omitempty"`
-	Stop          []agyHookEntry       `json:"Stop,omitempty"`
+	Stop          []agyHookEntry        `json:"Stop,omitempty"`
 }
 
 type agyHookMatcherGroup struct {
@@ -55,6 +58,11 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 		return errors.New("agy.GetAgentHooks: WorkspacePath is required")
 	}
 
+	hookCommandPrefix, err := agyHookCommandPrefix()
+	if err != nil {
+		return fmt.Errorf("agy.GetAgentHooks: resolve AO hook executable: %w", err)
+	}
+
 	hooksPath := agyHooksPath(cfg.WorkspacePath)
 	file, err := readAgyHookFile(hooksPath)
 	if err != nil {
@@ -63,16 +71,16 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 
 	definition := agyHookDefinition{
 		PreInvocation: []agyHookEntry{{
-			Type: "command", Command: agyHookCommandPrefix + "pre-invocation", Timeout: agyHookTimeout,
+			Type: "command", Command: hookCommandPrefix + "pre-invocation", Timeout: agyHookTimeout,
 		}},
 		PostToolUse: []agyHookMatcherGroup{{
 			Matcher: "*",
 			Hooks: []agyHookEntry{{
-				Type: "command", Command: agyHookCommandPrefix + "post-tool-use", Timeout: agyHookTimeout,
+				Type: "command", Command: hookCommandPrefix + "post-tool-use", Timeout: agyHookTimeout,
 			}},
 		}},
 		Stop: []agyHookEntry{{
-			Type: "command", Command: agyHookCommandPrefix + "stop", Timeout: agyHookTimeout,
+			Type: "command", Command: hookCommandPrefix + "stop", Timeout: agyHookTimeout,
 		}},
 	}
 	raw, err := json.Marshal(definition)
@@ -185,21 +193,45 @@ func writeAgyHookFile(hooksPath string, file agyHookFile) error {
 	return nil
 }
 
+func agyHookCommandPrefix() (string, error) {
+	executable, err := agyCurrentExecutable()
+	if err != nil {
+		return "", err
+	}
+	executable = strings.TrimSpace(executable)
+	if executable == "" {
+		return "", errors.New("current AO executable path is empty")
+	}
+	return quoteHookExecutable(executable) + agyHookCommandSuffix, nil
+}
+
+func quoteHookExecutable(path string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + path + `"`
+	}
+	return "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
+}
+
+func isManagedAgyHookCommand(command, event string) bool {
+	command = strings.TrimSpace(command)
+	return strings.HasSuffix(command, agyHookCommandSuffix+event) || command == "ao"+agyHookCommandSuffix+event
+}
+
 func agyDefinitionHasManagedHook(definition agyHookDefinition) bool {
 	for _, hook := range definition.PreInvocation {
-		if strings.HasPrefix(hook.Command, agyHookCommandPrefix) {
+		if isManagedAgyHookCommand(hook.Command, "pre-invocation") {
 			return true
 		}
 	}
 	for _, group := range definition.PostToolUse {
 		for _, hook := range group.Hooks {
-			if strings.HasPrefix(hook.Command, agyHookCommandPrefix) {
+			if isManagedAgyHookCommand(hook.Command, "post-tool-use") {
 				return true
 			}
 		}
 	}
 	for _, hook := range definition.Stop {
-		if strings.HasPrefix(hook.Command, agyHookCommandPrefix) {
+		if isManagedAgyHookCommand(hook.Command, "stop") {
 			return true
 		}
 	}
