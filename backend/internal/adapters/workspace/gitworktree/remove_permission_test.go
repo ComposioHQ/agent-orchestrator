@@ -2,6 +2,7 @@ package gitworktree
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -329,6 +330,35 @@ func TestRemoveAllWithRetryDeepReadonlyTree(t *testing.T) {
 	}
 
 	assertNotExists(t, worktree)
+}
+
+func TestRemoveAllWithRetryNonPermissionErrorDoesNotRetry(t *testing.T) {
+	if removeAllRetryEnabled {
+		t.Skip("Unix-only permission repair behavior")
+	}
+
+	originalRemoveAll := removeAll
+	t.Cleanup(func() {
+		removeAll = originalRemoveAll
+	})
+
+	var calls int
+	expectedErr := errors.New("synthetic filesystem failure")
+
+	removeAll = func(path string) error {
+		calls++
+		return expectedErr
+	}
+
+	err := removeAllWithRetry(context.Background(), "/does/not/matter")
+
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("got error %v, want %v", err, expectedErr)
+	}
+
+	if calls != 1 {
+		t.Fatalf("removeAll called %d times, want 1", calls)
+	}
 }
 
 // Helpers

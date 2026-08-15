@@ -3,6 +3,7 @@ package gitworktree
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -104,13 +105,22 @@ func removeAllWithRetry(ctx context.Context, path string) error {
 	// the budget. Gate on Lstat first so a stub-removal failure on an already
 	// gone path (the retry-loop tests) still returns after a single attempt.
 	if !removeAllRetryEnabled {
-		if _, statErr := os.Lstat(path); statErr == nil {
-			if repairErr := makeTreeWritable(path); repairErr == nil {
-				if err = removeAll(path); err == nil || errors.Is(err, os.ErrNotExist) {
-					return nil
-				}
-			}
+		if !errors.Is(err, fs.ErrPermission) {
+			return err
 		}
+
+		if _, statErr := os.Lstat(path); statErr != nil {
+			return err
+		}
+
+		if repairErr := makeTreeWritable(path); repairErr != nil {
+			return err
+		}
+
+		if err = removeAll(path); err == nil || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+
 		return err
 	}
 
