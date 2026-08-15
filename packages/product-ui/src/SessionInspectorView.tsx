@@ -4,7 +4,6 @@ import {
 	ArrowUpRightIcon,
 	BotIcon,
 	ChevronIcon,
-	FileCodeIcon,
 	GitPullRequestIcon,
 } from "./icons";
 import {
@@ -398,6 +397,7 @@ export type InspectorInlineComment = {
 	file?: string;
 	line?: number;
 	url?: string;
+	workedByWorkerAgent?: boolean;
 };
 
 export type InspectorGithubReview = {
@@ -421,6 +421,7 @@ export type InspectorUnresolvedReviewer = {
 		file?: string;
 		line?: number;
 		url?: string;
+		workedByWorkerAgent?: boolean;
 	}[];
 	reviewerId: string;
 	reviewUrl?: string;
@@ -460,6 +461,7 @@ export type InspectorReviewLabels = {
 	resolvedComments: (count: number) => string;
 	sendToWorkerAgent: string;
 	sentToWorkerAgent: string;
+	workedByWorkerAgent: string;
 	showLatestReviewOnly: string;
 	showLess: string;
 	showMore: string;
@@ -764,9 +766,9 @@ function GithubReviewHistory({
 	if (entries.length === 0) return null;
 	return (
 		<div className="flex min-w-0 flex-col gap-2">
-			{sorted.map((entry, index) => (
+			{sorted.map((entry) => (
 				<ExternalReviewCard
-					defaultOpen={index === 0}
+					defaultOpen={false}
 					entry={entry}
 					externalLink={externalLink}
 					key={entry.id}
@@ -865,11 +867,10 @@ function GithubInlineComments({
 				<span className="shrink-0 font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
 			</div>
 			<div className="divide-y divide-border/60">
-				{comments.map((comment, index) => (
+				{comments.map((comment) => (
 					<InlineCommentRow
 						comment={comment}
 						externalLink={ExternalLink}
-						index={index}
 						key={comment.id}
 						labels={labels}
 					/>
@@ -882,27 +883,22 @@ function GithubInlineComments({
 function InlineCommentRow({
 	comment,
 	externalLink: ExternalLink,
-	index,
 	labels,
 }: {
 	comment: InspectorInlineComment & { reviewerId?: string };
 	externalLink: ExternalLinkComponent;
-	index: number;
 	labels: InspectorReviewLabels;
 }) {
-	const label = comment.file ? `${comment.file}${comment.line ? `:${comment.line}` : ""}` : labels.commentNumber(index + 1);
 	const body = comment.body?.trim();
 	return (
 		<div className="flex min-w-0 flex-col gap-1.5 px-2.5 py-2 text-xs">
-			<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-muted-foreground">
-				<FileCodeIcon className="size-icon-2xs shrink-0" />
-				<span className="min-w-0 truncate font-medium" title={label}>{label}</span>
-				{comment.reviewerId ? <span className="shrink-0 text-passive">· {comment.reviewerId}</span> : null}
-			</div>
+			{comment.reviewerId ? <span className="font-medium text-muted-foreground">{comment.reviewerId}</span> : null}
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-				{comment.autoInjectReview ? (
-					<span className="font-medium text-muted-foreground">{labels.sentToWorkerAgent}</span>
+				{comment.workedByWorkerAgent ? (
+					<span className="font-medium text-success">{labels.workedByWorkerAgent}</span>
+				) : comment.autoInjectReview ? (
+					<span className="font-medium text-accent">{labels.sentToWorkerAgent}</span>
 				) : (
 					<button className="font-medium text-foreground transition-colors hover:text-accent" type="button">
 						{labels.sendToWorkerAgent}

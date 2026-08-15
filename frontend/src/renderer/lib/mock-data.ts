@@ -1,5 +1,9 @@
 import type { PRState, PullRequestFacts, WorkspaceSummary } from "../types/workspace";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+
+type PreviewReviewCommentLink = SessionPRSummary["review"]["unresolvedBy"][number]["links"][number] & {
+	workedByWorkerAgent?: boolean;
+};
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 
 const now = new Date().toISOString();
@@ -326,7 +330,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						// Two comments, two separate threads — resolving addresses threads.
 						links: [
 							{ file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84, body: "The reviewer terminal header wraps awkwardly at this width. Please keep the role label and controls on one line.", autoInjectReview: true },
-							{ file: "frontend/src/renderer/styles.css", line: 219, body: "This spacing token makes the review controls look larger than the rest of the inspector controls.", autoInjectReview: true },
+							({ file: "frontend/src/renderer/styles.css", line: 219, body: "This spacing token makes the review controls look larger than the rest of the inspector controls.", autoInjectReview: true, workedByWorkerAgent: true } as PreviewReviewCommentLink),
 						],
 					},
 				],

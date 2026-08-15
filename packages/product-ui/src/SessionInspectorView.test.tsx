@@ -215,6 +215,10 @@ describe("portable inspector presentations", () => {
 		const row = screen.getByTestId("review-pr-row");
 		expect(row).not.toHaveAttribute("aria-expanded");
 		expect(screen.getByText("Looks good.")).toBeInTheDocument();
+		expect(screen.queryByText("Ship it.")).not.toBeInTheDocument();
+		const externalReview = screen.getByRole("button", { name: /review-bot.*Approved/ });
+		expect(externalReview).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(externalReview);
 		expect(screen.getByText("Ship it.")).toBeInTheDocument();
 		expect(screen.getByText("Not injected")).toBeInTheDocument();
 		expect(renderAvatar).toHaveBeenCalledWith("codex");
@@ -251,6 +255,9 @@ describe("portable inspector presentations", () => {
 			/>
 		);
 		const { rerender } = render(view([olderReview]));
+		const olderButton = screen.getByRole("button", { name: /ada.*Changes requested/ });
+		expect(olderButton).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(olderButton);
 		expect(screen.getByText(olderBody)).toBeInTheDocument();
 
 		rerender(
@@ -267,8 +274,9 @@ describe("portable inspector presentations", () => {
 			]),
 		);
 
-		expect(screen.getByText(newerBody)).toBeInTheDocument();
-		expect(screen.getByText(olderBody)).toBeInTheDocument();
+		const cards = screen.getAllByTestId("github-review-card");
+		expect(within(cards[0]).getByRole("button", { name: /grace.*Changes requested/ })).toHaveAttribute("aria-expanded", "false");
+		expect(screen.queryByText(newerBody)).not.toBeInTheDocument();
 	});
 
 	it("shows unresolved inline review comment bodies together above external reviews", () => {
@@ -289,10 +297,10 @@ describe("portable inspector presentations", () => {
 									verdict: { label: "Commented", tone: "neutral" },
 								},
 							],
-							unresolved: 1,
+							unresolved: 3,
 							unresolvedBy: [
 								{
-									count: 1,
+									count: 3,
 									links: [
 										{
 											body: "This branch leaks the resize listener on unmount.",
@@ -300,13 +308,24 @@ describe("portable inspector presentations", () => {
 											line: 42,
 											url: "https://example.com/comment",
 										},
+										{
+											body: "This was sent to the worker already.",
+											autoInjectReview: true,
+											url: "https://example.com/comment-sent",
+										},
+										{
+											body: "The worker already handled this comment.",
+											autoInjectReview: true,
+											workedByWorkerAgent: true,
+											url: "https://example.com/comment-worked",
+										},
 									],
 									reviewerId: "maya",
 									reviewUrl: "https://example.com/review",
 								},
 							],
 						},
-						meta: "#12 · 1 unresolved",
+						meta: "#12 · 3 unresolved",
 						number: 12,
 						title: "Portable inspector",
 					},
@@ -320,11 +339,13 @@ describe("portable inspector presentations", () => {
 
 		expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
 		expect(screen.getByText("Open comments")).toBeInTheDocument();
-		expect(screen.getByText("1 unresolved")).toBeInTheDocument();
-		expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
+		expect(screen.getByText("3 unresolved")).toBeInTheDocument();
+		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "View in file" })).toBeInTheDocument();
+		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-accent");
+		expect(screen.getByText("Worked by worker agent")).toHaveClass("text-success");
+		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(3);
 	});
 
 });
@@ -345,6 +366,7 @@ const reviewLabels: InspectorReviewLabels = {
 	resolvedComments: (count) => `Resolved comments · ${count}`,
 	sendToWorkerAgent: "Send to worker agent",
 	sentToWorkerAgent: "Sent to worker agent",
+	workedByWorkerAgent: "Worked by worker agent",
 	showLatestReviewOnly: "Show latest only",
 	showLess: "Show less",
 	showMore: "Show more",
