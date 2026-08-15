@@ -1,4 +1,5 @@
 import type { components } from "../../api/schema";
+import { agentLabel } from "../lib/agent-options";
 import { buildRankedAgentOptions } from "../lib/agent-select-options";
 import { KNOWN_REVIEWER_HARNESS_IDS } from "../lib/reviewer-harnesses";
 import { AgentAvatar } from "./AgentAvatar";
@@ -58,9 +59,12 @@ export function ReviewerSelect({
 	supported?: components["schemas"]["AgentInfo"][];
 	excludedHarness?: string;
 }) {
+	// Until the daemon's catalog arrives these entries carry the whole menu, so
+	// label them the way the catalog would rather than printing bare ids: without
+	// this the same row reads "claude-code" now and "Claude Code" a moment later.
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
-		label: id,
+		label: agentLabel(id),
 	}));
 	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
 	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;

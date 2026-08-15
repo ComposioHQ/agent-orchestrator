@@ -1084,8 +1084,50 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+	});
+
+	// The label is a display name, not the wire id: the trigger used to print the
+	// raw harness id, which read as a second, selectable "claude-code" entry
+	// alongside the catalog's properly-cased "Claude Code".
+	it("labels the default reviewer with its display name, not the raw id", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: {},
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "claude-code")} />);
+		await openReviewsSection();
+
+		const trigger = await screen.findByRole("button", { name: /Select reviewer agent/ });
+		expect(trigger).toHaveTextContent("Claude Code");
+		expect(trigger).not.toHaveTextContent("claude-code");
 	});
 
 	it("configures session auto-review and disables manual controls", async () => {
@@ -1228,7 +1270,7 @@ describe("SessionInspector summary reviews", () => {
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
-		await screen.findByText("Review in progress · codex");
+		await screen.findByText("Review in progress · Codex");
 
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(screen.queryByText("Review summary")).not.toBeInTheDocument();
@@ -1244,7 +1286,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsSection();
 
-		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 4")).toBeInTheDocument();
 		expect(
@@ -1388,7 +1430,7 @@ describe("SessionInspector summary reviews", () => {
 			// A run in flight gets its own live strip naming the harness, not just a
 			// word on the button.
 			if (status === "running") {
-				expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
+				expect(screen.getByText("Review in progress · Codex")).toBeInTheDocument();
 			} else {
 				expect(screen.queryByText(/is reviewing this change/)).not.toBeInTheDocument();
 			}
@@ -1636,7 +1678,7 @@ describe("SessionInspector summary reviews", () => {
 
 		const picker = await screen.findByRole("button", { name: /Select reviewer agent/ });
 		await userEvent.click(picker);
-		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
+		expect(screen.getAllByRole("menuitem", { name: /codex/i })).toHaveLength(1);
 		expect(screen.getByRole("menuitem", { name: /opencode/ })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: /opencode/ }));
 
@@ -1648,8 +1690,8 @@ describe("SessionInspector summary reviews", () => {
 		);
 
 		await userEvent.click(picker);
-		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
-		await userEvent.click(screen.getByRole("menuitem", { name: /codex/ }));
+		expect(screen.getAllByRole("menuitem", { name: /codex/i })).toHaveLength(1);
+		await userEvent.click(screen.getByRole("menuitem", { name: /codex/i }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenLastCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
@@ -1681,8 +1723,8 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("Review in progress · codex")).toBeInTheDocument();
-		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
+		expect(await screen.findByText("Review in progress · Codex")).toBeInTheDocument();
+		expect(screen.queryByText("Review in progress · Claude Code")).not.toBeInTheDocument();
 	});
 
 	it("keeps older harness summaries behind explicit pagination when selecting the next agent", async () => {
@@ -1750,7 +1792,7 @@ describe("SessionInspector summary reviews", () => {
 
 		// AO runs one reviewer per worker, so a second harness cannot start
 		// alongside it. Say so rather than silently ignoring the choice.
-		expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
+		expect(screen.getByText("Review in progress · Codex")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toBeDisabled();
 	});
 
@@ -1852,7 +1894,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
