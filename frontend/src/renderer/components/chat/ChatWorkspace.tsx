@@ -39,13 +39,16 @@ import {
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
+import { aoBridge } from "../../lib/bridge";
 import {
 	TERMINAL_FONT_SIZE_DEFAULT,
 	TERMINAL_FONT_SIZE_MAX,
 	TERMINAL_FONT_SIZE_MIN,
 } from "../../lib/design-tokens";
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
+import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
 import { useUiStore } from "../../stores/ui-store";
+import type { TerminalTarget } from "../../types/terminal";
 import type { SessionKind, WorkspaceSession } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
@@ -104,14 +107,22 @@ const CHAT_FONT_SIZE_DEFAULT = 12;
 // Reviewer panes share the terminal font-size preference with CenterPane, so a
 // reviewer opened inside the Chat surface matches a reviewer opened in TUI mode.
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
+const WHEEL_ZOOM_THRESHOLD = 80;
+const WHEEL_ZOOM_RESET_MS = 250;
 
-function terminalFontSize(): number {
+function clampTerminalFontSize(size: number): number {
+	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
+}
+
+function initialTerminalFontSize(): number {
 	if (typeof window === "undefined") return TERMINAL_FONT_SIZE_DEFAULT;
 	const raw = window.localStorage?.getItem(terminalFontSizeStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
 	if (!Number.isFinite(parsed)) return TERMINAL_FONT_SIZE_DEFAULT;
-	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, parsed));
+	return clampTerminalFontSize(parsed);
 }
+
+type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -170,8 +181,8 @@ export interface ChatWorkspaceProps {
 	models?: ChatModel[];
 	/** The AO session this surface renders for. Used to attach the reviewer pane. */
 	session?: WorkspaceSession;
-	/** The reviewer pane is the active tab of the chat surface. */
-	reviewerActive?: boolean;
+	/** The selected reviewer pane. Kept even while its tab is temporarily unavailable. */
+	reviewerTarget?: ReviewerTerminalTarget;
 	/** Switch the active tab back to the chat timeline. */
 	onSelectChat?: () => void;
 	/** Daemon readiness for the reviewer terminal pane. */
@@ -249,7 +260,7 @@ export function ChatWorkspace({
 	reviewerTerminal,
 	onOpenReviewerTerminal,
 	session,
-	reviewerActive,
+	reviewerTarget,
 	onSelectChat,
 	daemonReady,
 	theme,
@@ -301,9 +312,10 @@ export function ChatWorkspace({
 	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
-	// Terminal-only constructs (the reviewer pane) render inside the chat surface
-	// as a tab body. The chat timeline/composer are the body of the chat tab.
-	const showReviewerPane = Boolean(reviewerActive && reviewerTerminal && session);
+	// Selection is durable UI state; availability only controls whether the tab is
+	// offered. Keeping these separate preserves a selected reviewer while an active
+	// session temporarily becomes terminated and later returns.
+	const reviewerActive = Boolean(reviewerTarget && session);
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
 			snapshot.items
@@ -323,6 +335,10 @@ export function ChatWorkspace({
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
 	const surfaceRef = useRef<HTMLElement | null>(null);
+	const lastWheelZoomAtRef = useRef(0);
+	const wheelZoomRemainderRef = useRef(0);
+	const [terminalFontSize, setTerminalFontSize] = useState(initialTerminalFontSize);
+	const [isFullscreen, setIsFullscreen] = useState(false);
 	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
 		leftInset: 0,
 		rightInset: 0,
@@ -357,6 +373,76 @@ export function ChatWorkspace({
 		return () => observer.disconnect();
 	}, []);
 
+	useEffect(() => {
+		const handleFullscreenChange = () => {
+			setIsFullscreen(document.fullscreenElement === surfaceRef.current);
+		};
+		document.addEventListener("fullscreenchange", handleFullscreenChange);
+		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+	}, []);
+
+	const updateTerminalFontSize = useCallback((delta: number) => {
+		setTerminalFontSize((current) => {
+			const next = clampTerminalFontSize(current + delta);
+			window.localStorage?.setItem(terminalFontSizeStorageKey, String(next));
+			return next;
+		});
+	}, []);
+
+	const handleWheelZoom = useCallback(
+		(event: ReactWheelEvent<HTMLDivElement>) => {
+			if (!event.ctrlKey && !event.metaKey) return;
+			event.preventDefault();
+			event.stopPropagation();
+
+			if (event.timeStamp - lastWheelZoomAtRef.current > WHEEL_ZOOM_RESET_MS) {
+				wheelZoomRemainderRef.current = 0;
+			}
+			lastWheelZoomAtRef.current = event.timeStamp;
+			wheelZoomRemainderRef.current += event.deltaY;
+
+			const steps = Math.floor(Math.abs(wheelZoomRemainderRef.current) / WHEEL_ZOOM_THRESHOLD);
+			if (steps === 0) return;
+
+			const direction = wheelZoomRemainderRef.current > 0 ? -1 : 1;
+			updateTerminalFontSize(direction * steps);
+			wheelZoomRemainderRef.current -=
+				Math.sign(wheelZoomRemainderRef.current) * steps * WHEEL_ZOOM_THRESHOLD;
+		},
+		[updateTerminalFontSize],
+	);
+
+	const toggleFullscreen = useCallback(async () => {
+		const surface = surfaceRef.current;
+		if (!surface) return;
+		try {
+			if (document.fullscreenElement === surface) {
+				await document.exitFullscreen();
+				return;
+			}
+			await surface.requestFullscreen();
+		} catch (error) {
+			console.warn("Unable to toggle chat reviewer fullscreen", error);
+		}
+	}, []);
+
+	const selectAdjacentTab = useCallback(() => {
+		if (reviewerActive) {
+			onSelectChat?.();
+			return;
+		}
+		if (reviewerTerminal) onOpenReviewerTerminal?.(reviewerTerminal);
+	}, [onOpenReviewerTerminal, onSelectChat, reviewerActive, reviewerTerminal]);
+
+	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousTabShortcut(selectAdjacentTab);
+		const disposeNext = aoBridge.app.onNextTabShortcut(selectAdjacentTab);
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [selectAdjacentTab]);
+
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.
 	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
@@ -379,15 +465,18 @@ export function ChatWorkspace({
 				sessionTitle={sessionTitle}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
-				reviewerActive={showReviewerPane}
+				reviewerActive={reviewerActive}
 				onSelectChat={onSelectChat}
 				headerActions={headerActions}
+				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
-			{showReviewerPane && reviewerTerminal ? (
+			{reviewerTarget && session ? (
 				<div
 					aria-label="Reviewer terminal"
 					className="relative min-h-0 flex-1"
+					data-testid="chat-reviewer-panel"
+					onWheelCapture={handleWheelZoom}
 					role="tabpanel"
 				>
 					<div
@@ -396,136 +485,141 @@ export function ChatWorkspace({
 					>
 						<TerminalPane
 							daemonReady={Boolean(daemonReady)}
-							fontSize={terminalFontSize()}
+							fontSize={terminalFontSize}
+							isFullscreen={isFullscreen}
+							onChangeFontSize={updateTerminalFontSize}
+							onToggleFullscreen={toggleFullscreen}
 							session={session}
-							terminalTarget={{
-								kind: "reviewer",
-								handleId: reviewerTerminal.handleId,
-								harness: reviewerTerminal.harness,
-								sessionId: session?.id ?? "",
-							}}
+							terminalTarget={reviewerTarget}
 							theme={theme ?? "dark"}
 						/>
 					</div>
 				</div>
-			) : (
-				<>
-			{/* Ordered by what blocks what. A session that needs credentials cannot make
-			    progress at all, so it is stated first; the controller's own health next;
-			    then the two that degrade a session rather than stopping it. */}
-			{snapshot.account ? (
-				<ReauthBanner account={snapshot.account} harness={snapshot.harness} />
 			) : null}
-			<ControllerBanner
-				controller={snapshot.controller}
-				transitioning={controllerTransitioning}
-				onResume={onResumeAgent}
-				resuming={resumingAgent}
-				resumeError={resumeError}
-				onOpenShell={onOpenShell}
-				openingShell={openingShell}
-				shellError={shellError}
-			/>
-			{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
-			<McpServerBanner
-				servers={brokenServers}
-				onReload={onReloadMcpServers}
-				reloading={reloadingMcpServers}
-				turnInFlight={Boolean(turn)}
-				error={mcpReloadError}
-			/>
-			<ChatLinkProvider onLinkOpen={onLinkOpen}>
-				<Timeline
-					snapshot={snapshot}
-					hasOlder={hasOlder}
-					loadingOlder={loadingOlder}
-					onLoadOlder={onLoadOlder}
-					onDecide={onDecide}
-					onResolveInput={onResolveInput}
-					busy={busy}
-					onRollback={rollbackTarget}
-					onEditHumanMessage={editHumanMessage}
-					editPending={editMessagePending}
-					editBusy={Boolean(turn)}
-					editError={editMessageError}
-					onActivateBranch={onActivateBranch}
-					activateBranchPending={activateBranchPending}
-					activateBranchError={activateBranchError}
+			<div
+				aria-hidden={reviewerActive}
+				aria-label="Chat conversation"
+				className="flex min-h-0 flex-1 flex-col"
+				data-testid="chat-conversation-panel"
+				hidden={reviewerActive}
+				inert={reviewerActive ? true : undefined}
+				role="tabpanel"
+			>
+				{/* Ordered by what blocks what. A session that needs credentials cannot make
+				    progress at all, so it is stated first; the controller's own health next;
+				    then the two that degrade a session rather than stopping it. */}
+				{snapshot.account ? (
+					<ReauthBanner account={snapshot.account} harness={snapshot.harness} />
+				) : null}
+				<ControllerBanner
+					controller={snapshot.controller}
+					transitioning={controllerTransitioning}
+					onResume={onResumeAgent}
+					resuming={resumingAgent}
+					resumeError={resumeError}
+					onOpenShell={onOpenShell}
+					openingShell={openingShell}
+					shellError={shellError}
 				/>
-			</ChatLinkProvider>
+				{snapshot.threadState ? <ThreadStateBanner threadState={snapshot.threadState} /> : null}
+				<McpServerBanner
+					servers={brokenServers}
+					onReload={onReloadMcpServers}
+					reloading={reloadingMcpServers}
+					turnInFlight={Boolean(turn)}
+					error={mcpReloadError}
+				/>
+				<ChatLinkProvider onLinkOpen={onLinkOpen}>
+					<Timeline
+						snapshot={snapshot}
+						hasOlder={hasOlder}
+						loadingOlder={loadingOlder}
+						onLoadOlder={onLoadOlder}
+						onDecide={onDecide}
+						onResolveInput={onResolveInput}
+						busy={busy}
+						onRollback={rollbackTarget}
+						onEditHumanMessage={editHumanMessage}
+						editPending={editMessagePending}
+						editBusy={Boolean(turn)}
+						editError={editMessageError}
+						onActivateBranch={onActivateBranch}
+						activateBranchPending={activateBranchPending}
+						activateBranchError={activateBranchError}
+					/>
+				</ChatLinkProvider>
 
-			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
-				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-					<div className="flex items-center justify-end">
-						<CompactButton
-							onCompact={onCompact}
-							compacting={compacting}
-							unavailable={compactUnavailable}
-							turnInFlight={Boolean(turn)}
-							compactedAt={snapshot.compactedAt}
+				<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
+					<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+						<div className="flex items-center justify-end">
+							<CompactButton
+								onCompact={onCompact}
+								compacting={compacting}
+								unavailable={compactUnavailable}
+								turnInFlight={Boolean(turn)}
+								compactedAt={snapshot.compactedAt}
+							/>
+						</div>
+						{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
+						{snapshot.branchedFromEarlierMessage ? (
+							<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+								<GitBranch aria-hidden="true" className="size-3 shrink-0" />
+								Conversation branched; worktree files were left unchanged.
+							</p>
+						) : null}
+						{turn?.state === "running" && queuedMessages.length > 0 ? (
+							<QueuedMessageDock
+								messages={queuedMessages}
+								onSteer={onPromoteQueuedTurn}
+							/>
+						) : null}
+						<ChatComposer
+							attachedTop={turn?.state === "running" && queuedMessages.length > 0}
+							onSend={(text, attachments) => onSend?.(text, attachments)}
+							onInterrupt={turn ? onInterrupt : undefined}
+							commandError={commandError}
+							settings={
+								onChooseSettings || onChooseConfigOption ? (
+									<TurnSettingsBar
+										models={models ?? []}
+										settings={snapshot.settings}
+										reroute={snapshot.modelReroute}
+										onChange={onChooseSettings}
+										configOptions={configOptions ?? []}
+										onChangeConfigOption={onChooseConfigOption}
+										configPending={configOptionPending}
+										error={configOptionError}
+										disabled={
+											snapshot.controller.state === "stopped" || configOptionPending
+										}
+									/>
+								) : null
+							}
+							busy={busy}
+							willQueue={Boolean(turn)}
+							disabled={snapshot.controller.state === "stopped"}
+							skills={skills}
+							filePaths={filePaths}
+							filePathsTruncated={filePathsTruncated}
+							onStageAttachments={onStageAttachments}
+							nativeImages={nativeImages}
+							// Steering is only meaningful into a turn that is running. A queued turn
+							// has not reached the provider, so there is nothing to steer.
+							onSteer={onSteer}
+							canSteer={Boolean(onSteer) && turn?.state === "running"}
+							steerPending={steerPending}
+							steerRefusal={steerRefusal}
 						/>
 					</div>
-					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
-					{snapshot.branchedFromEarlierMessage ? (
-						<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-							<GitBranch aria-hidden="true" className="size-3 shrink-0" />
-							Conversation branched; worktree files were left unchanged.
-						</p>
-					) : null}
-					{turn?.state === "running" && queuedMessages.length > 0 ? (
-						<QueuedMessageDock
-							messages={queuedMessages}
-							onSteer={onPromoteQueuedTurn}
-						/>
-					) : null}
-					<ChatComposer
-						attachedTop={turn?.state === "running" && queuedMessages.length > 0}
-						onSend={(text, attachments) => onSend?.(text, attachments)}
-						onInterrupt={turn ? onInterrupt : undefined}
-						commandError={commandError}
-						settings={
-							onChooseSettings || onChooseConfigOption ? (
-								<TurnSettingsBar
-									models={models ?? []}
-									settings={snapshot.settings}
-									reroute={snapshot.modelReroute}
-									onChange={onChooseSettings}
-									configOptions={configOptions ?? []}
-									onChangeConfigOption={onChooseConfigOption}
-									configPending={configOptionPending}
-									error={configOptionError}
-									disabled={
-										snapshot.controller.state === "stopped" || configOptionPending
-									}
-								/>
-							) : null
-						}
-						busy={busy}
-						willQueue={Boolean(turn)}
-						disabled={snapshot.controller.state === "stopped"}
-						skills={skills}
-						filePaths={filePaths}
-						filePathsTruncated={filePathsTruncated}
-						onStageAttachments={onStageAttachments}
-						nativeImages={nativeImages}
-						// Steering is only meaningful into a turn that is running. A queued turn
-						// has not reached the provider, so there is nothing to steer.
-						onSteer={onSteer}
-						canSteer={Boolean(onSteer) && turn?.state === "running"}
-						steerPending={steerPending}
-						steerRefusal={steerRefusal}
-					/>
 				</div>
 			</div>
-				</>
-			)}
 
 			{/* The copy has to be honest about the cost: this is not "hide these
 			    messages", it is "the agent forgets them". Nothing in the worktree is
 			    reverted either, and a user who assumed otherwise would be badly
 			    surprised, so it is said out loud. */}
 			<ConfirmDialog
-				open={Boolean(confirming)}
+				open={Boolean(confirming) && !reviewerActive}
 				onOpenChange={(open) => {
 					if (!open) setConfirming(undefined);
 				}}
@@ -669,6 +763,7 @@ function ChatHeader({
 	reviewerActive,
 	onSelectChat,
 	headerActions,
+	inline,
 	topbarBounds,
 }: {
 	snapshot: ConversationSnapshot;
@@ -680,6 +775,8 @@ function ChatHeader({
 	/** Return the tab strip to the chat tab. */
 	onSelectChat?: () => void;
 	headerActions?: ReactNode;
+	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
+	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
@@ -687,87 +784,88 @@ function ChatHeader({
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
-	return (
-		<SessionTopbarPortal>
-			<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
-				<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+	const header = (
+		<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
+			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+				<div
+					className={cn(
+						"flex min-w-0 shrink items-center pr-3",
+						!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
+						!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
+					)}
+					data-testid="session-terminal-region"
+					style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+				>
 					<div
-						className={cn(
-							"flex min-w-0 shrink items-center pr-3",
-							!isSidebarOpen && isMac && "session-topbar-titlebar-clearance-mac",
-							!isSidebarOpen && isLinux && "session-topbar-titlebar-clearance-linux",
-						)}
-						data-testid="session-terminal-region"
-						style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+						aria-label="Chat tabs"
+						className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
+						onKeyDown={handleTerminalTabListKeyDown}
+						role="tablist"
 					>
-						<div
-							aria-label="Chat tabs"
-							className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
-							role="tablist"
+						<span
+							data-terminal-role="primary"
+							className={cn(
+								"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+								reviewerActive
+									? "text-muted-foreground hover:bg-raised hover:text-foreground"
+									: "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80",
+							)}
 						>
+							<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
+							<button
+								aria-current={reviewerActive ? undefined : true}
+								aria-label={label}
+								aria-selected={!reviewerActive}
+								className={cn(
+									"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
+									reviewerActive ? "text-muted-foreground" : "text-foreground",
+								)}
+								onClick={reviewerActive ? onSelectChat : undefined}
+								role="tab"
+								tabIndex={!reviewerActive || !reviewerTerminal ? 0 : -1}
+								title={label}
+								type="button"
+							>
+								<span className="truncate">{label}</span>
+							</button>
+						</span>
+						{reviewerTerminal ? (
 							<span
-								data-terminal-role="primary"
 								className={cn(
 									"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
 									reviewerActive
-										? "text-muted-foreground hover:bg-raised hover:text-foreground"
-										: "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80",
+										? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+										: "text-muted-foreground hover:bg-raised hover:text-foreground",
 								)}
 							>
-								<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
+								<AgentAvatar className="size-icon-base" decorative provider={reviewerTerminal.harness} />
 								<button
-									aria-current={reviewerActive ? undefined : true}
-									aria-label={label}
-									aria-selected={!reviewerActive}
+									aria-current={reviewerActive ? true : undefined}
+									aria-label="Reviewer"
+									aria-selected={Boolean(reviewerActive)}
 									className={cn(
-										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
-										reviewerActive ? "text-muted-foreground" : "text-foreground",
+										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
+										reviewerActive ? "text-foreground" : "text-muted-foreground",
 									)}
-									onClick={reviewerActive ? onSelectChat : undefined}
+									onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
 									role="tab"
-									tabIndex={0}
-									title={label}
+									tabIndex={reviewerActive ? 0 : -1}
+									title={reviewerTerminal.harness}
 									type="button"
 								>
-									<span className="truncate">{label}</span>
+									<span className="truncate">Reviewer</span>
 								</button>
 							</span>
-							{reviewerTerminal ? (
-								<span
-									className={cn(
-										"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
-										reviewerActive
-											? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
-											: "text-muted-foreground hover:bg-raised hover:text-foreground",
-									)}
-								>
-									<AgentAvatar className="size-icon-base" decorative provider={reviewerTerminal.harness} />
-									<button
-										aria-label="Reviewer"
-										aria-selected={Boolean(reviewerActive)}
-										className={cn(
-											"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
-											reviewerActive ? "text-foreground" : "text-muted-foreground",
-										)}
-										onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
-										role="tab"
-										tabIndex={0}
-										title={reviewerTerminal.harness}
-										type="button"
-									>
-										<span className="truncate">Reviewer</span>
-									</button>
-								</span>
-							) : null}
-						</div>
-					</div>
-					<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
-						{headerActions}
+						) : null}
 					</div>
 				</div>
-			</header>
-		</SessionTopbarPortal>
+				<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
+					{headerActions}
+				</div>
+			</div>
+		</header>
 	);
+	return inline ? header : <SessionTopbarPortal>{header}</SessionTopbarPortal>;
 }
 
 function CompactButton({

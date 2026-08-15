@@ -140,14 +140,14 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		headerActions,
 		reviewerTerminal,
 		onOpenReviewerTerminal,
-		reviewerActive,
+		reviewerTarget,
 		onSelectChat,
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
-		reviewerActive?: boolean;
+		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
 		onSelectChat?: () => void;
 	}) => (
 		<div data-testid="chat-surface">
@@ -158,10 +158,10 @@ vi.mock("./chat/SessionChatSurface", () => ({
 					Reviewer
 				</button>
 			) : null}
-			{reviewerActive ? (
+			{reviewerTarget ? (
 				<div data-testid="terminal-target">reviewer</div>
 			) : null}
-			{reviewerActive ? (
+			{reviewerTarget ? (
 				<button type="button" onClick={onSelectChat}>
 					select chat tab
 				</button>
@@ -826,43 +826,49 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
 	});
 
-	it("restores the selected reviewer terminal when the session becomes active again", async () => {
-		const worker = workerSession("sess-1");
-		worker.prs = [
-			{
-				url: "https://github.com/acme/repo/pull/7",
-				number: 7,
-				state: "open",
-				ci: "passing",
-				review: "none",
-				mergeability: "mergeable",
-				reviewComments: false,
-				updatedAt: "2026-06-15T00:00:00Z",
-			},
-		];
-		reviewGetMock.mockResolvedValueOnce({
-			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
-			error: undefined,
-		});
+	it.each(["tui", "chat"] as const)(
+		"restores the selected reviewer terminal when a %s session becomes active again",
+		async (mode) => {
+			const worker = workerSession("sess-1");
+			worker.mode = mode;
+			worker.prs = [
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T00:00:00Z",
+				},
+			];
+			reviewGetMock.mockResolvedValueOnce({
+				data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+				error: undefined,
+			});
 
-		const view = render(<SessionView sessionId="sess-1" />);
-		await screen.findByRole("button", { name: "select reviewer tab" });
-		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+			const view = render(<SessionView sessionId="sess-1" />);
+			const reviewerButtonName = mode === "chat" ? "Reviewer" : "select reviewer tab";
+			await screen.findByRole("button", { name: reviewerButtonName });
+			fireEvent.click(screen.getByRole("button", { name: reviewerButtonName }));
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
 
-		worker.status = "terminated";
-		worker.isTerminated = true;
-		view.rerender(<SessionView sessionId="sess-1" />);
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
-		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
+			worker.status = "terminated";
+			worker.isTerminated = true;
+			view.rerender(<SessionView sessionId="sess-1" />);
+			if (mode === "chat") expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+			expect(screen.queryByRole("button", { name: reviewerButtonName })).not.toBeInTheDocument();
 
-		worker.status = "working";
-		worker.isTerminated = false;
-		view.rerender(<SessionView sessionId="sess-1" />);
+			worker.status = "working";
+			worker.isTerminated = false;
+			view.rerender(<SessionView sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: "select reviewer tab" });
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
-	});
+			await screen.findByRole("button", { name: reviewerButtonName });
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		},
+	);
 
 	it("opens the inspector with the shared sidebar spring tokens", () => {
 		render(<SessionView sessionId="sess-1" />);

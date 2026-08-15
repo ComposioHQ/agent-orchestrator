@@ -824,7 +824,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									session={session}
 									reviewerTerminal={reviewerTerminal}
 									onOpenReviewerTerminal={selectReviewerTerminal}
-									reviewerActive={routedTerminalTarget.kind === "reviewer"}
+									reviewerTarget={
+										routedTerminalTarget.kind === "reviewer" ? routedTerminalTarget : undefined
+									}
 									onSelectChat={selectSessionTerminal}
 									daemonReady={daemonStatus.state === "ready"}
 									theme={theme}

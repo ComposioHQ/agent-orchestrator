@@ -22,13 +22,14 @@ import {
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import { can } from "../../types/conversation";
 import type { Theme } from "../../stores/ui-store";
+import type { TerminalTarget } from "../../types/terminal";
 import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({
 	session,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
-	reviewerActive,
+	reviewerTarget,
 	onSelectChat,
 	daemonReady,
 	theme,
@@ -41,7 +42,7 @@ export function SessionChatSurface({
 	session: WorkspaceSession;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
-	reviewerActive?: boolean;
+	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
 	onSelectChat?: () => void;
 	daemonReady?: boolean;
 	theme?: Theme;
@@ -135,7 +136,7 @@ export function SessionChatSurface({
 			session={session}
 			reviewerTerminal={reviewerTerminal}
 			onOpenReviewerTerminal={onOpenReviewerTerminal}
-			reviewerActive={reviewerActive}
+			reviewerTarget={reviewerTarget}
 			onSelectChat={onSelectChat}
 			daemonReady={daemonReady}
 			theme={theme}
