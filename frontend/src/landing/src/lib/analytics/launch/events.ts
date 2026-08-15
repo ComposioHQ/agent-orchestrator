@@ -20,8 +20,6 @@ export const LAUNCH_EVENTS = {
 	phBadgeClick: "ph_badge_click",
 	/** Click on a CTA that sends the visitor back to Product Hunt to upvote. */
 	phUpvoteCtaClick: "ph_upvote_cta_click",
-	/** Click on a CTA that sends the visitor to comment/review on Product Hunt. */
-	phCommentCtaClick: "ph_comment_cta_click",
 	/** A visitor we have seen before in this browser. */
 	returnVisit: "return_visit",
 } as const;

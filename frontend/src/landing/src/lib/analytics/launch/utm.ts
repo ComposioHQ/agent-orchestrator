@@ -148,7 +148,3 @@ export const LAUNCH_CHANNELS: LaunchChannel[] = [
 	},
 ];
 
-/** Look up a channel's tagged inbound link by its `utm_source`. */
-export function launchLink(source: LaunchSourceName): string | undefined {
-	return LAUNCH_CHANNELS.find((c) => c.source === source)?.link;
-}

@@ -19,6 +19,7 @@
  * arguments) so the classification rules are testable without a browser.
  */
 
+import { campaignProperties, type CampaignParams } from "../campaign";
 import { LAUNCH_CHANNELS, type LaunchSourceName } from "./utm";
 
 export type LaunchSource = LaunchSourceName | "direct" | "other";
@@ -157,4 +158,62 @@ export function launchContext(input: {
 	const campaign = normalizeCampaign(input.utmCampaign);
 	if (campaign) context.campaign = campaign;
 	return context;
+}
+
+/**
+ * Referrer with same-site hosts removed. Navigating our own pages sets
+ * `document.referrer` to our own origin, which must not reclassify a visit
+ * (a reload of `/download` is not a referrer).
+ */
+export function externalReferrer(
+	referrer: string,
+	currentHostname: string,
+): string {
+	if (!referrer) return "";
+	try {
+		const host = new URL(referrer).hostname;
+		return hostMatches(host, currentHostname) ? "" : referrer;
+	} catch {
+		return referrer;
+	}
+}
+
+/** The browser inputs `launchContextFromBrowser` needs; injectable for tests. */
+export type BrowserLaunchRead = {
+	/** Persisted campaign params (campaign.ts captures once per tab session). */
+	campaign: () => CampaignParams;
+	referrer: string;
+	hostname: string;
+	userAgent: string;
+	touchPoints: number;
+};
+
+/**
+ * The launch context for the current browser visit.
+ *
+ * UTMs come from campaign.ts — capture-once and persisted for the tab session —
+ * rather than the current URL: a visitor who arrived tagged and then navigated
+ * or reloaded an untagged page keeps their attribution. The referrer is only
+ * consulted when there is no persisted `utm_source`, and same-site referrers
+ * are ignored.
+ */
+export function launchContextFromBrowser(
+	read?: BrowserLaunchRead,
+): LaunchContext {
+	if (typeof window === "undefined" && !read) return launchContext({});
+	const r = read ?? {
+		campaign: campaignProperties,
+		referrer: document.referrer,
+		hostname: window.location.hostname,
+		userAgent: navigator.userAgent,
+		touchPoints: navigator.maxTouchPoints,
+	};
+	const campaign = r.campaign();
+	return launchContext({
+		utmSource: campaign.utm_source,
+		utmCampaign: campaign.utm_campaign,
+		referrer: externalReferrer(r.referrer, r.hostname),
+		ua: r.userAgent,
+		touchPoints: r.touchPoints,
+	});
 }

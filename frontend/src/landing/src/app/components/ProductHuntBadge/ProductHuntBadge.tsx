@@ -10,18 +10,15 @@ import { PRODUCT_HUNT_URL } from "@/lib/analytics/launch/utm";
 export type ProductHuntIntent = keyof typeof INTENT_EVENT;
 
 const INTENT_EVENT = {
-	/** The badge itself ("find us on PH"). */
+	/** The drop-in badge itself ("find us on PH"). */
 	badge: LAUNCH_EVENTS.phBadgeClick,
 	/** A CTA sending the visitor back to upvote. */
 	upvote: LAUNCH_EVENTS.phUpvoteCtaClick,
-	/** A CTA sending the visitor to comment/review. */
-	comment: LAUNCH_EVENTS.phCommentCtaClick,
 } as const;
 
 const INTENT_LABEL: Record<ProductHuntIntent, string> = {
 	badge: "Find Agent Orchestrator on Product Hunt",
 	upvote: "Upvote us on Product Hunt",
-	comment: "Review us on Product Hunt",
 };
 
 type ProductHuntBadgeProps = {
@@ -38,10 +35,10 @@ type ProductHuntBadgeProps = {
 
 /**
  * A drop-in Product Hunt CTA for launch day. It links to our Product Hunt page
- * and fires the event matching `intent` on click (`ph_badge_click`,
- * `ph_upvote_cta_click`, or `ph_comment_cta_click`). Mounted in the header
- * during the launch; remove it after. It intentionally does not carry UTM back
- * to Product Hunt (the destination is Product Hunt, not our site).
+ * and fires the event matching `intent` on click (`ph_badge_click` or
+ * `ph_upvote_cta_click`). The header mounts the `upvote` variant for launch
+ * day; remove it after. It intentionally does not carry UTM back to Product
+ * Hunt (the destination is Product Hunt, not our site).
  */
 export function ProductHuntBadge({
 	children,

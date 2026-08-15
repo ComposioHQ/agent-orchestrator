@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-	buildUtmUrl,
-	LAUNCH_CAMPAIGN,
-	LAUNCH_CHANNELS,
-	launchLink,
-} from "./utm";
+import { buildUtmUrl, LAUNCH_CAMPAIGN, LAUNCH_CHANNELS } from "./utm";
 
 describe("buildUtmUrl", () => {
 	it("appends the params in standard order", () => {
@@ -63,7 +58,7 @@ describe("LAUNCH_CHANNELS", () => {
 	});
 
 	it("includes Product Hunt as a real, tagged link to the site", () => {
-		const ph = launchLink("product_hunt");
+		const ph = LAUNCH_CHANNELS.find((c) => c.source === "product_hunt")?.link;
 		expect(ph).toContain("https://aoagents.dev");
 		expect(ph).toContain("utm_source=product_hunt");
 	});

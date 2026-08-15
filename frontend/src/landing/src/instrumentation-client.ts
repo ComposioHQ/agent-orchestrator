@@ -8,7 +8,8 @@ import {
 import { ANALYTICS_CONSENT_KEY } from "@/lib/constants";
 import { applyMarketingConsent } from "@/lib/analytics/marketing-consent";
 import { campaignProperties } from "@/lib/analytics/campaign";
-import { launchContext } from "@/lib/analytics/launch/context";
+import { launchContextFromBrowser } from "@/lib/analytics/launch/context";
+import { launchSuperProperties } from "@/lib/analytics/launch/registration";
 
 // NEXT_PUBLIC_* is inlined at build time. Until the deploy workflow passed this
 // through, it was undefined on the deployed site and init was skipped entirely,
@@ -52,33 +53,18 @@ export const onRouterTransitionStart = () => {};
  * landing event of the whole launch funnel — unattributed. Same lesson as the
  * `app_name` registration in `marketing-consent.ts`.
  *
- * `campaign` is only set when the visit actually carried a utm_campaign, and is
- * actively unregistered otherwise: registered super-properties persist in the
- * PostHog cookie, so a stale `launch_day` from an earlier visit must not ride
- * along on later direct visits.
+ * UTMs come from campaign.ts (capture-once, persisted for the tab session), so
+ * a visitor who arrived tagged keeps their attribution across an untagged
+ * reload. `campaign` is registered only when the visit carried one and is
+ * actively unregistered otherwise (registered super-properties persist in the
+ * PostHog cookie), so a stale `launch_day` cannot ride along on later direct
+ * visits either. The register/unregister decision is `launchSuperProperties`
+ * (pure, unit-tested).
  */
 function registerLaunchContext(posthog: import("posthog-js").PostHog): void {
-  const params = new URLSearchParams(window.location.search);
-  const context = launchContext({
-    utmSource: params.get("utm_source") ?? undefined,
-    utmCampaign: params.get("utm_campaign") ?? undefined,
-    referrer: document.referrer,
-    ua: navigator.userAgent,
-    touchPoints: navigator.maxTouchPoints,
-  });
-  if (context.campaign) {
-    posthog.register({
-      source: context.source,
-      campaign: context.campaign,
-      user_type: context.user_type,
-      device: context.device,
-    });
-  } else {
-    posthog.unregister("campaign");
-    posthog.register({
-      source: context.source,
-      user_type: context.user_type,
-      device: context.device,
-    });
-  }
+  const { register, unregister } = launchSuperProperties(
+    launchContextFromBrowser(),
+  );
+  for (const key of unregister) posthog.unregister(key);
+  posthog.register(register);
 }

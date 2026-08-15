@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { classifySource, deviceType, launchContext } from "./context";
+import {
+	classifySource,
+	deviceType,
+	externalReferrer,
+	launchContext,
+	launchContextFromBrowser,
+	type BrowserLaunchRead,
+} from "./context";
 import { LAUNCH_CHANNELS } from "./utm";
 
 describe("classifySource", () => {
@@ -105,5 +112,70 @@ describe("launchContext", () => {
 		});
 		expect("campaign" in launchContext({ referrer: "", ua: "Mac" })).toBe(false);
 		expect(launchContext({ utmCampaign: "   ", ua: "Mac" }).campaign).toBeUndefined();
+	});
+});
+
+describe("externalReferrer", () => {
+	it("drops same-site referrers, including subdomains, and keeps external ones", () => {
+		expect(externalReferrer("https://aoagents.dev/", "aoagents.dev")).toBe("");
+		expect(externalReferrer("https://www.aoagents.dev/download", "aoagents.dev")).toBe("");
+		expect(externalReferrer("https://www.producthunt.com/", "aoagents.dev")).toBe(
+			"https://www.producthunt.com/",
+		);
+		expect(externalReferrer("", "aoagents.dev")).toBe("");
+	});
+});
+
+describe("launchContextFromBrowser", () => {
+	const read = (over: Partial<BrowserLaunchRead>): BrowserLaunchRead => ({
+		campaign: () => ({}),
+		referrer: "",
+		hostname: "aoagents.dev",
+		userAgent: "Macintosh",
+		touchPoints: 0,
+		...over,
+	});
+
+	it("keeps a tagged arrival attributed across an untagged reload", () => {
+		// Regression: the visitor arrived via the tagged Product Hunt link,
+		// then client-navigated to /download and reloaded — the URL no longer
+		// carries utm_*, but campaign.ts persists them for the tab session,
+		// and document.referrer is now our own origin.
+		const context = launchContextFromBrowser(
+			read({
+				campaign: () => ({
+					utm_source: "product_hunt",
+					utm_campaign: "launch_day",
+				}),
+				referrer: "https://aoagents.dev/download",
+			}),
+		);
+		expect(context.source).toBe("product_hunt");
+		expect(context.campaign).toBe("launch_day");
+	});
+
+	it("classifies an untagged same-site reload as direct with no campaign", () => {
+		const context = launchContextFromBrowser(
+			read({ referrer: "https://aoagents.dev/" }),
+		);
+		expect(context.source).toBe("direct");
+		expect(context.campaign).toBeUndefined();
+	});
+
+	it("falls back to the external referrer when no persisted utm exists", () => {
+		const context = launchContextFromBrowser(
+			read({ referrer: "https://t.co/abc" }),
+		);
+		expect(context.source).toBe("x");
+	});
+
+	it("passes touch detection through to the device class", () => {
+		const iPadOS =
+			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15";
+		expect(
+			launchContextFromBrowser(
+				read({ userAgent: iPadOS, touchPoints: 5 }),
+			).device,
+		).toBe("tablet");
 	});
 });

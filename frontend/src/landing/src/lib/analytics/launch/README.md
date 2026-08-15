@@ -15,9 +15,9 @@ be removed after the launch without unpicking anything.
   `utm_campaign` when it carried one and is **absent otherwise** — direct and
   untagged traffic is never relabeled `launch_day`.
 - **`events.ts`** — the launch event names (`ph_referral_visit`,
-  `ph_badge_click`, `ph_upvote_cta_click`, `ph_comment_cta_click`,
-  `return_visit`), fired through the shared `track()` wrapper at their call
-  sites.
+  `ph_badge_click`, `ph_upvote_cta_click`, `return_visit`), fired through the
+  shared `track()` wrapper at their call sites. (A `ph_comment_cta_click`
+  event is added when a comment CTA actually exists — not before.)
 - **Super-properties** — `source` / `campaign` / `device` are registered from
   the PostHog init `loaded` callback in `instrumentation-client.ts`, **before**
   the consent opt-in. That ordering is load-bearing: for an already-consented
@@ -26,19 +26,24 @@ be removed after the launch without unpicking anything.
   first pageview unattributed. From init on, **every** event, including
   autocaptured pageviews and the existing `download_clicked` /
   `waitlist_signup` / `section_viewed`, can be broken down by launch source
-  **without editing those call sites**. A visit without `utm_campaign` has
+  **without editing those call sites**. UTMs are re-read from campaign.ts
+  (capture-once, persisted for the tab session) on every load, so a visitor
+  who arrived tagged keeps their attribution across an untagged reload;
+  same-site referrers are ignored. A visit without `utm_campaign` has
   `campaign` unregistered, so a stale value cannot persist in the cookie.
 - **`LaunchAnalytics`** (`app/components/LaunchAnalytics`) — mounted once in the
   layout. Fires `ph_referral_visit` (once per tab session, Product Hunt traffic
-  only) and `return_visit` (once per tab session for browsers seen before).
-  Firing is consent-aware: nothing is captured — and no once-only flag is
-  consumed — until the visitor accepts analytics, so a first-time PH visitor
-  who accepts the banner a minute in is still counted.
+  only) and `return_visit` (a **new** tab session of a browser seen before —
+  a reload of a first-ever visit does not count). Firing is consent-aware:
+  nothing is captured — and no once-only flag is consumed — until the visitor
+  accepts analytics, so a first-time PH visitor who accepts the banner a minute
+  in is still counted. The firing/dedupe decisions live in `launch/visit.ts`
+  and the registration decision in `launch/registration.ts`; both are pure and
+  unit-tested, as is the shared browser-input path `launchContextFromBrowser`.
 - **`ProductHuntBadge`** (`app/components/ProductHuntBadge`) — a drop-in
-  Product Hunt CTA with `intent="badge" | "upvote" | "comment"` selecting the
-  event fired (`ph_badge_click` / `ph_upvote_cta_click` /
-  `ph_comment_cta_click`). Mounted in the header for launch day; drop
-  `intent="upvote"` variants into hero copy as needed.
+  Product Hunt CTA with `intent="badge" | "upvote"` selecting the event fired
+  (`ph_badge_click` / `ph_upvote_cta_click`). The header mounts the `upvote`
+  variant for launch day; remove it after.
 
 ## What already exists (not duplicated)
 

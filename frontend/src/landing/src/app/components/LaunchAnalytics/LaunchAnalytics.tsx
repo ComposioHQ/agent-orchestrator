@@ -4,8 +4,13 @@ import { useEffect } from "react";
 
 import { track } from "@/lib/analytics";
 import { MARKETING_ACCEPTED_CONSENT } from "@/lib/analytics/marketing-consent";
-import { launchContext } from "@/lib/analytics/launch/context";
+import { launchContextFromBrowser } from "@/lib/analytics/launch/context";
 import { LAUNCH_EVENTS } from "@/lib/analytics/launch/events";
+import {
+	planLaunchEvents,
+	type VisitPlan,
+	type VisitState,
+} from "@/lib/analytics/launch/visit";
 import { ANALYTICS_CONSENT_KEY } from "@/lib/constants";
 
 /**
@@ -24,13 +29,13 @@ import { ANALYTICS_CONSENT_KEY } from "@/lib/constants";
  * gets `ph_referral_visit`; one who never accepts is simply not counted (which
  * is the point of opt-out-by-default).
  *
- * Best-effort and side-effect free beyond analytics: all storage access is
- * guarded.
+ * The firing/dedupe decisions live in `launch/visit.ts` (pure, unit-tested);
+ * this component only gathers the guarded browser state and applies the plan.
  */
 
 /** localStorage: this browser has visited before (return-visit signal). */
 const SEEN_KEY = "ao.launch.seen";
-/** sessionStorage: return_visit already fired in this tab session. */
+/** sessionStorage: this tab session's initial visit has been counted. */
 const RETURN_FIRED_KEY = "ao.launch.return_fired";
 /** sessionStorage: ph_referral_visit already fired in this tab session. */
 const PH_KEY = "ao.launch.ph_referral";
@@ -73,51 +78,63 @@ function whenConsented(fire: () => void): () => void {
 	return () => window.clearInterval(timer);
 }
 
+/** Reads the dedupe markers; an unavailable storage reads as absent. */
+function readVisitState(source: VisitState["source"]): VisitState {
+	const state: VisitState = {
+		source,
+		seenBefore: false,
+		sessionCounted: false,
+		phReferralFired: false,
+		sessionStorageAvailable: false,
+		localStorageAvailable: false,
+	};
+	try {
+		state.seenBefore = window.localStorage.getItem(SEEN_KEY) === "1";
+		state.localStorageAvailable = true;
+	} catch {
+		// Storage blocked (private mode / cookies off).
+	}
+	try {
+		state.sessionCounted =
+			window.sessionStorage.getItem(RETURN_FIRED_KEY) === "1";
+		state.phReferralFired = window.sessionStorage.getItem(PH_KEY) === "1";
+		state.sessionStorageAvailable = true;
+	} catch {
+		// Storage blocked: per-load firing is the documented degradation.
+	}
+	return state;
+}
+
+/** Applies the plan's marker writes, each guarded independently. */
+function writeVisitMarkers(plan: VisitPlan): void {
+	try {
+		if (plan.markSeen) window.localStorage.setItem(SEEN_KEY, "1");
+	} catch {
+		// Storage blocked.
+	}
+	try {
+		if (plan.markSessionCounted) {
+			window.sessionStorage.setItem(RETURN_FIRED_KEY, "1");
+		}
+		if (plan.markPhReferralFired) {
+			window.sessionStorage.setItem(PH_KEY, "1");
+		}
+	} catch {
+		// Storage blocked.
+	}
+}
+
 export function LaunchAnalytics() {
 	useEffect(() => {
 		if (typeof window === "undefined") return;
 
-		const params = new URLSearchParams(window.location.search);
-		const context = launchContext({
-			utmSource: params.get("utm_source") ?? undefined,
-			utmCampaign: params.get("utm_campaign") ?? undefined,
-			referrer: document.referrer,
-			ua: navigator.userAgent,
-			touchPoints: navigator.maxTouchPoints,
-		});
+		const context = launchContextFromBrowser();
 
 		const stopWaiting = whenConsented(() => {
-			// return_visit: seen before in this browser. localStorage marks the
-			// browser; sessionStorage dedupes to once per tab session, so a
-			// reload does not re-fire it.
-			try {
-				const seen = window.localStorage.getItem(SEEN_KEY) === "1";
-				const firedThisSession =
-					window.sessionStorage.getItem(RETURN_FIRED_KEY) === "1";
-				if (seen && !firedThisSession) {
-					track(LAUNCH_EVENTS.returnVisit);
-					window.sessionStorage.setItem(RETURN_FIRED_KEY, "1");
-				}
-				window.localStorage.setItem(SEEN_KEY, "1");
-			} catch {
-				// Storage blocked (private mode / cookies off): skip the signal.
-			}
-
-			// ph_referral_visit: once per tab session, only for Product Hunt
-			// traffic.
-			if (context.source === "product_hunt") {
-				try {
-					if (window.sessionStorage.getItem(PH_KEY) !== "1") {
-						track(LAUNCH_EVENTS.phReferralVisit);
-						window.sessionStorage.setItem(PH_KEY, "1");
-					}
-				} catch {
-					// No sessionStorage: fire anyway — at most once per page
-					// load is the best dedupe available — rather than lose the
-					// signal entirely.
-					track(LAUNCH_EVENTS.phReferralVisit);
-				}
-			}
+			const plan = planLaunchEvents(readVisitState(context.source));
+			if (plan.fireReturnVisit) track(LAUNCH_EVENTS.returnVisit);
+			if (plan.firePhReferralVisit) track(LAUNCH_EVENTS.phReferralVisit);
+			writeVisitMarkers(plan);
 		});
 
 		return stopWaiting;
