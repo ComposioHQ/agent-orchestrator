@@ -765,7 +765,7 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
-	it("does not timestamp the live Activity state as a historical event", () => {
+	it("timestamps the live Activity state so it participates in chronological ordering", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
@@ -782,7 +782,7 @@ describe("SessionInspector Activity section", () => {
 		const activityRow = activitySection()
 			.getByText("Working")
 			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-		expect(within(activityRow).queryByText("2h ago")).not.toBeInTheDocument();
+		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
 	it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
@@ -934,19 +934,42 @@ describe("SessionInspector Activity section", () => {
 		expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
 	});
 
-	it("renders the current state before reverse-chronological historical milestones", () => {
+	it("orders Activity timeline rows by timestamp with the latest event on top", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+		const summaries = [
+			prSummary(42, "draft", {
+				createdAt: "2026-06-15T08:00:00Z",
+				stateChangedAt: "2026-06-15T08:00:00Z",
+			}),
+			prSummary(41, "open", {
+				createdAt: "2026-06-15T11:30:00Z",
+				stateChangedAt: "2026-06-15T11:30:00Z",
+			}),
+			prSummary(40, "merged", {
+				createdAt: "2026-06-15T09:15:00Z",
+				stateChangedAt: "2026-06-15T10:45:00Z",
+			}),
+		];
 
 		renderWithQuery(
 			<SessionInspector
-				session={session([pr(42, "draft"), pr(41, "open"), pr(40, "merged")], {
-					status: "merged",
-					createdAt: "2026-06-15T09:00:00Z",
-					updatedAt: "2026-06-15T11:55:00Z",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
-				})}
+				session={session(
+					[
+						pr(42, "draft", { url: `https://api.github.com/repos/acme/repo/pulls/42` }),
+						pr(41, "open", { url: `https://api.github.com/repos/acme/repo/pulls/41` }),
+						pr(40, "merged", { url: `https://api.github.com/repos/acme/repo/pulls/40` }),
+					],
+					{
+						status: "merged",
+						createdAt: "2026-06-15T09:00:00Z",
+						updatedAt: "2026-06-15T11:55:00Z",
+						activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+					},
+				)}
 			/>,
+			undefined,
+			(client) => client.setQueryData(sessionScmSummaryQueryKey("sess-1"), summaries),
 		);
 
 		const section = screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement;
@@ -954,13 +977,13 @@ describe("SessionInspector Activity section", () => {
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
-			"Idle",
-			"Done",
-			"Merged PR #40",
-			"Opened PR #40",
-			"Opened PR #41",
-			"Draft PR #42",
+			"Opened PR #4130m ago",
+			"Merged PR #401h ago",
+			"Done1h ago",
+			"Idle2h ago",
+			"Opened PR #402h ago",
 			"Created workspace3h ago",
+			"Draft PR #424h ago",
 		]);
 
 		const eventRows = section.querySelectorAll("[data-testid='inspector-timeline-event']");
