@@ -527,6 +527,11 @@ export function InspectorReviewsView({
 								<ReviewSourceLabel icon={<GitPullRequestIcon />}>
 									{labels.githubSource}
 								</ReviewSourceLabel>
+								<GithubInlineComments
+									externalLink={externalLink}
+									labels={labels}
+									reviewers={group.github.unresolvedBy}
+								/>
 								<GithubReviewHistory
 									entries={group.github.entries}
 									externalLink={externalLink}
@@ -761,7 +766,7 @@ function GithubReviewHistory({
 		<div className="flex min-w-0 flex-col gap-2">
 			{sorted.map((entry, index) => (
 				<ExternalReviewCard
-					defaultOpen={index === 0 || Boolean(entry.inlineComments?.length)}
+					defaultOpen={index === 0}
 					entry={entry}
 					externalLink={externalLink}
 					key={entry.id}
@@ -791,7 +796,6 @@ function ExternalReviewCard({
 }) {
 	const [open, setOpen] = useState(defaultOpen);
 	const body = entry.body?.trim();
-	const comments = entry.inlineComments?.filter((comment) => comment.body?.trim() || comment.file || comment.url) ?? [];
 	return (
 		<article className="overflow-hidden rounded-md border border-border bg-overlay/45" data-testid="github-review-card">
 			<button
@@ -820,9 +824,6 @@ function ExternalReviewCard({
 					{body ? (
 						<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
 					) : null}
-					{comments.length > 0 ? (
-						<InlineCommentsDisclosure comments={comments} externalLink={externalLink} labels={labels} />
-					) : null}
 					<ReviewLinks
 						clamped={false}
 						expanded={false}
@@ -837,41 +838,44 @@ function ExternalReviewCard({
 	);
 }
 
-function InlineCommentsDisclosure({
-	comments,
+function GithubInlineComments({
 	externalLink: ExternalLink,
 	labels,
+	reviewers,
 }: {
-	comments: InspectorInlineComment[];
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
+	reviewers: InspectorUnresolvedReviewer[];
 }) {
-	const [open, setOpen] = useState(true);
+	const comments = reviewers.flatMap((reviewer) =>
+		reviewer.links
+			.filter((link) => link.body?.trim() || link.file || link.url)
+			.map((link, index) => ({
+				...link,
+				id: `${reviewer.reviewerId}:${link.url ?? link.file ?? index}`,
+				reviewerId: reviewer.reviewerId,
+				url: link.url || reviewer.reviewUrl,
+			})),
+	);
+	if (comments.length === 0) return null;
 	return (
-		<div className="rounded-md border border-border/70 bg-background/35">
-			<button
-				aria-expanded={open}
-				className="flex w-full min-w-0 items-center gap-1.5 px-2 py-1.5 text-left text-xs font-medium text-foreground transition-colors hover:bg-interactive-hover/30"
-				onClick={() => setOpen((current) => !current)}
-				type="button"
-			>
-				<ChevronIcon className="size-icon-2xs shrink-0 text-passive" direction={open ? "down" : "right"} />
-				<span className="min-w-0 flex-1 truncate">{labels.openInlineComments(comments.length)}</span>
-			</button>
-			{open ? (
-				<div className="border-t border-border/70">
-					{comments.map((comment, index) => (
-						<InlineCommentRow
-							comment={comment}
-							externalLink={ExternalLink}
-							index={index}
-							key={`${comment.url ?? comment.file ?? "comment"}:${index}`}
-							labels={labels}
-						/>
-					))}
-				</div>
-			) : null}
-		</div>
+		<section className="overflow-hidden rounded-md border border-border/70 bg-background/35" data-testid="github-inline-comments">
+			<div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/70 px-2.5 py-2 text-xs">
+				<span className="font-semibold text-foreground">{labels.openComments}</span>
+				<span className="shrink-0 font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
+			</div>
+			<div className="divide-y divide-border/60">
+				{comments.map((comment, index) => (
+					<InlineCommentRow
+						comment={comment}
+						externalLink={ExternalLink}
+						index={index}
+						key={comment.id}
+						labels={labels}
+					/>
+				))}
+			</div>
+		</section>
 	);
 }
 
@@ -881,7 +885,7 @@ function InlineCommentRow({
 	index,
 	labels,
 }: {
-	comment: InspectorInlineComment;
+	comment: InspectorInlineComment & { reviewerId?: string };
 	externalLink: ExternalLinkComponent;
 	index: number;
 	labels: InspectorReviewLabels;
@@ -889,13 +893,14 @@ function InlineCommentRow({
 	const label = comment.file ? `${comment.file}${comment.line ? `:${comment.line}` : ""}` : labels.commentNumber(index + 1);
 	const body = comment.body?.trim();
 	return (
-		<div className="flex min-w-0 flex-col gap-1.5 border-b border-border/60 px-2 py-2 last:border-b-0">
-			<div className="flex min-w-0 items-center gap-1 font-mono text-[9px] leading-none text-muted-foreground">
-				<FileCodeIcon className="size-2.5 shrink-0 text-muted-foreground" />
-				<span className="truncate" title={label}>{label}</span>
+		<div className="flex min-w-0 flex-col gap-1.5 px-2.5 py-2 text-xs">
+			<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-muted-foreground">
+				<FileCodeIcon className="size-icon-2xs shrink-0" />
+				<span className="min-w-0 truncate font-medium" title={label}>{label}</span>
+				{comment.reviewerId ? <span className="shrink-0 text-passive">· {comment.reviewerId}</span> : null}
 			</div>
-			{body ? <p className="m-0 whitespace-pre-wrap break-words text-xs leading-snug text-foreground/90">{body}</p> : null}
-			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-micro">
+			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
+			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{comment.autoInjectReview ? (
 					<span className="font-medium text-muted-foreground">{labels.sentToWorkerAgent}</span>
 				) : (

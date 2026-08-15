@@ -271,7 +271,7 @@ describe("portable inspector presentations", () => {
 		expect(screen.getByText(olderBody)).toBeInTheDocument();
 	});
 
-	it("shows unresolved inline review comment bodies with their file location", () => {
+	it("shows unresolved inline review comment bodies together above external reviews", () => {
 		render(
 			<InspectorReviewsView
 				externalLink={ExternalLink}
@@ -280,8 +280,20 @@ describe("portable inspector presentations", () => {
 						github: {
 							entries: [
 								{
+									body: "Please address the inline notes before merge.",
 									id: "github-review-1",
-									inlineComments: [
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+									submittedAt: "2026-08-09T10:00:00Z",
+									submittedAtLabel: "1h ago",
+									verdict: { label: "Commented", tone: "neutral" },
+								},
+							],
+							unresolved: 1,
+							unresolvedBy: [
+								{
+									count: 1,
+									links: [
 										{
 											body: "This branch leaks the resize listener on unmount.",
 											file: "src/panel.tsx",
@@ -290,13 +302,9 @@ describe("portable inspector presentations", () => {
 										},
 									],
 									reviewerId: "maya",
-									submittedAt: "2026-08-09T10:00:00Z",
-									submittedAtLabel: "1h ago",
-									verdict: { label: "Commented", tone: "neutral" },
+									reviewUrl: "https://example.com/review",
 								},
 							],
-							unresolved: 1,
-							unresolvedBy: [],
 						},
 						meta: "#12 · 1 unresolved",
 						number: 12,
@@ -310,9 +318,11 @@ describe("portable inspector presentations", () => {
 			/>,
 		);
 
+		expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
+		expect(screen.getByText("Open comments")).toBeInTheDocument();
+		expect(screen.getByText("1 unresolved")).toBeInTheDocument();
 		expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "1 open inline comments" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: "View in file" })).toBeInTheDocument();
 	});

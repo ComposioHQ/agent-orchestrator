@@ -1062,49 +1062,16 @@ function MergedReviewsSection({
 				verdict: githubVerdict(run.verdict, t),
 			};
 		});
-		const unresolvedByReviewer = new Map(
-			(github?.review?.unresolvedBy ?? []).map((reviewer) => [reviewer.reviewerId, reviewer]),
-		);
-		const externalEntries = entries.map((entry) => {
-			const reviewer = unresolvedByReviewer.get(entry.reviewerId);
-			unresolvedByReviewer.delete(entry.reviewerId);
-			return {
-				body: entry.body,
-				id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
-				inlineComments: (reviewer?.links ?? []).map((link) => ({
-					autoInjectReview: link.autoInjectReview,
-					body: link.body,
-					file: link.file,
-					line: link.line,
-					url: link.url || reviewer?.reviewUrl,
-				})),
-				isBot: entry.isBot,
-				reviewerId: entry.reviewerId,
-				reviewUrl: entry.reviewUrl,
-				submittedAt: entry.submittedAt,
-				submittedAtLabel: formatTimeCompact(entry.submittedAt),
-				verdict: githubVerdict(entry.verdict, t),
-			};
-		});
-		for (const reviewer of unresolvedByReviewer.values()) {
-			externalEntries.push({
-				body: undefined,
-				id: `unresolved:${reviewer.reviewerId}:${number}`,
-				inlineComments: reviewer.links.map((link) => ({
-					autoInjectReview: link.autoInjectReview,
-					body: link.body,
-					file: link.file,
-					line: link.line,
-					url: link.url || reviewer.reviewUrl,
-				})),
-				isBot: reviewer.isBot,
-				reviewerId: reviewer.reviewerId,
-				reviewUrl: reviewer.reviewUrl,
-				submittedAt: "",
-				submittedAtLabel: "",
-				verdict: githubVerdict("none", t),
-			});
-		}
+		const externalEntries = entries.map((entry) => ({
+			body: entry.body,
+			id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
+			isBot: entry.isBot,
+			reviewerId: entry.reviewerId,
+			reviewUrl: entry.reviewUrl,
+			submittedAt: entry.submittedAt,
+			submittedAtLabel: formatTimeCompact(entry.submittedAt),
+			verdict: githubVerdict(entry.verdict, t),
+		}));
 		return {
 			ao: ao
 				? {
