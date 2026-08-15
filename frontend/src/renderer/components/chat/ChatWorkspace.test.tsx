@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
@@ -217,7 +217,7 @@ describe("ChatWorkspace timeline", () => {
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
 
-	it("renders an active turn as a compact status line instead of a boxed panel", async () => {
+	it("puts working state in the timeline and Stop in the composer action", async () => {
 		const user = userEvent.setup();
 		const onInterrupt = vi.fn();
 		const snapshot = {
@@ -227,11 +227,15 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
 
 		const status = screen.getByTestId("live-turn-status");
-		expect(status).toHaveClass("min-h-6", "px-1.5");
+		expect(screen.getByRole("log", { name: "Conversation" })).toContainElement(status);
+		expect(status).toHaveClass("min-h-6", "px-1");
 		expect(status).not.toHaveClass("border", "bg-surface", "rounded-md");
 		expect(status).toHaveTextContent("Working");
+		expect(within(status).queryByRole("button")).not.toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Stop turn" }));
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.getByLabelText("Message the agent").closest("form")).toContainElement(stop);
+		await user.click(stop);
 		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 

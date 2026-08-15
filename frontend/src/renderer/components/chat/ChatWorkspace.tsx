@@ -32,7 +32,6 @@ import {
 	GitBranch,
 	Loader2,
 	MessageSquare,
-	Square,
 	TriangleAlert,
 	Undo2,
 } from "lucide-react";
@@ -269,8 +268,6 @@ export function ChatWorkspace({
 	mcpReloadError,
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
-	const approval = pendingApproval(snapshot);
-	const userInput = pendingUserInput(snapshot);
 	const queuedCount = queuedTurnIds(snapshot).size;
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
@@ -403,14 +400,6 @@ export function ChatWorkspace({
 							Conversation branched; worktree files were left unchanged.
 						</p>
 					) : null}
-					{turn ? (
-						<LiveTurnBar
-							startedAt={turn.startedAt ?? turn.requestedAt}
-							blocked={Boolean(approval || userInput)}
-							queuedCount={queuedCount}
-							onInterrupt={onInterrupt}
-						/>
-					) : null}
 					{turn?.state === "running" && queuedMessages.length > 0 ? (
 						<QueuedMessageDock
 							messages={queuedMessages}
@@ -440,6 +429,9 @@ export function ChatWorkspace({
 						}
 						busy={busy}
 						willQueue={Boolean(turn)}
+						turnActive={Boolean(turn)}
+						onInterrupt={onInterrupt}
+						queuedCount={queuedCount}
 						disabled={snapshot.controller.state === "stopped"}
 						skills={skills}
 						filePaths={filePaths}
@@ -825,6 +817,8 @@ function Timeline({
 	const [pinned, setPinned] = useState(true);
 	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
 	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
+	const turn = activeTurn(snapshot);
+	const blocked = Boolean(pendingApproval(snapshot) || pendingUserInput(snapshot));
 	const [scrollbar, setScrollbar] = useState({
 		visible: false,
 		top: 0,
@@ -1060,7 +1054,7 @@ function Timeline({
 		updateScrollbar();
 	}
 
-	if (items.length === 0 && !messageEdit) {
+	if (items.length === 0 && !messageEdit && !turn) {
 		return <EmptyState harness={snapshot.harness} />;
 	}
 
@@ -1138,6 +1132,13 @@ function Timeline({
 								onSend={submitMessageEdit}
 							/>
 						</div>
+					) : null}
+					{turn ? (
+						<LiveTurnStatus
+							startedAt={turn.startedAt ?? turn.requestedAt}
+							blocked={blocked}
+							queuedCount={queued.size}
+						/>
 					) : null}
 				</div>
 			</div>
@@ -1760,21 +1761,19 @@ function QueuedMessageDock({
 }
 
 /**
- * The in-flight turn. Elapsed time is shown because a long silence is otherwise
- * indistinguishable from a hang, and "waiting on you" is called out so a blocked
- * turn is not mistaken for a slow one.
+ * The in-flight turn, rendered as the final line of the conversation rather than
+ * a second control bar above the composer. Elapsed time keeps a long silence from
+ * looking like a hang; stopping the turn belongs to the composer's primary action.
  */
-function LiveTurnBar({
+function LiveTurnStatus({
 	startedAt,
 	blocked,
 	queuedCount = 0,
-	onInterrupt,
 }: {
 	startedAt: string;
 	blocked?: boolean;
 	/** Messages typed during this turn, waiting to be sent after it. */
 	queuedCount?: number;
-	onInterrupt?: () => void;
 }) {
 	const [elapsed, setElapsed] = useState(() => since(startedAt));
 
@@ -1785,7 +1784,7 @@ function LiveTurnBar({
 
 	return (
 		<div
-			className="flex min-h-6 items-center gap-2 px-1.5"
+			className="flex min-h-6 items-center gap-2 px-1 py-0.5"
 			data-testid="live-turn-status"
 		>
 			{blocked ? (
@@ -1815,17 +1814,6 @@ function LiveTurnBar({
 					{queuedCount} {queuedCount === 1 ? "message" : "messages"} queued
 				</span>
 			) : null}
-			<Button
-				type="button"
-				size="sm"
-				variant="ghost"
-				onClick={onInterrupt}
-				aria-label={queuedCount > 0 ? "Stop turn and clear queued messages" : "Stop turn"}
-				className="ml-auto h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
-			>
-				<Square aria-hidden="true" className="size-2.5" />
-				{queuedCount > 0 ? "Stop + clear queue" : "Stop"}
-			</Button>
 		</div>
 	);
 }

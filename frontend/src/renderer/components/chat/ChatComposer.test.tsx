@@ -91,6 +91,20 @@ describe("send keys", () => {
 		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
 	});
 
+	it("turns the empty send action into Stop while the agent is working", async () => {
+		const onInterrupt = vi.fn();
+		const { field } = renderComposer({ turnActive: true, onInterrupt });
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+		await userEvent.click(stop);
+		expect(onInterrupt).toHaveBeenCalledOnce();
+
+		await userEvent.type(field, "queue this next");
+		expect(screen.queryByRole("button", { name: "Stop turn" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+	});
+
 	it("sends on Enter", async () => {
 		const { onSend, field } = renderComposer();
 		await userEvent.type(field, "hello");

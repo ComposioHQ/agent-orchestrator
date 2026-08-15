@@ -42,7 +42,7 @@ import {
 	type KeyboardEvent,
 	type ReactNode,
 } from "react";
-import { ArrowUp, CornerDownRight, Loader2, Paperclip, X } from "lucide-react";
+import { ArrowUp, CornerDownRight, Loader2, Paperclip, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { ComposerSuggestMenu } from "./ComposerSuggestMenu";
@@ -79,6 +79,9 @@ export function ChatComposer({
 	onSend,
 	busy,
 	willQueue,
+	turnActive,
+	onInterrupt,
+	queuedCount = 0,
 	disabled,
 	settings,
 	skills = [],
@@ -105,6 +108,11 @@ export function ChatComposer({
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
 	willQueue?: boolean;
+	/** The primary action becomes Stop while a turn is active and no draft is ready. */
+	turnActive?: boolean;
+	onInterrupt?: () => void;
+	/** Queued messages are cleared when the active turn is stopped. */
+	queuedCount?: number;
 	disabled?: boolean;
 	/** The provider's skills. Empty leaves `/` an ordinary character. */
 	skills?: ChatSkill[];
@@ -220,11 +228,13 @@ export function ChatComposer({
 	const activeIndex = Math.min(highlighted, suggestions.length - 1);
 
 	const staged = fileAttachments.attachments.length > 0;
+	const hasDraft = text.trim().length > 0 || staged;
 	// The control disappears the moment the turn ends, and the armed mode degrades
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+	const canSend = hasDraft && !busy && !disabled && !steerPending;
+	const stopping = Boolean(turnActive && !hasDraft);
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -634,13 +644,25 @@ export function ChatComposer({
 					className="flex shrink-0 items-center"
 				>
 					<Button
-						type="submit"
+						type={stopping ? "button" : "submit"}
 						size="icon-sm"
-						disabled={!canSend}
-						aria-label={steering ? "Steer the running turn" : "Send message"}
+						disabled={stopping ? !onInterrupt || busy : !canSend}
+						aria-label={
+							stopping
+								? queuedCount > 0
+									? "Stop turn and clear queued messages"
+									: "Stop turn"
+								: steering
+									? "Steer the running turn"
+									: "Send message"
+						}
+						title={stopping ? "Stop turn" : undefined}
+						onClick={stopping ? onInterrupt : undefined}
 						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
 					>
-						{steerPending ? (
+						{stopping ? (
+							<Square aria-hidden="true" className="size-2.5 fill-current" />
+						) : steerPending ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 						) : steering ? (
 							<CornerDownRight aria-hidden="true" className="size-3.5" />
