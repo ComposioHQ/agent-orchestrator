@@ -157,7 +157,7 @@ func (c *conversation) pump() {
 				c.contextAtTurnStart = c.contextTokens
 				c.mu.Unlock()
 			}
-			if ev.Kind == ports.ChatEventTurnCompleted && rootConversation {
+			if ev.Kind == ports.ChatEventTurnCompleted && ev.ProviderTurnID != "" && rootConversation {
 				c.mu.Lock()
 				if c.activeTurn == ev.ProviderTurnID {
 					c.activeTurn = ""

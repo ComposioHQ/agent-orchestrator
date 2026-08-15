@@ -1024,7 +1024,7 @@ describe("SessionInspector summary reviews", () => {
 		);
 		await openReviewsSection();
 
-		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+		await userEvent.click(await screen.findByRole("button", { name: "Review latest commit" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -1034,7 +1034,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
-	it("shows claude-code as the default reviewer before a run exists", async () => {
+	it("shows the worker-compatible default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return { data: { reviewerHandleId: "", reviews: [] } };
@@ -1061,7 +1061,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
@@ -1096,7 +1096,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
 		await openReviewsSection();
 
-		expect(screen.getByRole("button", { name: "Run review" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Select reviewer agent" })).toBeDisabled();
 		const toggle = screen.getByRole("switch", { name: "Auto review" });
 		expect(toggle).toBeChecked();
@@ -1181,7 +1181,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Review latest commit" })).toBeInTheDocument();
 		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 	});
@@ -1231,7 +1231,7 @@ describe("SessionInspector summary reviews", () => {
 		).not.toHaveLength(0);
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
@@ -1315,13 +1315,14 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Not run", "Run review"],
+		["needs_review", "changes_requested", "Review needed", "Review latest commit"],
+		["cancelled", "approved", "Review needed", "Review latest commit"],
 		["running", "approved", "Reviewing...", "Stop review"],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
 		async (status, previousVerdict, runLabel, actionLabel) => {
 			const current = {
-				...reviewState(3, status, "sha-current"),
+				...reviewState(3, status === "cancelled" ? "needs_review" : status, "sha-current"),
 				previousRun: {
 					...approvedReview,
 					id: "run-previous",
@@ -1332,11 +1333,11 @@ describe("SessionInspector summary reviews", () => {
 					targetSha: "sha-previous",
 				},
 			};
-			if (status === "running") {
+			if (status === "running" || status === "cancelled") {
 				current.latestRun = {
 					...approvedReview,
 					id: "run-current",
-					status: "running",
+					status,
 					verdict: "",
 					targetSha: "sha-current",
 				};
@@ -1349,11 +1350,14 @@ describe("SessionInspector summary reviews", () => {
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
 			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 			expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
-		if (status === "needs_review") {
-			expect(screen.getByText("Changes requested")).toBeInTheDocument();
-		} else {
-			expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
-		}
+			if (status === "needs_review" || status === "cancelled") {
+				expect(screen.getByText(status === "cancelled" ? "Approved" : "Changes requested")).toBeInTheDocument();
+				expect(screen.getByText("Earlier commit")).toBeInTheDocument();
+				expect(screen.getByText("#3 · Latest commit has not been reviewed")).toBeInTheDocument();
+			} else {
+				expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
+				expect(screen.queryByText("Earlier commit")).not.toBeInTheDocument();
+			}
 			expect(screen.getByRole("link", { name: "View on PR" })).toHaveAttribute(
 				"href",
 				"https://example.com/pr/3#pullrequestreview-98765",
@@ -1585,12 +1589,44 @@ describe("SessionInspector summary reviews", () => {
 				body: { harness: "opencode" },
 			}),
 		);
-		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
+		await userEvent.click(screen.getByRole("button", { name: "Review latest commit" }));
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
 			params: { path: { sessionId: "sess-1" } },
 			body: { harness: "opencode" },
 		});
+	});
+
+	it("keeps an explicit reviewer visible and lets it return to the resolved default", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
+		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
+		await openReviewsSection();
+
+		const picker = await screen.findByRole("button", { name: /Select reviewer agent/ });
+		await userEvent.click(picker);
+		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
+		expect(screen.getByRole("menuitem", { name: /opencode/ })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("menuitem", { name: /opencode/ }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { harness: "opencode" },
+			}),
+		);
+
+		await userEvent.click(picker);
+		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
+		await userEvent.click(screen.getByRole("menuitem", { name: /codex/ }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenLastCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { harness: undefined },
+			}),
+		);
 	});
 
 	it("names the reviewer that is actually running, not whichever PR comes first", async () => {
@@ -1772,7 +1808,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.queryByText("reviewer crashed")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeEnabled();
 	});
 
 	it("shows the reviewer identity and aggregate verdict", async () => {
@@ -1793,7 +1829,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("does not list a failed run without a verdict and still allows rerun", async () => {
+	it("does not list a failed run without a verdict and still allows reviewing the latest commit", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
 		]);
@@ -1802,7 +1838,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeEnabled();
 	});
 
 	it("surfaces the latest automatic review failure while auto review is enabled", async () => {

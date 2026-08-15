@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { memo, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { SessionsArchiveView, SessionsBoardGridView } from "@aoagents/product-ui";
+import {
+	SessionsArchiveView,
+	SessionsBoardGridView,
+	archiveToggleOffsetClassName,
+} from "@aoagents/product-ui";
 import { AlertTriangle, LayoutDashboard, Plus, RotateCw } from "lucide-react";
 import {
 	type WorkspaceSession,
@@ -68,7 +72,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const columns: AttentionZoneView[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone, t));
-	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
 	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
@@ -138,58 +141,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
 	const showWelcome = !projectId && isLoaded && all.length === 0;
 	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
-	// Archived sessions cost one quiet line under the board until expanded.
-	const [archiveExpanded, setArchiveExpanded] = useState(false);
-	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
-	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
-	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
+	const hasArchive = archived.length > 0;
 	const terminateSession = useTerminateSession();
 	const activeProjectIdRef = useRef(projectId);
 	activeProjectIdRef.current = projectId;
-	useEffect(() => {
-		setRestoringSessionId(undefined);
-		setRestoreErrors({});
-		setRestoreUnavailableSession(undefined);
-	}, [projectId]);
 
 	const openSession = (session: WorkspaceSession) =>
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: session.workspaceId, sessionId: session.id },
 		});
-
-	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
-		event.stopPropagation();
-		if (restoringSessionId) return;
-		const restoreProjectId = projectId;
-		const isStillActiveProject = () => !restoreProjectId || activeProjectIdRef.current === restoreProjectId;
-		setRestoringSessionId(session.id);
-		setRestoreErrors((current) => {
-			const next = { ...current };
-			delete next[session.id];
-			return next;
-		});
-		try {
-			const result = await restoreSessionById(session.id);
-			if (!isStillActiveProject()) return;
-			if (result.status === "success") {
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: session.workspaceId, sessionId: session.id },
-				});
-				return;
-			}
-			if (result.status === "not_resumable") {
-				setRestoreUnavailableSession(session);
-				return;
-			}
-			setRestoreErrors((current) => ({ ...current, [session.id]: result.message }));
-		} finally {
-			if (isStillActiveProject()) {
-				setRestoringSessionId(undefined);
-			}
-		}
-	};
 
 	const openOrchestrator = async (mode?: "tui") => {
 		if (!projectId || isProjectRestarting) return;
@@ -313,7 +274,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	) : undefined;
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
+		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
 			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
 			    crumb + New task / Orchestrator / bell live in this in-panel row.
 			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
@@ -342,7 +303,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				</div>
 			) : null}
 
-			<div className="min-h-0 flex-1 overflow-hidden">
+			{/* Reserve only the collapsed archive bar. Expanded archive overlays the
+			    board so lane height (and Needs You scrollbars) stay stable. */}
+			<div className={cn("min-h-0 flex-1 overflow-hidden", hasArchive && archiveToggleOffsetClassName)}>
 				{projectId && health.state !== "ok" ? (
 					<div className="mx-3 my-3 flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-muted-foreground">
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
@@ -389,14 +352,105 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				)}
 			</div>
 
+			{hasArchive ? (
+				<BoardArchivePanel
+					activeProjectIdRef={activeProjectIdRef}
+					projectId={projectId}
+					sessions={archived}
+					usageBySession={usageBySession}
+				/>
+			) : null}
+		</div>
+	);
+}
+
+/**
+ * Restore state lives here so expand/collapse in SessionsArchiveView does not
+ * re-render the kanban columns. In-flight restores are invalidated on project
+ * change or unmount so completion cannot navigate after the user left.
+ */
+const BoardArchivePanel = memo(function BoardArchivePanel({
+	activeProjectIdRef,
+	projectId,
+	sessions,
+	usageBySession,
+}: {
+	activeProjectIdRef: React.MutableRefObject<string | undefined>;
+	projectId?: string;
+	sessions: WorkspaceSession[];
+	usageBySession: UsageBySession;
+}) {
+	const { t } = useTranslation();
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+	const restoreSessionById = useRestoreSession();
+	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
+	const [restoreErrors, setRestoreErrors] = useState<Record<string, string>>({});
+	const [restoreUnavailableSession, setRestoreUnavailableSession] = useState<WorkspaceSession | undefined>();
+	const restoreGenerationRef = useRef(0);
+
+	useEffect(() => {
+		setRestoringSessionId(undefined);
+		setRestoreErrors({});
+		setRestoreUnavailableSession(undefined);
+		restoreGenerationRef.current += 1;
+	}, [projectId]);
+
+	useEffect(() => {
+		const generation = restoreGenerationRef.current;
+		return () => {
+			// Invalidate in-flight restores if this panel unmounts (e.g. project with
+			// no archive) so completion cannot navigate after the user left.
+			if (restoreGenerationRef.current === generation) {
+				restoreGenerationRef.current += 1;
+			}
+		};
+	}, []);
+
+	const restoreArchivedSession = async (event: MouseEvent<HTMLButtonElement>, session: WorkspaceSession) => {
+		event.stopPropagation();
+		if (restoringSessionId) return;
+		const restoreProjectId = projectId;
+		const generation = restoreGenerationRef.current;
+		const isStillActiveProject = () =>
+			generation === restoreGenerationRef.current &&
+			(!restoreProjectId || activeProjectIdRef.current === restoreProjectId);
+		setRestoringSessionId(session.id);
+		setRestoreErrors((current) => {
+			const next = { ...current };
+			delete next[session.id];
+			return next;
+		});
+		try {
+			const result = await restoreSessionById(session.id);
+			if (!isStillActiveProject()) return;
+			if (result.status === "success") {
+				void navigate({
+					to: "/projects/$projectId/sessions/$sessionId",
+					params: { projectId: session.workspaceId, sessionId: session.id },
+				});
+				return;
+			}
+			if (result.status === "not_resumable") {
+				setRestoreUnavailableSession(session);
+				return;
+			}
+			setRestoreErrors((current) => ({ ...current, [session.id]: result.message }));
+		} finally {
+			if (isStillActiveProject()) {
+				setRestoringSessionId(undefined);
+			}
+		}
+	};
+
+	return (
+		<>
 			<SessionsArchiveView
-				archiveExpanded={archiveExpanded}
 				labels={{
 					archive: t("shell.archive"),
-					archiveAria: t("shell.archiveSessionsAria", { count: archived.length }),
+					archiveAria: t("shell.archiveSessionsAria", { count: sessions.length }),
 					archivedSessions: t("shell.archivedSessions"),
 				}}
-				onArchiveExpandedChange={setArchiveExpanded}
 				renderSessionCard={(session) => (
 					<ArchivedSessionCardAdapter
 						isRestoreDisabled={restoringSessionId !== undefined}
@@ -407,9 +461,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						usage={usageBySession.get(session.id)}
 					/>
 				)}
-				sessions={archived}
+				resetKey={projectId}
+				sessions={sessions}
 			/>
-			{restoreUnavailableSession && (
+			{restoreUnavailableSession ? (
 				<RestoreUnavailableDialog
 					open={true}
 					session={restoreUnavailableSession}
@@ -420,7 +475,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 					}}
 				/>
-			)}
-		</div>
+			) : null}
+		</>
 	);
-}
+});

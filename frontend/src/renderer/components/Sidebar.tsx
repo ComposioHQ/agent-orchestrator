@@ -420,12 +420,16 @@ export function Sidebar({
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
-			    Its hairline and row height match the board Archive bar. On macOS
-			    the sidebar is already height-clamped beside the inset center surface. */}
+			    Its hairline and row height match the board Archive bar. Bottom
+			    margin matches the framed center-panel inset plus the 1px surface
+			    border so the two hairlines meet. Native fullscreen drops the
+			    mac inset, so the footer collapses to the 1px surface border. */}
 			<SidebarFooter
 				className={cn(
 					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
-					isMac ? "mb-px" : "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
+					isMac
+						? "mb-[calc(var(--size-center-panel-inset-mac)+1px)] in-[.native-fullscreen]:mb-px"
+						: "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible

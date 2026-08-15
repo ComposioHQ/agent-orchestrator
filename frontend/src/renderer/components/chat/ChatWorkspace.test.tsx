@@ -217,6 +217,42 @@ describe("ChatWorkspace timeline", () => {
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
 
+	it("shows live working state inline with the current turn while the composer owns the stop action", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		expect(screen.getByText(/^Working for /)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Stop turn" })).toBeInTheDocument();
+	});
+
+	it("shows blocked turn state inline with the current turn", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "approval-1",
+			sequence: 99,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "approval-1",
+			decisions: [{ id: "accept", label: "Approve" }],
+			detail: { command: "npm test" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		expect(screen.getByRole("alert")).toHaveTextContent("The agent is waiting for your decision.");
+		expect(screen.getByText("Waiting for your decision")).toBeInTheDocument();
+		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
+	});
+
 	it("lets readers select conversation text", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 

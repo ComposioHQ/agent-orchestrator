@@ -820,6 +820,20 @@ type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]
 type AgentInfo = components["schemas"]["AgentInfo"];
 type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
 
+const WORKER_DEFAULT_REVIEWERS: Partial<Record<WorkspaceSession["provider"], ReviewerHarness>> = {
+	"claude-code": "claude-code",
+	codex: "codex",
+	opencode: "opencode",
+	muse: "muse",
+	kimchi: "kimchi",
+};
+
+function resolveDefaultReviewerHarness(config: ProjectConfig | undefined, workerHarness: WorkspaceSession["provider"]): ReviewerHarness {
+	const configuredHarness = config?.reviewers?.[0]?.harness;
+	if (configuredHarness) return configuredHarness as ReviewerHarness;
+	return WORKER_DEFAULT_REVIEWERS[workerHarness] ?? "claude-code";
+}
+
 function ReviewsSection({
 	session,
 	onOpenReviewerTerminal,
@@ -1066,6 +1080,10 @@ function MergedReviewsSection({
 			ao: ao
 				? {
 						dimmed: ao.status === "ineligible",
+						historical:
+							ao.status === "needs_review" &&
+							Boolean(ao.previousRun) &&
+							(!ao.latestRun || ao.latestRun.status === "failed" || ao.latestRun.status === "cancelled"),
 						notInjected: aoRuns.some((run) => run.autoInjectReview === false),
 						runs: reviewRuns,
 					}
@@ -1258,10 +1276,11 @@ function ReviewPanel({
 		.filter((run): run is NonNullable<typeof run> => Boolean(run))
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
+	const resolvedDefaultHarness = resolveDefaultReviewerHarness(config, session.provider);
+	const effectiveReviewerHarness = reviewerOverride || resolvedDefaultHarness;
+	const activeReviewerHarness = latest?.harness || effectiveReviewerHarness;
 	const autoReviewFailure =
 		latestAutoFailure && latestAutoFailure.id !== dismissedAutoFailureId ? latestAutoFailure.body.trim() : null;
-	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
-	const projectDefaultLabel = t("newTask.projectDefault");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = reviewIsRunning(openReviewStates);
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1327,15 +1346,16 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							contentAlign="end"
-							defaultHarness={harness}
-							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
-							defaultTriggerLabel={harness || projectDefaultLabel}
+							defaultHarness={resolvedDefaultHarness}
+							defaultOptionLabel={resolvedDefaultHarness}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
 							value={reviewerOverride}
+							excludedHarness={resolvedDefaultHarness}
+							showDefaultOption
 						/>
 					</div>
 					<InspectorPolicyRow
@@ -1385,7 +1405,7 @@ function ReviewPanel({
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
+							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${activeReviewerHarness}`}
 						</span>
 					</div>
 				) : null}
@@ -1451,6 +1471,14 @@ function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: Revi
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {
+	if (
+		reviewState.status === "needs_review" &&
+		(!reviewState.latestRun ||
+			reviewState.latestRun.status === "failed" ||
+			reviewState.latestRun.status === "cancelled")
+	) {
+		return appI18n.t("inspector.latestCommitNotReviewedMeta", { number: reviewState.prNumber });
+	}
 	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
@@ -1472,6 +1500,9 @@ function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
 } {
+	if (reviewState.status === "needs_review") {
+		return { label: appI18n.t("inspector.review.needed"), tone: "neutral" };
+	}
 	if (reviewState.latestRun?.status === "failed") {
 		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
@@ -1485,7 +1516,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
 			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
-		case "needs_review":
 		case "ineligible":
 			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
