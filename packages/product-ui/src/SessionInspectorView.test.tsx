@@ -445,7 +445,21 @@ describe("portable inspector presentations", () => {
 				groups={[
 					{
 						github: {
-							entries: [],
+							entries: [
+								{
+									body: undefined,
+									id: "unresolved-maya",
+									inlineComments: [
+										{ body: "Fix the first comment.", file: "src/panel.tsx", line: 10 },
+										{ body: "Fix the second comment.", file: "src/panel.tsx", line: 20 },
+									],
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+									submittedAt: "",
+									submittedAtLabel: "",
+									verdict: { label: "Commented", tone: "neutral" },
+								},
+							],
 							unresolved: 2,
 							unresolvedBy: [
 								{
@@ -472,6 +486,7 @@ describe("portable inspector presentations", () => {
 			/>,
 		);
 
+		fireEvent.click(screen.getByRole("button", { name: /maya.*2 unresolved/i }));
 		const sendButtons = screen.getAllByRole("button", { name: "Send to worker agent" });
 		expect(sendButtons).toHaveLength(2);
 		fireEvent.click(sendButtons[0]!);
