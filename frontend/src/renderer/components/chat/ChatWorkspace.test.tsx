@@ -454,10 +454,21 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
 	});
 
-	it("explains itself instead of showing an empty scroller", () => {
+	it("centers the composer on an empty conversation instead of a starter blurb", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
-		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
+		expect(screen.queryByText("Start the conversation")).not.toBeInTheDocument();
 		expect(screen.queryByRole("log")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Message the agent")).toBeInTheDocument();
+		expect(
+			screen.getByTestId("chat-conversation-panel").querySelector("[data-composer-placement='center']"),
+		).not.toBeNull();
+	});
+
+	it("docks the composer once the conversation has content", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+		expect(
+			screen.getByTestId("chat-conversation-panel").querySelector("[data-composer-placement='dock']"),
+		).not.toBeNull();
 	});
 
 	it("keeps a turn as one block, positioned by its first item", () => {

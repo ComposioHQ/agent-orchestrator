@@ -16,6 +16,7 @@ import {
 	memo,
 	useCallback,
 	useEffect,
+	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
@@ -31,7 +32,6 @@ import {
 	CornerDownRight,
 	GitBranch,
 	Loader2,
-	MessageSquare,
 	TriangleAlert,
 	Undo2,
 } from "lucide-react";
@@ -449,6 +449,68 @@ export function ChatWorkspace({
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 	const editHumanMessage = can(snapshot, "fork") ? onEditMessage : undefined;
+	// Empty chats center the prompt; once a turn or item exists the composer docks
+	// at the bottom and stays there for the rest of the session.
+	const conversationEmpty = snapshot.items.length === 0 && !turn;
+	const composerDockRef = useRef<HTMLDivElement>(null);
+	const composerCenteredTopRef = useRef<number | null>(null);
+	const composerFlipDyRef = useRef<number | null>(null);
+	const composerSessionRef = useRef(snapshot.sessionId);
+
+	useLayoutEffect(() => {
+		const dock = composerDockRef.current;
+		if (!dock) return;
+
+		const sessionChanged = composerSessionRef.current !== snapshot.sessionId;
+		if (sessionChanged) {
+			composerSessionRef.current = snapshot.sessionId;
+			composerCenteredTopRef.current = null;
+			composerFlipDyRef.current = null;
+			dock.style.transition = "";
+			dock.style.transform = "";
+			dock.removeAttribute("data-composer-motion");
+		}
+
+		if (conversationEmpty) {
+			composerCenteredTopRef.current = dock.getBoundingClientRect().top;
+			composerFlipDyRef.current = null;
+			return;
+		}
+
+		// Capture the centered→docked delta once. Keep it across Strict Mode's
+		// setup→cleanup→setup so the docking motion still plays.
+		if (composerFlipDyRef.current == null && composerCenteredTopRef.current != null) {
+			composerFlipDyRef.current =
+				composerCenteredTopRef.current - dock.getBoundingClientRect().top;
+			composerCenteredTopRef.current = null;
+		}
+
+		const dy = composerFlipDyRef.current;
+		const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		if (dy == null || reduceMotion || Math.abs(dy) < 1) {
+			composerFlipDyRef.current = null;
+			return;
+		}
+
+		dock.dataset.composerMotion = "animating";
+		dock.style.transition = "none";
+		dock.style.transform = `translateY(${dy}px)`;
+		void dock.offsetHeight;
+		dock.style.transition = "transform 500ms cubic-bezier(0.22, 1, 0.36, 1)";
+		dock.style.transform = "translateY(0)";
+
+		const onEnd = (event: TransitionEvent) => {
+			if (event.target !== dock || event.propertyName !== "transform") return;
+			composerFlipDyRef.current = null;
+			dock.style.transition = "";
+			dock.style.transform = "";
+			dock.removeAttribute("data-composer-motion");
+		};
+		dock.addEventListener("transitionend", onEnd);
+		return () => {
+			dock.removeEventListener("transitionend", onEnd);
+		};
+	}, [conversationEmpty, snapshot.sessionId]);
 
 	return (
 		<section
@@ -528,85 +590,96 @@ export function ChatWorkspace({
 					turnInFlight={Boolean(turn)}
 					error={mcpReloadError}
 				/>
-				<ChatLinkProvider onLinkOpen={onLinkOpen}>
-					<Timeline
-						snapshot={snapshot}
-						hasOlder={hasOlder}
-						loadingOlder={loadingOlder}
-						onLoadOlder={onLoadOlder}
-						onDecide={onDecide}
-						onResolveInput={onResolveInput}
-						busy={busy}
-						onRollback={rollbackTarget}
-						onEditHumanMessage={editHumanMessage}
-						editPending={editMessagePending}
-						editBusy={Boolean(turn)}
-						editError={editMessageError}
-						onActivateBranch={onActivateBranch}
-						activateBranchPending={activateBranchPending}
-						activateBranchError={activateBranchError}
-					/>
-				</ChatLinkProvider>
-
-				<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
-					<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-						{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
-						{snapshot.branchedFromEarlierMessage ? (
-							<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-								<GitBranch aria-hidden="true" className="size-3 shrink-0" />
-								Conversation branched; worktree files were left unchanged.
-							</p>
-						) : null}
-						{turn?.state === "running" && queuedMessages.length > 0 ? (
-							<QueuedMessageDock
-								messages={queuedMessages}
-								onSteer={onPromoteQueuedTurn}
-							/>
-						) : null}
-						<ChatComposer
-							attachedTop={turn?.state === "running" && queuedMessages.length > 0}
-							onSend={(text, attachments) => onSend?.(text, attachments)}
-							onInterrupt={turn ? onInterrupt : undefined}
-							commandError={commandError}
-							settings={
-								onChooseSettings || onChooseConfigOption
-									? ({ delivery }) => (
-											<TurnSettingsBar
-												models={models ?? []}
-												settings={snapshot.settings}
-												reroute={snapshot.modelReroute}
-												onChange={onChooseSettings}
-												configOptions={configOptions ?? []}
-												onChangeConfigOption={onChooseConfigOption}
-												configPending={configOptionPending}
-												error={configOptionError}
-												disabled={
-													snapshot.controller.state === "stopped" || configOptionPending
-												}
-												beforeApprovals={delivery}
-											/>
-										)
-									: null
-							}
+				<div
+					className={cn(
+						"flex min-h-0 flex-1 flex-col",
+						conversationEmpty && "justify-center",
+					)}
+					data-composer-placement={conversationEmpty ? "center" : "dock"}
+				>
+					<ChatLinkProvider onLinkOpen={onLinkOpen}>
+						<Timeline
+							snapshot={snapshot}
+							hasOlder={hasOlder}
+							loadingOlder={loadingOlder}
+							onLoadOlder={onLoadOlder}
+							onDecide={onDecide}
+							onResolveInput={onResolveInput}
 							busy={busy}
-							willQueue={Boolean(turn)}
-							disabled={snapshot.controller.state === "stopped"}
-							skills={skills}
-							filePaths={filePaths}
-							filePathsTruncated={filePathsTruncated}
-							onStageAttachments={onStageAttachments}
-							nativeImages={nativeImages}
-							// Steering is only meaningful into a turn that is running. A queued turn
-							// has not reached the provider, so there is nothing to steer.
-							onSteer={onSteer}
-							canSteer={Boolean(onSteer) && turn?.state === "running"}
-							steerPending={steerPending}
-							steerRefusal={steerRefusal}
-							onCompact={onCompact}
-							compacting={compacting}
-							compactUnavailable={compactUnavailable}
-							compactBlocked={Boolean(turn)}
+							onRollback={rollbackTarget}
+							onEditHumanMessage={editHumanMessage}
+							editPending={editMessagePending}
+							editBusy={Boolean(turn)}
+							editError={editMessageError}
+							onActivateBranch={onActivateBranch}
+							activateBranchPending={activateBranchPending}
+							activateBranchError={activateBranchError}
 						/>
+					</ChatLinkProvider>
+
+					<div
+						ref={composerDockRef}
+						className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2"
+					>
+						<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+							{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
+							{snapshot.branchedFromEarlierMessage ? (
+								<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+									<GitBranch aria-hidden="true" className="size-3 shrink-0" />
+									Conversation branched; worktree files were left unchanged.
+								</p>
+							) : null}
+							{turn?.state === "running" && queuedMessages.length > 0 ? (
+								<QueuedMessageDock
+									messages={queuedMessages}
+									onSteer={onPromoteQueuedTurn}
+								/>
+							) : null}
+							<ChatComposer
+								attachedTop={turn?.state === "running" && queuedMessages.length > 0}
+								onSend={(text, attachments) => onSend?.(text, attachments)}
+								onInterrupt={turn ? onInterrupt : undefined}
+								commandError={commandError}
+								settings={
+									onChooseSettings || onChooseConfigOption
+										? ({ delivery }) => (
+												<TurnSettingsBar
+													models={models ?? []}
+													settings={snapshot.settings}
+													reroute={snapshot.modelReroute}
+													onChange={onChooseSettings}
+													configOptions={configOptions ?? []}
+													onChangeConfigOption={onChooseConfigOption}
+													configPending={configOptionPending}
+													error={configOptionError}
+													disabled={
+														snapshot.controller.state === "stopped" || configOptionPending
+													}
+													beforeApprovals={delivery}
+												/>
+											)
+										: null
+								}
+								busy={busy}
+								willQueue={Boolean(turn)}
+								disabled={snapshot.controller.state === "stopped"}
+								skills={skills}
+								filePaths={filePaths}
+								filePathsTruncated={filePathsTruncated}
+								onStageAttachments={onStageAttachments}
+								nativeImages={nativeImages}
+								// Steering is only meaningful into a turn that is running. A queued turn
+								// has not reached the provider, so there is nothing to steer.
+								onSteer={onSteer}
+								canSteer={Boolean(onSteer) && turn?.state === "running"}
+								steerPending={steerPending}
+								steerRefusal={steerRefusal}
+								onCompact={onCompact}
+								compacting={compacting}
+								compactUnavailable={compactUnavailable}
+								compactBlocked={Boolean(turn)}
+							/>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -1285,7 +1358,7 @@ function Timeline({
 	}
 
 	if (items.length === 0 && !messageEdit && !turn) {
-		return <EmptyState harness={snapshot.harness} />;
+		return null;
 	}
 
 	return (
@@ -1984,22 +2057,6 @@ function groupByTurn(snapshot: ConversationSnapshot): TimelineGroup[] {
 	}
 
 	return groups;
-}
-
-function EmptyState({ harness }: { harness: string }) {
-	return (
-		<div className="flex min-h-0 flex-1 items-center justify-center px-6">
-			<div className="flex max-w-sm flex-col items-center gap-2 text-center">
-				<MessageSquare aria-hidden="true" className="size-6 text-muted-foreground" />
-				<strong className="text-sm font-medium text-foreground">Start the conversation</strong>
-				<p className="text-xs leading-relaxed text-muted-foreground">
-					This session talks to {harness} over a structured connection. Tool calls, file changes,
-					and approvals appear here as they happen. The Terminal tab opens a plain shell in the
-					same worktree — it is not a second copy of the agent.
-				</p>
-			</div>
-		</div>
-	);
 }
 
 /* -------------------------------------------------------------------------- */

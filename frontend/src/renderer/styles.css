@@ -1863,6 +1863,19 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	background: transparent;
 }
 
+/* FLIP docking uses transform only so the move stays on the compositor. */
+.cursor-chat-composer-dock[data-composer-motion="animating"] {
+	will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.cursor-chat-composer-dock[data-composer-motion="animating"] {
+		will-change: auto;
+		transition: none !important;
+		transform: none !important;
+	}
+}
+
 /* Every state is a custom property read by the rules below, so a theme only
    restates the four colors instead of repeating the state selectors — and the
    drag highlight cannot be outranked by a theme's plain border-color. */
