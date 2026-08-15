@@ -140,11 +140,15 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		headerActions,
 		reviewerTerminal,
 		onOpenReviewerTerminal,
+		reviewerTarget,
+		onSelectChat,
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
+		onSelectChat?: () => void;
 	}) => (
 		<div data-testid="chat-surface">
 			chat surface
@@ -152,6 +156,14 @@ vi.mock("./chat/SessionChatSurface", () => ({
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
 					Reviewer
+				</button>
+			) : null}
+			{reviewerTarget ? (
+				<div data-testid="terminal-target">reviewer</div>
+			) : null}
+			{reviewerTarget ? (
+				<button type="button" onClick={onSelectChat}>
+					select chat tab
 				</button>
 			) : null}
 			<button type="button" onClick={onOpenShell}>
@@ -773,7 +785,13 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		await screen.findByRole("button", { name: "Reviewer" });
 		fireEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+		// The chat surface stays mounted; the reviewer pane renders inside it.
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		// Selecting the chat tab returns to the chat timeline.
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 	});
 
 	it("returns to the session terminal when the reviewer handle is cleared", async () => {
@@ -808,43 +826,49 @@ describe("SessionView", () => {
 		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
 	});
 
-	it("restores the selected reviewer terminal when the session becomes active again", async () => {
-		const worker = workerSession("sess-1");
-		worker.prs = [
-			{
-				url: "https://github.com/acme/repo/pull/7",
-				number: 7,
-				state: "open",
-				ci: "passing",
-				review: "none",
-				mergeability: "mergeable",
-				reviewComments: false,
-				updatedAt: "2026-06-15T00:00:00Z",
-			},
-		];
-		reviewGetMock.mockResolvedValueOnce({
-			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
-			error: undefined,
-		});
+	it.each(["tui", "chat"] as const)(
+		"restores the selected reviewer terminal when a %s session becomes active again",
+		async (mode) => {
+			const worker = workerSession("sess-1");
+			worker.mode = mode;
+			worker.prs = [
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T00:00:00Z",
+				},
+			];
+			reviewGetMock.mockResolvedValueOnce({
+				data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+				error: undefined,
+			});
 
-		const view = render(<SessionView sessionId="sess-1" />);
-		await screen.findByRole("button", { name: "select reviewer tab" });
-		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+			const view = render(<SessionView sessionId="sess-1" />);
+			const reviewerButtonName = mode === "chat" ? "Reviewer" : "select reviewer tab";
+			await screen.findByRole("button", { name: reviewerButtonName });
+			fireEvent.click(screen.getByRole("button", { name: reviewerButtonName }));
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
 
-		worker.status = "terminated";
-		worker.isTerminated = true;
-		view.rerender(<SessionView sessionId="sess-1" />);
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
-		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
+			worker.status = "terminated";
+			worker.isTerminated = true;
+			view.rerender(<SessionView sessionId="sess-1" />);
+			if (mode === "chat") expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+			expect(screen.queryByRole("button", { name: reviewerButtonName })).not.toBeInTheDocument();
 
-		worker.status = "working";
-		worker.isTerminated = false;
-		view.rerender(<SessionView sessionId="sess-1" />);
+			worker.status = "working";
+			worker.isTerminated = false;
+			view.rerender(<SessionView sessionId="sess-1" />);
 
-		await screen.findByRole("button", { name: "select reviewer tab" });
-		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
-	});
+			await screen.findByRole("button", { name: reviewerButtonName });
+			expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		},
+	);
 
 	it("opens the inspector with the shared sidebar spring tokens", () => {
 		render(<SessionView sessionId="sess-1" />);
@@ -959,7 +983,7 @@ describe("SessionView", () => {
 		}
 	});
 
-	it("locks responsive inspector labels to the opening target throughout the transition", () => {
+	it("keeps inspector labels expanded at the default width throughout the opening transition", () => {
 		vi.useFakeTimers();
 		try {
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
@@ -1039,18 +1063,20 @@ describe("SessionView", () => {
 		expect(inspectorOpen("sess-1")).toBe(true);
 	});
 
-	it("keeps one inspector action cluster mounted while the panel opens and closes", () => {
+	it("keeps the inspector toggle and trailing notification pinned while the panel changes state", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		const actions = screen.getByTestId("session-inspector-actions");
-		const notification = screen.getByRole("button", { name: "Notifications" });
-		const toggle = screen.getByRole("button", { name: "Close inspector panel" });
+		const actions = screen.getByTestId("session-pinned-actions");
+		const toggle = within(actions).getByRole("button", { name: "Close inspector panel" });
+		const notification = within(actions).getByRole("button", { name: "Notifications" });
+		const buttons = within(actions).getAllByRole("button");
+		expect(buttons.indexOf(notification)).toBeGreaterThan(buttons.indexOf(toggle));
 		expect(toggle).toHaveAttribute("aria-pressed", "true");
 
 		fireEvent.click(toggle);
 
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(screen.getByTestId("session-inspector-actions")).toBe(actions);
+		expect(screen.getByTestId("session-pinned-actions")).toBe(actions);
 		expect(screen.getByRole("button", { name: "Notifications" })).toBe(notification);
 		expect(screen.getByRole("button", { name: "Open inspector panel" })).toBe(toggle);
 		expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -1060,7 +1086,7 @@ describe("SessionView", () => {
 		window.localStorage.setItem("ao.inspector.widthPx", "240");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("360px");
+		expect(document.documentElement.style.getPropertyValue("--ao-inspector-w")).toBe("280px");
 	});
 
 	it("mounts the inspector in sync when navigating from an orchestrator session", () => {

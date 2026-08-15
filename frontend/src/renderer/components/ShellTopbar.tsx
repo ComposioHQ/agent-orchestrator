@@ -368,13 +368,12 @@ export function ShellTopbar({
 					</>
 				) : null}
 				{isSessionRoute && !isOrchestrator ? (
-					/* Controls stay in one persistent overlay owned by SessionView. This
-					   spacer alone follows the inspector motion so neighboring actions do
-					   not jump as the center pane gains or loses the available width. */
+					/* The pinned controls are owned by SessionView so they stay at the
+					   window's right edge. Reserve their width only when the rail is closed. */
 					<div
-						className="session-collapsed-inspector-actions"
+						className="session-pinned-actions-reserve"
 						data-state={isInspectorOpen ? "collapsed" : "expanded"}
-						data-testid="collapsed-inspector-actions"
+						data-testid="session-pinned-actions-reserve"
 						aria-hidden="true"
 					/>
 				) : (

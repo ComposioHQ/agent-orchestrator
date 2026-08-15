@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { MobileNav } from "./components/MobileNav";
 import { DesktopNav } from "./components/DesktopNav";
+import { ProductHuntBadge } from "../ProductHuntBadge";
 import { AOLogo } from "./components/AOLogo";
 
 interface HeaderProps {
@@ -62,6 +63,13 @@ export function Header({ ctaButtons }: HeaderProps) {
 
             <div className="hidden lg:flex items-center gap-4">
               <DesktopNav />
+              {/* Launch-day only: remove after the Product Hunt launch. */}
+              <ProductHuntBadge
+                intent="upvote"
+                className="text-sm font-medium text-foreground/80 hover:text-foreground transition-colors"
+              >
+                We&rsquo;re live on Product Hunt
+              </ProductHuntBadge>
               <div className="flex items-center gap-2 shrink-0">{ctaButtons}</div>
             </div>
 
