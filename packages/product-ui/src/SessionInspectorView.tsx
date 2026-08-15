@@ -896,13 +896,13 @@ function InlineCommentRow({
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{comment.workedByWorkerAgent ? (
-					<span className="inline-flex items-center gap-1 font-medium text-success">
-						<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+					<span className="inline-flex items-center gap-1 font-medium text-working">
+						<span aria-hidden="true" className="grid size-4 place-items-center rounded-full border border-current text-[10px] leading-none">•</span>
 						{labels.workedByWorkerAgent}
 					</span>
 				) : comment.autoInjectReview ? (
-					<span className="inline-flex items-center gap-1 font-medium text-working">
-						<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+					<span className="inline-flex items-center gap-1 font-medium text-success">
+						<span aria-hidden="true" className="grid size-4 place-items-center rounded-full border border-current text-[10px] leading-none">✓</span>
 						{labels.sentToWorkerAgent}
 					</span>
 				) : (

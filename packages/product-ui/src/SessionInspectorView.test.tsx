@@ -343,8 +343,8 @@ describe("portable inspector presentations", () => {
 		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
-		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-working");
-		expect(screen.getByText("Worked by agent")).toHaveClass("text-success");
+		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-success");
+		expect(screen.getByText("Worked by agent")).toHaveClass("text-working");
 		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(3);
 	});
 
