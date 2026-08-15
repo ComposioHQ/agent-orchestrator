@@ -2,12 +2,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
-import { useUiStore } from "../stores/ui-store";
+import { useLocaleStore } from "../stores/locale-store";
 
 const {
 	getUpdate,
 	setUpdate,
+	getUiSettings,
+	setUiSettings,
 	updGetStatus,
 	updCheck,
 	updReturnHome,
@@ -27,6 +30,8 @@ const {
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
+	getUiSettings: vi.fn(),
+	setUiSettings: vi.fn(),
 	updGetStatus: vi.fn(),
 	updReturnHome: vi.fn(),
 	updCheck: vi.fn(),
@@ -59,6 +64,7 @@ vi.mock("../lib/bridge", () => ({
 		clipboard: { writeText },
 		daemon: { getStatus: getDaemonStatus },
 		updateSettings: { get: getUpdate, set: setUpdate },
+		uiSettings: { get: getUiSettings, set: setUiSettings },
 		keybindings: {
 			get: getKeybindings,
 			set: setKeybindings,
@@ -86,10 +92,12 @@ function renderForm() {
 	return qc;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
 	for (const m of [
 		getUpdate,
 		setUpdate,
+		getUiSettings,
+		setUiSettings,
 		updGetStatus,
 		updCheck,
 		updReturnHome,
@@ -111,6 +119,10 @@ beforeEach(() => {
 	}
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
+	getUiSettings.mockResolvedValue({ locale: "en" });
+	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
+		locale: settings.locale,
+	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
 	updReturnHome.mockResolvedValue(undefined);
@@ -126,20 +138,64 @@ beforeEach(() => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
-	// Feature Releases lives behind Developer Mode; reset to the default (off).
-	useUiStore.getState().setDeveloperMode(false);
+	// Locale defaults to English so existing copy assertions stay green.
+	await appI18n.changeLanguage("en");
+	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
+	document.documentElement.lang = "en";
 });
 
 describe("GlobalSettingsForm", () => {
 	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+		// "Settings" heading is now in the modal dialog header, not in the form body
 		expect(screen.getByText("General")).toBeInTheDocument();
+		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
-		expect(screen.getByRole("switch", { name: "Developer Mode" })).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
+	});
+
+	it("gives settings link rows internal padding and rounded borders", async () => {
+		renderForm();
+
+		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
+		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
+
+		for (const row of [connectMobile, keyboardShortcuts]) {
+			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
+		}
+	});
+
+	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		expect(await screen.findByText("General")).toBeInTheDocument();
+		expect(screen.getByLabelText("Language")).toBeInTheDocument();
+
+		await user.click(screen.getByLabelText("Language"));
+		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
+		await waitFor(() => expect(screen.getByText("通用")).toBeInTheDocument());
+		expect(screen.getByText("语言")).toBeInTheDocument();
+		expect(screen.getByText("主题")).toBeInTheDocument();
+		expect(document.documentElement.lang).toBe("zh-CN");
+		expect(useLocaleStore.getState().locale).toBe("zh-CN");
+	});
+
+	it("keeps the current language and reports a persistence failure", async () => {
+		setUiSettings.mockRejectedValue(new Error("disk full"));
+		const user = userEvent.setup();
+		renderForm();
+		await screen.findByText("General");
+
+		await user.click(screen.getByLabelText("Language"));
+		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Could not save the language preference.");
+		expect(useLocaleStore.getState().locale).toBe("en");
+		expect(screen.getByText("General")).toBeInTheDocument();
 	});
 
 	it("closes settings with Escape", async () => {
@@ -149,7 +205,8 @@ describe("GlobalSettingsForm", () => {
 
 		await user.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		// Escape is handled by the wrapping Radix Dialog, not the form itself
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("lets an open settings dialog consume Escape first", async () => {
@@ -199,16 +256,6 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
 	});
 
-	it("hides the nightly warning when Feature Releases is selected", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
-		renderForm();
-		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
-	});
-
 	it("shows the current app version", async () => {
 		renderForm();
 		expect(await screen.findByText(/Current version - v1\.4\.0/)).toBeInTheDocument();
@@ -247,6 +294,26 @@ describe("GlobalSettingsForm", () => {
 		const installBtn = await screen.findByRole("button", { name: /Restart & install/ });
 		await userEvent.click(installBtn);
 		expect(updInstall).toHaveBeenCalled();
+	});
+
+	it("shows a non-error restart nudge when automatic checks keep failing on the network", async () => {
+		updGetStatus.mockResolvedValue({ state: "not-available", staleCheckNudge: true });
+		renderForm();
+		const nudge = await screen.findByText(
+			"Updates haven't been able to check for a while — restarting the app usually fixes this.",
+		);
+		expect(nudge).toBeInTheDocument();
+		// The nudge is a warning, not an error, and the normal status still shows.
+		expect(screen.getByText("You're on the latest version.")).toBeInTheDocument();
+	});
+
+	it("shows localized restart guidance for a net:: error status", async () => {
+		updGetStatus.mockResolvedValue({ state: "error", message: "net::ERR_FAILED", netError: true });
+		renderForm();
+		const guidance = await screen.findByText(
+			"Couldn't reach the update server — the app's network connection appears stuck. Restarting the app usually fixes this.",
+		);
+		expect(guidance).toBeInTheDocument();
 	});
 
 	it("opens feedback from settings and copies redacted report drafts", async () => {
@@ -290,7 +357,7 @@ describe("GlobalSettingsForm", () => {
 		expect(copied).not.toContain("## Type");
 		expect(copied).not.toContain("Generated locally by AO");
 		expect(openExternal).toHaveBeenCalledWith(
-			expect.stringContaining("https://github.com/AgentWrapper/agent-orchestrator/issues/new"),
+			expect.stringContaining("https://github.com/Untrivial-ai/agent-orchestrator/issues/new"),
 		);
 		expect(open).not.toHaveBeenCalled();
 		expect(screen.getByLabelText("Title")).toHaveValue("");
@@ -330,10 +397,10 @@ describe("GlobalSettingsForm", () => {
 
 		await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
 		expect(writeText.mock.calls[0][0]).toContain("Daemon: unknown");
-		expect(writeText.mock.calls[1][0]).toContain("To: support@aoagents.dev");
+		expect(writeText.mock.calls[1][0]).toContain("To: prateek@untrivial.ai");
 		expect(writeText.mock.calls[1][0]).toContain("AO feedback");
 		expect(openExternal).toHaveBeenCalledWith("https://discord.com/invite/UZv7JjxbwG");
-		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:support@aoagents.dev"));
+		expect(openExternal).toHaveBeenCalledWith(expect.stringContaining("mailto:prateek@untrivial.ai"));
 		expect(open).not.toHaveBeenCalled();
 	});
 
@@ -373,46 +440,8 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
 	});
 
-	it("hides the Feature Releases channel option when Developer Mode is off", async () => {
-		renderForm();
-		await screen.findByText("Updates");
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		expect(await screen.findByRole("menuitem", { name: "Stable (Latest)" })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: "Feature Releases" })).not.toBeInTheDocument();
-	});
-
-	it("reveals the Feature Releases channel option when Developer Mode is turned on", async () => {
-		renderForm();
-		await screen.findByText("Updates");
-		await userEvent.click(screen.getByRole("switch", { name: "Developer Mode" }));
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
-	});
-
-	it("persists Developer Mode to localStorage and defaults off", async () => {
-		expect(useUiStore.getState().developerMode).toBe(false);
-		renderForm();
-		const toggle = await screen.findByRole("switch", { name: "Developer Mode" });
-		expect(toggle).toHaveAttribute("aria-checked", "false");
-		await userEvent.click(toggle);
-		expect(useUiStore.getState().developerMode).toBe(true);
-		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
-	});
-
-	it("hides the feature-build picker when Developer Mode is turned off after selecting it", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		renderForm();
-		await screen.findByText("Updates");
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
-		// Toggling Developer Mode off must drop the transient picker (primaryValue guard).
-		await userEvent.click(screen.getByRole("switch", { name: "Developer Mode" }));
-		await waitFor(() => expect(screen.queryByText("No live feature releases.")).not.toBeInTheDocument());
-	});
-
-	it("surfaces a Return action for a persisted feature pin even when Developer Mode is off", async () => {
-		// A pin persists in settings but is not yet running; Developer Mode is off (default).
+	it("surfaces a Return action for a persisted feature pin", async () => {
+		// A pin persists in settings but is not yet running; updates are on the stable channel.
 		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
 		featGetActive.mockResolvedValue(null);
 		renderForm();
@@ -425,87 +454,12 @@ describe("GlobalSettingsForm", () => {
 				/Automatic updates, if enabled, keep tracking PR #2270 until you return home or the build retires\./i,
 			),
 		).toBeInTheDocument();
-		// The Feature Releases channel option and its build picker stay hidden.
-		expect(screen.queryByLabelText("Feature build")).not.toBeInTheDocument();
 		await userEvent.click(screen.getByLabelText("Updates channel"));
-		expect(screen.queryByRole("menuitem", { name: "Feature Releases" })).not.toBeInTheDocument();
 		await userEvent.keyboard("{Escape}");
 		// Return delegates to the single updater-serialized returnHome operation.
 		await userEvent.click(screen.getByRole("button", { name: "Return to Stable" }));
 		await waitFor(() => expect(updReturnHome).toHaveBeenCalledWith(expect.any(String)));
 		expect(updCheck).not.toHaveBeenCalled();
-	});
-
-	it("keeps Updates unchanged with Developer Mode on for a pinned-but-not-running build", async () => {
-		// With Developer Mode on the visible picker shows the pin, so no extra banner.
-		useUiStore.getState().setDeveloperMode(true);
-		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
-		featGetActive.mockResolvedValue(null);
-		renderForm();
-		expect(await screen.findByLabelText("Feature build")).toBeInTheDocument();
-		expect(screen.queryByText("PR #2270 is pinned but not yet installed.")).not.toBeInTheDocument();
-	});
-
-	it("reveals the feature-build picker when Feature Releases is selected", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		renderForm();
-		await screen.findByText("Updates");
-		// The picker must be reachable from a clean state (no pin seeded).
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-		// Secondary picker mounts; no live builds are mocked, so it shows the empty state.
-		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
-		expect(featListBuilds).toHaveBeenCalled();
-	});
-
-	it("pins a feature build after confirming and ignores unowned updater events", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		featListBuilds.mockResolvedValue([
-			{
-				pr: 2270,
-				title: "Fix foo",
-				base: "0.2.0",
-				sha: "abc",
-				slug: "x",
-				buildId: "v0.2.0-pr2270.202607061200",
-				publishedAt: new Date().toISOString(),
-			},
-		]);
-		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
-		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
-			emit = cb as typeof emit;
-			return () => undefined;
-		});
-		renderForm();
-		await screen.findByText("Updates");
-
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-
-		await userEvent.click(await screen.findByLabelText("Feature build"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: /PR #2270: Fix foo/ }));
-
-		// Confirmation dialog replaces window.confirm.
-		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-
-		await waitFor(() =>
-			expect(updCheck).toHaveBeenCalledWith({
-				settings: expect.objectContaining({ feature: { pr: 2270 } }),
-				requestId: expect.any(String),
-			}),
-		);
-		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
-
-		// An older hourly operation can finish while the feature request waits for
-		// updater ownership. Its events must not arm the feature install flow.
-		act(() => emit({ state: "available", version: "1.2.3" }));
-		expect(updDownload).not.toHaveBeenCalled();
-
-		// The owned feature operation auto-progresses available -> download -> install.
-		act(() => emit({ state: "available", version: "1.2.3", requestId }));
-		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));
-		act(() => emit({ state: "downloaded", version: "1.2.3", requestId }));
-		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 
 	it("returns to Stable, then auto-progresses check -> download -> install", async () => {

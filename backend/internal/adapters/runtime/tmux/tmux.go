@@ -31,8 +31,15 @@ const (
 	defaultEnterDelay = 300 * time.Millisecond
 	// defaultReapGrace is how long Destroy waits between SIGTERM and SIGKILL when
 	// reaping a pane's leftover background processes, giving them a chance to
-	// exit cleanly (release ports) before being forced (issue #2523).
+	// exit cleanly (release ports) before being forced (issue #2523). It is a
+	// ceiling, not a fixed wait: reapPollInterval decides how soon a pane that
+	// is already empty lets Destroy return.
 	defaultReapGrace = 5 * time.Second
+	// reapPollInterval is how often the reap rechecks for survivors while the
+	// grace runs. A plain shell exits within a tick or two, so Destroy returns
+	// in roughly this long instead of always burning the full grace — which the
+	// DELETE handler blocks on, and the user sees as a tab that will not close.
+	reapPollInterval = 50 * time.Millisecond
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -78,36 +85,93 @@ type runner interface {
 // SIGKILLs survivors. Best-effort: `pkill` is absent on Windows, where tmux is
 // never the runtime, so the calls simply no-op there.
 func killSessionsByPID(ctx context.Context, pids []int, grace time.Duration) {
+	reapPaneSessions(ctx, pids, grace, signalSessions, sessionsHaveProcesses)
+}
+
+// reapPaneSessions is killSessionsByPID's logic with the pkill/pgrep calls
+// injected, so the SIGTERM → wait → SIGKILL sequence is testable without real
+// processes.
+func reapPaneSessions(
+	ctx context.Context,
+	pids []int,
+	grace time.Duration,
+	signal func(ctx context.Context, pids []int, sig string) bool,
+	hasProcesses func(ctx context.Context, pids []int) bool,
+) {
 	if len(pids) == 0 {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace+5*time.Second)
 	defer cancel()
 
-	signalSessions(cleanupCtx, pids, "-TERM")
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
+	// `-s` is a Linux procps extension; BSD/macOS pkill rejects it outright. When
+	// the platform cannot signal by session id, no amount of waiting reaps
+	// anything — the SIGTERM never landed and the SIGKILL would not either — so
+	// return instead of blocking the caller for the whole grace. Destroy runs
+	// inside the shell-terminal DELETE handler, and that dead wait was the
+	// several-second delay users saw when closing a terminal on macOS.
+	if !signal(cleanupCtx, pids, "-TERM") {
+		return
+	}
+	if !hasProcesses(cleanupCtx, pids) {
 		return
 	}
 
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	select {
-	case <-cleanupCtx.Done():
-		return
-	case <-timer.C:
+	// Poll rather than sleep the whole grace. Callers block on this (Destroy runs
+	// inside the shell-terminal DELETE handler), and the common case — an
+	// interactive shell with nothing behind it — is empty almost immediately. A
+	// process that really needs the time still gets the full grace before SIGKILL.
+	deadline := time.NewTimer(grace)
+	defer deadline.Stop()
+	ticker := time.NewTicker(reapPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cleanupCtx.Done():
+			return
+		case <-ticker.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+		case <-deadline.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+			signal(cleanupCtx, pids, "-KILL")
+			return
+		}
 	}
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
-		return
-	}
-	signalSessions(cleanupCtx, pids, "-KILL")
 }
 
 // signalSessions sends a pkill signal flag (e.g. "-TERM") to every process in
-// each pane session, matched by session id via `pkill -s`.
-func signalSessions(ctx context.Context, pids []int, sig string) {
+// each pane session, matched by session id via `pkill -s`. It reports whether
+// the platform supports signalling by session id at all: exit 2 is a usage
+// error on both procps and BSD pkill, which is how macOS answers `-s`, and
+// there the call reaches no process.
+func signalSessions(ctx context.Context, pids []int, sig string) bool {
+	supported := false
 	for _, pid := range pids {
-		_ = exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		err := exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		if !isUnsupportedMatcher(err) {
+			supported = true
+		}
 	}
+	return supported
+}
+
+// isUnsupportedMatcher reports whether a pgrep/pkill invocation failed because
+// the platform rejects the matcher itself (exit 2, a usage error) rather than
+// because nothing matched (exit 1) or the process is missing entirely.
+func isUnsupportedMatcher(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode() >= 2
+	}
+	// pkill/pgrep absent (Windows, minimal containers): equally unusable.
+	return true
 }
 
 // sessionsHaveProcesses reports whether any process remains in the pane
@@ -425,11 +489,14 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 }
 
 // IsAlive reports whether the handle's session still exists via `tmux
-// has-session`. Exit 0 means alive. A non-zero exit with output indicating the
-// session or server is missing is a definitive false, nil. Any other non-zero
-// exit is a probe error (not proof of death) so callers (the reaper feeding
-// the LCM) treat it as a failed probe and never kill a session on a transient
-// error.
+// has-session`. Exit 0 means alive. A non-zero exit with output naming this
+// session as missing is a definitive false, nil. A server-level failure ("no
+// server running", "error connecting") wraps ports.ErrRuntimeUnavailable: the
+// probe learned nothing about this session — the agent process may well still
+// be running as an orphan of the dead server — so it must never be read as
+// per-session death (issue #3475). Any other non-zero exit is a plain probe
+// error so callers (the reaper feeding the LCM) treat it as a failed probe
+// and never kill a session on a transient error.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -438,8 +505,14 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	out, err := r.run(ctx, hasSessionArgs(id)...)
 	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
-			return false, nil
+		if errors.As(err, &exitErr) {
+			if sessionMissingOutput(string(out)) {
+				return false, nil
+			}
+			if serverUnreachableOutput(string(out)) {
+				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
+					id, ports.ErrRuntimeUnavailable, strings.TrimSpace(string(out)))
+			}
 		}
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
@@ -452,28 +525,51 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 // interactive shell behind, a child launched from that shell is treated as a
 // manually resumed workload. Command failures remain inconclusive.
 func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
-	id, err := handleID(handle)
+	entries, panePID, err := r.supervisedProcessTree(ctx, handle)
 	if err != nil {
 		return false, err
 	}
+	return containsManagedWorkload(entries, panePID, string(ref.SessionID), ref.LaunchID), nil
+}
+
+// IsExactSupervisedProcessAlive reports only the AO supervisor matching ref
+// while that supervisor still owns a live managed child. It deliberately
+// excludes both the manual-child fallback used by the ordinary reaper probe
+// and a supervisor that is merely waiting to durably report its child's exit:
+// neither is proof that an agent can safely receive a continuation.
+func (r *Runtime) IsExactSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
+	if ref.SessionID == "" || strings.TrimSpace(ref.LaunchID) == "" {
+		return false, errors.New("tmux runtime: exact supervisor session and launch are required")
+	}
+	entries, panePID, err := r.supervisedProcessTree(ctx, handle)
+	if err != nil {
+		return false, err
+	}
+	return containsExactSupervisedWorkload(entries, panePID, string(ref.SessionID), ref.LaunchID), nil
+}
+
+func (r *Runtime) supervisedProcessTree(ctx context.Context, handle ports.RuntimeHandle) ([]processEntry, int, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return nil, 0, err
+	}
 	paneOut, err := r.run(ctx, panePIDArgs(id)...)
 	if err != nil {
-		return false, fmt.Errorf("tmux runtime: inspect pane pid %s: %w", id, err)
+		return nil, 0, fmt.Errorf("tmux runtime: inspect pane pid %s: %w", id, err)
 	}
 	panePID, err := strconv.Atoi(strings.TrimSpace(string(paneOut)))
 	if err != nil || panePID <= 0 {
-		return false, fmt.Errorf("tmux runtime: invalid pane pid %q", strings.TrimSpace(string(paneOut)))
+		return nil, 0, fmt.Errorf("tmux runtime: invalid pane pid %q", strings.TrimSpace(string(paneOut)))
 	}
-
 	processOut, err := r.runCommand(ctx, "ps", "-ww", "-axo", "pid=,ppid=,args=")
 	if err != nil {
-		return false, fmt.Errorf("tmux runtime: inspect process tree %s: %w", id, err)
+		return nil, 0, fmt.Errorf("tmux runtime: inspect process tree %s: %w", id, err)
 	}
 	entries, err := parseProcessTable(string(processOut))
 	if err != nil {
-		return false, fmt.Errorf("tmux runtime: parse process tree %s: %w", id, err)
+		return nil, 0, fmt.Errorf("tmux runtime: parse process tree %s: %w", id, err)
 	}
-	return containsManagedWorkload(entries, panePID, string(ref.SessionID), ref.LaunchID), nil
+	return entries, panePID, nil
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then
@@ -553,6 +649,20 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	return nil
 }
 
+// SendInput sends raw terminal input without appending Enter. It is intended
+// for TUI keybindings such as Escape rather than prompt text.
+func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
+	id, err := handleID(handle)
+	if err != nil {
+		return err
+	}
+	args := sendKeysLiteralArgs(id, input)
+	if _, err := r.run(ctx, args...); err != nil {
+		return fmt.Errorf("tmux runtime: send input %s: %w", id, err)
+	}
+	return nil
+}
+
 // GetOutput returns the last `lines` lines of the session pane's captured
 // output.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
@@ -566,6 +676,22 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	out, err := r.run(ctx, capturePaneArgs(id, lines)...)
 	if err != nil {
 		return "", fmt.Errorf("tmux runtime: capture output %s: %w", id, err)
+	}
+	return tailLines(trimTrailingBlankLines(string(out)), lines), nil
+}
+
+// GetStyledOutput is GetOutput with tmux's -e flag so SGR styling is retained.
+func (r *Runtime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return "", err
+	}
+	if lines <= 0 {
+		return "", errors.New("tmux runtime: lines must be positive")
+	}
+	out, err := r.run(ctx, capturePaneStyledArgs(id, lines)...)
+	if err != nil {
+		return "", fmt.Errorf("tmux runtime: capture styled output %s: %w", id, err)
 	}
 	return tailLines(trimTrailingBlankLines(string(out)), lines), nil
 }
@@ -717,10 +843,21 @@ func containsManagedWorkload(entries []processEntry, rootPID int, sessionID, lau
 	return hasChild && !hasSupervisor
 }
 
-func containsSupervisor(entries []processEntry, rootPID int, sessionID, launchID string) bool {
+func containsExactSupervisedWorkload(entries []processEntry, rootPID int, sessionID, launchID string) bool {
 	descendants := descendantPIDs(entries, rootPID)
+	supervisorPID := 0
 	for _, entry := range entries {
 		if entry.pid != rootPID && descendants[entry.pid] && isSupervisorCommand(entry.command, sessionID, launchID) {
+			supervisorPID = entry.pid
+			break
+		}
+	}
+	if supervisorPID == 0 {
+		return false
+	}
+	workloadDescendants := descendantPIDs(entries, supervisorPID)
+	for _, entry := range entries {
+		if entry.pid != supervisorPID && workloadDescendants[entry.pid] {
 			return true
 		}
 	}
@@ -808,21 +945,34 @@ func handleID(handle ports.RuntimeHandle) (string, error) {
 
 // -- output detection helpers --
 
-// sessionMissingOutput reports whether a non-zero `tmux has-session` or
-// `tmux kill-session` exit is definitively "session does not exist" rather
-// than a transient probe failure.
+// sessionMissingOutput reports whether a non-zero `tmux has-session` exit is
+// definitively "this session does not exist" — evidence about the probed
+// session itself. Server-level failures deliberately do not match: "no server
+// running" describes the whole server and "error connecting" is a transient
+// socket failure; neither says anything about one session, so treating them as
+// per-session death let a single server outage archive every session on the
+// board (issue #3475).
 func sessionMissingOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "can't find session") ||
-		strings.Contains(s, "no server running") ||
-		strings.Contains(s, "error connecting") ||
 		strings.Contains(s, "session not found")
 }
 
+// serverUnreachableOutput reports whether a non-zero tmux exit means the
+// server itself could not be reached, which is inconclusive for any single
+// session's liveness.
+func serverUnreachableOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "no server running") ||
+		strings.Contains(s, "error connecting")
+}
+
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`
-// failed because the session was already gone.
+// failed because the session was already gone. Teardown stays generous: a
+// missing server also means there is nothing left to kill, so it shares the
+// server-level patterns that liveness probing must not use.
 func killSessionMissingOutput(out string) bool {
-	return sessionMissingOutput(out)
+	return sessionMissingOutput(out) || serverUnreachableOutput(out)
 }
 
 // -- text helpers --
@@ -923,8 +1073,10 @@ func shellQuote(s string) string {
 }
 
 // buildLaunchCommand builds the shell command string passed to `sh -c`. It
-// exports env vars, then runs argv, then execs a keep-alive interactive shell
-// so the tmux session survives the agent exiting.
+// exports env vars, runs argv, then keeps the tmux session alive. Supervised
+// launches park on a non-interpreting stdin sink after exit so bytes racing a
+// process exit can never become shell commands; legacy/unsupervised launches
+// retain the interactive-shell fallback used by manual recovery.
 //
 // PATH from cfg.Env is exported last, after all other keys, so an explicit
 // override takes effect.
@@ -970,10 +1122,15 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		parts[i] = shellQuote(a)
 	}
 	b.WriteString(strings.Join(parts, " "))
-	// Keep the tmux session alive after the agent exits so the operator can
-	// inspect the terminal. The shell variable expansion picks up $SHELL from
-	// the process env if set, otherwise falls back to /bin/sh.
-	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
+	if cfg.Env["AO_SUPERVISED_PROCESS"] == "1" {
+		// cat consumes and discards any input that arrived while the supervised
+		// child was exiting. Runtime Restart/Destroy replaces or kills the pane.
+		b.WriteString(`; exec cat >/dev/null`)
+	} else {
+		// Keep the tmux session alive after an unsupervised agent exits so the
+		// operator can inspect it and use the historical manual-recovery shell.
+		b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
+	}
 	return b.String()
 }
 

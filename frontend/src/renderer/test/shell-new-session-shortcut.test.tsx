@@ -16,7 +16,7 @@ const shellMocks = vi.hoisted(() => {
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
-		routeSearch: {} as { tabOwner?: string },
+		routeSearch: {} as Record<string, unknown>,
 		workspaces: [] as WorkspaceSummary[],
 		workspaceQuery: {
 			data: [] as WorkspaceSummary[],
@@ -69,7 +69,9 @@ const shellMocks = vi.hoisted(() => {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
 			getQueryState: vi.fn(),
+			getQueryData: vi.fn(),
 			invalidateQueries: vi.fn(),
+			prefetchQuery: vi.fn(async () => undefined),
 			setQueryData: vi.fn(),
 		},
 		state,
@@ -79,6 +81,9 @@ const shellMocks = vi.hoisted(() => {
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
+	// TerminalCacheProvider owns reviewer queries in production. This shell-only
+	// harness has no routed terminal children and intentionally omits a provider.
+	useQueries: () => [],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -108,6 +113,10 @@ vi.mock("../lib/bridge", () => ({
 			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 	},
 }));
 
@@ -124,6 +133,7 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
+	useShellTerminals: () => ({ data: [], isSuccess: true }),
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
@@ -131,6 +141,10 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
 	agentsQueryOptions: {},
 	refreshAgents: vi.fn(),
+	// The shell reports the install's agent inventory once per launch, so the
+	// mock has to answer this too. Undefined data means the hook reports nothing,
+	// which keeps these shortcut tests free of telemetry side effects.
+	useAgentsQuery: () => ({ data: undefined }),
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
@@ -155,6 +169,7 @@ vi.mock("../components/TitlebarNav", async () => {
 	};
 });
 vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
+vi.mock("../components/SettingsDialog", () => ({ SettingsDialog: () => null }));
 vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
@@ -185,10 +200,10 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		Sidebar: ({ isOverlay, onPreviewLeave }: { isOverlay?: boolean; onPreviewLeave?: () => void }) => {
+		Sidebar: ({ isOverlay, onPreviewLeave, topbarOffset }: { isOverlay?: boolean; onPreviewLeave?: () => void; topbarOffset?: string }) => {
 			const nonce = useStore((state) => state.createProjectNonce);
 			return (
-				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" onPointerLeave={onPreviewLeave}>
+				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" data-topbar-offset={topbarOffset} onPointerLeave={onPreviewLeave}>
 					{nonce > 0 ? <div data-testid="create-project-flow" /> : null}
 				</div>
 			);
@@ -279,10 +294,23 @@ beforeEach(() => {
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		settingsModal: null,
 	});
 });
 
 describe("shell workspace startup", () => {
+	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		const sidebar = screen.getByTestId("sidebar");
+		expect(screen.queryByTestId("session-topbar-host")).not.toBeInTheDocument();
+		// The route shell owns only the frame. SessionView places its topbar host
+		// inside the terminal panel so the inspector header can occupy this row too.
+		expect(sidebar).not.toHaveAttribute("data-topbar-offset", "session");
+		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
+	});
+
 	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {
 		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
 		useUiStore.setState({ isSidebarOpen: false });
@@ -463,15 +491,16 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		);
 	});
 
-	it("scopes the terminal to the originating session while viewing one of its pinned tabs", async () => {
+	// Session terminals always belong to the session on screen — there is no
+	// longer an "owner" session whose worktree could be borrowed here (#3208).
+	it("scopes the terminal to the session on screen, not the route's project alone", async () => {
 		shellMocks.state.routeParams = { projectId: "proj-2", sessionId: "sess-cross" };
-		shellMocks.state.routeSearch = { tabOwner: "sess-1" };
 		await renderShell();
 
 		pressNewShellTerminal();
 
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
-			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
+			expect.objectContaining({ projectId: "proj-2", sessionId: "sess-cross" }),
 			expect.anything(),
 		);
 	});
@@ -535,7 +564,8 @@ describe("shell application shortcut subscriptions", () => {
 
 		act(() => shellMocks.state.openSettingsListener?.());
 
-		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
 	});
 
 	it("moves to the next active session in the current project", async () => {
@@ -562,15 +592,25 @@ describe("shell application shortcut subscriptions", () => {
 		});
 	});
 
-	it("focuses the mounted terminal", async () => {
-		const terminalInput = document.createElement("textarea");
-		terminalInput.className = "xterm-helper-textarea";
-		document.body.appendChild(terminalInput);
+	it("focuses the active terminal without targeting an earlier parked xterm", async () => {
+		const parked = document.createElement("div");
+		parked.dataset.terminalActivationPhase = "parked";
+		parked.inert = true;
+		const parkedInput = document.createElement("textarea");
+		parkedInput.className = "xterm-helper-textarea";
+		parked.appendChild(parkedInput);
+		const active = document.createElement("div");
+		active.dataset.terminalActivationPhase = "visible";
+		const activeInput = document.createElement("textarea");
+		activeInput.className = "xterm-helper-textarea";
+		active.appendChild(activeInput);
+		document.body.append(parked, active);
 		await renderShell();
 
 		act(() => shellMocks.state.focusTerminalListener?.());
 
-		expect(document.activeElement).toBe(terminalInput);
-		terminalInput.remove();
+		expect(document.activeElement).toBe(activeInput);
+		parked.remove();
+		active.remove();
 	});
 });

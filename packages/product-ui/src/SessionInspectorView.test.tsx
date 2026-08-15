@@ -1,0 +1,373 @@
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import {
+	InspectorActivityTimelineView,
+	InspectorPullRequestCardView,
+	InspectorReviewsView,
+	SessionInspectorShellView,
+	type InspectorReviewLabels,
+} from "./SessionInspectorView";
+import type { ExternalLinkProps } from "./external-link";
+
+function ExternalLink({ ariaLabel, children, stopPropagation, ...props }: ExternalLinkProps) {
+	return (
+		<a
+			{...props}
+			aria-label={ariaLabel}
+			onClick={stopPropagation ? (event) => event.stopPropagation() : undefined}
+		>
+			{children}
+		</a>
+	);
+}
+
+const tabs = [
+	{ id: "summary" as const, icon: <svg />, label: "Summary" },
+	{ id: "reviews" as const, icon: <svg />, label: "Reviews" },
+	{ badge: true, id: "browser" as const, icon: <svg />, label: "Browser" },
+	{ displayLabel: "2 Files", id: "files" as const, icon: <svg />, label: "Files" },
+];
+
+describe("SessionInspectorShellView", () => {
+	it("preserves the tab semantics, responsive labels, badge, and host slots", () => {
+		const onViewChange = vi.fn();
+		const { rerender } = render(
+			<SessionInspectorShellView
+				activeView="summary"
+				ariaLabel="Session inspector"
+				browserPoppedOut={false}
+				browserView={<div role="tabpanel">browser slot</div>}
+				filesView={<div role="tabpanel">files slot</div>}
+				onViewChange={onViewChange}
+				reviewsView={<div role="tabpanel">reviews slot</div>}
+				summaryView={<div role="tabpanel">summary slot</div>}
+				tabs={tabs}
+			/>,
+		);
+
+		expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
+		expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist");
+		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
+		expect(screen.getByRole("tab", { name: "Summary" })).toHaveClass("min-w-0");
+		expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("flex-1");
+		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("tabindex", "0");
+		expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("tabindex", "-1");
+		const filesLabel = within(screen.getByRole("tab", { name: "Files" })).getByText("2 Files");
+		expect(filesLabel).toHaveClass("session-inspector__responsive-label", "min-w-0");
+		expect(filesLabel).not.toHaveClass("@max-[350px]/inspector:hidden");
+		expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+		expect(onViewChange).toHaveBeenCalledWith("browser");
+		fireEvent.keyDown(screen.getByRole("tab", { name: "Summary" }), { key: "ArrowRight" });
+		expect(onViewChange).toHaveBeenLastCalledWith("reviews");
+		expect(screen.getByRole("tab", { name: "Reviews" })).toHaveFocus();
+
+		rerender(
+			<SessionInspectorShellView
+				activeView="reviews"
+				ariaLabel="Session inspector"
+				browserPoppedOut={false}
+				onViewChange={onViewChange}
+				reviewsView={<div role="tabpanel">reviews slot</div>}
+				tabs={tabs}
+			/>,
+		);
+		expect(screen.getByText("reviews slot")).toBeInTheDocument();
+
+		rerender(
+			<SessionInspectorShellView
+				activeView="browser"
+				ariaLabel="Session inspector"
+				browserPoppedOut={false}
+				browserView={<div role="tabpanel">browser slot</div>}
+				onViewChange={onViewChange}
+				summaryView={<div role="tabpanel">summary slot</div>}
+				tabs={tabs}
+			/>,
+		);
+		const body = screen.getByRole("tablist").parentElement?.nextElementSibling;
+		expect(body).toHaveClass("session-inspector__body--browser", "p-0", "overflow-hidden");
+		expect(body).not.toHaveClass("p-3");
+		expect(screen.getByText("browser slot")).toBeInTheDocument();
+	});
+
+	it("renders the loading state without tab chrome", () => {
+		render(
+			<SessionInspectorShellView
+				activeView="summary"
+				ariaLabel="Session inspector"
+				browserPoppedOut={false}
+				loadingText="Loading session…"
+				onViewChange={vi.fn()}
+				tabs={tabs}
+			/>,
+		);
+		expect(screen.getByText("Loading session…")).toHaveClass("text-settings-muted");
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+	});
+});
+
+describe("portable inspector presentations", () => {
+	it("renders PR facts and host-owned actions from a neutral view model", () => {
+		render(
+			<InspectorPullRequestCardView
+				countNounLabel={(count, noun) => `${count} ${noun}s`}
+				externalLink={ExternalLink}
+				mergeAction={<button type="button">Merge</button>}
+				openLabel="Open PR #12"
+				pr={{
+					additions: 4,
+					author: "ada",
+					card: {
+						primary: { key: "merge", label: "Ready to merge", links: [], tone: "success" },
+						supporting: [],
+					},
+					changedFiles: 2,
+					deletions: 1,
+					href: "https://example.com/pull/12",
+					number: 12,
+					provider: "github",
+					sourceBranch: "feature",
+					state: "open",
+					stateLabel: "open",
+					targetBranch: "main",
+					title: "Portable inspector",
+				}}
+			/>,
+		);
+		expect(screen.getByRole("link", { name: "Portable inspector" })).toHaveAttribute(
+			"href",
+			"https://example.com/pull/12",
+		);
+		expect(screen.getByRole("link", { name: "Open PR #12" })).toBeInTheDocument();
+		expect(screen.getByText("Ready to merge")).toHaveClass("text-success");
+		expect(screen.getByRole("button", { name: "Merge" })).toBeInTheDocument();
+	});
+
+	it("renders timeline events with current-state marker treatment", () => {
+		render(
+			<InspectorActivityTimelineView
+				events={[
+					{
+						content: <span>Working</span>,
+						markerBreathe: true,
+						markerTone: "#60a5fa",
+						timestamp: null,
+						tone: "now",
+					},
+					{ content: <span>Created workspace</span>, timestamp: "2h ago", tone: "neutral" },
+				]}
+			/>,
+		);
+		const events = screen.getAllByTestId("inspector-timeline-event");
+		expect(events).toHaveLength(2);
+		expect(events[0].querySelector(".animate-status-pulse")).toHaveStyle({ background: "#60a5fa" });
+		expect(screen.getByText("2h ago")).toHaveClass("font-mono", "text-passive");
+	});
+
+	it("owns grouped review disclosure while the host supplies markdown and assets", () => {
+		const renderAvatar = vi.fn((harness: string) => <span data-testid="avatar">{harness}</span>);
+		const renderMarkdown = vi.fn((body: string) => <p>{body}</p>);
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						ao: {
+							notInjected: true,
+							runs: [
+								{
+									body: "Looks good.",
+									createdAtLabel: "5m ago",
+									harness: "codex",
+									id: "run-1",
+									status: "delivered",
+									url: "https://example.com/review",
+									verdict: { label: "Approved", tone: "success" },
+								},
+							],
+						},
+						github: {
+							entries: [
+								{
+									body: "Ship it.",
+									id: "github-review-1",
+									isBot: true,
+									reviewerId: "review-bot",
+									submittedAt: "2026-08-09T10:00:00Z",
+									submittedAtLabel: "5m ago",
+									verdict: { label: "Approved", tone: "success" },
+								},
+							],
+							unresolved: 0,
+							unresolvedBy: [],
+						},
+						meta: "#12 · 5m ago",
+						number: 12,
+						title: "Portable inspector",
+						verdict: { label: "Approved", tone: "success" },
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={renderAvatar}
+				renderMarkdown={renderMarkdown}
+			/>,
+		);
+
+		const row = screen.getByTestId("review-pr-row");
+		expect(row).not.toHaveAttribute("aria-expanded");
+		expect(screen.getByText("Looks good.")).toBeInTheDocument();
+		expect(screen.queryByText("Ship it.")).not.toBeInTheDocument();
+		const externalReview = screen.getByRole("button", { name: /review-bot.*Approved/ });
+		expect(externalReview).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(externalReview);
+		expect(screen.getByText("Ship it.")).toBeInTheDocument();
+		expect(screen.getByText("Not injected")).toBeInTheDocument();
+		expect(renderAvatar).toHaveBeenCalledWith("codex");
+		expect(renderMarkdown).toHaveBeenCalledTimes(2);
+	});
+
+	it("shows the newest GitHub review when history prepends", () => {
+		const olderBody = "Older review";
+		const newerBody = "Newer review";
+		const olderReview = {
+			body: olderBody,
+			id: "github-review-old",
+			reviewerId: "ada",
+			submittedAt: "2026-08-09T10:00:00Z",
+			submittedAtLabel: "10m ago",
+			verdict: { label: "Changes requested", tone: "danger" as const },
+		};
+		const group = (entries: typeof olderReview[]) => [
+			{
+				github: { entries, unresolved: 0, unresolvedBy: [] },
+				meta: "#12",
+				number: 12,
+				title: "Portable inspector",
+			},
+		];
+		const view = (entries: typeof olderReview[]) => (
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={group(entries)}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>
+		);
+		const { rerender } = render(view([olderReview]));
+		const olderButton = screen.getByRole("button", { name: /ada.*Changes requested/ });
+		expect(olderButton).toHaveAttribute("aria-expanded", "false");
+		fireEvent.click(olderButton);
+		expect(screen.getByText(olderBody)).toBeInTheDocument();
+
+		rerender(
+			view([
+				{
+					...olderReview,
+					body: newerBody,
+					id: "github-review-new",
+					reviewerId: "grace",
+					submittedAt: "2026-08-09T11:00:00Z",
+					submittedAtLabel: "Now",
+				},
+				olderReview,
+			]),
+		);
+
+		const cards = screen.getAllByTestId("github-review-card");
+		expect(within(cards[0]).getByRole("button", { name: /grace.*Changes requested/ })).toHaveAttribute("aria-expanded", "false");
+		expect(screen.queryByText(newerBody)).not.toBeInTheDocument();
+	});
+
+	it("shows unresolved inline review comment bodies together above external reviews", () => {
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [
+								{
+									body: "Please address the inline notes before merge.",
+									id: "github-review-1",
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+									submittedAt: "2026-08-09T10:00:00Z",
+									submittedAtLabel: "1h ago",
+									verdict: { label: "Commented", tone: "neutral" },
+								},
+							],
+							unresolved: 2,
+							unresolvedBy: [
+								{
+									count: 2,
+									links: [
+										{
+											body: "This branch leaks the resize listener on unmount.",
+											file: "src/panel.tsx",
+											line: 42,
+											url: "https://example.com/comment",
+										},
+										{
+											body: "This was sent to the worker already.",
+											autoInjectReview: true,
+											url: "https://example.com/comment-sent",
+										},
+									],
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+								},
+							],
+						},
+						meta: "#12 · 2 unresolved",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
+		expect(screen.getByText("Open comments")).toBeInTheDocument();
+		expect(screen.getByText("2 unresolved")).toBeInTheDocument();
+		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
+		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
+		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-success");
+		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(2);
+	});
+
+
+});
+
+const reviewLabels: InspectorReviewLabels = {
+	aoSource: "AO",
+	bot: "Bot",
+	earlierPass: "Earlier pass",
+	githubSource: "On GitHub",
+	loadingReviews: "Loading reviews",
+	loadMoreReviews: (count) => `Load ${count} more`,
+	noPastReviewSummaries: "No summaries",
+	notInjected: "Not injected",
+	openComments: "Open comments",
+	openInlineComments: (count) => `${count} open inline comments`,
+	reviews: "Reviews",
+	reviewedAt: (time) => `Reviewed ${time}`,
+	resolvedComments: (count) => `Resolved comments · ${count}`,
+	sendToWorkerAgent: "Send to worker agent",
+	sentToWorkerAgent: "Sent to worker agent",
+	showLatestReviewOnly: "Show latest only",
+	showLess: "Show less",
+	showMore: "Show more",
+	commentNumber: (number) => `Comment ${number}`,
+	unresolvedCount: (count) => `${count} unresolved`,
+	viewInFile: "View in file",
+	viewOnPR: "View on PR",
+};

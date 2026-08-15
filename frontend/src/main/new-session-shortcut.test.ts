@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL, TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 import { attachAppShortcuts } from "./app-shortcuts";
 
 type InputEvent = {
@@ -100,17 +100,42 @@ describe("attachAppShortcuts", () => {
 		expect(target.send).toHaveBeenCalledTimes(1);
 	});
 
-	it("forwards the new-shell-terminal chord using the physical code Ctrl+Shift+` reports", () => {
+	it.each([
+		["macOS", true, { key: "t", meta: true }],
+		["Windows/Linux", false, { key: "t", control: true }],
+	])("forwards the new-shell-terminal chord on %s", (_name, isMac, input) => {
 		const source = fakeSource();
 		const target = fakeTarget();
-		attachAppShortcuts(source, false, target);
+		attachAppShortcuts(source, isMac, target);
 
-		// Real Electron values for Ctrl+Shift+` on a US layout: Shift shifts the
-		// character to "~", so only the physical code "Backquote" identifies the
-		// chord. This pins app-shortcuts forwarding `code` into the matcher.
-		source.emit({ key: "~", code: "Backquote", control: true, shift: true, type: "keyDown" });
+		source.emit(input);
 
 		expect(target.send).toHaveBeenCalledWith(NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL);
+	});
+
+	it.each([
+		["macOS", true, { key: "w", meta: true }],
+		["Windows/Linux", false, { key: "w", control: true }],
+	])("forwards and consumes the close-shell-terminal chord on %s", (_name, isMac, input) => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachAppShortcuts(source, isMac, target);
+
+		const event = source.emit(input);
+
+		expect(target.send).toHaveBeenCalledWith(CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL);
+		expect(event.preventDefault).toHaveBeenCalledOnce();
+	});
+
+	it("preserves the close chord when no shell terminal is closeable", () => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		attachAppShortcuts(source, false, target, false, () => ({}), () => false, (id) => id !== "close-shell-terminal");
+
+		const event = source.emit({ key: "w", control: true });
+
+		expect(target.send).not.toHaveBeenCalled();
+		expect(event.preventDefault).not.toHaveBeenCalled();
 	});
 
 	it("forwards keyboard-shortcut help on each platform", () => {
@@ -132,6 +157,8 @@ describe("attachAppShortcuts", () => {
 		["settings", { key: ",", control: true }, OPEN_SETTINGS_SHORTCUT_CHANNEL],
 		["previous session", { key: "PageUp", control: true }, PREVIOUS_SESSION_SHORTCUT_CHANNEL],
 		["next session", { key: "PageDown", control: true }, NEXT_SESSION_SHORTCUT_CHANNEL],
+		["previous tab", { key: "Tab", control: true, shift: true }, PREVIOUS_TAB_SHORTCUT_CHANNEL],
+		["next tab", { key: "Tab", control: true }, NEXT_TAB_SHORTCUT_CHANNEL],
 		["focus terminal", { key: "T", control: true, shift: true }, FOCUS_TERMINAL_SHORTCUT_CHANNEL],
 	] as const)("forwards the Windows/Linux %s shortcut", (_label, input, channel) => {
 		const source = fakeSource();
@@ -177,5 +204,41 @@ describe("attachAppShortcuts", () => {
 		expect(activeEvent.preventDefault).toHaveBeenCalledTimes(1);
 		expect(target.send).toHaveBeenCalledTimes(1);
 		expect(target.send).toHaveBeenCalledWith(KEYBOARD_SHORTCUTS_HELP_CHANNEL);
+	});
+
+	it.each([
+		["macOS", true, { key: "=", code: "Equal", meta: true }],
+		["Windows/Linux", false, { key: "+", code: "Equal", control: true }],
+	] as const)("routes primary-modifier plus/minus to the focused terminal on %s and preserves app zoom otherwise", (_platform, isMac, input) => {
+		const source = fakeSource();
+		const target = fakeTarget();
+		let terminalFocused = true;
+		attachAppShortcuts(
+			source,
+			isMac,
+			target,
+			false,
+			() => ({}),
+			() => false,
+			() => true,
+			undefined,
+			() => terminalFocused,
+		);
+
+		const focusedEvent = source.emit(input);
+
+		expect(focusedEvent.preventDefault).toHaveBeenCalledOnce();
+		expect(target.send).toHaveBeenCalledWith(TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL, 1);
+
+		target.send.mockClear();
+		terminalFocused = false;
+		const appZoomEvent = source.emit(
+			isMac
+				? { key: "-", code: "Minus", meta: true }
+				: { key: "-", code: "Minus", control: true },
+		);
+
+		expect(appZoomEvent.preventDefault).not.toHaveBeenCalled();
+		expect(target.send).not.toHaveBeenCalled();
 	});
 });

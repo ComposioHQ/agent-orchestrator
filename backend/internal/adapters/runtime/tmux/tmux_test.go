@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +209,9 @@ func TestCommandBuilders(t *testing.T) {
 	}
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
+	}
+	if got, want := capturePaneStyledArgs("sess-1", 10), []string{"capture-pane", "-e", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("capturePaneStyledArgs = %#v, want %#v", got, want)
 	}
 }
 
@@ -735,18 +739,31 @@ func TestIsSupervisedProcessAliveFindsExactDescendant(t *testing.T) {
 }
 
 func TestIsSupervisedProcessAliveRejectsStaleAndUnrelatedProcesses(t *testing.T) {
-	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-old -- codex\n200 1 /opt/ao agent-process supervise --session sess-1 --launch launch-new -- codex\n")
+	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-old -- codex\n102 101 codex\n200 1 /opt/ao agent-process supervise --session sess-1 --launch launch-new -- codex\n201 200 codex\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if containsSupervisor(entries, 100, "sess-1", "launch-new") {
+	if containsExactSupervisedWorkload(entries, 100, "sess-1", "launch-new") {
 		t.Fatal("stale descendant or matching process outside the pane tree was accepted")
 	}
 	if containsManagedWorkload(entries, 100, "sess-1", "launch-new") {
 		t.Fatal("stale supervised generation was accepted as a manual workload")
 	}
-	if !containsSupervisor(entries, 100, "sess-1", "launch-old") {
+	if !containsExactSupervisedWorkload(entries, 100, "sess-1", "launch-old") {
 		t.Fatal("exact supervised descendant was not found")
+	}
+}
+
+func TestExactSupervisedWorkloadRejectsSupervisorReportingExitedChild(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-2 -- codex\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsExactSupervisedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("supervisor without a managed child was accepted as a live target")
+	}
+	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("ordinary reaper should retain a supervisor while it reports the child exit")
 	}
 }
 
@@ -757,6 +774,21 @@ func TestIsSupervisedProcessAliveFindsManualRelaunchFromPreservedShell(t *testin
 	}
 	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
 		t.Fatal("workload relaunched from the preserved shell was not found")
+	}
+}
+
+func TestIsExactSupervisedProcessAliveRejectsManualRelaunchFromPreservedShell(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{
+		[]byte("100\n"),
+		[]byte("100 1 /bin/zsh -i\n101 100 codex resume native-1\n102 101 codex worker\n"),
+	}
+	alive, err := r.IsExactSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-2",
+	})
+	if err != nil || alive {
+		t.Fatalf("IsExactSupervisedProcessAlive = (%v, %v), want (false, nil)", alive, err)
 	}
 }
 
@@ -836,28 +868,33 @@ func TestIsAliveReturnsFalseNilOnCantFindSession(t *testing.T) {
 	}
 }
 
-func TestIsAliveReturnsFalseNilOnNoServer(t *testing.T) {
+// A server-level failure says nothing about one session: the whole server is
+// gone (or unreachable), and the agent may still be alive as an orphan. It
+// must surface as ports.ErrRuntimeUnavailable — an inconclusive probe — never
+// as a definitive "this session is dead" (issue #3475: reading it as death
+// archived every session on the board in one pass).
+func TestIsAliveReportsNoServerAsRuntimeUnavailable(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("no server running on /tmp/tmux-1000/default")}
 	fr.err = &exec.ExitError{}
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
-	if err != nil {
-		t.Fatalf("IsAlive: %v", err)
+	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
 	}
 	if alive {
 		t.Fatal("alive = true, want false")
 	}
 }
 
-func TestIsAliveReturnsFalseNilOnErrorConnecting(t *testing.T) {
+func TestIsAliveReportsErrorConnectingAsRuntimeUnavailable(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("error connecting to /tmp/tmux-1000/default (No such file or directory)")}
 	fr.err = &exec.ExitError{}
 
 	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
-	if err != nil {
-		t.Fatalf("IsAlive error connecting: %v", err)
+	if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+		t.Fatalf("IsAlive err = %v, want ports.ErrRuntimeUnavailable", err)
 	}
 	if alive {
 		t.Fatal("alive = true, want false")
@@ -1073,6 +1110,19 @@ func TestInterruptSendsCtrlC(t *testing.T) {
 	}
 }
 
+func TestSendInputSendsEscapeWithoutEnter(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	if err := r.SendInput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "\x1b"); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(fr.calls))
+	}
+	if got, want := fr.calls[0].args, sendKeysLiteralArgs("sess-1", "\x1b"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("escape args = %#v, want %#v", got, want)
+	}
+}
+
 // -- GetOutput tests --
 
 func TestGetOutputValidatesLines(t *testing.T) {
@@ -1118,6 +1168,22 @@ func TestGetOutputArgs(t *testing.T) {
 		t.Fatalf("GetOutput: %v", err)
 	}
 	if got, want := fr.calls[0].args, capturePaneArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
+		t.Fatalf("capture-pane args = %#v, want %#v", got, want)
+	}
+}
+
+func TestGetStyledOutputPreservesCaptureMode(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("› \x1b[2mplaceholder\x1b[0m\n")}
+
+	out, err := r.GetStyledOutput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, 10)
+	if err != nil {
+		t.Fatalf("GetStyledOutput: %v", err)
+	}
+	if !strings.Contains(out, "\x1b[2m") {
+		t.Fatalf("styled output lost SGR sequence: %q", out)
+	}
+	if got, want := fr.calls[0].args, capturePaneStyledArgs("sess-1", 10); !reflect.DeepEqual(got, want) {
 		t.Fatalf("capture-pane args = %#v, want %#v", got, want)
 	}
 }
@@ -1207,4 +1273,117 @@ func TestTrimTrailingBlankLines(t *testing.T) {
 	if got := trimTrailingBlankLines(""); got != "" {
 		t.Fatalf("trimTrailingBlankLines empty = %q", got)
 	}
+}
+
+// -- reap tests --
+
+// The reap used to sleep the whole grace before rechecking, and Destroy blocks
+// the shell-terminal DELETE handler, so closing a plain terminal took the full
+// 5s no matter how fast the shell exited. Polling must return as soon as the
+// pane session is empty.
+func TestReapPaneSessionsReturnsAsSoonAsSessionsAreEmpty(t *testing.T) {
+	grace := 3 * time.Second
+	var signals []string
+	calls := 0
+	hasProcesses := func(context.Context, []int) bool {
+		calls++
+		// Alive for the SIGTERM check, gone by the first poll.
+		return calls == 1
+	}
+
+	start := time.Now()
+	reapPaneSessions(context.Background(), []int{4242}, grace,
+		func(_ context.Context, _ []int, sig string) bool { signals = append(signals, sig); return true },
+		hasProcesses,
+	)
+	elapsed := time.Since(start)
+
+	if elapsed >= grace {
+		t.Fatalf("reap took %v, want well under the %v grace", elapsed, grace)
+	}
+	if !reflect.DeepEqual(signals, []string{"-TERM"}) {
+		t.Fatalf("signals = %#v, want just -TERM: a process that already exited must not be SIGKILLed", signals)
+	}
+}
+
+// The grace still exists for what it was added for (issue #2523): a dev server
+// a worker backgrounded gets the full window to release its ports, and is only
+// then forced.
+func TestReapPaneSessionsSigkillsSurvivorsAfterGrace(t *testing.T) {
+	grace := 150 * time.Millisecond
+	var signals []string
+
+	start := time.Now()
+	reapPaneSessions(context.Background(), []int{4242}, grace,
+		func(_ context.Context, _ []int, sig string) bool { signals = append(signals, sig); return true },
+		func(context.Context, []int) bool { return true },
+	)
+	elapsed := time.Since(start)
+
+	if elapsed < grace {
+		t.Fatalf("reap took %v, want at least the %v grace before forcing", elapsed, grace)
+	}
+	if !reflect.DeepEqual(signals, []string{"-TERM", "-KILL"}) {
+		t.Fatalf("signals = %#v, want -TERM then -KILL", signals)
+	}
+}
+
+// An empty pane list means there is nothing to reap; signalling anything there
+// would be pkill against no session at all.
+func TestReapPaneSessionsIgnoresEmptyPidList(t *testing.T) {
+	called := false
+	reapPaneSessions(context.Background(), nil, time.Second,
+		func(context.Context, []int, string) bool { called = true; return true },
+		func(context.Context, []int) bool { return true },
+	)
+	if called {
+		t.Fatal("no pane sessions should mean no signals sent")
+	}
+}
+
+// Regression: macOS pkill/pgrep have no `-s` (session id) matcher — it is a
+// Linux procps extension — so every signal and probe failed with a usage error
+// and the probe's conservative "assume survivors" kept the full grace running.
+// The reap accomplished nothing and cost 5s on every close.
+func TestReapPaneSessionsSkipsWaitWhenSessionMatcherUnsupported(t *testing.T) {
+	grace := 3 * time.Second
+	probed := false
+
+	start := time.Now()
+	reapPaneSessions(context.Background(), []int{4242}, grace,
+		func(context.Context, []int, string) bool { return false },
+		func(context.Context, []int) bool { probed = true; return true },
+	)
+	elapsed := time.Since(start)
+
+	if elapsed >= grace {
+		t.Fatalf("reap took %v; a platform that cannot signal by session id must not wait out the grace", elapsed)
+	}
+	if probed {
+		t.Fatal("no point probing for survivors when the matcher itself is unsupported")
+	}
+}
+
+func TestIsUnsupportedMatcher(t *testing.T) {
+	if isUnsupportedMatcher(nil) {
+		t.Fatal("a successful match is supported")
+	}
+	if isUnsupportedMatcher(exitCodeErr(t, 1)) {
+		t.Fatal("exit 1 means nothing matched, which is a supported outcome")
+	}
+	if !isUnsupportedMatcher(exitCodeErr(t, 2)) {
+		t.Fatal("exit 2 is a usage error: the matcher is unsupported")
+	}
+	if !isUnsupportedMatcher(errors.New("exec: \"pkill\": executable file not found")) {
+		t.Fatal("a missing pkill is equally unusable")
+	}
+}
+
+func exitCodeErr(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
+	if err == nil {
+		t.Fatalf("sh -c 'exit %d' should fail", code)
+	}
+	return err
 }

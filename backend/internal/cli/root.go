@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // Execute runs the ao CLI with process stdio.
@@ -73,6 +74,9 @@ type Deps struct {
 	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
 	// httptest without mutating package-global state.
 	DoctorGitHubRESTBase string
+	// DoctorGitLabRESTBase lets tests point the doctor GitLab token probe at
+	// httptest without mutating package-global state.
+	DoctorGitLabRESTBase string
 	Now                  func() time.Time
 	Sleep                func(time.Duration)
 }
@@ -91,6 +95,7 @@ func DefaultDeps() Deps {
 		CommandOutput:        commandOutput,
 		CommandOutputInDir:   commandOutputInDir,
 		DoctorGitHubRESTBase: defaultDoctorGitHubRESTBase,
+		DoctorGitLabRESTBase: defaultDoctorGitLabRESTBase,
 		Now:                  time.Now,
 		Sleep:                time.Sleep,
 	}
@@ -141,6 +146,9 @@ func (d Deps) withDefaults() Deps {
 	if d.DoctorGitHubRESTBase == "" {
 		d.DoctorGitHubRESTBase = def.DoctorGitHubRESTBase
 	}
+	if d.DoctorGitLabRESTBase == "" {
+		d.DoctorGitLabRESTBase = def.DoctorGitLabRESTBase
+	}
 	if d.Now == nil {
 		d.Now = def.Now
 	}
@@ -188,6 +196,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newSpawnCommand(ctx))
 	root.AddCommand(newSendCommand(ctx))
 	root.AddCommand(newPreviewCommand(ctx))
+	root.AddCommand(newBrowserCommand(ctx))
 	root.AddCommand(newHooksCommand(ctx))
 	root.AddCommand(newAgentProcessCommand(ctx))
 	root.AddCommand(newLaunchCommand(ctx))
@@ -210,12 +219,15 @@ type commandContext struct {
 }
 
 func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
-	switch strings.TrimSpace(cmd.CommandPath()) {
+	commandPath := telemetrymeta.NormalizeCommandPath(cmd.CommandPath())
+	if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
+		return false
+	}
+	switch commandPath {
 	// "ao daemon"/"ao start" are supervisor-driven bootstrapping, and
 	// "ao completion"/"ao help" are shell setup and self-documentation.
 	// "ao pty-host" and "ao agent-process" are internal runtime processes.
-	// None reflect user activity. "ao hooks" is agent activity and is still
-	// reported, but the daemon keeps it out of ao.app.active/DAU.
+	// None reflect user activity.
 	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host", "ao agent-process", "ao agent-process supervise":
 		return false
 	default:

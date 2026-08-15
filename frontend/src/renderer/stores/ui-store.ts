@@ -1,16 +1,29 @@
 import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
+	applyDocumentTheme,
+	applyDocumentThemeStyle,
 	readStoredThemePreference,
+	readStoredThemeStyle,
 	resolveTheme,
+	runThemeTransition,
 	systemTheme,
 	themeStorageKey,
+	themeStyleStorageKey,
 	type Theme,
 	type ThemePreference,
+	type ThemeStyle,
 } from "../lib/theme";
 
-export type { Theme, ThemePreference } from "../lib/theme";
-export { readStoredThemePreference, resolveTheme } from "../lib/theme";
+export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
+export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
+
+export type SettingsModal =
+	| { scope: "global" }
+	| {
+			scope: "project";
+			projectId: string;
+	  };
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
@@ -19,10 +32,9 @@ export type InspectorView = "summary" | "reviews" | "browser" | "files";
 export type InspectorSessionState = {
 	isOpen: boolean;
 	view: InspectorView;
-	previewKey?: string;
-	// A preview target arrived (ao preview, or a clicked link) while the Browser
-	// tab was not the open/active view. We badge the Browser icon instead of
-	// stealing focus; cleared once the user opens the Browser tab.
+	/** The current non-empty browser content lifecycle has already been revealed. */
+	browserContentRevealed?: boolean;
+	/** Real browser activity occurred while Browser was not visible. */
 	browserUnseen?: boolean;
 };
 
@@ -34,16 +46,15 @@ type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
-	/** Extra worker tabs pinned to each originating session's terminal strip. */
-	sessionTabsByOwner: Record<string, string[]>;
 	isCommandPaletteOpen: boolean;
+	settingsModal: SettingsModal | null;
 	themePreference: ThemePreference;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
-	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
-	developerMode: boolean;
+	/** Named color style theme (e.g. "catppuccin", "nord") — independent of light/dark mode. */
+	themeStyle: ThemeStyle;
 	restartingProjectIds: ReadonlySet<string>;
-	orchestratorReplacementErrors: Record<string, string>;
+	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
 	// Transient "open the New Task dialog for this project" signal. The nonce
 	// bumps on every request so a repeat press (even for the same project) still
@@ -71,20 +82,21 @@ type UiState = {
 	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
-	setDeveloperMode: (enabled: boolean) => void;
+	setThemeStyle: (style: ThemeStyle) => void;
+	openGlobalSettings: () => void;
+	openProjectSettings: (projectId: string) => void;
+	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
-	addSessionTab: (ownerSessionId: string, sessionId: string) => void;
-	removeSessionTab: (ownerSessionId: string, sessionId: string) => void;
-	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
+	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
-	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
+	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
@@ -94,10 +106,13 @@ type UiState = {
 	clearVisibleTerminalKind: (sessionId: string) => void;
 };
 
-const sidebarStorageKey = "ao.sidebar.open";
-const developerModeStorageKey = "ao.developerMode";
-const sessionTabsStorageKey = "ao.sessionTabs";
+export type OrchestratorReplacementFailure = {
+	message: string;
+	code?: string;
+	requestId?: string;
+};
 
+const sidebarStorageKey = "ao.sidebar.open";
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -107,47 +122,22 @@ function initialSidebarOpen() {
 	return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
 }
 
-function initialDeveloperMode() {
-	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
-}
-
-function initialSessionTabs(): Record<string, string[]> {
-	const raw = getLocalStorage()?.getItem(sessionTabsStorageKey);
-	if (!raw) return {};
-	try {
-		const parsed = JSON.parse(raw) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-		return Object.fromEntries(
-			Object.entries(parsed).flatMap(([ownerSessionId, sessionIds]) =>
-				Array.isArray(sessionIds) && sessionIds.every((sessionId) => typeof sessionId === "string")
-					? [[ownerSessionId, sessionIds]]
-					: [],
-			),
-		);
-	} catch {
-		return {};
-	}
-}
-
-function storeSessionTabs(sessionTabsByOwner: Record<string, string[]>) {
-	getLocalStorage()?.setItem(sessionTabsStorageKey, JSON.stringify(sessionTabsByOwner));
-}
-
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
 	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
 }
 
 const initialThemePreference = readStoredThemePreference();
+const initialThemeStyle = readStoredThemeStyle();
 
-export const useUiStore = create<UiState>((set) => ({
+export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
-	sessionTabsByOwner: initialSessionTabs(),
 	isCommandPaletteOpen: false,
+	settingsModal: null,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
-	developerMode: initialDeveloperMode(),
+	themeStyle: initialThemeStyle,
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -158,19 +148,35 @@ export const useUiStore = create<UiState>((set) => ({
 	visibleTerminalKindBySession: {},
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
-		getLocalStorage()?.setItem(themeStorageKey, themePreference);
-		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
+		if (get().themePreference === themePreference) return;
+		runThemeTransition(() => {
+			const resolvedTheme = resolveTheme(themePreference);
+			getLocalStorage()?.setItem(themeStorageKey, themePreference);
+			applyDocumentTheme(resolvedTheme);
+			set({ themePreference, resolvedTheme });
+		});
 	},
-	setDeveloperMode: (developerMode) => {
-		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
-		set({ developerMode });
+	setThemeStyle: (themeStyle) => {
+		if (get().themeStyle === themeStyle) return;
+		runThemeTransition(() => {
+			getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
+			applyDocumentThemeStyle(themeStyle);
+			set({ themeStyle });
+		});
 	},
-	syncSystemTheme: () =>
-		set((state) => {
-			if (state.themePreference !== "system") return state;
-			const next = systemTheme();
-			return next === state.resolvedTheme ? state : { resolvedTheme: next };
-		}),
+	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	closeSettings: () => set({ settingsModal: null }),
+	syncSystemTheme: () => {
+		const { themePreference, resolvedTheme } = get();
+		if (themePreference !== "system") return;
+		const next = systemTheme();
+		if (next === resolvedTheme) return;
+		runThemeTransition(() => {
+			applyDocumentTheme(next);
+			set({ resolvedTheme: next });
+		});
+	},
 	toggleSidebar: () =>
 		set((state) => {
 			const isSidebarOpen = !state.isSidebarOpen;
@@ -200,7 +206,6 @@ export const useUiStore = create<UiState>((set) => ({
 	setInspectorView: (sessionId, view) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
-			// Opening the Browser tab consumes any pending preview badge.
 			const browserUnseen = view === "browser" ? false : current.browserUnseen;
 			return {
 				inspectorSessions: {
@@ -209,35 +214,18 @@ export const useUiStore = create<UiState>((set) => ({
 				},
 			};
 		}),
-	addSessionTab: (ownerSessionId, sessionId) =>
-		set((state) => {
-			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
-			if (ownerSessionId === sessionId || current.includes(sessionId)) return state;
-			const sessionTabsByOwner = {
-				...state.sessionTabsByOwner,
-				[ownerSessionId]: [...current, sessionId],
-			};
-			storeSessionTabs(sessionTabsByOwner);
-			return { sessionTabsByOwner };
-		}),
-	removeSessionTab: (ownerSessionId, sessionId) =>
-		set((state) => {
-			const current = state.sessionTabsByOwner[ownerSessionId] ?? [];
-			if (!current.includes(sessionId)) return state;
-			const remaining = current.filter((id) => id !== sessionId);
-			const sessionTabsByOwner = { ...state.sessionTabsByOwner };
-			if (remaining.length > 0) sessionTabsByOwner[ownerSessionId] = remaining;
-			else delete sessionTabsByOwner[ownerSessionId];
-			storeSessionTabs(sessionTabsByOwner);
-			return { sessionTabsByOwner };
-		}),
-	markInspectorPreviewSeen: (sessionId, previewKey) =>
+	setBrowserContentRevealed: (sessionId, browserContentRevealed) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.browserContentRevealed) === browserContentRevealed) return state;
 			return {
 				inspectorSessions: {
 					...state.inspectorSessions,
-					[sessionId]: { ...current, previewKey },
+					[sessionId]: {
+						...current,
+						browserContentRevealed,
+						browserUnseen: browserContentRevealed ? current.browserUnseen : false,
+					},
 				},
 			};
 		}),
@@ -263,11 +251,11 @@ export const useUiStore = create<UiState>((set) => ({
 			}
 			return { restartingProjectIds };
 		}),
-	setOrchestratorReplacementError: (projectId, message) =>
+	setOrchestratorReplacementError: (projectId, failure) =>
 		set((state) => {
 			const orchestratorReplacementErrors = { ...state.orchestratorReplacementErrors };
-			if (message) {
-				orchestratorReplacementErrors[projectId] = message;
+			if (failure) {
+				orchestratorReplacementErrors[projectId] = failure;
 			} else {
 				delete orchestratorReplacementErrors[projectId];
 			}
