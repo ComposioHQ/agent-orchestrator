@@ -34,11 +34,24 @@ vi.mock("../../hooks/useConversation", () => ({
 }));
 
 vi.mock("./ChatWorkspace", () => ({
-	ChatWorkspace: ({ onLinkOpen }: { onLinkOpen?: (url: string) => void }) => (
-		<button type="button" onClick={() => onLinkOpen?.(LINK)}>
-			Open chat link
-		</button>
+	ChatWorkspace: ({
+		onLinkOpen,
+		switchAgentControl,
+	}: {
+		onLinkOpen?: (url: string) => void;
+		switchAgentControl?: ReactNode;
+	}) => (
+		<div>
+			<button type="button" onClick={() => onLinkOpen?.(LINK)}>
+				Open chat link
+			</button>
+			{switchAgentControl}
+		</div>
 	),
+}));
+
+vi.mock("../TerminalSwitchAgentButton", () => ({
+	TerminalSwitchAgentButton: () => <button aria-label="Switch agent" type="button" />,
 }));
 
 import { SessionChatSurface } from "./SessionChatSurface";
@@ -89,5 +102,20 @@ describe("SessionChatSurface link routing", () => {
 			body: { url: LINK },
 		});
 		await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: workspaceQueryKey }));
+	});
+
+	// The chat surface offers the same in-place agent switch the terminal pane's
+	// tab strip does (#4033): the control must be reachable without leaving chat.
+	it("offers the in-place agent switch inside the chat surface", () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={session} />
+			</Wrapper>,
+		);
+
+		expect(screen.getByRole("button", { name: "Switch agent" })).toBeInTheDocument();
 	});
 });

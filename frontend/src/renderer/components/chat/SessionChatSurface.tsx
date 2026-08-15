@@ -8,8 +8,10 @@
  */
 
 import { AlertTriangle, Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { useSwitchAgentState } from "../../hooks/useSwitchAgent";
+import { TerminalSwitchAgentButton } from "../TerminalSwitchAgentButton";
 import {
 	useConversation,
 	useConversationCommands,
@@ -20,6 +22,7 @@ import {
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
+import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { can } from "../../types/conversation";
 import type { Theme } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
@@ -31,6 +34,11 @@ export function SessionChatSurface({
 	onOpenReviewerTerminal,
 	reviewerTarget,
 	onSelectChat,
+	shellTerminals,
+	shellTarget,
+	onSelectShellTerminal,
+	onCloseShellTerminal,
+	onRenameShellTerminal,
 	daemonReady,
 	theme,
 	onOpenShell,
@@ -44,6 +52,13 @@ export function SessionChatSurface({
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
 	onSelectChat?: () => void;
+	/** This session's standalone shells, rendered as tabs in the chat header. */
+	shellTerminals?: ShellTerminal[];
+	/** The selected shell pane, if any. Mirrors reviewerTarget. */
+	shellTarget?: Extract<TerminalTarget, { kind: "shell" }>;
+	onSelectShellTerminal?: (handleId: string) => void;
+	onCloseShellTerminal?: (handleId: string) => void;
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	daemonReady?: boolean;
 	theme?: Theme;
 	onOpenShell?: () => void;
@@ -87,6 +102,13 @@ export function SessionChatSurface({
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
 	const openLinkInBrowser = useSessionBrowserLink(session);
+	// In-place agent switching is the same session-level operation in either
+	// interface; the chat header offers the same entry point the terminal pane's
+	// tab strip does. Mirrors CenterPane: dialog open flag plus the element the
+	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
+	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
+	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	const switchMutation = useSwitchAgentState(session.id);
 
 	if (isLoading) {
 		return (
@@ -138,6 +160,21 @@ export function SessionChatSurface({
 			onOpenReviewerTerminal={onOpenReviewerTerminal}
 			reviewerTarget={reviewerTarget}
 			onSelectChat={onSelectChat}
+			shellTerminals={shellTerminals}
+			shellTarget={shellTarget}
+			onSelectShellTerminal={onSelectShellTerminal}
+			onCloseShellTerminal={onCloseShellTerminal}
+			onRenameShellTerminal={onRenameShellTerminal}
+			switchAgentControl={
+				<TerminalSwitchAgentButton
+					container={switchSelectorContainer}
+					onOpenChange={setSwitchSelectorOpen}
+					open={switchSelectorOpen}
+					session={session}
+					switchError={switchMutation.error}
+				/>
+			}
+			switchDialogContainer={setSwitchSelectorContainer}
 			daemonReady={daemonReady}
 			theme={theme}
 			headerActions={headerActions}

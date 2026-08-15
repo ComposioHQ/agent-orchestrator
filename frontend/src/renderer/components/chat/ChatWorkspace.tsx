@@ -46,6 +46,7 @@ import {
 } from "../../lib/design-tokens";
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { handleTerminalTabListKeyDown } from "../../lib/terminal-tabs";
+import type { ShellTerminal } from "../../hooks/useShellTerminals";
 import { useUiStore } from "../../stores/ui-store";
 import type { TerminalTarget } from "../../types/terminal";
 import type { SessionKind, WorkspaceSession } from "../../types/workspace";
@@ -53,6 +54,7 @@ import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTopbarPortal } from "../SessionTopbarPortal";
+import { ShellTerminalTab } from "../ShellTerminalTab";
 import { TerminalPane } from "../TerminalPane";
 import {
 	ActivityRow,
@@ -122,6 +124,7 @@ function initialTerminalFontSize(): number {
 }
 
 type ReviewerTerminalTarget = Extract<TerminalTarget, { kind: "reviewer" }>;
+type ShellTerminalTarget = Extract<TerminalTarget, { kind: "shell" }>;
 
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
@@ -184,6 +187,18 @@ export interface ChatWorkspaceProps {
 	reviewerTarget?: ReviewerTerminalTarget;
 	/** Switch the active tab back to the chat timeline. */
 	onSelectChat?: () => void;
+	/** This session's standalone shells, rendered as tabs after the reviewer. */
+	shellTerminals?: ShellTerminal[];
+	/** The selected shell pane, if any. Mirrors reviewerTarget. */
+	shellTarget?: ShellTerminalTarget;
+	onSelectShellTerminal?: (handleId: string) => void;
+	onCloseShellTerminal?: (handleId: string) => void;
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
+	/** The in-place agent-switch control. Owned by the surface (which owns query
+	    wiring) so this pure view stays renderable without query providers. */
+	switchAgentControl?: ReactNode;
+	/** Receives the body element the agent-switch dialog anchors to. */
+	switchDialogContainer?: (node: HTMLDivElement | null) => void;
 	/** Daemon readiness for the reviewer terminal pane. */
 	daemonReady?: boolean;
 	/** Resolved color theme for the reviewer terminal pane. */
@@ -261,6 +276,13 @@ export function ChatWorkspace({
 	session,
 	reviewerTarget,
 	onSelectChat,
+	shellTerminals,
+	shellTarget,
+	onSelectShellTerminal,
+	onCloseShellTerminal,
+	onRenameShellTerminal,
+	switchAgentControl,
+	switchDialogContainer,
 	daemonReady,
 	theme,
 	hasOlder,
@@ -315,6 +337,7 @@ export function ChatWorkspace({
 	// offered. Keeping these separate preserves a selected reviewer while an active
 	// session temporarily becomes terminated and later returns.
 	const reviewerActive = Boolean(reviewerTarget && session);
+	const shellActive = Boolean(shellTarget && session);
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
 			snapshot.items
@@ -425,13 +448,45 @@ export function ChatWorkspace({
 		}
 	}, []);
 
+	// Cycle chat → reviewer → shells in strip order, wrapping. With no auxiliary
+	// tabs there is nothing to cycle to and the shortcut is a no-op.
 	const selectAdjacentTab = useCallback(() => {
-		if (reviewerActive) {
+		if (shellActive) {
+			const shells = shellTerminals ?? [];
+			const index = shells.findIndex((shell) => shell.handleId === shellTarget?.handleId);
+			const nextShell = shells[index + 1];
+			if (nextShell) {
+				onSelectShellTerminal?.(nextShell.handleId);
+				return;
+			}
 			onSelectChat?.();
 			return;
 		}
-		if (reviewerTerminal) onOpenReviewerTerminal?.(reviewerTerminal);
-	}, [onOpenReviewerTerminal, onSelectChat, reviewerActive, reviewerTerminal]);
+		if (reviewerActive) {
+			const firstShell = shellTerminals?.[0];
+			if (firstShell) {
+				onSelectShellTerminal?.(firstShell.handleId);
+				return;
+			}
+			onSelectChat?.();
+			return;
+		}
+		if (reviewerTerminal) {
+			onOpenReviewerTerminal?.(reviewerTerminal);
+			return;
+		}
+		const firstShell = shellTerminals?.[0];
+		if (firstShell) onSelectShellTerminal?.(firstShell.handleId);
+	}, [
+		onOpenReviewerTerminal,
+		onSelectChat,
+		onSelectShellTerminal,
+		reviewerActive,
+		reviewerTerminal,
+		shellActive,
+		shellTarget,
+		shellTerminals,
+	]);
 
 	useEffect(() => {
 		const disposePrevious = aoBridge.app.onPreviousTabShortcut(selectAdjacentTab);
@@ -466,10 +521,24 @@ export function ChatWorkspace({
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
 				reviewerActive={reviewerActive}
 				onSelectChat={onSelectChat}
+				shellTerminals={shellTerminals}
+				shellActiveHandleId={shellActive ? shellTarget?.handleId : undefined}
+				onSelectShellTerminal={onSelectShellTerminal}
+				onCloseShellTerminal={onCloseShellTerminal}
+				onRenameShellTerminal={onRenameShellTerminal}
+				switchAgentControl={switchAgentControl}
 				headerActions={headerActions}
 				inline={isFullscreen}
 				topbarBounds={topbarBounds}
 			/>
+			{/* The body host anchors the agent-switch dialog and holds whichever tab is
+			    active: the reviewer pane, a shell pane, or the chat timeline. The
+			    container ref is handed up so the surface (not this pure view) owns the
+			    dialog's state. */}
+			<div
+				className="relative flex min-h-0 flex-1 flex-col"
+				ref={switchDialogContainer}
+			>
 			{reviewerTarget && session ? (
 				<div
 					aria-label="Reviewer terminal"
@@ -495,13 +564,35 @@ export function ChatWorkspace({
 					</div>
 				</div>
 			) : null}
+			{shellTarget && session ? (
+				<div
+					aria-label="Shell terminal"
+					className="relative min-h-0 flex-1"
+					data-testid="chat-shell-panel"
+					onWheelCapture={handleWheelZoom}
+					role="tabpanel"
+				>
+					<div className="h-full min-h-0 pl-2" data-testid="chat-shell-terminal">
+						<TerminalPane
+							daemonReady={Boolean(daemonReady)}
+							fontSize={terminalFontSize}
+							isFullscreen={isFullscreen}
+							onChangeFontSize={updateTerminalFontSize}
+							onToggleFullscreen={toggleFullscreen}
+							session={session}
+							terminalTarget={shellTarget}
+							theme={theme ?? "dark"}
+						/>
+					</div>
+				</div>
+			) : null}
 			<div
-				aria-hidden={reviewerActive}
+				aria-hidden={reviewerActive || shellActive}
 				aria-label="Chat conversation"
 				className="flex min-h-0 flex-1 flex-col"
 				data-testid="chat-conversation-panel"
-				hidden={reviewerActive}
-				inert={reviewerActive ? true : undefined}
+				hidden={reviewerActive || shellActive}
+				inert={reviewerActive || shellActive ? true : undefined}
 				role="tabpanel"
 			>
 				{/* Ordered by what blocks what. A session that needs credentials cannot make
@@ -607,13 +698,14 @@ export function ChatWorkspace({
 					</div>
 				</div>
 			</div>
+			</div>
 
 			{/* The copy has to be honest about the cost: this is not "hide these
 			    messages", it is "the agent forgets them". Nothing in the worktree is
 			    reverted either, and a user who assumed otherwise would be badly
 			    surprised, so it is said out loud. */}
 			<ConfirmDialog
-				open={Boolean(confirming) && !reviewerActive}
+				open={Boolean(confirming) && !reviewerActive && !shellActive}
 				onOpenChange={(open) => {
 					if (!open) setConfirming(undefined);
 				}}
@@ -756,6 +848,12 @@ function ChatHeader({
 	onOpenReviewerTerminal,
 	reviewerActive,
 	onSelectChat,
+	shellTerminals,
+	shellActiveHandleId,
+	onSelectShellTerminal,
+	onCloseShellTerminal,
+	onRenameShellTerminal,
+	switchAgentControl,
 	headerActions,
 	inline,
 	topbarBounds,
@@ -768,12 +866,23 @@ function ChatHeader({
 	reviewerActive?: boolean;
 	/** Return the tab strip to the chat tab. */
 	onSelectChat?: () => void;
+	/** This session's standalone shells, as tabs after the reviewer. */
+	shellTerminals?: ShellTerminal[];
+	/** The selected shell tab, if any. */
+	shellActiveHandleId?: string;
+	onSelectShellTerminal?: (handleId: string) => void;
+	onCloseShellTerminal?: (handleId: string) => void;
+	onRenameShellTerminal?: (handleId: string, title: string) => void;
+	/** The in-place agent-switch control, same entry point as the terminal pane. */
+	switchAgentControl?: ReactNode;
 	headerActions?: ReactNode;
 	/** Fullscreen content cannot see the normal topbar portal outside its subtree. */
 	inline?: boolean;
 	topbarBounds: TopbarBounds;
 }) {
 	const label = sessionTitle || snapshot.title || snapshot.sessionId;
+	// The chat tab is "selected" only when neither terminal pane is the body.
+	const timelineActive = !reviewerActive && !shellActiveHandleId;
 	// Match CenterPane: when the sidebar is off-canvas, the fixed TitlebarNav
 	// cluster sits over the session tab strip. Terminal already reserves that
 	// space; chat must too or the back/forward buttons land on the tab label.
@@ -800,23 +909,23 @@ function ChatHeader({
 							data-terminal-role="primary"
 							className={cn(
 								"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
-								reviewerActive
-									? "text-muted-foreground hover:bg-raised hover:text-foreground"
-									: "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80",
+								timelineActive
+									? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+									: "text-muted-foreground hover:bg-raised hover:text-foreground",
 							)}
 						>
 							<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
 							<button
-								aria-current={reviewerActive ? undefined : true}
+								aria-current={timelineActive ? true : undefined}
 								aria-label={label}
-								aria-selected={!reviewerActive}
+								aria-selected={timelineActive}
 								className={cn(
 									"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
-									reviewerActive ? "text-muted-foreground" : "text-foreground",
+									timelineActive ? "text-foreground" : "text-muted-foreground",
 								)}
-								onClick={reviewerActive ? onSelectChat : undefined}
+								onClick={timelineActive ? undefined : onSelectChat}
 								role="tab"
-								tabIndex={!reviewerActive || !reviewerTerminal ? 0 : -1}
+								tabIndex={timelineActive || (!reviewerTerminal && !shellTerminals?.length) ? 0 : -1}
 								title={label}
 								type="button"
 							>
@@ -851,9 +960,27 @@ function ChatHeader({
 								</button>
 							</span>
 						) : null}
+						{/* The same shared shell tab the terminal pane strip and the
+						    standalone terminals screen use, so all three never drift. */}
+						{(shellTerminals ?? []).map((shell) => (
+							<ShellTerminalTab
+								key={shell.handleId}
+								appearance="connected"
+								isActive={shell.handleId === shellActiveHandleId}
+								onClose={() => onCloseShellTerminal?.(shell.handleId)}
+								onRename={
+									onRenameShellTerminal
+										? (title) => onRenameShellTerminal(shell.handleId, title)
+										: undefined
+								}
+								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
+								shell={shell}
+							/>
+						))}
 					</div>
 				</div>
-				<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
+				<div className="ml-auto flex shrink-0 items-center gap-1 px-3" data-testid="session-action-region">
+					{switchAgentControl}
 					{headerActions}
 				</div>
 			</div>
