@@ -1609,6 +1609,22 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByText("Not injected")).toBeInTheDocument();
 		expect(screen.getByText("External reviews")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+				params: { path: { sessionId: "sess-1" } },
+				body: {
+					message: expect.stringContaining("Location: a.ts:9"),
+				},
+			}),
+		);
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				message: expect.stringContaining("Reviewer: @maya"),
+			},
+		});
+		expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
 	});
 
 	it("marks an AO review using its stored injection decision", async () => {

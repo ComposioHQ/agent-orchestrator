@@ -473,6 +473,7 @@ export function InspectorReviewsView({
 	groups,
 	isLoading,
 	labels,
+	onSendInlineComment,
 	renderAvatar,
 	renderMarkdown,
 }: {
@@ -480,6 +481,7 @@ export function InspectorReviewsView({
 	groups: InspectorReviewGroup[];
 	isLoading: boolean;
 	labels: InspectorReviewLabels;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
@@ -533,6 +535,7 @@ export function InspectorReviewsView({
 								<GithubInlineComments
 									externalLink={externalLink}
 									labels={labels}
+									onSendInlineComment={onSendInlineComment}
 									reviewers={group.github.unresolvedBy}
 								/>
 								<GithubReviewHistory
@@ -887,18 +890,22 @@ function ExternalReviewCard({
 function GithubInlineComments({
 	externalLink: ExternalLink,
 	labels,
+	onSendInlineComment,
 	reviewers,
 }: {
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	reviewers: InspectorUnresolvedReviewer[];
 }) {
+	const [sentCommentIds, setSentCommentIds] = useState<Set<string>>(() => new Set());
+	const [sendingCommentIds, setSendingCommentIds] = useState<Set<string>>(() => new Set());
 	const comments = reviewers.flatMap((reviewer) =>
 		reviewer.links
 			.filter((link) => link.body?.trim() || link.file || link.url)
 			.map((link, index) => ({
 				...link,
-				id: `${reviewer.reviewerId}:${link.url ?? link.file ?? index}`,
+				id: `${reviewer.reviewerId}:${link.url ?? `${link.file ?? ""}:${link.line ?? ""}:${index}`}`,
 				reviewerId: reviewer.reviewerId,
 				url: link.url || reviewer.reviewUrl,
 			})),
@@ -917,6 +924,24 @@ function GithubInlineComments({
 						externalLink={ExternalLink}
 						key={comment.id}
 						labels={labels}
+						onSend={onSendInlineComment ? async () => {
+							setSendingCommentIds((current) => new Set(current).add(comment.id));
+							try {
+								await onSendInlineComment(comment);
+								setSentCommentIds((current) => new Set(current).add(comment.id));
+							} catch {
+								// Keep the UI in the unsent state; this surface intentionally only
+								// renders the two worker-agent states requested for inline comments.
+							} finally {
+								setSendingCommentIds((current) => {
+									const next = new Set(current);
+									next.delete(comment.id);
+									return next;
+								});
+							}
+						} : undefined}
+						sent={Boolean(comment.autoInjectReview) || sentCommentIds.has(comment.id)}
+						sending={sendingCommentIds.has(comment.id)}
 					/>
 				))}
 			</div>
@@ -928,10 +953,16 @@ function InlineCommentRow({
 	comment,
 	externalLink: ExternalLink,
 	labels,
+	onSend,
+	sending = false,
+	sent,
 }: {
 	comment: InspectorInlineComment & { reviewerId?: string };
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
+	onSend?: () => void;
+	sending?: boolean;
+	sent: boolean;
 }) {
 	const body = comment.body?.trim();
 	return (
@@ -939,11 +970,13 @@ function InlineCommentRow({
 			{comment.reviewerId ? <span className="font-medium text-muted-foreground">{comment.reviewerId}</span> : null}
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-				{comment.autoInjectReview ? (
+				{sent ? (
 					<span className="font-medium text-success">{labels.sentToWorkerAgent}</span>
 				) : (
 					<button
-						className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [&_svg]:size-icon-xs"
+						className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60 [&_svg]:size-icon-xs"
+						disabled={sending || !onSend}
+						onClick={onSend}
 						type="button"
 					>
 						<BotIcon className="shrink-0 text-muted-foreground" />

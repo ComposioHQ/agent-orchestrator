@@ -14,6 +14,7 @@ import {
 	SessionInspectorSummaryView,
 	inspectorEmptyClass,
 	type InspectorPullRequest,
+	type InspectorInlineComment,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
 	type InspectorTimelineEvent,
@@ -1089,6 +1090,14 @@ function MergedReviewsSection({
 	}
 	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
 	const labels = reviewLabels(t);
+	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
+		if (usePreviewData) return;
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: session.id } },
+			body: { message: formatInlineReviewCommentMessage(comment) },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
+	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
 		const entries = github?.review?.reviews ?? [];
@@ -1201,6 +1210,7 @@ function MergedReviewsSection({
 			groups={groups}
 			isLoading={isLoading}
 			labels={labels}
+			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
 				<AgentAvatar className="size-icon-sm shrink-0" decorative provider={harness} />
 			)}
@@ -1251,6 +1261,32 @@ function renderReviewMarkdown(body: string) {
 			{body}
 		</ReactMarkdown>
 	);
+}
+
+function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { reviewerId?: string }): string {
+	const reviewer = sanitizeWorkerMessagePart(comment.reviewerId?.trim() || "unknown reviewer");
+	const file = sanitizeWorkerMessagePart(comment.file?.trim() || "");
+	const location = file ? `${file}${comment.line ? `:${comment.line}` : ""}` : "general PR comment";
+	const body = sanitizeWorkerMessagePart(comment.body?.trim() || "No comment body provided.");
+	const url = sanitizeWorkerMessagePart(comment.url?.trim() || "");
+	const lines = [
+		`A reviewer left an unresolved inline comment on your PR. Address it and push fixes.`,
+		"",
+		`Reviewer: @${reviewer}`,
+		`Location: ${location}`,
+		"",
+		"Comment:",
+		body,
+	];
+	if (url) {
+		lines.push("", `Comment URL: ${url}`);
+	}
+	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
+	return lines.join("\n");
+}
+
+function sanitizeWorkerMessagePart(value: string): string {
+	return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
 }
 
 function projectConfig(project: components["schemas"]["ProjectOrDegraded"] | undefined): ProjectConfig | undefined {

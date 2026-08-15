@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
 	InspectorActivityTimelineView,
@@ -282,7 +282,8 @@ describe("portable inspector presentations", () => {
 		expect(screen.queryByText(newerBody)).not.toBeInTheDocument();
 	});
 
-	it("shows unresolved inline review comment bodies together above external reviews", () => {
+	it("shows unresolved inline review comment bodies together above external reviews", async () => {
+		const onSendInlineComment = vi.fn().mockResolvedValue(undefined);
 		render(
 			<InspectorReviewsView
 				externalLink={ExternalLink}
@@ -329,6 +330,7 @@ describe("portable inspector presentations", () => {
 				]}
 				isLoading={false}
 				labels={reviewLabels}
+				onSendInlineComment={onSendInlineComment}
 				renderAvatar={() => null}
 				renderMarkdown={(body) => <p>{body}</p>}
 			/>,
@@ -339,8 +341,18 @@ describe("portable inspector presentations", () => {
 		expect(screen.getByText("2 unresolved")).toBeInTheDocument();
 		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+		expect(onSendInlineComment).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: "This branch leaks the resize listener on unmount.",
+				file: "src/panel.tsx",
+				line: 42,
+				reviewerId: "maya",
+				url: "https://example.com/comment",
+			}),
+		);
 		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-success");
+		await waitFor(() => expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2));
 		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(2);
 	});
 
