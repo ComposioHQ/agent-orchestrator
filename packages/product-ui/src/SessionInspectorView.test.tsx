@@ -297,10 +297,10 @@ describe("portable inspector presentations", () => {
 									verdict: { label: "Commented", tone: "neutral" },
 								},
 							],
-							unresolved: 3,
+							unresolved: 2,
 							unresolvedBy: [
 								{
-									count: 3,
+									count: 2,
 									links: [
 										{
 											body: "This branch leaks the resize listener on unmount.",
@@ -313,19 +313,13 @@ describe("portable inspector presentations", () => {
 											autoInjectReview: true,
 											url: "https://example.com/comment-sent",
 										},
-										{
-											body: "The worker already handled this comment.",
-											autoInjectReview: true,
-											workedByWorkerAgent: true,
-											url: "https://example.com/comment-worked",
-										},
 									],
 									reviewerId: "maya",
 									reviewUrl: "https://example.com/review",
 								},
 							],
 						},
-						meta: "#12 · 3 unresolved",
+						meta: "#12 · 2 unresolved",
 						number: 12,
 						title: "Portable inspector",
 					},
@@ -339,13 +333,13 @@ describe("portable inspector presentations", () => {
 
 		expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
 		expect(screen.getByText("Open comments")).toBeInTheDocument();
-		expect(screen.getByText("3 unresolved")).toBeInTheDocument();
+		expect(screen.getByText("2 unresolved")).toBeInTheDocument();
 		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
 		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-success");
-		expect(screen.getByText("Worked by agent")).toHaveClass("text-working");
-		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(3);
+		expect(screen.queryByText("Worked by agent")).not.toBeInTheDocument();
+		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(2);
 	});
 
 });
@@ -366,7 +360,6 @@ const reviewLabels: InspectorReviewLabels = {
 	resolvedComments: (count) => `Resolved comments · ${count}`,
 	sendToWorkerAgent: "Send to worker agent",
 	sentToWorkerAgent: "Sent to worker agent",
-	workedByWorkerAgent: "Worked by agent",
 	showLatestReviewOnly: "Show latest only",
 	showLess: "Show less",
 	showMore: "Show more",
