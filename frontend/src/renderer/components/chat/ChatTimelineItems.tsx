@@ -233,20 +233,20 @@ export function HumanMessage({
 				</div>
 			)}
 			{editing ? null : (
-				<div className="flex h-[18px] items-center gap-0.5">
-					<div className="flex items-center opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
-						<CopyButton text={message.text} label="Copy user message" compact className="-mr-1" />
+				<div className="mt-2 flex h-[18px] items-center gap-1">
+					<div className="flex items-center gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/message:opacity-100">
 						{onEdit && onEditStart && message.turnId ? (
 							<button
 								type="button"
 								onClick={onEditStart}
 								aria-label="Edit user message"
-								title="Edit user message"
 								className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10.5px] text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 							>
 								<Pencil aria-hidden="true" className="size-3" />
+								Edit
 							</button>
 						) : null}
+						<CopyButton text={message.text} label="Copy user message" />
 					</div>
 					{branchPoint && onActivateBranch ? (
 						<ConversationBranchNavigator
