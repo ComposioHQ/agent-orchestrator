@@ -679,6 +679,21 @@ func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionI
 	return nil
 }
 
+// ListVisibleRunningTurnProviderIDs returns the same active-branch running turns,
+// in the same order, that a conversation snapshot exposes to clients. Interrupt
+// uses the full set because a root and nested provider turn may overlap; settling
+// only one would leave the UI's Working state behind.
+func (s *Store) ListVisibleRunningTurnProviderIDs(
+	ctx context.Context,
+	conversationID string,
+) ([]string, error) {
+	providerTurnIDs, err := s.qr.ListVisibleRunningTurnsForConversation(ctx, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("list visible running turns for %s: %w", conversationID, err)
+	}
+	return providerTurnIDs, nil
+}
+
 // SetConversationSettings records the provider choices for the next turn.
 //
 // An empty field is stored as NULL rather than as an empty string, so "the user

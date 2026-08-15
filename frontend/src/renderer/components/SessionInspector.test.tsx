@@ -765,7 +765,7 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
-	it("does not timestamp the live Activity state as a historical event", () => {
+	it("timestamps the live Activity state so it participates in chronological ordering", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
@@ -782,7 +782,7 @@ describe("SessionInspector Activity section", () => {
 		const activityRow = activitySection()
 			.getByText("Working")
 			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-		expect(within(activityRow).queryByText("2h ago")).not.toBeInTheDocument();
+		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
 	it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
@@ -934,19 +934,42 @@ describe("SessionInspector Activity section", () => {
 		expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
 	});
 
-	it("renders the current state before reverse-chronological historical milestones", () => {
+	it("orders Activity timeline rows by timestamp with the latest event on top", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+		const summaries = [
+			prSummary(42, "draft", {
+				createdAt: "2026-06-15T08:00:00Z",
+				stateChangedAt: "2026-06-15T08:00:00Z",
+			}),
+			prSummary(41, "open", {
+				createdAt: "2026-06-15T11:30:00Z",
+				stateChangedAt: "2026-06-15T11:30:00Z",
+			}),
+			prSummary(40, "merged", {
+				createdAt: "2026-06-15T09:15:00Z",
+				stateChangedAt: "2026-06-15T10:45:00Z",
+			}),
+		];
 
 		renderWithQuery(
 			<SessionInspector
-				session={session([pr(42, "draft"), pr(41, "open"), pr(40, "merged")], {
-					status: "merged",
-					createdAt: "2026-06-15T09:00:00Z",
-					updatedAt: "2026-06-15T11:55:00Z",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
-				})}
+				session={session(
+					[
+						pr(42, "draft", { url: `https://api.github.com/repos/acme/repo/pulls/42` }),
+						pr(41, "open", { url: `https://api.github.com/repos/acme/repo/pulls/41` }),
+						pr(40, "merged", { url: `https://api.github.com/repos/acme/repo/pulls/40` }),
+					],
+					{
+						status: "merged",
+						createdAt: "2026-06-15T09:00:00Z",
+						updatedAt: "2026-06-15T11:55:00Z",
+						activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+					},
+				)}
 			/>,
+			undefined,
+			(client) => client.setQueryData(sessionScmSummaryQueryKey("sess-1"), summaries),
 		);
 
 		const section = screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement;
@@ -954,13 +977,13 @@ describe("SessionInspector Activity section", () => {
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
-			"Idle",
-			"Done",
-			"Merged PR #40",
-			"Opened PR #40",
-			"Opened PR #41",
-			"Draft PR #42",
+			"Opened PR #4130m ago",
+			"Merged PR #401h ago",
+			"Done1h ago",
+			"Idle2h ago",
+			"Opened PR #402h ago",
 			"Created workspace3h ago",
+			"Draft PR #424h ago",
 		]);
 
 		const eventRows = section.querySelectorAll("[data-testid='inspector-timeline-event']");
@@ -1061,8 +1084,50 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+	});
+
+	// The label is a display name, not the wire id: the trigger used to print the
+	// raw harness id, which read as a second, selectable "claude-code" entry
+	// alongside the catalog's properly-cased "Claude Code".
+	it("labels the default reviewer with its display name, not the raw id", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: {},
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "claude-code")} />);
+		await openReviewsSection();
+
+		const trigger = await screen.findByRole("button", { name: /Select reviewer agent/ });
+		expect(trigger).toHaveTextContent("Claude Code");
+		expect(trigger).not.toHaveTextContent("claude-code");
 	});
 
 	it("configures session auto-review and disables manual controls", async () => {
@@ -1205,7 +1270,7 @@ describe("SessionInspector summary reviews", () => {
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
-		await screen.findByText("Review in progress · codex");
+		await screen.findByText("Review in progress · Codex");
 
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(screen.queryByText("Review summary")).not.toBeInTheDocument();
@@ -1221,7 +1286,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsSection();
 
-		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 4")).toBeInTheDocument();
 		expect(
@@ -1365,7 +1430,7 @@ describe("SessionInspector summary reviews", () => {
 			// A run in flight gets its own live strip naming the harness, not just a
 			// word on the button.
 			if (status === "running") {
-				expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
+				expect(screen.getByText("Review in progress · Codex")).toBeInTheDocument();
 			} else {
 				expect(screen.queryByText(/is reviewing this change/)).not.toBeInTheDocument();
 			}
@@ -1422,10 +1487,12 @@ describe("SessionInspector summary reviews", () => {
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
 		expect(screen.getAllByText(/2 unresolved/)).toHaveLength(2);
-		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:3");
-		expect(screen.getByTestId("github-inline-comments")).not.toHaveTextContent("a.ts:9");
-		await userEvent.click(screen.getByRole("button", { name: "Load more · 1 earlier" }));
-		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:9");
+		const comments = screen.getByTestId("github-inline-comments");
+		expect(comments).toHaveTextContent("Open comments");
+		expect(comments).toHaveTextContent("maya");
+		expect(comments).toHaveTextContent("Sent to worker agent");
+		expect(comments).not.toHaveTextContent("a.ts:3");
+		expect(comments).not.toHaveTextContent("a.ts:9");
 		// AO's runs and the PR's own reviews share one section keyed by PR, so the
 		// unresolved count rides the same row as the AO verdict.
 		expect(screen.getByText("Review summary")).toBeInTheDocument();
@@ -1483,12 +1550,15 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
+		const reviewCard = await screen.findByRole("button", { name: /maya.*Approved/ });
+		expect(reviewCard).toHaveAttribute("aria-expanded", "false");
+		await userEvent.click(reviewCard);
 		const summary = await screen.findByTestId("github-review-summary");
 		const externalReview = summary.closest("article") as HTMLElement;
 		expect(within(summary).getByText("ready").tagName).toBe("STRONG");
 		expect(within(summary).getByText("Ship it").tagName).toBe("LI");
 		expect(summary).not.toHaveTextContent("**ready**");
-		expect(within(externalReview).getByText("3d ago")).toBeInTheDocument();
+		expect(within(externalReview).getByText("Reviewed 3d ago")).toBeInTheDocument();
 		expect(within(externalReview).getByRole("link", { name: "View on PR" })).toHaveAttribute(
 			"href",
 			"https://example.com/pr/3#pullrequestreview-456",
@@ -1608,7 +1678,7 @@ describe("SessionInspector summary reviews", () => {
 
 		const picker = await screen.findByRole("button", { name: /Select reviewer agent/ });
 		await userEvent.click(picker);
-		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
+		expect(screen.getAllByRole("menuitem", { name: /codex/i })).toHaveLength(1);
 		expect(screen.getByRole("menuitem", { name: /opencode/ })).toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: /opencode/ }));
 
@@ -1620,8 +1690,8 @@ describe("SessionInspector summary reviews", () => {
 		);
 
 		await userEvent.click(picker);
-		expect(screen.getAllByRole("menuitem", { name: /codex/ })).toHaveLength(1);
-		await userEvent.click(screen.getByRole("menuitem", { name: /codex/ }));
+		expect(screen.getAllByRole("menuitem", { name: /codex/i })).toHaveLength(1);
+		await userEvent.click(screen.getByRole("menuitem", { name: /codex/i }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenLastCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
@@ -1653,8 +1723,8 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("Review in progress · codex")).toBeInTheDocument();
-		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
+		expect(await screen.findByText("Review in progress · Codex")).toBeInTheDocument();
+		expect(screen.queryByText("Review in progress · Claude Code")).not.toBeInTheDocument();
 	});
 
 	it("keeps older harness summaries behind explicit pagination when selecting the next agent", async () => {
@@ -1722,7 +1792,7 @@ describe("SessionInspector summary reviews", () => {
 
 		// AO runs one reviewer per worker, so a second harness cannot start
 		// alongside it. Say so rather than silently ignoring the choice.
-		expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
+		expect(screen.getByText("Review in progress · Codex")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toBeDisabled();
 	});
 
@@ -1824,7 +1894,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();

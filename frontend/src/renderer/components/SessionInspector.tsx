@@ -56,6 +56,7 @@ import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
+import { agentLabel } from "../lib/agent-options";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -662,77 +663,99 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 	);
 }
 
-function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
-	const history: InspectorTimelineEvent[] = [];
+type SortableTimelineEvent = InspectorTimelineEvent & { sortTime: number };
 
-	history.push({
-		tone: "neutral",
-		content: <>{appI18n.t("inspector.timeline.createdWorkspace")}</>,
-		timestamp: formatTimeCompact(session.createdAt ?? session.updatedAt),
-	});
+function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
+	const events: SortableTimelineEvent[] = [];
+	const pushEvent = (event: InspectorTimelineEvent, timestamp?: string | null) => {
+		events.push({ ...event, sortTime: timelineSortTime(timestamp) });
+	};
+	const createdAt = session.createdAt ?? session.updatedAt;
+
+	pushEvent(
+		{
+			tone: "neutral",
+			content: <>{appI18n.t("inspector.timeline.createdWorkspace")}</>,
+			timestamp: formatTimeCompact(createdAt),
+		},
+		createdAt,
+	);
 
 	for (const pr of prs.filter((pr) => pr.state === "draft")) {
-		history.push({
-			tone: "neutral",
-			content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.draft")} />,
-			timestamp: prStateTime(pr),
-		});
+		pushEvent(
+			{
+				tone: "neutral",
+				content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.draft")} />,
+				timestamp: prStateTime(pr),
+			},
+			pr.stateChangedAt,
+		);
 	}
 
 	for (const pr of prs.filter((pr) => pr.state !== "draft")) {
-		history.push({
-			tone: "neutral",
-			content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.opened")} />,
-			timestamp: prCreatedTime(pr),
-		});
+		pushEvent(
+			{
+				tone: "neutral",
+				content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.opened")} />,
+				timestamp: prCreatedTime(pr),
+			},
+			pr.createdAt,
+		);
 	}
 
 	for (const pr of prs.filter((pr) => pr.state === "merged")) {
-		history.push({
-			tone: "good",
-			content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.merged")} />,
-			timestamp: prStateTime(pr),
-		});
+		pushEvent(
+			{
+				tone: "good",
+				content: <PRTimelineLink pr={pr} verb={appI18n.t("inspector.timeline.merged")} />,
+				timestamp: prStateTime(pr),
+			},
+			pr.stateChangedAt,
+		);
 	}
 
 	if (session.status === "merged") {
-		history.push({
-			tone: "good",
-			content: <>{appI18n.t("inspector.timeline.done")}</>,
-			timestamp: latestMergedTime(prs),
-		});
+		const mergedAt = latestMergedTimestamp(prs);
+		pushEvent(
+			{
+				tone: "good",
+				content: <>{appI18n.t("inspector.timeline.done")}</>,
+				timestamp: mergedAt ? formatTimeCompact(mergedAt) : null,
+			},
+			mergedAt,
+		);
 	}
 
-	// Current activity is a live reading, not a historical event. Keep it above
-	// the optional reverse-chronological history and do not imply that its last
-	// hook time is when the state transition occurred.
 	const activityView = getAgentActivityView(session.activity);
-	const current = {
-		tone: "now",
-		content: (
-			<span className="inline-flex flex-wrap items-center gap-1.5">
-				<span className="inline-flex align-middle">
-					<InspectorActivityPill activity={session.activity} />
-				</span>
-				{session.status === "no_signal" ? (
+	const activityAt = session.activity?.lastActivityAt ?? session.updatedAt ?? session.createdAt;
+	pushEvent(
+		{
+			tone: "now",
+			content: (
+				<span className="inline-flex flex-wrap items-center gap-1.5">
 					<span className="inline-flex align-middle">
-						<TimelinePill {...getSessionTimelinePillView("no_signal")} />
-				</span>
-			) : null}
-				{scmTimelineStates(session).map((state) => (
-					<span key={state} className="inline-flex align-middle">
-						<InspectorScmPill state={state} />
+						<InspectorActivityPill activity={session.activity} />
 					</span>
-				))}
-			</span>
-		),
-		timestamp: null,
-		markerTone: activityView.tone,
-		markerBreathe: activityView.breathe,
-	} satisfies InspectorTimelineEvent;
-	const events = [current, ...history.reverse()];
+					{session.status === "no_signal" ? (
+						<span className="inline-flex align-middle">
+							<TimelinePill {...getSessionTimelinePillView("no_signal")} />
+						</span>
+					) : null}
+					{scmTimelineStates(session).map((state) => (
+						<span key={state} className="inline-flex align-middle">
+							<InspectorScmPill state={state} />
+						</span>
+					))}
+				</span>
+			),
+			timestamp: activityAt ? formatTimeCompact(activityAt) : null,
+			markerTone: activityView.tone,
+			markerBreathe: activityView.breathe,
+		} satisfies InspectorTimelineEvent,
+		activityAt,
+	);
 
-	return <InspectorActivityTimelineView events={events} />;
+	return <InspectorActivityTimelineView events={[...events].sort((a, b) => b.sortTime - a.sortTime)} />;
 }
 
 function PRTimelineLink({ pr, verb }: { pr: SessionPRSummary; verb: string }) {
@@ -759,7 +782,7 @@ function prCreatedTime(pr: SessionPRSummary): string | null {
 	return pr.createdAt ? formatTimeCompact(pr.createdAt) : null;
 }
 
-function latestMergedTime(prs: SessionPRSummary[]): string | null {
+function latestMergedTimestamp(prs: SessionPRSummary[]): string | null {
 	let latest: { timestamp: string; milliseconds: number } | undefined;
 	for (const pr of prs) {
 		if (pr.state !== "merged" || !pr.stateChangedAt) continue;
@@ -769,7 +792,13 @@ function latestMergedTime(prs: SessionPRSummary[]): string | null {
 			latest = { timestamp: pr.stateChangedAt, milliseconds };
 		}
 	}
-	return latest ? formatTimeCompact(latest.timestamp) : null;
+	return latest?.timestamp ?? null;
+}
+
+function timelineSortTime(timestamp: string | null | undefined): number {
+	if (!timestamp) return Number.NEGATIVE_INFINITY;
+	const milliseconds = Date.parse(timestamp);
+	return Number.isFinite(milliseconds) ? milliseconds : Number.NEGATIVE_INFINITY;
 }
 
 type ScmTimelineState = "ci_failed" | "changes_requested" | "conflict";
@@ -1076,6 +1105,49 @@ function MergedReviewsSection({
 				verdict: githubVerdict(run.verdict, t),
 			};
 		});
+		const unresolvedByReviewer = new Map(
+			(github?.review?.unresolvedBy ?? []).map((reviewer) => [reviewer.reviewerId, reviewer]),
+		);
+		const externalEntries = entries.map((entry) => {
+			const reviewer = unresolvedByReviewer.get(entry.reviewerId);
+			unresolvedByReviewer.delete(entry.reviewerId);
+			return {
+				body: entry.body,
+				id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
+				inlineComments: (reviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					url: link.url || reviewer?.reviewUrl,
+				})),
+				isBot: entry.isBot,
+				reviewerId: entry.reviewerId,
+				reviewUrl: entry.reviewUrl,
+				submittedAt: entry.submittedAt,
+				submittedAtLabel: formatTimeCompact(entry.submittedAt),
+				verdict: githubVerdict(entry.verdict, t),
+			};
+		});
+		for (const reviewer of unresolvedByReviewer.values()) {
+			externalEntries.push({
+				body: undefined,
+				id: `unresolved:${reviewer.reviewerId}:${number}`,
+				inlineComments: reviewer.links.map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					url: link.url || reviewer.reviewUrl,
+				})),
+				isBot: reviewer.isBot,
+				reviewerId: reviewer.reviewerId,
+				reviewUrl: reviewer.reviewUrl,
+				submittedAt: "",
+				submittedAtLabel: "",
+				verdict: githubVerdict("none", t),
+			});
+		}
 		return {
 			ao: ao
 				? {
@@ -1090,16 +1162,7 @@ function MergedReviewsSection({
 				: undefined,
 			github: github
 				? {
-						entries: entries.map((entry) => ({
-							body: entry.body,
-							id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
-							isBot: entry.isBot,
-							reviewerId: entry.reviewerId,
-							reviewUrl: entry.reviewUrl,
-							submittedAt: entry.submittedAt,
-							submittedAtLabel: formatTimeCompact(entry.submittedAt),
-							verdict: githubVerdict(entry.verdict, t),
-						})),
+						entries: externalEntries,
 						notInjected:
 							entries.some((review) => review.autoInjectReview === false) ||
 							(github.review?.unresolvedBy ?? []).some((reviewer) =>
@@ -1110,6 +1173,7 @@ function MergedReviewsSection({
 							count: reviewer.count,
 							isBot: reviewer.isBot,
 							links: reviewer.links.map((link) => ({
+								autoInjectReview: link.autoInjectReview,
 								body: link.body,
 								file: link.file,
 								line: link.line,
@@ -1156,12 +1220,18 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		noPastReviewSummaries: t("inspector.noPastReviewSummaries"),
 		notInjected: t("inspector.review.notInjected"),
 		openComments: t("inspector.openComments"),
+		openInlineComments: (count) => t("inspector.openInlineComments", { count }),
 		reviews: t("inspector.reviews"),
+		reviewedAt: (time) => t("inspector.reviewedAt", { time }),
+		resolvedComments: (count) => t("inspector.resolvedComments", { count }),
+		sendToWorkerAgent: t("inspector.sendToWorkerAgent"),
+		sentToWorkerAgent: t("inspector.sentToWorkerAgent"),
 		showLatestReviewOnly: t("inspector.showLatestReviewOnly"),
 		showLess: t("inspector.showLess"),
 		showMore: t("inspector.showMore"),
 		commentNumber: (number) => t("inspector.commentNumber", { number }),
 		unresolvedCount: (count) => t("inspector.unresolvedCount", { count }),
+		viewInFile: t("inspector.viewInFile"),
 		viewOnPR: t("inspector.viewOnPR"),
 	};
 }
@@ -1347,7 +1417,7 @@ function ReviewPanel({
 							authorized={agentCatalog?.authorized}
 							contentAlign="end"
 							defaultHarness={resolvedDefaultHarness}
-							defaultOptionLabel={resolvedDefaultHarness}
+							defaultOptionLabel={agentLabel(resolvedDefaultHarness)}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
@@ -1405,7 +1475,9 @@ function ReviewPanel({
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${activeReviewerHarness}`}
+							{isCancelling
+								? t("inspector.review.cancelling")
+								: `Review in progress · ${agentLabel(activeReviewerHarness)}`}
 						</span>
 					</div>
 				) : null}
