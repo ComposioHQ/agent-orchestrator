@@ -959,7 +959,7 @@ describe("SessionView", () => {
 		}
 	});
 
-	it("locks responsive inspector labels to the opening target throughout the transition", () => {
+	it("keeps compact inspector labels stable throughout the default opening transition", () => {
 		vi.useFakeTimers();
 		try {
 			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
@@ -969,11 +969,11 @@ describe("SessionView", () => {
 
 			const split = screen.getByTestId("panel-group");
 			expect(split).toHaveAttribute("data-terminal-live-resize", "true");
-			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
+			expect(split).toHaveAttribute("data-inspector-label-mode", "compact");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 
 			act(() => vi.advanceTimersByTime(399));
-			expect(split).toHaveAttribute("data-inspector-label-mode", "expanded");
+			expect(split).toHaveAttribute("data-inspector-label-mode", "compact");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
 
 			act(() => vi.advanceTimersByTime(1));
@@ -1000,6 +1000,29 @@ describe("SessionView", () => {
 			const split = screen.getByTestId("panel-group");
 			expect(split).toHaveAttribute("data-inspector-label-mode", "compact");
 			expect(split).toHaveAttribute("data-topbar-secondary-label-mode", "compact");
+		} finally {
+			clientWidth.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
+	it("locks responsive inspector labels compact before header actions crowd the tabs", () => {
+		vi.useFakeTimers();
+		const clientWidth = vi
+			.spyOn(HTMLElement.prototype, "clientWidth", "get")
+			.mockImplementation(function (this: HTMLElement) {
+				return this.dataset.testid === "panel-group" ? 900 : 900;
+			});
+		try {
+			act(() => useUiStore.getState().setInspectorOpen("sess-1", false));
+			render(<SessionView sessionId="sess-1" />);
+
+			act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+
+			expect(screen.getByTestId("panel-group")).toHaveAttribute(
+				"data-inspector-label-mode",
+				"compact",
+			);
 		} finally {
 			clientWidth.mockRestore();
 			vi.useRealTimers();
