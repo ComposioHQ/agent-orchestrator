@@ -895,7 +895,11 @@ function InlineCommentRow({
 				{comment.autoInjectReview ? (
 					<span className="font-medium text-success">{labels.sentToWorkerAgent}</span>
 				) : (
-					<button className="font-medium text-foreground transition-colors hover:text-accent" type="button">
+					<button
+						className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [&_svg]:size-icon-xs"
+						type="button"
+					>
+						<BotIcon className="shrink-0 text-muted-foreground" />
 						{labels.sendToWorkerAgent}
 					</button>
 				)}
