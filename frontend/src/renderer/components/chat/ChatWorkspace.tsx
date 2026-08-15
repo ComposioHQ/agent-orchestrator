@@ -569,21 +569,24 @@ export function ChatWorkspace({
 							onInterrupt={turn ? onInterrupt : undefined}
 							commandError={commandError}
 							settings={
-								onChooseSettings || onChooseConfigOption ? (
-									<TurnSettingsBar
-										models={models ?? []}
-										settings={snapshot.settings}
-										reroute={snapshot.modelReroute}
-										onChange={onChooseSettings}
-										configOptions={configOptions ?? []}
-										onChangeConfigOption={onChooseConfigOption}
-										configPending={configOptionPending}
-										error={configOptionError}
-										disabled={
-											snapshot.controller.state === "stopped" || configOptionPending
-										}
-									/>
-								) : null
+								onChooseSettings || onChooseConfigOption
+									? ({ delivery }) => (
+											<TurnSettingsBar
+												models={models ?? []}
+												settings={snapshot.settings}
+												reroute={snapshot.modelReroute}
+												onChange={onChooseSettings}
+												configOptions={configOptions ?? []}
+												onChangeConfigOption={onChooseConfigOption}
+												configPending={configOptionPending}
+												error={configOptionError}
+												disabled={
+													snapshot.controller.state === "stopped" || configOptionPending
+												}
+												beforeApprovals={delivery}
+											/>
+										)
+									: null
 							}
 							busy={busy}
 							willQueue={Boolean(turn)}
@@ -1412,9 +1415,9 @@ function Timeline({
 					aria-label="Jump to latest"
 					title="Jump to latest"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 size-10 -translate-x-1/2 rounded-full border-border-strong bg-raised p-0 text-foreground shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
+					className="absolute bottom-3 left-1/2 size-12 -translate-x-1/2 rounded-full border-border-strong bg-raised p-0 text-foreground shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
-					<ArrowDown aria-hidden="true" className="size-4" />
+					<ArrowDown aria-hidden="true" className="size-5" />
 				</Button>
 			) : null}
 		</div>

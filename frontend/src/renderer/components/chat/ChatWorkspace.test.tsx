@@ -492,7 +492,7 @@ describe("ChatWorkspace timeline", () => {
 		const jump = await screen.findByRole("button", { name: /jump to latest/i });
 		expect(jump).toHaveAttribute("title", "Jump to latest");
 		expect(jump).not.toHaveTextContent("Jump to latest");
-		expect(jump).toHaveClass("rounded-full", "size-10", "bg-raised", "dark:bg-raised");
+		expect(jump).toHaveClass("rounded-full", "size-12", "bg-raised", "dark:bg-raised");
 		expect(jump).not.toHaveClass("dark:bg-transparent");
 		expect(jump).not.toHaveClass("dark:hover:bg-input/30");
 

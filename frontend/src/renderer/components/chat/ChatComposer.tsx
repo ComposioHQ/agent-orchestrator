@@ -100,8 +100,11 @@ export function ChatComposer({
 	compactBlocked,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
-	/** The next-turn controls, rendered inline. May wrap queue/steer onto the model row. */
-	settings?: ReactNode | ((addon: ReactNode) => ReactNode);
+	/**
+	 * The next-turn controls, rendered inline. When a function, it receives the
+	 * queue/steer addon so those controls can sit immediately before Approvals.
+	 */
+	settings?: ReactNode | ((slots: { delivery: ReactNode | null }) => ReactNode);
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -496,7 +499,9 @@ export function ChatComposer({
 			<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
 		) : null;
 	const settingsNode =
-		typeof settings === "function" ? settings(deliveryChoice) : (
+		typeof settings === "function" ? (
+			settings({ delivery: deliveryChoice })
+		) : (
 			<>
 				{settings}
 				{deliveryChoice}
