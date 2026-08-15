@@ -403,6 +403,59 @@ describe("portable inspector presentations", () => {
 		expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
 	});
 
+	it("tracks URL-less inline comments independently when they share a review URL", async () => {
+		const onSendInlineComment = vi.fn().mockResolvedValue(undefined);
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [],
+							unresolved: 2,
+							unresolvedBy: [
+								{
+									count: 2,
+									links: [
+										{ body: "Fix the first comment.", file: "src/panel.tsx", line: 10 },
+										{ body: "Fix the second comment.", file: "src/panel.tsx", line: 20 },
+									],
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+								},
+							],
+						},
+						meta: "#12 · 2 unresolved",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				onSendInlineComment={onSendInlineComment}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		const sendButtons = screen.getAllByRole("button", { name: "Send to worker agent" });
+		expect(sendButtons).toHaveLength(2);
+		fireEvent.click(sendButtons[0]!);
+
+		await waitFor(() => expect(screen.getByText("Sent to worker agent")).toBeInTheDocument());
+		expect(screen.getAllByRole("button", { name: "Send to worker agent" })).toHaveLength(1);
+		expect(onSendInlineComment).toHaveBeenCalledTimes(1);
+		expect(onSendInlineComment).toHaveBeenCalledWith(
+			expect.objectContaining({
+				body: "Fix the first comment.",
+				file: "src/panel.tsx",
+				line: 10,
+				reviewerId: "maya",
+				url: "https://example.com/review",
+			}),
+		);
+	});
+
 });
 
 const reviewLabels: InspectorReviewLabels = {
