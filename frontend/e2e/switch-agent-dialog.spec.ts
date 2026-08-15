@@ -3,9 +3,8 @@ import { installFakeAgent } from "./support/fake-bridge";
 
 const projectId = "switch-agent-dialog";
 
-test.use({ reducedMotion: "reduce" });
-
 async function openSwitchAgentDialog(page: Page) {
+	await page.emulateMedia({ reducedMotion: "reduce" });
 	await installFakeAgent(page, {
 		projectId,
 		projectName: projectId,
@@ -53,7 +52,7 @@ async function openSwitchAgentDialog(page: Page) {
 	};
 }
 
-test("renderer: switch-agent selector remains compact inside a wide terminal", async ({ page }) => {
+test("renderer: switch-agent selector remains compact inside a wide terminal @T0", async ({ page }) => {
 	const { dialog, terminalPanel } = await openSwitchAgentDialog(page);
 	await expect(dialog).toHaveCSS("width", "420px");
 	await expect
@@ -61,7 +60,7 @@ test("renderer: switch-agent selector remains compact inside a wide terminal", a
 		.toBeGreaterThan(420);
 });
 
-test("renderer: switch-agent selector stays inside a narrow terminal", async ({ page }) => {
+test("renderer: switch-agent selector stays inside a narrow terminal @T0", async ({ page }) => {
 	await page.setViewportSize({ width: 960, height: 720 });
 	const { dialog, terminalPanel } = await openSwitchAgentDialog(page);
 	const dialogBox = await dialog.boundingBox();
