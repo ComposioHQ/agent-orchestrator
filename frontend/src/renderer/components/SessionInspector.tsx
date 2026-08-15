@@ -1066,6 +1066,10 @@ function MergedReviewsSection({
 			ao: ao
 				? {
 						dimmed: ao.status === "ineligible",
+						historical:
+							ao.status === "needs_review" &&
+							Boolean(ao.previousRun) &&
+							(!ao.latestRun || ao.latestRun.status === "failed" || ao.latestRun.status === "cancelled"),
 						notInjected: aoRuns.some((run) => run.autoInjectReview === false),
 						runs: reviewRuns,
 					}
@@ -1451,6 +1455,14 @@ function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: Revi
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {
+	if (
+		reviewState.status === "needs_review" &&
+		(!reviewState.latestRun ||
+			reviewState.latestRun.status === "failed" ||
+			reviewState.latestRun.status === "cancelled")
+	) {
+		return appI18n.t("inspector.latestCommitNotReviewedMeta", { number: reviewState.prNumber });
+	}
 	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
@@ -1472,6 +1484,9 @@ function reviewVerdict(reviewState: PRReviewState): {
 	label: string;
 	tone: "neutral" | "running" | "success" | "danger";
 } {
+	if (reviewState.status === "needs_review") {
+		return { label: appI18n.t("inspector.review.needed"), tone: "neutral" };
+	}
 	if (reviewState.latestRun?.status === "failed") {
 		return { label: appI18n.t("inspector.review.failed"), tone: "danger" };
 	}
@@ -1485,7 +1500,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: appI18n.t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
 			return { label: appI18n.t("inspector.review.changesRequested"), tone: "danger" };
-		case "needs_review":
 		case "ineligible":
 			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}

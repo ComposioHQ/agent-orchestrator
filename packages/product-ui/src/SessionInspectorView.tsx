@@ -420,6 +420,7 @@ export type InspectorUnresolvedReviewer = {
 export type InspectorReviewGroup = {
 	ao?: {
 		dimmed?: boolean;
+		historical?: boolean;
 		notInjected?: boolean;
 		runs: InspectorReviewRun[];
 	};
@@ -500,6 +501,7 @@ export function InspectorReviewsView({
 								<ReviewRuns
 									dimmed={group.ao.dimmed}
 									externalLink={externalLink}
+									historical={group.ao.historical}
 									labels={labels}
 									renderAvatar={renderAvatar}
 									renderMarkdown={renderMarkdown}
@@ -618,7 +620,7 @@ function ReviewDisclosure({
 						</span>
 						{verdict ? <VerdictBadge verdict={verdict} /> : null}
 					</span>
-					<span className="truncate font-mono text-micro text-passive" title={meta}>
+					<span className="whitespace-normal break-words font-mono text-micro leading-snug text-passive" title={meta}>
 						{meta}
 					</span>
 				</div>
@@ -640,7 +642,7 @@ function ReviewDisclosure({
 					<span className="whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
 						{title}
 					</span>
-					<span className="truncate font-mono text-micro text-passive" title={meta}>
+					<span className="whitespace-normal break-words font-mono text-micro leading-snug text-passive" title={meta}>
 						{meta}
 					</span>
 				</span>
@@ -654,6 +656,7 @@ function ReviewDisclosure({
 function ReviewRuns({
 	dimmed,
 	externalLink,
+	historical,
 	labels,
 	renderAvatar,
 	renderMarkdown,
@@ -661,6 +664,7 @@ function ReviewRuns({
 }: {
 	dimmed?: boolean;
 	externalLink: ExternalLinkComponent;
+	historical?: boolean;
 	labels: InspectorReviewLabels;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
@@ -673,6 +677,7 @@ function ReviewRuns({
 		<ReviewRunHistory
 			dimmed={dimmed}
 			externalLink={externalLink}
+			historical={historical}
 			labels={labels}
 			renderAvatar={renderAvatar}
 			renderMarkdown={renderMarkdown}
@@ -684,6 +689,7 @@ function ReviewRuns({
 function ReviewRunHistory({
 	dimmed,
 	externalLink,
+	historical,
 	labels,
 	renderAvatar,
 	renderMarkdown,
@@ -691,6 +697,7 @@ function ReviewRunHistory({
 }: {
 	dimmed?: boolean;
 	externalLink: ExternalLinkComponent;
+	historical?: boolean;
 	labels: InspectorReviewLabels;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
@@ -708,7 +715,7 @@ function ReviewRunHistory({
 					actor={run.harness || "reviewer"}
 					body={run.status === "cancelled" || run.status === "failed" ? "" : run.body}
 					externalLink={externalLink}
-					isEarlier={index > 0}
+					isEarlier={historical || index > 0}
 					key={run.id}
 					labels={labels}
 					renderAvatar={renderAvatar}

@@ -1315,13 +1315,14 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Not run", "Run review"],
+		["needs_review", "changes_requested", "Review needed", "Review latest commit"],
+		["cancelled", "approved", "Review needed", "Review latest commit"],
 		["running", "approved", "Reviewing...", "Stop review"],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
 		async (status, previousVerdict, runLabel, actionLabel) => {
 			const current = {
-				...reviewState(3, status, "sha-current"),
+				...reviewState(3, status === "cancelled" ? "needs_review" : status, "sha-current"),
 				previousRun: {
 					...approvedReview,
 					id: "run-previous",
@@ -1332,11 +1333,11 @@ describe("SessionInspector summary reviews", () => {
 					targetSha: "sha-previous",
 				},
 			};
-			if (status === "running") {
+			if (status === "running" || status === "cancelled") {
 				current.latestRun = {
 					...approvedReview,
 					id: "run-current",
-					status: "running",
+					status,
 					verdict: "",
 					targetSha: "sha-current",
 				};
@@ -1349,11 +1350,14 @@ describe("SessionInspector summary reviews", () => {
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
 			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 			expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
-		if (status === "needs_review") {
-			expect(screen.getByText("Changes requested")).toBeInTheDocument();
-		} else {
-			expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
-		}
+			if (status === "needs_review" || status === "cancelled") {
+				expect(screen.getByText(status === "cancelled" ? "Approved" : "Changes requested")).toBeInTheDocument();
+				expect(screen.getByText("Earlier commit")).toBeInTheDocument();
+				expect(screen.getByText("#3 · Latest commit has not been reviewed")).toBeInTheDocument();
+			} else {
+				expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
+				expect(screen.queryByText("Earlier commit")).not.toBeInTheDocument();
+			}
 			expect(screen.getByRole("link", { name: "View on PR" })).toHaveAttribute(
 				"href",
 				"https://example.com/pr/3#pullrequestreview-98765",

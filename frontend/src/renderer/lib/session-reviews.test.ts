@@ -97,7 +97,7 @@ describe("shared review eligibility helpers", () => {
 			appI18n.t("inspector.review.rerun"),
 		);
 		expect(reviewSessionRunAction([reviewState(1, "needs_review")], false)).toBe(
-			appI18n.t("inspector.review.run"),
+			appI18n.t("inspector.review.runLatest"),
 		);
 	});
 });
