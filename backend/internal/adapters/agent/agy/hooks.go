@@ -124,8 +124,9 @@ func (p *Plugin) UninstallHooks(ctx context.Context, workspacePath string) error
 }
 
 // AreHooksInstalled reports whether the current Antigravity workspace file
-// contains AO's TUI hook set. Legacy .gemini/hooks.json entries deliberately do
-// not count: current Agy does not load that file as a workspace hook source.
+// contains AO's TUI hook set with commands pointing at this exact AO binary.
+// A legacy bare `ao hooks agy ...` command deliberately does not count: desktop
+// launches may not put AO on PATH, so those stale hook sets must be refreshed.
 func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -150,7 +151,11 @@ func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (b
 	if err := json.Unmarshal(raw, &definition); err != nil {
 		return false, fmt.Errorf("agy.AreHooksInstalled: parse managed hook set: %w", err)
 	}
-	return agyDefinitionHasManagedHook(definition), nil
+	hookCommandPrefix, err := agyHookCommandPrefix()
+	if err != nil {
+		return false, fmt.Errorf("agy.AreHooksInstalled: resolve AO hook executable: %w", err)
+	}
+	return agyDefinitionHasManagedHooks(definition, hookCommandPrefix), nil
 }
 
 func agyHooksPath(workspacePath string) string {
@@ -212,28 +217,42 @@ func quoteHookExecutable(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'"
 }
 
-func isManagedAgyHookCommand(command, event string) bool {
-	command = strings.TrimSpace(command)
-	return strings.HasSuffix(command, agyHookCommandSuffix+event) || command == "ao"+agyHookCommandSuffix+event
-}
+func agyDefinitionHasManagedHooks(definition agyHookDefinition, prefix string) bool {
+	wantPre := prefix + "pre-invocation"
+	wantPost := prefix + "post-tool-use"
+	wantStop := prefix + "stop"
 
-func agyDefinitionHasManagedHook(definition agyHookDefinition) bool {
+	hasPre := false
 	for _, hook := range definition.PreInvocation {
-		if isManagedAgyHookCommand(hook.Command, "pre-invocation") {
-			return true
+		if strings.TrimSpace(hook.Command) == wantPre {
+			hasPre = true
+			break
 		}
 	}
+
+	hasPost := false
 	for _, group := range definition.PostToolUse {
+		if group.Matcher != "*" {
+			continue
+		}
 		for _, hook := range group.Hooks {
-			if isManagedAgyHookCommand(hook.Command, "post-tool-use") {
-				return true
+			if strings.TrimSpace(hook.Command) == wantPost {
+				hasPost = true
+				break
 			}
 		}
-	}
-	for _, hook := range definition.Stop {
-		if isManagedAgyHookCommand(hook.Command, "stop") {
-			return true
+		if hasPost {
+			break
 		}
 	}
-	return false
+
+	hasStop := false
+	for _, hook := range definition.Stop {
+		if strings.TrimSpace(hook.Command) == wantStop {
+			hasStop = true
+			break
+		}
+	}
+
+	return hasPre && hasPost && hasStop
 }
