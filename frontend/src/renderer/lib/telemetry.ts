@@ -441,6 +441,17 @@ async function sanitizeRendererContextProperties(properties?: TelemetryPropertie
 }
 
 const ORCHESTRATOR_SPAWN_SOURCE_SET = new Set<string>(ORCHESTRATOR_SPAWN_SOURCES);
+const ORCHESTRATOR_SPAWN_ERROR_KIND_SET = new Set([
+	"bad_request",
+	"not_found",
+	"conflict",
+	"forbidden",
+	"internal",
+	"not_implemented",
+	"network_error",
+	"invalid_response",
+]);
+const TELEMETRY_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 const EDITOR_ID_SET = new Set<string>(EDITOR_IDS);
 const OPEN_TARGET_KIND_SET = new Set(["editor", "file_manager", "terminal"]);
@@ -485,6 +496,20 @@ export async function sanitizeRendererProperties(
 			if (projectIDHash) safe.project_id_hash = projectIDHash;
 			if (typeof properties?.source === "string" && ORCHESTRATOR_SPAWN_SOURCE_SET.has(properties.source)) {
 				safe.source = properties.source;
+			}
+			if (
+				event === "ao.renderer.orchestrator_spawn_failed" &&
+				typeof properties?.error_kind === "string" &&
+				ORCHESTRATOR_SPAWN_ERROR_KIND_SET.has(properties.error_kind)
+			) {
+				safe.error_kind = properties.error_kind;
+			}
+			if (
+				event === "ao.renderer.orchestrator_spawn_failed" &&
+				typeof properties?.error_code === "string" &&
+				TELEMETRY_ERROR_CODE_PATTERN.test(properties.error_code)
+			) {
+				safe.error_code = properties.error_code;
 			}
 			break;
 		}
