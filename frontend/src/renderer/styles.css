@@ -1784,6 +1784,23 @@ body.is-resizing-x [data-slot="inspector-container"] {
 		var(--color-bg-primary);
 }
 
+/* Chat: no accent focus rings. Hover/active already cue interactivity; the blue
+ * outline on activity rows and shared Button chrome reads as noise in the timeline. */
+.cursor-chat-surface :focus {
+	outline: none;
+}
+.cursor-chat-surface :focus-visible {
+	outline: none !important;
+	box-shadow: none !important;
+}
+.cursor-chat-surface .group\/button:focus-visible {
+	/* Undo focus-visible:border-ring from the shared Button primitive. */
+	border-color: transparent !important;
+}
+.cursor-chat-surface .group\/button[class*="border-border"]:focus-visible {
+	border-color: var(--color-border) !important;
+}
+
 .cursor-chat-header {
 	border-bottom: 1px solid var(--color-border);
 	background: color-mix(in srgb, var(--color-bg-sidebar) 72%, var(--color-bg-primary));
@@ -1999,10 +2016,17 @@ body.is-resizing-x [data-slot="inspector-container"] {
 
 .chat-scroll-viewport {
 	scrollbar-width: none;
+	/* Spacer-driven prompt pinning fights the browser's own scroll anchoring. */
+	overflow-anchor: none;
 }
 
 .chat-scroll-viewport::-webkit-scrollbar {
 	display: none;
+}
+
+.chat-prompt-spacer {
+	flex-shrink: 0;
+	pointer-events: none;
 }
 
 .chat-scroll-marker {

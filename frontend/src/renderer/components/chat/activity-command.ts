@@ -3,7 +3,7 @@ export type CommandCategory = "read" | "search" | "vcs" | "run";
 
 /** Shared chrome for one command summary and a collapsed run of commands. */
 export const ACTIVITY_SUMMARY_BUTTON_CLASS =
-	"group/run flex w-full items-center gap-1.5 rounded-sm py-0.5 pr-1 text-left transition-colors hover:bg-interactive-hover";
+	"group/run flex w-full items-center gap-1.5 rounded-sm py-0.5 pr-1 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:outline-none";
 
 const READERS = new Set(["cat", "sed", "nl", "head", "tail", "bat", "less", "more", "wc", "jq"]);
 const SEARCHERS = new Set(["rg", "grep", "find", "fd", "ls", "tree", "glob", "ag"]);

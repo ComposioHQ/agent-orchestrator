@@ -962,6 +962,11 @@ function ControllerBanner({
  * Once they scroll up to read, new output must not yank them away — it surfaces a
  * jump control instead.
  *
+ * A trailing spacer sizes itself so the latest human prompt can sit near the top
+ * of the viewport when following — the Cursor/ChatGPT "drop a prompt and the
+ * history moves up" behaviour. As the reply grows the spacer shrinks, which keeps
+ * the prompt in place without fighting the reader.
+ *
  * Finished turns are memoized so a targeted live-event invalidation only redraws
  * the turn that changed. Older pages are prepended explicitly instead of keeping
  * an unbounded history in every snapshot response.
@@ -1001,8 +1006,10 @@ function Timeline({
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
+	const promptSpacer = useRef<HTMLDivElement>(null);
 	const scrollTrack = useRef<HTMLDivElement>(null);
 	const drag = useRef<{ pointerId: number; startY: number; startScrollTop: number } | null>(null);
+	const pinnedRef = useRef(true);
 	const [pinned, setPinned] = useState(true);
 	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
 	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
@@ -1033,6 +1040,9 @@ function Timeline({
 	);
 
 	useEffect(() => setMessageEdit(undefined), [snapshot.sessionId]);
+	useEffect(() => {
+		pinnedRef.current = pinned;
+	}, [pinned]);
 
 	const startMessageEdit = useCallback((message: ConversationMessage) => {
 		if (!message.turnId) return;
@@ -1126,23 +1136,53 @@ function Timeline({
 		);
 	}, []);
 
-	useEffect(() => {
-		if (!pinned) return;
+	/**
+	 * Size the trailing spacer so scrolling to the bottom parks the latest human
+	 * prompt below a band of prior chat — matching Cursor, where a little of the
+	 * previous turn stays visible above the new prompt instead of flush to the top.
+	 * Shrinks naturally as that reply grows.
+	 */
+	const syncPromptSpacer = useCallback(() => {
 		const node = scroller.current;
-		if (node) {
-			node.scrollTop = node.scrollHeight;
-			updateScrollbar();
+		const pad = promptSpacer.current;
+		if (!node || !pad) return;
+
+		const anchors = scrollContent.current?.querySelectorAll<HTMLElement>("[data-chat-scroll-anchor]");
+		const anchor = anchors && anchors.length > 0 ? anchors[anchors.length - 1] : null;
+		const nextHeight = anchor
+			? promptSpacerHeight({
+					viewportHeight: node.clientHeight,
+					contentHeightWithoutSpacer: node.scrollHeight - pad.offsetHeight,
+					anchorOffset: anchor.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop,
+					topInset: promptTopInset(node.clientHeight),
+				})
+			: 0;
+		if (Math.abs(pad.offsetHeight - nextHeight) > 0.5) {
+			pad.style.height = `${nextHeight}px`;
 		}
-	}, [pinned, snapshot.latestSequence, updateScrollbar]);
+	}, []);
+
+	const syncScrollLayout = useCallback(() => {
+		syncPromptSpacer();
+		const node = scroller.current;
+		if (node && pinnedRef.current) {
+			node.scrollTop = node.scrollHeight;
+		}
+		updateScrollbar();
+	}, [syncPromptSpacer, updateScrollbar]);
 
 	useEffect(() => {
-		updateScrollbar();
+		syncScrollLayout();
+	}, [pinned, snapshot.latestSequence, groups.length, messageEdit?.turnId, syncScrollLayout]);
+
+	useEffect(() => {
+		syncScrollLayout();
 		if (typeof ResizeObserver === "undefined") return;
-		const observer = new ResizeObserver(updateScrollbar);
+		const observer = new ResizeObserver(syncScrollLayout);
 		if (scroller.current) observer.observe(scroller.current);
 		if (scrollContent.current) observer.observe(scrollContent.current);
 		return () => observer.disconnect();
-	}, [groups.length, updateScrollbar]);
+	}, [groups.length, syncScrollLayout]);
 
 	function onScroll() {
 		const node = scroller.current;
@@ -1326,6 +1366,14 @@ function Timeline({
 							/>
 						</div>
 					) : null}
+					{/* Pushes the latest prompt toward the top of the viewport when following,
+					    then shrinks as the reply fills the space below it. */}
+					<div
+						ref={promptSpacer}
+						aria-hidden="true"
+						className="chat-prompt-spacer"
+						data-testid="chat-prompt-spacer"
+					/>
 				</div>
 			</div>
 
@@ -1813,6 +1861,31 @@ function groupPreview(group: TimelineGroup): GroupPreview {
 
 function groupHasHumanPrompt(group: TimelineGroup): boolean {
 	return group.items.some((item) => item.kind === "message" && item.role === "user" && item.origin === "human");
+}
+
+/** How tall the trailing spacer must be to park `anchorOffset` near the top when scrolled to the end. */
+export function promptSpacerHeight({
+	viewportHeight,
+	contentHeightWithoutSpacer,
+	anchorOffset,
+	topInset = 12,
+}: {
+	viewportHeight: number;
+	contentHeightWithoutSpacer: number;
+	anchorOffset: number;
+	topInset?: number;
+}): number {
+	const afterAnchor = Math.max(0, contentHeightWithoutSpacer - anchorOffset);
+	return Math.max(0, Math.round(viewportHeight - topInset - afterAnchor));
+}
+
+/**
+ * Leave a band of prior chat above the latest prompt (Cursor-style), not flush to
+ * the top edge. Scales with the timeline viewport, with a floor so short panes
+ * still keep a peek of history.
+ */
+export function promptTopInset(viewportHeight: number): number {
+	return Math.max(80, Math.round(viewportHeight * 0.2));
 }
 
 function previewText(value: string, limit: number): string {
