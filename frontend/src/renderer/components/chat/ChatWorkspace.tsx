@@ -1223,13 +1223,14 @@ function Timeline({
 			{!pinned ? (
 				<Button
 					type="button"
-					size="sm"
+					size="icon-sm"
 					variant="outline"
+					aria-label="Jump to latest"
+					title="Jump to latest"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
+					className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
-					<ArrowDown aria-hidden="true" className="size-3.5" />
-					Jump to latest
+					<ArrowDown aria-hidden="true" className="size-4" />
 				</Button>
 			) : null}
 		</div>

@@ -415,6 +415,8 @@ describe("ChatWorkspace timeline", () => {
 		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 100 });
 		log.dispatchEvent(new Event("scroll"));
 		const jump = await screen.findByRole("button", { name: /jump to latest/i });
+		expect(jump).toHaveAttribute("title", "Jump to latest");
+		expect(jump).not.toHaveTextContent("Jump to latest");
 		expect(jump).toHaveClass(
 			"bg-raised",
 			"dark:bg-raised",
