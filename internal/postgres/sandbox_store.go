@@ -148,7 +148,7 @@ func (s *Store) UpdateSandboxObservation(
 				-- next unrelated failure.
 				consecutive_failures = CASE WHEN $4 = 'failed' THEN consecutive_failures ELSE 0 END,
 				worker_last_seen_at = CASE
-					WHEN $4 IN ('requested', 'provisioning', 'bootstrapping')
+					WHEN $4 IN ('requested', 'provisioning', 'restoring', 'bootstrapping')
 						AND (
 							provider_environment_id IS DISTINCT FROM NULLIF($3, '')
 							OR observed_state IS DISTINCT FROM $4
@@ -754,7 +754,7 @@ func (s *Store) MarkWorkerSeen(
 			`UPDATE ao_sandboxes
 			SET worker_last_seen_at = now(),
 				observed_state = CASE
-					WHEN observed_state IN ('requested', 'provisioning', 'bootstrapping', 'disconnected')
+					WHEN observed_state IN ('requested', 'provisioning', 'restoring', 'bootstrapping', 'disconnected')
 						THEN 'running'
 					ELSE observed_state
 				END,

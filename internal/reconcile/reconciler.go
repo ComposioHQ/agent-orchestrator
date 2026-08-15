@@ -486,7 +486,12 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 			}
 			return r.fail(ctx, record, err)
 		}
-		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedBootstrapping, "", 2*time.Second)
+		// A NodeOps resume retains the sandbox filesystem, including the
+		// previously uploaded worker binary. Keep the distinct restoring state
+		// until the provider confirms it is running, so that next probe can
+		// refresh the worker in place rather than waiting for the startup timeout
+		// to repair a stale release.
+		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedRestoring, "", 2*time.Second)
 	case sandbox.StateRunning:
 		return r.superviseRunning(ctx, record, environment, provider)
 	default:
@@ -572,6 +577,10 @@ func (r *Reconciler) superviseRunning(
 	environment sandbox.Environment,
 	provider sandbox.Provider,
 ) error {
+	if record.ObservedState == domain.SandboxObservedRestoring {
+		return r.refreshRestoredWorker(ctx, record, environment, provider)
+	}
+
 	startupExpired := (record.ObservedState == domain.SandboxObservedProvisioning ||
 		record.ObservedState == domain.SandboxObservedBootstrapping) &&
 		record.WorkerLastSeenAt == nil &&
@@ -616,6 +625,45 @@ func (r *Reconciler) superviseRunning(
 		state = domain.SandboxObservedBootstrapping
 	}
 	return r.observe(ctx, record, string(environment.ID), state, "", 5*time.Second)
+}
+
+// refreshRestoredWorker installs the release worker into a resumed sandbox
+// exactly once. NodeOps resumes a preserved root filesystem, so without this
+// step a session paused before a deployment can continue running an older
+// worker binary after it wakes.
+func (r *Reconciler) refreshRestoredWorker(
+	ctx context.Context,
+	record domain.Sandbox,
+	environment sandbox.Environment,
+	provider sandbox.Provider,
+) error {
+	bootstrapper, supportsBootstrap := provider.(sandbox.Bootstrapper)
+	if !supportsBootstrap || len(r.options.WorkerBinary) == 0 {
+		return r.observe(ctx, record, string(environment.ID),
+			domain.SandboxObservedBootstrapping, "", r.options.Interval)
+	}
+
+	spec, err := r.workerSpec(ctx, record)
+	if err != nil {
+		return r.fail(ctx, record, err)
+	}
+	r.log.Info("refreshing worker after sandbox restore",
+		"session_id", record.SessionID,
+		"provider", record.Provider,
+		"provider_id", environment.ID,
+	)
+	if err := bootstrapper.BootstrapWorker(ctx, environment.ID, sandbox.WorkerBootstrap{
+		Binary:            r.options.WorkerBinary,
+		Destination:       r.options.WorkerDestination,
+		HelperBinary:      r.options.WorkerHelperBinary,
+		HelperDestination: r.options.WorkerHelperDestination,
+		User:              r.options.WorkerUser,
+		Environment:       spec.Environment,
+	}); err != nil {
+		return r.fail(ctx, record, err)
+	}
+	return r.observe(ctx, record, string(environment.ID),
+		domain.SandboxObservedBootstrapping, "", r.options.Interval)
 }
 
 func repairReason(record domain.Sandbox, startupExpired, heartbeatExpired bool) string {

@@ -939,8 +939,53 @@ func TestPausedSandboxResumesInsteadOfBeingReplaced(t *testing.T) {
 	if len(provider.recreated) != 0 {
 		t.Error("a paused sandbox was replaced instead of resumed, discarding its workspace")
 	}
+	if got := store.lastObservation(t); got.state != domain.SandboxObservedRestoring {
+		t.Errorf("observed state = %q, want restoring so a resumed worker is refreshed", got.state)
+	}
+}
+
+func TestRestoredNodeOpsSandboxRefreshesWorkerInPlace(t *testing.T) {
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedRestoring
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := &bootstrappingProvider{fakeProvider: newFakeProvider()}
+	provider.setState("env-1", sandbox.StateRunning)
+	reconciler := newReconciler(store, provider)
+	reconciler.options.WorkerBinary = []byte("ao-worker")
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.bootstraps) != 1 {
+		t.Fatalf("BootstrapWorker called %d times, want 1 after an in-place restore", len(provider.bootstraps))
+	}
+	if len(provider.recreated) != 0 || len(provider.created) != 0 {
+		t.Fatalf("restored sandbox was replaced: recreated=%v created=%v", provider.recreated, provider.created)
+	}
+	if len(store.tickets) != 1 {
+		t.Fatalf("issued %d bootstrap tickets, want 1", len(store.tickets))
+	}
 	if got := store.lastObservation(t); got.state != domain.SandboxObservedBootstrapping {
-		t.Errorf("observed state = %q, want bootstrapping so the startup budget restarts", got.state)
+		t.Errorf("observed state = %q, want bootstrapping after worker refresh", got.state)
+	}
+}
+
+func TestBootstrappingSandboxDoesNotRepeatRestoreRefresh(t *testing.T) {
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedBootstrapping
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := &bootstrappingProvider{fakeProvider: newFakeProvider()}
+	provider.setState("env-1", sandbox.StateRunning)
+	reconciler := newReconciler(store, provider)
+	reconciler.options.WorkerBinary = []byte("ao-worker")
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.bootstraps) != 0 {
+		t.Fatalf("BootstrapWorker called %d times, want no duplicate restore refresh", len(provider.bootstraps))
 	}
 }
 

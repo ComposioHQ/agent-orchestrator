@@ -11,6 +11,8 @@ export function terminalWaitingLabel(
     case "paused":
     case "stopped":
       return "Waking the existing NodeOps VM…";
+    case "restoring":
+      return "Restoring the AO worker…";
     case "bootstrapping":
       return "Starting the AO worker…";
     case "ready":

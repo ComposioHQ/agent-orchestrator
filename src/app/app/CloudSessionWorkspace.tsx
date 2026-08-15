@@ -493,6 +493,8 @@ function provisioningLabel(
   switch (runtimeState) {
     case "provisioning":
       return "Creating a new NodeOps VM…";
+    case "restoring":
+      return "Restoring the AO worker…";
     case "bootstrapping":
       return "Starting the AO worker and coding-agent harness…";
     case "ready":

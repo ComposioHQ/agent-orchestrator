@@ -371,6 +371,50 @@ func TestObservationClearsTheHeartbeatWhenComputeIsReplaced(t *testing.T) {
 	}
 }
 
+func TestObservationClearsTheHeartbeatWhenRefreshingRestoredWorker(t *testing.T) {
+	fixture := newSandboxFixture(t, "restore")
+	ctx := context.Background()
+
+	fixture.claimOwn(t, "owner-a")
+	if err := fixture.store.UpdateSandboxObservation(
+		ctx, "owner-a", fixture.orgID, fixture.sessionID,
+		fixture.environmentID("1"), domain.SandboxObservedRunning, "", time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.store.MarkWorkerSeen(
+		ctx, fixture.orgID, fixture.sessionID, "worker-before-restore", "0.1.0", 1, nil,
+	); err != nil {
+		t.Fatalf("MarkWorkerSeen() error = %v", err)
+	}
+
+	fixture.claimOwn(t, "owner-a")
+	if err := fixture.store.UpdateSandboxObservation(
+		ctx, "owner-a", fixture.orgID, fixture.sessionID,
+		fixture.environmentID("1"), domain.SandboxObservedRestoring, "", time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	record := fixture.claimOwn(t, "owner-a")
+	if record.WorkerLastSeenAt != nil {
+		t.Fatal("the previous worker heartbeat survived restore; a stale worker could be treated as current")
+	}
+	if record.ObservedState != domain.SandboxObservedRestoring {
+		t.Fatalf("observed state = %q, want restoring", record.ObservedState)
+	}
+
+	if err := fixture.store.MarkWorkerSeen(
+		ctx, fixture.orgID, fixture.sessionID, "worker-after-restore", "0.2.0", 1, nil,
+	); err != nil {
+		t.Fatalf("MarkWorkerSeen() after restore error = %v", err)
+	}
+	record = fixture.claimOwn(t, "owner-a")
+	if record.ObservedState != domain.SandboxObservedRunning {
+		t.Fatalf("observed state after fresh heartbeat = %q, want running", record.ObservedState)
+	}
+}
+
 func TestAccessTicketRedeemsExactlyOnce(t *testing.T) {
 	fixture := newSandboxFixture(t, "ticket")
 	ctx := context.Background()

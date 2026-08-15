@@ -20,8 +20,12 @@ const (
 // `running` only once its worker has checked in: the provider's opinion that a
 // machine booted is not evidence that the session is usable.
 const (
-	SandboxObservedRequested     = "requested"
-	SandboxObservedProvisioning  = "provisioning"
+	SandboxObservedRequested    = "requested"
+	SandboxObservedProvisioning = "provisioning"
+	// SandboxObservedRestoring records an accepted in-place provider resume.
+	// The next running probe refreshes the uploaded worker before the sandbox
+	// returns to ordinary bootstrapping supervision.
+	SandboxObservedRestoring     = "restoring"
 	SandboxObservedBootstrapping = "bootstrapping"
 	SandboxObservedReady         = "ready"
 	SandboxObservedRunning       = "running"
