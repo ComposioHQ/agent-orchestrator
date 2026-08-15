@@ -343,8 +343,8 @@ describe("portable inspector presentations", () => {
 		expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
-		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-accent");
-		expect(screen.getByText("Worked by worker agent")).toHaveClass("text-success");
+		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-working");
+		expect(screen.getByText("Worked by agent")).toHaveClass("text-success");
 		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(3);
 	});
 
@@ -366,7 +366,7 @@ const reviewLabels: InspectorReviewLabels = {
 	resolvedComments: (count) => `Resolved comments · ${count}`,
 	sendToWorkerAgent: "Send to worker agent",
 	sentToWorkerAgent: "Sent to worker agent",
-	workedByWorkerAgent: "Worked by worker agent",
+	workedByWorkerAgent: "Worked by agent",
 	showLatestReviewOnly: "Show latest only",
 	showLess: "Show less",
 	showMore: "Show more",

@@ -896,9 +896,15 @@ function InlineCommentRow({
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{comment.workedByWorkerAgent ? (
-					<span className="font-medium text-success">{labels.workedByWorkerAgent}</span>
+					<span className="inline-flex items-center gap-1 font-medium text-success">
+						<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+						{labels.workedByWorkerAgent}
+					</span>
 				) : comment.autoInjectReview ? (
-					<span className="font-medium text-accent">{labels.sentToWorkerAgent}</span>
+					<span className="inline-flex items-center gap-1 font-medium text-working">
+						<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+						{labels.sentToWorkerAgent}
+					</span>
 				) : (
 					<button className="font-medium text-foreground transition-colors hover:text-accent" type="button">
 						{labels.sendToWorkerAgent}

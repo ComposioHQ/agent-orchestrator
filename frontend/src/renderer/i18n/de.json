@@ -265,7 +265,7 @@
 	"inspector.resolvedComments": "Resolved comments · {{count}}",
 	"inspector.sendToWorkerAgent": "Send to worker agent",
 	"inspector.sentToWorkerAgent": "Sent to worker agent",
-	"inspector.workedByWorkerAgent": "Worked by worker agent",
+	"inspector.workedByWorkerAgent": "Worked by agent",
 	"inspector.viewInFile": "View in file",
 	"inspector.commentNumber": "Kommentar #{{number}}",
 	"inspector.loadMoreReviews": "Mehr laden · {{count}} frühere",
