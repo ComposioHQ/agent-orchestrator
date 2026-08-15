@@ -1423,6 +1423,8 @@ describe("SessionInspector summary reviews", () => {
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
 		expect(screen.getAllByText(/2 unresolved/)).toHaveLength(2);
 		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:3");
+		expect(screen.getByTestId("github-inline-comments")).not.toHaveTextContent("a.ts:9");
+		await userEvent.click(screen.getByRole("button", { name: "Load more · 1 earlier" }));
 		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:9");
 		// AO's runs and the PR's own reviews share one section keyed by PR, so the
 		// unresolved count rides the same row as the AO verdict.
