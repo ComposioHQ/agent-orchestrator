@@ -1880,8 +1880,8 @@ body.is-resizing-x [data-slot="inspector-container"] {
    restates the four colors instead of repeating the state selectors — and the
    drag highlight cannot be outranked by a theme's plain border-color. */
 .cursor-chat-composer {
-	--composer-bg: #1f1f1f;
-	--composer-bg-active: #1f1f1f;
+	--composer-bg: #1c1c1c;
+	--composer-bg-active: #1c1c1c;
 	--composer-border: color-mix(in oklch, var(--color-border-strong) 36%, transparent);
 	--composer-border-hover: color-mix(in oklch, var(--color-border-strong) 68%, transparent);
 	--composer-border-focus: color-mix(in oklch, var(--color-border-strong) 88%, transparent);

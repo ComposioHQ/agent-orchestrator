@@ -1643,6 +1643,11 @@ const TurnGroup = memo(function TurnGroup({
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
+						onRollback={
+							canRollback && run.items[0]?.id === copyableMessageId
+								? () => onRollback(group.turnId as string)
+								: undefined
+						}
 						showStreamingIndicator={group.live && run.items[0]?.id === latestItemId}
 					/>
 				),
@@ -1658,12 +1663,26 @@ const TurnGroup = memo(function TurnGroup({
 			{group.live ? (
 				<TurnLiveStatus startedAt={group.liveStartedAt} blocked={group.blocked} />
 			) : null}
+			{/* No assistant prose to hang the undo on — still offer it before the outcome
+			    divider so a tool-only turn is not stuck without a way back. */}
+			{canRollback && !copyableMessageId ? (
+				<div className="mt-2 flex h-[18px] items-center">
+					<button
+						type="button"
+						onClick={() => onRollback(group.turnId as string)}
+						aria-label="Roll back to here"
+						title="Roll back to here"
+						className="flex items-center rounded px-1.5 py-0.5 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+					>
+						<Undo2 aria-hidden="true" className="size-3" />
+					</button>
+				</div>
+			) : null}
 			{group.outcome ? (
 				<TurnOutcome
 					state={group.outcome.state}
 					durationMs={group.outcome.durationMs}
 					error={group.outcome.error}
-					onRollback={canRollback ? () => onRollback(group.turnId as string) : undefined}
 				/>
 			) : null}
 		</div>
@@ -1739,6 +1758,7 @@ function TimelineItem({
 	busy,
 	queued,
 	showCopy,
+	onRollback,
 	showStreamingIndicator,
 }: {
 	item: ConversationItem;
@@ -1768,6 +1788,8 @@ function TimelineItem({
 	queued?: boolean;
 	/** This is the final assistant response of a turn that has finished. */
 	showCopy?: boolean;
+	/** Undo this finished turn from the answer that owns its copy action. */
+	onRollback?: () => void;
 	/** This message is the live edge of its turn, rather than an earlier fragment
 	 * followed by tool activity. */
 	showStreamingIndicator?: boolean;
@@ -1778,6 +1800,7 @@ function TimelineItem({
 				<AssistantMessage
 					message={item}
 					showCopy={showCopy}
+					onRollback={onRollback}
 					showStreamingIndicator={showStreamingIndicator}
 				/>
 			);
