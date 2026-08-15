@@ -459,6 +459,7 @@ export type InspectorReviewLabels = {
 	resolvedComments: (count: number) => string;
 	sendToWorkerAgent: string;
 	sentToWorkerAgent: string;
+	sendToWorkerAgentError: string;
 	showLatestReviewOnly: string;
 	showLess: string;
 	showMore: string;
@@ -900,6 +901,7 @@ function GithubInlineComments({
 }) {
 	const [sentCommentIds, setSentCommentIds] = useState<Set<string>>(() => new Set());
 	const [sendingCommentIds, setSendingCommentIds] = useState<Set<string>>(() => new Set());
+	const [sendErrorCommentIds, setSendErrorCommentIds] = useState<Set<string>>(() => new Set());
 	const comments = reviewers.flatMap((reviewer) =>
 		reviewer.links
 			.filter((link) => link.body?.trim() || link.file || link.url)
@@ -926,12 +928,16 @@ function GithubInlineComments({
 						labels={labels}
 						onSend={onSendInlineComment ? async () => {
 							setSendingCommentIds((current) => new Set(current).add(comment.id));
+							setSendErrorCommentIds((current) => {
+								const next = new Set(current);
+								next.delete(comment.id);
+								return next;
+							});
 							try {
 								await onSendInlineComment(comment);
 								setSentCommentIds((current) => new Set(current).add(comment.id));
 							} catch {
-								// Keep the UI in the unsent state; this surface intentionally only
-								// renders the two worker-agent states requested for inline comments.
+								setSendErrorCommentIds((current) => new Set(current).add(comment.id));
 							} finally {
 								setSendingCommentIds((current) => {
 									const next = new Set(current);
@@ -940,6 +946,7 @@ function GithubInlineComments({
 								});
 							}
 						} : undefined}
+						sendError={sendErrorCommentIds.has(comment.id)}
 						sent={Boolean(comment.autoInjectReview) || sentCommentIds.has(comment.id)}
 						sending={sendingCommentIds.has(comment.id)}
 					/>
@@ -954,6 +961,7 @@ function InlineCommentRow({
 	externalLink: ExternalLink,
 	labels,
 	onSend,
+	sendError = false,
 	sending = false,
 	sent,
 }: {
@@ -961,6 +969,7 @@ function InlineCommentRow({
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onSend?: () => void;
+	sendError?: boolean;
 	sending?: boolean;
 	sent: boolean;
 }) {
@@ -989,6 +998,7 @@ function InlineCommentRow({
 					</ExternalLink>
 				) : null}
 			</div>
+			{sendError && !sent ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
 		</div>
 	);
 }

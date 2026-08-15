@@ -1236,6 +1236,7 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		resolvedComments: (count) => t("inspector.resolvedComments", { count }),
 		sendToWorkerAgent: t("inspector.sendToWorkerAgent"),
 		sentToWorkerAgent: t("inspector.sentToWorkerAgent"),
+		sendToWorkerAgentError: t("inspector.sendToWorkerAgentError"),
 		showLatestReviewOnly: t("inspector.showLatestReviewOnly"),
 		showLess: t("inspector.showLess"),
 		showMore: t("inspector.showMore"),

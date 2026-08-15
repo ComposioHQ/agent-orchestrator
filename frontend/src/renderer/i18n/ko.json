@@ -268,6 +268,7 @@
 	"inspector.resolvedComments": "Resolved comments · {{count}}",
 	"inspector.sendToWorkerAgent": "Send to worker agent",
 	"inspector.sentToWorkerAgent": "Sent to worker agent",
+	"inspector.sendToWorkerAgentError": "Unable to send. Retry.",
 	"inspector.viewInFile": "View in file",
 	"inspector.commentNumber": "댓글 #{{number}}",
 	"inspector.loadMoreReviews": "더 불러오기 · 이전 {{count}}개",

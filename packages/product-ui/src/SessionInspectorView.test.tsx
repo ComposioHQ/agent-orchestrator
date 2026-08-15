@@ -351,9 +351,54 @@ describe("portable inspector presentations", () => {
 				url: "https://example.com/comment",
 			}),
 		);
-		expect(screen.getByText("Sent to worker agent")).toHaveClass("text-success");
-		await waitFor(() => expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2));
+		await waitFor(() => {
+			expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
+			expect(screen.getAllByText("Sent to worker agent")[0]).toHaveClass("text-success");
+		});
 		expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(2);
+	});
+
+	it("surfaces inline review comment send failures", async () => {
+		const onSendInlineComment = vi.fn().mockRejectedValue(new Error("send failed"));
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [],
+							unresolved: 1,
+							unresolvedBy: [
+								{
+									count: 1,
+									links: [
+										{
+											body: "Please tighten this spacing.",
+											url: "https://example.com/comment",
+										},
+									],
+									reviewerId: "maya",
+								},
+							],
+						},
+						meta: "#12 · 1 unresolved",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				onSendInlineComment={onSendInlineComment}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Send to worker agent" }));
+
+		await waitFor(() => expect(screen.getByText("Unable to send. Retry.")).toHaveClass("text-error"));
+		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
+		expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
 	});
 
 
@@ -375,6 +420,7 @@ const reviewLabels: InspectorReviewLabels = {
 	resolvedComments: (count) => `Resolved comments · ${count}`,
 	sendToWorkerAgent: "Send to worker agent",
 	sentToWorkerAgent: "Sent to worker agent",
+	sendToWorkerAgentError: "Unable to send. Retry.",
 	showLatestReviewOnly: "Show latest only",
 	showLess: "Show less",
 	showMore: "Show more",

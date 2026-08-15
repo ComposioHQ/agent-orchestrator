@@ -267,6 +267,7 @@
 	"inspector.resolvedComments": "Resolved comments · {{count}}",
 	"inspector.sendToWorkerAgent": "Send to worker agent",
 	"inspector.sentToWorkerAgent": "Sent to worker agent",
+	"inspector.sendToWorkerAgentError": "Unable to send. Retry.",
 	"inspector.viewInFile": "View in file",
 	"inspector.commentNumber": "Comment #{{number}}",
 	"inspector.loadMoreReviews": "Load more · {{count}} earlier",
