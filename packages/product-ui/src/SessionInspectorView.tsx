@@ -770,7 +770,7 @@ function ReviewHistoryPager({
 		<div className="flex min-w-0 gap-1.5">
 			{onCollapse ? (
 				<button
-					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-micro font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
+					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
 					onClick={onCollapse}
 					type="button"
 				>
@@ -780,7 +780,7 @@ function ReviewHistoryPager({
 			) : null}
 			{remaining > 0 && onLoadMore ? (
 				<button
-					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-micro font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
+					className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md border border-dashed border-border px-2 py-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
 					onClick={onLoadMore}
 					type="button"
 				>
@@ -942,7 +942,7 @@ function GithubInlineComments({
 	if (comments.length === 0) return null;
 	return (
 		<section className="overflow-hidden rounded-md border border-border/70 bg-background/35" data-testid="github-inline-comments">
-			<div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/70 px-2.5 py-2 text-xs">
+			<div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/70 px-2.5 py-2 text-2xs">
 				<span className="font-semibold text-foreground">{labels.openComments}</span>
 				<span className="shrink-0 font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
 			</div>
@@ -1005,9 +1005,9 @@ function InlineCommentRow({
 }) {
 	const body = comment.body?.trim();
 	return (
-		<div className="flex min-w-0 flex-col gap-1.5 px-2.5 py-2 text-xs">
+		<div className="flex min-w-0 flex-col gap-1.5 px-2.5 py-2 text-2xs">
 			{showReviewer && comment.reviewerId ? <span className="font-medium text-muted-foreground">{comment.reviewerId}</span> : null}
-			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-normal text-foreground/90">{body}</p> : null}
+			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{sent ? (
 					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm [&_svg]:size-icon-xs">
