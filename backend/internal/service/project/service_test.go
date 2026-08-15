@@ -1152,7 +1152,7 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	}
 }
 
-func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
+func TestManager_AddWorkspaceAcceptsUnbornChildAsNeedsInit(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
@@ -1161,20 +1161,60 @@ func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
 	if out, err := exec.Command("git", "init", "-b", "main", child).CombinedOutput(); err != nil {
 		t.Fatalf("git init child: %v (%s)", err, out)
 	}
+	gitRepoWithCommit(t, filepath.Join(parent, "ready"))
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_UNBORN")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with unborn child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
+	}
+	var foundNeedsInit, foundReady bool
+	for _, r := range proj.WorkspaceRepos {
+		switch r.GitStatus {
+		case string(domain.GitStatusNeedsInit):
+			foundNeedsInit = true
+		case string(domain.GitStatusReady):
+			foundReady = true
+		}
+	}
+	if !foundNeedsInit {
+		t.Fatalf("expected a needs_init child")
+	}
+	if !foundReady {
+		t.Fatalf("expected a ready child")
+	}
 }
 
-func TestManager_AddWorkspaceRejectsChildWithoutOrigin(t *testing.T) {
+func TestManager_AddWorkspaceAcceptsChildWithoutOriginAsNeedsInit(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
 	parent := t.TempDir()
 	gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
+	gitRepoWithCommit(t, filepath.Join(parent, "ready"))
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_ORIGIN_REQUIRED")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with originless child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
+	}
+	var needsInitRepo *project.WorkspaceRepo
+	for i := range proj.WorkspaceRepos {
+		if proj.WorkspaceRepos[i].GitStatus == string(domain.GitStatusNeedsInit) {
+			needsInitRepo = &proj.WorkspaceRepos[i]
+			break
+		}
+	}
+	if needsInitRepo == nil {
+		t.Fatalf("expected a needs_init child")
+	}
+	if needsInitRepo.Repo != "" {
+		t.Fatalf("Repo = %q, want empty", needsInitRepo.Repo)
+	}
 }
 
 // TestManager_AddWorkspaceAdoptsExistingParent verifies that when the parent is
@@ -1317,9 +1357,9 @@ func TestManager_AddWorkspaceAdoptsSeparateGitDirParent(t *testing.T) {
 	}
 }
 
-// TestManager_AddWorkspaceRejectsWorktreeChild verifies that a child whose .git
-// is a file (linked worktree) is rejected.
-func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
+// TestManager_AddWorkspaceAcceptsWorktreeChildAsNeedsInit verifies that a
+// child whose .git is a file (linked worktree) is accepted as needs_init.
+func TestManager_AddWorkspaceAcceptsWorktreeChildAsNeedsInit(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
@@ -1338,9 +1378,25 @@ func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
 	if out, err := exec.Command("git", "-C", extRepo, "worktree", "add", child).CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add child: %v (%s)", err, out)
 	}
+	gitRepoWithCommit(t, filepath.Join(parent, "ready"))
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_IS_WORKTREE")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with worktree child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos, got %d", len(proj.WorkspaceRepos))
+	}
+	var foundNeedsInit bool
+	for _, r := range proj.WorkspaceRepos {
+		if r.GitStatus == string(domain.GitStatusNeedsInit) {
+			foundNeedsInit = true
+			break
+		}
+	}
+	if !foundNeedsInit {
+		t.Fatalf("expected a needs_init child")
+	}
 }
 
 // TestManager_AddWorkspaceRejectsReservedChildName verifies that a child repo
@@ -1357,11 +1413,11 @@ func TestManager_AddWorkspaceRejectsReservedChildName(t *testing.T) {
 	wantCode(t, err, "WORKSPACE_CHILD_RESERVED_NAME")
 }
 
-// TestManager_AddWorkspaceInitRollsBackOnNestedGitlink verifies that when a
-// nested git repo at depth ≥2 causes guardNoGitlinks to fail, initWorkspaceParent
-// rolls back the .git dir and .gitignore so the folder is exactly as it was.
-// A retry of the same Add must fail with the same error, not a stranded-state error.
-func TestManager_AddWorkspaceInitRollsBackOnNestedGitlink(t *testing.T) {
+// TestManager_AddWorkspaceNonGitChildWithNestedRepo verifies that a non-git
+// child folder containing a nested git repo is imported as needs_init (not
+// rejected as a gitlink). The child is gitignored in the parent, so the
+// nested repo is never staged by git add -A and guardNoGitlinks never fires.
+func TestManager_AddWorkspaceNonGitChildWithNestedRepo(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
@@ -1369,30 +1425,42 @@ func TestManager_AddWorkspaceInitRollsBackOnNestedGitlink(t *testing.T) {
 	parent := t.TempDir()
 	// One direct committed child repo — valid on its own.
 	gitRepoWithCommit(t, filepath.Join(parent, "app"))
-	// A nested git repo at packages/foo — depth 2 relative to parent.
-	// detectWorkspaceChildren never registers it (packages/ itself is not a repo),
-	// but git add -A would stage it as a gitlink.
+	// A non-git child folder containing a nested git repo at depth 2.
+	// detectWorkspaceChildren registers packages/ as needs_init; it gets
+	// gitignored in the parent, so packages/foo is never staged as a gitlink.
 	pkgs := filepath.Join(parent, "packages")
 	if err := os.MkdirAll(pkgs, 0o755); err != nil {
 		t.Fatalf("mkdir packages: %v", err)
 	}
 	gitRepoWithCommit(t, filepath.Join(pkgs, "foo"))
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_PARENT_GITLINK")
-
-	// Rollback: .git must not exist.
-	if _, statErr := os.Lstat(filepath.Join(parent, ".git")); statErr == nil {
-		t.Fatal(".git still exists after rollback")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with non-git child: %v", err)
 	}
-	// Rollback: .gitignore must not exist (it didn't exist before the call).
-	if _, statErr := os.Lstat(filepath.Join(parent, ".gitignore")); statErr == nil {
-		t.Fatal(".gitignore still exists after rollback")
+	if len(proj.WorkspaceRepos) != 2 {
+		t.Fatalf("expected 2 child repos (app + packages), got %d", len(proj.WorkspaceRepos))
+	}
+	var pkgsRepo *project.WorkspaceRepo
+	for i := range proj.WorkspaceRepos {
+		if proj.WorkspaceRepos[i].Name == "packages" {
+			pkgsRepo = &proj.WorkspaceRepos[i]
+		}
+	}
+	if pkgsRepo == nil {
+		t.Fatalf("packages not in WorkspaceRepos = %#v", proj.WorkspaceRepos)
+	}
+	if pkgsRepo.GitStatus != string(domain.GitStatusNeedsInit) {
+		t.Fatalf("packages GitStatus = %q, want %q", pkgsRepo.GitStatus, domain.GitStatusNeedsInit)
 	}
 
-	// Retry must fail with the same error, not a different stranded-state error.
-	_, err2 := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("rbt"), AsWorkspace: true})
-	wantCode(t, err2, "WORKSPACE_PARENT_GITLINK")
+	// Parent git repo and .gitignore must exist (no rollback).
+	if _, statErr := os.Lstat(filepath.Join(parent, ".git")); statErr != nil {
+		t.Fatalf(".git missing after successful init: %v", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(parent, ".gitignore")); statErr != nil {
+		t.Fatalf(".gitignore missing after successful init: %v", statErr)
+	}
 }
 
 // TestManager_AddWorkspaceConcurrentSamePath verifies that two goroutines racing

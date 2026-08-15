@@ -91,6 +91,13 @@ var shippedMigrations = map[int64]string{
 	85: "0085_agent_switching.sql",
 	86: "0086_workspace_repo_default_branch.sql",
 	87: "0087_conversation_branches.sql",
+	88: "0088_add_auto_inject_ci_toggle.sql",
+	89: "0089_conversation_turn_promotion.sql",
+	90: "0090_workspace_git_status.sql",
+	91: "0091_session_auto_review.sql",
+	92: "0092_pr_reviews_target_sha.sql",
+	93: "0093_review_run_trigger_source.sql",
+	94: "0094_agent_switch_recovery.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -254,7 +261,8 @@ INSERT INTO projects (
 		t.Fatalf("repeat migrate on repaired schema: %v", err)
 	}
 	for table, want := range map[string][]string{
-		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier", "auto_inject_review"},
+		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier", "auto_inject_review", "auto_inject_ci"},
+		"pr":            {"auto_inject_ci"},
 		"notifications": {"resolved_at"},
 	} {
 		for _, column := range want {

@@ -79,6 +79,7 @@ type PullRequestFailingCheck struct {
 type PullRequestCISummary struct {
 	State         CIState                   `json:"state"`
 	FailingChecks []PullRequestFailingCheck `json:"failingChecks"`
+	AutoInjectCI  bool                      `json:"autoInjectCI"`
 }
 
 // PullRequestReviewCommentLink points to one unresolved review comment.
@@ -86,6 +87,7 @@ type PullRequestReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
 	Line             int    `json:"line,omitempty"`
+	Body             string `json:"body,omitempty"`
 	AutoInjectReview bool   `json:"autoInjectReview"`
 }
 

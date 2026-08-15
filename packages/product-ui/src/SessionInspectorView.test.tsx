@@ -23,6 +23,7 @@ function ExternalLink({ ariaLabel, children, stopPropagation, ...props }: Extern
 
 const tabs = [
 	{ id: "summary" as const, icon: <svg />, label: "Summary" },
+	{ id: "reviews" as const, icon: <svg />, label: "Reviews" },
 	{ badge: true, id: "browser" as const, icon: <svg />, label: "Browser" },
 	{ displayLabel: "2 Files", id: "files" as const, icon: <svg />, label: "Files" },
 ];
@@ -38,6 +39,7 @@ describe("SessionInspectorShellView", () => {
 				browserView={<div role="tabpanel">browser slot</div>}
 				filesView={<div role="tabpanel">files slot</div>}
 				onViewChange={onViewChange}
+				reviewsView={<div role="tabpanel">reviews slot</div>}
 				summaryView={<div role="tabpanel">summary slot</div>}
 				tabs={tabs}
 			/>,
@@ -47,15 +49,27 @@ describe("SessionInspectorShellView", () => {
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("tabindex", "0");
 		expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("tabindex", "-1");
-		expect(within(screen.getByRole("tab", { name: "Files" })).getByText("2 Files")).toHaveClass(
-			"@max-[350px]/inspector:hidden",
-		);
+		const filesLabel = within(screen.getByRole("tab", { name: "Files" })).getByText("2 Files");
+		expect(filesLabel).toHaveClass("session-inspector__responsive-label");
+		expect(filesLabel).not.toHaveClass("@max-[350px]/inspector:hidden");
 		expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
 		expect(onViewChange).toHaveBeenCalledWith("browser");
 		fireEvent.keyDown(screen.getByRole("tab", { name: "Summary" }), { key: "ArrowRight" });
-		expect(onViewChange).toHaveBeenLastCalledWith("browser");
-		expect(screen.getByRole("tab", { name: "Browser" })).toHaveFocus();
+		expect(onViewChange).toHaveBeenLastCalledWith("reviews");
+		expect(screen.getByRole("tab", { name: "Reviews" })).toHaveFocus();
+
+		rerender(
+			<SessionInspectorShellView
+				activeView="reviews"
+				ariaLabel="Session inspector"
+				browserPoppedOut={false}
+				onViewChange={onViewChange}
+				reviewsView={<div role="tabpanel">reviews slot</div>}
+				tabs={tabs}
+			/>,
+		);
+		expect(screen.getByText("reviews slot")).toBeInTheDocument();
 
 		rerender(
 			<SessionInspectorShellView
@@ -68,7 +82,7 @@ describe("SessionInspectorShellView", () => {
 				tabs={tabs}
 			/>,
 		);
-		const body = screen.getByRole("tablist").nextElementSibling;
+		const body = screen.getByRole("tablist").parentElement?.nextElementSibling;
 		expect(body).toHaveClass("session-inspector__body--browser", "p-0", "overflow-hidden");
 		expect(body).not.toHaveClass("p-3");
 		expect(screen.getByText("browser slot")).toBeInTheDocument();
@@ -261,6 +275,46 @@ describe("portable inspector presentations", () => {
 			"line-clamp-4",
 		);
 	});
+	it("shows unresolved inline review comment bodies with their file location", () => {
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [],
+							unresolved: 1,
+							unresolvedBy: [
+								{
+									count: 1,
+									links: [
+										{
+											body: "This branch leaks the resize listener on unmount.",
+											file: "src/panel.tsx",
+											line: 42,
+											url: "https://example.com/comment",
+										},
+									],
+									reviewerId: "maya",
+								},
+							],
+						},
+						meta: "#12 · 1 unresolved",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
+		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
+	});
+
 });
 
 const reviewLabels: InspectorReviewLabels = {

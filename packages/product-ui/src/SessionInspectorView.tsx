@@ -19,7 +19,7 @@ import type {
 } from "./pull-request-models";
 import { cn } from "./utils";
 
-export type InspectorView = "summary" | "browser" | "files";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
 export type InspectorTab = {
 	badge?: boolean;
@@ -40,8 +40,11 @@ export function SessionInspectorShellView({
 	browserPoppedOut,
 	browserView,
 	filesView,
+	headerActions,
+	isVisible = true,
 	loadingText,
 	onViewChange,
+	reviewsView,
 	summaryView,
 	tabs,
 }: {
@@ -50,8 +53,11 @@ export function SessionInspectorShellView({
 	browserPoppedOut: boolean;
 	browserView?: ReactNode;
 	filesView?: ReactNode;
+	headerActions?: ReactNode;
+	isVisible?: boolean;
 	loadingText?: string;
 	onViewChange: (view: InspectorView) => void;
+	reviewsView?: ReactNode;
 	summaryView?: ReactNode;
 	tabs: InspectorTab[];
 }) {
@@ -93,54 +99,63 @@ export function SessionInspectorShellView({
 
 	return (
 		<aside className={inspectorShellClass} aria-label={ariaLabel}>
-			<div className="flex h-inspector-tabs shrink-0 items-center gap-1 border-b border-border px-2.5" role="tablist">
-				{tabs.map((tab, index) => (
-					<button
-						aria-label={tab.label}
-						key={tab.id}
-						type="button"
-						role="tab"
-						aria-selected={activeView === tab.id}
-						tabIndex={activeView === tab.id ? 0 : -1}
-						className={cn(
-							"inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-sm-md font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
-							activeView === tab.id && "bg-interactive-active text-foreground",
-						)}
-						onClick={() => onViewChange(tab.id)}
-						onKeyDown={(event) => selectAdjacentTab(event, index)}
-						title={tab.label}
-					>
-						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
-							{tab.icon}
-							{tab.badge ? (
-								<span
-									aria-hidden="true"
-									className="absolute -right-1 -top-1 inline-flex size-dot-sm"
-									data-testid="browser-unseen-indicator"
-								>
-									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+			<div className="session-inspector__topbar flex h-inspector-tabs shrink-0 items-center border-b border-border pl-2.5">
+				{isVisible ? (
+					<div className="flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
+						{tabs.map((tab, index) => (
+							<button
+								aria-label={tab.label}
+								key={tab.id}
+								type="button"
+								role="tab"
+								aria-selected={activeView === tab.id}
+								tabIndex={activeView === tab.id ? 0 : -1}
+								className={cn(
+									"session-inspector__tab-button inline-flex h-control-md shrink-0 items-center justify-center rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+									activeView === tab.id && "bg-interactive-active text-foreground",
+								)}
+								onClick={() => onViewChange(tab.id)}
+								onKeyDown={(event) => selectAdjacentTab(event, index)}
+								title={tab.label}
+							>
+								<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
+									{tab.icon}
+									{tab.badge ? (
+										<span
+											aria-hidden="true"
+											className="absolute right-0 top-0 inline-flex size-dot-sm"
+											data-testid="browser-unseen-indicator"
+										>
+											<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
+											<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
+										</span>
+									) : null}
 								</span>
-							) : null}
-						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">
-							{tab.displayLabel ?? tab.label}
-						</span>
-					</button>
-				))}
+								<span className="session-inspector__responsive-label truncate whitespace-nowrap text-2xs">
+									{tab.displayLabel ?? tab.label}
+								</span>
+							</button>
+						))}
+					</div>
+				) : null}
+				{isVisible ? headerActions : null}
 			</div>
 
 			<div
+				aria-hidden={!isVisible}
 				className={cn(
 					inspectorBodyBaseClass,
+					!isVisible && "invisible pointer-events-none",
 					activeView !== "browser" && activeView !== "files" && inspectorScrollableBodyClass,
 					activeView === "browser" &&
 						!browserPoppedOut &&
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					activeView === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
+				inert={!isVisible}
 			>
 				{activeView === "summary" ? summaryView : null}
+				{activeView === "reviews" ? reviewsView : null}
 				{activeView === "browser" ? browserView : null}
 				{activeView === "files" ? filesView : null}
 			</div>
@@ -239,6 +254,7 @@ export function InspectorPullRequestCardView({
 	openLabel,
 	pr,
 	pullRequestIcon,
+	statusNotice,
 }: {
 	countNounLabel: CountNounLabel;
 	externalIcon?: ReactNode;
@@ -248,6 +264,7 @@ export function InspectorPullRequestCardView({
 	openLabel: string;
 	pr: InspectorPullRequest;
 	pullRequestIcon?: ReactNode;
+	statusNotice?: ReactNode;
 }) {
 	return (
 		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
@@ -295,6 +312,7 @@ export function InspectorPullRequestCardView({
 						externalLink={ExternalLink}
 						presentation={pr.card}
 					/>
+					{statusNotice}
 					{mergeError ? (
 						<p className="mt-2 text-2xs leading-normal text-error" role="status">
 							{mergeError}
@@ -390,6 +408,7 @@ export type InspectorUnresolvedReviewer = {
 	count: number;
 	isBot?: boolean;
 	links: {
+		body?: string;
 		file?: string;
 		line?: number;
 		url?: string;
@@ -464,7 +483,7 @@ export function InspectorReviewsView({
 				{groups.map((group, index) => (
 					<ReviewDisclosure
 						collapsible={groups.length > 1}
-						defaultOpen={index === 0}
+						defaultOpen={index === 0 || Boolean(group.github?.unresolved)}
 						key={group.number}
 						meta={group.meta}
 						title={group.title}
@@ -884,38 +903,49 @@ function GithubInlineComments({
 	const count = active.reduce((total, reviewer) => total + reviewer.count, 0);
 	if (count === 0) return null;
 	return (
-		<div className="rounded-md border border-error/20 bg-error/6 px-2.5 py-2.5" data-testid="github-inline-comments">
-			<div className="flex min-w-0 items-center gap-1.5 text-2xs font-semibold text-foreground">
-				<MessageSquareIcon className="size-icon-xs shrink-0 text-error" />
+		<div className="rounded-md border border-border bg-overlay/40 px-2.5 py-2.5" data-testid="github-inline-comments">
+			<div className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-foreground">
+				<MessageSquareIcon className="size-icon-xs shrink-0 text-muted-foreground" />
 				<span>{labels.openComments}</span>
-				<span className="ml-auto shrink-0 font-mono text-micro font-normal text-error">
+				<span className="ml-auto shrink-0 font-mono text-micro font-semibold text-error">
 					{labels.unresolvedCount(count)}
 				</span>
 			</div>
-			<div className="mt-2 flex min-w-0 flex-col gap-2">
+			<div className="mt-2.5 flex min-w-0 flex-col gap-3">
 				{active.map((reviewer) => (
 					<div className="min-w-0" key={reviewer.reviewerId}>
 						<div className="flex min-w-0 items-center gap-1.5 text-micro text-muted-foreground">
 							<span className="min-w-0 truncate font-medium text-foreground">{reviewer.reviewerId}</span>
 							{reviewer.isBot ? <span className="font-mono text-passive">{labels.bot}</span> : null}
 						</div>
-						<div className="mt-1 flex min-w-0 flex-wrap gap-1">
+						<div className="mt-1.5 min-w-0 rounded-md border border-border/70 bg-background/35">
 							{reviewer.links.map((link, index) => {
 								const label = link.file
 									? `${link.file}${link.line ? `:${link.line}` : ""}`
 									: labels.commentNumber(index + 1);
 								const href = link.url || reviewer.reviewUrl;
-								const contents = (
+								const body = link.body?.trim();
+								const heading = (
 									<>
-										<FileCodeIcon className="size-2.5 shrink-0" />
+										<FileCodeIcon className="size-2.5 shrink-0 text-muted-foreground" />
 										<span className="truncate" title={label}>{label}</span>
 									</>
 								);
 								const className =
-									"inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-background/35 px-1.5 py-1 font-mono text-micro text-muted-foreground";
+									"flex max-w-full min-w-0 flex-col gap-1.5 border-b border-border/60 px-2 py-2 font-mono text-[9px] leading-none text-muted-foreground last:border-b-0";
+								const contents = (
+									<>
+										<span className="inline-flex min-w-0 items-center gap-1">{heading}</span>
+										{body ? (
+											<span className="whitespace-pre-wrap break-words font-sans text-xs leading-snug text-foreground/90">
+												{body}
+											</span>
+										) : null}
+									</>
+								);
 								return href ? (
 									<ExternalLink
-										className={cn(className, "no-underline transition-colors hover:bg-background/60 hover:text-foreground")}
+										className={cn(className, "no-underline transition-colors hover:bg-background/55 hover:text-foreground")}
 										href={href}
 										key={`${href}:${index}`}
 									>
@@ -927,7 +957,7 @@ function GithubInlineComments({
 							})}
 							{reviewer.links.length === 0 && reviewer.reviewUrl ? (
 								<ExternalLink
-									className="inline-flex items-center gap-0.5 rounded-sm bg-background/35 px-1.5 py-1 font-medium text-muted-foreground no-underline transition-colors hover:text-foreground"
+									className="inline-flex items-center gap-0.5 rounded-md border border-border/70 bg-background/45 px-2 py-1.5 font-medium text-[9px] leading-none text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-background/70 hover:text-foreground"
 									href={reviewer.reviewUrl}
 								>
 									{labels.viewOnPR}
