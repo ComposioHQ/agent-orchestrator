@@ -1,7 +1,5 @@
 package gitworktree
 
-import "strings"
-
 func checkRefFormatBranchArgs(repo, branch string) []string {
 	return []string{"-C", repo, "check-ref-format", "--branch", branch}
 }
@@ -134,16 +132,4 @@ func cherryPickNoCommitArgs(worktree, commitSHA string) []string {
 // ignoredCountArgs lists files skipped because of .gitignore (dry-run, no mutation).
 func ignoredCountArgs(worktree string) []string {
 	return []string{"-C", worktree, "status", "--ignored", "--porcelain"}
-}
-
-func configuredBaseRefCandidates(defaultBranch string) []string {
-	if strings.Contains(defaultBranch, "/") {
-		// A qualified default ("upstream/main") is used verbatim; git's refname
-		// disambiguation already falls back to refs/heads/<defaultBranch>.
-		return []string{defaultBranch}
-	}
-	// The local head comes after origin/<defaultBranch> so remote-tracking
-	// still wins when present, but a remoteless repo can base new branches
-	// on its local default branch instead of failing BRANCH_NOT_FETCHED.
-	return []string{"origin/" + defaultBranch, "refs/heads/" + defaultBranch}
 }

@@ -568,6 +568,58 @@ func TestWorkspaceIntegrationAutoUsesRequestedRemoteBranchWithoutRemoteHead(t *t
 	}
 }
 
+func TestWorkspaceIntegrationCreateFetchesMissingSlashDefaultFromPrimaryRemote(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, filepath.Join(tmp, "source"))
+	origin := gitOutput(t, git, repo, "remote", "get-url", "origin")
+	defaultBranch := "release/2026"
+	sessionBranch := "ao/proj-session"
+
+	publisher := filepath.Join(tmp, "publisher")
+	run(t, git, "clone", origin, publisher)
+	runGit(t, git, publisher, "config", "user.email", "ao@example.com")
+	runGit(t, git, publisher, "config", "user.name", "Ao Agents")
+	runGit(t, git, publisher, "checkout", "-b", defaultBranch)
+	if err := os.WriteFile(filepath.Join(publisher, "remote.txt"), []byte("remote branch\n"), 0o644); err != nil {
+		t.Fatalf("write remote branch file: %v", err)
+	}
+	runGit(t, git, publisher, "add", "remote.txt")
+	runGit(t, git, publisher, "commit", "-m", "remote branch")
+	runGit(t, git, publisher, "push", "origin", defaultBranch)
+
+	if err := exec.Command(git, "-C", repo, "show-ref", "--verify", "--quiet", "refs/remotes/origin/"+defaultBranch).Run(); err == nil {
+		t.Fatalf("test setup unexpectedly fetched origin/%s", defaultBranch)
+	}
+
+	ws, err := New(Options{
+		Binary:       git,
+		ManagedRoot:  filepath.Join(tmp, "managed"),
+		RepoResolver: StaticRepoResolver{"proj": repo},
+	})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID:  "proj",
+		SessionID:  "sess",
+		Branch:     sessionBranch,
+		BaseBranch: defaultBranch,
+	})
+	if err != nil {
+		t.Fatalf("create from unfetched slash default branch: %v", err)
+	}
+	if info.BaseRef != "refs/remotes/origin/"+defaultBranch {
+		t.Fatalf("base ref = %q, want origin slash branch", info.BaseRef)
+	}
+	if _, err := os.Stat(filepath.Join(info.Path, "remote.txt")); err != nil {
+		t.Fatalf("fetched remote branch file missing: %v", err)
+	}
+	if err := ws.Destroy(context.Background(), info); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+}
+
 func TestWorkspaceIntegrationRequestedRemoteBranchKeepsDefaultComparisonBase(t *testing.T) {
 	git := requireGit(t)
 	for _, tc := range []struct {
@@ -576,7 +628,7 @@ func TestWorkspaceIntegrationRequestedRemoteBranchKeepsDefaultComparisonBase(t *
 		wantBaseRef string
 	}{
 		{name: "automatic default", wantBaseRef: "refs/remotes/origin/main"},
-		{name: "explicit default", baseBranch: "main", wantBaseRef: "origin/main"},
+		{name: "explicit default", baseBranch: "main", wantBaseRef: "refs/remotes/origin/main"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tmp := t.TempDir()
