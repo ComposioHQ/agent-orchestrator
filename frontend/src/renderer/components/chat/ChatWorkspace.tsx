@@ -40,13 +40,19 @@ import {
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
+import {
+	TERMINAL_FONT_SIZE_DEFAULT,
+	TERMINAL_FONT_SIZE_MAX,
+	TERMINAL_FONT_SIZE_MIN,
+} from "../../lib/design-tokens";
 import { isLinuxPlatform, isMacPlatform } from "../../lib/platform";
 import { useUiStore } from "../../stores/ui-store";
-import type { SessionKind } from "../../types/workspace";
+import type { SessionKind, WorkspaceSession } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTopbarPortal } from "../SessionTopbarPortal";
+import { TerminalPane } from "../TerminalPane";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -97,6 +103,19 @@ import {
 } from "../../types/conversation";
 
 const CHAT_FONT_SIZE_DEFAULT = 12;
+
+// Reviewer panes share the terminal font-size preference with CenterPane, so a
+// reviewer opened inside the Chat surface matches a reviewer opened in TUI mode.
+const terminalFontSizeStorageKey = "ao.terminal.fontSize";
+
+function terminalFontSize(): number {
+	if (typeof window === "undefined") return TERMINAL_FONT_SIZE_DEFAULT;
+	const raw = window.localStorage?.getItem(terminalFontSizeStorageKey);
+	const parsed = raw === null ? Number.NaN : Number(raw);
+	if (!Number.isFinite(parsed)) return TERMINAL_FONT_SIZE_DEFAULT;
+	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, parsed));
+}
+
 const isMac = isMacPlatform();
 const isLinux = isLinuxPlatform();
 
@@ -152,6 +171,16 @@ export interface ChatWorkspaceProps {
 	busy?: boolean;
 	/** The provider's model catalog. Empty hides the model control. */
 	models?: ChatModel[];
+	/** The AO session this surface renders for. Used to attach the reviewer pane. */
+	session?: WorkspaceSession;
+	/** The reviewer pane is the active tab of the chat surface. */
+	reviewerActive?: boolean;
+	/** Switch the active tab back to the chat timeline. */
+	onSelectChat?: () => void;
+	/** Daemon readiness for the reviewer terminal pane. */
+	daemonReady?: boolean;
+	/** Resolved color theme for the reviewer terminal pane. */
+	theme?: "light" | "dark";
 	onChooseSettings?: (settings: TurnSettings) => void;
 	/** Live provider-owned options, such as ACP model, effort, mode, and fast mode. */
 	configOptions?: ChatConfigOption[];
@@ -222,6 +251,11 @@ export function ChatWorkspace({
 	controllerTransitioning,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	session,
+	reviewerActive,
+	onSelectChat,
+	daemonReady,
+	theme,
 	hasOlder,
 	loadingOlder,
 	onLoadOlder,
@@ -272,6 +306,9 @@ export function ChatWorkspace({
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
 	const userInput = pendingUserInput(snapshot);
+	// Terminal-only constructs (the reviewer pane) render inside the chat surface
+	// as a tab body. The chat timeline/composer are the body of the chat tab.
+	const showReviewerPane = Boolean(reviewerActive && reviewerTerminal && session);
 	const queuedCount = queuedTurnIds(snapshot).size;
 	const queuedMessages = useMemo(() => {
 		const messagesByTurn = new Map(
@@ -348,9 +385,37 @@ export function ChatWorkspace({
 				sessionTitle={sessionTitle}
 				reviewerTerminal={reviewerTerminal}
 				onOpenReviewerTerminal={onOpenReviewerTerminal}
+				reviewerActive={showReviewerPane}
+				onSelectChat={onSelectChat}
 				headerActions={headerActions}
 				topbarBounds={topbarBounds}
 			/>
+			{showReviewerPane && reviewerTerminal ? (
+				<div
+					aria-label="Reviewer terminal"
+					className="relative min-h-0 flex-1"
+					role="tabpanel"
+				>
+					<div
+						className="h-full min-h-0 pl-2"
+						data-testid="chat-reviewer-terminal"
+					>
+						<TerminalPane
+							daemonReady={Boolean(daemonReady)}
+							fontSize={terminalFontSize()}
+							session={session}
+							terminalTarget={{
+								kind: "reviewer",
+								handleId: reviewerTerminal.handleId,
+								harness: reviewerTerminal.harness,
+								sessionId: session?.id ?? "",
+							}}
+							theme={theme ?? "dark"}
+						/>
+					</div>
+				</div>
+			) : (
+				<>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
 			    progress at all, so it is stated first; the controller's own health next;
 			    then the two that degrade a session rather than stopping it. */}
@@ -465,6 +530,8 @@ export function ChatWorkspace({
 					/>
 				</div>
 			</div>
+				</>
+			)}
 
 			{/* The copy has to be honest about the cost: this is not "hide these
 			    messages", it is "the agent forgets them". Nothing in the worktree is
@@ -612,6 +679,8 @@ function ChatHeader({
 	sessionTitle,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	reviewerActive,
+	onSelectChat,
 	headerActions,
 	topbarBounds,
 }: {
@@ -619,6 +688,10 @@ function ChatHeader({
 	sessionTitle?: string;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	/** The reviewer tab is selected; the chat tab is the clickable alternative. */
+	reviewerActive?: boolean;
+	/** Return the tab strip to the chat tab. */
+	onSelectChat?: () => void;
 	headerActions?: ReactNode;
 	topbarBounds: TopbarBounds;
 }) {
@@ -647,14 +720,23 @@ function ChatHeader({
 						>
 							<span
 								data-terminal-role="primary"
-								className="group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-overlay px-3 text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+								className={cn(
+									"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+									reviewerActive
+										? "text-muted-foreground hover:bg-raised hover:text-foreground"
+										: "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80",
+								)}
 							>
 								<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
 								<button
-									aria-current
+									aria-current={reviewerActive ? undefined : true}
 									aria-label={label}
-									aria-selected
-									className="inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none text-foreground transition-colors"
+									aria-selected={!reviewerActive}
+									className={cn(
+										"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none transition-colors",
+										reviewerActive ? "text-muted-foreground" : "text-foreground",
+									)}
+									onClick={reviewerActive ? onSelectChat : undefined}
 									role="tab"
 									tabIndex={0}
 									title={label}
@@ -664,11 +746,22 @@ function ChatHeader({
 								</button>
 							</span>
 							{reviewerTerminal ? (
-								<span className="group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3 text-muted-foreground hover:bg-raised hover:text-foreground">
+								<span
+									className={cn(
+										"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border px-3",
+										reviewerActive
+											? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+											: "text-muted-foreground hover:bg-raised hover:text-foreground",
+									)}
+								>
 									<AgentAvatar className="size-icon-base" decorative provider={reviewerTerminal.harness} />
 									<button
 										aria-label="Reviewer"
-										className="inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none"
+										aria-selected={Boolean(reviewerActive)}
+										className={cn(
+											"inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none",
+											reviewerActive ? "text-foreground" : "text-muted-foreground",
+										)}
 										onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}
 										role="tab"
 										tabIndex={0}

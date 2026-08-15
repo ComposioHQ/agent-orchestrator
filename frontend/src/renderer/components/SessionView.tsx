@@ -617,7 +617,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
 		? terminalTarget
 		: ({ kind: "worker" } satisfies TerminalTarget);
-	const showChatSurface = session?.mode === "chat" && routedTerminalTarget.kind === "worker";
+	// Chat surface stays mounted in chat mode for worker + reviewer targets;
+	// it renders the terminal pane as a tab when the reviewer is the active target.
+	const showChatSurface = session?.mode === "chat" && (routedTerminalTarget.kind === "worker" || routedTerminalTarget.kind === "reviewer");
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
 	// takes the agent's terminal off screen while the route still points here.
@@ -822,6 +824,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									session={session}
 									reviewerTerminal={reviewerTerminal}
 									onOpenReviewerTerminal={selectReviewerTerminal}
+									reviewerActive={routedTerminalTarget.kind === "reviewer"}
+									onSelectChat={selectSessionTerminal}
+									daemonReady={daemonStatus.state === "ready"}
+									theme={theme}
 									headerActions={sessionHeaderActions}
 									controllerTransitioning={chatControllerTransitioning}
 									onOpenShell={addShellTerminal}

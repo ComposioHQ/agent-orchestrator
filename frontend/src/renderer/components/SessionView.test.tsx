@@ -140,11 +140,15 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		headerActions,
 		reviewerTerminal,
 		onOpenReviewerTerminal,
+		reviewerActive,
+		onSelectChat,
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+		reviewerActive?: boolean;
+		onSelectChat?: () => void;
 	}) => (
 		<div data-testid="chat-surface">
 			chat surface
@@ -152,6 +156,14 @@ vi.mock("./chat/SessionChatSurface", () => ({
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onOpenReviewerTerminal?.(reviewerTerminal)}>
 					Reviewer
+				</button>
+			) : null}
+			{reviewerActive ? (
+				<div data-testid="terminal-target">reviewer</div>
+			) : null}
+			{reviewerActive ? (
+				<button type="button" onClick={onSelectChat}>
+					select chat tab
 				</button>
 			) : null}
 			<button type="button" onClick={onOpenShell}>
@@ -773,7 +785,13 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		await screen.findByRole("button", { name: "Reviewer" });
 		fireEvent.click(screen.getByRole("button", { name: "Reviewer" }));
+		// The chat surface stays mounted; the reviewer pane renders inside it.
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		// Selecting the chat tab returns to the chat timeline.
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 	});
 
 	it("returns to the session terminal when the reviewer handle is cleared", async () => {
