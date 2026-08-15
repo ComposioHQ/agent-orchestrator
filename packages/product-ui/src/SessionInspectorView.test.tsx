@@ -284,6 +284,47 @@ describe("portable inspector presentations", () => {
 		expect(screen.queryByText(newerBody)).not.toBeInTheDocument();
 	});
 
+	it("marks an expanded external review as asked for re-review", () => {
+		render(
+			<InspectorReviewsView
+				externalLink={ExternalLink}
+				groups={[
+					{
+						github: {
+							entries: [
+								{
+									body: "Please take another pass after fixes land.",
+									id: "github-review-1",
+									reviewerId: "maya",
+									reviewUrl: "https://example.com/review",
+									submittedAt: "2026-08-09T10:00:00Z",
+									submittedAtLabel: "1h ago",
+									verdict: { label: "Changes requested", tone: "danger" },
+								},
+							],
+							unresolved: 0,
+							unresolvedBy: [],
+						},
+						meta: "#12",
+						number: 12,
+						title: "Portable inspector",
+					},
+				]}
+				isLoading={false}
+				labels={reviewLabels}
+				renderAvatar={() => null}
+				renderMarkdown={(body) => <p>{body}</p>}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Request to re-review PR" })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /maya.*Changes requested/ }));
+		fireEvent.click(screen.getByRole("button", { name: "Request to re-review PR" }));
+
+		expect(screen.getByText("Asked for re-review")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Request to re-review PR" })).not.toBeInTheDocument();
+	});
+
 	it("shows unresolved inline review comments inside each reviewer dropdown", async () => {
 		const onSendInlineComment = vi.fn().mockResolvedValue(undefined);
 		render(
@@ -520,9 +561,11 @@ const reviewLabels: InspectorReviewLabels = {
 	notInjected: "Not injected",
 	openComments: "Open comments",
 	openInlineComments: (count) => `${count} open inline comments`,
+	requestRereviewPR: "Request to re-review PR",
 	reviews: "Reviews",
 	reviewedAt: (time) => `Reviewed ${time}`,
 	resolvedComments: (count) => `Resolved comments · ${count}`,
+	rereviewRequested: "Asked for re-review",
 	sendToWorkerAgent: "Send to worker agent",
 	sentToWorkerAgent: "Sent to worker agent",
 	sendToWorkerAgentError: "Unable to send. Retry.",

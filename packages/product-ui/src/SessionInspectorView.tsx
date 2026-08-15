@@ -456,9 +456,11 @@ export type InspectorReviewLabels = {
 	notInjected: string;
 	openComments: string;
 	openInlineComments: (count: number) => string;
+	requestRereviewPR: string;
 	reviews: string;
 	reviewedAt: (time: string) => string;
 	resolvedComments: (count: number) => string;
+	rereviewRequested: string;
 	sendToWorkerAgent: string;
 	sentToWorkerAgent: string;
 	sendToWorkerAgentError: string;
@@ -845,6 +847,7 @@ function ExternalReviewCard({
 	renderMarkdown: (body: string) => ReactNode;
 }) {
 	const [open, setOpen] = useState(defaultOpen);
+	const [rereviewRequested, setRereviewRequested] = useState(false);
 	const body = entry.body?.trim();
 	const inlineComments = entry.inlineComments ?? [];
 	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
@@ -888,6 +891,23 @@ function ExternalReviewCard({
 						onExpandedChange={() => undefined}
 						url={entry.reviewUrl}
 					/>
+					<div className="flex min-w-0 flex-wrap items-center gap-2">
+						{rereviewRequested ? (
+							<span className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 text-2xs font-medium text-foreground shadow-sm [&_svg]:size-icon-xs">
+								<CheckIcon className="shrink-0 text-success" />
+								{labels.rereviewRequested}
+							</span>
+						) : (
+							<button
+								className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 text-2xs font-medium text-foreground shadow-sm transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [&_svg]:size-icon-xs"
+								onClick={() => setRereviewRequested(true)}
+								type="button"
+							>
+								<GitPullRequestIcon className="shrink-0 text-muted-foreground" />
+								{labels.requestRereviewPR}
+							</button>
+						)}
+					</div>
 					{openInlineCount > 0 ? (
 						<GithubInlineComments
 							externalLink={externalLink}
