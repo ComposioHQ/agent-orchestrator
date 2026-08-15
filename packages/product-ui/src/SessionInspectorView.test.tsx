@@ -222,8 +222,8 @@ describe("portable inspector presentations", () => {
 	});
 
 	it("shows the newest GitHub review when history prepends", () => {
-		const olderBody = "Older review ".repeat(30).trim();
-		const newerBody = "Newer review ".repeat(30).trim();
+		const olderBody = "Older review";
+		const newerBody = "Newer review";
 		const olderReview = {
 			body: olderBody,
 			id: "github-review-old",
@@ -251,10 +251,7 @@ describe("portable inspector presentations", () => {
 			/>
 		);
 		const { rerender } = render(view([olderReview]));
-		fireEvent.click(screen.getByRole("button", { name: "Show more" }));
-
-		const olderSummary = screen.getByText(olderBody).closest('[data-testid="github-review-summary"]');
-		expect(olderSummary).not.toHaveClass("line-clamp-4");
+		expect(screen.getByText(olderBody)).toBeInTheDocument();
 
 		rerender(
 			view([
@@ -270,11 +267,10 @@ describe("portable inspector presentations", () => {
 			]),
 		);
 
-		expect(screen.queryByText(olderBody)).not.toBeInTheDocument();
-		expect(screen.getByText(newerBody).closest('[data-testid="github-review-summary"]')).toHaveClass(
-			"line-clamp-4",
-		);
+		expect(screen.getByText(newerBody)).toBeInTheDocument();
+		expect(screen.getByText(olderBody)).toBeInTheDocument();
 	});
+
 	it("shows unresolved inline review comment bodies with their file location", () => {
 		render(
 			<InspectorReviewsView
@@ -282,12 +278,10 @@ describe("portable inspector presentations", () => {
 				groups={[
 					{
 						github: {
-							entries: [],
-							unresolved: 1,
-							unresolvedBy: [
+							entries: [
 								{
-									count: 1,
-									links: [
+									id: "github-review-1",
+									inlineComments: [
 										{
 											body: "This branch leaks the resize listener on unmount.",
 											file: "src/panel.tsx",
@@ -296,8 +290,13 @@ describe("portable inspector presentations", () => {
 										},
 									],
 									reviewerId: "maya",
+									submittedAt: "2026-08-09T10:00:00Z",
+									submittedAtLabel: "1h ago",
+									verdict: { label: "Commented", tone: "neutral" },
 								},
 							],
+							unresolved: 1,
+							unresolvedBy: [],
 						},
 						meta: "#12 · 1 unresolved",
 						number: 12,
@@ -313,6 +312,9 @@ describe("portable inspector presentations", () => {
 
 		expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
 		expect(screen.getByText("This branch leaks the resize listener on unmount.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "1 open inline comments" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send to worker agent" })).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "View in file" })).toBeInTheDocument();
 	});
 
 });
@@ -327,11 +329,17 @@ const reviewLabels: InspectorReviewLabels = {
 	noPastReviewSummaries: "No summaries",
 	notInjected: "Not injected",
 	openComments: "Open comments",
+	openInlineComments: (count) => `${count} open inline comments`,
 	reviews: "Reviews",
+	reviewedAt: (time) => `Reviewed ${time}`,
+	resolvedComments: (count) => `Resolved comments · ${count}`,
+	sendToWorkerAgent: "Send to worker agent",
+	sentToWorkerAgent: "Sent to worker agent",
 	showLatestReviewOnly: "Show latest only",
 	showLess: "Show less",
 	showMore: "Show more",
 	commentNumber: (number) => `Comment ${number}`,
 	unresolvedCount: (count) => `${count} unresolved`,
+	viewInFile: "View in file",
 	viewOnPR: "View on PR",
 };
