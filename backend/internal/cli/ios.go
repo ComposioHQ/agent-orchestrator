@@ -48,7 +48,7 @@ func iosToolchainStatus(ctx *commandContext, cmd *cobra.Command) error {
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet,
 		fmt.Sprintf("http://%s:%d/api/v1/ios-device/toolchain/status",
-			config.LoopbackHost, cfg.Port), nil)
+			config.LoopbackHost, cfg.Port), http.NoBody)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
