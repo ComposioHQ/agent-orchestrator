@@ -1270,7 +1270,7 @@ function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { re
 	const body = sanitizeWorkerMessagePart(comment.body?.trim() || "No comment body provided.");
 	const url = sanitizeWorkerMessagePart(comment.url?.trim() || "");
 	const lines = [
-		`A reviewer left an unresolved inline comment on your PR. Address it and push fixes.`,
+		`A reviewer left an unresolved inline comment on your PR. Address it, commit the fix, and push the branch to GitHub.`,
 		"",
 		`Reviewer: @${reviewer}`,
 		`Location: ${location}`,

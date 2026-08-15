@@ -1623,6 +1623,12 @@ describe("SessionInspector summary reviews", () => {
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
 			params: { path: { sessionId: "sess-1" } },
 			body: {
+				message: expect.stringContaining("commit the fix, and push the branch to GitHub"),
+			},
+		});
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: "sess-1" } },
+			body: {
 				message: expect.stringContaining("Reviewer: @maya"),
 			},
 		});
