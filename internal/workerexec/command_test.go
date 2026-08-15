@@ -172,6 +172,8 @@ func TestHarnessBuilderBuildsInteractiveAgentWithoutHeadlessFlags(t *testing.T) 
 
 func TestHarnessBuilderResumesInteractiveAgentWithoutReplayingPrompt(t *testing.T) {
 	dataDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	writeClaudeTranscript(t, filepath.Join(dataDir, "claude"), "native-session-1")
 	command, err := (HarnessBuilder{DataDir: dataDir}).BuildInteractive(
 		worker.LaunchContext{
 			SessionID:      "session-1",
@@ -201,22 +203,96 @@ func TestHarnessBuilderResumesInteractiveAgentWithoutReplayingPrompt(t *testing.
 	}
 }
 
+func TestHarnessBuilderStartsFreshWhenStoredClaudeConversationIsMissing(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	command, err := (HarnessBuilder{DataDir: dataDir}).BuildInteractive(
+		worker.LaunchContext{
+			SessionID:      "session-1",
+			Harness:        "claude-code",
+			Prompt:         "start this task again",
+			AgentSessionID: "stale-native-session",
+			Mode:           "trusted",
+		},
+		worker.CredentialResponse{
+			Provider:       "claude-code",
+			CredentialType: "oauth_token",
+			Secret:         "top-secret",
+		},
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(command.Args, " ")
+	if strings.Contains(joined, "--resume") || !strings.Contains(joined, "start this task again") {
+		t.Fatalf("fresh launch args = %q", command.Args)
+	}
+}
+
+func TestHarnessBuilderHeadlessClaudeStartsFreshWhenStoredConversationIsMissing(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	command, err := (HarnessBuilder{DataDir: dataDir}).Build(
+		context.Background(),
+		worker.Turn{
+			Harness:        "claude-code",
+			Mode:           "standard",
+			Prompt:         "continue the task",
+			AgentSessionID: "stale-native-session",
+		},
+		worker.CredentialResponse{
+			Provider:       "claude-code",
+			CredentialType: "oauth_token",
+			Secret:         "top-secret",
+		},
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(command.Args, " ")
+	if strings.Contains(joined, "--resume") || !strings.Contains(joined, "continue the task") {
+		t.Fatalf("fresh headless args = %q", command.Args)
+	}
+	if command.Env["CLAUDE_CONFIG_DIR"] != filepath.Join(dataDir, "claude") {
+		t.Fatalf("CLAUDE_CONFIG_DIR = %q", command.Env["CLAUDE_CONFIG_DIR"])
+	}
+}
+
+func TestHarnessBuilderHeadlessClaudeResumesAvailableConversation(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	writeClaudeTranscript(t, filepath.Join(dataDir, "claude"), "native-session-1")
+	command, err := (HarnessBuilder{DataDir: dataDir}).Build(
+		context.Background(),
+		worker.Turn{
+			Harness:        "claude-code",
+			Mode:           "standard",
+			Prompt:         "continue the task",
+			AgentSessionID: "native-session-1",
+		},
+		worker.CredentialResponse{
+			Provider:       "claude-code",
+			CredentialType: "oauth_token",
+			Secret:         "top-secret",
+		},
+		t.TempDir(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(command.Args, " "), "--resume native-session-1") {
+		t.Fatalf("resume headless args = %q", command.Args)
+	}
+}
+
 func TestHarnessBuilderFindsPersistedClaudeConversationAfterWorkerReplacement(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
 	sessionID := "session-legacy"
 	identity := agentruntime.ClaudeSessionID(sessionID)
-	projectDir := filepath.Join(configDir, "projects", "-workspace-repository")
-	if err := os.MkdirAll(projectDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(projectDir, identity+".jsonl"),
-		[]byte("{}\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
+	writeClaudeTranscript(t, configDir, identity)
 
 	command, err := (HarnessBuilder{DataDir: t.TempDir()}).BuildInteractive(
 		worker.LaunchContext{
@@ -419,6 +495,21 @@ func readJSONObject(t *testing.T, path string) map[string]any {
 		t.Fatal(err)
 	}
 	return result
+}
+
+func writeClaudeTranscript(t *testing.T, configDir, identity string) {
+	t.Helper()
+	projectDir := filepath.Join(configDir, "projects", "-workspace-repository")
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(projectDir, identity+".jsonl"),
+		[]byte("{}\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHarnessBuilderFailsClosedForUnsupportedPolicy(t *testing.T) {

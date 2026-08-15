@@ -156,24 +156,44 @@ func (b HarnessBuilder) BuildInteractive(
 func (b HarnessBuilder) interactiveRestoreIdentity(
 	launch worker.LaunchContext,
 ) string {
-	if identity := strings.TrimSpace(launch.AgentSessionID); identity != "" {
+	if launch.Harness != "claude-code" {
+		return strings.TrimSpace(launch.AgentSessionID)
+	}
+	if identity := strings.TrimSpace(launch.AgentSessionID); b.claudeConversationAvailable(identity) {
 		return identity
 	}
-	if launch.Harness != "claude-code" {
-		return ""
-	}
 	identity := agentruntime.ClaudeSessionID(launch.SessionID)
+	if b.claudeConversationAvailable(identity) {
+		return identity
+	}
+	return ""
+}
+
+func (b HarnessBuilder) claudeConfigDir() (string, error) {
 	configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
-	if configDir == "" {
-		configDir = filepath.Join(strings.TrimSpace(b.DataDir), "claude")
+	if configDir != "" {
+		return configDir, nil
+	}
+	dataDir := strings.TrimSpace(b.DataDir)
+	if dataDir == "" {
+		return "", errors.New("worker data directory is required for Claude Code configuration")
+	}
+	return filepath.Join(dataDir, "claude"), nil
+}
+
+func (b HarnessBuilder) claudeConversationAvailable(identity string) bool {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return false
+	}
+	configDir, err := b.claudeConfigDir()
+	if err != nil {
+		return false
 	}
 	matches, _ := filepath.Glob(
 		filepath.Join(configDir, "projects", "*", identity+".jsonl"),
 	)
-	if len(matches) > 0 {
-		return identity
-	}
-	return ""
+	return len(matches) > 0
 }
 
 func (b HarnessBuilder) Build(
@@ -196,6 +216,14 @@ func (b HarnessBuilder) Build(
 	var err error
 	switch turn.Harness {
 	case "claude-code":
+		configDir, configErr := b.claudeConfigDir()
+		if configErr != nil {
+			return Command{}, configErr
+		}
+		command.Env["CLAUDE_CONFIG_DIR"] = configDir
+		if !b.claudeConversationAvailable(turn.AgentSessionID) {
+			turn.AgentSessionID = ""
+		}
 		command.Args, err = claudeArgs(turn)
 	case "codex":
 		command.Args, err = codexArgs(turn)
@@ -266,13 +294,9 @@ func (b HarnessBuilder) binary(harness string) string {
 }
 
 func (b HarnessBuilder) prepareClaudeCloudExperience(command *Command, workspace string) error {
-	configDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
-	if configDir == "" {
-		dataDir := strings.TrimSpace(b.DataDir)
-		if dataDir == "" {
-			return errors.New("worker data directory is required for Claude Code configuration")
-		}
-		configDir = filepath.Join(dataDir, "claude")
+	configDir, err := b.claudeConfigDir()
+	if err != nil {
+		return err
 	}
 	command.Env["CLAUDE_CONFIG_DIR"] = configDir
 	if err := updateJSONFile(filepath.Join(configDir, ".claude.json"), func(root map[string]any) {
