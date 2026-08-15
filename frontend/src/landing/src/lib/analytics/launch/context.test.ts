@@ -178,4 +178,58 @@ describe("launchContextFromBrowser", () => {
 			).device,
 		).toBe("tablet");
 	});
+
+	it("remembers an untagged external arrival's source across a same-site reload", () => {
+		// Regression: an untagged Product Hunt link (no utm_*) classified
+		// correctly on arrival, but after the reload — referrer now our own
+		// origin, campaign.ts holding nothing — the source became "direct" and
+		// ph_referral_visit was lost for a visitor who consented late.
+		const session = new Map<string, string>();
+		const sessionStorage = {
+			getItem: (k: string) => session.get(k) ?? null,
+			setItem: (k: string, v: string) => void session.set(k, v),
+		};
+		const arrival = launchContextFromBrowser(
+			read({ referrer: "https://www.producthunt.com/posts/ao" }),
+			sessionStorage,
+		);
+		expect(arrival.source).toBe("product_hunt");
+		expect(session.get("ao.launch.source")).toBe("product_hunt");
+
+		const reload = launchContextFromBrowser(
+			read({ referrer: "https://aoagents.dev/" }),
+			sessionStorage,
+		);
+		expect(reload.source).toBe("product_hunt");
+	});
+
+	it("does not remember direct or unrecognized sources", () => {
+		const session = new Map<string, string>();
+		const sessionStorage = {
+			getItem: (k: string) => session.get(k) ?? null,
+			setItem: (k: string, v: string) => void session.set(k, v),
+		};
+		launchContextFromBrowser(read({ referrer: "https://example.com/" }), sessionStorage);
+		launchContextFromBrowser(read({ referrer: "" }), sessionStorage);
+		expect(session.has("ao.launch.source")).toBe(false);
+		// A later same-site load with nothing remembered is direct.
+		expect(
+			launchContextFromBrowser(read({ referrer: "https://aoagents.dev/" }), sessionStorage).source,
+		).toBe("direct");
+	});
+
+	it("prefers a tagged arrival over any remembered source", () => {
+		const session = new Map<string, string>([["ao.launch.source", "x"]]);
+		const sessionStorage = {
+			getItem: (k: string) => session.get(k) ?? null,
+			setItem: (k: string, v: string) => void session.set(k, v),
+		};
+		const context = launchContextFromBrowser(
+			read({
+				campaign: () => ({ utm_source: "product_hunt", utm_campaign: "launch_day" }),
+			}),
+			sessionStorage,
+		);
+		expect(context.source).toBe("product_hunt");
+	});
 });

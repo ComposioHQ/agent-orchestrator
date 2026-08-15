@@ -29,17 +29,24 @@ be removed after the launch without unpicking anything.
   **without editing those call sites**. UTMs are re-read from campaign.ts
   (capture-once, persisted for the tab session) on every load, so a visitor
   who arrived tagged keeps their attribution across an untagged reload;
-  same-site referrers are ignored. A visit without `utm_campaign` has
-  `campaign` unregistered, so a stale value cannot persist in the cookie.
+  same-site referrers are ignored. An untagged external arrival — whose link
+  carried no utm_* — has its referrer-inferred source remembered in
+  sessionStorage for the tab session, so it too survives a same-site reload.
+  A visit without `utm_campaign` has `campaign` unregistered, so a stale value
+  cannot persist in the cookie.
 - **`LaunchAnalytics`** (`app/components/LaunchAnalytics`) — mounted once in the
-  layout. Fires `ph_referral_visit` (once per tab session, Product Hunt traffic
-  only) and `return_visit` (a **new** tab session of a browser seen before —
-  a reload of a first-ever visit does not count). Firing is consent-aware:
-  nothing is captured — and no once-only flag is consumed — until the visitor
-  accepts analytics, so a first-time PH visitor who accepts the banner a minute
-  in is still counted. The firing/dedupe decisions live in `launch/visit.ts`
-  and the registration decision in `launch/registration.ts`; both are pure and
-  unit-tested, as is the shared browser-input path `launchContextFromBrowser`.
+  layout; thin wiring only. Fires `ph_referral_visit` (once per tab session,
+  Product Hunt traffic only) and `return_visit` (a **new** tab session of a
+  browser seen before — a reload of a first-ever visit does not count, and if
+  sessionStorage is blocked the return signal is suppressed rather than
+  guessed at). Firing is consent-aware: nothing is captured — and no once-only
+  flag is consumed — until the visitor accepts analytics, so a first-time PH
+  visitor who accepts the banner a minute in is still counted. All decisions
+  and guarded storage/consent handling live in `launch/visit.ts` (injectable,
+  unit-tested with fakes and fake timers), the registration decision in
+  `launch/registration.ts`, and the shared browser-input path in
+  `launchContextFromBrowser` — the same single-caller seam shape as
+  `marketing-consent.ts` and `campaign.ts`.
 - **`ProductHuntBadge`** (`app/components/ProductHuntBadge`) — a drop-in
   Product Hunt CTA with `intent="badge" | "upvote"` selecting the event fired
   (`ph_badge_click` / `ph_upvote_cta_click`). The header mounts the `upvote`

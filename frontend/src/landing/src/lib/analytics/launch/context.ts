@@ -197,8 +197,57 @@ export type BrowserLaunchRead = {
  * consulted when there is no persisted `utm_source`, and same-site referrers
  * are ignored.
  */
+/**
+ * sessionStorage key holding the referrer-inferred source of this tab session.
+ *
+ * Tagged arrivals keep their attribution through campaign.ts (it persists the
+ * utm_* params for the tab). An untagged external arrival — a visitor whose
+ * channel link carried no utm_* — can only be classified from document.referrer,
+ * which is our own origin after the first reload. The inferred source is
+ * therefore remembered here, with the same per-tab-session lifetime campaign.ts
+ * uses: a new tab tomorrow from elsewhere starts clean.
+ */
+const SESSION_SOURCE_KEY = "ao.launch.source";
+
+type SessionSourceStorage = Pick<Storage, "getItem" | "setItem">;
+
+function sessionSourceStorage(): SessionSourceStorage | undefined {
+	if (typeof window === "undefined") return undefined;
+	try {
+		return window.sessionStorage;
+	} catch {
+		return undefined;
+	}
+}
+
+function rememberedSource(
+	storage?: SessionSourceStorage,
+): LaunchSource | undefined {
+	try {
+		const value = (storage ?? sessionSourceStorage())?.getItem(
+			SESSION_SOURCE_KEY,
+		);
+		return value ? (value as LaunchSource) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function rememberSource(
+	source: LaunchSource,
+	storage?: SessionSourceStorage,
+): void {
+	try {
+		(storage ?? sessionSourceStorage())?.setItem(SESSION_SOURCE_KEY, source);
+	} catch {
+		// Storage blocked: the source simply is not persisted for the tab.
+	}
+}
+
 export function launchContextFromBrowser(
 	read?: BrowserLaunchRead,
+	/** Where the inferred source is remembered; defaults to sessionStorage. */
+	sessionSourceStore?: SessionSourceStorage,
 ): LaunchContext {
 	if (typeof window === "undefined" && !read) return launchContext({});
 	const r = read ?? {
@@ -209,11 +258,29 @@ export function launchContextFromBrowser(
 		touchPoints: navigator.maxTouchPoints,
 	};
 	const campaign = r.campaign();
-	return launchContext({
-		utmSource: campaign.utm_source,
+	const referrer = externalReferrer(r.referrer, r.hostname);
+	const base = {
 		utmCampaign: campaign.utm_campaign,
-		referrer: externalReferrer(r.referrer, r.hostname),
 		ua: r.userAgent,
 		touchPoints: r.touchPoints,
-	});
+	};
+	// Tagged arrival: campaign.ts persists the utm_* for the tab, so this is
+	// stable across untagged reloads by construction.
+	if (campaign.utm_source) {
+		return launchContext({ ...base, utmSource: campaign.utm_source, referrer });
+	}
+	// Untagged external arrival: classify from the referrer, and remember the
+	// inferred source for the rest of the tab session.
+	if (referrer) {
+		const context = launchContext({ ...base, referrer });
+		if (context.source !== "direct" && context.source !== "other") {
+			rememberSource(context.source, sessionSourceStore);
+		}
+		return context;
+	}
+	// Same-site reload (or no referrer): fall back to what this tab session
+	// arrived as, if anything was remembered.
+	const remembered = rememberedSource(sessionSourceStore);
+	const context = launchContext({ ...base, referrer: "" });
+	return remembered ? { ...context, source: remembered } : context;
 }
