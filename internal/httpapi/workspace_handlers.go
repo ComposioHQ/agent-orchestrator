@@ -106,6 +106,12 @@ func (s *Server) writeWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadGateway, "INVALID_WORKER_RESPONSE", "The worker returned an invalid workspace file.")
 		return
 	}
+	// A browser-originated write is already durable in the worker workspace.
+	// Emit a small invalidation event so every view of this session refreshes
+	// from the same event stream instead of waiting for a polling interval.
+	s.appendSessionProjectionEvent(r.Context(), orgID, sessionID, "workspace.changed", map[string]string{
+		"path": file.Path,
+	})
 	writeJSON(w, http.StatusOK, file)
 }
 

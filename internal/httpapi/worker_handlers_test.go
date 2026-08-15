@@ -37,6 +37,12 @@ type checkoutEndpointStore struct {
 	current bool
 }
 
+func (s checkoutEndpointStore) AppendSessionEvent(
+	context.Context, string, string, string, json.RawMessage,
+) (domain.ClientEvent, error) {
+	return domain.ClientEvent{}, nil
+}
+
 func (s checkoutEndpointStore) WorkerConnectionCurrent(
 	context.Context, string, string, string, int64,
 ) (bool, error) {

@@ -67,6 +67,115 @@ type ShareClient = {
   ) => Promise<{ member: OrganizationMember }>;
 };
 
+export type CloudSessionEvent = {
+  sessionId: string;
+  sequence: number;
+  type: string;
+  payload: unknown;
+  createdAt: string;
+};
+
+type SessionEventSubscription = {
+  orgId: string;
+  sessionId: string;
+  after?: number;
+  onEvent: (event: CloudSessionEvent) => void;
+  onError?: (error: Error) => void;
+};
+
+// SSE cannot attach the same-origin session sentinel through EventSource. Keep
+// this small fetch-based reader at the client boundary so the Next gateway can
+// continue to exchange it for the HttpOnly session server-side.
+export function subscribeBrowserSessionEvents({
+  orgId,
+  sessionId,
+  after = 0,
+  onEvent,
+  onError,
+}: SessionEventSubscription): () => void {
+  let stopped = false;
+  let controller: AbortController | null = null;
+  let retryTimer: number | null = null;
+  let cursor = after;
+
+  const scheduleRetry = (delay: number) => {
+    if (stopped) return;
+    retryTimer = window.setTimeout(() => void connect(), delay);
+  };
+
+  const handleBlock = (block: string) => {
+    const lines = block.split("\n");
+    let eventType = "message";
+    let id = "";
+    const data: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith("event:")) eventType = line.slice("event:".length).trim();
+      if (line.startsWith("id:")) id = line.slice("id:".length).trim();
+      if (line.startsWith("data:")) data.push(line.slice("data:".length).trimStart());
+    }
+    if (data.length === 0) return;
+    try {
+      const parsed = JSON.parse(data.join("\n")) as Partial<CloudSessionEvent>;
+      const sequence = Number(parsed.sequence ?? id);
+      if (!Number.isFinite(sequence) || sequence <= cursor) return;
+      cursor = sequence;
+      onEvent({
+        sessionId: parsed.sessionId ?? sessionId,
+        sequence,
+        type: parsed.type ?? eventType,
+        payload: parsed.payload ?? {},
+        createdAt: parsed.createdAt ?? new Date().toISOString(),
+      });
+    } catch {
+      // A malformed event must not make the browser discard the established stream.
+    }
+  };
+
+  async function connect() {
+    controller = new AbortController();
+    try {
+      const response = await fetch(
+        `/api/cloud/v1/orgs/${encodeURIComponent(orgId)}/sessions/${encodeURIComponent(sessionId)}/events?after=${cursor}`,
+        {
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: "Bearer same-origin-session",
+            "Cache-Control": "no-cache",
+          },
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok || !response.body) {
+        throw new Error(`Session event stream failed (${response.status}).`);
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!stopped) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() ?? "";
+        for (const block of blocks) handleBlock(block.replace(/\r/g, ""));
+        if (done) break;
+      }
+      if (!stopped) scheduleRetry(250);
+    } catch (cause) {
+      if (!stopped && !(cause instanceof DOMException && cause.name === "AbortError")) {
+        onError?.(cause instanceof Error ? cause : new Error("Session event stream failed."));
+        scheduleRetry(1_000);
+      }
+    }
+  }
+
+  void connect();
+  return () => {
+    stopped = true;
+    controller?.abort();
+    if (retryTimer !== null) window.clearTimeout(retryTimer);
+  };
+}
+
 export function browserCloudClient() {
   const baseUrl = typeof window === "undefined" ? "http://localhost" : window.location.origin;
   const client = createCloudClient({

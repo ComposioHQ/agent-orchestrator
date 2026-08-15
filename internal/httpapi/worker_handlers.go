@@ -363,6 +363,7 @@ func (s *Server) workerRaisePullRequest(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_FAILED", "The pull request could not be opened.")
 		return
 	}
+	s.appendSessionProjectionEvent(r.Context(), claims.OrgID, claims.SessionID, "pull_request.created", pr)
 	writeJSON(w, http.StatusCreated, worker.RaisePullRequestResponse{
 		ID:         pr.ID,
 		Number:     pr.Number,
@@ -411,6 +412,7 @@ func (s *Server) workerClaimPullRequest(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusBadGateway, "PULL_REQUEST_FAILED", "The pull request could not be tracked.")
 		return
 	}
+	s.appendSessionProjectionEvent(r.Context(), claims.OrgID, claims.SessionID, "pull_request.claimed", pr)
 	writeJSON(w, http.StatusOK, worker.ClaimPullRequestResponse{
 		ID: pr.ID, Number: pr.Number, HTMLURL: pr.URL,
 	})
@@ -454,7 +456,29 @@ func (s *Server) workerSubmitReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadGateway, "REVIEW_FAILED", "The review could not be delivered.")
 		return
 	}
+	s.appendSessionProjectionEvent(r.Context(), claims.OrgID, claims.SessionID, "review.submitted", run)
 	writeJSON(w, http.StatusOK, worker.SubmitReviewResponse{ID: run.ID, Status: string(run.Status)})
+}
+
+// appendSessionProjectionEvent makes a completed worker-side state change
+// observable to connected browser projections. The source of truth remains the
+// normal database record; event persistence is deliberately best-effort here
+// so an event-stream outage cannot turn a successful GitHub operation into a
+// failed worker command.
+func (s *Server) appendSessionProjectionEvent(
+	ctx context.Context, orgID, sessionID, eventType string, payload any,
+) {
+	if s.store == nil {
+		return
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		s.logger.Error("marshal session projection event", "event_type", eventType, "error", err)
+		return
+	}
+	if _, err := s.store.AppendSessionEvent(ctx, orgID, sessionID, eventType, raw); err != nil {
+		s.logger.Error("append session projection event", "event_type", eventType, "error", err)
+	}
 }
 
 // workerEvent publishes one worker-originated event onto the session stream.
@@ -519,6 +543,9 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 			s.writeWorkerStoreError(w, r, err)
 			return
 		}
+		s.appendSessionProjectionEvent(
+			r.Context(), claims.OrgID, claims.SessionID, input.Type, activity,
+		)
 	case "worker.ready":
 		var ready worker.ReadyEvent
 		if err := json.Unmarshal(input.Payload, &ready); err != nil ||

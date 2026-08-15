@@ -10,6 +10,14 @@ import (
 )
 
 var clientEventTypes = []string{
+	"agent.activity",
+	"worker.connected",
+	"worker.ready",
+	"sandbox.provisioning",
+	"workspace.changed",
+	"pull_request.created",
+	"pull_request.claimed",
+	"review.submitted",
 	"chat.user_message",
 	"chat.assistant_delta",
 	"chat.turn_started",

@@ -94,6 +94,7 @@ export function CloudWorkspace() {
   const [organizationId, setOrganizationId] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessionProjectionRevision, setSessionProjectionRevision] = useState(0);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -512,7 +513,11 @@ export function CloudWorkspace() {
         refreshing = false;
       }
     };
-    const interval = window.setInterval(() => void refreshSessions(), 1_500);
+    // The durable per-session stream refreshes visible state immediately. This
+    // interval is only a bounded reconciliation fallback for sessions that are
+    // not currently open in the browser.
+    void refreshSessions();
+    const interval = window.setInterval(() => void refreshSessions(), 15_000);
     const onVisibility = () => void refreshSessions();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -520,7 +525,11 @@ export function CloudWorkspace() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [client, organizationId]);
+  }, [client, organizationId, sessionProjectionRevision]);
+
+  const handleSessionProjectionEvent = useCallback(() => {
+    setSessionProjectionRevision((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -796,7 +805,10 @@ export function CloudWorkspace() {
     }
   };
 
-  const connectGitHubUser = async () => {
+  const connectGitHubUser = async (): Promise<{
+    popup: Window;
+    connection: GitHubUserCapability["connection"];
+  }> => {
     const attempt = await client.startGitHubUserAuthorization();
     const popup = window.open(
       attempt.authorizeUrl,
@@ -815,29 +827,37 @@ export function CloudWorkspace() {
       if (connection.connected) {
         authorized = true;
         setGitHubUser({ status: "available", connection });
-        break;
+        return { popup, connection };
       }
       await delay(300);
     }
     if (!authorized) {
       throw new Error("GitHub account authorization did not complete.");
     }
-    return popup;
+    throw new Error("GitHub account authorization did not return a connection.");
   };
 
-  const connectGitHubOrganization = async (existingPopup?: Window | null) => {
-    const before = new Map(
+  const connectGitHubOrganization = async (
+    existingPopup?: Window | null,
+    baselineInstallations?: GitHubInstallation[],
+    baselineUserConnection?: GitHubUserCapability["connection"],
+  ) => {
+    const currentInstallations = baselineInstallations ?? (
       github.status === "available"
         ? github.installations
-            .filter(({ accountType }) => accountType === "Organization")
-            .map(({ githubInstallationId, updatedAt }) => [
-              githubInstallationId,
-              updatedAt,
-            ])
-        : [],
+        : await client.listGitHubInstallations(organizationId)
+    );
+    const currentUserConnection = baselineUserConnection ?? githubUser.connection;
+    const before = new Map(
+      currentInstallations
+        .filter(({ accountType }) => accountType === "Organization")
+        .map(({ githubInstallationId, updatedAt }) => [
+          githubInstallationId,
+          updatedAt,
+        ]),
     );
     const beforeUserInstallations = new Map(
-      githubUser.connection.installations.map((installation) => [
+      currentUserConnection.installations.map((installation) => [
         installation.githubInstallationId,
         [
           installation.repositorySelection,
@@ -938,17 +958,27 @@ export function CloudWorkspace() {
     setError("");
     try {
       let popup: Window | null = null;
-      if (!githubUser.connection.connected) {
-        popup = await connectGitHubUser();
+      let userConnection = githubUser.connection;
+      let installations = github.status === "available"
+        ? github.installations
+        : await client.listGitHubInstallations(organizationId);
+      if (!userConnection.connected) {
+        const authorized = await connectGitHubUser();
+        popup = authorized.popup;
+        userConnection = authorized.connection;
       }
+      // The GitHub user connection is the authoritative record for which App
+      // installations the user has just authorized. The cloud installation
+      // list is intentionally used only as the baseline for detecting a
+      // changed/claimed organization inside connectGitHubOrganization. A
+      // refetch here can race GitHub's install callback and incorrectly skip
+      // the organization popup after personal authorization.
       const hasInstalls =
-        github.status === "available" &&
-        github.installations.some(
-          ({ accountType, status }) =>
-            accountType === "Organization" && status !== "removed",
+        userConnection.installations.some(
+          ({ accountType }) => accountType === "Organization",
         );
       if (!hasInstalls) {
-        await connectGitHubOrganization(popup);
+        await connectGitHubOrganization(popup, installations, userConnection);
         return;
       }
       popup?.close();
@@ -1399,6 +1429,7 @@ export function CloudWorkspace() {
                 const project = projects.find((p) => p.id === activeSession.projectId);
                 if (project) void openShareDialog(project);
               }}
+              onSessionEvent={handleSessionProjectionEvent}
               organizationId={activeSessionOrgId}
               projectSessions={sessions.filter((candidate) => candidate.projectId === activeSession.projectId)}
               session={activeSession}

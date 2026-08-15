@@ -55,6 +55,7 @@ const mocks = vi.hoisted(() => ({
   listSharedProjects: vi.fn(),
   listSharedProjectSessions: vi.fn(),
   getSession: vi.fn(),
+  subscribeBrowserSessionEvents: vi.fn(() => () => {}),
 }));
 
 vi.mock("@/lib/cloud-client", () => ({
@@ -105,6 +106,7 @@ vi.mock("@/lib/cloud-client", () => ({
     listSharedProjectSessions: mocks.listSharedProjectSessions,
     getSession: mocks.getSession,
   }),
+  subscribeBrowserSessionEvents: mocks.subscribeBrowserSessionEvents,
   consumePendingShareRedemption: () => null,
   newIdempotencyKey: () => "test-key",
 }));

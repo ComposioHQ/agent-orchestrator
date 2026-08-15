@@ -3,9 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,49 @@ type pendingWorkspaceStore struct {
 	Store
 	mu        sync.Mutex
 	cancelled int
+}
+
+type completedWorkspaceStore struct {
+	Store
+	eventType string
+	eventData json.RawMessage
+}
+
+func (s *completedWorkspaceStore) CreateWorkspaceRequest(
+	context.Context,
+	domain.Principal,
+	string,
+	string,
+	string,
+	json.RawMessage,
+	time.Duration,
+) (domain.WorkerRequest, error) {
+	return domain.WorkerRequest{ID: "00000000-0000-0000-0000-000000000004"}, nil
+}
+
+func (s *completedWorkspaceStore) GetWorkspaceRequest(
+	context.Context,
+	domain.Principal,
+	string,
+	string,
+	string,
+) (domain.WorkerRequest, error) {
+	return domain.WorkerRequest{
+		Status:   "succeeded",
+		Response: json.RawMessage(`{"path":"README.md","content":"updated","size":7}`),
+	}, nil
+}
+
+func (s *completedWorkspaceStore) AppendSessionEvent(
+	_ context.Context,
+	_ string,
+	_ string,
+	eventType string,
+	payload json.RawMessage,
+) (domain.ClientEvent, error) {
+	s.eventType = eventType
+	s.eventData = append(json.RawMessage(nil), payload...)
+	return domain.ClientEvent{Type: eventType, Payload: payload}, nil
 }
 
 func (s *pendingWorkspaceStore) CreateWorkspaceRequest(
@@ -101,6 +146,36 @@ func TestWorkspaceDisconnectCancelsDurableCommand(t *testing.T) {
 	}
 	if store.cancelCount() != 1 {
 		t.Fatalf("cancelled=%d, want 1", store.cancelCount())
+	}
+}
+
+func TestWorkspaceWriteEmitsDurableProjectionInvalidation(t *testing.T) {
+	store := &completedWorkspaceStore{}
+	server := &Server{
+		store:                store,
+		workerRequestTimeout: time.Second,
+		logger:               slog.Default(),
+	}
+	request := workspaceHandlerRequest(context.Background())
+	request.Method = http.MethodPut
+	request.Body = io.NopCloser(strings.NewReader(`{"path":"README.md","content":"updated"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+
+	server.writeWorkspaceFile(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if store.eventType != "workspace.changed" {
+		t.Fatalf("event type = %q, want workspace.changed", store.eventType)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(store.eventData, &payload); err != nil {
+		t.Fatalf("decode event payload: %v", err)
+	}
+	if payload["path"] != "README.md" {
+		t.Fatalf("event path = %q, want README.md", payload["path"])
 	}
 }
 

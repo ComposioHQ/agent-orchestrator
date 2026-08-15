@@ -144,9 +144,17 @@ printf 'username=x-access-token\npassword=%%s\n' "$github_token"
 	}
 	githubWrapper := fmt.Sprintf(`#!/bin/sh
 set -eu
-real_gh="${AO_GH_REAL_BINARY:-/usr/bin/gh}"
-if [ ! -x "$real_gh" ]; then
-  echo "AO GitHub CLI is unavailable at $real_gh" >&2
+real_gh="${AO_GH_REAL_BINARY:-}"
+if [ -z "$real_gh" ]; then
+  for candidate in /usr/local/bin/gh /usr/bin/gh; do
+    if [ -x "$candidate" ]; then
+      real_gh="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$real_gh" ] || [ ! -x "$real_gh" ]; then
+  echo "AO GitHub CLI is unavailable; expected /usr/local/bin/gh or /usr/bin/gh" >&2
   exit 127
 fi
 if [ -n "${GH_TOKEN:-}" ]; then

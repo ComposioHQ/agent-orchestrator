@@ -204,6 +204,14 @@ func TestConfigureWorkerGitBrokersCurrentWorkerCredential(t *testing.T) {
 		!strings.Contains(string(helper), "/worker/github-token") {
 		t.Fatalf("credential helper = %q", helper)
 	}
+	githubWrapper, err := os.ReadFile(filepath.Join(ToolingBinDir(dataDir), "gh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(githubWrapper), "/usr/local/bin/gh") ||
+		!strings.Contains(string(githubWrapper), "/usr/bin/gh") {
+		t.Fatalf("GitHub wrapper does not include the supported binary fallbacks: %q", githubWrapper)
+	}
 	if err := os.WriteFile(filepath.Join(dataDir, "worker-token"), []byte("fresh-worker-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

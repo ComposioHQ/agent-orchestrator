@@ -10,10 +10,12 @@ const mocks = vi.hoisted(() => ({
   writeWorkspaceFile: vi.fn(),
   listSessionPullRequests: vi.fn(),
   getSessionReviewState: vi.fn(),
+  subscribeBrowserSessionEvents: vi.fn(() => () => {}),
 }));
 
 vi.mock("@/lib/cloud-client", () => ({
   browserCloudClient: () => mocks,
+  subscribeBrowserSessionEvents: mocks.subscribeBrowserSessionEvents,
 }));
 vi.mock("./CloudTerminal", () => ({
   CloudTerminal: ({ kind }: { kind: string }) => (
@@ -40,6 +42,7 @@ const session = {
 };
 
 beforeEach(() => {
+  mocks.subscribeBrowserSessionEvents.mockClear();
   mocks.getWorkspaceDiff.mockResolvedValue({
     status: " M README.md",
     unstaged: "diff --git a/README.md b/README.md",
@@ -222,6 +225,37 @@ it("shows orchestrator and child worker changes in the orchestrator inspector", 
   ));
   expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith("org-1", "orchestrator-1");
   expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith("org-1", "worker-1");
+});
+
+it("uses one durable refresh domain for an orchestrator and its active workers", async () => {
+  const orchestrator = {
+    ...session,
+    id: "orchestrator-1",
+    kind: "orchestrator" as const,
+    displayName: "Orchestrator",
+  };
+  const worker = {
+    ...session,
+    id: "worker-1",
+    displayName: "random-file-pr",
+  };
+
+  render(
+    <CloudSessionWorkspace
+      onClose={vi.fn()}
+      organizationId="org-1"
+      projectSessions={[orchestrator, worker]}
+      session={orchestrator}
+    />,
+  );
+
+  await waitFor(() => expect(mocks.subscribeBrowserSessionEvents).toHaveBeenCalledTimes(2));
+  expect(mocks.subscribeBrowserSessionEvents).toHaveBeenCalledWith(
+    expect.objectContaining({ orgId: "org-1", sessionId: "orchestrator-1" }),
+  );
+  expect(mocks.subscribeBrowserSessionEvents).toHaveBeenCalledWith(
+    expect.objectContaining({ orgId: "org-1", sessionId: "worker-1" }),
+  );
 });
 
 it("mounts visible terminals to wake a paused or provisioning worker", () => {

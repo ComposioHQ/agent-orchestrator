@@ -20,11 +20,12 @@ the public `@aoagents/cloud-client` and `@aoagents/product-ui` sources for
 contracts, transport, status mapping, board layout, cards, and agent identity.
 It supports organization switching, projects, durable sessions, search, chat
 history, live event streams, worker turns, and replica-safe workspace files.
-Personal GitHub OAuth, PR/issue synchronization, and sharing behavior remain in
-development. See
+The Cloud UI also persists personal GitHub OAuth, installation confirmation,
+repository grants, PR/issue synchronization, and sharing behavior. See
 [`docs/control-plane.md`](docs/control-plane.md) for durable-state and cluster
-behavior and [`docs/deployment.md`](docs/deployment.md) for staging and
-production deployments.
+behavior, [`docs/deployment.md`](docs/deployment.md) for staging and production
+deployments, and [`docs/cloudagent-v1-parity.md`](docs/cloudagent-v1-parity.md)
+for the CloudAgent V1 comparison and remaining performance work.
 
 ## Environment model
 

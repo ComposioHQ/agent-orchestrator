@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { browserCloudClient } from "@/lib/cloud-client";
+import { browserCloudClient, subscribeBrowserSessionEvents } from "@/lib/cloud-client";
 import { CloudExternalLink } from "./CloudBoard";
 import { CloudTerminal } from "./CloudTerminal";
 import { harnessLogoSource } from "./harness-logo";
@@ -67,6 +67,7 @@ export function CloudSessionWorkspace({
   onDelete = () => {},
   onNewTask = () => {},
   onShare = () => {},
+  onSessionEvent,
   organizationId,
   projectSessions = [],
   session,
@@ -75,6 +76,7 @@ export function CloudSessionWorkspace({
   onDelete?: () => void;
   onNewTask?: () => void;
   onShare?: () => void;
+  onSessionEvent?: () => void;
   organizationId: string;
   projectSessions?: Session[];
   session: Session;
@@ -95,13 +97,25 @@ export function CloudSessionWorkspace({
   const [pullRequests, setPullRequests] = useState<PullRequestSummary[]>([]);
   const [reviewGroups, setReviewGroups] = useState<InspectorReviewGroup[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [projectionVersion, setProjectionVersion] = useState(0);
   const diffInFlight = useRef(false);
   const shownErrors = useRef(new Set<string>());
+  const projectionRefreshTimer = useRef<number | null>(null);
   const projectRuntimeKey = Array.from(
     new Map([session, ...projectSessions].map((candidate) => [candidate.id, candidate])).values(),
   )
     .map((candidate) => `${candidate.id}:${candidate.runtimeConnected}:${candidate.isTerminated}:${candidate.updatedAt}`)
     .join("|");
+  const projectionSessionKey = useMemo(
+    () => Array.from(
+      new Map(
+        (session.kind === "orchestrator" ? [session, ...projectSessions] : [session])
+          .filter((candidate) => !candidate.isTerminated)
+          .map((candidate) => [candidate.id, candidate]),
+      ).keys(),
+    ).join("|"),
+    [projectRuntimeKey],
+  );
   const terminalCanWake =
     !session.isTerminated &&
     session.runtimeState !== "failed" &&
@@ -114,6 +128,33 @@ export function CloudSessionWorkspace({
     const timer = window.setTimeout(() => setToastError(""), 2_000);
     return () => window.clearTimeout(timer);
   }, [error]);
+
+  useEffect(() => {
+    const refreshProjections = () => {
+      if (projectionRefreshTimer.current !== null) {
+        window.clearTimeout(projectionRefreshTimer.current);
+      }
+      projectionRefreshTimer.current = window.setTimeout(() => {
+        projectionRefreshTimer.current = null;
+        setProjectionVersion((current) => current + 1);
+        onSessionEvent?.();
+      }, 125);
+    };
+    const unsubscribers = projectionSessionKey.split("|").filter(Boolean).map((sessionId) =>
+      subscribeBrowserSessionEvents({
+        orgId: organizationId,
+        sessionId,
+        onEvent: refreshProjections,
+      }),
+    );
+    return () => {
+      for (const unsubscribe of unsubscribers) unsubscribe();
+      if (projectionRefreshTimer.current !== null) {
+        window.clearTimeout(projectionRefreshTimer.current);
+        projectionRefreshTimer.current = null;
+      }
+    };
+  }, [onSessionEvent, organizationId, projectionSessionKey]);
 
   const loadReviews = async () => {
     // While a NodeOps VM is waking, the terminal ticket is the only request
@@ -242,10 +283,18 @@ export function CloudSessionWorkspace({
   }, [tab, session.id]);
 
   useEffect(() => {
+    if (tab !== "files" || selectedFile) return;
+    void loadDirectory(directory);
+    // loadDirectory intentionally remains local to this render; the durable
+    // event stream is only an invalidation signal, not a replacement API.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectionVersion]);
+
+  useEffect(() => {
     if (tab !== "summary") return;
     void loadDiff();
     void loadReviews();
-  }, [tab, organizationId, session.id, session.runtimeConnected, projectRuntimeKey]);
+  }, [tab, organizationId, session.id, session.runtimeConnected, projectRuntimeKey, projectionVersion]);
 
   const inspectorTabs: InspectorTab<CloudInspectorTab>[] = [
     {

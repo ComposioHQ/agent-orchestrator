@@ -747,16 +747,23 @@ func TestAppendSessionEventIsVisibleOnTheSessionStream(t *testing.T) {
 	fixture := newSandboxFixture(t, "events")
 	ctx := context.Background()
 
-	if _, err := fixture.store.AppendSessionEvent(
-		ctx, fixture.orgID, fixture.sessionID, "sandbox.provisioning",
-		json.RawMessage(`{"provider":"nodeops"}`),
-	); err != nil {
-		t.Fatalf("AppendSessionEvent() error = %v", err)
-	}
-	if _, err := fixture.store.AppendSessionEvent(
-		ctx, fixture.orgID, fixture.sessionID, "worker.connected", nil,
-	); err != nil {
-		t.Fatalf("AppendSessionEvent() with an empty payload error = %v", err)
+	for _, input := range []struct {
+		eventType string
+		payload   json.RawMessage
+	}{
+		{"sandbox.provisioning", json.RawMessage(`{"provider":"nodeops"}`)},
+		{"worker.connected", nil},
+		{"agent.activity", json.RawMessage(`{"state":"active"}`)},
+		{"workspace.changed", json.RawMessage(`{"path":"README.md"}`)},
+		{"pull_request.created", json.RawMessage(`{"number":1}`)},
+		{"pull_request.claimed", json.RawMessage(`{"number":1}`)},
+		{"review.submitted", json.RawMessage(`{"pullRequestNumber":1}`)},
+	} {
+		if _, err := fixture.store.AppendSessionEvent(
+			ctx, fixture.orgID, fixture.sessionID, input.eventType, input.payload,
+		); err != nil {
+			t.Fatalf("AppendSessionEvent(%q) error = %v", input.eventType, err)
+		}
 	}
 
 	var types []string
@@ -781,8 +788,37 @@ func TestAppendSessionEventIsVisibleOnTheSessionStream(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(types) != 2 || types[0] != "sandbox.provisioning" || types[1] != "worker.connected" {
-		t.Fatalf("session events = %v, want the two lifecycle events in order", types)
+	wantTypes := []string{
+		"sandbox.provisioning",
+		"worker.connected",
+		"agent.activity",
+		"workspace.changed",
+		"pull_request.created",
+		"pull_request.claimed",
+		"review.submitted",
+	}
+	if len(types) != len(wantTypes) {
+		t.Fatalf("stored event count = %d, want %d (%v)", len(types), len(wantTypes), types)
+	}
+	for index, want := range wantTypes {
+		if types[index] != want {
+			t.Fatalf("stored event[%d] = %q, want %q", index, types[index], want)
+		}
+	}
+
+	visible, hasMore, err := fixture.store.ListClientEvents(
+		ctx, fixture.principal, fixture.orgID, fixture.sessionID, 0, 100,
+	)
+	if err != nil || hasMore {
+		t.Fatalf("ListClientEvents() events=%v hasMore=%v error=%v", visible, hasMore, err)
+	}
+	if len(visible) != len(wantTypes) {
+		t.Fatalf("client-visible event count = %d, want %d (%v)", len(visible), len(wantTypes), visible)
+	}
+	for index, want := range wantTypes {
+		if visible[index].Type != want {
+			t.Fatalf("client-visible event[%d] = %q, want %q", index, visible[index].Type, want)
+		}
 	}
 }
 
