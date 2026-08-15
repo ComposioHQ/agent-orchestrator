@@ -401,22 +401,6 @@ describe("portable inspector presentations", () => {
 		expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
 	});
 
-	it("shows an empty review summary instead of a blank reviews area", () => {
-		render(
-			<InspectorReviewsView
-				externalLink={ExternalLink}
-				groups={[]}
-				isLoading={false}
-				labels={reviewLabels}
-				renderAvatar={() => null}
-				renderMarkdown={(body) => <p>{body}</p>}
-			/>,
-		);
-
-		expect(screen.getByText("Reviews")).toBeInTheDocument();
-		expect(screen.getByText("No summaries")).toBeInTheDocument();
-	});
-
 
 });
 

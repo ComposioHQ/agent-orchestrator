@@ -1273,8 +1273,7 @@ describe("SessionInspector summary reviews", () => {
 		await screen.findByText("Review in progress · Codex");
 
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
-		expect(screen.getByText("Review summary")).toBeInTheDocument();
-		expect(screen.getByText("No past review summaries yet.")).toBeInTheDocument();
+		expect(screen.queryByText("Review summary")).not.toBeInTheDocument();
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {

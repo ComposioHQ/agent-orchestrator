@@ -493,13 +493,7 @@ export function InspectorReviewsView({
 			</InspectorSection>
 		);
 	}
-	if (groups.length === 0) {
-		return (
-			<InspectorSection surface title={labels.reviews}>
-				<p className={inspectorEmptyClass}>{labels.noPastReviewSummaries}</p>
-			</InspectorSection>
-		);
-	}
+	if (groups.length === 0) return null;
 	return (
 		<InspectorSection surface={false} title={labels.reviews}>
 			<div className="flex flex-col gap-2">
