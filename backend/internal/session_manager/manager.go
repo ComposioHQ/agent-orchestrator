@@ -3562,10 +3562,10 @@ func HookPATH(executable func() (string, error), getenv func(string) string, pro
 // workspace never launches an agent.
 func (m *Manager) provisionWorkspace(ctx context.Context, project domain.ProjectRecord, workspacePath string) error {
 	if err := applySymlinks(project.Path, workspacePath, project.Config.Symlinks); err != nil {
-		return fmt.Errorf("%w: symlinks: %v", ErrWorkspaceProvisionFailed, err)
+		return fmt.Errorf("%w: symlinks: %w", ErrWorkspaceProvisionFailed, err)
 	}
 	if err := runPostCreate(ctx, workspacePath, project.Config.PostCreate); err != nil {
-		return fmt.Errorf("%w: postCreate: %v", ErrWorkspaceProvisionFailed, err)
+		return fmt.Errorf("%w: postCreate: %w", ErrWorkspaceProvisionFailed, err)
 	}
 	return nil
 }

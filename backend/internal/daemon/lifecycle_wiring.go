@@ -440,7 +440,7 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 	}
 	info, err := os.Stat(rec.Path)
 	if err != nil {
-		return "", fmt.Errorf("project %q repo path %q is unavailable: %v: %w", projectID, rec.Path, err, sessionmanager.ErrProjectNotResolvable)
+		return "", fmt.Errorf("project %q repo path %q is unavailable: %w: %w", projectID, rec.Path, err, sessionmanager.ErrProjectNotResolvable)
 	}
 	if !info.IsDir() {
 		return "", fmt.Errorf("project %q repo path %q is not a directory: %w", projectID, rec.Path, sessionmanager.ErrProjectNotResolvable)
