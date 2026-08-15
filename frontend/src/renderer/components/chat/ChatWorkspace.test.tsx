@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
@@ -217,16 +217,27 @@ describe("ChatWorkspace timeline", () => {
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
 
-	it("shows live working state inline with the current turn while the composer owns the stop action", () => {
+	it("shows live working state inline with the current turn while the composer owns the stop action", async () => {
+		const user = userEvent.setup();
+		const onInterrupt = vi.fn();
 		const snapshot = structuredClone(chatFixture);
 		snapshot.items = snapshot.items.filter(
 			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
 		);
 
-		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
 
-		expect(screen.getByText(/^Working for /)).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Stop turn" })).toBeInTheDocument();
+		const status = screen.getByTestId("live-turn-status");
+		expect(screen.getByRole("log", { name: "Conversation" })).toContainElement(status);
+		expect(status).toHaveClass("min-h-6", "px-1");
+		expect(status).not.toHaveClass("border", "bg-surface", "rounded-md");
+		expect(status).toHaveTextContent(/^Working for /);
+		expect(within(status).queryByRole("button")).not.toBeInTheDocument();
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.getByLabelText("Message the agent").closest("form")).toContainElement(stop);
+		await user.click(stop);
+		expect(onInterrupt).toHaveBeenCalledOnce();
 	});
 
 	it("shows blocked turn state inline with the current turn", () => {
@@ -433,6 +444,8 @@ describe("ChatWorkspace timeline", () => {
 		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 100 });
 		log.dispatchEvent(new Event("scroll"));
 		const jump = await screen.findByRole("button", { name: /jump to latest/i });
+		expect(jump).toHaveAttribute("title", "Jump to latest");
+		expect(jump).not.toHaveTextContent("Jump to latest");
 		expect(jump).toHaveClass(
 			"bg-raised",
 			"dark:bg-raised",

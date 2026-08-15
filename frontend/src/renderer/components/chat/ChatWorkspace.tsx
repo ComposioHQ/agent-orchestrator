@@ -27,7 +27,6 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-	Archive,
 	ArrowDown,
 	CornerDownRight,
 	GitBranch,
@@ -391,15 +390,6 @@ export function ChatWorkspace({
 
 			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
-					<div className="flex items-center justify-end">
-						<CompactButton
-							onCompact={onCompact}
-							compacting={compacting}
-							unavailable={compactUnavailable}
-							turnInFlight={Boolean(turn)}
-							compactedAt={snapshot.compactedAt}
-						/>
-					</div>
 					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 					{snapshot.branchedFromEarlierMessage ? (
 						<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -449,6 +439,10 @@ export function ChatWorkspace({
 						canSteer={Boolean(onSteer) && turn?.state === "running"}
 						steerPending={steerPending}
 						steerRefusal={steerRefusal}
+						onCompact={onCompact}
+						compacting={compacting}
+						compactUnavailable={compactUnavailable}
+						compactBlocked={Boolean(turn)}
 					/>
 				</div>
 			</div>
@@ -677,51 +671,6 @@ function ChatHeader({
 	);
 }
 
-function CompactButton({
-	onCompact,
-	compacting,
-	unavailable,
-	turnInFlight,
-	compactedAt,
-}: {
-	onCompact?: () => void;
-	compacting?: boolean;
-	unavailable?: string;
-	turnInFlight?: boolean;
-	compactedAt?: string;
-}) {
-	if (!onCompact) return null;
-	if (unavailable === "This agent cannot compact its history") {
-		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
-	}
-
-	const title = turnInFlight
-		? "Finish or stop the current turn before compacting"
-		: compactedAt
-			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
-			: "Summarize earlier history to reclaim context";
-
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="ghost"
-			onClick={onCompact}
-			disabled={compacting || turnInFlight}
-			title={title}
-			aria-label="Compact conversation history"
-			className="h-5 gap-1 px-1.5 text-[11px]"
-		>
-			{compacting ? (
-				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-			) : (
-				<Archive aria-hidden="true" className="size-3" />
-			)}
-			{compacting ? "Compacting…" : "Compact"}
-		</Button>
-	);
-}
-
 /**
  * Controller health. A stopped or recovering controller is announced, because a
  * silent surface is indistinguishable from an agent that is simply thinking.
@@ -863,6 +812,7 @@ function Timeline({
 	const [pinned, setPinned] = useState(true);
 	const [hoveredMarker, setHoveredMarker] = useState<number | null>(null);
 	const [messageEdit, setMessageEdit] = useState<MessageEditDraft>();
+	const turn = activeTurn(snapshot);
 	const [scrollbar, setScrollbar] = useState({
 		visible: false,
 		top: 0,
@@ -1098,7 +1048,7 @@ function Timeline({
 		updateScrollbar();
 	}
 
-	if (items.length === 0 && !messageEdit) {
+	if (items.length === 0 && !messageEdit && !turn) {
 		return <EmptyState harness={snapshot.harness} />;
 	}
 
@@ -1163,6 +1113,9 @@ function Timeline({
 							/>
 						</div>
 					))}
+					{turn && !groups.some((group) => group.turnId === turn.id) ? (
+						<TurnLiveStatus startedAt={turn.startedAt ?? turn.requestedAt} />
+					) : null}
 					{messageEdit && !editedMessageVisible ? (
 						<div className="flex justify-end" data-chat-scroll-anchor="">
 							<HumanMessageEditor
@@ -1261,13 +1214,14 @@ function Timeline({
 			{!pinned ? (
 				<Button
 					type="button"
-					size="sm"
+					size="icon-sm"
 					variant="outline"
+					aria-label="Jump to latest"
+					title="Jump to latest"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
+					className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
-					<ArrowDown aria-hidden="true" className="size-3.5" />
-					Jump to latest
+					<ArrowDown aria-hidden="true" className="size-4" />
 				</Button>
 			) : null}
 		</div>
@@ -1408,23 +1362,27 @@ function TurnLiveStatus({ startedAt, blocked }: { startedAt?: string; blocked?: 
 		return () => clearInterval(timer);
 	}, [blocked, startedAt]);
 
-	if (blocked) {
-		return (
-			<div className="border-b border-border pb-2 pt-0.5">
+	return (
+		<div className="flex min-h-6 items-center gap-2 px-1 py-0.5" data-testid="live-turn-status">
+			{blocked ? (
 				<span role="alert" className="sr-only">
 					The agent is waiting for your decision.
 				</span>
-				<span className="text-sm font-normal leading-5 text-muted-foreground">
-					Waiting for your decision
-				</span>
-			</div>
-		);
-	}
-
-	return (
-		<div className="border-b border-border pb-2 pt-0.5">
-			<span role="status" aria-live="polite" className="text-sm font-normal leading-5 text-muted-foreground">
-				Working for {elapsed}
+			) : null}
+			{blocked ? (
+				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
+			) : (
+				<Loader2
+					aria-hidden="true"
+					className="size-3 shrink-0 animate-spin text-status-working opacity-100"
+				/>
+			)}
+			<span
+				role={blocked ? undefined : "status"}
+				aria-live={blocked ? undefined : "polite"}
+				className={cn("text-xs font-medium", blocked ? "text-warning" : "text-muted-foreground")}
+			>
+				{blocked ? "Waiting for your decision" : `Working for ${elapsed}`}
 			</span>
 		</div>
 	);
