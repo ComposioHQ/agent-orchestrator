@@ -1,21 +1,55 @@
 package pr
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 type fakeActionStore struct {
-	pr domain.PullRequest
-	ok bool
+	pr           domain.PullRequest
+	ok           bool
+	recordErr    error
+	recordCalls  int
+	recordedSHA  string
+	recordedTime time.Time
 }
 
 func (f *fakeActionStore) GetPR(context.Context, string) (domain.PullRequest, bool, error) {
 	return f.pr, f.ok, nil
+}
+
+func (f *fakeActionStore) RecordPRMerge(_ context.Context, _ string, mergeCommitSHA string, mergedAt time.Time) (domain.PullRequest, error) {
+	f.recordCalls++
+	f.recordedSHA = mergeCommitSHA
+	f.recordedTime = mergedAt
+	if f.recordErr != nil {
+		return domain.PullRequest{}, f.recordErr
+	}
+	f.pr.Merged = true
+	f.pr.Draft = false
+	f.pr.Closed = false
+	f.pr.MergeCommitSHA = mergeCommitSHA
+	f.pr.StateChangedAt = mergedAt
+	return f.pr, nil
+}
+
+type fakeActionLifecycle struct {
+	observations []ports.SCMObservation
+	sessionIDs   []domain.SessionID
+	err          error
+}
+
+func (f *fakeActionLifecycle) ApplySCMObservation(_ context.Context, id domain.SessionID, obs ports.SCMObservation) error {
+	f.sessionIDs = append(f.sessionIDs, id)
+	f.observations = append(f.observations, obs)
+	return f.err
 }
 
 type fakeSCMAction struct {
@@ -43,6 +77,7 @@ func (f *fakeSCMAction) MergePullRequest(_ context.Context, request ports.SCMMer
 func mergeableActionFixture() (domain.PullRequest, *fakeSCMAction) {
 	pr := domain.PullRequest{
 		URL:          "https://github.com/acme/widgets/pull/42",
+		SessionID:    "session-1",
 		Number:       42,
 		Provider:     "github",
 		Host:         "github.com",
@@ -61,7 +96,10 @@ func mergeableActionFixture() (domain.PullRequest, *fakeSCMAction) {
 
 func TestActionServiceMerge_GuardsAndSquashMergesExactHead(t *testing.T) {
 	pr, scm := mergeableActionFixture()
-	svc := NewActionService(ActionDeps{Store: &fakeActionStore{pr: pr, ok: true}, Reader: scm, Merger: scm})
+	store := &fakeActionStore{pr: pr, ok: true}
+	lifecycle := &fakeActionLifecycle{}
+	mergedAt := time.Date(2026, 8, 15, 2, 0, 0, 0, time.UTC)
+	svc := NewActionService(ActionDeps{Store: store, Reader: scm, Merger: scm, Lifecycle: lifecycle, Clock: func() time.Time { return mergedAt }})
 	result, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA})
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +109,51 @@ func TestActionServiceMerge_GuardsAndSquashMergesExactHead(t *testing.T) {
 	}
 	if scm.mergeCalls != 1 || scm.request.ExpectedHeadSHA != pr.HeadSHA || scm.request.Method != ports.SCMMergeSquash {
 		t.Fatalf("request = %#v, calls = %d", scm.request, scm.mergeCalls)
+	}
+	if store.recordCalls != 1 || store.recordedSHA != "merge-sha" || !store.recordedTime.Equal(mergedAt) {
+		t.Fatalf("merge projection = calls %d sha %q time %s", store.recordCalls, store.recordedSHA, store.recordedTime)
+	}
+	if len(lifecycle.observations) != 1 || lifecycle.sessionIDs[0] != pr.SessionID {
+		t.Fatalf("lifecycle projection = sessions %#v observations %#v", lifecycle.sessionIDs, lifecycle.observations)
+	}
+	projected := lifecycle.observations[0]
+	if !projected.PR.Merged || projected.PR.Closed || projected.PR.Draft || projected.PR.MergeCommitSHA != "merge-sha" || !projected.ObservedAt.Equal(mergedAt) {
+		t.Fatalf("projected merged observation = %+v", projected)
+	}
+}
+
+func TestActionServiceMerge_ProjectionFailureDoesNotMisreportProviderMerge(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	store := &fakeActionStore{pr: pr, ok: true, recordErr: errors.New("disk full")}
+	var logs bytes.Buffer
+	svc := NewActionService(ActionDeps{
+		Store: store, Reader: scm, Merger: scm,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	result, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA})
+	if err != nil || result.MergeCommitSHA != "merge-sha" {
+		t.Fatalf("provider merge should remain successful: result=%+v err=%v", result, err)
+	}
+	if store.recordCalls != 1 || !bytes.Contains(logs.Bytes(), []byte("durable projection failed")) {
+		t.Fatalf("projection failure was not attempted/logged: calls=%d logs=%q", store.recordCalls, logs.String())
+	}
+}
+
+func TestActionServiceMerge_LifecycleFailureDoesNotMisreportProviderMerge(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	store := &fakeActionStore{pr: pr, ok: true}
+	lifecycle := &fakeActionLifecycle{err: errors.New("lifecycle unavailable")}
+	var logs bytes.Buffer
+	svc := NewActionService(ActionDeps{
+		Store: store, Reader: scm, Merger: scm, Lifecycle: lifecycle,
+		Logger: slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	result, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA})
+	if err != nil || result.MergeCommitSHA != "merge-sha" {
+		t.Fatalf("provider merge should remain successful: result=%+v err=%v", result, err)
+	}
+	if store.recordCalls != 1 || len(lifecycle.observations) != 1 || !bytes.Contains(logs.Bytes(), []byte("lifecycle reaction failed")) {
+		t.Fatalf("lifecycle failure was not attempted/logged: store calls=%d lifecycle calls=%d logs=%q", store.recordCalls, len(lifecycle.observations), logs.String())
 	}
 }
 

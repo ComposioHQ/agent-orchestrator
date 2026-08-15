@@ -277,6 +277,7 @@ func mrToSCMPRObservation(repo ports.SCMRepo, mr *restMR) ports.SCMPRObservation
 		URL:                      mr.WebURL,
 		HTMLURL:                  mr.WebURL,
 		Number:                   mr.IID,
+		BaseRepo:                 repo.Repo,
 		State:                    string(state),
 		Draft:                    mr.Draft,
 		Merged:                   merged,

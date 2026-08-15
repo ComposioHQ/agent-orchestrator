@@ -745,6 +745,23 @@ flowchart TD
 
 ```
 
+PR listing and detailed observation have deliberately different persistence
+semantics. A list response proves only that an open or draft PR exists and can
+be attributed to a session, so discovery uses an insert-only baseline write.
+Only a successful detailed provider observation may replace CI, review,
+mergeability, metadata, and semantic acknowledgement hashes. Providers also
+carry the canonical base-repository identity from list responses so repository
+renames or transfers cannot make the same canonical PR URL appear new under a
+redirecting remote alias.
+
+SCM commands use the same durable-facts-first rule. When AO receives a
+successful merge response from a provider, the action service immediately
+projects only the terminal merge facts into SQLite and then runs lifecycle
+reactions. The resulting `pr_updated` change event makes API clients converge
+without waiting for the periodic observer. Provider polling remains the
+reconciliation path for mutations performed outside AO and for rare local
+projection failures.
+
 ### Runtime Reaper
 
 ```mermaid

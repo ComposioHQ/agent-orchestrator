@@ -299,7 +299,7 @@ func TestParsePRURL(t *testing.T) {
 	}
 }
 
-func TestRestListPullToSCMCarriesHeadRepo(t *testing.T) {
+func TestRestListPullToSCMCarriesRepositoryIdentities(t *testing.T) {
 	var pull restListPull
 	pull.Number = 7
 	pull.State = "open"
@@ -307,6 +307,7 @@ func TestRestListPullToSCMCarriesHeadRepo(t *testing.T) {
 	pull.Head.SHA = "deadbeef"
 	pull.Head.Repo.FullName = "forker/hello"
 	pull.Base.Ref = "main"
+	pull.Base.Repo.FullName = "canonical/hello"
 
 	obs := restListPullToSCM(pull)
 	if obs.SourceBranch != "feat/x" {
@@ -314,6 +315,9 @@ func TestRestListPullToSCMCarriesHeadRepo(t *testing.T) {
 	}
 	if obs.HeadRepo != "forker/hello" {
 		t.Fatalf("HeadRepo = %q, want forker/hello", obs.HeadRepo)
+	}
+	if obs.BaseRepo != "canonical/hello" {
+		t.Fatalf("BaseRepo = %q, want canonical/hello", obs.BaseRepo)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -39,6 +40,21 @@ const (
 // merged as a bounded partial window.
 type SCMWriter interface {
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ReviewWriteMode) error
+}
+
+// SCMDiscoveryWriter records the minimal fact that a PR exists. Discovery is
+// intentionally separate from SCMWriter because a repository listing does not
+// carry authoritative CI, review, mergeability, or full metadata. Ensuring an
+// already-known URL must never overwrite its richer stored observation.
+type SCMDiscoveryWriter interface {
+	EnsureDiscoveredPR(ctx context.Context, pr domain.DiscoveredPullRequest) error
+}
+
+// SCMMergeWriter projects a provider-confirmed merge into the durable PR facts
+// immediately. Polling remains a reconciliation path; callers should not wait
+// for the next observer tick after AO itself performed the mutation.
+type SCMMergeWriter interface {
+	RecordPRMerge(ctx context.Context, url, mergeCommitSHA string, mergedAt time.Time) (domain.PullRequest, error)
 }
 
 // PRClaimer atomically moves (or creates) a PR row for a target session and

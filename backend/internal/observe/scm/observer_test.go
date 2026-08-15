@@ -37,7 +37,8 @@ type fakeStore struct {
 	checks         map[string][]domain.PullRequestCheck
 	writeErr       error
 
-	writes []fakeWrite
+	discoveries []domain.DiscoveredPullRequest
+	writes      []fakeWrite
 
 	listEntered chan struct{}
 	listRelease chan struct{}
@@ -105,6 +106,16 @@ func (s *fakeStore) ListChecks(_ context.Context, prURL string) ([]domain.PullRe
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]domain.PullRequestCheck(nil), s.checks[prURL]...), nil
+}
+
+func (s *fakeStore) EnsureDiscoveredPR(_ context.Context, pr domain.DiscoveredPullRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	s.discoveries = append(s.discoveries, pr)
+	return nil
 }
 
 func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
@@ -922,6 +933,9 @@ func TestPoll_IgnoresForkPRWithMatchingBranch(t *testing.T) {
 	if len(store.writes) != 0 {
 		t.Fatalf("fork PR must not be persisted, got %d writes", len(store.writes))
 	}
+	if len(store.discoveries) != 0 {
+		t.Fatalf("fork PR must not be discovered, got %d discoveries", len(store.discoveries))
+	}
 }
 
 func mustGit(t *testing.T, args ...string) {
@@ -1027,6 +1041,94 @@ func TestPoll_IgnoresUpstreamPRFromForeignHead(t *testing.T) {
 	if len(store.writes) != 0 {
 		t.Fatalf("foreign-head upstream PR must not be persisted, got %d writes", len(store.writes))
 	}
+	if len(store.discoveries) != 0 {
+		t.Fatalf("foreign-head upstream PR must not be discovered, got %d discoveries", len(store.discoveries))
+	}
+}
+
+func TestPoll_DedupesRedirectedRepoAliasByCanonicalBaseRepo(t *testing.T) {
+	dir := t.TempDir()
+	mustGit(t, "init", dir)
+	mustGit(t, "-C", dir, "remote", "add", "origin", "https://github.com/new/r.git")
+	mustGit(t, "-C", dir, "remote", "add", "old", "https://github.com/old/r.git")
+
+	canonical := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "new", Name: "r", Repo: "new/r"}
+	alias := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}
+	listed := ports.SCMPRObservation{
+		ProviderID:   "PR_stable_7",
+		URL:          "https://github.com/new/r/pull/7",
+		Number:       7,
+		BaseRepo:     "new/r",
+		SourceBranch: "ao/p-1/fix",
+		HeadRepo:     "new/r",
+		TargetBranch: "main",
+		HeadSHA:      "sha7",
+		Author:       "alice",
+	}
+	detailed := ports.SCMObservation{
+		Fetched: true, Provider: "github", Host: "github.com", Repo: "new/r",
+		PR: ports.SCMPRObservation{
+			ProviderID: "PR_stable_7", URL: "https://github.com/new/r/pull/7", Number: 7, State: "open",
+			SourceBranch: "ao/p-1/fix", HeadRepo: "new/r", TargetBranch: "main", HeadSHA: "sha7", Title: "PR",
+		},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: "sha7"},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewNone)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable), Mergeable: true},
+	}
+	session := domain.SessionRecord{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "ao/p-1/root"}, AutoInjectReview: true}
+	aliasObservation := detailed
+	aliasObservation.Repo = alias.Repo
+	aliasObservation.PR.URL = "https://github.com/old/r/pull/7"
+	local, _, _, _, _ := domainFromObservation(session.ID, session, aliasObservation, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
+	local.ReviewObservedAt = time.Unix(2, 0).UTC()
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{session},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: dir, RepoOriginURL: "https://github.com/new/r.git"}},
+		prs:      map[domain.SessionID][]domain.PullRequest{"p-1": {local}},
+		checks:   map[string][]domain.PullRequestCheck{},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{
+			prKey(canonical, 0): {ETag: "canonical"},
+			prKey(alias, 0):     {ETag: "alias"},
+		},
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(canonical, 0): {listed},
+			prKey(alias, 0):     {listed},
+		},
+		observations: map[string]ports.SCMObservation{prKey(canonical, 7): detailed},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(3, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.discoveries) != 0 {
+		t.Fatalf("redirected alias rediscovered an existing PR: %#v", store.discoveries)
+	}
+	if len(provider.fetchBatches) != 1 || len(provider.fetchBatches[0]) != 1 {
+		t.Fatalf("canonical PR should be fetched once, got batches %#v", provider.fetchBatches)
+	}
+	if got := provider.fetchBatches[0][0].Repo.Repo; got != canonical.Repo {
+		t.Fatalf("fetch repo = %q, want canonical %q", got, canonical.Repo)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("canonical observation should migrate the stored repository identity")
+	}
+	for _, write := range store.writes {
+		if write.pr.CI != domain.CIPassing || write.pr.Mergeability != domain.MergeMergeable {
+			t.Fatalf("identity migration downgraded readiness facts: %+v", write.pr)
+		}
+		if write.pr.Repo != canonical.Repo {
+			t.Fatalf("identity migration persisted repo %q, want %q", write.pr.Repo, canonical.Repo)
+		}
+	}
+}
+
+func TestSplitRepoFullNamePreservesNestedNamespace(t *testing.T) {
+	owner, name, ok := splitRepoFullName("group/subgroup/repo")
+	if !ok || owner != "group/subgroup" || name != "repo" {
+		t.Fatalf("split = %q, %q, %v", owner, name, ok)
+	}
 }
 
 // A newly discovered open PR is persisted as a baseline row during discovery,
@@ -1045,19 +1147,19 @@ func TestPoll_DiscoveredPRPersistedAsBaselineBeforeRefresh(t *testing.T) {
 	if err := obs.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	var baseline *domain.PullRequest
-	for i := range store.writes {
-		if store.writes[i].pr.Number == 1 {
-			baseline = &store.writes[i].pr
+	var baseline *domain.DiscoveredPullRequest
+	for i := range store.discoveries {
+		if store.discoveries[i].Number == 1 {
+			baseline = &store.discoveries[i]
 			break
 		}
 	}
 	if baseline == nil {
-		t.Fatalf("discovered PR #1 not persisted as a baseline row; writes=%#v", store.writes)
+		t.Fatalf("discovered PR #1 not persisted as a baseline row; discoveries=%#v", store.discoveries)
 		return
 	}
-	if baseline.Merged || baseline.Closed {
-		t.Fatalf("baseline row must be open, got merged=%v closed=%v", baseline.Merged, baseline.Closed)
+	if baseline.Draft {
+		t.Fatal("baseline row should be open, got draft")
 	}
 }
 

@@ -26,6 +26,26 @@ type PRFacts struct {
 	UpdatedAt      time.Time
 }
 
+// DiscoveredPullRequest is the minimal, non-authoritative fact produced by PR
+// listing. Discovery proves that an open or draft PR exists and which session
+// owns its branch; it does not prove current CI, review, mergeability, or full
+// metadata. Persistence must therefore treat this as insert-only and leave an
+// existing PullRequest snapshot untouched.
+type DiscoveredPullRequest struct {
+	URL          string
+	SessionID    SessionID
+	Number       int
+	Draft        bool
+	UpdatedAt    time.Time
+	Provider     string
+	Host         string
+	Repo         string
+	ProviderID   string
+	SourceBranch string
+	TargetBranch string
+	HeadSHA      string
+}
+
 // PullRequest is the app-level representation of one tracked pull request as
 // persisted by the PR store. It is intentionally separate from the sqlc
 // generated sqlite row type so storage details do not leak outside sqlite.

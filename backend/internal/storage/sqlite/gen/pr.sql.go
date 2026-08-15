@@ -131,6 +131,56 @@ func (q *Queries) DeletePRByURL(ctx context.Context, url string) error {
 	return err
 }
 
+const ensureDiscoveredPR = `-- name: EnsureDiscoveredPR :exec
+INSERT INTO pr (
+    url, session_id, number, pr_state, updated_at,
+    provider, host, repo, provider_id, source_branch, target_branch, head_sha, is_draft,
+    auto_inject_ci
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+ON CONFLICT (url) DO NOTHING
+`
+
+type EnsureDiscoveredPRParams struct {
+	URL          string
+	SessionID    domain.SessionID
+	Number       int64
+	PRState      domain.PRState
+	UpdatedAt    time.Time
+	Provider     string
+	Host         string
+	Repo         string
+	ProviderID   string
+	SourceBranch string
+	TargetBranch string
+	HeadSha      string
+	IsDraft      int64
+	ID           domain.SessionID
+}
+
+// A repository listing only proves identity plus open/draft lifecycle. It must
+// never replace an authoritative observation already stored for the same URL.
+func (q *Queries) EnsureDiscoveredPR(ctx context.Context, arg EnsureDiscoveredPRParams) error {
+	_, err := q.db.ExecContext(ctx, ensureDiscoveredPR,
+		arg.URL,
+		arg.SessionID,
+		arg.Number,
+		arg.PRState,
+		arg.UpdatedAt,
+		arg.Provider,
+		arg.Host,
+		arg.Repo,
+		arg.ProviderID,
+		arg.SourceBranch,
+		arg.TargetBranch,
+		arg.HeadSha,
+		arg.IsDraft,
+		arg.ID,
+	)
+	return err
+}
+
 const getDisplayPRFactsBySession = `-- name: GetDisplayPRFactsBySession :one
 SELECT
     pr.url,
@@ -639,6 +689,48 @@ type MovePRAliasReviewsParams struct {
 func (q *Queries) MovePRAliasReviews(ctx context.Context, arg MovePRAliasReviewsParams) error {
 	_, err := q.db.ExecContext(ctx, movePRAliasReviews, arg.CanonicalURL, arg.PreviousURL)
 	return err
+}
+
+const recordPRMerge = `-- name: RecordPRMerge :execrows
+UPDATE pr
+SET pr_state = 'merged',
+    state_changed_at = CASE
+        WHEN pr_state = 'merged' AND state_changed_at IS NOT NULL THEN state_changed_at
+        ELSE ?
+    END,
+    updated_at = ?,
+    is_draft = 0,
+    is_merged = 1,
+    is_closed = 0,
+    provider_state = 'merged',
+    merge_commit_sha = ?,
+    merged_at_provider = COALESCE(merged_at_provider, ?)
+WHERE url = ?
+`
+
+type RecordPRMergeParams struct {
+	StateChangedAt   sql.NullTime
+	UpdatedAt        time.Time
+	MergeCommitSha   string
+	MergedAtProvider sql.NullTime
+	URL              string
+}
+
+// A successful provider merge command is authoritative for terminal lifecycle.
+// Preserve CI/review/mergeability and semantic hashes; the observer may later
+// enrich the terminal snapshot without the command path erasing useful facts.
+func (q *Queries) RecordPRMerge(ctx context.Context, arg RecordPRMergeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordPRMerge,
+		arg.StateChangedAt,
+		arg.UpdatedAt,
+		arg.MergeCommitSha,
+		arg.MergedAtProvider,
+		arg.URL,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const repointPRAliases = `-- name: RepointPRAliases :exec

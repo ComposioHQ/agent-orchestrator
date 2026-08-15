@@ -59,6 +59,37 @@ ON CONFLICT (url) DO UPDATE SET
     ci_observed_at = excluded.ci_observed_at,
     review_observed_at = excluded.review_observed_at;
 
+-- name: EnsureDiscoveredPR :exec
+-- A repository listing only proves identity plus open/draft lifecycle. It must
+-- never replace an authoritative observation already stored for the same URL.
+INSERT INTO pr (
+    url, session_id, number, pr_state, updated_at,
+    provider, host, repo, provider_id, source_branch, target_branch, head_sha, is_draft,
+    auto_inject_ci
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    COALESCE((SELECT auto_inject_ci FROM sessions WHERE id = ?), TRUE))
+ON CONFLICT (url) DO NOTHING;
+
+-- name: RecordPRMerge :execrows
+-- A successful provider merge command is authoritative for terminal lifecycle.
+-- Preserve CI/review/mergeability and semantic hashes; the observer may later
+-- enrich the terminal snapshot without the command path erasing useful facts.
+UPDATE pr
+SET pr_state = 'merged',
+    state_changed_at = CASE
+        WHEN pr_state = 'merged' AND state_changed_at IS NOT NULL THEN state_changed_at
+        ELSE ?
+    END,
+    updated_at = ?,
+    is_draft = 0,
+    is_merged = 1,
+    is_closed = 0,
+    provider_state = 'merged',
+    merge_commit_sha = ?,
+    merged_at_provider = COALESCE(merged_at_provider, ?)
+WHERE url = ?;
+
 -- name: UpsertLegacyPR :exec
 INSERT INTO pr (
     url, session_id, number, pr_state, review_decision, ci_state, mergeability, updated_at, state_changed_at,

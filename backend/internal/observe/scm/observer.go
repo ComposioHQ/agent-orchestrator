@@ -79,6 +79,7 @@ type Store interface {
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
+	EnsureDiscoveredPR(ctx context.Context, pr domain.DiscoveredPullRequest) error
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
 }
 
@@ -878,8 +879,8 @@ func (o *Observer) workspaceSCMSessionRepos(ctx context.Context, proj domain.Pro
 
 func repoForTrackedPR(pr domain.PullRequest, repos []ports.SCMRepo) (ports.SCMRepo, bool) {
 	if pr.Provider != "" && pr.Host != "" && pr.Repo != "" {
-		owner, name, ok := strings.Cut(pr.Repo, "/")
-		if !ok || owner == "" || name == "" {
+		owner, name, ok := splitRepoFullName(pr.Repo)
+		if !ok {
 			return ports.SCMRepo{}, false
 		}
 		return ports.SCMRepo{Provider: pr.Provider, Host: pr.Host, Owner: owner, Name: name, Repo: pr.Repo}, true
@@ -997,6 +998,20 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 	// re-fetched
 	listedPRs = map[string]bool{}
 	listedRepos = map[string]bool{}
+	type trackedSubject struct {
+		key  string
+		subj *subject
+	}
+	trackedByURL := map[string]trackedSubject{}
+	trackedByProviderID := map[string]trackedSubject{}
+	for key, subj := range subjects {
+		if url := strings.TrimSpace(subj.known.URL); url != "" {
+			trackedByURL[url] = trackedSubject{key: key, subj: subj}
+		}
+		if id := providerPRIdentityKey(subj.known.Provider, subj.known.Host, subj.known.ProviderID); id != "" {
+			trackedByProviderID[id] = trackedSubject{key: key, subj: subj}
+		}
+	}
 	for repoKey, repo := range repos {
 		g := guards[repoKey]
 		if g.err != nil {
@@ -1026,7 +1041,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 		// restrict refresh to only updated MRs rather than every tracked MR.
 		listedRepos[repoKey] = true
 		for _, pr := range pulls {
-			listedPRs[prKey(repo, pr.Number)] = true
+			listedPRs[prKey(repoForListedPR(repo, pr), pr.Number)] = true
 		}
 		for _, pr := range pulls {
 			if pr.Number <= 0 || pr.SourceBranch == "" {
@@ -1041,7 +1056,8 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 					continue
 				}
 			}
-			key := prKey(repo, pr.Number)
+			prRepo := repoForListedPR(repo, pr)
+			key := prKey(prRepo, pr.Number)
 			if _, ok := subjects[key]; ok {
 				continue
 			}
@@ -1057,17 +1073,41 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			if !ok {
 				continue
 			}
-			known := domain.PullRequest{
-				URL:          firstNonEmpty(pr.URL, pr.HTMLURL),
+			url := firstNonEmpty(pr.URL, pr.HTMLURL)
+			if strings.TrimSpace(url) == "" {
+				continue
+			}
+			tracked, trackedAlready := trackedByURL[url]
+			providerIDKey := providerPRIdentityKey(prRepo.Provider, prRepo.Host, pr.ProviderID)
+			if !trackedAlready && providerIDKey != "" {
+				tracked, trackedAlready = trackedByProviderID[providerIDKey]
+			}
+			if trackedAlready {
+				// The provider returned the same canonical PR URL through another
+				// repository identity (for example, a pre-transfer remote that now
+				// redirects). Re-key the existing rich snapshot to the provider's
+				// canonical base repo instead of rediscovering a partial snapshot.
+				migrated := *tracked.subj
+				migrated.repo = prRepo
+				delete(subjects, tracked.key)
+				subjects[key] = &migrated
+				trackedByURL[url] = trackedSubject{key: key, subj: &migrated}
+				if providerIDKey != "" {
+					trackedByProviderID[providerIDKey] = trackedSubject{key: key, subj: &migrated}
+				}
+				continue
+			}
+			discovered := domain.DiscoveredPullRequest{
+				URL:          url,
 				SessionID:    sr.session.ID,
 				Number:       pr.Number,
 				Draft:        pr.Draft,
 				SourceBranch: pr.SourceBranch,
 				TargetBranch: pr.TargetBranch,
 				HeadSHA:      pr.HeadSHA,
-				Provider:     repo.Provider,
-				Host:         repo.Host,
-				Repo:         repoFullName(repo),
+				Provider:     prRepo.Provider,
+				Host:         prRepo.Host,
+				Repo:         repoFullName(prRepo),
 				ProviderID:   pr.ProviderID,
 				UpdatedAt:    now,
 			}
@@ -1077,23 +1117,76 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			// reads every PR of the session from the store. Without this write, an
 			// open sibling/child discovered in the same poll would not yet be
 			// durable, and the session could terminate while that PR is still open.
-			if err := o.store.WriteSCMObservation(ctx, known, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
-				o.logger.Error("scm observer: persist discovered PR failed", "session", sr.session.ID, "pr", known.URL, "err", err)
+			if err := o.store.EnsureDiscoveredPR(ctx, discovered); err != nil {
+				o.logger.Error("scm observer: persist discovered PR failed", "session", sr.session.ID, "pr", discovered.URL, "err", err)
 				if markRepoFailed != nil {
-					markRepoFailed(repo)
+					markRepoFailed(prRepo)
 				}
 				continue
 			}
+			known := pullRequestFromDiscovery(discovered)
 			subjects[key] = &subject{
 				session: sr.session,
-				repo:    repo,
+				repo:    prRepo,
 				branch:  sr.branch,
 				known:   known,
 				hasPR:   true,
 			}
+			trackedByURL[url] = trackedSubject{key: key, subj: subjects[key]}
+			if providerIDKey != "" {
+				trackedByProviderID[providerIDKey] = trackedSubject{key: key, subj: subjects[key]}
+			}
 		}
 	}
 	return listedPRs, listedRepos
+}
+
+func providerPRIdentityKey(provider, host, providerID string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	host = strings.ToLower(strings.TrimSpace(host))
+	providerID = strings.TrimSpace(providerID)
+	if provider == "" || host == "" || providerID == "" {
+		return ""
+	}
+	return provider + "|" + host + "|" + providerID
+}
+
+// repoForListedPR prefers the base repository identity returned by the
+// provider over the identity used for the list request. Providers can redirect
+// renamed or transferred repositories while still serving the request, so the
+// requested remote name is not necessarily the repository that owns the PR
+// number.
+func repoForListedPR(scanned ports.SCMRepo, pr ports.SCMPRObservation) ports.SCMRepo {
+	fullName := strings.TrimSpace(pr.BaseRepo)
+	if fullName == "" || strings.EqualFold(fullName, repoFullName(scanned)) {
+		return scanned
+	}
+	owner, name, ok := splitRepoFullName(fullName)
+	if !ok {
+		return scanned
+	}
+	canonical := scanned
+	canonical.Owner = owner
+	canonical.Name = name
+	canonical.Repo = fullName
+	return canonical
+}
+
+func pullRequestFromDiscovery(pr domain.DiscoveredPullRequest) domain.PullRequest {
+	return domain.PullRequest{
+		URL:          pr.URL,
+		SessionID:    pr.SessionID,
+		Number:       pr.Number,
+		Draft:        pr.Draft,
+		UpdatedAt:    pr.UpdatedAt,
+		Provider:     pr.Provider,
+		Host:         pr.Host,
+		Repo:         pr.Repo,
+		ProviderID:   pr.ProviderID,
+		SourceBranch: pr.SourceBranch,
+		TargetBranch: pr.TargetBranch,
+		HeadSHA:      pr.HeadSHA,
+	}
 }
 
 func (o *Observer) authenticatedIdentity(ctx context.Context) (ports.SCMIdentity, bool) {
@@ -1772,7 +1865,7 @@ func domainFromObservation(sessionID domain.SessionID, sessionRecord domain.Sess
 		Provider:                 obs.Provider,
 		Host:                     obs.Host,
 		Repo:                     obs.Repo,
-		ProviderID:               obs.PR.ProviderID,
+		ProviderID:               firstNonEmpty(obs.PR.ProviderID, local.ProviderID),
 		SourceBranch:             obs.PR.SourceBranch,
 		TargetBranch:             obs.PR.TargetBranch,
 		HeadSHA:                  obs.PR.HeadSHA,
@@ -2056,19 +2149,25 @@ func repoFullName(repo ports.SCMRepo) string {
 }
 
 func ownerOf(full string) string {
-	parts := strings.SplitN(full, "/", 2)
-	if len(parts) == 2 {
-		return parts[0]
-	}
-	return ""
+	owner, _, _ := splitRepoFullName(full)
+	return owner
 }
 
 func nameOf(full string) string {
-	parts := strings.SplitN(full, "/", 2)
-	if len(parts) == 2 {
-		return parts[1]
+	_, name, ok := splitRepoFullName(full)
+	if !ok {
+		return full
 	}
-	return full
+	return name
+}
+
+func splitRepoFullName(full string) (owner, name string, ok bool) {
+	full = strings.Trim(strings.TrimSpace(full), "/")
+	i := strings.LastIndex(full, "/")
+	if i <= 0 || i == len(full)-1 {
+		return "", "", false
+	}
+	return full[:i], full[i+1:], true
 }
 
 func firstNonEmpty(vals ...string) string {

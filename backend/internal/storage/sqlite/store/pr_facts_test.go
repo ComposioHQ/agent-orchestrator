@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,5 +180,143 @@ func TestPRStateChangedAtFillsWhenProviderCreatedAtArrives(t *testing.T) {
 	}
 	if !got.StateChangedAt.Equal(createdAt) {
 		t.Fatalf("same-state stateChangedAt = %s, want provider creation time %s", got.StateChangedAt, createdAt)
+	}
+}
+
+func TestEnsureDiscoveredPRIsInsertOnly(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	owner, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	other, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Date(2026, 8, 15, 1, 0, 0, 0, time.UTC)
+	url := "https://github.com/new/repo/pull/42"
+	authoritative := domain.PullRequest{
+		URL:          url,
+		SessionID:    owner.ID,
+		Number:       42,
+		CI:           domain.CIPassing,
+		Review:       domain.ReviewApproved,
+		Mergeability: domain.MergeMergeable,
+		UpdatedAt:    now,
+		Provider:     "github",
+		Host:         "github.com",
+		Repo:         "new/repo",
+		ProviderID:   "PR_stable_42",
+		SourceBranch: "feature",
+		TargetBranch: "main",
+		HeadSHA:      "authoritative-sha",
+		Title:        "Authoritative title",
+		MetadataHash: "metadata-hash",
+		CIHash:       "ci-hash",
+		ReviewHash:   "review-hash",
+		ObservedAt:   now,
+		CIObservedAt: now,
+	}
+	if err := s.WriteSCMObservation(ctx, authoritative, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	seqBeforeRediscovery, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A stale remote alias can list the same canonical URL with only partial
+	// fields. Ensuring that discovery must not downgrade any stored fact.
+	if err := s.EnsureDiscoveredPR(ctx, domain.DiscoveredPullRequest{
+		URL: url, SessionID: owner.ID, Number: 42, UpdatedAt: now.Add(time.Minute),
+		Provider: "github", Host: "github.com", Repo: "old/repo", ProviderID: "PR_stable_42",
+		SourceBranch: "feature", TargetBranch: "main", HeadSHA: "partial-sha",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seqAfterRediscovery, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seqAfterRediscovery != seqBeforeRediscovery {
+		t.Fatalf("rediscovery emitted CDC: sequence advanced from %d to %d", seqBeforeRediscovery, seqAfterRediscovery)
+	}
+	got, ok, err := s.GetPR(ctx, url)
+	if err != nil || !ok {
+		t.Fatalf("GetPR: ok=%v err=%v", ok, err)
+	}
+	if got.CI != domain.CIPassing || got.Review != domain.ReviewApproved || got.Mergeability != domain.MergeMergeable {
+		t.Fatalf("discovery downgraded readiness facts: CI=%q review=%q mergeability=%q", got.CI, got.Review, got.Mergeability)
+	}
+	if got.Repo != "new/repo" || got.HeadSHA != "authoritative-sha" || got.Title != "Authoritative title" {
+		t.Fatalf("discovery replaced authoritative metadata: repo=%q sha=%q title=%q", got.Repo, got.HeadSHA, got.Title)
+	}
+	if got.MetadataHash != "metadata-hash" || got.CIHash != "ci-hash" || got.ReviewHash != "review-hash" {
+		t.Fatalf("discovery replaced acknowledgement hashes: metadata=%q ci=%q review=%q", got.MetadataHash, got.CIHash, got.ReviewHash)
+	}
+
+	newURL := "https://github.com/new/repo/pull/43"
+	if err := s.EnsureDiscoveredPR(ctx, domain.DiscoveredPullRequest{
+		URL: newURL, SessionID: owner.ID, Number: 43, Draft: true, UpdatedAt: now,
+		Provider: "github", Host: "github.com", Repo: "new/repo", ProviderID: "PR_stable_43",
+		SourceBranch: "feature/child", TargetBranch: "feature", HeadSHA: "new-sha",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	inserted, ok, err := s.GetPR(ctx, newURL)
+	if err != nil || !ok {
+		t.Fatalf("GetPR(new discovery): ok=%v err=%v", ok, err)
+	}
+	if !inserted.Draft || inserted.ProviderID != "PR_stable_43" || inserted.CI != domain.CIUnknown || inserted.Review != domain.ReviewNone || inserted.Mergeability != domain.MergeUnknown {
+		t.Fatalf("new discovery baseline = %+v", inserted)
+	}
+
+	if err := s.EnsureDiscoveredPR(ctx, domain.DiscoveredPullRequest{
+		URL: url, SessionID: other.ID, Number: 42, UpdatedAt: now,
+	}); err == nil {
+		t.Fatal("discovery must not silently move a PR to another session")
+	}
+}
+
+func TestRecordPRMergeImmediatelyProjectsTerminalState(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	owner, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	observedAt := time.Date(2026, 8, 15, 2, 0, 0, 0, time.UTC)
+	mergedAt := observedAt.Add(time.Minute)
+	url := "https://github.com/acme/repo/pull/44"
+	if err := s.WriteSCMObservation(ctx, domain.PullRequest{
+		URL: url, SessionID: owner.ID, Number: 44, UpdatedAt: observedAt,
+		CI: domain.CIPassing, Review: domain.ReviewApproved, Mergeability: domain.MergeMergeable,
+		Provider: "github", Host: "github.com", Repo: "acme/repo",
+		SourceBranch: "feature", TargetBranch: "main", HeadSHA: "head-sha",
+		MetadataHash: "metadata", CIHash: "ci", ReviewHash: "review",
+	}, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		t.Fatal(err)
+	}
+	seq, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := s.RecordPRMerge(ctx, url, "merge-sha", mergedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !merged.Merged || merged.Closed || merged.Draft || merged.MergeCommitSHA != "merge-sha" {
+		t.Fatalf("terminal projection = %+v", merged)
+	}
+	if !merged.StateChangedAt.Equal(mergedAt) || !merged.MergedAtProvider.Equal(mergedAt) {
+		t.Fatalf("merge timestamps = state %s provider %s, want %s", merged.StateChangedAt, merged.MergedAtProvider, mergedAt)
+	}
+	if merged.CI != domain.CIPassing || merged.Review != domain.ReviewApproved || merged.Mergeability != domain.MergeMergeable {
+		t.Fatalf("terminal projection erased readiness facts: %+v", merged)
+	}
+	if merged.MetadataHash != "metadata" || merged.CIHash != "ci" || merged.ReviewHash != "review" {
+		t.Fatalf("terminal projection erased observer cursors: %+v", merged)
+	}
+	events, err := s.EventsAfter(ctx, seq, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Type != "pr_updated" || !strings.Contains(string(events[0].Payload), `"state":"merged"`) {
+		t.Fatalf("merge CDC events = %+v", events)
 	}
 }

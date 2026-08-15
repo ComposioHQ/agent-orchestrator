@@ -244,6 +244,9 @@ func TestListPRsByRepo(t *testing.T) {
 	if len(prs) != 2 {
 		t.Fatalf("got %d PRs, want 2", len(prs))
 	}
+	if prs[0].BaseRepo != "myorg/myrepo" {
+		t.Fatalf("BaseRepo = %q, want myorg/myrepo", prs[0].BaseRepo)
+	}
 	if prs[0].State != "open" {
 		t.Errorf("pr[0].State = %q, want %q", prs[0].State, "open")
 	}

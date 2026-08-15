@@ -24,9 +24,11 @@ import (
 // drift between either interface and this implementation fails here at the point
 // of definition rather than later at the call sites in lifecycle_wiring / tests.
 var (
-	_ ports.PRWriter  = (*Store)(nil)
-	_ ports.SCMWriter = (*Store)(nil)
-	_ ports.PRClaimer = (*Store)(nil)
+	_ ports.PRWriter           = (*Store)(nil)
+	_ ports.SCMWriter          = (*Store)(nil)
+	_ ports.SCMDiscoveryWriter = (*Store)(nil)
+	_ ports.SCMMergeWriter     = (*Store)(nil)
+	_ ports.PRClaimer          = (*Store)(nil)
 )
 
 // WritePR persists a legacy PR observation — scalar facts, check runs, and the
@@ -47,6 +49,88 @@ func (s *Store) WritePR(ctx context.Context, pr domain.PullRequest, checks []dom
 // cadence than metadata/CI polling.
 func (s *Store) WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error {
 	return s.writePR(ctx, pr, checks, reviews, threads, comments, reviewMode, false)
+}
+
+// EnsureDiscoveredPR inserts the minimal fact produced by repository listing.
+// If the canonical PR URL already exists for this session, its authoritative
+// metadata, CI, review, and mergeability facts remain untouched. Discovery is
+// not a claim operation, so an existing owner mismatch remains an error.
+func (s *Store) EnsureDiscoveredPR(ctx context.Context, pr domain.DiscoveredPullRequest) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.inTx(ctx, "ensure discovered pr", func(q *gen.Queries) error {
+		identity := normalizedPRIdentity(domain.PullRequest{
+			URL: pr.URL, SessionID: pr.SessionID, Provider: pr.Provider,
+			Host: pr.Host, Repo: pr.Repo, ProviderID: pr.ProviderID,
+		})
+		candidates, err := findPRIdentityCandidates(ctx, q, identity)
+		if err != nil {
+			return err
+		}
+		for _, existing := range candidates {
+			if existing.SessionID != pr.SessionID {
+				return fmt.Errorf("pr %s already belongs to session %s", pr.URL, existing.SessionID)
+			}
+		}
+		if len(candidates) != 0 {
+			return nil
+		}
+		state := domain.PRStateOpen
+		if pr.Draft {
+			state = domain.PRStateDraft
+		}
+		return q.EnsureDiscoveredPR(ctx, gen.EnsureDiscoveredPRParams{
+			URL:          pr.URL,
+			SessionID:    pr.SessionID,
+			Number:       int64(pr.Number),
+			PRState:      state,
+			UpdatedAt:    pr.UpdatedAt,
+			Provider:     identity.Provider,
+			Host:         identity.Host,
+			Repo:         identity.Repo,
+			ProviderID:   identity.ProviderID,
+			SourceBranch: pr.SourceBranch,
+			TargetBranch: pr.TargetBranch,
+			HeadSha:      pr.HeadSHA,
+			IsDraft:      boolInt(pr.Draft),
+			ID:           pr.SessionID,
+		})
+	})
+}
+
+// RecordPRMerge projects a successful SCM merge command into the existing PR
+// row and returns the resulting snapshot for lifecycle processing. The update
+// is deliberately narrow: terminal lifecycle and merge metadata change, while
+// CI, review, mergeability, and observer acknowledgement hashes are preserved.
+func (s *Store) RecordPRMerge(ctx context.Context, url, mergeCommitSHA string, mergedAt time.Time) (domain.PullRequest, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var merged domain.PullRequest
+	err := s.inTx(ctx, "record pr merge", func(q *gen.Queries) error {
+		updated, err := q.RecordPRMerge(ctx, gen.RecordPRMergeParams{
+			StateChangedAt:   nullTime(mergedAt),
+			UpdatedAt:        mergedAt,
+			MergeCommitSha:   mergeCommitSHA,
+			MergedAtProvider: nullTime(mergedAt),
+			URL:              url,
+		})
+		if err != nil {
+			return err
+		}
+		if updated != 1 {
+			return fmt.Errorf("pr %s not found", url)
+		}
+		row, err := q.GetPR(ctx, url)
+		if err != nil {
+			return err
+		}
+		merged = prRowFromGen(row)
+		return nil
+	})
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	return merged, nil
 }
 
 // ClaimPR moves (or creates) a PR row to pr.SessionID and applies the live SCM

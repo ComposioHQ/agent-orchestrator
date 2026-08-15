@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -19,6 +21,7 @@ var (
 
 type actionStore interface {
 	GetPR(ctx context.Context, url string) (domain.PullRequest, bool, error)
+	RecordPRMerge(ctx context.Context, url, mergeCommitSHA string, mergedAt time.Time) (domain.PullRequest, error)
 }
 
 type actionReader interface {
@@ -26,25 +29,45 @@ type actionReader interface {
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
 }
 
+type actionLifecycle interface {
+	ApplySCMObservation(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error
+}
+
 // ActionDeps contains the storage and SCM boundaries used by ActionService.
 type ActionDeps struct {
-	Store  actionStore
-	Merger ports.SCMMerger
-	Reader actionReader
+	Store     actionStore
+	Merger    ports.SCMMerger
+	Reader    actionReader
+	Lifecycle actionLifecycle
+	Clock     func() time.Time
+	Logger    *slog.Logger
 }
 
 // ActionService validates current pull request state before applying mutations.
 type ActionService struct {
-	store  actionStore
-	merger ports.SCMMerger
-	reader actionReader
+	store     actionStore
+	merger    ports.SCMMerger
+	reader    actionReader
+	lifecycle actionLifecycle
+	clock     func() time.Time
+	logger    *slog.Logger
 }
 
 var _ ActionManager = (*ActionService)(nil)
 
 // NewActionService builds the guarded pull request action service.
 func NewActionService(deps ActionDeps) *ActionService {
-	return &ActionService{store: deps.Store, merger: deps.Merger, reader: deps.Reader}
+	s := &ActionService{
+		store: deps.Store, merger: deps.Merger, reader: deps.Reader,
+		lifecycle: deps.Lifecycle, clock: deps.Clock, logger: deps.Logger,
+	}
+	if s.clock == nil {
+		s.clock = time.Now
+	}
+	if s.logger == nil {
+		s.logger = slog.Default()
+	}
+	return s
 }
 
 // Merge re-fetches authoritative SCM state and then squash-merges only the
@@ -108,7 +131,43 @@ func (s *ActionService) Merge(ctx context.Context, request MergeRequest) (MergeR
 			return MergeResult{}, fmt.Errorf("merge pull request: %w", err)
 		}
 	}
+	s.projectSuccessfulMerge(ctx, tracked, fresh, review, out)
 	return MergeResult{PRNumber: tracked.Number, Method: string(ports.SCMMergeSquash), MergeCommitSHA: out.MergeCommitSHA}, nil
+}
+
+// projectSuccessfulMerge closes the command-to-observation gap. The provider
+// merge response is authoritative for terminal lifecycle, so AO records it and
+// emits lifecycle/notification effects immediately instead of waiting for the
+// periodic observer to rediscover the state. Projection failures do not turn a
+// successful external merge into an API failure; they are logged and the SCM
+// observer remains the reconciliation fallback.
+func (s *ActionService) projectSuccessfulMerge(ctx context.Context, tracked domain.PullRequest, fresh ports.SCMObservation, review ports.SCMReviewObservation, result ports.SCMMergeResult) {
+	// Once the provider accepted the mutation, client cancellation must not
+	// prevent AO from projecting the result it caused into local durable state.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	mergedAt := s.clock().UTC()
+	merged, err := s.store.RecordPRMerge(ctx, tracked.URL, result.MergeCommitSHA, mergedAt)
+	if err != nil {
+		s.logger.Error("pr merge succeeded but durable projection failed", "pr", tracked.URL, "err", err)
+		return
+	}
+	if s.lifecycle == nil {
+		return
+	}
+	fresh.Fetched = true
+	fresh.ObservedAt = mergedAt
+	fresh.PR.State = string(domain.PRStateMerged)
+	fresh.PR.Draft = false
+	fresh.PR.Merged = true
+	fresh.PR.Closed = false
+	fresh.PR.MergeCommitSHA = result.MergeCommitSHA
+	fresh.PR.MergedAtProvider = mergedAt
+	fresh.Review = review
+	fresh.Changed.Metadata = true
+	if err := s.lifecycle.ApplySCMObservation(ctx, merged.SessionID, fresh); err != nil {
+		s.logger.Error("pr merge projected but lifecycle reaction failed", "session", merged.SessionID, "pr", tracked.URL, "err", err)
+	}
 }
 
 func (s *ActionService) fetchMergeReadiness(ctx context.Context, ref ports.SCMPRRef) (ports.SCMObservation, ports.SCMReviewObservation, error) {

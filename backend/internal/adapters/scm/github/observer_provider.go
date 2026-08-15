@@ -325,8 +325,11 @@ type restListPull struct {
 		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"base"`
 	User struct {
 		Login string `json:"login"`
@@ -341,6 +344,7 @@ func restListPullToSCM(pull restListPull) ports.SCMPRObservation {
 		ProviderID:        pull.NodeID,
 		URL:               firstNonEmpty(pull.HTMLURL, pull.URL),
 		Number:            pull.Number,
+		BaseRepo:          pull.Base.Repo.FullName,
 		State:             normalizePRState(pull.Draft, false, closed),
 		Draft:             pull.Draft,
 		Closed:            closed,
