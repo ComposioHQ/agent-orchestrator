@@ -897,7 +897,7 @@ function ExternalReviewCard({
 			{open ? (
 				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
 					{onRequestRereview ? (
-						<div className="flex min-w-0 items-center justify-between gap-2 border-y border-border/50 py-2">
+						<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
 							<span className="text-2xs text-muted-foreground">
 								{openInlineCount > 0 ? labels.unresolvedCount(openInlineCount) : null}
 							</span>
@@ -908,7 +908,7 @@ function ExternalReviewCard({
 								</span>
 							) : (
 								<button
-									className="inline-flex h-control-md items-center rounded-md border border-border-strong px-2.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+									className="inline-flex min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-2.5 py-1.5 text-center text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
 									onClick={async () => {
 										setRereviewError(false);
 										try {
@@ -1120,7 +1120,7 @@ function InlineCommentRow({
 					</span>
 				) : (
 					<button
-						className="inline-flex h-control-md items-center rounded-md border border-border-strong px-2.5 font-medium text-foreground transition-colors hover:bg-interactive-hover"
+						className="inline-flex h-control-md items-center rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 						disabled={!onResolve || !comment.url}
 						onClick={onResolve}
 						type="button"
