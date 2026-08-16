@@ -2808,13 +2808,16 @@ body.is-resizing-x [data-slot="inspector-container"] {
 }
 
 .session-inspector__tab-button {
+	flex: none;
 	gap: 0;
 }
 
 .session-inspector__responsive-label {
 	max-width: 5.5rem;
-	margin-left: var(--space-1);
+	margin-left: var(--space-0_5);
 	overflow: hidden;
+	/* Clip during the collapse animation — never ellipsize mid-label. */
+	text-overflow: clip;
 	opacity: 1;
 	transform: translateX(0);
 	transition:
@@ -2826,9 +2829,13 @@ body.is-resizing-x [data-slot="inspector-container"] {
 
 .session-inspector__tablist {
 	container: inspector-tabs / inline-size;
+	justify-content: flex-start;
 }
 
-@container inspector-tabs (max-width: 239px) {
+/* Keep labels until they nearly meet the pinned actions, then collapse to a
+ * tight icon cluster. Tuned just under the ~270px labeled content width so the
+ * default inspector (~274px tablist) still shows full words. */
+@container inspector-tabs (max-width: 268px) {
 	.session-inspector__responsive-label {
 		max-width: 0;
 		margin-left: 0;
@@ -2843,7 +2850,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
 	.session-inspector__responsive-label {
 	max-width: 5.5rem;
-	margin-left: var(--space-1);
+	margin-left: var(--space-0_5);
 	opacity: 1;
 	transform: translateX(0);
 }

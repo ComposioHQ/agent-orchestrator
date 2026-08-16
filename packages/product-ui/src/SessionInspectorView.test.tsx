@@ -48,12 +48,14 @@ describe("SessionInspectorShellView", () => {
 		expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
 		expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist");
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
-		expect(screen.getByRole("tab", { name: "Summary" })).toHaveClass("min-w-0");
+		expect(screen.getByRole("tab", { name: "Summary" })).toHaveClass("shrink-0");
 		expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("flex-1");
+		expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("min-w-0");
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("tabindex", "0");
 		expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("tabindex", "-1");
 		const filesLabel = within(screen.getByRole("tab", { name: "Files" })).getByText("2 Files");
-		expect(filesLabel).toHaveClass("session-inspector__responsive-label", "min-w-0");
+		expect(filesLabel).toHaveClass("session-inspector__responsive-label");
+		expect(filesLabel).not.toHaveClass("truncate", "min-w-0");
 		expect(filesLabel).not.toHaveClass("@max-[350px]/inspector:hidden");
 		expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));

@@ -225,7 +225,7 @@ describe("SessionInspector tabs", () => {
 		const summaryTab = screen.getByRole("tab", { name: "Summary" });
 
 		expect(summaryTab).not.toHaveClass("flex-1");
-		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
+		expect(summaryTab).toHaveClass("h-control-md", "px-1", "shrink-0");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
 	});
 
