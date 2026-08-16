@@ -5,8 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -16,7 +20,10 @@ const (
 	piExtensionsDirName = "extensions"
 	piExtensionFileName = "ao-activity.ts"
 	piExtensionSentinel = "agent-orchestrator: managed pi activity extension"
+	minPiSettledVersion = "0.80.6"
 )
+
+var piVersionPattern = regexp.MustCompile(`\b(\d+)\.(\d+)\.(\d+)\b`)
 
 func piExtensionPath(workspacePath string) string {
 	return filepath.Join(workspacePath, ".pi", piExtensionsDirName, piExtensionFileName)
@@ -45,7 +52,11 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("pi.GetAgentHooks: create extension dir: %w", err)
 	}
-	if err := hookutil.AtomicWriteFile(path, []byte(piActivityExtensionSource()), 0o600); err != nil {
+	settledSupported, err := p.piAgentSettledSupported(ctx)
+	if err != nil {
+		return err
+	}
+	if err := hookutil.AtomicWriteFile(path, []byte(piActivityExtensionSource(settledSupported)), 0o600); err != nil {
 		return fmt.Errorf("pi.GetAgentHooks: write extension: %w", err)
 	}
 	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(path), piExtensionFileName); err != nil {
@@ -61,12 +72,62 @@ func appendPiExtensionFlag(cmd *[]string, workspacePath string) {
 	*cmd = append(*cmd, "--extension", piExtensionPath(workspacePath))
 }
 
-func piActivityExtensionSource() string {
+func (p *Plugin) piAgentSettledSupported(ctx context.Context) (bool, error) {
+	binary, err := p.piBinary(ctx)
+	if err != nil {
+		return false, err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(probeCtx, binary, "--version").CombinedOutput() //nolint:gosec // binary is adapter-resolved, args are static.
+	if err != nil {
+		return false, fmt.Errorf("pi.GetAgentHooks: probe pi --version: %w", err)
+	}
+	version, ok := parsePiVersion(string(out))
+	if !ok {
+		return false, fmt.Errorf("pi.GetAgentHooks: parse pi --version output %q", strings.TrimSpace(string(out)))
+	}
+	minimum, _ := parsePiVersion(minPiSettledVersion)
+	return !version.less(minimum), nil
+}
+
+type piVersion [3]int
+
+func parsePiVersion(output string) (piVersion, bool) {
+	match := piVersionPattern.FindStringSubmatch(output)
+	if match == nil {
+		return piVersion{}, false
+	}
+	var version piVersion
+	for i := range version {
+		n, err := strconv.Atoi(match[i+1])
+		if err != nil {
+			return piVersion{}, false
+		}
+		version[i] = n
+	}
+	return version, true
+}
+
+func (v piVersion) less(other piVersion) bool {
+	for i := range v {
+		if v[i] < other[i] {
+			return true
+		}
+		if v[i] > other[i] {
+			return false
+		}
+	}
+	return false
+}
+
+func piActivityExtensionSource(settledSupported bool) string {
 	return `// ` + piExtensionSentinel + ` (do not edit)
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawnSync } from "node:child_process";
 
 const HOOK_TIMEOUT_MS = 5_000;
+const AGENT_SETTLED_SUPPORTED = ` + strconv.FormatBool(settledSupported) + `;
 
 function callHookSync(hookName: string, payload: Record<string, unknown>) {
   try {
@@ -90,11 +151,6 @@ function sessionID(ctx: any): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  // Pi 0.81.0 and newer expose agent_settled as the final idle boundary.
-  const version = typeof (pi as any).version === "string" ? (pi as any).version : "";
-  const versionParts = version.match(/^(\d+)\.(\d+)/);
-  const settledSupported = versionParts !== null &&
-    (Number(versionParts[1]) > 0 || Number(versionParts[2]) >= 81);
   pi.on("session_start", async (_event, ctx) => {
     callHookSync("session-start", { session_id: sessionID(ctx) });
   });
@@ -105,10 +161,10 @@ export default function (pi: ExtensionAPI) {
   // compact, or queue follow-up work after it; a subsequent start immediately
   // reactivates AO, while agent_settled below confirms the final idle state.
   pi.on("agent_end", async (_event, ctx) => {
-	    if (!settledSupported) callHookSync("stop", { session_id: sessionID(ctx) });
+	    if (!AGENT_SETTLED_SUPPORTED) callHookSync("stop", { session_id: sessionID(ctx) });
   });
   pi.on("agent_settled", async (_event, ctx) => {
-	    callHookSync("stop", { session_id: sessionID(ctx) });
+	    if (AGENT_SETTLED_SUPPORTED) callHookSync("stop", { session_id: sessionID(ctx) });
   });
   pi.on("session_shutdown", async (event, ctx) => {
 	    if (event.reason === "quit") {

@@ -321,7 +321,7 @@ func TestGetRestoreCommandExplicitlyLoadsManagedExtension(t *testing.T) {
 
 func TestGetAgentHooksInstallsManagedActivityExtension(t *testing.T) {
 	workspace := t.TempDir()
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+	if err := (&Plugin{resolvedBinary: fakePiBinary(t, "0.80.6")}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
 		t.Fatalf("GetAgentHooks err = %v", err)
 	}
 
@@ -365,7 +365,7 @@ func TestGetAgentHooksRefusesForeignManagedPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace})
+	err := (&Plugin{resolvedBinary: fakePiBinary(t, "0.80.6")}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace})
 	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite") {
 		t.Fatalf("GetAgentHooks err = %v, want foreign-file refusal", err)
 	}
