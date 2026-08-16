@@ -43,14 +43,14 @@ func New(deps Deps) *Workspace {
 	}
 }
 
-// RemoteExists delegates to the git workspace adapter for the repository at repoPath.
-func (w *Workspace) RemoteExists(ctx context.Context, repoPath, remote string) (bool, error) {
-	return w.git.RemoteExists(ctx, repoPath, remote)
+// ResolveDefaultBranch delegates local default-branch resolution to the git workspace adapter.
+func (w *Workspace) ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (ports.WorkspaceDefaultBranch, error) {
+	return w.git.ResolveDefaultBranch(ctx, repoPath, configuredBranch)
 }
 
 // FetchDefaultBranch delegates default-branch fetching to the git workspace adapter.
-func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath, remote, branch string) error {
-	return w.git.FetchDefaultBranch(ctx, repoPath, remote, branch)
+func (w *Workspace) FetchDefaultBranch(ctx context.Context, repoPath string, target ports.WorkspaceDefaultBranch) error {
+	return w.git.FetchDefaultBranch(ctx, repoPath, target)
 }
 
 // Create delegates session workspace creation to the project-appropriate

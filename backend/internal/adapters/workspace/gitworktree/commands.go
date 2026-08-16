@@ -10,8 +10,8 @@ func revParseVerifyArgs(repo, ref string) []string {
 	return []string{"-C", repo, "rev-parse", "--verify", "--quiet", ref}
 }
 
-func remoteGetURLArgs(repo, remote string) []string {
-	return []string{"-C", repo, "remote", "get-url", remote}
+func remoteListArgs(repo string) []string {
+	return []string{"-C", repo, "remote"}
 }
 
 func fetchBranchArgs(repo, remote, branch string) []string {
@@ -138,12 +138,14 @@ func ignoredCountArgs(worktree string) []string {
 
 func baseRefCandidates(branch, defaultBranch string) []string {
 	candidates := []string{"origin/" + branch}
-	// Remote-tracking refs are preferred even when the branch name itself
-	// contains a slash (for example release/2026). A qualified remote branch
-	// such as upstream/main remains available as the next candidate.
 	if strings.Contains(defaultBranch, "/") {
-		candidates = append(candidates, "origin/"+defaultBranch, defaultBranch)
+		// A qualified default ("upstream/main") is used verbatim; git's refname
+		// disambiguation already falls back to refs/heads/<defaultBranch>.
+		candidates = append(candidates, defaultBranch)
 	} else {
+		// The local head comes after origin/<defaultBranch> so remote-tracking
+		// still wins when present, but a remoteless repo can base new branches
+		// on its local default branch instead of failing BRANCH_NOT_FETCHED.
 		candidates = append(candidates, "origin/"+defaultBranch, "refs/heads/"+defaultBranch)
 	}
 	return append(candidates, branch)

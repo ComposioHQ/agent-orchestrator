@@ -40,13 +40,13 @@ func New(opts Options) (*Workspace, error) {
 	return &Workspace{managedRoot: filepath.Clean(root)}, nil
 }
 
-// RemoteExists reports false because scratch workspaces do not have git remotes.
-func (w *Workspace) RemoteExists(context.Context, string, string) (bool, error) {
-	return false, nil
+// ResolveDefaultBranch returns no target because scratch workspaces are branchless.
+func (w *Workspace) ResolveDefaultBranch(context.Context, string, string) (ports.WorkspaceDefaultBranch, error) {
+	return ports.WorkspaceDefaultBranch{}, nil
 }
 
 // FetchDefaultBranch is a no-op because scratch workspaces are branchless.
-func (w *Workspace) FetchDefaultBranch(context.Context, string, string, string) error {
+func (w *Workspace) FetchDefaultBranch(context.Context, string, ports.WorkspaceDefaultBranch) error {
 	return nil
 }
 

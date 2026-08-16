@@ -26,7 +26,7 @@ type recordingWorkspace struct {
 	stashCalls         int
 	applyCalls         int
 	addExcludeCalls    int
-	remoteExistsCalls  int
+	resolveCalls       int
 	fetchCalls         int
 	projectCreateCalls int
 	lastCreate         ports.WorkspaceConfig
@@ -38,12 +38,12 @@ type recordingWorkspace struct {
 	path               string
 }
 
-func (w *recordingWorkspace) RemoteExists(_ context.Context, _ string, _ string) (bool, error) {
-	w.remoteExistsCalls++
-	return true, nil
+func (w *recordingWorkspace) ResolveDefaultBranch(_ context.Context, _ string, _ string) (ports.WorkspaceDefaultBranch, error) {
+	w.resolveCalls++
+	return ports.WorkspaceDefaultBranch{Remote: "origin", Branch: "main", BaseRef: "refs/remotes/origin/main"}, nil
 }
 
-func (w *recordingWorkspace) FetchDefaultBranch(_ context.Context, _ string, _ string, _ string) error {
+func (w *recordingWorkspace) FetchDefaultBranch(_ context.Context, _ string, _ ports.WorkspaceDefaultBranch) error {
 	w.fetchCalls++
 	return nil
 }

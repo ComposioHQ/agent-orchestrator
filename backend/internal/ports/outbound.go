@@ -177,14 +177,14 @@ type Attacher interface {
 
 // Workspace is the isolated checkout an agent works in (a git worktree or clone).
 type Workspace interface {
-	// RemoteExists reports whether repoPath has a remote with the given name.
-	// It lets callers distinguish a qualified remote branch such as
-	// "upstream/main" from an ordinary branch name containing a slash such as
-	// "release/2026".
-	RemoteExists(ctx context.Context, repoPath, remote string) (bool, error)
+	// ResolveDefaultBranch selects the exact remote-tracking ref that should
+	// seed new worktrees. An empty configured branch is inferred per repository.
+	// Resolution is local-only so callers can retain the canonical ref even when
+	// the subsequent network refresh fails.
+	ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (WorkspaceDefaultBranch, error)
 	// FetchDefaultBranch refreshes the remote-tracking ref used as the base for
 	// new session worktrees. Callers decide whether failures are fatal.
-	FetchDefaultBranch(ctx context.Context, repoPath, remote, branch string) error
+	FetchDefaultBranch(ctx context.Context, repoPath string, target WorkspaceDefaultBranch) error
 	Create(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	Destroy(ctx context.Context, info WorkspaceInfo) error
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
@@ -212,6 +212,15 @@ type Workspace interface {
 	// present are skipped. Owning this here keeps git/process execution inside the
 	// workspace adapter rather than leaking into callers.
 	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
+}
+
+// WorkspaceDefaultBranch is a locally resolved default-branch target. BaseRef
+// is canonical (for example refs/remotes/upstream/main), so materialization
+// never has to reconstruct the remote decision from an ambiguous slash.
+type WorkspaceDefaultBranch struct {
+	Remote  string
+	Branch  string
+	BaseRef string
 }
 
 // WorkspaceObserver is an optional read-only capability implemented by
@@ -329,6 +338,9 @@ type WorkspaceConfig struct {
 	// BaseBranch is the per-project default branch new session branches are
 	// created from. Empty falls back to the workspace adapter's own default.
 	BaseBranch string
+	// BaseRef is the exact canonical ref selected before any best-effort fetch.
+	// When present it takes precedence over BaseBranch during materialization.
+	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
 	// Path optionally supplies an existing managed worktree path for restore.
@@ -357,6 +369,7 @@ type WorkspaceProjectConfig struct {
 	Branch        string
 	RootRepoPath  string
 	BaseBranch    string
+	BaseRef       string
 	Repos         []WorkspaceProjectRepoConfig
 }
 
@@ -367,6 +380,7 @@ type WorkspaceProjectRepoConfig struct {
 	RelativePath string
 	RepoPath     string
 	BaseBranch   string
+	BaseRef      string
 }
 
 // WorkspaceProjectInfo returns the root worktree plus every child worktree.
