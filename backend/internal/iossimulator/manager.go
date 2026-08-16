@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"image/png"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"sort"
 	"strings"
@@ -30,6 +31,7 @@ type Status struct {
 // the simctl screenshot fallback for development and non-macOS builds.
 func (m *Manager) NativeScreenshot() ([]byte, error) {
 	helper := os.Getenv("AO_IOS_CAPTURE_HELPER")
+	if helper == "" { if executable, err := os.Executable(); err == nil { helper = filepath.Join(filepath.Dir(executable), "ao-ios-capture") } }
 	if helper == "" {
 		return nil, fmt.Errorf("AO_IOS_CAPTURE_HELPER is not configured")
 	}
