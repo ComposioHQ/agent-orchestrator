@@ -2124,6 +2124,7 @@ describe("SessionInspector summary reviews", () => {
       screen.getByRole("button", { name: /maya.*Commented/i }),
     );
     const comments = screen.getByTestId("github-inline-comments");
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
     expect(comments).toHaveTextContent("Open comments");
     expect(comments).not.toHaveTextContent("maya");
     expect(comments).toHaveTextContent("Sent to worker agent");
@@ -2392,6 +2393,7 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /maya.*Changes requested/i }),
     );
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
     const sendButton = screen.getByRole("button", {
       name: "Send to worker agent",
     });
