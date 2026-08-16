@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type CommandRunner func(name string, args ...string) ([]byte, error)
@@ -29,6 +30,8 @@ type Manager struct {
 	device           Status
 	screenshotWidth  int
 	screenshotHeight int
+	lastRestart      time.Time
+	restartAttempts  int
 }
 
 func (m *Manager) Screenshot() ([]byte, error) {
@@ -69,6 +72,11 @@ func (m *Manager) Status() Status {
 	}
 	state, err := m.deviceState(m.device.DeviceID)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			m.device.State = "stale"
+			m.device.Error = err.Error()
+			return m.device
+		}
 		m.device.Error = err.Error()
 		return m.device
 	}
@@ -92,7 +100,17 @@ func (m *Manager) Start() (Status, error) {
 	}
 	state, err := m.deviceState(m.device.DeviceID)
 	if err != nil {
-		return m.device, err
+		if strings.Contains(err.Error(), "not found") {
+			m.device = Status{}
+			device, createErr := m.ensureDevice()
+			if createErr != nil {
+				return Status{}, createErr
+			}
+			m.device = device
+			state = "Shutdown"
+		} else {
+			return m.device, err
+		}
 	}
 	if state != "Booted" {
 		if _, err := m.run("xcrun", "simctl", "boot", m.device.DeviceID); err != nil && !strings.Contains(err.Error(), "already booted") {
@@ -113,12 +131,26 @@ func (m *Manager) Start() (Status, error) {
 
 func (m *Manager) ensureSimulatorProcess() error {
 	if _, err := m.run("pgrep", "-x", "Simulator"); err == nil {
+		m.restartAttempts = 0
 		return nil
 	}
+	backoff := time.Duration(1<<min(m.restartAttempts, 4)) * time.Second
+	if !m.lastRestart.IsZero() && time.Since(m.lastRestart) < backoff {
+		return fmt.Errorf("Simulator.app restart backoff active")
+	}
+	m.lastRestart = time.Now()
+	m.restartAttempts++
 	if _, err := m.run("open", "-a", "Simulator"); err != nil {
 		return fmt.Errorf("restart Simulator.app: %w", err)
 	}
 	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (m *Manager) Stop() (Status, error) {
