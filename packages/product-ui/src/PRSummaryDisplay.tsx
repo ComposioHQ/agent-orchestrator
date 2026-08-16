@@ -70,7 +70,7 @@ export function PRSummaryMeta({
 					{primary.map((part, index) => (
 						<Fragment key={index}>
 							{index > 0 ? <span className="shrink-0 text-passive">·</span> : null}
-							<span className="min-w-0 truncate">{part}</span>
+							<span className="min-w-0 break-words [overflow-wrap:anywhere]">{part}</span>
 						</Fragment>
 					))}
 				</div>
@@ -167,7 +167,7 @@ export function PRCardStatusSummary({
 								<span aria-hidden="true" className="size-dot-sm shrink-0 rounded-full bg-current" />
 								{presentation.readiness.label}
 							</div>
-							<div className="mt-0.5 pl-4 text-2xs leading-4 text-muted-foreground">{presentation.readiness.detail}</div>
+							<div className="mt-0.5 min-w-0 break-words pl-4 text-2xs leading-4 text-muted-foreground">{presentation.readiness.detail}</div>
 						</div>
 						{action ? <div className="shrink-0 self-center">{action}</div> : null}
 					</div>

@@ -64,6 +64,7 @@ describe("SessionInspectorShellView", () => {
 
 		expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
 		expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist");
+		expect(screen.getByRole("tablist").parentElement?.nextElementSibling).toHaveClass("overflow-x-hidden");
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
 		expect(screen.getByRole("tab", { name: "Summary" })).toHaveClass("shrink-0");
 		expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("flex-1");

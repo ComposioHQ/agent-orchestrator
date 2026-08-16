@@ -31,7 +31,7 @@ export type InspectorTab = {
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 const inspectorBodyBaseClass = "min-h-0 flex-1";
-const inspectorScrollableBodyClass = "overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
+const inspectorScrollableBodyClass = "overflow-x-hidden overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 export const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
 export function SessionInspectorShellView({
