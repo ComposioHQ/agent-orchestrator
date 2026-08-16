@@ -672,7 +672,7 @@ describe("SessionInspector PR section", () => {
     expect(toggle).toBeChecked();
   });
 
-  it("shows that failing CI was not injected while preserving the failing checks", () => {
+  it("shows failing checks without an injection notice", () => {
     const failingPR = prSummary(7, "open", {
       ci: {
         autoInjectCI: false,
@@ -703,13 +703,8 @@ describe("SessionInspector PR section", () => {
     const card = prSection("Pull request")
       .getByText("PR #7")
       .closest("article") as HTMLElement;
-    expect(
-      within(card).getByText("CI failures not injected"),
-    ).toBeInTheDocument();
-    expect(within(card).getByRole("link", { name: "unit" })).toHaveAttribute(
-      "href",
-      "https://ci.example/unit",
-    );
+    expect(within(card).getByText("Checks failing")).toBeInTheDocument();
+    expect(within(card).queryByText("CI failures not injected")).not.toBeInTheDocument();
   });
 
   it("links each PR to its url", () => {

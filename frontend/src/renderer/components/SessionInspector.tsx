@@ -665,13 +665,6 @@ function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => 
 			openLabel={t("inspector.openPR", { number: pr.number })}
 			pr={viewModel}
 			pullRequestIcon={<GitPullRequest className="size-icon-sm shrink-0" aria-hidden="true" />}
-			statusNotice={
-				pr.ci.state === "failing" && !pr.ci.autoInjectCI ? (
-					<p className="mt-2 text-2xs font-medium leading-normal text-warning">
-						{t("inspector.ci.notInjected")}
-					</p>
-				) : undefined
-			}
 		/>
 	);
 }
