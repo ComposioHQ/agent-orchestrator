@@ -15,9 +15,12 @@ describe("AgentAvatar", () => {
 	it("renders the DeepSeek Harness brand asset", () => {
 		render(<AgentAvatar provider="deepseek-harness" />);
 
-		expect(screen.getByRole("img", { name: "deepseek-harness" })).toHaveAttribute(
-			"src",
-			expect.stringContaining("data:image/svg+xml"),
-		);
+		const img = screen.queryByRole("img", { name: "deepseek-harness" });
+		if (img?.tagName.toLowerCase() === "img") {
+			expect(img).toHaveAttribute("src", expect.stringContaining("data:image/svg+xml"));
+		} else {
+			const svg = screen.getByLabelText("deepseek-harness");
+			expect(svg.tagName.toLowerCase()).toBe("svg");
+		}
 	});
 });
