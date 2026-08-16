@@ -37,6 +37,15 @@ if (versionResult.status !== 0 || !actualGoVersion || !meetsMinimumVersion(actua
 
 if (isWindowsDev) {
 	mkdirSync(windowsDevOutDir, { recursive: true });
+} else if (process.platform === "win32") {
+	// A running dev daemon may still hold an older dev-* binary open. Keep the
+	// output directory in place and remove only the files that the packaged
+	// build owns; locked dev folders can remain without affecting the bundled
+	// daemon path.
+	mkdirSync(outDir, { recursive: true });
+	rmSync(outPath, { force: true });
+	rmSync(windowsDevManifestPath, { force: true });
+	cleanupOldWindowsDevDaemons(undefined);
 } else {
 	rmSync(outDir, { recursive: true, force: true });
 	mkdirSync(outDir, { recursive: true });
@@ -63,7 +72,7 @@ if (isWindowsDev) {
 }
 
 function cleanupOldWindowsDevDaemons(activePath) {
-	const activeDir = dirname(activePath);
+	const activeDir = activePath ? dirname(activePath) : "";
 	let entries;
 	try {
 		entries = readdirSync(outDir, { withFileTypes: true })
@@ -76,7 +85,7 @@ function cleanupOldWindowsDevDaemons(activePath) {
 	} catch {
 		return;
 	}
-	for (const entry of entries.slice(5)) {
+	for (const entry of entries.slice(activePath ? 5 : 0)) {
 		if (entry.dir === activeDir) continue;
 		try {
 			rmSync(entry.dir, { recursive: true, force: true });
