@@ -631,11 +631,11 @@ function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => 
 		card: presentation,
 		href: prBrowserUrl(pr),
 		stateLabel: t(prStateLabelKeys[pr.state]),
-		reviewDetailsAction: (
+		reviewDetailsAction: pr.review.decision !== "none" ? (
 				<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
 				{t("pr.review.viewDetails")} ↗
 			</button>
-		),
+		) : undefined,
 	};
 	return (
 		<InspectorPullRequestCardView

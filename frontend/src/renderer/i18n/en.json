@@ -496,7 +496,7 @@
 	"pr.review.draftNotReady": "Draft PR · Not ready for review",
 	"pr.review.none": "None",
 	"pr.review.openPR": "Open pull request",
-	"pr.review.pending": "Pending",
+	"pr.review.pending": "Review pending",
 	"pr.review.requiredNotSubmitted": "Required review not submitted",
 	"pr.review.requirementSatisfied": "PR approved",
 	"pr.review.viewDetails": "View review details",

@@ -268,7 +268,7 @@ function reviewStatusDetail(pr: SessionPRSummary): string {
 		case "approved": return appI18n.t("pr.review.requirementSatisfied");
 		case "changes_requested": return appI18n.t("pr.review.changesActive");
 		case "review_required": return appI18n.t("pr.review.requiredNotSubmitted");
-		default: return appI18n.t("pr.review.none");
+		default: return appI18n.t("pr.review.pending");
 	}
 }
 
