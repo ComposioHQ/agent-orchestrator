@@ -42,18 +42,22 @@ static int ao_text(const char *value, int length) {
     CGEventPost(kCGHIDEventTap, event); CFRelease(event); return 1;
 }
 */
-import "C"
+import "C" //nolint:gocritic // cgo requires the C pseudo-package and unsafe import.
+
 import (
 	"fmt"
+	//nolint:gocritic // cgo requires unsafe for passing text buffers.
 	"unsafe"
 )
 
+// Permissions reports whether macOS has granted simulator control permissions.
 type Permissions struct {
 	ScreenRecording bool `json:"screenRecording"`
 	Accessibility   bool `json:"accessibility"`
 	Supported       bool `json:"supported"`
 }
 
+// PermissionsStatus reports the current macOS simulator permissions.
 func PermissionsStatus() Permissions {
 	return Permissions{ScreenRecording: C.ao_screen_recording() != 0, Accessibility: C.ao_accessibility() != 0, Supported: true}
 }

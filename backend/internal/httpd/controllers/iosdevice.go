@@ -16,16 +16,20 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/iossimulator"
 )
 
+// IOSDeviceController exposes the iOS Simulator HTTP API.
 type IOSDeviceController struct{ Simulator *iossimulator.Manager }
 
+// Status reports the detected iOS toolchain.
 func (c *IOSDeviceController) Status(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, iosStatusResponse(iossdk.DetectToolchain()))
 }
 
+// Recheck refreshes the detected iOS toolchain status.
 func (c *IOSDeviceController) Recheck(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, iosStatusResponse(iossdk.DetectToolchain()))
 }
 
+// FetchRuntime explains how to acquire an iOS runtime.
 func (c *IOSDeviceController) FetchRuntime(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AcceptAppleID bool `json:"acceptAppleID"`
@@ -37,6 +41,7 @@ func (c *IOSDeviceController) FetchRuntime(w http.ResponseWriter, r *http.Reques
 	envelope.WriteJSON(w, http.StatusOK, FetchRuntimeResponse{Success: false, Message: "AO cannot download Xcode. Install Xcode from the Mac App Store or Apple Developer downloads, then recheck the toolchain."})
 }
 
+// SimulatorStatus reports the managed simulator state.
 func (c *IOSDeviceController) SimulatorStatus(w http.ResponseWriter, r *http.Request) {
 	if c.Simulator == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
@@ -45,6 +50,7 @@ func (c *IOSDeviceController) SimulatorStatus(w http.ResponseWriter, r *http.Req
 	envelope.WriteJSON(w, http.StatusOK, simulatorStatusResponse(c.Simulator.Status()))
 }
 
+// StartSimulator boots the managed simulator.
 func (c *IOSDeviceController) StartSimulator(w http.ResponseWriter, r *http.Request) {
 	if c.Simulator == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
@@ -58,6 +64,7 @@ func (c *IOSDeviceController) StartSimulator(w http.ResponseWriter, r *http.Requ
 	envelope.WriteJSON(w, http.StatusOK, simulatorStatusResponse(status))
 }
 
+// StopSimulator shuts down the managed simulator.
 func (c *IOSDeviceController) StopSimulator(w http.ResponseWriter, r *http.Request) {
 	if c.Simulator == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
@@ -71,6 +78,7 @@ func (c *IOSDeviceController) StopSimulator(w http.ResponseWriter, r *http.Reque
 	envelope.WriteJSON(w, http.StatusOK, simulatorStatusResponse(status))
 }
 
+// Screenshot captures the managed simulator display.
 func (c *IOSDeviceController) Screenshot(w http.ResponseWriter, r *http.Request) {
 	if c.Simulator == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
@@ -84,11 +92,13 @@ func (c *IOSDeviceController) Screenshot(w http.ResponseWriter, r *http.Request)
 	envelope.WriteJSON(w, http.StatusOK, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png"})
 }
 
+// Permissions reports macOS permissions relevant to simulator control.
 func (c *IOSDeviceController) Permissions(w http.ResponseWriter, r *http.Request) {
 	status := iossimulator.PermissionsStatus()
 	envelope.WriteJSON(w, http.StatusOK, SimulatorPermissionsResponse{ScreenRecording: status.ScreenRecording, Accessibility: status.Accessibility, Supported: status.Supported})
 }
 
+// Input sends tap, swipe, text, or key input to the simulator.
 func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
 	if c.Simulator == nil {
 		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
@@ -107,6 +117,7 @@ func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, SimulatorInputResponse{Accepted: true})
 }
 
+// Stream sends periodic simulator screenshots over WebSocket.
 func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 	if c.Simulator == nil {
 		http.Error(w, "iOS Simulator is not wired", http.StatusNotImplemented)
@@ -116,7 +127,7 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "stream ended")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "stream ended") }()
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -139,6 +150,7 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// InstallApp installs an app bundle on the managed simulator.
 func (c *IOSDeviceController) InstallApp(w http.ResponseWriter, r *http.Request) {
 	var q SimulatorAppRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.AppPath == "" {
@@ -151,6 +163,8 @@ func (c *IOSDeviceController) InstallApp(w http.ResponseWriter, r *http.Request)
 	}
 	envelope.WriteJSON(w, 200, SimulatorInputResponse{Accepted: true})
 }
+
+// LaunchApp launches an installed app by bundle identifier.
 func (c *IOSDeviceController) LaunchApp(w http.ResponseWriter, r *http.Request) {
 	var q SimulatorAppRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.BundleID == "" {
@@ -163,6 +177,8 @@ func (c *IOSDeviceController) LaunchApp(w http.ResponseWriter, r *http.Request) 
 	}
 	envelope.WriteJSON(w, 200, SimulatorInputResponse{Accepted: true})
 }
+
+// TerminateApp stops an app by bundle identifier.
 func (c *IOSDeviceController) TerminateApp(w http.ResponseWriter, r *http.Request) {
 	var q SimulatorAppRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.BundleID == "" {
@@ -176,6 +192,7 @@ func (c *IOSDeviceController) TerminateApp(w http.ResponseWriter, r *http.Reques
 	envelope.WriteJSON(w, 200, SimulatorInputResponse{Accepted: true})
 }
 
+// BuildApp builds, installs, and optionally launches an iOS app.
 func (c *IOSDeviceController) BuildApp(w http.ResponseWriter, r *http.Request) {
 	var q SimulatorBuildRequest
 	if json.NewDecoder(r.Body).Decode(&q) != nil || q.Scheme == "" {
@@ -188,7 +205,7 @@ func (c *IOSDeviceController) BuildApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c.Simulator == nil {
-		http.Error(w, "not wired", 501)
+		http.Error(w, "not wired", http.StatusNotImplemented)
 		return
 	}
 	if err := c.Simulator.Install(app); err != nil {
@@ -218,6 +235,7 @@ func iosStatusResponse(status iossdk.ToolchainStatus) StatusResponse {
 	return res
 }
 
+// Register mounts the iOS Simulator routes on a Chi router.
 func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Get("/ios-device/toolchain/status", c.Status)
 	r.Post("/ios-device/toolchain/recheck", c.Recheck)

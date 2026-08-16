@@ -15,6 +15,7 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
+// StatusResponse reports Xcode and Simulator toolchain availability.
 type StatusResponse struct {
 	XcodeDetected           bool   `json:"xcodeDetected"`
 	CLTOnly                 bool   `json:"cltOnly"`
@@ -25,11 +26,13 @@ type StatusResponse struct {
 	GuidanceWhyMissing      string `json:"guidanceWhyMissing,omitempty"`
 }
 
+// FetchRuntimeResponse reports the result of runtime acquisition guidance.
 type FetchRuntimeResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
+// SimulatorStatusResponse reports the managed simulator state.
 type SimulatorStatusResponse struct {
 	Available bool   `json:"available"`
 	DeviceID  string `json:"deviceId,omitempty"`
@@ -38,11 +41,13 @@ type SimulatorStatusResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
+// SimulatorScreenshotResponse contains an encoded simulator screenshot.
 type SimulatorScreenshotResponse struct {
 	Data     string `json:"data"`
 	MimeType string `json:"mimeType"`
 }
 
+// SimulatorInputRequest describes input sent to the simulator.
 type SimulatorInputRequest struct {
 	Action  string  `json:"action"`
 	X       float64 `json:"x,omitempty"`
@@ -53,21 +58,25 @@ type SimulatorInputRequest struct {
 	KeyCode int     `json:"keyCode,omitempty"`
 }
 
+// SimulatorPermissionsResponse reports required macOS permissions.
 type SimulatorPermissionsResponse struct {
 	ScreenRecording bool `json:"screenRecording"`
 	Accessibility   bool `json:"accessibility"`
 	Supported       bool `json:"supported"`
 }
 
+// SimulatorInputResponse reports whether simulator input was accepted.
 type SimulatorInputResponse struct {
 	Accepted bool `json:"accepted"`
 }
 
+// SimulatorAppRequest identifies an app bundle or bundle identifier.
 type SimulatorAppRequest struct {
 	AppPath  string `json:"appPath,omitempty"`
 	BundleID string `json:"bundleId,omitempty"`
 }
 
+// SimulatorBuildRequest describes an Xcode build request.
 type SimulatorBuildRequest struct {
 	Project     string `json:"project,omitempty"`
 	Workspace   string `json:"workspace,omitempty"`
@@ -75,6 +84,8 @@ type SimulatorBuildRequest struct {
 	BundleID    string `json:"bundleId"`
 	DerivedData string `json:"derivedData,omitempty"`
 }
+
+// SimulatorBuildResponse reports the resulting app bundle.
 type SimulatorBuildResponse struct {
 	AppPath  string `json:"appPath"`
 	Accepted bool   `json:"accepted"`

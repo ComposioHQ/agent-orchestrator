@@ -8,6 +8,7 @@ type Guidance struct {
 	WhyMissing   string `json:"whyMissing"`
 }
 
+// DefaultGuidance contains the links and explanation shown when Xcode is missing.
 var DefaultGuidance = Guidance{
 	AppStoreURL:  "https://apps.apple.com/app/xcode/id497799835",
 	DeveloperURL: "https://developer.apple.com/download/all/",

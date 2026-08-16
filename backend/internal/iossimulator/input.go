@@ -2,6 +2,7 @@ package iossimulator
 
 import "fmt"
 
+// Input describes a tap, swipe, text, or key event for the simulator.
 type Input struct {
 	Action  string  `json:"action"`
 	X       float64 `json:"x"`
@@ -12,6 +13,7 @@ type Input struct {
 	KeyCode int     `json:"keyCode"`
 }
 
+// Input sends an event to the managed simulator.
 func (m *Manager) Input(input Input) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -16,14 +16,27 @@ import (
 	"time"
 )
 
+// CommandRunner executes an external simulator command.
 type CommandRunner func(name string, args ...string) ([]byte, error)
 
+// Status describes the managed simulator state.
 type Status struct {
 	Available bool   `json:"available"`
 	DeviceID  string `json:"deviceId,omitempty"`
 	Name      string `json:"name,omitempty"`
 	State     string `json:"state"`
 	Error     string `json:"error,omitempty"`
+}
+
+// Manager owns the single shared iOS Simulator instance.
+type Manager struct {
+	mu               sync.Mutex
+	run              CommandRunner
+	device           Status
+	screenshotWidth  int
+	screenshotHeight int
+	lastRestart      time.Time
+	restartAttempts  int
 }
 
 // NativeScreenshot invokes the optional ScreenCaptureKit helper. The helper
@@ -39,23 +52,15 @@ func (m *Manager) NativeScreenshot() ([]byte, error) {
 	if helper == "" {
 		return nil, fmt.Errorf("AO_IOS_CAPTURE_HELPER is not configured")
 	}
-	data, err := exec.Command(helper).Output()
+	// The helper path is deliberately configurable for development and packaging.
+	data, err := exec.Command(helper).Output() // #nosec G702 -- helper is an explicit local AO configuration.
 	if err != nil {
 		return nil, fmt.Errorf("ScreenCaptureKit helper: %w", err)
 	}
 	return data, nil
 }
 
-type Manager struct {
-	mu               sync.Mutex
-	run              CommandRunner
-	device           Status
-	screenshotWidth  int
-	screenshotHeight int
-	lastRestart      time.Time
-	restartAttempts  int
-}
-
+// Install installs an app bundle on the managed simulator.
 func (m *Manager) Install(path string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -65,6 +70,8 @@ func (m *Manager) Install(path string) error {
 	_, err := m.run("xcrun", "simctl", "install", m.device.DeviceID, path)
 	return err
 }
+
+// Launch starts an installed app by bundle identifier.
 func (m *Manager) Launch(bundle string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -74,6 +81,8 @@ func (m *Manager) Launch(bundle string) error {
 	_, err := m.run("xcrun", "simctl", "launch", m.device.DeviceID, bundle)
 	return err
 }
+
+// Terminate stops an app by bundle identifier.
 func (m *Manager) Terminate(bundle string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -84,6 +93,7 @@ func (m *Manager) Terminate(bundle string) error {
 	return err
 }
 
+// Screenshot captures the managed simulator display as PNG data.
 func (m *Manager) Screenshot() ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -101,8 +111,10 @@ func (m *Manager) Screenshot() ([]byte, error) {
 	return data, nil
 }
 
+// New creates a manager using the real command runner.
 func New() *Manager { return &Manager{run: defaultRunner} }
 
+// NewWithRunner creates a manager with an injected command runner.
 func NewWithRunner(run CommandRunner) *Manager {
 	if run == nil {
 		run = defaultRunner
@@ -114,6 +126,7 @@ func defaultRunner(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }
 
+// Status returns the current managed simulator state.
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -138,6 +151,7 @@ func (m *Manager) Status() Status {
 	return m.device
 }
 
+// Start creates, boots, and supervises the managed simulator.
 func (m *Manager) Start() (Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -184,9 +198,9 @@ func (m *Manager) ensureSimulatorProcess() error {
 		m.restartAttempts = 0
 		return nil
 	}
-	backoff := time.Duration(1<<min(m.restartAttempts, 4)) * time.Second
+	backoff := time.Duration(1<<minInt(m.restartAttempts, 4)) * time.Second
 	if !m.lastRestart.IsZero() && time.Since(m.lastRestart) < backoff {
-		return fmt.Errorf("Simulator.app restart backoff active")
+		return fmt.Errorf("simulator.app restart backoff active")
 	}
 	m.lastRestart = time.Now()
 	m.restartAttempts++
@@ -196,13 +210,14 @@ func (m *Manager) ensureSimulatorProcess() error {
 	return nil
 }
 
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
 
+// Stop shuts down the managed simulator device.
 func (m *Manager) Stop() (Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -2,12 +2,14 @@
 
 package iossimulator
 
+// Permissions reports whether macOS has granted simulator control permissions.
 type Permissions struct {
 	ScreenRecording bool `json:"screenRecording"`
 	Accessibility   bool `json:"accessibility"`
 	Supported       bool `json:"supported"`
 }
 
+// PermissionsStatus reports unavailable permissions on unsupported platforms.
 func PermissionsStatus() Permissions     { return Permissions{} }
 func tap(x, y float64) error             { return unsupportedError{} }
 func text(value string) error            { return unsupportedError{} }
