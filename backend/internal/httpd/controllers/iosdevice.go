@@ -80,6 +80,29 @@ func (c *IOSDeviceController) Screenshot(w http.ResponseWriter, r *http.Request)
 	envelope.WriteJSON(w, http.StatusOK, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png"})
 }
 
+func (c *IOSDeviceController) Permissions(w http.ResponseWriter, r *http.Request) {
+	status := iossimulator.PermissionsStatus()
+	envelope.WriteJSON(w, http.StatusOK, SimulatorPermissionsResponse{ScreenRecording: status.ScreenRecording, Accessibility: status.Accessibility, Supported: status.Supported})
+}
+
+func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
+	if c.Simulator == nil {
+		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
+		return
+	}
+	var request SimulatorInputRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	err := c.Simulator.Input(iossimulator.Input{Action: request.Action, X: request.X, Y: request.Y, X2: request.X2, Y2: request.Y2, Text: request.Text, KeyCode: request.KeyCode})
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "IOS_SIMULATOR_INPUT", err.Error(), nil)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SimulatorInputResponse{Accepted: true})
+}
+
 func simulatorStatusResponse(status iossimulator.Status) SimulatorStatusResponse {
 	return SimulatorStatusResponse{Available: status.Available, DeviceID: status.DeviceID, Name: status.Name, State: status.State, Error: status.Error}
 }
@@ -102,4 +125,6 @@ func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Post("/ios-device/start", c.StartSimulator)
 	r.Post("/ios-device/stop", c.StopSimulator)
 	r.Get("/ios-device/screenshot", c.Screenshot)
+	r.Get("/ios-device/permissions", c.Permissions)
+	r.Post("/ios-device/input", c.Input)
 }

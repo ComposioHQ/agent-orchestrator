@@ -141,6 +141,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ios-device/input": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send tap, swipe, text, or key input to the iOS Simulator */
+        post: operations["sendIOSDeviceInput"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ios-device/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check macOS permissions needed for iOS Simulator capture and input */
+        get: operations["getIOSDevicePermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ios-device/screenshot": {
         parameters: {
             query?: never;
@@ -1091,6 +1125,27 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
+        };
+        ControllersSimulatorInputRequest: {
+            action: string;
+            keyCode?: number;
+            text?: string;
+            /** Format: double */
+            x?: number;
+            /** Format: double */
+            x2?: number;
+            /** Format: double */
+            y?: number;
+            /** Format: double */
+            y2?: number;
+        };
+        ControllersSimulatorInputResponse: {
+            accepted: boolean;
+        };
+        ControllersSimulatorPermissionsResponse: {
+            accessibility: boolean;
+            screenRecording: boolean;
+            supported: boolean;
         };
         ControllersSpawnAttachmentInput: {
             data: string;
@@ -2184,6 +2239,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    sendIOSDeviceInput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSimulatorInputRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersSimulatorInputResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getIOSDevicePermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersSimulatorPermissionsResponse"];
                 };
             };
         };

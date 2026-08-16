@@ -43,6 +43,26 @@ type SimulatorScreenshotResponse struct {
 	MimeType string `json:"mimeType"`
 }
 
+type SimulatorInputRequest struct {
+	Action  string  `json:"action"`
+	X       float64 `json:"x,omitempty"`
+	Y       float64 `json:"y,omitempty"`
+	X2      float64 `json:"x2,omitempty"`
+	Y2      float64 `json:"y2,omitempty"`
+	Text    string  `json:"text,omitempty"`
+	KeyCode int     `json:"keyCode,omitempty"`
+}
+
+type SimulatorPermissionsResponse struct {
+	ScreenRecording bool `json:"screenRecording"`
+	Accessibility   bool `json:"accessibility"`
+	Supported       bool `json:"supported"`
+}
+
+type SimulatorInputResponse struct {
+	Accepted bool `json:"accepted"`
+}
+
 // HTTP response envelopes for the projects surface — the SINGLE definition of
 // each wire shape. The handlers encode these (envelope.WriteJSON), and
 // apispec.Build reflects these same types into openapi.yaml, so the served

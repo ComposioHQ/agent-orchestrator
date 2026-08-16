@@ -350,6 +350,50 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/ios-device/input:
+    post:
+      operationId: sendIOSDeviceInput
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSimulatorInputRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: Send tap, swipe, text, or key input to the iOS Simulator
+      tags:
+      - ios-device
+  /api/v1/ios-device/permissions:
+    get:
+      operationId: getIOSDevicePermissions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersSimulatorPermissionsResponse'
+          description: OK
+      summary: Check macOS permissions needed for iOS Simulator capture and input
+      tags:
+      - ios-device
   /api/v1/ios-device/screenshot:
     get:
       operationId: getIOSDeviceScreenshot
@@ -2986,6 +3030,49 @@ components:
       - updatedAt
       - status
       - prs
+      type: object
+    ControllersSimulatorInputRequest:
+      properties:
+        action:
+          type: string
+        keyCode:
+          type: integer
+        text:
+          type: string
+        x:
+          format: double
+          type: number
+        x2:
+          format: double
+          type: number
+        "y":
+          format: double
+          type: number
+        y2:
+          format: double
+          type: number
+      required:
+      - action
+      type: object
+    ControllersSimulatorInputResponse:
+      properties:
+        accepted:
+          type: boolean
+      required:
+      - accepted
+      type: object
+    ControllersSimulatorPermissionsResponse:
+      properties:
+        accessibility:
+          type: boolean
+        screenRecording:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - screenRecording
+      - accessibility
+      - supported
       type: object
     ControllersSpawnAttachmentInput:
       properties:
