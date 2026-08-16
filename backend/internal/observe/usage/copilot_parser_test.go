@@ -102,6 +102,28 @@ func TestParseCopilotPrefersShutdownRollupOverAssistantMessages(t *testing.T) {
 	}
 }
 
+func TestParseCopilotLaterShutdownSuppressesAlreadyParsedAssistantMessage(t *testing.T) {
+	source := usageSource(domain.UsageSourceCopilotShutdown)
+	first := parseRecords(source, []jsonlRecord{
+		{Offset: 0, Data: []byte(`{"type":"assistant.message","id":"message-1","data":{"model":"gpt-5-mini","outputTokens":17}}`)},
+	}, 100, time.Unix(1700000000, 0).UTC())
+	if first.err != nil || len(first.Events) != 1 {
+		t.Fatalf("first result = %+v", first)
+	}
+
+	source.Source.ParserStateJSON = first.Cursor.ParserStateJSON
+	second := parseRecords(source, []jsonlRecord{
+		{Offset: 100, Data: copilotShutdownLine("gpt-5-mini", 100, 60, 10, 17, 5)},
+	}, 200, time.Unix(1700000001, 0).UTC())
+	if second.err != nil || len(second.Events) != 1 {
+		t.Fatalf("second result = %+v", second)
+	}
+	if got := second.Events[0].Tokens; got.InputTokens != 100 || got.OutputTokens != 0 ||
+		got.ReasoningTokens == nil || *got.ReasoningTokens != 0 {
+		t.Fatalf("shutdown delta tokens = %+v", got)
+	}
+}
+
 // TestParseCopilotCounterRegressionResetsBaseline catches negative usage deltas
 // after Copilot starts a new cumulative epoch.
 func TestParseCopilotCounterRegressionResetsBaseline(t *testing.T) {

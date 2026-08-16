@@ -231,6 +231,10 @@ func (c *Collector) ReactivateSession(
 		if err := c.backfillSession(ctx, session, nativeID); err != nil {
 			return err
 		}
+	} else if session.Harness == domain.HarnessPi {
+		if err := c.backfillPiPaths(ctx); err != nil {
+			return err
+		}
 	} else {
 		return nil
 	}

@@ -44,7 +44,7 @@ func parseQwen(source domain.UsageSourceContext, records []jsonlRecord, result *
 			InputTokens:         native.InputTokens,
 			UncachedInputTokens: native.InputTokens - native.CachedTokens,
 			CacheReadTokens:     native.CachedTokens,
-			OutputTokens:        native.OutputTokens,
+			OutputTokens:        native.OutputTokens + native.ThoughtsTokens,
 			ReasoningTokens:     int64Ptr(native.ThoughtsTokens),
 		}
 		if !validTokenMetrics(tokens) {

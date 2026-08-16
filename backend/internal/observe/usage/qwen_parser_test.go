@@ -23,8 +23,21 @@ func TestParseQwenUsageForBoundSession(t *testing.T) {
 		t.Fatalf("event = %+v", event)
 	}
 	if got := event.Tokens; got.InputTokens != 30 || got.UncachedInputTokens != 21 ||
-		got.CacheReadTokens != 9 || got.CacheWriteTokens != 0 || got.OutputTokens != 12 ||
+		got.CacheReadTokens != 9 || got.CacheWriteTokens != 0 || got.OutputTokens != 16 ||
 		got.ReasoningTokens == nil || *got.ReasoningTokens != 4 {
+		t.Fatalf("tokens = %+v", got)
+	}
+}
+
+func TestParseQwenNormalizesThoughtsIntoOutputTokens(t *testing.T) {
+	source := usageSource(domain.UsageSourceQwenMonthly)
+	source.NativeRootID = "native-root"
+	record := jsonlRecord{Data: []byte(`{"schemaVersion":1,"id":"turn-1","sessionId":"native-root","model":"qwen3","inputTokens":3,"outputTokens":2,"cachedTokens":1,"thoughtsTokens":4,"totalTokens":9}`)}
+	result := parseRecords(source, []jsonlRecord{record}, 100, time.Now())
+	if result.err != nil || len(result.Events) != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	if got := result.Events[0].Tokens; got.OutputTokens != 6 || got.ReasoningTokens == nil || *got.ReasoningTokens != 4 {
 		t.Fatalf("tokens = %+v", got)
 	}
 }

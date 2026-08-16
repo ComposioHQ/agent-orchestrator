@@ -50,7 +50,7 @@ func parseCopilot(
 		switch native.Type {
 		case "assistant.message":
 			if !hasShutdown {
-				appendCopilotAssistantMessageUsage(source, record, native, result)
+				appendCopilotAssistantMessageUsage(source, record, native, state, result)
 			}
 		case "session.shutdown":
 			parseCopilotShutdownUsage(source, native, state, result)
@@ -64,6 +64,7 @@ func appendCopilotAssistantMessageUsage(
 	source domain.UsageSourceContext,
 	record jsonlRecord,
 	native copilotTranscriptRecord,
+	state *copilotParserStateV1,
 	result *parseResult,
 ) {
 	model := firstNonEmpty(native.Data.Model)
@@ -85,6 +86,13 @@ func appendCopilotAssistantMessageUsage(
 		recordMalformed(result)
 		return
 	}
+	baseline := state.Models[model]
+	baseline.InputTokens += native.Data.InputTokens
+	baseline.OutputTokens += native.Data.OutputTokens
+	if native.Data.ReasoningTokens != nil {
+		baseline.ReasoningTokens += *native.Data.ReasoningTokens
+	}
+	state.Models[model] = baseline
 	identity := firstNonEmpty(native.ID, strconv.FormatInt(record.Offset, 10))
 	result.Events = append(result.Events, domain.ModelUsageEvent{
 		ModelID: model,
@@ -130,6 +138,9 @@ func parseCopilotShutdownUsage(
 			continue
 		}
 		delta := subtractCopilotTotal(total, baseline)
+		if delta.ReasoningTokens > delta.OutputTokens {
+			delta.ReasoningTokens = delta.OutputTokens
+		}
 		state.Models[model] = total
 		if delta.InputTokens == 0 && delta.OutputTokens == 0 && delta.CacheWriteTokens == 0 {
 			continue

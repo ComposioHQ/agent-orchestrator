@@ -2001,6 +2001,65 @@ func TestCollectorReconcileFindsPiSessionWithoutCapturedNativeID(t *testing.T) {
 	}
 }
 
+func TestCollectorMarkSpawnedFindsExistingPiSessionWithoutCapturedNativeID(t *testing.T) {
+	store := collectorTestStore(t)
+	workspace := t.TempDir()
+	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	root := t.TempDir()
+	path := filepath.Join(root, "project", "existing.jsonl")
+	writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":"pi-existing","cwd":%q,"version":3}`+"\n", workspace))
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, nil)
+	manager := lifecycle.New(store, nil)
+	manager.SetUsageFinalizer(collector)
+
+	mustNoError(t, manager.MarkSpawned(context.Background(), session.ID, domain.SessionMetadata{
+		RuntimeLaunchID: "launch-1",
+		WorkspacePath:   workspace,
+	}))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != "pi-existing" {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 || sources[0].ArtifactPath != canonicalUsagePath(t, path) {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestCollectorMarkSpawnedRetriesPiSessionCreatedLater(t *testing.T) {
+	store := collectorTestStore(t)
+	workspace := t.TempDir()
+	session := collectorTestSession(t, store, domain.HarnessPi, "", false)
+	root := t.TempDir()
+	wakes := 0
+	collector := NewCollector(store, SourceRoots{PiSessions: root}, func(reconcile bool) {
+		if reconcile {
+			wakes++
+		}
+	})
+	manager := lifecycle.New(store, nil)
+	manager.SetUsageFinalizer(collector)
+
+	mustNoError(t, manager.MarkSpawned(context.Background(), session.ID, domain.SessionMetadata{
+		RuntimeLaunchID: "launch-1",
+		WorkspacePath:   workspace,
+	}))
+	if wakes != 1 {
+		t.Fatalf("reconcile wakes = %d, want 1", wakes)
+	}
+	if bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID); err != nil || len(bindings) != 0 {
+		t.Fatalf("early bindings=%+v err=%v", bindings, err)
+	}
+
+	path := filepath.Join(root, "project", "late.jsonl")
+	writeUsageFixture(t, path, fmt.Sprintf(`{"type":"session","id":"pi-late","cwd":%q,"version":3}`+"\n", workspace))
+	mustNoError(t, collector.ReconcileSources(context.Background(), -1))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 || bindings[0].NativeRootID != "pi-late" {
+		t.Fatalf("bindings=%+v err=%v", bindings, err)
+	}
+}
+
 func TestCollectorBindsPiWhenLifecycleCapturesNativeSessionID(t *testing.T) {
 	const nativeID = "pi-captured"
 	store := collectorTestStore(t)
