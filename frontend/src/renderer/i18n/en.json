@@ -498,7 +498,7 @@
 	"pr.review.openPR": "Open pull request",
 	"pr.review.pending": "Pending",
 	"pr.review.requiredNotSubmitted": "Required review not submitted",
-	"pr.review.requirementSatisfied": "Approval requirement satisfied",
+	"pr.review.requirementSatisfied": "PR approved",
 	"pr.review.viewDetails": "View review details",
 	"pr.section.ci": "CI",
 	"pr.section.merge": "Merge",

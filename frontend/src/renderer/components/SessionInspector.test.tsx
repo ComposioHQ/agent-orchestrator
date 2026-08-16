@@ -458,7 +458,13 @@ describe("SessionInspector PR section", () => {
       undefined,
       (client) => {
         client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
-          prSummary(7, "open"),
+          prSummary(7, "open", {
+            review: {
+              decision: "approved",
+              hasUnresolvedHumanComments: false,
+              unresolvedBy: [],
+            },
+          }),
         ]);
       },
     );
@@ -467,8 +473,9 @@ describe("SessionInspector PR section", () => {
     expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
     expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
     expect(
-      prSection("Pull request").getByText("Ready to merge"),
+      prSection("Pull request").getByText("Mergeable"),
     ).toBeInTheDocument();
+    expect(prSection("Pull request").getByText("PR approved")).toBeInTheDocument();
     expect(
       prSection("Pull request").getByText("Checks passing"),
     ).toBeInTheDocument();
@@ -491,6 +498,11 @@ describe("SessionInspector PR section", () => {
     const readyPR = prSummary(7, "open", {
       url: "https://example.com/pr/7",
       headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      review: {
+        decision: "approved",
+        hasUnresolvedHumanComments: false,
+        unresolvedBy: [],
+      },
     });
     renderWithQuery(
       <SessionInspector session={session([pr(7, "open")])} />,
