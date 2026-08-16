@@ -76,7 +76,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
-				terminal: { saveDroppedFile: async () => "" },
+				terminal: {
+					saveDroppedFile: async () => "",
+					setFocused: () => undefined,
+					onFontSizeShortcut: () => () => undefined,
+				},
 				window: {
 					setOverlay: async () => undefined,
 					isFullScreen: async () => false,
@@ -510,7 +514,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
-				terminal: { saveDroppedFile: async () => "" },
+				terminal: {
+					saveDroppedFile: async () => "",
+					setFocused: () => undefined,
+					onFontSizeShortcut: () => () => undefined,
+				},
 				window: {
 					setOverlay: async () => undefined,
 					isFullScreen: async () => false,

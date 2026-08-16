@@ -27,6 +27,8 @@ export const aoBridge: AoBridge =
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
+			setFocused: () => undefined,
+			onFontSizeShortcut: () => () => undefined,
 		},
 		window: {
 			setOverlay: async () => undefined,

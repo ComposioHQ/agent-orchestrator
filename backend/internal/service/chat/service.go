@@ -485,6 +485,24 @@ func (s *Service) Interrupt(ctx context.Context, id domain.SessionID) error {
 	return controller.Interrupt(ctx)
 }
 
+// ArmChatHandoff closes source intake and queue dispatch at
+// interface-transition acceptance time. It is a reversible fence; durable queue
+// settlement waits until target preflight succeeds.
+func (s *Service) ArmChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	controller, err := s.Controller(id)
+	if errors.Is(err, ErrNoController) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return controller.ArmHandoff(ctx, policy)
+}
+
 // PrepareChatHandoff closes source intake and makes the controller quiescent.
 // Session Manager remains responsible for stopping it and starting the target;
 // keeping that sequencing outside this package preserves the one-writer rule.
@@ -766,6 +784,12 @@ func (f SnapshotPageReaderFunc) LoadConversationSnapshotPage(
 // The methods below let the session manager launch a chat controller during spawn
 // without importing this package's config types. They are deliberately narrow:
 // the manager decides when, this package decides how.
+
+// SupportsChat reports whether a harness has a Chat driver at all, without
+// probing the local install. Use it to decide whether Chat is even offerable.
+func (s *Service) SupportsChat(harness domain.AgentHarness) bool {
+	return s.drivers.SupportsChat(harness)
+}
 
 // PreflightChat reports whether a harness can start in chat mode right now.
 //
