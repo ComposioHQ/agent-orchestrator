@@ -268,6 +268,11 @@ func newestIPhoneType(out []byte) (string, string, error) {
 	if len(matches) == 0 {
 		return "", "", fmt.Errorf("no iPhone simulator device type installed")
 	}
+	for _, match := range matches {
+		if match.name == "iPhone 17" {
+			return match.id, match.name, nil
+		}
+	}
 	sort.Slice(matches, func(i, j int) bool { return matches[i].name > matches[j].name })
 	return matches[0].id, matches[0].name, nil
 }
