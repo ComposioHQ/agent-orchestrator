@@ -2114,7 +2114,7 @@ describe("SessionInspector summary reviews", () => {
     expect(
       (await screen.findAllByText("Reviewable change 3")).length,
     ).toBeGreaterThan(0);
-    expect(screen.getAllByText(/2 unresolved/).length).toBeGreaterThanOrEqual(
+    expect(screen.getAllByText(/2 unresolved comments/).length).toBeGreaterThanOrEqual(
       1,
     );
     expect(

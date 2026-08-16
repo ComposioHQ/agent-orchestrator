@@ -260,7 +260,7 @@
 	"inspector.reviewAlreadyRanShort": "This commit has already been reviewed",
 	"inspector.reviewBySource.ao": "Agent reviews",
 	"inspector.reviewBySource.github": "External reviews",
-	"inspector.unresolvedCount": "{{count}} unresolved",
+	"inspector.unresolvedCount": "{{count}} unresolved comments",
 	"inspector.openComments": "Open comments",
 	"inspector.openInlineComments": "{{count}} open inline comments",
 	"inspector.requestRereviewPR": "Request to re-review PR",
