@@ -1132,8 +1132,7 @@ function InlineCommentRow({
 					</ExternalLink>
 				) : null}
 				{parsed.priority ? (
-					<span className="ml-auto inline-flex items-center gap-1 text-2xs font-semibold text-error">
-						<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+					<span aria-label={`priority ${parsed.priority}`} className="ml-auto font-mono text-2xs font-semibold tracking-wide text-error/80">
 						{parsed.priority}
 					</span>
 				) : null}
