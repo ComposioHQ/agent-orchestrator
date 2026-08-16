@@ -213,19 +213,29 @@ function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 }
 
 function sessionLastActiveNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
-	const aActivity = timestamp(a.activity?.lastActivityAt);
-	const bActivity = timestamp(b.activity?.lastActivityAt);
-	if (aActivity !== bActivity) return aActivity > bActivity;
-	const aUpdated = timestamp(a.updatedAt);
-	const bUpdated = timestamp(b.updatedAt);
-	if (aUpdated !== bUpdated) return aUpdated > bUpdated;
-	return sessionNewer(a, b);
+	const aLastActive = sessionLastActiveTimestamp(a);
+	const bLastActive = sessionLastActiveTimestamp(b);
+	if (aLastActive !== bLastActive) return aLastActive > bLastActive;
+	return a.id > b.id;
+}
+
+function sessionLastActiveTimestamp(session: WorkspaceSession): number {
+	return (
+		validTimestamp(session.activity?.lastActivityAt) ??
+		validTimestamp(session.updatedAt) ??
+		validTimestamp(session.createdAt) ??
+		0
+	);
 }
 
 function timestamp(value?: string): number {
-	if (!value) return 0;
+	return validTimestamp(value) ?? 0;
+}
+
+function validTimestamp(value?: string): number | undefined {
+	if (!value) return undefined;
 	const parsed = Date.parse(value);
-	return Number.isNaN(parsed) ? 0 : parsed;
+	return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
