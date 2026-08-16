@@ -145,7 +145,7 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
             </div>
 
             <a
-              href="https://www.producthunt.com/products/agent-orchestrator?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-agent-orchestrator"
+              href="https://www.producthunt.com/posts/agent-orchestrator"
               target="_blank"
               rel="noopener noreferrer"
               className="mt-4 inline-flex rounded-[14px] transition-opacity hover:opacity-90"

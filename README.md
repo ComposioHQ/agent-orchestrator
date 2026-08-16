@@ -3,7 +3,7 @@
 
   <br />
 
-  <a href="https://www.producthunt.com/products/agent-orchestrator?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-agent-orchestrator" target="_blank" rel="noopener noreferrer">
+  <a href="https://www.producthunt.com/posts/agent-orchestrator" target="_blank" rel="noopener noreferrer">
     <img alt="Agent Orchestrator - Run a fleet of coding agents. Ship like a team. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1215599&amp;theme=light&amp;t=1786778713789" />
   </a>
 
