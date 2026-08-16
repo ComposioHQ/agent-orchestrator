@@ -243,9 +243,17 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			reviewcore.WithRunFilePath(cfg.RunFilePath),
 			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store,
+	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
-		reviewsvc.WithTelemetry(telemetry))
+		reviewsvc.WithTelemetry(telemetry),
+	}
+	if scmProvider != nil {
+		reviewOpts = append(reviewOpts,
+			reviewsvc.WithReviewRequester(scmProvider),
+			reviewsvc.WithReviewResolver(scmProvider),
+		)
+	}
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
 	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }

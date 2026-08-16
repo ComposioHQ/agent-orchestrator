@@ -15,6 +15,7 @@ import {
 	inspectorEmptyClass,
 	type InspectorPullRequest,
 	type InspectorInlineComment,
+	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
 	type InspectorTimelineEvent,
@@ -1076,6 +1077,7 @@ function MergedReviewsSection({
 	session: WorkspaceSession;
 }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
 	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	const runsByPR = runsByPRFrom(openReviewStates, runs);
 	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
@@ -1090,6 +1092,22 @@ function MergedReviewsSection({
 	}
 	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
 	const labels = reviewLabels(t);
+	const requestRereview = async (review: InspectorGithubReview) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/rerequest", {
+			params: { path: { sessionId: session.id } },
+			body: { pullRequestUrl: review.pullRequestUrl, reviewerId: review.reviewerId },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to request re-review"));
+	};
+	const resolveInlineComment = async (comment: InspectorInlineComment) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/comments/resolve", {
+			params: { path: { sessionId: session.id } },
+			body: { pullRequestUrl: comment.pullRequestUrl, commentUrl: comment.url ?? "" },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to resolve review comment"));
+		void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(session.id) });
+		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+	};
 	const sendInlineCommentToWorker = async (comment: InspectorInlineComment & { reviewerId?: string }) => {
 		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 			params: { path: { sessionId: session.id } },
@@ -1122,11 +1140,13 @@ function MergedReviewsSection({
 			return {
 				body: entry.body,
 				id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
+				pullRequestUrl: github?.url,
 				inlineComments: (reviewer?.links ?? []).map((link) => ({
 					autoInjectReview: link.autoInjectReview,
 					body: link.body,
 					file: link.file,
 					line: link.line,
+					pullRequestUrl: github?.url,
 					url: link.url || reviewer?.reviewUrl,
 				})),
 				isBot: entry.isBot,
@@ -1141,11 +1161,13 @@ function MergedReviewsSection({
 			externalEntries.push({
 				body: undefined,
 				id: `unresolved:${reviewer.reviewerId}:${number}`,
+				pullRequestUrl: github?.url,
 				inlineComments: reviewer.links.map((link) => ({
 					autoInjectReview: link.autoInjectReview,
 					body: link.body,
 					file: link.file,
 					line: link.line,
+					pullRequestUrl: github?.url,
 					url: link.url || reviewer.reviewUrl,
 				})),
 				isBot: reviewer.isBot,
@@ -1185,6 +1207,7 @@ function MergedReviewsSection({
 								body: link.body,
 								file: link.file,
 								line: link.line,
+								pullRequestUrl: github?.url,
 								url: link.url,
 							})),
 							reviewerId: reviewer.reviewerId,
@@ -1209,6 +1232,8 @@ function MergedReviewsSection({
 			groups={groups}
 			isLoading={isLoading}
 			labels={labels}
+			onRequestRereview={requestRereview}
+			onResolveInlineComment={resolveInlineComment}
 			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
 				<AgentAvatar className="size-icon-sm shrink-0" decorative provider={harness} />
@@ -1235,6 +1260,10 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		reviewedAt: (time) => t("inspector.reviewedAt", { time }),
 		resolvedComments: (count) => t("inspector.resolvedComments", { count }),
 		rereviewRequested: t("inspector.rereviewRequested"),
+		rereviewRequestFailed: t("inspector.rereviewRequestFailed"),
+		resolveComment: t("inspector.resolveComment"),
+		resolvedReview: t("inspector.resolvedReview"),
+		resolveReviewFailed: t("inspector.resolveReviewFailed"),
 		sendToWorkerAgent: t("inspector.sendToWorkerAgent"),
 		sentToWorkerAgent: t("inspector.sentToWorkerAgent"),
 		sendToWorkerAgentError: t("inspector.sendToWorkerAgentError"),

@@ -4082,6 +4082,57 @@ paths:
       summary: Cancel a running code review
       tags:
       - reviews
+  /api/v1/sessions/{sessionId}/reviews/comments/resolve:
+    post:
+      operationId: resolveReviewComment
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersResolveReviewCommentRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersResolveReviewCommentResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Resolve an external review comment thread
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/reviews/kill:
     post:
       operationId: killReviewSession
@@ -4119,6 +4170,57 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Kill a worker's reviewer terminal session
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/rerequest:
+    post:
+      operationId: requestRereview
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersRequestRereviewRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersRequestRereviewResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Ask an external reviewer to re-review a worker's PR
       tags:
       - reviews
   /api/v1/sessions/{sessionId}/reviews/restore:
@@ -5296,6 +5398,44 @@ components:
       properties:
         disabled:
           type: boolean
+      type: object
+    ControllersRequestRereviewRequest:
+      properties:
+        pullRequestUrl:
+          description: Tracked pull request URL. Required when the session has multiple
+            PRs.
+          type: string
+        reviewerId:
+          description: Provider login of the reviewer to ask for another review.
+          type: string
+      required:
+      - reviewerId
+      type: object
+    ControllersRequestRereviewResponse:
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
+      type: object
+    ControllersResolveReviewCommentRequest:
+      properties:
+        commentUrl:
+          description: Provider URL of the unresolved review comment to resolve.
+          type: string
+        pullRequestUrl:
+          description: Tracked pull request URL. Required when the session has multiple
+            PRs.
+          type: string
+      required:
+      - commentUrl
+      type: object
+    ControllersResolveReviewCommentResponse:
+      properties:
+        ok:
+          type: boolean
+      required:
+      - ok
       type: object
     ControllersSecurePairingStatus:
       properties:
