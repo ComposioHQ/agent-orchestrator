@@ -470,6 +470,19 @@ paths:
       summary: Shut down the AO-managed iOS Simulator
       tags:
       - ios-device
+  /api/v1/ios-device/stream:
+    get:
+      operationId: streamIOSDevice
+      responses:
+        "101":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulatorScreenshotResponse'
+          description: Switching Protocols
+      summary: Stream periodic iOS Simulator screenshots over WebSocket
+      tags:
+      - ios-device
   /api/v1/ios-device/toolchain/fetch-runtime:
     post:
       operationId: fetchIOSDeviceRuntime

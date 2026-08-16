@@ -365,6 +365,7 @@ func iosDeviceOperations() []operation {
 		{method: http.MethodGet, path: "/api/v1/ios-device/screenshot", id: "getIOSDeviceScreenshot", tag: "ios-device", summary: "Capture a screenshot from the AO-managed iOS Simulator", resps: []respUnit{{http.StatusOK, controllers.SimulatorScreenshotResponse{}}, {http.StatusConflict, envelope.APIError{}}}},
 		{method: http.MethodGet, path: "/api/v1/ios-device/permissions", id: "getIOSDevicePermissions", tag: "ios-device", summary: "Check macOS permissions needed for iOS Simulator capture and input", resps: []respUnit{{http.StatusOK, controllers.SimulatorPermissionsResponse{}}}},
 		{method: http.MethodPost, path: "/api/v1/ios-device/input", id: "sendIOSDeviceInput", tag: "ios-device", summary: "Send tap, swipe, text, or key input to the iOS Simulator", reqBody: controllers.SimulatorInputRequest{}, resps: []respUnit{{http.StatusOK, controllers.SimulatorInputResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}}},
+		{method: http.MethodGet, path: "/api/v1/ios-device/stream", id: "streamIOSDevice", tag: "ios-device", summary: "Stream periodic iOS Simulator screenshots over WebSocket", resps: []respUnit{{http.StatusSwitchingProtocols, controllers.SimulatorScreenshotResponse{}}}},
 	}
 }
 

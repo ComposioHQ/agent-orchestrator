@@ -1,10 +1,14 @@
 package controllers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -103,6 +107,35 @@ func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, SimulatorInputResponse{Accepted: true})
 }
 
+func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
+	if c.Simulator == nil {
+		http.Error(w, "iOS Simulator is not wired", http.StatusNotImplemented)
+		return
+	}
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+	if err != nil {
+		return
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "stream ended")
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			data, captureErr := c.Simulator.Screenshot()
+			if captureErr != nil {
+				_ = wsjson.Write(context.Background(), conn, map[string]string{"error": captureErr.Error()})
+				continue
+			}
+			if err := wsjson.Write(context.Background(), conn, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png"}); err != nil {
+				return
+			}
+		}
+	}
+}
+
 func simulatorStatusResponse(status iossimulator.Status) SimulatorStatusResponse {
 	return SimulatorStatusResponse{Available: status.Available, DeviceID: status.DeviceID, Name: status.Name, State: status.State, Error: status.Error}
 }
@@ -127,4 +160,5 @@ func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Get("/ios-device/screenshot", c.Screenshot)
 	r.Get("/ios-device/permissions", c.Permissions)
 	r.Post("/ios-device/input", c.Input)
+	r.Get("/ios-device/stream", c.Stream)
 }
