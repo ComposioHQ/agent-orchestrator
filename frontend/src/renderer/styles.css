@@ -2147,7 +2147,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	color: var(--color-text-topbar);
 }
 
-.session-collapsed-inspector-actions {
+.session-pinned-actions-reserve {
 	display: flex;
 	width: 0;
 	min-width: 0;
@@ -2162,12 +2162,12 @@ body.is-resizing-x [data-slot="inspector-container"] {
 			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1));
 }
 
-.session-collapsed-inspector-actions[data-state="expanded"] {
+.session-pinned-actions-reserve[data-state="expanded"] {
 	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
 	margin-left: 0;
 }
 
-.session-inspector-persistent-actions {
+.session-pinned-actions {
 	-webkit-app-region: no-drag;
 	position: absolute;
 	top: 0;
@@ -2264,7 +2264,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 @media (prefers-reduced-motion: reduce) {
 	.workspace-topbar-actions .topbar-control,
 	.workspace-topbar-actions [data-compact-label],
-	.session-collapsed-inspector-actions,
+	.session-pinned-actions-reserve,
 	.session-split[data-terminal-live-resize="true"]
 		.workspace-topbar-actions
 		[data-priority="secondary"].topbar-control,
@@ -2808,13 +2808,16 @@ body.is-resizing-x [data-slot="inspector-container"] {
 }
 
 .session-inspector__tab-button {
+	flex: none;
 	gap: 0;
 }
 
 .session-inspector__responsive-label {
 	max-width: 5.5rem;
-	margin-left: var(--space-1);
+	margin-left: var(--space-0_5);
 	overflow: hidden;
+	/* Clip during the collapse animation — never ellipsize mid-label. */
+	text-overflow: clip;
 	opacity: 1;
 	transform: translateX(0);
 	transition:
@@ -2824,7 +2827,15 @@ body.is-resizing-x [data-slot="inspector-container"] {
 		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-@container inspector (max-width: 359px) {
+.session-inspector__tablist {
+	container: inspector-tabs / inline-size;
+	justify-content: flex-start;
+}
+
+/* Keep labels until they nearly meet the pinned actions, then collapse to a
+ * tight icon cluster. Tuned just under the ~270px labeled content width so the
+ * default inspector (~274px tablist) still shows full words. */
+@container inspector-tabs (max-width: 268px) {
 	.session-inspector__responsive-label {
 		max-width: 0;
 		margin-left: 0;
@@ -2839,7 +2850,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
 	.session-inspector__responsive-label {
 	max-width: 5.5rem;
-	margin-left: var(--space-1);
+	margin-left: var(--space-0_5);
 	opacity: 1;
 	transform: translateX(0);
 }

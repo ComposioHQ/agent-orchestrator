@@ -1537,6 +1537,38 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 }
 
+func TestMarkSpawnedPersistsAndPreservesDiffBase(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+
+	wantSHA := "0123456789abcdef"
+	wantRef := "refs/remotes/origin/main"
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath: "/ws",
+		DiffBaseSHA:   wantSHA,
+		DiffBaseRef:   wantRef,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"].Metadata
+	if got.DiffBaseSHA != wantSHA || got.DiffBaseRef != wantRef {
+		t.Fatalf("spawn diff base = sha:%q ref:%q, want sha:%q ref:%q", got.DiffBaseSHA, got.DiffBaseRef, wantSHA, wantRef)
+	}
+
+	// Restore does not recompute the base. Empty incoming values must preserve
+	// the durable comparison metadata recorded by the initial spawn.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:   "/ws",
+		RuntimeHandleID: "h2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions["mer-1"].Metadata
+	if got.DiffBaseSHA != wantSHA || got.DiffBaseRef != wantRef {
+		t.Fatalf("restored diff base = sha:%q ref:%q, want preserved sha:%q ref:%q", got.DiffBaseSHA, got.DiffBaseRef, wantSHA, wantRef)
+	}
+}
+
 func TestCommitControllerEpochOwnsModeAndActivityFacts(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = domain.SessionRecord{
