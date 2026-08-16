@@ -491,7 +491,7 @@
 	"pr.reason.providerBlocked": "merge unavailable",
 	"pr.reason.reviewRequired": "review required",
 	"pr.review.approved": "Approved",
-	"pr.review.changesActive": "Requested changes still active",
+	"pr.review.changesActive": "Changes requested",
 	"pr.review.changesRequested": "Changes requested",
 	"pr.review.draftNotReady": "Draft PR · Not ready for review",
 	"pr.review.none": "None",
