@@ -231,7 +231,7 @@ beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
-	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
+	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null, orchestratorStartupErrors: {} });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -334,6 +334,20 @@ describe("Sidebar", () => {
 		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
+	});
+
+	it("surfaces a refused spawn on the project board instead of swallowing it", async () => {
+		const user = userEvent.setup();
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		spawnMock.mockRejectedValue(
+			new Error("agent: binary not found on PATH: install the claude-code CLI and make sure its binary is on PATH"),
+		);
+		renderSidebar();
+
+		await user.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
+
+		expect(useUiStore.getState().orchestratorStartupErrors["proj-1"]).toContain("install the claude-code CLI");
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
 	});
 
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {

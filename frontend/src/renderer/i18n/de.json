@@ -1117,6 +1117,10 @@
 	"newTask.taskPlaceholder": "z. B. Den instabilen Checkout-Test reparieren (optional)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "Agent-Dokumentation",
+	"newTask.agentNotInstalled": "{{agent}} ist nicht installiert. Installiere dessen CLI und versuche es erneut.",
+	"shell.agentDocs": "Agent-Dokumentation",
+	"shell.agentNotInstalled": "{{agent}} ist nicht installiert. Installiere dessen CLI und versuche es erneut.",
 	"shell.signIn": "Anmelden",
 	"shell.signInToAOCloud": "Bei AO Cloud anmelden",
 	"shell.signedInAs": "Angemeldet als {{email}}",
@@ -1131,5 +1135,4 @@
 	"chat.edit.image": "Bild",
 	"chat.edit.cancel": "Bearbeitung abbrechen",
 	"chat.edit.send": "Bearbeitete Nachricht senden",
-	"chat.edit.sendShortcut": "Bearbeitete Nachricht senden (⌘/Strg+Enter)"
-}
+	"chat.edit.sendShortcut": "Bearbeitete Nachricht senden (⌘/Strg+Enter)"}

@@ -111,6 +111,49 @@ describe("TaskComposer", () => {
 		expect(onCreated).toHaveBeenCalledWith("sess-empty");
 	});
 
+	// The daemon refuses this task too, but only after a round trip that leaves a
+	// failed spawn in telemetry. A missing CLI is a setup gap, so it reads as
+	// install guidance and never becomes a delegate request.
+	it("blocks a task whose agent CLI is not installed and offers the agent docs", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "goose",
+						selectionMode: "text",
+						models: [],
+						allowCustom: true,
+						refreshRecommended: false,
+					},
+				};
+			}
+			if (path === "/api/v1/agents") {
+				return { data: { supported: [{ id: "goose", label: "Goose" }], installed: [], authorized: [] } };
+			}
+			return { data: { status: "ok", project: { config: { worker: { agent: "goose" } } } } };
+		});
+		h.post.mockImplementation(async (path: string) => {
+			if (path.includes("/probe")) {
+				return { data: { agent: { id: "goose", label: "Goose" }, supported: true, installed: false } };
+			}
+			return { data: { workerId: "sess-should-not-happen" } };
+		});
+		const onCreated = vi.fn();
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={onCreated} />
+			</Wrap>,
+		);
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "goose"));
+		fireEvent.click(screen.getByText("Start task"));
+
+		expect(await screen.findByText("Goose is not installed. Install its CLI, then try again.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Agent docs" })).toBeInTheDocument();
+		expect(h.post).not.toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything());
+		expect(onCreated).not.toHaveBeenCalled();
+	});
+
 	it("keeps prompt guidance in the field instead of adding a separate footer row", () => {
 		render(
 			<Wrap>

@@ -1099,6 +1099,10 @@
 	"newTask.taskPlaceholder": "例如：修复不稳定的结账测试（可选）…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "代理文档",
+	"newTask.agentNotInstalled": "{{agent}} 尚未安装。请先安装其 CLI，然后重试。",
+	"shell.agentDocs": "代理文档",
+	"shell.agentNotInstalled": "{{agent}} 尚未安装。请先安装其 CLI，然后重试。",
 	"shell.signIn": "登录",
 	"shell.signInToAOCloud": "登录 AO Cloud",
 	"shell.signedInAs": "已登录为 {{email}}",
@@ -1113,5 +1117,4 @@
 	"chat.edit.image": "图像",
 	"chat.edit.cancel": "取消编辑",
 	"chat.edit.send": "发送编辑后的消息",
-	"chat.edit.sendShortcut": "发送编辑后的消息（⌘/Ctrl+Enter）"
-}
+	"chat.edit.sendShortcut": "发送编辑后的消息（⌘/Ctrl+Enter）"}

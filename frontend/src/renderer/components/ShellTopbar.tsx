@@ -20,6 +20,7 @@ import {
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { isAgentNotInstalledError } from "../lib/agent-install-preflight";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
@@ -174,7 +175,13 @@ export function ShellTopbar({
 				project_id: projectId,
 			});
 			console.error("Failed to spawn orchestrator:", error);
-			setBoardSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+			setBoardSpawnError(
+				isAgentNotInstalledError(error)
+					? t("shell.agentNotInstalled", { agent: error.agentLabel })
+					: error instanceof Error
+						? error.message
+						: t("shell.couldNotSpawn"),
+			);
 		} finally {
 			setIsSpawning(false);
 		}

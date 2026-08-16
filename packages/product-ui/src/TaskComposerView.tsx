@@ -81,10 +81,14 @@ export type TaskComposerSubmission = {
 	modelWarning?: string;
 	onSubmit: () => void;
 	onSubmitAsTui: () => void;
+	/** Opens the agent docs. Set when the error is a missing agent CLI, which is a
+	 *  setup gap the user fixes outside AO rather than a failed task. */
+	onOpenAgentDocs?: () => void;
 };
 
 export type TaskComposerLabels = {
 	addFile: string;
+	agentDocs: string;
 	createAsTui: string;
 	removeFile: (name: string) => string;
 	runsWith: string;
@@ -242,6 +246,15 @@ export function TaskComposerView({
 									className="inline-flex h-control-md shrink-0 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs text-foreground transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
 								>
 									{labels.createAsTui}
+								</button>
+							) : null}
+							{submission.onOpenAgentDocs ? (
+								<button
+									type="button"
+									onClick={submission.onOpenAgentDocs}
+									className="inline-flex h-control-md shrink-0 items-center justify-center rounded-md border border-border bg-background px-2.5 text-xs text-foreground transition-colors hover:bg-muted"
+								>
+									{labels.agentDocs}
 								</button>
 							) : null}
 						</div>

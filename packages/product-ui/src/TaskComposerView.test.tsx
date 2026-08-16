@@ -12,6 +12,7 @@ function viewProps(overrides: Partial<TaskComposerViewProps> = {}): TaskComposer
 		onPromptChange: vi.fn(),
 		labels: {
 			addFile: "Add file",
+			agentDocs: "Agent docs",
 			createAsTui: "Create as Terminal UI",
 			removeFile: (name) => `Remove ${name}`,
 			runsWith: "Runs with",
@@ -170,5 +171,30 @@ describe("TaskComposerView", () => {
 		expect(screen.queryByText("Hidden while the submission error is visible")).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "Create as Terminal UI" }));
 		expect(onSubmitAsTui).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("button", { name: "Agent docs" })).not.toBeInTheDocument();
+	});
+
+	// A missing agent CLI is fixed outside AO, so that error carries a way out to
+	// the docs instead of only telling the user the task failed.
+	it("offers the agent docs when the submission error is a missing agent CLI", () => {
+		const onOpenAgentDocs = vi.fn();
+		render(
+			<TaskComposerView
+				{...viewProps({
+					submission: {
+						canCreateAsTui: false,
+						error: "Goose is not installed. Install its CLI, then try again.",
+						isSubmitting: false,
+						onSubmit: vi.fn(),
+						onSubmitAsTui: vi.fn(),
+						onOpenAgentDocs,
+					},
+				})}
+			/>,
+		);
+
+		fireEvent.click(screen.getByRole("button", { name: "Agent docs" }));
+		expect(onOpenAgentDocs).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("button", { name: "Create as Terminal UI" })).not.toBeInTheDocument();
 	});
 });

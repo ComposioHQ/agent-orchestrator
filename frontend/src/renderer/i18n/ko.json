@@ -1117,6 +1117,10 @@
 	"newTask.taskPlaceholder": "예: 불안정한 결제 테스트 수정(선택 사항)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "에이전트 문서",
+	"newTask.agentNotInstalled": "{{agent}}이(가) 설치되지 않았습니다. CLI를 설치한 후 다시 시도하세요.",
+	"shell.agentDocs": "에이전트 문서",
+	"shell.agentNotInstalled": "{{agent}}이(가) 설치되지 않았습니다. CLI를 설치한 후 다시 시도하세요.",
 	"shell.signIn": "로그인",
 	"shell.signInToAOCloud": "AO Cloud에 로그인",
 	"shell.signedInAs": "{{email}}(으)로 로그인됨",
@@ -1131,5 +1135,4 @@
 	"chat.edit.image": "이미지",
 	"chat.edit.cancel": "편집 취소",
 	"chat.edit.send": "편집한 메시지 보내기",
-	"chat.edit.sendShortcut": "편집한 메시지 보내기(⌘/Ctrl+Enter)"
-}
+	"chat.edit.sendShortcut": "편집한 메시지 보내기(⌘/Ctrl+Enter)"}

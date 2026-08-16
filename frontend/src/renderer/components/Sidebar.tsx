@@ -39,6 +39,7 @@ import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { isAgentNotInstalledError } from "../lib/agent-install-preflight";
 import { renameSession } from "../lib/rename-session";
 import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
@@ -573,6 +574,21 @@ function ProjectItem({
 			selection.goSession(workspace.id, sessionId);
 		} catch (err) {
 			console.error("Failed to spawn orchestrator:", err);
+			// The button used to fail silently: a refused spawn (an agent CLI that is
+			// not installed, a missing tmux) only reached the console. Park the reason
+			// on the project and go to its board so the user reads what to install
+			// instead of clicking a dead button.
+			useUiStore
+				.getState()
+				.setOrchestratorStartupError(
+					workspace.id,
+					isAgentNotInstalledError(err)
+						? t("shell.agentNotInstalled", { agent: err.agentLabel })
+						: err instanceof Error
+							? err.message
+							: t("shell.couldNotSpawn"),
+				);
+			selection.goProject(workspace.id);
 		} finally {
 			setIsSpawning(false);
 		}

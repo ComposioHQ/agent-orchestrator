@@ -682,7 +682,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// after CreateSession would leave a terminated orphan row and waste a
 	// worktree on a spawn that can never launch.
 	if _, ok := m.agents.Agent(cfg.Harness); !ok {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q; run `ao agent ls` for the agents this daemon supports", ErrUnknownHarness, cfg.Harness)
 	}
 
 	// Resolve the controller mode here, before anything durable is created, for
@@ -701,12 +701,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	cfg.RequestedMode = mode
 
-	// A chat session runs no agent inside a terminal runtime, so the terminal
-	// prerequisites are not its concern.
-	if mode == domain.SessionModeTUI {
-		if err := m.validateRuntimePrerequisites(); err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
-		}
+	// Local readiness — terminal runtime and the harness binary — is proven here,
+	// while a failure still costs nothing. See preflightSpawnEnvironment.
+	if err := m.preflightSpawnEnvironment(ctx, cfg.Harness, mode); err != nil {
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
 	}
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
@@ -4045,7 +4043,7 @@ func (m *Manager) validateRuntimePrerequisites() error {
 		return nil
 	}
 	if path, err := m.lookPath("tmux"); err != nil || path == "" {
-		return fmt.Errorf("%w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite)
+		return fmt.Errorf("%w: tmux required on macOS/Linux but not in PATH; install it with %s", ports.ErrRuntimePrerequisite, tmuxInstallHint())
 	}
 	return nil
 }

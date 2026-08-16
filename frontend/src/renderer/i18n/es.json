@@ -1132,6 +1132,10 @@
 	"newTask.taskPlaceholder": "p. ej. Arreglar la prueba de pago inestable (opcional)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "Documentación de agentes",
+	"newTask.agentNotInstalled": "{{agent}} no está instalado. Instala su CLI y vuelve a intentarlo.",
+	"shell.agentDocs": "Documentación de agentes",
+	"shell.agentNotInstalled": "{{agent}} no está instalado. Instala su CLI y vuelve a intentarlo.",
 	"shell.signIn": "Iniciar sesión",
 	"shell.signInToAOCloud": "Iniciar sesión en AO Cloud",
 	"shell.signedInAs": "Sesión iniciada como {{email}}",
@@ -1146,5 +1150,4 @@
 	"chat.edit.image": "Imagen",
 	"chat.edit.cancel": "Cancelar edición",
 	"chat.edit.send": "Enviar mensaje editado",
-	"chat.edit.sendShortcut": "Enviar mensaje editado (⌘/Ctrl+Enter)"
-}
+	"chat.edit.sendShortcut": "Enviar mensaje editado (⌘/Ctrl+Enter)"}

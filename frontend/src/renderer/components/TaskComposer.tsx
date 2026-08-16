@@ -12,6 +12,8 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
+import { AGENT_DOCS_URL, assertAgentInstalled, isAgentNotInstalledError } from "../lib/agent-install-preflight";
+import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
 import { useSettings } from "../hooks/useSettings";
@@ -79,6 +81,7 @@ export function TaskComposer({
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const [canCreateAsTUI, setCanCreateAsTUI] = useState(false);
+	const [needsAgentInstall, setNeedsAgentInstall] = useState(false);
 	const {
 		attachments,
 		error: attachmentError,
@@ -91,6 +94,12 @@ export function TaskComposer({
 		async (input: CreateTaskInput): Promise<string> => {
 			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
 			try {
+				// The picker disables agents the catalog reports as missing, but the
+				// resolved default can be one of them and the catalog is a snapshot, so
+				// the selection is confirmed against a fresh probe before it becomes a
+				// spawn the daemon has to refuse.
+				await assertAgentInstalled(input.agent);
+
 				const { data, error } = await apiClient.POST("/api/v1/orchestrators/delegate", {
 					body: {
 						projectId: input.projectId,
@@ -244,6 +253,7 @@ export function TaskComposer({
 		setIsSubmitting(true);
 		setError(undefined);
 		setCanCreateAsTUI(false);
+		setNeedsAgentInstall(false);
 		try {
 			const attachmentPayloads = await toSettledPayload();
 			const sessionId = await createTask({
@@ -263,7 +273,16 @@ export function TaskComposer({
 					err instanceof TaskCreateError &&
 					Boolean(err.code && CHAT_PREFLIGHT_CODES.has(err.code)),
 			);
-			setError(err instanceof Error ? err.message : t("newTask.unableToStart"));
+			// A missing CLI is a setup gap, so it reads as install guidance with a
+			// docs link rather than as a failed task.
+			setNeedsAgentInstall(isAgentNotInstalledError(err));
+			setError(
+				isAgentNotInstalledError(err)
+					? t("newTask.agentNotInstalled", { agent: err.agentLabel })
+					: err instanceof Error
+						? err.message
+						: t("newTask.unableToStart"),
+			);
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -277,6 +296,7 @@ export function TaskComposer({
 			onPromptChange={setPrompt}
 			labels={{
 				addFile: t("newTask.addFile"),
+				agentDocs: t("newTask.agentDocs"),
 				createAsTui: t("newTask.createAsTui"),
 				removeFile: (name) => t("newTask.removeFile", { name }),
 				runsWith: t("newTask.runsWith"),
@@ -338,6 +358,7 @@ export function TaskComposer({
 				modelWarning,
 				onSubmit: () => void submitTask(requiresTuiFallback ? "tui" : undefined),
 				onSubmitAsTui: () => void submitTask("tui"),
+				onOpenAgentDocs: needsAgentInstall ? () => void openLinkInSystemBrowser(AGENT_DOCS_URL) : undefined,
 			}}
 			renderAgentControl={(control) => <DesktopAgentControl {...control} />}
 			renderModelControl={(control) => <TaskModelPicker {...control} />}

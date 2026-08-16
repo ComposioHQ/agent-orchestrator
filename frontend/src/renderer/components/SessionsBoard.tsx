@@ -34,6 +34,8 @@ import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { AGENT_DOCS_URL, isAgentNotInstalledError } from "../lib/agent-install-preflight";
+import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
@@ -90,6 +92,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const [canCreateAsTui, setCanCreateAsTui] = useState(false);
+	const [needsAgentInstall, setNeedsAgentInstall] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const orchestratorStartupError = useUiStore((state) =>
 		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
@@ -107,6 +110,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	useEffect(() => {
 		setSpawnError(null);
 		setCanCreateAsTui(false);
+		setNeedsAgentInstall(false);
 	}, [projectId]);
 	const previousProjectIdRef = useRef(projectId);
 	useEffect(() => {
@@ -169,6 +173,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 		setSpawnError(null);
 		setCanCreateAsTui(false);
+		setNeedsAgentInstall(false);
 		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
@@ -183,8 +188,15 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", error);
-			setSpawnError(error instanceof Error ? error.message : t("shell.couldNotSpawn"));
+			setSpawnError(
+				isAgentNotInstalledError(error)
+					? t("shell.agentNotInstalled", { agent: error.agentLabel })
+					: error instanceof Error
+						? error.message
+						: t("shell.couldNotSpawn"),
+			);
 			setCanCreateAsTui(isChatPreflightError(error));
+			setNeedsAgentInstall(isAgentNotInstalledError(error));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -208,6 +220,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{visibleSpawnError}
 				</TopbarKillError>
 			)}
+			{visibleSpawnError && needsAgentInstall && !showProjectEmpty ? (
+				<TopbarButton onClick={() => void openLinkInSystemBrowser(AGENT_DOCS_URL)}>
+					{t("shell.agentDocs")}
+				</TopbarButton>
+			) : null}
 			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
 				<TopbarButton disabled={isSpawning || isProjectRestarting} onClick={() => void openOrchestrator("tui")}>
 					{t("newTask.createAsTui")}

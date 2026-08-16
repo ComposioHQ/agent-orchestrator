@@ -1117,6 +1117,10 @@
 	"newTask.taskPlaceholder": "例：不安定なチェックアウトテストを修正（任意）…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required.",
+	"newTask.agentDocs": "エージェントのドキュメント",
+	"newTask.agentNotInstalled": "{{agent}} がインストールされていません。CLI をインストールしてから再試行してください。",
+	"shell.agentDocs": "エージェントのドキュメント",
+	"shell.agentNotInstalled": "{{agent}} がインストールされていません。CLI をインストールしてから再試行してください。",
 	"shell.signIn": "サインイン",
 	"shell.signInToAOCloud": "AO Cloud にサインイン",
 	"shell.signedInAs": "{{email}} としてサインイン中",
@@ -1131,5 +1135,4 @@
 	"chat.edit.image": "画像",
 	"chat.edit.cancel": "編集をキャンセル",
 	"chat.edit.send": "編集したメッセージを送信",
-	"chat.edit.sendShortcut": "編集したメッセージを送信（⌘/Ctrl+Enter）"
-}
+	"chat.edit.sendShortcut": "編集したメッセージを送信（⌘/Ctrl+Enter）"}
