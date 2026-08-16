@@ -27,6 +27,19 @@ type Manager struct {
 	device Status
 }
 
+func (m *Manager) Screenshot() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.device.DeviceID == "" {
+		return nil, fmt.Errorf("iOS Simulator is not started")
+	}
+	data, err := m.run("xcrun", "simctl", "io", m.device.DeviceID, "screenshot", "-")
+	if err != nil {
+		return nil, fmt.Errorf("capture simulator screenshot: %w", err)
+	}
+	return data, nil
+}
+
 func New() *Manager { return &Manager{run: defaultRunner} }
 
 func NewWithRunner(run CommandRunner) *Manager {
@@ -76,6 +89,9 @@ func (m *Manager) Start() (Status, error) {
 		}
 		// Simulator.app owns the visible window; simctl only boots the device.
 		_, _ = m.run("open", "-a", "Simulator")
+		if _, err := m.run("xcrun", "simctl", "bootstatus", m.device.DeviceID, "-b"); err != nil {
+			return m.device, fmt.Errorf("wait for simulator boot: %w", err)
+		}
 	}
 	m.device.State = "Booted"
 	return m.device, nil

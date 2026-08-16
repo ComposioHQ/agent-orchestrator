@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 
@@ -66,6 +67,19 @@ func (c *IOSDeviceController) StopSimulator(w http.ResponseWriter, r *http.Reque
 	envelope.WriteJSON(w, http.StatusOK, simulatorStatusResponse(status))
 }
 
+func (c *IOSDeviceController) Screenshot(w http.ResponseWriter, r *http.Request) {
+	if c.Simulator == nil {
+		envelope.WriteJSON(w, http.StatusNotImplemented, map[string]string{"error": "iOS Simulator is not wired"})
+		return
+	}
+	data, err := c.Simulator.Screenshot()
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "IOS_SIMULATOR_SCREENSHOT", err.Error(), nil)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png"})
+}
+
 func simulatorStatusResponse(status iossimulator.Status) SimulatorStatusResponse {
 	return SimulatorStatusResponse{Available: status.Available, DeviceID: status.DeviceID, Name: status.Name, State: status.State, Error: status.Error}
 }
@@ -87,4 +101,5 @@ func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Get("/ios-device/status", c.SimulatorStatus)
 	r.Post("/ios-device/start", c.StartSimulator)
 	r.Post("/ios-device/stop", c.StopSimulator)
+	r.Get("/ios-device/screenshot", c.Screenshot)
 }

@@ -151,6 +151,7 @@ var schemaNames = map[string]string{
 	"ControllersStatusResponse":                   "StatusResponse",
 	"ControllersFetchRuntimeResponse":             "FetchRuntimeResponse",
 	"ControllersSimulatorStatusResponse":          "SimulatorStatusResponse",
+	"ControllersSimulatorScreenshotResponse":      "SimulatorScreenshotResponse",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
@@ -361,6 +362,7 @@ func iosDeviceOperations() []operation {
 		{method: http.MethodGet, path: "/api/v1/ios-device/status", id: "getIOSDeviceStatus", tag: "ios-device", summary: "Get the AO-managed iOS Simulator status", resps: []respUnit{{http.StatusOK, controllers.SimulatorStatusResponse{}}, {http.StatusNotImplemented, envelope.APIError{}}}},
 		{method: http.MethodPost, path: "/api/v1/ios-device/start", id: "startIOSDevice", tag: "ios-device", summary: "Create and boot the AO-managed iOS Simulator", resps: []respUnit{{http.StatusOK, controllers.SimulatorStatusResponse{}}, {http.StatusInternalServerError, envelope.APIError{}}}},
 		{method: http.MethodPost, path: "/api/v1/ios-device/stop", id: "stopIOSDevice", tag: "ios-device", summary: "Shut down the AO-managed iOS Simulator", resps: []respUnit{{http.StatusOK, controllers.SimulatorStatusResponse{}}, {http.StatusInternalServerError, envelope.APIError{}}}},
+		{method: http.MethodGet, path: "/api/v1/ios-device/screenshot", id: "getIOSDeviceScreenshot", tag: "ios-device", summary: "Capture a screenshot from the AO-managed iOS Simulator", resps: []respUnit{{http.StatusOK, controllers.SimulatorScreenshotResponse{}}, {http.StatusConflict, envelope.APIError{}}}},
 	}
 }
 

@@ -350,6 +350,25 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/ios-device/screenshot:
+    get:
+      operationId: getIOSDeviceScreenshot
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulatorScreenshotResponse'
+          description: OK
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: Capture a screenshot from the AO-managed iOS Simulator
+      tags:
+      - ios-device
   /api/v1/ios-device/start:
     post:
       operationId: startIOSDevice
@@ -4233,6 +4252,16 @@ components:
       - workingDir
       - title
       - createdAt
+      type: object
+    SimulatorScreenshotResponse:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      - mimeType
       type: object
     SimulatorStatusResponse:
       properties:

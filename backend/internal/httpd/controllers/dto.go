@@ -38,6 +38,11 @@ type SimulatorStatusResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
+type SimulatorScreenshotResponse struct {
+	Data     string `json:"data"`
+	MimeType string `json:"mimeType"`
+}
+
 // HTTP response envelopes for the projects surface — the SINGLE definition of
 // each wire shape. The handlers encode these (envelope.WriteJSON), and
 // apispec.Build reflects these same types into openapi.yaml, so the served
