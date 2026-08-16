@@ -100,7 +100,7 @@ export function SessionInspectorShellView({
 		<aside className={inspectorShellClass} aria-label={ariaLabel}>
 			<div className="session-inspector__topbar flex h-inspector-tabs shrink-0 items-center border-b border-border pl-2.5">
 				{isVisible ? (
-					<div className="session-inspector__tablist flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
+					<div className="session-inspector__tablist flex min-w-0 flex-1 items-center justify-start gap-0" role="tablist">
 						{tabs.map((tab, index) => (
 							<button
 								aria-label={tab.label}
@@ -110,7 +110,7 @@ export function SessionInspectorShellView({
 								aria-selected={activeView === tab.id}
 								tabIndex={activeView === tab.id ? 0 : -1}
 								className={cn(
-									"session-inspector__tab-button inline-flex h-control-md min-w-0 items-center justify-center rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+									"session-inspector__tab-button inline-flex h-control-md shrink-0 items-center justify-center rounded-md px-1 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
 									activeView === tab.id && "bg-interactive-active text-foreground",
 								)}
 								onClick={() => onViewChange(tab.id)}
@@ -130,7 +130,7 @@ export function SessionInspectorShellView({
 										</span>
 									) : null}
 								</span>
-								<span className="session-inspector__responsive-label min-w-0 truncate whitespace-nowrap text-2xs">
+								<span className="session-inspector__responsive-label whitespace-nowrap text-2xs">
 									{tab.displayLabel ?? tab.label}
 								</span>
 							</button>
