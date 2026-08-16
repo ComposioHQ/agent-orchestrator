@@ -306,6 +306,29 @@ describe("tool server reload refusals", () => {
 });
 
 describe("controller recovery", () => {
+	it("refreshes the conversation after Stop reports stale turn state", async () => {
+		postMock.mockResolvedValue({
+			data: undefined,
+			error: { code: "CHAT_NO_ACTIVE_TURN" },
+			response: { status: 409 },
+		});
+		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		act(() => {
+			result.current.interrupt();
+		});
+
+		await waitFor(() => {
+			expect(postMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/conversation/interrupt",
+				{ params: { path: { sessionId: "ao-1" } } },
+			);
+			expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-1"] });
+		});
+		invalidateSpy.mockRestore();
+	});
+
 	it("resumes the agent and refreshes both chat and task state", async () => {
 		postMock.mockResolvedValue({ data: {}, error: undefined, response: { status: 200 } });
 		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");

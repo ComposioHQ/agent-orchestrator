@@ -210,10 +210,11 @@ describe("SessionInspector tabs", () => {
 	it("gives the Browser viewport the full inspector body without the default content gutter", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
-		const tablist = screen.getByRole("tablist");
 		await userEvent.click(screen.getByRole("tab", { name: "Browser" }));
 
-		const body = tablist.nextElementSibling;
+		const body = screen.getByRole("complementary", { name: "Session inspector" }).querySelector(
+			".session-inspector__body--browser",
+		);
 		expect(body).toHaveClass("session-inspector__body--browser", "p-0", "overflow-hidden");
 		expect(body).not.toHaveClass("p-3", "pb-4", "@max-[300px]/inspector:px-2.5");
 	});
@@ -226,7 +227,6 @@ describe("SessionInspector tabs", () => {
 		expect(summaryTab).not.toHaveClass("flex-1");
 		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
-		expect(within(summaryTab).getByText("Summary")).toHaveClass("@max-[350px]/inspector:hidden");
 	});
 
 	it("shows the glow only while real browser activity is unseen", () => {
@@ -296,6 +296,14 @@ describe("SessionInspector tabs", () => {
 
 		const filesTab = screen.getByRole("tab", { name: "Files" });
 		expect(within(filesTab).getByText("0 Files")).toBeInTheDocument();
+	});
+
+	it("keeps collapsed inspector content hidden and inert", () => {
+		renderWithQuery(<SessionInspector isInspectorVisible={false} session={session([])} />);
+
+		expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
+		expect(document.querySelector("[aria-hidden='true'][inert]")).toBeInTheDocument();
 	});
 });
 
@@ -391,7 +399,7 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 
-	it("renders PRs and reviews before the stacked compact policy rows", async () => {
+	it("keeps PR and session policies in Summary while review policies live in Reviews", async () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
 		expect(screen.getByText("Session controls")).toBeInTheDocument();
@@ -399,24 +407,16 @@ describe("SessionInspector PR section", () => {
 		const policyRow = (name: string) =>
 			screen.getByRole("switch", { name }).closest("[data-slot='inspector-policy-row']") as HTMLElement;
 		const ciRow = policyRow("Automatically send CI failures");
-		const reviewRow = policyRow("Automatically send reviews");
 		const terminateRow = policyRow("Terminate session when pull requests merge");
 		const prCard = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
-		const runReview = await screen.findByRole("button", { name: "Run review" });
 		const appearsBefore = (first: HTMLElement, second: HTMLElement) =>
 			Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-		expect(ciRow.nextElementSibling).toBe(reviewRow);
 		expect(appearsBefore(prCard, ciRow)).toBe(true);
-		expect(appearsBefore(runReview, ciRow)).toBe(true);
 		expect(ciRow.className).toBe(terminateRow.className);
-		expect(reviewRow.className).toBe(terminateRow.className);
 		expect(ciRow.parentElement).not.toHaveClass("rounded-lg", "border", "bg-surface");
-		for (const name of [
-			"Automatically send CI failures",
-			"Automatically send reviews",
-			"Terminate session when pull requests merge",
-		]) {
+		expect(screen.queryByRole("switch", { name: "Automatically send reviews" })).not.toBeInTheDocument();
+		for (const name of ["Automatically send CI failures", "Terminate session when pull requests merge"]) {
 			const toggle = screen.getByRole("switch", { name });
 			expect(toggle).toHaveClass("h-4", "w-8", "rounded-full");
 			expect(toggle.querySelector("[data-slot='switch-thumb']")).toHaveClass("size-3", "rounded-full");
@@ -431,6 +431,10 @@ describe("SessionInspector PR section", () => {
 				name: "When disabled, AO keeps this session open after all pull requests merge.",
 			}),
 		).toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(screen.getByRole("switch", { name: "Automatically send reviews" })).toBeInTheDocument();
 	});
 
 	it("persists the CI injection default before a PR exists", async () => {
@@ -622,6 +626,26 @@ describe("SessionInspector Activity section", () => {
 		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
 	});
 
+	it("does not offer agent resume while an agent switch owns the exited source", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "exited",
+					activity: { state: "exited", lastActivityAt: "2026-06-15T10:00:00Z" },
+					activeAgentSwitch: {
+						id: "switch-1",
+						fromHarness: "claude-code",
+						targetHarness: "codex",
+						state: "source_stopped",
+						agentHandoffStatus: "received",
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Resume agent" })).not.toBeInTheDocument();
+	});
+
 	it("keeps resume failures visible beside the action", async () => {
 		postMock.mockResolvedValueOnce({ error: new Error("agent restart failed"), response: { status: 500 } });
 		renderWithQuery(
@@ -741,7 +765,7 @@ describe("SessionInspector Activity section", () => {
 		expect(within(activityRow).getByText("Conflict")).toBeInTheDocument();
 	});
 
-	it("does not timestamp the live Activity state as a historical event", () => {
+	it("timestamps the live Activity state so it participates in chronological ordering", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
 
@@ -758,7 +782,7 @@ describe("SessionInspector Activity section", () => {
 		const activityRow = activitySection()
 			.getByText("Working")
 			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
-		expect(within(activityRow).queryByText("2h ago")).not.toBeInTheDocument();
+		expect(within(activityRow).getByText("2h ago")).toBeInTheDocument();
 	});
 
 	it("aligns text-row dots lower while keeping the Activity chip dot centered", () => {
@@ -910,19 +934,42 @@ describe("SessionInspector Activity section", () => {
 		expect(within(doneRow).getByText("30m ago")).toBeInTheDocument();
 	});
 
-	it("renders the current state before reverse-chronological historical milestones", () => {
+	it("orders Activity timeline rows by timestamp with the latest event on top", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-06-15T12:00:00Z"));
+		const summaries = [
+			prSummary(42, "draft", {
+				createdAt: "2026-06-15T08:00:00Z",
+				stateChangedAt: "2026-06-15T08:00:00Z",
+			}),
+			prSummary(41, "open", {
+				createdAt: "2026-06-15T11:30:00Z",
+				stateChangedAt: "2026-06-15T11:30:00Z",
+			}),
+			prSummary(40, "merged", {
+				createdAt: "2026-06-15T09:15:00Z",
+				stateChangedAt: "2026-06-15T10:45:00Z",
+			}),
+		];
 
 		renderWithQuery(
 			<SessionInspector
-				session={session([pr(42, "draft"), pr(41, "open"), pr(40, "merged")], {
-					status: "merged",
-					createdAt: "2026-06-15T09:00:00Z",
-					updatedAt: "2026-06-15T11:55:00Z",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
-				})}
+				session={session(
+					[
+						pr(42, "draft", { url: `https://api.github.com/repos/acme/repo/pulls/42` }),
+						pr(41, "open", { url: `https://api.github.com/repos/acme/repo/pulls/41` }),
+						pr(40, "merged", { url: `https://api.github.com/repos/acme/repo/pulls/40` }),
+					],
+					{
+						status: "merged",
+						createdAt: "2026-06-15T09:00:00Z",
+						updatedAt: "2026-06-15T11:55:00Z",
+						activity: { state: "idle", lastActivityAt: "2026-06-15T10:00:00Z" },
+					},
+				)}
 			/>,
+			undefined,
+			(client) => client.setQueryData(sessionScmSummaryQueryKey("sess-1"), summaries),
 		);
 
 		const section = screen.getByText("Activity").closest("[data-testid='inspector-section']") as HTMLElement;
@@ -930,13 +977,13 @@ describe("SessionInspector Activity section", () => {
 			row.textContent?.replace(/\s+/g, " ").trim(),
 		);
 		expect(rows).toEqual([
-			"Idle",
-			"Done",
-			"Merged PR #40",
-			"Opened PR #40",
-			"Opened PR #41",
-			"Draft PR #42",
+			"Opened PR #4130m ago",
+			"Merged PR #401h ago",
+			"Done1h ago",
+			"Idle2h ago",
+			"Opened PR #402h ago",
 			"Created workspace3h ago",
+			"Draft PR #424h ago",
 		]);
 
 		const eventRows = section.querySelectorAll("[data-testid='inspector-timeline-event']");
@@ -948,11 +995,17 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector tabs", () => {
-	it("exposes Summary, Browser, and Files as inspector tabs", () => {
+	it("exposes Reviews after Summary and keeps review content out of Summary", async () => {
+		mockCommonGets([], "", [reviewState(1, "needs_review")]);
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
-		expect(tabs).toEqual(["Summary", "Browser", "Files"]);
-		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
+		expect(screen.queryByText("Review controls")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+
+		expect(await screen.findByText("Review controls")).toBeInTheDocument();
+		expect(screen.queryByText("Pull request")).not.toBeInTheDocument();
 	});
 
 	it("does not render the overview card in the summary", () => {
@@ -966,9 +1019,10 @@ describe("SessionInspector tabs", () => {
 });
 
 describe("SessionInspector summary reviews", () => {
-	// PR rows start collapsed, so opening the Summary tab alone shows only their titles.
-	// Reveal every row, since these tests are about what a review says.
+	// Review rows start collapsed. Open the Reviews tab and reveal every row,
+	// since these tests are about what a review says.
 	const openReviewsSection = async () => {
+		await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
 		// Rows arrive with the reviews query, so wait for them before expanding.
 		const rows = await screen.findAllByTestId("review-pr-row").catch(() => []);
 		for (const row of rows) {
@@ -993,7 +1047,7 @@ describe("SessionInspector summary reviews", () => {
 		);
 		await openReviewsSection();
 
-		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+		await userEvent.click(await screen.findByRole("button", { name: "Review latest commit" }));
 
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
@@ -1003,7 +1057,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
 	});
 
-	it("shows claude-code as the default reviewer before a run exists", async () => {
+	it("shows the worker-compatible default reviewer before a run exists", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/sessions/{sessionId}/reviews") {
 				return { data: { reviewerHandleId: "", reviews: [] } };
@@ -1030,8 +1084,50 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
+	});
+
+	// The label is a display name, not the wire id: the trigger used to print the
+	// raw harness id, which read as a second, selectable "claude-code" entry
+	// alongside the catalog's properly-cased "Claude Code".
+	it("labels the default reviewer with its display name, not the raw id", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+				return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: {},
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "claude-code")} />);
+		await openReviewsSection();
+
+		const trigger = await screen.findByRole("button", { name: /Select reviewer agent/ });
+		expect(trigger).toHaveTextContent("Claude Code");
+		expect(trigger).not.toHaveTextContent("claude-code");
 	});
 
 	it("configures session auto-review and disables manual controls", async () => {
@@ -1065,7 +1161,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")], { autoReviewEnabled: true })} />);
 		await openReviewsSection();
 
-		expect(screen.getByRole("button", { name: "Run review" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Select reviewer agent" })).toBeDisabled();
 		const toggle = screen.getByRole("switch", { name: "Auto review" });
 		expect(toggle).toBeChecked();
@@ -1150,7 +1246,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(await screen.findByRole("button", { name: "Review latest commit" })).toBeInTheDocument();
 		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 	});
@@ -1173,10 +1269,11 @@ describe("SessionInspector summary reviews", () => {
 		mockCommonGets([], "reviewer-pane", [running]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await screen.findByText("Review in progress · codex");
+		await openReviewsSection();
+		await screen.findByText("Review in progress · Codex");
 
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
-		expect(screen.queryByText("Reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("Review summary")).not.toBeInTheDocument();
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -1189,7 +1286,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
 		await openReviewsSection();
 
-		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 		expect(await screen.findByText("Reviewable change 4")).toBeInTheDocument();
 		expect(
@@ -1199,7 +1296,7 @@ describe("SessionInspector summary reviews", () => {
 		).not.toHaveLength(0);
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
@@ -1283,13 +1380,14 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Not run", "Run review"],
+		["needs_review", "changes_requested", "Review needed", "Review latest commit"],
+		["cancelled", "approved", "Review needed", "Review latest commit"],
 		["running", "approved", "Reviewing...", "Stop review"],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
 		async (status, previousVerdict, runLabel, actionLabel) => {
 			const current = {
-				...reviewState(3, status, "sha-current"),
+				...reviewState(3, status === "cancelled" ? "needs_review" : status, "sha-current"),
 				previousRun: {
 					...approvedReview,
 					id: "run-previous",
@@ -1300,11 +1398,11 @@ describe("SessionInspector summary reviews", () => {
 					targetSha: "sha-previous",
 				},
 			};
-			if (status === "running") {
+			if (status === "running" || status === "cancelled") {
 				current.latestRun = {
 					...approvedReview,
 					id: "run-current",
-					status: "running",
+					status,
 					verdict: "",
 					targetSha: "sha-current",
 				};
@@ -1317,11 +1415,14 @@ describe("SessionInspector summary reviews", () => {
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
 			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
 			expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
-		if (status === "needs_review") {
-			expect(screen.getByText("Changes requested")).toBeInTheDocument();
-		} else {
-			expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
-		}
+			if (status === "needs_review" || status === "cancelled") {
+				expect(screen.getByText(status === "cancelled" ? "Approved" : "Changes requested")).toBeInTheDocument();
+				expect(screen.getByText("Earlier commit")).toBeInTheDocument();
+				expect(screen.getByText("#3 · Latest commit has not been reviewed")).toBeInTheDocument();
+			} else {
+				expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
+				expect(screen.queryByText("Earlier commit")).not.toBeInTheDocument();
+			}
 			expect(screen.getByRole("link", { name: "View on PR" })).toHaveAttribute(
 				"href",
 				"https://example.com/pr/3#pullrequestreview-98765",
@@ -1329,7 +1430,7 @@ describe("SessionInspector summary reviews", () => {
 			// A run in flight gets its own live strip naming the harness, not just a
 			// word on the button.
 			if (status === "running") {
-				expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
+				expect(screen.getByText("Review in progress · Codex")).toBeInTheDocument();
 			} else {
 				expect(screen.queryByText(/is reviewing this change/)).not.toBeInTheDocument();
 			}
@@ -1385,9 +1486,15 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
-		expect(screen.getAllByText(/2 unresolved/)).toHaveLength(2);
-		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:3");
-		expect(screen.getByTestId("github-inline-comments")).toHaveTextContent("a.ts:9");
+		expect(screen.getAllByText(/2 unresolved/).length).toBeGreaterThanOrEqual(2);
+		expect(screen.queryByTestId("github-inline-comments")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /maya.*2 unresolved/i }));
+		const comments = screen.getByTestId("github-inline-comments");
+		expect(comments).toHaveTextContent("Open comments");
+		expect(comments).not.toHaveTextContent("maya");
+		expect(comments).toHaveTextContent("Sent to worker agent");
+		expect(comments).not.toHaveTextContent("a.ts:3");
+		expect(comments).not.toHaveTextContent("a.ts:9");
 		// AO's runs and the PR's own reviews share one section keyed by PR, so the
 		// unresolved count rides the same row as the AO verdict.
 		expect(screen.getByText("Review summary")).toBeInTheDocument();
@@ -1445,12 +1552,15 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
+		const reviewCard = await screen.findByRole("button", { name: /maya.*Approved/ });
+		expect(reviewCard).toHaveAttribute("aria-expanded", "false");
+		await userEvent.click(reviewCard);
 		const summary = await screen.findByTestId("github-review-summary");
 		const externalReview = summary.closest("article") as HTMLElement;
 		expect(within(summary).getByText("ready").tagName).toBe("STRONG");
 		expect(within(summary).getByText("Ship it").tagName).toBe("LI");
 		expect(summary).not.toHaveTextContent("**ready**");
-		expect(within(externalReview).getByText("3d ago")).toBeInTheDocument();
+		expect(within(externalReview).getByText("Reviewed 3d ago")).toBeInTheDocument();
 		expect(within(externalReview).getByRole("link", { name: "View on PR" })).toHaveAttribute(
 			"href",
 			"https://example.com/pr/3#pullrequestreview-456",
@@ -1499,8 +1609,34 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
 		expect(screen.getByText("External reviews")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Send to worker agent" })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: /maya.*2 unresolved/i }));
+		const sendButton = screen.getByRole("button", { name: "Send to worker agent" });
+		expect(sendButton).toBeEnabled();
+		await userEvent.click(sendButton);
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+				params: { path: { sessionId: "sess-1" } },
+				body: {
+					message: expect.stringContaining("Location: a.ts:9"),
+				},
+			}),
+		);
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				message: expect.stringContaining("commit the fix, and push the branch to GitHub"),
+			},
+		});
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: "sess-1" } },
+			body: {
+				message: expect.stringContaining("Reviewer: @maya"),
+			},
+		});
+		expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
 	});
 
 	it("marks an AO review using its stored injection decision", async () => {
@@ -1518,7 +1654,7 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("Not injected")).toBeInTheDocument();
+		expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
 		expect(screen.getByText("Agent reviews")).toBeInTheDocument();
 	});
 
@@ -1553,12 +1689,44 @@ describe("SessionInspector summary reviews", () => {
 				body: { harness: "opencode" },
 			}),
 		);
-		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
+		await userEvent.click(screen.getByRole("button", { name: "Review latest commit" }));
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
 			params: { path: { sessionId: "sess-1" } },
 			body: { harness: "opencode" },
 		});
+	});
+
+	it("keeps an explicit reviewer visible and lets it return to the resolved default", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
+		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
+
+		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
+		await openReviewsSection();
+
+		const picker = await screen.findByRole("button", { name: /Select reviewer agent/ });
+		await userEvent.click(picker);
+		expect(screen.getAllByRole("menuitem", { name: /codex/i })).toHaveLength(1);
+		expect(screen.getByRole("menuitem", { name: /opencode/ })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("menuitem", { name: /opencode/ }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { harness: "opencode" },
+			}),
+		);
+
+		await userEvent.click(picker);
+		expect(screen.getAllByRole("menuitem", { name: /codex/i })).toHaveLength(1);
+		await userEvent.click(screen.getByRole("menuitem", { name: /codex/i }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenLastCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { harness: undefined },
+			}),
+		);
 	});
 
 	it("names the reviewer that is actually running, not whichever PR comes first", async () => {
@@ -1583,8 +1751,8 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByText("Review in progress · codex")).toBeInTheDocument();
-		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
+		expect(await screen.findByText("Review in progress · Codex")).toBeInTheDocument();
+		expect(screen.queryByText("Review in progress · Claude Code")).not.toBeInTheDocument();
 	});
 
 	it("keeps older harness summaries behind explicit pagination when selecting the next agent", async () => {
@@ -1652,7 +1820,7 @@ describe("SessionInspector summary reviews", () => {
 
 		// AO runs one reviewer per worker, so a second harness cannot start
 		// alongside it. Say so rather than silently ignoring the choice.
-		expect(screen.getByText("Review in progress · codex")).toBeInTheDocument();
+		expect(screen.getByText("Review in progress · Codex")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toBeDisabled();
 	});
 
@@ -1740,7 +1908,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Cancelled")).not.toBeInTheDocument();
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
 		expect(screen.queryByText("reviewer crashed")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeEnabled();
 	});
 
 	it("shows the reviewer identity and aggregate verdict", async () => {
@@ -1754,14 +1922,14 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
+		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("Codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("review session")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("does not list a failed run without a verdict and still allows rerun", async () => {
+	it("does not list a failed run without a verdict and still allows reviewing the latest commit", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
 		]);
@@ -1770,7 +1938,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
+		expect(screen.getByRole("button", { name: "Review latest commit" })).toBeEnabled();
 	});
 
 	it("surfaces the latest automatic review failure while auto review is enabled", async () => {
@@ -1791,11 +1959,13 @@ describe("SessionInspector summary reviews", () => {
 		);
 	});
 
-	it("does not expose the Reviews tab when the session has no PRs", async () => {
+	it("keeps the Reviews tab available when the session has no PRs", async () => {
 		mockCommonGets();
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		await screen.findByRole("tab", { name: /Summary/ });
-		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+		expect(screen.getByRole("switch", { name: "Automatically send reviews" })).toBeInTheDocument();
+		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
 	});
 });

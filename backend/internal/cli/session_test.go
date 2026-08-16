@@ -572,6 +572,59 @@ func TestSessionClaimPR_ProjectScopeMismatchIsUsage(t *testing.T) {
 	}
 }
 
+func TestSessionClaimPR_UsesCurrentSessionFromEnv(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "demo-1")
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "session", "claim-pr", "142")
+	if err != nil {
+		t.Fatalf("claim-pr with AO_SESSION_ID failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "claimed PR #142") {
+		t.Fatalf("unexpected output: %s", out)
+	}
+	want := []string{
+		"GET /api/v1/sessions/demo-1",
+		"GET /api/v1/projects/demo",
+		"POST /api/v1/sessions/demo-1/pr/claim",
+	}
+	if got := log.all(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests=%#v want %#v", got, want)
+	}
+}
+
+func TestSessionClaimPR_OneArgRequiresCurrentSessionEnv(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "")
+	setConfigEnv(t)
+
+	_, _, err := executeCLI(t, Deps{}, "session", "claim-pr", "142")
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("err=%v exit=%d, want usage error", err, ExitCode(err))
+	}
+	if !strings.Contains(err.Error(), "pass <session-id> or set AO_SESSION_ID") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSessionClaimPR_HelpDocumentsCurrentSessionShorthand(t *testing.T) {
+	out, _, err := executeCLI(t, Deps{}, "session", "claim-pr", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"claim-pr [<session-id>] <pr-ref>",
+		"current session is read from AO_SESSION_ID",
+		"ao session claim-pr 88",
+		"ao session claim-pr mer-3 88",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestSessionClaimPR_JSONAndNoTakeoverError(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, _ := sessionCommandServer(t)

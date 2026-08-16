@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,7 +22,7 @@ func TestTerminateNativeSessionStopsTheActiveOwnerOfTheTranscript(t *testing.T) 
 			if binary != "prime-agent" || cwd != "/ao-data" {
 				return nil, fmt.Errorf("binary=%q cwd=%q", binary, cwd)
 			}
-			if env["PRIME_AGENT_CODING_AGENT_DIR"] != filepath.Join("/ao-data", "agent-runtime", "prime-agent", "prime-agent") {
+			if _, ok := env["PRIME_AGENT_CODING_AGENT_DIR"]; ok {
 				return nil, fmt.Errorf("env=%v", env)
 			}
 			switch strings.Join(args, " ") {
@@ -52,11 +51,11 @@ func TestTerminateNativeSessionStopsTheActiveOwnerOfTheTranscript(t *testing.T) 
 	}
 }
 
-func TestAugmentRuntimeEnvUsesAOOwnedPrimeState(t *testing.T) {
+func TestAugmentRuntimeEnvPreservesPrimeUserConfigRoot(t *testing.T) {
 	env := map[string]string{}
 	New().AugmentRuntimeEnv(env, "/ao-data")
-	if got, want := env["PRIME_AGENT_CODING_AGENT_DIR"], filepath.Join("/ao-data", "agent-runtime", "prime-agent", "prime-agent"); got != want {
-		t.Fatalf("PRIME_AGENT_CODING_AGENT_DIR = %q, want %q", got, want)
+	if _, ok := env["PRIME_AGENT_CODING_AGENT_DIR"]; ok {
+		t.Fatalf("PRIME_AGENT_CODING_AGENT_DIR was set: %v", env)
 	}
 }
 

@@ -33,6 +33,7 @@ type fakeStore struct {
 	deleteErr     error
 	upsertWTErr   error
 	listAllErr    error
+	getProjectErr error
 	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
 	// Lifecycle Manager's atomic ownership-boundary commands.
 	agentSwitchStore any
@@ -53,6 +54,9 @@ func newFakeStore() *fakeStore {
 	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	if f.getProjectErr != nil {
+		return domain.ProjectRecord{}, false, f.getProjectErr
+	}
 	r, ok := f.projects[id]
 	return r, ok, nil
 }
@@ -236,6 +240,7 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 
 type fakeRuntime struct {
 	createErr          error
+	createIDs          []string
 	destroyErr         error
 	destroyErrSequence []error
 	onDestroy          func(call int, handle ports.RuntimeHandle)
@@ -302,6 +307,10 @@ func (r *fakeRestartRuntime) Restart(_ context.Context, handle ports.RuntimeHand
 	if r.restartErr != nil {
 		return ports.RuntimeHandle{}, r.restartErr
 	}
+	if r.aliveByHandle == nil {
+		r.aliveByHandle = map[string]bool{}
+	}
+	r.aliveByHandle[handle.ID] = true
 	return handle, nil
 }
 
@@ -337,7 +346,12 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 	}
 	r.lastCfg = cfg
 	r.created++
-	handle := ports.RuntimeHandle{ID: "h1"}
+	handleID := "h1"
+	if len(r.createIDs) > 0 {
+		handleID = r.createIDs[0]
+		r.createIDs = r.createIDs[1:]
+	}
+	handle := ports.RuntimeHandle{ID: handleID}
 	if r.aliveByHandle == nil {
 		r.aliveByHandle = map[string]bool{}
 	}
@@ -945,7 +959,7 @@ func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 	}
 	msg := &fakeMessenger{}
 	ws := &fakeWorkspace{}
-	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws, DataDir: t.TempDir()})
 
 	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
 	if err := m.Send(ctx, "mer-1", "Make the button blue.", attachment); err != nil {
@@ -1408,6 +1422,20 @@ func TestResumeAgent_RejectsConcurrentRequest(t *testing.T) {
 	close(runtime.release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first resume: %v", err)
+	}
+}
+
+func TestResumeAgent_ReportsActiveAgentSwitch(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, _, _ := newExitedResumeManager(t, baseRuntime, agent)
+	if err := m.beginAgentSwitch(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	defer m.endAgentSwitch("mer-1")
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); !errors.Is(err, ErrSwitchInProgress) {
+		t.Fatalf("resume during switch error = %v, want ErrSwitchInProgress", err)
 	}
 }
 
@@ -5032,6 +5060,20 @@ func TestSaveAndTeardownOne_WorkspaceProjectNativeTerminationFailurePreservesRep
 	}
 }
 
+func TestSaveAndTeardownOne_WorkspaceProjectTerminatesNativeSessionOnce(t *testing.T) {
+	m, st, _, _ := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7"}
+	m.agents = singleAgent{agent: agent}
+	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
+
+	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+		t.Fatalf("saveAndTeardownOne err = %v", err)
+	}
+	if agent.calls != 1 {
+		t.Fatalf("native termination calls = %d, want 1", agent.calls)
+	}
+}
+
 // TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy covers
 // the last coverage gap the second review round flagged: the shutdown
 // save-and-teardown path (also reached by reconcileLive on boot, via the same
@@ -5184,6 +5226,119 @@ func TestSaveAndTeardownAllThenRestoreAll_TeardownsAndRestoresReviewerTerminal(t
 	}
 }
 
+func TestSaveAndTeardownAllThenRestoreAll_PreservesIgnoredAttachments(t *testing.T) {
+	dataDir := t.TempDir()
+	workspacePath := filepath.Join(t.TempDir(), "mer-1")
+	attachmentDir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
+	if err := os.MkdirAll(attachmentDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]byte{
+		"attachment-before-restart.png": []byte("image-bytes-before-restart"),
+		"attachment-before-restart.txt": []byte("text-bytes-before-restart"),
+	}
+	for name, data := range want {
+		if err := os.WriteFile(filepath.Join(attachmentDir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: workspacePath}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		DataDir: dataDir, LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   workspacePath,
+			Branch:          "ao/mer-1/root",
+			RuntimeHandleID: "h1",
+			AgentSessionID:  "agent-w",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll: %v", err)
+	}
+	// The fake records ForceDestroy without touching disk. Reproduce the real
+	// adapter's removal, then provide the empty worktree returned by Restore.
+	if err := os.RemoveAll(workspacePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspacePath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+
+	for name, wantData := range want {
+		got, err := os.ReadFile(filepath.Join(attachmentDir, name))
+		if err != nil {
+			t.Fatalf("read %s after restore: %v", name, err)
+		}
+		if string(got) != string(wantData) {
+			t.Fatalf("%s after restore = %q, want %q", name, got, wantData)
+		}
+	}
+	if wantPattern := "/" + attachmentsDir + "/"; !reflect.DeepEqual(ws.excludePatterns, []string{wantPattern}) {
+		t.Fatalf("restore exclude patterns = %v, want [%s]", ws.excludePatterns, wantPattern)
+	}
+}
+
+func TestSaveAndTeardownAllDoesNotDestroyWorkspaceWhenAttachmentImportIsUnsafe(t *testing.T) {
+	dataDir := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dataDir, "attachments")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	workspacePath := filepath.Join(t.TempDir(), "mer-1")
+	attachmentPath := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir), "attachment-before-restart.png")
+	if err := os.MkdirAll(filepath.Dir(attachmentPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(attachmentPath, []byte("must survive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: workspacePath}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		DataDir: dataDir, LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{WorkspacePath: workspacePath, Branch: "ao/mer-1/root", RuntimeHandleID: "h1", AgentSessionID: "agent-w"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll: %v", err)
+	}
+	if ws.stashCalls != 0 || rt.destroyed != 0 {
+		t.Fatalf("unsafe import still tore down session: stash=%d runtimeDestroy=%d", ws.stashCalls, rt.destroyed)
+	}
+	if got, err := os.ReadFile(attachmentPath); err != nil || string(got) != "must survive" {
+		t.Fatalf("live workspace attachment = %q, %v; want preserved", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "mer-1", "attachment-before-restart.png")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unsafe import wrote outside AO data: %v", err)
+	}
+}
+
 func TestSaveAndTeardownAll_SkipsScratchSessions(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
@@ -5321,6 +5476,20 @@ func TestRetireForReplacement_WorkspaceProjectNativeTerminationFailurePreservesR
 		if strings.HasPrefix(call, "ForceDestroy:") {
 			t.Fatalf("worktrees must remain after native termination failure: calls=%v", ws.calls)
 		}
+	}
+}
+
+func TestRetireForReplacement_WorkspaceProjectTerminatesNativeSessionOnce(t *testing.T) {
+	m, st, _, _ := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7"}
+	m.agents = singleAgent{agent: agent}
+	rec := seedNativeWorkspaceProject(st, "mer-orch", domain.KindOrchestrator)
+
+	if err := m.RetireForReplacement(ctx, rec.ID); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+	if agent.calls != 1 {
+		t.Fatalf("native termination calls = %d, want 1", agent.calls)
 	}
 }
 

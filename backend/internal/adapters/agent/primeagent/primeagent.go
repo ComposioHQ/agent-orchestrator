@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -33,12 +32,16 @@ func New() *Plugin {
 	return &Plugin{}
 }
 
-// AugmentRuntimeEnv keeps Prime's persistent daemon/config state inside AO.
+// AugmentRuntimeEnv intentionally leaves Prime's user configuration root alone.
+// Prime stores auth, settings, custom models, extensions, and skills under
+// PRIME_AGENT_CODING_AGENT_DIR; overriding it with a fresh AO-owned directory
+// would make launched sessions disagree with model discovery and lose the
+// user's authenticated config. AO isolates its own state with --session-dir and
+// the managed extension path instead.
 func (p *Plugin) AugmentRuntimeEnv(env map[string]string, dataDir string) {
 	if strings.TrimSpace(dataDir) == "" {
 		return
 	}
-	env["PRIME_AGENT_CODING_AGENT_DIR"] = filepath.Join(dataDir, "agent-runtime", adapterID, "prime-agent")
 }
 
 var _ adapters.Adapter = (*Plugin)(nil)

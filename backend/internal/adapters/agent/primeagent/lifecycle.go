@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,11 +51,7 @@ func (p *Plugin) executePrimeCommand(ctx context.Context, workingDir string, arg
 	}
 	runCtx, cancel := context.WithTimeout(ctx, primeCommandTimeout)
 	defer cancel()
-	env := map[string]string{}
-	if strings.TrimSpace(workingDir) != "" && workingDir != "." {
-		env["PRIME_AGENT_CODING_AGENT_DIR"] = filepath.Join(workingDir, "agent-runtime", adapterID, "prime-agent")
-	}
-	return runner(runCtx, binary, workingDir, env, args...)
+	return runner(runCtx, binary, workingDir, nil, args...)
 }
 
 func activeSessionForTranscript(output []byte, nativeID string) (string, bool, error) {

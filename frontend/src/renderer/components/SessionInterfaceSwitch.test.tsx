@@ -2,6 +2,18 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionInterfaceTransition } from "../hooks/useSessionInterfaceTransition";
 import { SessionInterfaceSwitchButton } from "./SessionInterfaceSwitch";
+import { TooltipProvider } from "./ui/tooltip";
+
+function renderSwitchButton(target: "chat" | "tui", onClick = vi.fn()) {
+	return {
+		onClick,
+		...render(
+			<TooltipProvider>
+				<SessionInterfaceSwitchButton target={target} supported onClick={onClick} />
+			</TooltipProvider>,
+		),
+	};
+}
 
 function transition(phase: SessionInterfaceTransition["phase"]): SessionInterfaceTransition {
 	return {
@@ -50,12 +62,16 @@ describe("SessionInterfaceSwitchButton", () => {
 		expect(screen.queryByRole("button", { name: "Cancel switch to Chat UI" })).not.toBeInTheDocument();
 	});
 
-	it("shows explicit switch copy for the target interface", () => {
-		const onClick = vi.fn();
-		render(<SessionInterfaceSwitchButton target="tui" supported onClick={onClick} />);
+	it.each([
+		["chat", "Switch to chat UI", "lucide-message-square"],
+		["tui", "Switch to terminal UI", "lucide-square-terminal"],
+	] as const)("uses an icon-only %s destination control", (target, label, iconClass) => {
+		const { onClick } = renderSwitchButton(target);
 
-		const button = screen.getByRole("button", { name: "Switch to terminal UI" });
-		expect(button).toHaveTextContent("Switch to terminal UI");
+		const button = screen.getByRole("button", { name: label });
+		expect(button.classList.contains("topbar-control--icon")).toBe(true);
+		expect(button.textContent).toBe("");
+		expect(button.querySelector(`.${iconClass}`)).not.toBeNull();
 		fireEvent.click(button);
 		expect(onClick).toHaveBeenCalledOnce();
 	});

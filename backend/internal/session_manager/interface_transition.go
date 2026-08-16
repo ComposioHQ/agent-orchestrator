@@ -43,6 +43,7 @@ type interfaceTransitionStore interface {
 }
 
 type chatHandoffLauncher interface {
+	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 }
@@ -85,6 +86,9 @@ func (m *Manager) InterfaceTransitionStatus(
 	if rec.IsTerminated {
 		status.ReasonCode = "SESSION_TERMINATED"
 		status.Reason = "Terminated sessions must be restored before switching interfaces."
+	} else if target == domain.SessionModeChat && (m.chat == nil || !m.chat.SupportsChat(rec.Harness)) {
+		status.ReasonCode = "CHAT_UNSUPPORTED"
+		status.Reason = fmt.Sprintf("%s does not support Chat UI.", rec.Harness)
 	} else if _, _, err := m.nativeConversationID(ctx, rec); err != nil {
 		if errors.Is(err, ErrInterfaceHandoffUnsupported) {
 			status.ReasonCode = "INTERFACE_HANDOFF_UNSUPPORTED"
@@ -163,6 +167,27 @@ func (m *Manager) StartInterfaceTransition(
 	if !created {
 		return transition, ErrInterfaceTransitionInProgress
 	}
+	if source == domain.SessionModeChat {
+		handoff, ok := m.chat.(chatHandoffLauncher)
+		if !ok {
+			err := ErrInterfaceHandoffUnsupported
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed,
+				"SOURCE_FENCE_FAILED", err.Error())
+			return domain.SessionInterfaceTransition{}, err
+		}
+		// This is the acceptance boundary visible to the caller. The transition
+		// must not return while a Chat completion can still promote queued work;
+		// target preflight and provider cancellation happen asynchronously later.
+		if err := handoff.ArmChatHandoff(ctx, id, policy); err != nil {
+			finishErr := m.finishInterfaceTransition(transition.ID,
+				domain.SessionInterfaceTransitionFailed, "SOURCE_FENCE_FAILED", err.Error())
+			if finishErr != nil {
+				return domain.SessionInterfaceTransition{}, errors.Join(err,
+					fmt.Errorf("record source fence failure: %w", finishErr))
+			}
+			return domain.SessionInterfaceTransition{}, err
+		}
+	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	run := &interfaceTransitionRun{cancel: cancel, done: make(chan struct{})}
@@ -240,7 +265,10 @@ func (m *Manager) runInterfaceTransition(
 		m.transitionMu.Unlock()
 	}()
 
-	sourcePrepared := false
+	// Chat was armed synchronously before StartInterfaceTransition returned. TUI
+	// installs its raw-input gate below because that gate is tied to this worker's
+	// lifetime. Any failure before Chat stops must therefore reopen Chat intake.
+	sourcePrepared := transition.SourceMode == domain.SessionModeChat
 	sourceStopped := false
 	modeChanged := false
 	var sourceRuntimeHandle ports.RuntimeHandle
