@@ -87,6 +87,7 @@ type Workspace struct {
 type commandRunner func(ctx context.Context, binary string, args ...string) ([]byte, error)
 
 var _ ports.Workspace = (*Workspace)(nil)
+var _ ports.WorkspaceDefaultBranchRefresher = (*Workspace)(nil)
 var _ ports.WorkspaceProject = (*Workspace)(nil)
 var _ ports.WorkspaceObserver = (*Workspace)(nil)
 
@@ -1191,7 +1192,18 @@ var errNoBaseRef = errors.New("gitworktree: no base ref found")
 
 func (w *Workspace) resolveBaseRef(ctx context.Context, repo, branch, baseBranch, canonicalBaseRef string) (string, error) {
 	if canonicalBaseRef = strings.TrimSpace(canonicalBaseRef); canonicalBaseRef != "" {
-		return w.resolveBaseRefFromCandidates(ctx, repo, branch, []string{"origin/" + branch, canonicalBaseRef})
+		fallbackBranch := strings.TrimSpace(baseBranch)
+		if fallbackBranch == "" {
+			fallbackBranch = w.inferRepoDefaultBranch(ctx, repo)
+		}
+		legacyCandidates := baseRefCandidates(branch, fallbackBranch)
+		candidates := make([]string, 0, len(legacyCandidates)+1)
+		candidates = append(candidates, "origin/"+branch, canonicalBaseRef)
+		// The first legacy candidate is the same origin/<session-branch> probe
+		// already placed first above. Preserve the remaining pre-refresh fallbacks
+		// so an unavailable canonical remote cannot break a remoteless/offline repo.
+		candidates = append(candidates, legacyCandidates[1:]...)
+		return w.resolveBaseRefFromCandidates(ctx, repo, branch, candidates)
 	}
 	if strings.TrimSpace(baseBranch) != "" {
 		return w.resolveBaseRefFromDefault(ctx, repo, branch, baseBranch)

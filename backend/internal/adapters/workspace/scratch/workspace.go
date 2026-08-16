@@ -40,16 +40,6 @@ func New(opts Options) (*Workspace, error) {
 	return &Workspace{managedRoot: filepath.Clean(root)}, nil
 }
 
-// ResolveDefaultBranch returns no target because scratch workspaces are branchless.
-func (w *Workspace) ResolveDefaultBranch(context.Context, string, string) (ports.WorkspaceDefaultBranch, error) {
-	return ports.WorkspaceDefaultBranch{}, nil
-}
-
-// FetchDefaultBranch is a no-op because scratch workspaces are branchless.
-func (w *Workspace) FetchDefaultBranch(context.Context, string, ports.WorkspaceDefaultBranch) error {
-	return nil
-}
-
 // Create materializes a branchless scratch directory for one session.
 func (w *Workspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
 	path, err := w.managedPath(cfg)

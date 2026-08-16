@@ -63,12 +63,6 @@ func TestBaseRefCandidates(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("qualified candidates = %#v, want %#v", got, want)
 	}
-
-	got = baseRefCandidates("ao/feature", "release/2026")
-	want = []string{"origin/ao/feature", "release/2026", "ao/feature"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("slash candidates = %#v, want %#v", got, want)
-	}
 }
 
 func TestParseWorktreePorcelain(t *testing.T) {

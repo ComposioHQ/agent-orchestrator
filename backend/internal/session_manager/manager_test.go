@@ -666,8 +666,6 @@ type fakeWorkspace struct {
 	destroyed  int
 	fetchErr   error
 	fetches    []fetchDefaultBranchCall
-	remotes    map[string]bool
-	resolveErr error
 	resolves   []resolveDefaultBranchCall
 	resolved   map[string]ports.WorkspaceDefaultBranch
 	fetchFunc  func(context.Context, string, ports.WorkspaceDefaultBranch) error
@@ -719,9 +717,6 @@ type resolveDefaultBranchCall struct {
 
 func (w *fakeWorkspace) ResolveDefaultBranch(_ context.Context, repoPath, configuredBranch string) (ports.WorkspaceDefaultBranch, error) {
 	w.resolves = append(w.resolves, resolveDefaultBranchCall{repoPath: repoPath, configuredBranch: configuredBranch})
-	if w.resolveErr != nil {
-		return ports.WorkspaceDefaultBranch{}, w.resolveErr
-	}
 	if target, ok := w.resolved[repoPath]; ok {
 		return target, nil
 	}
@@ -729,15 +724,10 @@ func (w *fakeWorkspace) ResolveDefaultBranch(_ context.Context, repoPath, config
 	if branch == "" {
 		branch = "main"
 	}
-	remote := "origin"
-	if candidateRemote, candidateBranch, ok := strings.Cut(branch, "/"); ok && w.remotes[candidateRemote] {
-		remote = candidateRemote
-		branch = candidateBranch
-	}
 	return ports.WorkspaceDefaultBranch{
-		Remote:  remote,
+		Remote:  "origin",
 		Branch:  branch,
-		BaseRef: "refs/remotes/" + remote + "/" + branch,
+		BaseRef: "refs/remotes/origin/" + branch,
 	}, nil
 }
 
@@ -756,7 +746,6 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	if w.createErr != nil {
 		return ports.WorkspaceInfo{}, w.createErr
 	}
-	w.calls = append(w.calls, "Create")
 	if w.sharedLog != nil {
 		*w.sharedLog = append(*w.sharedLog, "Create")
 	}
@@ -3201,12 +3190,17 @@ func TestSpawn_FetchesQualifiedDefaultBranchRemote(t *testing.T) {
 	cfg := testRoleAgents()
 	cfg.DefaultBranch = "upstream/main"
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Config: cfg}
-	ws.remotes = map[string]bool{"origin": true, "upstream": true}
+	ws.resolved = map[string]ports.WorkspaceDefaultBranch{
+		"/repo/mer": {Remote: "upstream", Branch: "main", BaseRef: "refs/remotes/upstream/main"},
+	}
 
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatal(err)
 	}
 
+	if got, want := ws.resolves, []resolveDefaultBranchCall{{repoPath: "/repo/mer", configuredBranch: "upstream/main"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolutions = %#v, want %#v", got, want)
+	}
 	if got, want := ws.fetches, []fetchDefaultBranchCall{{repoPath: "/repo/mer", remote: "upstream", branch: "main", baseRef: "refs/remotes/upstream/main"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("fetches = %#v, want %#v", got, want)
 	}
@@ -3225,6 +3219,9 @@ func TestSpawn_SlashDefaultBranchWithoutKnownRemoteFetchesFromOrigin(t *testing.
 		t.Fatal(err)
 	}
 
+	if got, want := ws.resolves, []resolveDefaultBranchCall{{repoPath: "/repo/mer", configuredBranch: "release/2026"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolutions = %#v, want %#v", got, want)
+	}
 	if got, want := ws.fetches, []fetchDefaultBranchCall{{repoPath: "/repo/mer", remote: "origin", branch: "release/2026", baseRef: "refs/remotes/origin/release/2026"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("fetches = %#v, want %#v", got, want)
 	}

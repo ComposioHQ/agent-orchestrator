@@ -177,14 +177,6 @@ type Attacher interface {
 
 // Workspace is the isolated checkout an agent works in (a git worktree or clone).
 type Workspace interface {
-	// ResolveDefaultBranch selects the exact remote-tracking ref that should
-	// seed new worktrees. An empty configured branch is inferred per repository.
-	// Resolution is local-only so callers can retain the canonical ref even when
-	// the subsequent network refresh fails.
-	ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (WorkspaceDefaultBranch, error)
-	// FetchDefaultBranch refreshes the remote-tracking ref used as the base for
-	// new session worktrees. Callers decide whether failures are fatal.
-	FetchDefaultBranch(ctx context.Context, repoPath string, target WorkspaceDefaultBranch) error
 	Create(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
 	Destroy(ctx context.Context, info WorkspaceInfo) error
 	Restore(ctx context.Context, cfg WorkspaceConfig) (WorkspaceInfo, error)
@@ -212,6 +204,14 @@ type Workspace interface {
 	// present are skipped. Owning this here keeps git/process execution inside the
 	// workspace adapter rather than leaking into callers.
 	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
+}
+
+// WorkspaceDefaultBranchRefresher is an optional capability for Git-backed
+// workspaces. Resolution is local-only so callers can retain the canonical ref
+// even when the subsequent best-effort network refresh fails.
+type WorkspaceDefaultBranchRefresher interface {
+	ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (WorkspaceDefaultBranch, error)
+	FetchDefaultBranch(ctx context.Context, repoPath string, target WorkspaceDefaultBranch) error
 }
 
 // WorkspaceDefaultBranch is a locally resolved default-branch target. BaseRef

@@ -15,9 +15,15 @@ type ProjectStore interface {
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
+// GitWorkspace is the Git-specific capability set required by the router.
+type GitWorkspace interface {
+	ports.Workspace
+	ports.WorkspaceDefaultBranchRefresher
+}
+
 // Deps configures a workspace router.
 type Deps struct {
-	Git      ports.Workspace
+	Git      GitWorkspace
 	Scratch  ports.Workspace
 	Projects ProjectStore
 }
@@ -25,12 +31,13 @@ type Deps struct {
 // Workspace delegates workspace operations to the adapter that matches the
 // session's project kind.
 type Workspace struct {
-	git      ports.Workspace
+	git      GitWorkspace
 	scratch  ports.Workspace
 	projects ProjectStore
 }
 
 var _ ports.Workspace = (*Workspace)(nil)
+var _ ports.WorkspaceDefaultBranchRefresher = (*Workspace)(nil)
 var _ ports.WorkspaceProject = (*Workspace)(nil)
 var _ ports.WorkspaceObserver = (*Workspace)(nil)
 

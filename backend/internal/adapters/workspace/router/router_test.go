@@ -26,8 +26,6 @@ type recordingWorkspace struct {
 	stashCalls         int
 	applyCalls         int
 	addExcludeCalls    int
-	resolveCalls       int
-	fetchCalls         int
 	projectCreateCalls int
 	lastCreate         ports.WorkspaceConfig
 	lastRestore        ports.WorkspaceConfig
@@ -39,12 +37,10 @@ type recordingWorkspace struct {
 }
 
 func (w *recordingWorkspace) ResolveDefaultBranch(_ context.Context, _ string, _ string) (ports.WorkspaceDefaultBranch, error) {
-	w.resolveCalls++
 	return ports.WorkspaceDefaultBranch{Remote: "origin", Branch: "main", BaseRef: "refs/remotes/origin/main"}, nil
 }
 
 func (w *recordingWorkspace) FetchDefaultBranch(_ context.Context, _ string, _ ports.WorkspaceDefaultBranch) error {
-	w.fetchCalls++
 	return nil
 }
 

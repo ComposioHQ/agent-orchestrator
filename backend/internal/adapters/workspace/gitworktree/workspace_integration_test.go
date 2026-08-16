@@ -445,7 +445,20 @@ func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	ctx := context.Background()
-	info, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "sess", Branch: "feature/remoteless"})
+	target, err := ws.ResolveDefaultBranch(ctx, repo, "main")
+	if err != nil {
+		t.Fatalf("resolve default branch: %v", err)
+	}
+	if err := ws.FetchDefaultBranch(ctx, repo, target); err == nil {
+		t.Fatal("fetch without an origin remote unexpectedly succeeded")
+	}
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{
+		ProjectID:  "proj",
+		SessionID:  "sess",
+		Branch:     "feature/remoteless",
+		BaseBranch: "main",
+		BaseRef:    target.BaseRef,
+	})
 	if err != nil {
 		t.Fatalf("create in remoteless repo: %v", err)
 	}
@@ -528,6 +541,9 @@ func TestFetchDefaultBranchRefreshesRemoteTrackingRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
+	// Exclude main from remote.origin.fetch. The explicit destination refspec
+	// must still update origin/main instead of succeeding with only FETCH_HEAD.
+	runGit(t, git, repo, "config", "remote.origin.fetch", "+refs/heads/restricted-only:refs/remotes/origin/restricted-only")
 	originURL := gitOutput(t, git, repo, "remote", "get-url", "origin")
 	updater := filepath.Join(tmp, "updater")
 	run(t, git, "clone", originURL, updater)
@@ -558,6 +574,25 @@ func TestFetchDefaultBranchRefreshesRemoteTrackingRef(t *testing.T) {
 	}
 	if got := gitOutput(t, git, repo, "rev-parse", "refs/remotes/origin/main"); got != freshMain {
 		t.Fatalf("origin/main = %s, want refreshed %s", got, freshMain)
+	}
+}
+
+func TestResolveDefaultBranchKeepsSlashBranchOnOriginWithoutMatchingRemote(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	target, err := ws.ResolveDefaultBranch(context.Background(), repo, "release/2026")
+	if err != nil {
+		t.Fatalf("resolve slash branch: %v", err)
+	}
+	want := ports.WorkspaceDefaultBranch{Remote: "origin", Branch: "release/2026", BaseRef: "refs/remotes/origin/release/2026"}
+	if target != want {
+		t.Fatalf("target = %#v, want %#v", target, want)
 	}
 }
 

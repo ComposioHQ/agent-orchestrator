@@ -927,13 +927,17 @@ type defaultBranchRefreshTarget struct {
 }
 
 func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project domain.ProjectRecord) map[string]string {
-	baseRefs := make(map[string]string)
 	if project.Kind.WithDefault() == domain.ProjectKindScratch {
-		return baseRefs
+		return nil
 	}
 	if strings.TrimSpace(project.Path) == "" {
-		return baseRefs
+		return nil
 	}
+	refresher, ok := m.workspace.(ports.WorkspaceDefaultBranchRefresher)
+	if !ok {
+		return nil
+	}
+	baseRefs := make(map[string]string)
 	targets := []defaultBranchRefreshTarget{{
 		repoPath:         project.Path,
 		configuredBranch: project.Config.WithDefaults().DefaultBranch,
@@ -959,7 +963,7 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	// each repository's own inferred origin/HEAD even if an earlier fetch uses
 	// the entire shared refresh budget.
 	for i := range targets {
-		resolved, err := m.workspace.ResolveDefaultBranch(ctx, targets[i].repoPath, targets[i].configuredBranch)
+		resolved, err := refresher.ResolveDefaultBranch(ctx, targets[i].repoPath, targets[i].configuredBranch)
 		if err != nil {
 			m.logger.Warn("spawn: default branch resolution failed; continuing with adapter fallback",
 				"projectID", project.ID,
@@ -983,7 +987,7 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 		if target.resolved.BaseRef == "" {
 			continue
 		}
-		if err := m.workspace.FetchDefaultBranch(fetchCtx, target.repoPath, target.resolved); err != nil {
+		if err := refresher.FetchDefaultBranch(fetchCtx, target.repoPath, target.resolved); err != nil {
 			m.logger.Warn("spawn: default branch refresh failed; continuing with local refs",
 				"projectID", project.ID,
 				"repoPath", target.repoPath,
