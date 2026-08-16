@@ -17,6 +17,7 @@ import type {
 	PRSummaryMetadata,
 } from "./pull-request-models";
 import { cn } from "./utils";
+import { GithubAvatar } from "./GithubAvatar";
 
 export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
@@ -554,7 +555,6 @@ export function InspectorReviewsView({
 									onSendInlineComment={onSendInlineComment}
 									onRequestRereview={onRequestRereview}
 									onResolveInlineComment={onResolveInlineComment}
-									renderAvatar={renderAvatar}
 									renderMarkdown={renderMarkdown}
 								/>
 							</div>
@@ -815,7 +815,6 @@ function GithubReviewHistory({
 	onRequestRereview,
 	onResolveInlineComment,
 	onSendInlineComment,
-	renderAvatar,
 	renderMarkdown,
 }: {
 	entries: InspectorGithubReview[];
@@ -824,7 +823,6 @@ function GithubReviewHistory({
 	onRequestRereview?: (review: InspectorGithubReview) => Promise<void> | void;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
-	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
 	const sorted = [...entries].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
@@ -841,7 +839,6 @@ function GithubReviewHistory({
 					onRequestRereview={onRequestRereview}
 					onResolveInlineComment={onResolveInlineComment}
 					onSendInlineComment={onSendInlineComment}
-					renderAvatar={renderAvatar}
 					renderMarkdown={renderMarkdown}
 				/>
 			))}
@@ -857,7 +854,6 @@ function ExternalReviewCard({
 	onRequestRereview,
 	onResolveInlineComment,
 	onSendInlineComment,
-	renderAvatar,
 	renderMarkdown,
 }: {
 	defaultOpen: boolean;
@@ -867,7 +863,6 @@ function ExternalReviewCard({
 	onRequestRereview?: (review: InspectorGithubReview) => Promise<void> | void;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
-	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
 	const [open, setOpen] = useState(defaultOpen);
@@ -888,7 +883,7 @@ function ExternalReviewCard({
 				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<span className="flex min-w-0 items-center gap-1.5">
 						<span className="inline-flex min-w-0 items-center gap-1 text-xs font-semibold text-foreground">
-							{renderAvatar(entry.reviewerId)}
+							<GithubAvatar login={entry.reviewerId} />
 							<span className="truncate">{entry.reviewerId}</span>
 						</span>
 						{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
@@ -1087,7 +1082,12 @@ function InlineCommentRow({
 	const body = comment.body?.trim();
 	return (
 		<div className="flex min-w-0 flex-col gap-1.5 px-2.5 py-2 text-2xs">
-			{showReviewer && comment.reviewerId ? <span className="font-medium text-muted-foreground">{comment.reviewerId}</span> : null}
+			{showReviewer && comment.reviewerId ? (
+				<span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
+					<GithubAvatar login={comment.reviewerId} />
+					<span className="truncate">{comment.reviewerId}</span>
+				</span>
+			) : null}
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{sent ? (
