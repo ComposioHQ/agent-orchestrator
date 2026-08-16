@@ -50,6 +50,20 @@ vi.mock("../lib/telemetry", () => ({
 	captureRendererEvent: vi.fn(),
 	captureRendererException: vi.fn(),
 }));
+
+// Platform under test is mutable so the titlebar-clearance cases can pin Linux
+// vs macOS vs the jsdom default (neither) without forking the module graph.
+const { platformState } = vi.hoisted(() => ({
+	platformState: { isLinux: false, isMac: false },
+}));
+vi.mock("../lib/platform", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("../lib/platform")>();
+	return {
+		...actual,
+		isLinuxPlatform: () => platformState.isLinux,
+		isMacPlatform: () => platformState.isMac,
+	};
+});
 vi.mock("./NewTaskDialog", () => ({ NewTaskDialog: () => null }));
 vi.mock("./NotificationCenter", () => ({
 	NotificationCenter: () => <button aria-label="Notifications" type="button" />,
@@ -434,6 +448,45 @@ describe("ShellTopbar inspector state", () => {
 		expect(screen.getByTestId("session-pinned-actions-reserve")).toBe(reserve);
 		expect(reserve).toHaveAttribute("data-state", "collapsed");
 		expect(within(reserve).queryByRole("button")).not.toBeInTheDocument();
+	});
+});
+
+describe("ShellTopbar titlebar clearance", () => {
+	// The crumb must clear the fixed TitlebarNav cluster whenever the sidebar
+	// is off-canvas: macOS pads 170px past the traffic lights; Linux pins the
+	// cluster at the window edge and needs the smaller 110px reserve (#4062).
+	const headerStyle = () => {
+		const header = document.querySelector("header");
+		if (!header) throw new Error("topbar header not rendered");
+		return header.getAttribute("style") ?? "";
+	};
+
+	beforeEach(() => {
+		platformState.isLinux = false;
+		platformState.isMac = false;
+	});
+
+	it("pads the Linux topbar past the fixed nav cluster when the sidebar is collapsed", () => {
+		platformState.isLinux = true;
+		useUiStore.setState({ isSidebarOpen: false });
+		renderTopbar(sessionWith());
+
+		expect(headerStyle()).toContain("padding-left: 110px");
+	});
+
+	it("keeps the Linux clearance at the default inset while the sidebar is open", () => {
+		platformState.isLinux = true;
+		useUiStore.setState({ isSidebarOpen: true });
+		renderTopbar(sessionWith());
+
+		expect(headerStyle()).toContain("padding-left: 18px");
+	});
+
+	it("does not apply the collapsed-sidebar clearance on other platforms", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		renderTopbar(sessionWith());
+
+		expect(headerStyle()).toContain("padding-left: 18px");
 	});
 });
 

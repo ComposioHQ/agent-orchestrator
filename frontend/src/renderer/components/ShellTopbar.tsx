@@ -25,7 +25,7 @@ import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
-import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { SHELL_PANEL_SPRING } from "../lib/motion-spring";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
@@ -60,6 +60,10 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
+// Linux has no traffic lights, so the fixed TitlebarNav cluster sits at the
+// window edge instead of 72px in: 6 + 92 + 12 = 110 (see tokens.css
+// --size-titlebar-content-offset-linux, kept in sync manually here).
+const PADDING_CLEARANCE_LINUX = 110;
 
 export function ShellTopbar({
 	embedded = false,
@@ -82,11 +86,19 @@ export function ShellTopbar({
 	const isFullScreen = useWindowFullScreen();
 	const prefersReducedMotion = useReducedMotion();
 	const mac = isMacPlatform();
+	const linux = isLinuxPlatform();
+	// macOS pins the TitlebarNav cluster beside the traffic lights and pads the
+	// crumb past it; Linux keeps the same fixed cluster at the window edge (no
+	// traffic lights), so it needs the smaller Linux clearance. Without it the
+	// collapsed-sidebar board crumb slides under the cluster and the disabled
+	// history arrows ghost over the title text (#4062).
 	const targetPaddingLeft =
-		!embedded && mac && !isSidebarOpen
-			? isFullScreen
-				? PADDING_CLEARANCE_FULLSCREEN
-				: PADDING_CLEARANCE
+		!embedded && !isSidebarOpen && (mac || linux)
+			? mac
+				? isFullScreen
+					? PADDING_CLEARANCE_FULLSCREEN
+					: PADDING_CLEARANCE
+				: PADDING_CLEARANCE_LINUX
 			: PADDING_DEFAULT;
 	const paddingLeft = useMotionValue(targetPaddingLeft);
 	useEffect(() => {

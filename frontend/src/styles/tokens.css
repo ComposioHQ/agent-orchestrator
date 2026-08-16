@@ -312,6 +312,13 @@
 	--size-titlebar-content-offset: calc(
 		var(--size-titlebar-cluster-left) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
+	/* Linux variant: no traffic lights, so the cluster starts at the window
+	 * edge instead of 72px in. Mirrors the mac offset; referenced by
+	 * .session-topbar-titlebar-clearance-linux (styles.css) and kept in sync
+	 * with PADDING_CLEARANCE_LINUX in ShellTopbar.tsx. */
+	--size-titlebar-content-offset-linux: calc(
+		var(--size-titlebar-cluster-left-linux) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
 
 	/* Keep macOS traffic-light chrome aligned with the shared route topbar. */
 	--size-traffic-light-clearance: var(--size-toolbar);
