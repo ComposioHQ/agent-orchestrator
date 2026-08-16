@@ -1092,7 +1092,12 @@ function InlineCommentRow({
 			) : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-mono text-passive">
 				<span className="font-semibold text-foreground">#{commentNumber}</span>
-				{parsed.priority ? <span className="rounded border border-error/30 bg-error/10 px-1.5 py-0.5 font-semibold text-error">{parsed.priority}</span> : null}
+				{parsed.priority ? (
+					<span className="inline-flex items-center gap-1 font-semibold text-error">
+						<span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
+						{parsed.priority}
+					</span>
+				) : null}
 				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
 			</div>
 			{parsed.body ? <p className="m-0 max-w-prose whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{parsed.body}</p> : null}
