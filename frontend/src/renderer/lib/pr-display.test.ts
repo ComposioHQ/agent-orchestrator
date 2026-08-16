@@ -237,6 +237,18 @@ describe("prCardPresentation", () => {
 		expect(presentation.supporting.map((status) => status.label)).toEqual(["Checks passing"]);
 	});
 
+	it("shows checking merge readiness while provider state is pending", () => {
+		const presentation = prCardPresentation(
+			summary({
+				ci: { autoInjectCI: true, state: "pending", failingChecks: [] },
+				mergeability: { state: "unknown", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
+			}),
+		);
+
+		expect(presentation.readiness?.label).toBe("Checking merge readiness");
+		expect(presentation.readiness?.detail).toBe("Waiting for the latest checks and review state.");
+	});
+
 	it("prioritizes failing checks over lower-priority review and merge facts", () => {
 		const presentation = prCardPresentation(
 			summary({

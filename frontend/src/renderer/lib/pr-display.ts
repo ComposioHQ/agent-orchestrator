@@ -227,9 +227,11 @@ export function prCardPresentation(pr: SessionPRSummary): PRCardPresentation {
 		}
 		statusRows.push(cardStatus("review", "pr.card.reviewStatus", reviewTone(pr.review.decision, pr.review.hasUnresolvedHumanComments), reviewStatusDetail(pr)));
 		const mergeable = pr.mergeability.state !== "conflicting" && pr.ci.state === "passing" && pr.review.decision === "approved";
+		const checkingReadiness = pr.ci.state === "pending" || pr.ci.state === "unknown" || pr.mergeability.state === "unknown";
 		return { primary, supporting, statusRows, readiness: {
-			label: appI18n.t(mergeable ? "pr.merge.mergeable" : "pr.merge.notMergeableYet"),
-			detail: mergeReadinessDetail(pr), tone: mergeable ? "success" : "error",
+			label: appI18n.t(checkingReadiness ? "pr.merge.checkingReadiness" : mergeable ? "pr.merge.mergeable" : "pr.merge.notMergeableYet"),
+			detail: checkingReadiness ? appI18n.t("pr.merge.checkingDetail") : mergeReadinessDetail(pr),
+			tone: checkingReadiness ? "neutral" : mergeable ? "success" : "error",
 		} };
 	}
 	return { primary, supporting };

@@ -456,6 +456,8 @@
 	"pr.merge.failed": "Could not merge PR #{{number}}.",
 	"pr.merge.merging": "Merging…",
 	"pr.merge.checking": "Checking",
+	"pr.merge.checkingDetail": "Waiting for the latest checks and review state.",
+	"pr.merge.checkingReadiness": "Checking merge readiness",
 	"pr.merge.conflict": "Conflict",
 	"pr.merge.conflicts": "conflicts",
 	"pr.merge.conflictsWithBase": "Conflicts with the base branch",
