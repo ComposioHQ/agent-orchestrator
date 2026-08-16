@@ -3105,6 +3105,16 @@ func TestSpawn_InfersEmptyWorkspaceChildDefaultBeforeFetchAndCreate(t *testing.T
 	if got, want := ws.lastProjectCfg.Repos[0].BaseRef, "refs/remotes/origin/dev"; got != want {
 		t.Fatalf("child create base ref = %q, want %q", got, want)
 	}
+	var persistedChildBase string
+	for _, row := range st.worktrees["mer-1"] {
+		if row.RepoName == "api" {
+			persistedChildBase = row.BaseSHA
+			break
+		}
+	}
+	if got, want := persistedChildBase, "api-base"; got != want {
+		t.Fatalf("persisted child BaseSHA = %q, want materializer result %q", got, want)
+	}
 }
 
 func TestRefreshDefaultBranchesUsesOneOverallFetchBudget(t *testing.T) {
