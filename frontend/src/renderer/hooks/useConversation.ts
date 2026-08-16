@@ -222,6 +222,10 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 		},
 		onSuccess: invalidate,
+		// A failed interrupt (e.g. CHAT_NO_ACTIVE_TURN) means the cached turn
+		// state is wrong. Refetch so the UI discovers the real state instead of
+		// keeping a Working bar the user cannot dismiss.
+		onError: invalidate,
 	});
 
 	const resume = useMutation({
@@ -395,7 +399,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		resumeAgent: () => resume.mutateAsync(),
 		resumingAgent: resume.isPending,
 		resumeError: resume.error ? apiErrorMessage(resume.error) : undefined,
-		compact: () => compact.mutate(),
+		compact: () => compact.mutateAsync(),
 		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
 		/** A compaction is in flight provider-side and takes seconds, so it reads as
 		 *  its own state rather than folding into the generic busy flag, which also

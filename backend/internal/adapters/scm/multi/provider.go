@@ -193,6 +193,40 @@ func (m *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	return p.FetchReviewThreads(ctx, ref)
 }
 
+// RequestReview delegates to the sub-provider matching request.PR.Repo.Provider
+// when that provider supports review-request mutations.
+func (m *Provider) RequestReview(ctx context.Context, request ports.SCMReviewRequest) error {
+	if m == nil {
+		return fmt.Errorf("%w: review request provider is unavailable", ports.ErrSCMUnsupported)
+	}
+	p, err := m.resolve(request.PR.Repo.Provider)
+	if err != nil {
+		return err
+	}
+	requester, ok := p.(ports.SCMReviewRequester)
+	if !ok {
+		return fmt.Errorf("%w: review requests for provider %q", ports.ErrSCMUnsupported, request.PR.Repo.Provider)
+	}
+	return requester.RequestReview(ctx, request)
+}
+
+// ResolveReviewThread delegates to the sub-provider matching request.PR.Repo.Provider
+// when that provider supports review-thread resolve mutations.
+func (m *Provider) ResolveReviewThread(ctx context.Context, request ports.SCMReviewResolveRequest) error {
+	if m == nil {
+		return fmt.Errorf("%w: review thread resolver is unavailable", ports.ErrSCMUnsupported)
+	}
+	p, err := m.resolve(request.PR.Repo.Provider)
+	if err != nil {
+		return err
+	}
+	resolver, ok := p.(ports.SCMReviewResolver)
+	if !ok {
+		return fmt.Errorf("%w: review thread resolve for provider %q", ports.ErrSCMUnsupported, request.PR.Repo.Provider)
+	}
+	return resolver.ResolveReviewThread(ctx, request)
+}
+
 type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
 }

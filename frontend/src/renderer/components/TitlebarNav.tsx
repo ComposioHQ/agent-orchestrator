@@ -22,7 +22,7 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // the forward entries (the new index is the tip); BACK/FORWARD/GO only move
 // within it. After a mid-stack reload the tip resets to the current entry —
 // forward greys out rather than dangle on entries we can no longer see.
-function useCanGoForward(): boolean {
+export function useCanGoForward(): boolean {
 	const router = useRouter();
 	const [canGoForward, setCanGoForward] = useState(false);
 	useEffect(() => {

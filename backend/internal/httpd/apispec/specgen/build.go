@@ -1136,6 +1136,32 @@ func reviewOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/comments/resolve", id: "resolveReviewComment", tag: "reviews",
+			summary:    "Resolve an external review comment thread",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.ResolveReviewCommentRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ResolveReviewCommentResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/rerequest", id: "requestRereview", tag: "reviews",
+			summary:    "Ask an external reviewer to re-review a worker's PR",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.RequestRereviewRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RequestRereviewResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/cancel", id: "cancelReview", tag: "reviews",
 			summary:    "Cancel a running code review",
 			pathParams: []any{controllers.SessionIDParam{}},

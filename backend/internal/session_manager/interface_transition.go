@@ -387,6 +387,14 @@ func (m *Manager) runInterfaceTransition(
 	}
 }
 
+// nativeConversationID resolves the adapter's native conversation id for the
+// session's current interface. An empty id is only safe to pass through when
+// the adapter can distinguish a fresh TUI from a real conversation (it
+// implements AgentInterfaceHandoffHistoryProbe) AND the session has no
+// hook-derived conversation history. If any conversation metadata is set but
+// the native id is empty, the hooks fired but failed to capture the id — a
+// bug state where fresh-starting would silently discard the conversation, so
+// hard-block with ErrNativeConversationMissing instead.
 func (m *Manager) nativeConversationID(
 	ctx context.Context,
 	rec domain.SessionRecord,
@@ -410,6 +418,12 @@ func (m *Manager) nativeConversationID(
 	}
 	id = strings.TrimSpace(id)
 	if !ok || id == "" {
+		if _, hasProbe := handoff.(ports.AgentInterfaceHandoffHistoryProbe); hasProbe &&
+			rec.Metadata.LatestUserPrompt == "" &&
+			rec.Metadata.LatestAssistantUpdate == "" &&
+			rec.Metadata.NativeTranscriptPath == "" {
+			return "", handoff, nil
+		}
 		return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
 	}
 	return id, handoff, nil
