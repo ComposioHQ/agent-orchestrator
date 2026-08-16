@@ -15,6 +15,21 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
+type StatusResponse struct {
+	XcodeDetected           bool   `json:"xcodeDetected"`
+	CLTOnly                 bool   `json:"cltOnly"`
+	SimctlAvailable         bool   `json:"simctlAvailable"`
+	DefaultRuntimeAvailable bool   `json:"defaultRuntimeAvailable"`
+	GuidanceAppStoreURL     string `json:"guidanceAppStoreURL,omitempty"`
+	GuidanceDeveloperURL    string `json:"guidanceDeveloperURL,omitempty"`
+	GuidanceWhyMissing      string `json:"guidanceWhyMissing,omitempty"`
+}
+
+type FetchRuntimeResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
 // HTTP response envelopes for the projects surface — the SINGLE definition of
 // each wire shape. The handlers encode these (envelope.WriteJSON), and
 // apispec.Build reflects these same types into openapi.yaml, so the served
