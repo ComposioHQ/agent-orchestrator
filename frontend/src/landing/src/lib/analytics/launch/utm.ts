@@ -21,7 +21,7 @@ export const LAUNCH_CAMPAIGN = "launch_day";
 
 /** The live Product Hunt page (outbound target for upvote / comment CTAs). */
 export const PRODUCT_HUNT_URL =
-	"https://www.producthunt.com/posts/agent-orchestrator";
+	"https://www.producthunt.com/products/agent-orchestrator?launch=agent-orchestrator";
 
 export type UtmParams = {
 	source: string;
@@ -147,3 +147,4 @@ export const LAUNCH_CHANNELS: LaunchChannel[] = [
 		todo: true,
 	},
 ];
+
