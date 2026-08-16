@@ -3,8 +3,10 @@
 package iossimulator
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"os/exec"
 	"sort"
 	"strings"
@@ -22,9 +24,11 @@ type Status struct {
 }
 
 type Manager struct {
-	mu     sync.Mutex
-	run    CommandRunner
-	device Status
+	mu               sync.Mutex
+	run              CommandRunner
+	device           Status
+	screenshotWidth  int
+	screenshotHeight int
 }
 
 func (m *Manager) Screenshot() ([]byte, error) {
@@ -36,6 +40,10 @@ func (m *Manager) Screenshot() ([]byte, error) {
 	data, err := m.run("xcrun", "simctl", "io", m.device.DeviceID, "screenshot", "-")
 	if err != nil {
 		return nil, fmt.Errorf("capture simulator screenshot: %w", err)
+	}
+	if image, err := png.Decode(bytes.NewReader(data)); err == nil {
+		m.screenshotWidth = image.Bounds().Dx()
+		m.screenshotHeight = image.Bounds().Dy()
 	}
 	return data, nil
 }
@@ -65,6 +73,9 @@ func (m *Manager) Status() Status {
 		return m.device
 	}
 	m.device.State = state
+	if state == "Booted" {
+		_ = m.ensureSimulatorProcess()
+	}
 	m.device.Error = ""
 	return m.device
 }
@@ -93,8 +104,21 @@ func (m *Manager) Start() (Status, error) {
 			return m.device, fmt.Errorf("wait for simulator boot: %w", err)
 		}
 	}
+	if err := m.ensureSimulatorProcess(); err != nil {
+		return m.device, err
+	}
 	m.device.State = "Booted"
 	return m.device, nil
+}
+
+func (m *Manager) ensureSimulatorProcess() error {
+	if _, err := m.run("pgrep", "-x", "Simulator"); err == nil {
+		return nil
+	}
+	if _, err := m.run("open", "-a", "Simulator"); err != nil {
+		return fmt.Errorf("restart Simulator.app: %w", err)
+	}
+	return nil
 }
 
 func (m *Manager) Stop() (Status, error) {

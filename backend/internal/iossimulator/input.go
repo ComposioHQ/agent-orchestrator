@@ -25,6 +25,16 @@ func (m *Manager) Input(input Input) error {
 	if state != "Booted" {
 		return fmt.Errorf("iOS Simulator is not booted")
 	}
+	if m.screenshotWidth > 0 && m.screenshotHeight > 0 {
+		bounds, err := simulatorWindowBounds()
+		if err != nil {
+			return fmt.Errorf("find Simulator window: %w", err)
+		}
+		input.X = bounds.X + input.X/float64(m.screenshotWidth)*bounds.Width
+		input.Y = bounds.Y + input.Y/float64(m.screenshotHeight)*bounds.Height
+		input.X2 = bounds.X + input.X2/float64(m.screenshotWidth)*bounds.Width
+		input.Y2 = bounds.Y + input.Y2/float64(m.screenshotHeight)*bounds.Height
+	}
 	switch input.Action {
 	case "tap":
 		return tap(input.X, input.Y)
