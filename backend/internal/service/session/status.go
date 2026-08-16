@@ -52,6 +52,7 @@ func toContractPRFacts(prs []domain.PRFacts) []contract.PRFacts {
 			Review:         pr.Review,
 			Mergeability:   pr.Mergeability,
 			ReviewComments: pr.ReviewComments,
+			CheckCount:     pr.CheckCount,
 			SourceBranch:   pr.SourceBranch,
 			TargetBranch:   pr.TargetBranch,
 		}

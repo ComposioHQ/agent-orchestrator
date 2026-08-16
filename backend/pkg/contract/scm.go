@@ -78,6 +78,7 @@ type PullRequestFailingCheck struct {
 // PullRequestCISummary is the latest aggregate CI observation.
 type PullRequestCISummary struct {
 	State         CIState                   `json:"state"`
+	CheckCount    int                       `json:"checkCount"`
 	FailingChecks []PullRequestFailingCheck `json:"failingChecks"`
 	AutoInjectCI  bool                      `json:"autoInjectCI"`
 }

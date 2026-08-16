@@ -23,8 +23,8 @@ import {
 import {
 	ArrowUpRight,
 	Files as FilesIcon,
-	GitPullRequest,
 	GitMerge,
+	GitPullRequest,
 	Info,
 	Play,
 	Trash2,
@@ -39,13 +39,14 @@ import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
 import { ProductExternalLink } from "./ProductExternalLink";
 import {
-	sessionScmSummaryQueryKey,
 	useSessionScmSummary,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, prCardPresentation, prNounKeys, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { isPRMergeable, useMergePR } from "../lib/pr-actions";
+import { ConfirmDialog } from "./ConfirmDialog";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -595,30 +596,14 @@ function updateSessionMergePolicy(
 
 function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
 	const { t } = useTranslation();
-	const queryClient = useQueryClient();
 	const presentation = prCardPresentation(pr);
-	const canMerge =
-		pr.state === "open" &&
-		presentation.primary.key === "merge" &&
-		presentation.primary.tone === "success" &&
-		Boolean(pr.url && pr.headSha);
-	const mergePr = useMutation({
-		mutationFn: async () => {
-			if (usePreviewData) return;
-			const { error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
-				params: { path: { id: String(pr.number) } },
-				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },
-			});
-			if (error) throw new Error(apiErrorMessage(error, t("pr.merge.failed", { number: pr.number })));
-		},
-		onSuccess: async () => {
-			await Promise.all([
-				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) }),
-				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
-			]);
-		},
-	});
-	const mergeError = mergePr.error instanceof Error ? mergePr.error.message : null;
+	const canMerge = isPRMergeable(pr);
+	const [mergeConfirmOpen, setMergeConfirmOpen] = useState(false);
+	const mergePr = useMergePR();
+	const mergeError = mergePr.error ? t("pr.merge.failed", { number: pr.number }) : null;
+	useEffect(() => {
+		if (mergePr.isSuccess) setMergeConfirmOpen(false);
+	}, [mergePr.isSuccess]);
 	const viewModel: InspectorPullRequest = {
 		...pr,
 		card: presentation,
@@ -632,21 +617,33 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 			externalLink={ProductExternalLink}
 			mergeAction={
 				canMerge ? (
-					<Button
-						aria-label={t("pr.merge.actionFor", { number: pr.number })}
-						className="gap-1 px-2"
-						disabled={mergePr.isPending}
-						onClick={() => mergePr.mutate()}
-						size="sm"
-						type="button"
-					>
-						{mergePr.isPending ? (
-							<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
-						) : (
-							<GitMerge className="size-icon-sm" aria-hidden="true" />
-						)}
-						{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
-					</Button>
+					<>
+						<Button
+							aria-label={t("pr.merge.actionFor", { number: pr.number })}
+							className="gap-1 px-2"
+							disabled={mergePr.isPending}
+							onClick={() => setMergeConfirmOpen(true)}
+							size="sm"
+							type="button"
+						>
+							{mergePr.isPending ? (
+								<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
+							) : (
+								<GitMerge className="size-icon-sm" aria-hidden="true" />
+							)}
+							{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+						</Button>
+						<ConfirmDialog
+							description={t("pr.merge.confirmDescription", { number: pr.number })}
+							confirmLabel={mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+							error={mergeError}
+							busy={mergePr.isPending}
+							onConfirm={() => mergePr.mutate({ pr, sessionId })}
+							onOpenChange={setMergeConfirmOpen}
+							open={mergeConfirmOpen}
+							title={t("pr.merge.confirmTitle", { number: pr.number })}
+						/>
+					</>
 				) : undefined
 			}
 			mergeError={mergeError}

@@ -101,7 +101,7 @@ const prSummary = (
 		additions: 4,
 		deletions: 1,
 		changedFiles: 2,
-		ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
+		ci: { autoInjectCI: true, state: "passing", checkCount: 0, failingChecks: [] },
 		review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 		mergeability: { state: "mergeable", reasons: [], prUrl: url, conflictFiles: [] },
 		updatedAt: "2026-06-15T12:00:00Z",
@@ -355,6 +355,11 @@ describe("SessionInspector PR section", () => {
 		expect(mergeButton).toBeEnabled();
 		fireEvent.click(mergeButton);
 
+		// The merge button opens a confirmation dialog (shared with the board) —
+		// confirm to actually fire the merge request.
+		const confirmMerge = await screen.findByRole("button", { name: "Merge" });
+		fireEvent.click(confirmMerge);
+
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
 				params: { path: { id: "7" } },
@@ -466,10 +471,11 @@ describe("SessionInspector PR section", () => {
 
 	it("shows that failing CI was not injected while preserving the failing checks", () => {
 		const failingPR = prSummary(7, "open", {
-			ci: {
-				autoInjectCI: false,
-				state: "failing",
-				failingChecks: [
+		ci: {
+			autoInjectCI: false,
+			state: "failing",
+			checkCount: 1,
+			failingChecks: [
 					{ name: "unit", status: "failed", conclusion: "failure", url: "https://ci.example/unit" },
 				],
 			},

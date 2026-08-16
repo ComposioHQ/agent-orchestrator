@@ -85,6 +85,7 @@ type PRFacts struct {
 	Merged         bool
 	Closed         bool
 	CI             CIState
+	CheckCount     int
 	Review         ReviewDecision
 	Mergeability   Mergeability
 	ReviewComments bool
@@ -246,7 +247,7 @@ func prPipelineStatus(pr PRFacts) SessionStatus {
 		return StatusDraft
 	case pr.Review == ReviewChangesRequest || pr.ReviewComments:
 		return StatusChangesRequested
-	case pr.Mergeability == MergeMergeable:
+	case prMergeReady(pr):
 		return StatusMergeable
 	case pr.Mergeability == MergeBlocked:
 		return StatusPROpen
@@ -256,5 +257,25 @@ func prPipelineStatus(pr PRFacts) SessionStatus {
 		return StatusReviewPending
 	default:
 		return StatusPROpen
+	}
+}
+
+// prMergeReady reports whether a PR is ready to merge: mergeable, no review
+// blockers, and CI either passing or genuinely absent (unknown CI with no
+// observed checks). Unknown CI with observed checks must fail closed.
+func prMergeReady(pr PRFacts) bool {
+	if pr.Draft || pr.Review == ReviewChangesRequest || pr.ReviewComments {
+		return false
+	}
+	if pr.Mergeability != MergeMergeable {
+		return false
+	}
+	switch pr.CI {
+	case CIPassing:
+		return true
+	case CIUnknown, "":
+		return pr.CheckCount == 0
+	default:
+		return false
 	}
 }

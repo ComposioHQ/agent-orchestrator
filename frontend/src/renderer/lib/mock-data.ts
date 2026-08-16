@@ -235,6 +235,7 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 		ci: {
 			autoInjectCI: true,
 			state: facts?.ci === "failing" ? "failing" : facts?.ci === "pending" ? "pending" : "passing",
+			checkCount: 0,
 			failingChecks: [],
 		},
 		review: {
@@ -275,10 +276,11 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 	"demo-ci-failed": [
 		prSummary("demo-ci-failed", 324, {
-			ci: {
-				autoInjectCI: false,
-				state: "failing",
-				failingChecks: [
+		ci: {
+			autoInjectCI: false,
+			state: "failing",
+			checkCount: 1,
+			failingChecks: [
 					{
 						name: "renderer smoke",
 						status: "failed",
@@ -368,6 +370,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			ci: {
 				autoInjectCI: true,
 				state: "failing",
+				checkCount: 4,
 				failingChecks: [
 					{
 						name: "backend / go test ./...",
@@ -405,6 +408,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			ci: {
 				autoInjectCI: true,
 				state: "failing",
+				checkCount: 2,
 				failingChecks: [
 					{
 						name: "render tests",

@@ -650,6 +650,7 @@ type SessionPRSummary struct {
 // SessionPRCISummary is the CI status block for a session PR summary.
 type SessionPRCISummary struct {
 	State         domain.CIState          `json:"state" enum:"unknown,pending,passing,failing"`
+	CheckCount    int                     `json:"checkCount"`
 	FailingChecks []SessionPRFailingCheck `json:"failingChecks"`
 	AutoInjectCI  bool                    `json:"autoInjectCI"`
 }
@@ -761,7 +762,7 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 	for _, ch := range in.FailingChecks {
 		checks = append(checks, SessionPRFailingCheck{Name: ch.Name, Status: ch.Status, Conclusion: ch.Conclusion, URL: ch.URL})
 	}
-	return SessionPRCISummary{State: in.State, FailingChecks: checks, AutoInjectCI: in.AutoInjectCI}
+	return SessionPRCISummary{State: in.State, CheckCount: in.CheckCount, FailingChecks: checks, AutoInjectCI: in.AutoInjectCI}
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {

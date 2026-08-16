@@ -140,6 +140,7 @@ func TestDeriveSCMStatusRemainsAvailableWhileAgentIsActive(t *testing.T) {
 		{"review-pending", statusPR(domain.PRFacts{Review: domain.ReviewRequired}), domain.StatusReviewPending},
 		{"approved", statusPR(domain.PRFacts{Review: domain.ReviewApproved}), domain.StatusApproved},
 		{"mergeable", statusPR(domain.PRFacts{Mergeability: domain.MergeMergeable}), domain.StatusMergeable},
+		{"unknown-ci-with-observed-checks", statusPR(domain.PRFacts{CI: domain.CIUnknown, CheckCount: 1, Mergeability: domain.MergeMergeable}), domain.StatusPROpen},
 		{"merge-blocked", statusPR(domain.PRFacts{Mergeability: domain.MergeBlocked}), domain.StatusPROpen},
 		{"merged", statusPR(domain.PRFacts{Merged: true}), domain.StatusMerged},
 	}

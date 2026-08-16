@@ -7354,6 +7354,8 @@ components:
       properties:
         autoInjectCI:
           type: boolean
+        checkCount:
+          type: integer
         failingChecks:
           items:
             $ref: '#/components/schemas/SessionPRFailingCheck'
@@ -7367,6 +7369,7 @@ components:
           type: string
       required:
       - state
+      - checkCount
       - failingChecks
       - autoInjectCI
       type: object

@@ -2542,6 +2542,7 @@ export interface components {
         };
         SessionPRCISummary: {
             autoInjectCI: boolean;
+            checkCount: number;
             failingChecks: components["schemas"]["SessionPRFailingCheck"][];
             /** @enum {string} */
             state: "unknown" | "pending" | "passing" | "failing";
