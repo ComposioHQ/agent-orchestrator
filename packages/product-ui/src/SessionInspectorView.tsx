@@ -169,16 +169,18 @@ export function InspectorSection({
 	className,
 	surface = true,
 	title,
+	titleClassName,
 }: {
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
 	surface?: boolean;
 	title?: string;
+	titleClassName?: string;
 }) {
 	const heading =
 		title || action ? (
-			<div className="mb-1 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+			<div className={cn("mb-1 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted", titleClassName)}>
 				{title ? <span>{title}</span> : <span />}
 				{action ?? null}
 			</div>
@@ -512,7 +514,7 @@ export function InspectorReviewsView({
 	}
 	if (groups.length === 0) return null;
 	return (
-		<InspectorSection surface={false} title={labels.reviews}>
+		<InspectorSection surface={false} title={labels.reviews} titleClassName="text-foreground [&>span:first-child]:text-xs [&>span:first-child]:tracking-wide">
 			<div className="flex flex-col gap-2">
 				{groups.map((group, index) => (
 					<ReviewDisclosure
@@ -908,7 +910,7 @@ function ExternalReviewCard({
 								</span>
 							) : (
 								<button
-									className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-2.5 text-center text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
+									className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
 									onClick={async () => {
 										setRereviewError(false);
 										try {
@@ -1103,12 +1105,12 @@ function InlineCommentRow({
 			) : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-mono text-passive">
 				<span className="font-semibold text-foreground">#{commentNumber}</span>
-				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
 				{parsed.priority ? (
-					<span aria-label={`priority ${parsed.priority}`} className="ml-auto font-mono text-2xs font-semibold tracking-wide text-error/80">
+					<span aria-label={`priority ${parsed.priority}`} className="font-mono text-2xs font-semibold tracking-wide text-error/80">
 						{parsed.priority}
 					</span>
 				) : null}
+				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
 			</div>
 			{parsed.body ? <p className="m-0 max-w-prose whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{parsed.body}</p> : null}
 			<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
@@ -1128,8 +1130,8 @@ function InlineCommentRow({
 					</button>
 				)}
 				{resolved ? (
-					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground">
-						<CheckIcon className="shrink-0 text-success" />
+					<span className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium text-muted-foreground">
+						<CheckIcon className="size-icon-xs shrink-0 text-success" />
 						{labels.resolvedReview}
 					</span>
 				) : (
