@@ -607,8 +607,8 @@ function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => 
 		pr.state === "open" &&
 		pr.ci.state === "passing" &&
 		pr.review.decision === "approved" &&
-		pr.mergeability.state !== "conflicting" &&
-		Boolean(pr.url);
+		pr.mergeability.state === "mergeable" &&
+		Boolean(pr.url && pr.headSha);
 	const mergePr = useMutation({
 		mutationFn: async () => {
 			if (usePreviewData) return;

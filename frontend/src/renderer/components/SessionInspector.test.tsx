@@ -545,6 +545,44 @@ describe("SessionInspector PR section", () => {
     ).not.toBeInTheDocument();
   });
 
+  it.each(["unknown", "blocked", "unstable"] as const)(
+    "does not offer Merge when provider mergeability is %s",
+    (mergeability) => {
+      renderWithQuery(
+        <SessionInspector session={session([pr(7, "open")])} />,
+        undefined,
+        (client) => {
+          client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
+            prSummary(7, "open", {
+              ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
+              review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+              mergeability: { state: mergeability, reasons: [], prUrl: "https://example.com/pr/7" },
+            }),
+          ]);
+        },
+      );
+      expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not offer Merge without a current head SHA", () => {
+    renderWithQuery(
+      <SessionInspector session={session([pr(7, "open")])} />,
+      undefined,
+      (client) => {
+        client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
+          prSummary(7, "open", {
+            headSha: "",
+            ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
+            review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+            mergeability: { state: "mergeable", reasons: [], prUrl: "https://example.com/pr/7" },
+          }),
+        ]);
+      },
+    );
+    expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
+  });
+
   it("uses the state chip as the single merged-state indicator", () => {
     renderWithQuery(
       <SessionInspector
