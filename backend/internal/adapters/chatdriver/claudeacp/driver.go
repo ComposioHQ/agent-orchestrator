@@ -50,7 +50,11 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 			if _, err := resolveRuntime(ctx); err != nil {
 				return fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
-			if _, err := plugin.ResolveBinary(ctx); err != nil {
+			claudeBinary, err := plugin.ResolveBinary(ctx)
+			if err != nil {
+				return fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
+			}
+			if err := validateClaudeACPExecutable(claudeBinary, runtime.GOOS); err != nil {
 				return fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
 			status, err := plugin.AuthStatus(ctx)
@@ -73,6 +77,9 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 			if err != nil {
 				return acpdriver.Launch{}, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
+			if err := validateClaudeACPExecutable(claudeBinary, runtime.GOOS); err != nil {
+				return acpdriver.Launch{}, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
+			}
 			env := make(map[string]string, len(cfg.Env)+1)
 			for key, value := range cfg.Env {
 				env[key] = value
@@ -90,6 +97,18 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 		SessionMode:    claudeSessionMode,
 		SessionOptions: claudeSessionOptions,
 	}, log)
+}
+
+func validateClaudeACPExecutable(binary, goos string) error {
+	if goos != "windows" {
+		return nil
+	}
+	switch strings.ToLower(filepath.Ext(binary)) {
+	case ".cmd", ".bat":
+		return fmt.Errorf("resolved Claude Code command shim %q, but chat requires the native claude.exe; reinstall or update Claude Code", binary)
+	default:
+		return nil
+	}
 }
 
 func claudeSessionMeta(cfg acpdriver.LaunchConfig) map[string]any {

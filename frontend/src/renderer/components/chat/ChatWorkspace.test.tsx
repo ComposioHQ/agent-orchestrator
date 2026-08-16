@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
@@ -13,15 +13,50 @@ import {
 } from "../../lib/chat-fixture";
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
 import { setApiBaseUrl } from "../../lib/api-client";
+import { useUiStore } from "../../stores/ui-store";
+import type { WorkspaceSession } from "../../types/workspace";
 
 const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
+const previousTabListeners = new Set<() => void>();
+const nextTabListeners = new Set<() => void>();
+type TerminalPaneTestProps = {
+	fontSize?: number;
+	isFullscreen?: boolean;
+	onChangeFontSize?: (delta: number) => void;
+	onToggleFullscreen?: () => Promise<void> | void;
+};
+const terminalPaneState = vi.hoisted(() => ({
+	props: undefined as TerminalPaneTestProps | undefined,
+}));
 
 vi.mock("../../lib/bridge", () => ({
 	aoBridge: {
+		app: {
+			onPreviousTabShortcut: (listener: () => void) => {
+				previousTabListeners.add(listener);
+				return () => previousTabListeners.delete(listener);
+			},
+			onNextTabShortcut: (listener: () => void) => {
+				nextTabListeners.add(listener);
+				return () => nextTabListeners.delete(listener);
+			},
+		},
 		clipboard: { writeText: (text: string) => writeText(text) },
 		menu: { action: (action: string) => menuAction(action) },
 	},
+}));
+
+vi.mock("../TerminalPane", () => ({
+	TerminalPane: (props: NonNullable<typeof terminalPaneState.props>) => {
+		terminalPaneState.props = props;
+		return <div data-testid="terminal-pane" />;
+	},
+}));
+
+vi.mock("../../lib/platform", () => ({
+	isMacPlatform: () => true,
+	isLinuxPlatform: () => false,
 }));
 
 /** A refetch: identical content, all-new objects, which is what JSON parsing gives. */
@@ -55,7 +90,12 @@ function stubGeometry(node: HTMLElement, { scrollHeight, clientHeight, scrollTop
 beforeEach(() => {
 	writeText.mockClear();
 	menuAction.mockClear();
+	previousTabListeners.clear();
+	nextTabListeners.clear();
+	terminalPaneState.props = undefined;
+	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
+	useUiStore.setState({ isSidebarOpen: true });
 });
 
 afterEach(() => setApiBaseUrl(null));
@@ -73,6 +113,19 @@ function humanMessage(text: string): ConversationMessage {
 		createdAt: "2026-08-08T00:00:00Z",
 	};
 }
+
+const chatSession = {
+	id: chatFixture.sessionId,
+	workspaceId: "project-1",
+	workspaceName: "agent-orchestrator",
+	title: "Reviewer chat",
+	provider: "codex",
+	kind: "worker",
+	mode: "chat",
+	status: "working",
+	updatedAt: "2026-08-15T00:00:00Z",
+	prs: [],
+} satisfies WorkspaceSession;
 
 describe("HumanMessage attachments", () => {
 	function renderImageAttachment(header: string, name: string) {
@@ -170,28 +223,37 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
 	});
 
-	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
+	it("clears the fixed titlebar nav when the sidebar is collapsed, like the terminal session", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const { rerender } = render(<ChatWorkspace snapshot={chatFixture} />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+		expect(screen.getByTestId("session-terminal-region")).toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
 
-		expect(menuAction).not.toHaveBeenCalled();
+		useUiStore.setState({ isSidebarOpen: true });
+		rerender(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByTestId("session-terminal-region")).not.toHaveClass(
+			"session-topbar-titlebar-clearance-mac",
+		);
 	});
 
-	it("starts chat text at 12px and updates its scoped font size with the controls", () => {
+	it("leaves new-terminal and display controls out of the chat strip, like the terminal session", () => {
+		render(<ChatWorkspace snapshot={chatFixture} onOpenShell={vi.fn()} />);
+
+		const terminalRegion = screen.getByTestId("session-terminal-region");
+		expect(terminalRegion).toContainElement(screen.getByRole("tablist", { name: "Chat tabs" }));
+		expect(terminalRegion).not.toContainElement(screen.queryByRole("button", { name: "New terminal" }));
+		expect(screen.queryByRole("toolbar", { name: "Chat display controls" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Decrease font size" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Fullscreen" })).not.toBeInTheDocument();
+	});
+
+	it("starts chat text at 12px without a topbar font control", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const chat = screen.getByLabelText("Chat");
 
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
-		expect(screen.getByLabelText("Chat font size: 13 pixels")).toHaveTextContent("13px");
-		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("13px");
-
-		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
-		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
 		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
 	});
 
@@ -199,6 +261,53 @@ describe("ChatWorkspace timeline", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		const composer = screen.getByLabelText("Message the agent").closest("form");
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
+	});
+
+	it("shows live working state inline with the current turn while the composer owns the stop action", async () => {
+		const user = userEvent.setup();
+		const onInterrupt = vi.fn();
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items = snapshot.items.filter(
+			(item) => !(item.kind === "activity" && item.activityKind === "approval" && item.status === "pending"),
+		);
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={onInterrupt} />);
+
+		const status = screen.getByTestId("live-turn-status");
+		expect(screen.getByRole("log", { name: "Conversation" })).toContainElement(status);
+		expect(status).toHaveClass("min-h-6", "px-1");
+		expect(status).not.toHaveClass("border", "bg-surface", "rounded-md");
+		expect(status).toHaveTextContent(/^Working for /);
+		expect(within(status).queryByRole("button")).not.toBeInTheDocument();
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.getByLabelText("Message the agent").closest("form")).toContainElement(stop);
+		await user.click(stop);
+		expect(onInterrupt).toHaveBeenCalledOnce();
+	});
+
+	it("shows blocked turn state inline with the current turn", () => {
+		const snapshot = structuredClone(chatFixture);
+		snapshot.items.push({
+			kind: "activity",
+			id: "approval-1",
+			sequence: 99,
+			revision: 1,
+			turnId: "turn-2",
+			activityKind: "approval",
+			status: "pending",
+			summary: "Run command",
+			requestId: "approval-1",
+			decisions: [{ id: "accept", label: "Approve" }],
+			detail: { command: "npm test" },
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+
+		render(<ChatWorkspace snapshot={snapshot} onInterrupt={vi.fn()} />);
+
+		expect(screen.getByRole("alert")).toHaveTextContent("The agent is waiting for your decision.");
+		expect(screen.getByText("Waiting for your decision")).toBeInTheDocument();
+		expect(screen.queryByText(/^Working for /)).not.toBeInTheDocument();
 	});
 
 	it("lets readers select conversation text", () => {
@@ -318,6 +427,33 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
 	});
 
+	it("limits conversation minimap navigation to human prompts", () => {
+		const snapshot = structuredClone(chatFixtureLongHistory(2));
+		snapshot.items.splice(1, 0, {
+			kind: "activity",
+			id: "loose-status",
+			sequence: 1.5,
+			revision: 1,
+			activityKind: "system",
+			status: "completed",
+			summary: "Automatic compaction completed",
+			createdAt: "2026-08-08T00:00:00Z",
+		});
+		render(<ChatWorkspace snapshot={snapshot} />);
+		const log = screen.getByRole("log");
+		const scrollbar = screen.getByRole("scrollbar", { name: "Conversation scrollbar" });
+		stubGeometry(log, { scrollHeight: 1800, clientHeight: 600, scrollTop: 0 });
+		stubGeometry(scrollbar, { scrollHeight: 600, clientHeight: 600, scrollTop: 0 });
+		fireEvent.scroll(log);
+
+		const markers = Array.from(
+			scrollbar.querySelectorAll<HTMLElement>("[data-chat-scroll-marker]"),
+		);
+		expect(markers).toHaveLength(2);
+		fireEvent.pointerEnter(markers[1]!);
+		expect(screen.getByRole("tooltip")).not.toHaveTextContent("Automatic compaction completed");
+	});
+
 	it("explains itself instead of showing an empty scroller", () => {
 		render(<ChatWorkspace snapshot={chatFixtureEmpty} />);
 		expect(screen.getByText("Start the conversation")).toBeInTheDocument();
@@ -354,6 +490,8 @@ describe("ChatWorkspace timeline", () => {
 		stubGeometry(log, { scrollHeight: 4000, clientHeight: 800, scrollTop: 100 });
 		log.dispatchEvent(new Event("scroll"));
 		const jump = await screen.findByRole("button", { name: /jump to latest/i });
+		expect(jump).toHaveAttribute("title", "Jump to latest");
+		expect(jump).not.toHaveTextContent("Jump to latest");
 		expect(jump).toHaveClass(
 			"bg-raised",
 			"dark:bg-raised",
@@ -616,5 +754,165 @@ describe("ChatWorkspace message actions", () => {
 	it("does not leave a writing caret behind prose followed by tool activity", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		expect(screen.queryByLabelText("still writing")).not.toBeInTheDocument();
+	});
+});
+
+describe("ChatWorkspace reviewer tabs", () => {
+	const reviewerTerminal = { handleId: "review-1", harness: "codex" };
+	const reviewerTarget = {
+		kind: "reviewer" as const,
+		...reviewerTerminal,
+		sessionId: chatSession.id,
+	};
+
+	it("keeps the chat draft, attachments, edit, and scroll state mounted while Reviewer is selected", async () => {
+		const user = userEvent.setup();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTerminal,
+			onOpenReviewerTerminal: vi.fn(),
+			onSelectChat: vi.fn(),
+			onEditMessage: vi.fn(async () => undefined),
+			onStageAttachments: vi.fn(async () => []),
+		};
+		const view = render(<ChatWorkspace {...common} />);
+		const composer = screen.getByRole("combobox", { name: "Message the agent" });
+		await user.type(composer, "unsent reviewer-switch draft");
+		fireEvent.paste(composer, {
+			clipboardData: {
+				files: [new File([new Uint8Array([137, 80, 78, 71])], "review.png", { type: "image/png" })],
+				items: [],
+			},
+		});
+		await waitFor(() => expect(screen.getByLabelText("Remove review.png")).toBeInTheDocument());
+		const attachment = screen.getByLabelText("Remove review.png");
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const editor = screen.getByRole("textbox", { name: "Edit message" });
+		await user.clear(editor);
+		await user.type(editor, "in-progress branch edit");
+		const timeline = screen.getByRole("log", { name: "Conversation" });
+		stubGeometry(timeline, { scrollHeight: 2_000, clientHeight: 500, scrollTop: 417 });
+
+		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
+
+		expect(composer).toBeInTheDocument();
+		expect(attachment).toBeInTheDocument();
+		expect(editor).toBeInTheDocument();
+		expect(timeline).toBeInTheDocument();
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+
+		view.rerender(<ChatWorkspace {...common} />);
+
+		expect(screen.getByRole("combobox", { name: "Message the agent" })).toBe(composer);
+		expect(composer).toHaveValue("unsent reviewer-switch draft");
+		expect(screen.getByLabelText("Remove review.png")).toBe(attachment);
+		expect(screen.getByRole("textbox", { name: "Edit message" })).toBe(editor);
+		expect(editor).toHaveValue("in-progress branch edit");
+		expect(screen.getByRole("log", { name: "Conversation" })).toBe(timeline);
+		expect(timeline.scrollTop).toBe(417);
+	});
+
+	it("keeps the selected reviewer pane through temporary terminal unavailability", () => {
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTarget,
+			onSelectChat: vi.fn(),
+		};
+		const view = render(<ChatWorkspace {...common} reviewerTerminal={reviewerTerminal} />);
+		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+
+		view.rerender(<ChatWorkspace {...common} reviewerTerminal={undefined} />);
+
+		expect(screen.getByTestId("chat-reviewer-terminal")).toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: "Reviewer" })).not.toBeInTheDocument();
+	});
+
+	it("gives the reviewer terminal working zoom and fullscreen controls", async () => {
+		window.localStorage.setItem("ao.terminal.fontSize", "14");
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				reviewerTerminal={reviewerTerminal}
+				reviewerTarget={reviewerTarget}
+			/>,
+		);
+
+		expect(terminalPaneState.props).toMatchObject({ fontSize: 14, isFullscreen: false });
+		expect(terminalPaneState.props?.onChangeFontSize).toEqual(expect.any(Function));
+		expect(terminalPaneState.props?.onToggleFullscreen).toEqual(expect.any(Function));
+
+		act(() => terminalPaneState.props?.onChangeFontSize?.(2));
+		expect(window.localStorage.getItem("ao.terminal.fontSize")).toBe("16");
+		expect(terminalPaneState.props?.fontSize).toBe(16);
+
+		fireEvent.wheel(screen.getByTestId("chat-reviewer-panel"), {
+			ctrlKey: true,
+			deltaY: -80,
+		});
+		expect(window.localStorage.getItem("ao.terminal.fontSize")).toBe("17");
+		expect(terminalPaneState.props?.fontSize).toBe(17);
+
+		const surface = screen.getByLabelText("Chat");
+		const requestFullscreen = vi.fn(async () => undefined);
+		Object.defineProperty(surface, "requestFullscreen", { configurable: true, value: requestFullscreen });
+		await act(async () => terminalPaneState.props?.onToggleFullscreen?.());
+		expect(requestFullscreen).toHaveBeenCalledOnce();
+	});
+
+	it("supports arrow, Home/End, and desktop previous/next tab shortcuts", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		const onSelectChat = vi.fn();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTerminal,
+			onOpenReviewerTerminal,
+			onSelectChat,
+		};
+		const view = render(<ChatWorkspace {...common} />);
+		const chatTab = screen.getByRole("tab", { name: chatFixture.sessionId });
+		const reviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(chatTab).toHaveAttribute("tabindex", "0");
+		expect(reviewerTab).toHaveAttribute("tabindex", "-1");
+
+		chatTab.focus();
+		fireEvent.keyDown(chatTab, { key: "End" });
+		expect(reviewerTab).toHaveFocus();
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+
+		onOpenReviewerTerminal.mockClear();
+		chatTab.focus();
+		fireEvent.keyDown(chatTab, { key: "ArrowRight" });
+		expect(reviewerTab).toHaveFocus();
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+
+		onOpenReviewerTerminal.mockClear();
+		expect(nextTabListeners.size).toBe(1);
+		act(() => [...nextTabListeners][0]?.());
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith(reviewerTerminal);
+
+		view.rerender(<ChatWorkspace {...common} reviewerTarget={reviewerTarget} />);
+		const activeReviewerTab = screen.getByRole("tab", { name: "Reviewer" });
+		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveAttribute("tabindex", "-1");
+		expect(activeReviewerTab).toHaveAttribute("tabindex", "0");
+
+		activeReviewerTab.focus();
+		fireEvent.keyDown(activeReviewerTab, { key: "Home" });
+		expect(onSelectChat).toHaveBeenCalledOnce();
+		expect(screen.getByRole("tab", { name: chatFixture.sessionId })).toHaveFocus();
+
+		onSelectChat.mockClear();
+		activeReviewerTab.focus();
+		fireEvent.keyDown(activeReviewerTab, { key: "ArrowLeft" });
+		expect(onSelectChat).toHaveBeenCalledOnce();
+
+		onSelectChat.mockClear();
+		expect(previousTabListeners.size).toBe(1);
+		act(() => [...previousTabListeners][0]?.());
+		expect(onSelectChat).toHaveBeenCalledOnce();
 	});
 });

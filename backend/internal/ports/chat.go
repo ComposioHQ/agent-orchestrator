@@ -712,6 +712,11 @@ type ChatEvent struct {
 
 	// ProviderTurnID is set on every event that belongs to a turn.
 	ProviderTurnID string
+	// ProviderConversationID identifies the native thread/session the event came
+	// from. It may differ from ChatConversation.ProviderConversationID for nested
+	// agent work. Empty preserves compatibility with providers whose protocol has
+	// no nested-conversation identity.
+	ProviderConversationID string
 	// ProviderItemID identifies the message or activity being reported.
 	ProviderItemID string
 	// ClientMessageID is the provider-carried idempotency key for a recovered user

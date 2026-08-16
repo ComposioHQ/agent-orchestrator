@@ -1,7 +1,9 @@
+import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { PanelLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
+import { useCanGoForward } from "./TitlebarNav";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -22,7 +24,7 @@ const isWindows =
 			"",
 	);
 
-type MenuKey = "file" | "edit" | "view" | "window" | "help";
+type MenuKey = "view" | "help";
 
 // Dispatch a native-menu action to the main process (see menu:action in main.ts).
 const act = (action: string) => () => {
@@ -78,7 +80,10 @@ export function WindowTitlebar({
 }) {
 	const { t } = useTranslation();
 	const theme = useResolvedTheme();
-	const { isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
+	const { isSidebarOpen, toggleSidebar } = useUiStore();
+	const router = useRouter();
+	const canGoBack = useCanGoBack();
+	const canGoForward = useCanGoForward();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
 	// Electron draws the min/max/close overlay natively and can't read our CSS, so
@@ -121,44 +126,27 @@ export function WindowTitlebar({
 			>
 				<PanelLeft aria-hidden="true" className="window-titlebar__toggle-icon" />
 			</button>
+			<button
+				aria-label={t("titlebar.goBack")}
+				className="window-titlebar__toggle"
+				disabled={!canGoBack}
+				onClick={() => router.history.back()}
+				title={t("titlebar.goBack")}
+				type="button"
+			>
+				<ArrowLeft aria-hidden="true" className="window-titlebar__toggle-icon" />
+			</button>
+			<button
+				aria-label={t("titlebar.goForward")}
+				className="window-titlebar__toggle"
+				disabled={!canGoForward}
+				onClick={() => router.history.forward()}
+				title={t("titlebar.goForward")}
+				type="button"
+			>
+				<ArrowRight aria-hidden="true" className="window-titlebar__toggle-icon" />
+			</button>
 			<nav className="window-titlebar__menus">
-				<TopMenu id="file" label={t("titlebar.file")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={() => openGlobalSettings()}>{t("shell.settings")}</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={act("app.quit")}>
-						{t("titlebar.quit")}
-						<DropdownMenuShortcut>Alt+F4</DropdownMenuShortcut>
-					</DropdownMenuItem>
-				</TopMenu>
-
-				<TopMenu id="edit" label={t("titlebar.edit")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={act("edit.undo")}>
-						{t("titlebar.undo")}
-						<DropdownMenuShortcut>Ctrl+Z</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.redo")}>
-						{t("titlebar.redo")}
-						<DropdownMenuShortcut>Ctrl+Y</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={act("edit.cut")}>
-						{t("titlebar.cut")}
-						<DropdownMenuShortcut>Ctrl+X</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.copy")}>
-						{t("titlebar.copy")}
-						<DropdownMenuShortcut>Ctrl+C</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.paste")}>
-						{t("titlebar.paste")}
-						<DropdownMenuShortcut>Ctrl+V</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.selectAll")}>
-						{t("titlebar.selectAll")}
-						<DropdownMenuShortcut>Ctrl+A</DropdownMenuShortcut>
-					</DropdownMenuItem>
-				</TopMenu>
-
 				<TopMenu id="view" label={t("titlebar.view")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={act("view.reload")}>
 						{t("titlebar.reload")}
@@ -177,12 +165,6 @@ export function WindowTitlebar({
 						{t("titlebar.fullscreen")}
 						<DropdownMenuShortcut>F11</DropdownMenuShortcut>
 					</DropdownMenuItem>
-				</TopMenu>
-
-				<TopMenu id="window" label={t("titlebar.window")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={act("window.minimize")}>{t("titlebar.minimize")}</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("window.maximize")}>{t("titlebar.maximize")}</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("window.close")}>{t("titlebar.close")}</DropdownMenuItem>
 				</TopMenu>
 
 				<TopMenu id="help" label={t("titlebar.help")} openMenu={openMenu} setOpenMenu={setOpenMenu}>

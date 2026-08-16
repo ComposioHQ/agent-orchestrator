@@ -157,9 +157,9 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 								{form.channel === "nightly" ? t("settings.updates.returnToNightly") : t("settings.updates.returnToStable")}
 							</Button>
 						</div>
-						<p className="px-1 text-xs text-settings-muted">
-							{t("settings.updates.featureTracking", { pr: featurePr })}
-						</p>
+					<p className="px-(--size-settings-row-padding) text-xs text-settings-muted">
+						{t("settings.updates.featureTracking", { pr: featurePr })}
+					</p>
 					</div>
 				)}
 
@@ -194,9 +194,16 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					)}
 				</div>
 
-				{save.isError && (
-					<p className="px-1 text-xs text-error">{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}</p>
-				)}
+			{status.staleCheckNudge && (
+				<p className="flex items-center gap-2 px-(--size-settings-row-padding) text-xs leading-row text-warning">
+					<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
+					<span>{t("settings.updates.networkStale")}</span>
+				</p>
+			)}
+
+			{save.isError && (
+				<p className="px-(--size-settings-row-padding) text-xs text-error">{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}</p>
+			)}
 
 				<UpdateActions status={status} suppressTopBorder={primaryValue === "nightly" && form.enabled} />
 			</SettingsSection>
@@ -283,7 +290,13 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 		case "unsupported":
 			return <span className="text-xs text-settings-muted">{status.message ?? t("settings.updates.needInstalledApp")}</span>;
 		case "error":
-			return <span className="text-xs text-error">{status.message ?? t("settings.updates.updateFailed")}</span>;
+			return (
+				<span className="text-xs text-error">
+				{status.netError
+					? t("settings.updates.netErrorRestartGuidance")
+					: status.message ?? t("settings.updates.updateFailed")}
+				</span>
+			);
 		default:
 			return null;
 	}

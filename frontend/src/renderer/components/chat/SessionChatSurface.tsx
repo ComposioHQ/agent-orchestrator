@@ -21,10 +21,18 @@ import {
 } from "../../hooks/useConversation";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import { can } from "../../types/conversation";
+import type { Theme } from "../../stores/ui-store";
+import type { TerminalTarget } from "../../types/terminal";
 import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({
 	session,
+	reviewerTerminal,
+	onOpenReviewerTerminal,
+	reviewerTarget,
+	onSelectChat,
+	daemonReady,
+	theme,
 	onOpenShell,
 	openingShell,
 	shellError,
@@ -32,6 +40,12 @@ export function SessionChatSurface({
 	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
+	reviewerTerminal?: { handleId: string; harness: string };
+	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
+	onSelectChat?: () => void;
+	daemonReady?: boolean;
+	theme?: Theme;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -49,16 +63,25 @@ export function SessionChatSurface({
 		loadOlder,
 	} = useConversation(session.id);
 	const commands = useConversationCommands(session.id);
-	const hasProviderConfig = Boolean(snapshot && can(snapshot, "config_options"));
+	const configOptions = useConversationConfigOptions(
+		session.id,
+		Boolean(snapshot && can(snapshot, "config_options")),
+	);
+	// A provider config catalog may cover only model, only mode, or both.
+	// Suppress native controls only for dimensions the provider catalog replaces;
+	// a model-only catalog must not hide the Approvals control.
+	const providerOptions = configOptions.options ?? [];
+	const hasProviderMode = providerOptions.some(
+		(option) => option.category === "mode" || option.id === "mode",
+	);
+	const hasProviderModel = providerOptions.some(
+		(option) => option.category === "model" || option.id === "model" || option.id === "agent",
+	);
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
 	const { models } = useConversationModels(
 		session.id,
-		Boolean(snapshot) && !hasProviderConfig,
-	);
-	const configOptions = useConversationConfigOptions(
-		session.id,
-		hasProviderConfig,
+		Boolean(snapshot) && !hasProviderModel,
 	);
 	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
@@ -110,6 +133,13 @@ export function SessionChatSurface({
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}
+			session={session}
+			reviewerTerminal={reviewerTerminal}
+			onOpenReviewerTerminal={onOpenReviewerTerminal}
+			reviewerTarget={reviewerTarget}
+			onSelectChat={onSelectChat}
+			daemonReady={daemonReady}
+			theme={theme}
 			headerActions={headerActions}
 			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}
@@ -130,7 +160,7 @@ export function SessionChatSurface({
 			openingShell={openingShell}
 			shellError={shellError}
 			models={models}
-			onChooseSettings={hasProviderConfig ? undefined : commands.chooseSettings}
+			onChooseSettings={hasProviderMode ? undefined : commands.chooseSettings}
 			configOptions={configOptions.options}
 			onChooseConfigOption={configOptions.setOption}
 			configOptionPending={configOptions.pending}
@@ -157,6 +187,11 @@ export function SessionChatSurface({
 			// covers the window before the controller reports, and it is the last word
 			// afterwards, since the capability is a property of the driver.
 			onSteer={can(snapshot, "steer") && !commands.steerUnsupported ? commands.steer : undefined}
+			onPromoteQueuedTurn={
+				can(snapshot, "steer") && !commands.steerUnsupported
+					? commands.promoteQueuedTurn
+					: undefined
+			}
 			steerPending={commands.steerPending}
 			steerRefusal={commands.steerRefusal}
 			onReloadMcpServers={
