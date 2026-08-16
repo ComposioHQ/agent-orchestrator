@@ -48,11 +48,11 @@ export function PRSummaryMeta({
 		primary.push(
 			pr.provider === "github" ? (
 				<ExternalLink
-					className="text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					className="inline-flex min-w-0 items-center gap-1 text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 					href={`https://github.com/${encodeURIComponent(authorHandle)}`}
 					key="author"
 				>
-					{pr.provider === "github" ? <GithubAvatar login={authorHandle} /> : null}
+					{pr.provider === "github" ? <GithubAvatar className="size-3" login={authorHandle} /> : null}
 					@{authorHandle}
 				</ExternalLink>
 			) : (
