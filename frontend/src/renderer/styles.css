@@ -1386,6 +1386,58 @@ textarea,
 	background: transparent;
 }
 
+/* Chromium uses the desktop theme's chunky native horizontal scrollbar on
+   Linux. Keep the board scroller compact and rounded there without changing
+   macOS overlay scrollbars or Windows behavior. */
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar {
+	height: 6px;
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-track,
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-thumb {
+	min-width: 24px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent);
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 56%, transparent);
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar {
+	width: 6px;
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-thumb {
+	min-height: 24px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent);
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 56%, transparent);
+}
+
 @supports (-moz-appearance: none) {
 	.board-scrollbar {
 		scrollbar-width: thin;
@@ -2095,7 +2147,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	color: var(--color-text-topbar);
 }
 
-.session-collapsed-inspector-actions {
+.session-pinned-actions-reserve {
 	display: flex;
 	width: 0;
 	min-width: 0;
@@ -2110,12 +2162,12 @@ body.is-resizing-x [data-slot="inspector-container"] {
 			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1));
 }
 
-.session-collapsed-inspector-actions[data-state="expanded"] {
+.session-pinned-actions-reserve[data-state="expanded"] {
 	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
 	margin-left: 0;
 }
 
-.session-inspector-persistent-actions {
+.session-pinned-actions {
 	-webkit-app-region: no-drag;
 	position: absolute;
 	top: 0;
@@ -2212,7 +2264,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 @media (prefers-reduced-motion: reduce) {
 	.workspace-topbar-actions .topbar-control,
 	.workspace-topbar-actions [data-compact-label],
-	.session-collapsed-inspector-actions,
+	.session-pinned-actions-reserve,
 	.session-split[data-terminal-live-resize="true"]
 		.workspace-topbar-actions
 		[data-priority="secondary"].topbar-control,
@@ -2461,6 +2513,16 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .window-titlebar__toggle:hover {
 	background: color-mix(in srgb, var(--fg) 8%, transparent);
 	color: var(--fg);
+}
+
+.window-titlebar__toggle:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+
+.window-titlebar__toggle:disabled:hover {
+	background: transparent;
+	color: var(--fg-muted);
 }
 
 .window-titlebar__toggle-icon {
@@ -2762,7 +2824,11 @@ body.is-resizing-x [data-slot="inspector-container"] {
 		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-@container inspector (max-width: 359px) {
+.session-inspector__tablist {
+	container: inspector-tabs / inline-size;
+}
+
+@container inspector-tabs (max-width: 239px) {
 	.session-inspector__responsive-label {
 		max-width: 0;
 		margin-left: 0;

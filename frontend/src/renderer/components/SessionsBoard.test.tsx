@@ -5,6 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { appI18n } from "../i18n";
 
+// Instant motion updates so height tweens do not leave tests waiting on timers.
+vi.mock("motion/react", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("motion/react")>();
+	return {
+		...actual,
+		AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
+	};
+});
+
 const {
 	navigateMock,
 	notificationShowMock,
@@ -59,6 +68,7 @@ vi.mock("../lib/platform", async (importOriginal) => {
 	};
 });
 
+import { archiveToggleHeightClassName, archiveToggleOffsetClassName } from "@aoagents/product-ui";
 import { SessionsBoard } from "./SessionsBoard";
 import { TooltipProvider } from "./ui/tooltip";
 
@@ -76,6 +86,12 @@ function renderBoardWithClient(queryClient: QueryClient, projectId?: string) {
 			</TooltipProvider>
 		</QueryClientProvider>,
 	);
+}
+
+/** Archive cards mount on the next frame via startTransition — wait for the list. */
+async function expandArchive() {
+	await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+	return screen.findByRole("list", { name: "Archived sessions" });
 }
 
 beforeEach(() => {
@@ -351,8 +367,7 @@ describe("SessionsBoard", () => {
 		expect(activeTooltip).not.toHaveTextContent(/lower bound/i);
 		await userEvent.unhover(activeUsage);
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
-		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		const archive = await expandArchive();
 		const archivedUsage = within(archive).getByText("≥$0.02 · 2K tok");
 		expect(archivedUsage).toHaveAttribute("aria-label", "≥$0.02 · 2,000 tokens");
 		await userEvent.hover(archivedUsage);
@@ -867,11 +882,19 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const archiveButton = screen.getByRole("button", { name: /archive/i });
-		expect(archiveButton).toHaveClass("h-[46px]", "py-0");
-		await userEvent.click(archiveButton);
-
-		const archive = screen.getByRole("list", { name: "Archived sessions" });
-		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
+		expect(archiveButton).toHaveClass(archiveToggleHeightClassName, "w-full", "py-0");
+		const archiveLabel = within(archiveButton).getByText("Archive");
+		expect(archiveLabel).not.toHaveClass("font-mono", "uppercase");
+		expect(archiveLabel).toHaveClass("text-2xs", "font-medium");
+		// Expanded archive overlays the board instead of shrinking lanes (which would
+		// force a persistent Needs You column scrollbar gutter).
+		expect(archiveButton.parentElement).toHaveClass("absolute", "inset-x-0", "bottom-0", "bg-background");
+		expect(screen.getByTestId("board")).toHaveClass("relative");
+		expect(screen.getByTestId("board").querySelector(":scope > .min-h-0.flex-1")).toHaveClass(
+			archiveToggleOffsetClassName,
+		);
+		const archive = await expandArchive();
+		expect(archive).toHaveClass("scrollbar-none", "overflow-y-auto", "max-h-[28vh]");
 		const terminatedCard = within(archive).getByText("dead worker").closest<HTMLElement>("[role='listitem']");
 		expect(terminatedCard).not.toBeNull();
 		expect(terminatedCard).toHaveAttribute("data-testid", "board-session-card");
@@ -904,6 +927,35 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 	});
 
+	it("keeps archive cards mounted after collapse so reopen does not remount them", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		const archiveButton = screen.getByRole("button", { name: /archive/i });
+		const archive = await expandArchive();
+		const card = within(archive).getByText("dead worker");
+
+		await userEvent.click(archiveButton);
+		expect(archiveButton).toHaveAttribute("aria-expanded", "false");
+		expect(archive).toBeInTheDocument();
+		expect(archive).toHaveAttribute("aria-hidden", "true");
+		expect(archive).toHaveAttribute("inert");
+		expect(archive).toHaveClass("pointer-events-none");
+		expect(screen.queryByRole("list", { name: "Archived sessions" })).not.toBeInTheDocument();
+
+		await userEvent.click(archiveButton);
+		expect(archiveButton).toHaveAttribute("aria-expanded", "true");
+		const reopened = screen.getByRole("list", { name: "Archived sessions" });
+		expect(reopened).toBe(archive);
+		expect(within(reopened).getByText("dead worker")).toBe(card);
+		expect(reopened).not.toHaveAttribute("inert");
+		expect(reopened).not.toHaveClass("pointer-events-none");
+	});
+
 	it("renders archived sessions as a grid even when rows were previously saved", async () => {
 		window.localStorage.setItem("ao.board.archive.layout", "rows");
 		workspaceQueryMock.mockReturnValue({
@@ -913,7 +965,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		expect(screen.queryByRole("group", { name: "Archive layout" })).not.toBeInTheDocument();
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("grid");
@@ -931,7 +983,7 @@ describe("SessionsBoard", () => {
 		const queryClient = renderBoard("p1");
 		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -955,7 +1007,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() =>
@@ -977,7 +1029,7 @@ describe("SessionsBoard", () => {
 		});
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		await waitFor(() => expect(postMock).toHaveBeenCalled());
@@ -999,7 +1051,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		const restoringButton = screen.getByRole("button", { name: "Restore dead worker" });
@@ -1023,7 +1075,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Session can no longer be restored")).toBeInTheDocument();
@@ -1039,7 +1091,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		expect(await screen.findByText("Unable to restore session")).toBeInTheDocument();
@@ -1055,7 +1107,7 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByText("dead worker"));
 
 		expect(postMock).not.toHaveBeenCalled();
@@ -1085,7 +1137,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -1126,7 +1178,7 @@ describe("SessionsBoard", () => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const view = renderBoardWithClient(queryClient, "p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		await userEvent.click(screen.getByRole("button", { name: "Restore dead worker" }));
 
 		view.rerender(
@@ -1250,7 +1302,7 @@ describe("SessionsBoard", () => {
 		expect(within(mergedRegion).getByText("live merged worker")).toBeInTheDocument();
 		expect(within(mergedRegion).queryByText("archived merged worker")).not.toBeInTheDocument();
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		await expandArchive();
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		const archivedMergedCard = within(archive)
 			.getByText("archived merged worker")

@@ -76,10 +76,17 @@ const productUiReactBoundary: Plugin = {
 	name: "product-ui-react-boundary",
 	enforce: "pre",
 	async resolveId(source, importer) {
-		if (
-			!importer?.includes("/packages/product-ui/") ||
-			!(source === "react" || source.startsWith("react/") || source === "react-dom" || source.startsWith("react-dom/"))
-		) {
+		if (!importer?.includes("/packages/product-ui/")) {
+			return null;
+		}
+		const remap =
+			source === "react" ||
+			source.startsWith("react/") ||
+			source === "react-dom" ||
+			source.startsWith("react-dom/") ||
+			source === "motion" ||
+			source.startsWith("motion/");
+		if (!remap) {
 			return null;
 		}
 		return this.resolve(
