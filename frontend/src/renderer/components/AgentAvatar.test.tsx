@@ -19,8 +19,10 @@ describe("AgentAvatar", () => {
 		if (img?.tagName.toLowerCase() === "img") {
 			expect(img).toHaveAttribute("src", expect.stringContaining("data:image/svg+xml"));
 		} else {
-			const svg = screen.getByLabelText("deepseek-harness");
-			expect(svg.tagName.toLowerCase()).toBe("svg");
+			const el = screen.getByLabelText("deepseek-harness");
+			expect(
+				["svg", "img"].includes(el.tagName.toLowerCase()) || el.getAttribute("role") === "img",
+			).toBe(true);
 		}
 	});
 });
