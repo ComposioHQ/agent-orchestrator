@@ -327,29 +327,32 @@ func (c *Client) BootstrapWorker(
 		return fmt.Errorf("createos: worker helper destination %q must be an absolute path", bootstrap.HelperDestination)
 	}
 
-	// Guest paths must be absolute and their parents must already exist.
-	if _, slash := path(destination); slash != "" {
-		if err := c.exec(ctx, id, "mkdir", []string{"-p", slash}); err != nil {
+	// The binaries go up as file PUTs and stay their own requests. Their parents
+	// must exist before those PUTs, so create each distinct parent first. Every
+	// remaining shell step is collapsed into the single exec built below: each
+	// exec is a separate control-plane round-trip, and the old one-step-per-call
+	// form cost six of them on a plain launch (eleven with a helper and a run-as
+	// user).
+	// Each binary is staged beside its destination because on the repair path
+	// the previous worker is usually still running (a partitioned worker only
+	// exits after its heartbeats fail) and Linux refuses to write a running
+	// executable with ETXTBSY; renaming over it swaps the directory entry
+	// instead, which the kernel allows while the old inode is still mapped.
+	_, workerParent := path(destination)
+	if workerParent != "" {
+		if err := c.exec(ctx, id, "mkdir", []string{"-p", workerParent}); err != nil {
 			return err
 		}
 	}
-
-	// On the repair path the previous worker is usually still running — a
-	// partitioned worker only exits after its heartbeats fail — and Linux
-	// refuses to write a running executable with ETXTBSY. Staging the upload
-	// beside the destination and renaming over it swaps the directory entry
-	// instead, which the kernel allows while the old inode is still mapped.
 	staging := destination + ".new"
 	if err := c.uploadFile(ctx, id, staging, bootstrap.Binary); err != nil {
 		return err
 	}
-	if err := c.exec(ctx, id, "chmod", []string{"0755", staging}); err != nil {
-		return err
-	}
 	helperStaging := ""
 	if len(bootstrap.HelperBinary) > 0 {
-		if parent, _ := path(helperDestination); parent != "" {
-			if err := c.exec(ctx, id, "mkdir", []string{"-p", parent}); err != nil {
+		_, helperParent := path(helperDestination)
+		if helperParent != "" && helperParent != workerParent {
+			if err := c.exec(ctx, id, "mkdir", []string{"-p", helperParent}); err != nil {
 				return err
 			}
 		}
@@ -357,44 +360,50 @@ func (c *Client) BootstrapWorker(
 		if err := c.uploadFile(ctx, id, helperStaging, bootstrap.HelperBinary); err != nil {
 			return err
 		}
-		if err := c.exec(ctx, id, "chmod", []string{"0755", helperStaging}); err != nil {
-			return err
-		}
-	}
-	// Stop the old worker before the swap so a repaired sandbox does not end up
-	// with two processes heartbeating under the same identity. The pattern is
-	// anchored at the start of the command line because an unanchored one also
-	// matches this very shell — whose arguments contain the destination — so
-	// pkill kills itself, the exec reports exit -1, and the "|| true" never
-	// runs. pkill exits 1 when nothing matches, the normal first-boot case.
-	stop := "pkill -f " + shellQuote("^"+destination+"( |$)") + " || true"
-	if err := c.exec(ctx, id, "bash", []string{"-c", stop}); err != nil {
-		return err
-	}
-	if err := c.exec(ctx, id, "mv", []string{"-f", staging, destination}); err != nil {
-		return err
-	}
-	if helperStaging != "" {
-		if err := c.exec(ctx, id, "mv", []string{"-f", helperStaging, helperDestination}); err != nil {
-			return err
-		}
 	}
 
-	// Repair issues a new one-time bootstrap ticket. Pass the complete fresh
-	// environment to this process instead of relying on the environment stored
-	// at sandbox creation, which contains a consumed ticket.
+	// One exec does the whole install and launch: mark the staged binaries
+	// executable, stop any old worker, swap them into place, optionally hand
+	// /workspace to the run-as user, and launch. set -e fails the exec if any
+	// synchronous step fails; only the final launch is backgrounded, so the exec
+	// still returns promptly. The pkill pattern is anchored at the start of the
+	// command line because an unanchored one also matches this very shell (whose
+	// arguments contain the destination) so it would kill itself; "|| true"
+	// tolerates the normal first-boot no-match.
+	var script strings.Builder
+	script.WriteString("set -e; ")
+	script.WriteString("chmod 0755 " + shellQuote(staging) + "; ")
+	if helperStaging != "" {
+		script.WriteString("chmod 0755 " + shellQuote(helperStaging) + "; ")
+	}
+	script.WriteString("{ pkill -f " + shellQuote("^"+destination+"( |$)") + " || true; }; ")
+	script.WriteString("mv -f " + shellQuote(staging) + " " + shellQuote(destination) + "; ")
+	if helperStaging != "" {
+		script.WriteString("mv -f " + shellQuote(helperStaging) + " " + shellQuote(helperDestination) + "; ")
+	}
+
+	// Repair issues a new one-time bootstrap ticket, so pass the fresh
+	// environment to this process rather than the one stored at sandbox
+	// creation, whose ticket is already consumed.
 	command := launchEnvironment(bootstrap.Environment) + shellQuote(destination)
 	if user := strings.TrimSpace(bootstrap.User); user != "" {
 		quotedUser := shellQuote(user)
-		prepare := "id -u " + quotedUser + " >/dev/null && " +
-			"chown -R " + quotedUser + ":" + quotedUser + " /workspace"
-		if err := c.exec(ctx, id, "bash", []string{"-c", prepare}); err != nil {
-			return err
-		}
+		// Create the run-as user if the image does not already provide it. A
+		// template that lacks it (github-v4 has no ao-worker) would otherwise
+		// wedge every bootstrap on "id: no such user", which the reconciler
+		// retries forever as a recreate loop that burns sandbox credits. Under
+		// set -e, id succeeding skips useradd; id failing runs useradd, and if
+		// useradd itself fails the bootstrap still fails rather than launching
+		// as the wrong identity. The account matches the worker image: an
+		// unprivileged user that owns /workspace.
+		script.WriteString("id -u " + quotedUser + " >/dev/null 2>&1 || " +
+			"useradd --create-home --home-dir /workspace/.ao/home --shell /bin/bash " +
+			quotedUser + "; ")
+		script.WriteString("chown -R " + quotedUser + ":" + quotedUser + " /workspace; ")
 		command = "runuser --user " + quotedUser + " -- " + command
 	}
-	launch := "nohup " + command + " >> /var/log/ao-worker.log 2>&1 &"
-	return c.exec(ctx, id, "bash", []string{"-c", launch})
+	script.WriteString("nohup " + command + " >> /var/log/ao-worker.log 2>&1 &")
+	return c.exec(ctx, id, "bash", []string{"-c", script.String()})
 }
 
 func (c *Client) exec(ctx context.Context, id sandbox.ID, cmd string, args []string) error {

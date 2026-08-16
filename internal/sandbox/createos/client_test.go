@@ -387,6 +387,13 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BootstrapWorker() error = %v", err)
 	}
+	if want := []string{
+		"POST /v1/sandboxes/sbx-1/exec",
+		"PUT /v1/sandboxes/sbx-1/files",
+		"POST /v1/sandboxes/sbx-1/exec",
+	}; !slices.Equal(calls, want) {
+		t.Errorf("request order = %q, want %q", calls, want)
+	}
 
 	// The binary lands beside its destination, never on top of it: overwriting
 	// the running worker in place would fail with ETXTBSY on every repair.
@@ -396,38 +403,40 @@ func TestBootstrapWorkerUploadsThenLaunches(t *testing.T) {
 	if string(uploaded) != "ELF-worker" {
 		t.Errorf("uploaded %q, want the worker binary bytes", uploaded)
 	}
-	if len(execCommands) != 5 {
-		t.Fatalf("exec called %d times, want mkdir, chmod, pkill, mv, and launch", len(execCommands))
+	// File PUTs require their parent to exist, so mkdir comes before the upload;
+	// install and launch still share one bash exec rather than five separate ones.
+	if len(execCommands) != 2 {
+		t.Fatalf("exec called %d times, want mkdir and one combined install+launch call", len(execCommands))
 	}
-	if execCommands[0].Cmd != "mkdir" || execCommands[1].Cmd != "chmod" {
-		t.Errorf("exec sequence = %q/%q, want mkdir then chmod", execCommands[0].Cmd, execCommands[1].Cmd)
+	if execCommands[0].Cmd != "mkdir" || !slices.Equal(execCommands[0].Args, []string{"-p", "/usr/local/bin"}) {
+		t.Errorf("parent command = %s %v, want mkdir -p /usr/local/bin", execCommands[0].Cmd, execCommands[0].Args)
 	}
-	stop := strings.Join(execCommands[2].Args, " ")
-	if !strings.Contains(stop, "pkill") || !strings.Contains(stop, "|| true") {
-		t.Errorf("stop command = %v, want a pkill that tolerates no match", execCommands[2].Args)
+	if execCommands[1].Cmd != "bash" {
+		t.Errorf("exec cmd = %q, want the combined script run under bash", execCommands[1].Cmd)
 	}
-	// An unanchored pattern also matches the shell running it, so pkill kills
-	// itself and the exec comes back exit -1 with nothing on stderr.
-	if !strings.Contains(stop, "'^/usr/local/bin/ao-worker( |$)'") {
-		t.Errorf("stop pattern = %v, want it anchored so the shell does not match itself", execCommands[2].Args)
+	script := strings.Join(execCommands[1].Args, " ")
+	// The one script must still do everything the old five execs did.
+	for _, want := range []string{
+		"set -e", // a failed step fails the exec
+		"chmod 0755 '/usr/local/bin/ao-worker.new'",
+		"mv -f '/usr/local/bin/ao-worker.new' '/usr/local/bin/ao-worker'",
+		// Create-time environment holds a single-use ticket; a repair relaunching
+		// without the fresh one gets 401 on every attempt, forever.
+		"AO_WORKER_BOOTSTRAP_TOKEN=fresh-ticket",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("install script missing %q\ngot: %s", want, script)
+		}
 	}
-	if execCommands[3].Cmd != "mv" {
-		t.Errorf("swap command = %q, want the staged binary renamed into place", execCommands[3].Cmd)
+	// An unanchored pattern also matches the shell running it, so pkill would
+	// kill itself; "|| true" tolerates the normal first-boot no-match.
+	if !strings.Contains(script, "pkill") || !strings.Contains(script, "|| true") ||
+		!strings.Contains(script, "'^/usr/local/bin/ao-worker( |$)'") {
+		t.Errorf("install script pkill wrong\ngot: %s", script)
 	}
-	if got := strings.Join(execCommands[3].Args, " "); got != "-f /usr/local/bin/ao-worker.new /usr/local/bin/ao-worker" {
-		t.Errorf("swap args = %q, want the staging path renamed over the destination", got)
-	}
-	launch := strings.Join(execCommands[4].Args, " ")
-	if execCommands[4].Cmd != "bash" ||
-		!strings.Contains(launch, "ao-worker") ||
-		!strings.Contains(launch, "AO_WORKER_BOOTSTRAP_TOKEN=fresh-ticket") {
-		t.Errorf("launch command = %s %v, want the worker started under bash", execCommands[4].Cmd, execCommands[4].Args)
-	}
-	// Create-time environment is fixed for the life of the sandbox and holds a
-	// single-use ticket. A repair relaunching without the fresh one gets 401 on
-	// every attempt, forever.
-	if !strings.Contains(launch, "AO_WORKER_BOOTSTRAP_TOKEN=fresh-ticket") {
-		t.Errorf("launch command = %v, want the freshly minted ticket in the environment", execCommands[4].Args)
+	// Only the launch is backgrounded, so the exec returns promptly.
+	if !strings.Contains(script, "nohup") || !strings.HasSuffix(strings.TrimSpace(script), "&") {
+		t.Errorf("install script launch wrong\ngot: %s", script)
 	}
 }
 
@@ -444,9 +453,11 @@ func TestBootstrapWorkerRejectsARelativeDestination(t *testing.T) {
 }
 
 func TestBootstrapWorkerInstallsHelperAndLaunchesAsUnprivilegedUser(t *testing.T) {
+	var calls []string
 	var uploads []string
 	var execCommands []execRequest
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/files"):
 			uploads = append(uploads, r.URL.Query().Get("path"))
@@ -472,24 +483,48 @@ func TestBootstrapWorkerInstallsHelperAndLaunchesAsUnprivilegedUser(t *testing.T
 	if err != nil {
 		t.Fatalf("BootstrapWorker() error = %v", err)
 	}
+	if want := []string{
+		"POST /v1/sandboxes/sbx-1/exec",
+		"PUT /v1/sandboxes/sbx-1/files",
+		"PUT /v1/sandboxes/sbx-1/files",
+		"POST /v1/sandboxes/sbx-1/exec",
+	}; !slices.Equal(calls, want) {
+		t.Errorf("request order = %q, want %q", calls, want)
+	}
 	if !slices.Equal(uploads, []string{
 		"/usr/local/bin/ao-worker.new",
 		"/usr/local/bin/ao.new",
 	}) {
 		t.Fatalf("uploads = %q", uploads)
 	}
-	if len(execCommands) != 9 {
-		t.Fatalf("exec called %d times, want 9", len(execCommands))
+	// Both binaries still upload separately. Their common parent is made once,
+	// then the nine install and launch execs collapse to one.
+	if len(execCommands) != 2 {
+		t.Fatalf("exec called %d times, want one parent mkdir and one combined install+launch call", len(execCommands))
 	}
-	prepare := strings.Join(execCommands[7].Args, " ")
-	if execCommands[7].Cmd != "bash" ||
-		!strings.Contains(prepare, "chown -R 'ao-worker':'ao-worker' /workspace") {
-		t.Errorf("prepare command = %s %v", execCommands[7].Cmd, execCommands[7].Args)
+	if execCommands[0].Cmd != "mkdir" || !slices.Equal(execCommands[0].Args, []string{"-p", "/usr/local/bin"}) {
+		t.Errorf("parent command = %s %v, want mkdir -p /usr/local/bin", execCommands[0].Cmd, execCommands[0].Args)
 	}
-	launch := strings.Join(execCommands[8].Args, " ")
-	if !strings.Contains(launch, "runuser --user 'ao-worker' --") ||
-		!strings.Contains(launch, "'/usr/local/bin/ao-worker'") {
-		t.Errorf("launch command = %s %v", execCommands[8].Cmd, execCommands[8].Args)
+	if execCommands[1].Cmd != "bash" {
+		t.Errorf("exec cmd = %q, want the combined script run under bash", execCommands[1].Cmd)
+	}
+	script := strings.Join(execCommands[1].Args, " ")
+	for _, want := range []string{
+		"chmod 0755 '/usr/local/bin/ao-worker.new'",
+		"chmod 0755 '/usr/local/bin/ao.new'",
+		"mv -f '/usr/local/bin/ao-worker.new' '/usr/local/bin/ao-worker'",
+		"mv -f '/usr/local/bin/ao.new' '/usr/local/bin/ao'",
+		// A template lacking the run-as user must not wedge the bootstrap: the
+		// user is created when absent, then /workspace is handed to it.
+		"id -u 'ao-worker' >/dev/null 2>&1 || useradd --create-home --home-dir /workspace/.ao/home --shell /bin/bash 'ao-worker'",
+		"chown -R 'ao-worker':'ao-worker' /workspace",
+		// The worker runs as the unprivileged user.
+		"runuser --user 'ao-worker' --",
+		"'/usr/local/bin/ao-worker'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("install script missing %q\ngot: %s", want, script)
+		}
 	}
 }
 
