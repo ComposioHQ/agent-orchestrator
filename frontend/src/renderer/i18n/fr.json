@@ -1146,5 +1146,15 @@
 	"chat.edit.image": "Image",
 	"chat.edit.cancel": "Annuler la modification",
 	"chat.edit.send": "Envoyer le message modifié",
-	"chat.edit.sendShortcut": "Envoyer le message modifié (⌘/Ctrl+Entrée)"
+	"chat.edit.sendShortcut": "Envoyer le message modifié (⌘/Ctrl+Entrée)",
+	"pr.card.reviewStatus": "Review status",
+	"pr.merge.checkingDetail": "Waiting for the latest checks and review state.",
+	"pr.merge.checkingReadiness": "Checking merge readiness",
+	"pr.merge.notMergeableYet": "Not mergeable yet",
+	"pr.merge.reasonConflict": "One approval is sufficient, but the merge conflict still blocks this PR.",
+	"pr.merge.reasonChecksFailing": "The review requirement is satisfied, but failing checks still block this PR.",
+	"pr.merge.reasonReview": "A required review must be completed before this PR can merge.",
+	"pr.merge.reasonReady": "No merge conflict, checks are passing, and the review requirement is satisfied.",
+	"pr.review.requirementSatisfied": "PR approved",
+	"pr.review.viewDetails": "View review details"
 }

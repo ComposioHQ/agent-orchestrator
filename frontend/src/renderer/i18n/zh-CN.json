@@ -1113,5 +1113,15 @@
 	"chat.edit.image": "图像",
 	"chat.edit.cancel": "取消编辑",
 	"chat.edit.send": "发送编辑后的消息",
-	"chat.edit.sendShortcut": "发送编辑后的消息（⌘/Ctrl+Enter）"
+	"chat.edit.sendShortcut": "发送编辑后的消息（⌘/Ctrl+Enter）",
+	"pr.card.reviewStatus": "Review status",
+	"pr.merge.checkingDetail": "Waiting for the latest checks and review state.",
+	"pr.merge.checkingReadiness": "Checking merge readiness",
+	"pr.merge.notMergeableYet": "Not mergeable yet",
+	"pr.merge.reasonConflict": "One approval is sufficient, but the merge conflict still blocks this PR.",
+	"pr.merge.reasonChecksFailing": "The review requirement is satisfied, but failing checks still block this PR.",
+	"pr.merge.reasonReview": "A required review must be completed before this PR can merge.",
+	"pr.merge.reasonReady": "No merge conflict, checks are passing, and the review requirement is satisfied.",
+	"pr.review.requirementSatisfied": "PR approved",
+	"pr.review.viewDetails": "View review details"
 }
