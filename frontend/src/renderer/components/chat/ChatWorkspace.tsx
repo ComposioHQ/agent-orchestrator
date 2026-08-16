@@ -450,33 +450,30 @@ export function ChatWorkspace({
 
 	// Cycle chat → reviewer → shells in strip order, wrapping. With no auxiliary
 	// tabs there is nothing to cycle to and the shortcut is a no-op.
-	const selectAdjacentTab = useCallback(() => {
-		if (shellActive) {
-			const shells = shellTerminals ?? [];
-			const index = shells.findIndex((shell) => shell.handleId === shellTarget?.handleId);
-			const nextShell = shells[index + 1];
-			if (nextShell) {
-				onSelectShellTerminal?.(nextShell.handleId);
-				return;
-			}
+	const selectAdjacentTab = useCallback((direction: -1 | 1) => {
+		const tabs = [
+			{ kind: "chat" as const },
+			...(reviewerTerminal ? [{ kind: "reviewer" as const }] : []),
+			...(shellTerminals ?? []).map((shell) => ({ kind: "shell" as const, handleId: shell.handleId })),
+		];
+		if (tabs.length <= 1) return;
+		const activeIndex = shellActive
+			? tabs.findIndex((tab) => tab.kind === "shell" && tab.handleId === shellTarget?.handleId)
+			: reviewerActive
+				? tabs.findIndex((tab) => tab.kind === "reviewer")
+				: 0;
+		const currentIndex = activeIndex >= 0 ? activeIndex : 0;
+		const next = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+		if (!next) return;
+		if (next.kind === "chat") {
 			onSelectChat?.();
 			return;
 		}
-		if (reviewerActive) {
-			const firstShell = shellTerminals?.[0];
-			if (firstShell) {
-				onSelectShellTerminal?.(firstShell.handleId);
-				return;
-			}
-			onSelectChat?.();
+		if (next.kind === "reviewer") {
+			if (reviewerTerminal) onOpenReviewerTerminal?.(reviewerTerminal);
 			return;
 		}
-		if (reviewerTerminal) {
-			onOpenReviewerTerminal?.(reviewerTerminal);
-			return;
-		}
-		const firstShell = shellTerminals?.[0];
-		if (firstShell) onSelectShellTerminal?.(firstShell.handleId);
+		onSelectShellTerminal?.(next.handleId);
 	}, [
 		onOpenReviewerTerminal,
 		onSelectChat,
@@ -488,14 +485,29 @@ export function ChatWorkspace({
 		shellTerminals,
 	]);
 
+	useEffect(
+		() =>
+			aoBridge.app.onCloseShellTerminalShortcut(() => {
+				if (shellTarget) onCloseShellTerminal?.(shellTarget.handleId);
+			}),
+		[onCloseShellTerminal, shellTarget],
+	);
+
 	useEffect(() => {
-		const disposePrevious = aoBridge.app.onPreviousTabShortcut(selectAdjacentTab);
-		const disposeNext = aoBridge.app.onNextTabShortcut(selectAdjacentTab);
+		const disposePrevious = aoBridge.app.onPreviousTabShortcut(() => selectAdjacentTab(-1));
+		const disposeNext = aoBridge.app.onNextTabShortcut(() => selectAdjacentTab(1));
 		return () => {
 			disposePrevious();
 			disposeNext();
 		};
 	}, [selectAdjacentTab]);
+
+	useEffect(() => {
+		aoBridge.app.setCloseShellTerminalShortcutEnabled(
+			Boolean(shellTarget && onCloseShellTerminal),
+		);
+		return () => aoBridge.app.setCloseShellTerminalShortcutEnabled(false);
+	}, [onCloseShellTerminal, shellTarget]);
 
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.

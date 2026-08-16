@@ -20,6 +20,8 @@ const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
 const previousTabListeners = new Set<() => void>();
 const nextTabListeners = new Set<() => void>();
+const closeShellTerminalListeners = new Set<() => void>();
+const closeShellTerminalShortcutStates: boolean[] = [];
 type TerminalPaneTestProps = {
 	fontSize?: number;
 	isFullscreen?: boolean;
@@ -40,6 +42,13 @@ vi.mock("../../lib/bridge", () => ({
 			onNextTabShortcut: (listener: () => void) => {
 				nextTabListeners.add(listener);
 				return () => nextTabListeners.delete(listener);
+			},
+			onCloseShellTerminalShortcut: (listener: () => void) => {
+				closeShellTerminalListeners.add(listener);
+				return () => closeShellTerminalListeners.delete(listener);
+			},
+			setCloseShellTerminalShortcutEnabled: (enabled: boolean) => {
+				closeShellTerminalShortcutStates.push(enabled);
 			},
 		},
 		clipboard: { writeText: (text: string) => writeText(text) },
@@ -93,6 +102,8 @@ beforeEach(() => {
 	menuAction.mockClear();
 	previousTabListeners.clear();
 	nextTabListeners.clear();
+	closeShellTerminalListeners.clear();
+	closeShellTerminalShortcutStates.length = 0;
 	terminalPaneState.props = undefined;
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
@@ -1030,5 +1041,64 @@ describe("ChatWorkspace shell tabs", () => {
 		act(() => [...nextTabListeners][0]?.());
 		expect(onSelectChat).toHaveBeenCalledOnce();
 	});
-});
 
+	it("cycles shell → reviewer → chat on the desktop previous-tab shortcut", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		const onSelectShellTerminal = vi.fn();
+		const onSelectChat = vi.fn();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTerminal: { handleId: "review-1", harness: "codex" },
+			onOpenReviewerTerminal,
+			shellTerminals: shells,
+			onSelectShellTerminal,
+			onSelectChat,
+		};
+		const view = render(<ChatWorkspace {...common} shellTarget={shellTarget("shell-1")} />);
+
+		act(() => [...previousTabListeners][0]?.());
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-1", harness: "codex" });
+
+		view.rerender(
+			<ChatWorkspace
+				{...common}
+				reviewerTarget={{
+					kind: "reviewer",
+					handleId: "review-1",
+					harness: "codex",
+					sessionId: chatFixture.sessionId,
+				}}
+			/>,
+		);
+		act(() => [...previousTabListeners][0]?.());
+		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+
+	it("enables the close-shell shortcut and closes the active shell tab", () => {
+		const onCloseShellTerminal = vi.fn();
+		const view = render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				shellTarget={shellTarget("shell-2")}
+				onCloseShellTerminal={onCloseShellTerminal}
+			/>,
+		);
+
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(true);
+		act(() => [...closeShellTerminalListeners][0]?.());
+		expect(onCloseShellTerminal).toHaveBeenCalledWith("shell-2");
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				onCloseShellTerminal={onCloseShellTerminal}
+			/>,
+		);
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(false);
+	});
+});
