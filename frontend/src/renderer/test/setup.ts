@@ -23,6 +23,26 @@ if (typeof window !== "undefined") {
 		value: ResizeObserverStub,
 	});
 
+	// @pierre/diffs' <Virtualizer> (the Files diff view's row virtualizer)
+	// requires IntersectionObserver, which jsdom does not implement.
+	class IntersectionObserverStub {
+		readonly root = null;
+		readonly rootMargin = "";
+		readonly thresholds: ReadonlyArray<number> = [];
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+		takeRecords(): IntersectionObserverEntry[] {
+			return [];
+		}
+	}
+
+	Object.defineProperty(window, "IntersectionObserver", {
+		configurable: true,
+		writable: true,
+		value: IntersectionObserverStub,
+	});
+
 	Object.defineProperty(window, "matchMedia", {
 		configurable: true,
 		writable: true,
