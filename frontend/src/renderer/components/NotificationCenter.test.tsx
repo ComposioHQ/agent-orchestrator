@@ -70,7 +70,9 @@ const allNotifications: NotificationDTO[] = [
 		sessionId: "sess-dead",
 		projectId: "proj-1",
 		prUrl: "",
-		type: "pr_merged",
+		// needs_input: an agent is genuinely paused waiting on this session, so a
+		// terminated backing session should still require restore before opening.
+		type: "needs_input",
 		title: "PR #9 merged",
 		body: "The agent session has ended.",
 		status: "read",
@@ -244,6 +246,18 @@ describe("NotificationRuntime", () => {
 });
 
 describe("NotificationCenter", () => {
+	it("uses the compact topbar bell and unread badge sizing", () => {
+		renderNotificationCenter();
+		const trigger = screen.getByRole("button", { name: /unread notifications/ });
+		const bell = trigger.querySelector("svg");
+		const badge = trigger.querySelector("span");
+
+		expect(bell?.classList.contains("size-icon-base")).toBe(true);
+		expect(badge?.classList.contains("h-3")).toBe(true);
+		expect(badge?.classList.contains("min-w-3")).toBe(true);
+		expect(badge?.classList.contains("text-[7px]")).toBe(true);
+	});
+
 	it("opens once on click without a hover/focus remount and dismisses outside", async () => {
 		renderNotificationCenter();
 		const trigger = screen.getByRole("button", { name: /unread notifications/ });
@@ -566,6 +580,53 @@ describe("NotificationCenter", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
 		await waitFor(() => expect(restoreSessionMock).toHaveBeenCalledWith("sess-dead"));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-dead" },
+		});
+	});
+
+	// A PR outcome describes work that already finished — there's no paused
+	// agent to resume, so a terminated session behind one should stay directly
+	// viewable instead of gated behind restore.
+	it("opens a terminated session directly for a PR-outcome notification, with no restore option", async () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			status === "all"
+				? {
+						...notificationQueryResult(status),
+						data: {
+							pageParams: [""],
+							pages: [
+								{
+									notifications: [
+										{
+											id: "ntf_dead_pr",
+											sessionId: "sess-dead",
+											projectId: "proj-1",
+											prUrl: "https://github.com/acme/app/pull/9",
+											type: "pr_merged",
+											title: "PR #9 merged",
+											body: "The agent session has ended.",
+											status: "read",
+											createdAt: "2026-07-19T09:00:00Z",
+											target: { kind: "session", sessionId: "sess-dead" },
+										},
+									],
+									unreadCount: 0,
+									unresolvedCount: 0,
+								},
+							],
+						},
+					}
+				: notificationQueryResult(status),
+		);
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(screen.queryByRole("button", { name: "Restore session" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByText("The agent session has ended."));
+		expect(restoreSessionMock).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "sess-dead" },

@@ -1,6 +1,6 @@
 import { autoUpdater } from "electron-updater";
 import { app, BrowserWindow, dialog } from "electron";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -15,6 +15,7 @@ import {
 import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
 import {
+  isNetErrorMessage,
   updateFailureOutcome,
   type UpdateOutcome,
   type UpdatePhase,
@@ -105,6 +106,16 @@ let automaticCheckPreviousStatus:
   { status: UpdateStatus; independentRevision: number } | undefined;
 let updaterOperationQueue: Promise<void> = Promise.resolve();
 let automaticCheckInFlight = false;
+// Consecutive automatic-check failures from Chromium's network stack
+// (net::ERR_*): a wedged stack fails every updater request until the app
+// restarts, and automatic failures are UI-suppressed, so the install goes
+// silently stale (#3526). At the threshold, statuses carry staleCheckNudge so
+// the renderer can suggest a restart.
+const STALE_CHECK_NUDGE_THRESHOLD = 3; // hourly checks → ~3h of staleness
+let consecutiveAutomaticNetFailures = 0;
+// One automatic check can both emit an "error" event and reject
+// checkForUpdates(); count that as a single failure.
+let automaticCheckNetFailureCounted = false;
 // Which stage the active operation reached, and what it was fetching. Tracked
 // here because the renderer cannot know either: automatic failures never
 // broadcast a status, and error statuses carry no version.
@@ -138,6 +149,10 @@ function broadcast(
   status: UpdateStatus,
   owner: "independent" | "automatic-operation" = "independent",
 ): void {
+  const stamped: UpdateStatus =
+    consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
+      ? { ...status, staleCheckNudge: true }
+      : status;
   if (owner === "independent") {
     independentStatusRevision += 1;
     if (
@@ -145,14 +160,14 @@ function broadcast(
       automaticCheckPreviousStatus !== undefined
     ) {
       automaticCheckPreviousStatus = {
-        status,
+        status: stamped,
         independentRevision: independentStatusRevision,
       };
     }
   }
-  lastStatus = status;
+  lastStatus = stamped;
   for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send("updates:status", status);
+    if (!win.isDestroyed()) win.webContents.send("updates:status", stamped);
   }
 }
 
@@ -315,6 +330,7 @@ async function runSerializedUpdaterOperation(
     activeUpdaterRequestId = requestId;
     activeUpdaterPhase = operation === "manual-download" ? "download" : "check";
     pendingUpdateVersion = undefined;
+    if (operation === "automatic-check") automaticCheckNetFailureCounted = false;
     try {
       await runOperation();
     } finally {
@@ -377,6 +393,47 @@ async function runRetirementPoll(stateDir: string): Promise<void> {
   }
 }
 
+// isNetError checks whether the error is a Chromium network-stack failure
+// (net::ERR_*). When the network stack wedges, every updater request fails
+// this way until the app restarts (#3526).
+function isNetError(err: unknown): boolean {
+  return isNetErrorMessage(
+    err instanceof Error ? err.message : err === undefined ? undefined : String(err),
+  );
+}
+
+// recordAutomaticNetFailure counts one net-level automatic-check failure,
+// guarding against the same check surfacing as both an "error" event and a
+// checkForUpdates() rejection. The flag is re-armed per operation in
+// runSerializedUpdaterOperation.
+function recordAutomaticNetFailure(): void {
+  if (automaticCheckNetFailureCounted) return;
+  automaticCheckNetFailureCounted = true;
+  consecutiveAutomaticNetFailures += 1;
+}
+
+// recordAutomaticCheckFailure tallies one automatic-check failure against the
+// consecutive net:: streak. A net error extends it; any other failure (HTTP
+// status, manifest 404, signature error, …) proves the network stack reached a
+// server and so breaks the streak — otherwise a single interleaving non-net
+// error would let a stale streak still trip the nudge (#3526).
+function recordAutomaticCheckFailure(err: unknown): void {
+  if (isNetError(err)) recordAutomaticNetFailure();
+  else consecutiveAutomaticNetFailures = 0;
+}
+
+// errorMessage extracts the user-facing message for an update error status,
+// defaulting null/undefined to a generic label. Net-error restart guidance is
+// localized in the renderer from the netError flag instead of being built here
+// (#3526).
+function errorMessage(err: unknown): string {
+  return err instanceof Error
+    ? err.message
+    : err == null
+      ? "Update check failed"
+      : String(err);
+}
+
 // isManifest404Error checks whether the error is a 404 on a release
 // manifest YAML file — a routine condition that should not be surfaced
 // to users as an error dialog.
@@ -412,6 +469,8 @@ function wireUpdaterEvents(): void {
     broadcastUpdaterStatus({ state: "checking" });
   });
   autoUpdater.on("update-available", (info) => {
+    // A successful check proves the network stack is healthy.
+    consecutiveAutomaticNetFailures = 0;
     // A manual re-check reports the already-staged build as merely "available"
     // (autoDownload is off on that path). It is still in cache and installs on
     // quit, so keep the richer downloaded status instead of hiding the row.
@@ -423,6 +482,8 @@ function wireUpdaterEvents(): void {
     broadcastUpdaterStatus({ state: "available", version: info?.version });
   });
   autoUpdater.on("update-not-available", () => {
+    // A successful check proves the network stack is healthy.
+    consecutiveAutomaticNetFailures = 0;
     broadcastUpdaterStatus({ state: "not-available" });
     // The staged build outlives a "nothing newer" answer (e.g. after a channel
     // switch); follow up so the restart row returns.
@@ -430,8 +491,10 @@ function wireUpdaterEvents(): void {
       broadcastUpdaterStatus(stagedDownloadedStatus());
   });
   autoUpdater.on("download-progress", (p) => {
-    // Any progress proves the check succeeded, so a later error is a download
-    // failure even when the operation began life as a check.
+    // Any progress proves the network stack is healthy and the check
+    // succeeded, so a later error is a download failure even when the
+    // operation began life as a check.
+    consecutiveAutomaticNetFailures = 0;
     activeUpdaterPhase = "download";
     return broadcastUpdaterStatus({
       state: "downloading",
@@ -473,6 +536,7 @@ function wireUpdaterEvents(): void {
     emitUpdateFailure(err);
     if (activeUpdaterOperation === "automatic-check") {
       console.error("auto-update check failed:", err);
+      recordAutomaticCheckFailure(err);
       restoreAutomaticCheckPreviousStatus();
       return;
     }
@@ -503,17 +567,25 @@ function wireUpdaterEvents(): void {
       return;
     }
     // All other errors: broadcast so the user knows something went wrong.
+    // Chromium network-stack failures carry a netError flag so the renderer can
+    // localize restart guidance instead of showing the raw net:: string (#3526).
     broadcast(
       withActiveRequest({
         state: "error",
-        message: err?.message ?? String(err),
+        message: errorMessage(err),
+        ...(isNetError(err) ? { netError: true } : {}),
       }),
     );
   });
 }
 
 export function getUpdateStatus(): UpdateStatus {
-  return lastStatus;
+  // Derive the nudge at read time: a streak can cross the threshold without
+  // any broadcast (no checking-for-update → restore no-ops), and Settings
+  // seeds from this getter (#3526).
+  return consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
+    ? { ...lastStatus, staleCheckNudge: true }
+    : lastStatus;
 }
 
 async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
@@ -536,9 +608,20 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
       wireUpdaterEvents();
       configureFeed(settings);
       autoUpdater.autoDownload = true;
-      autoUpdater.autoInstallOnAppQuit = true;
-      const result = await autoUpdater.checkForUpdates();
-      if (result?.downloadPromise) await result.downloadPromise;
+      applyInstallOnQuitPolicy();
+      try {
+        const result = await autoUpdater.checkForUpdates();
+        if (result?.downloadPromise) await result.downloadPromise;
+      } catch (err) {
+        // electron-updater normally also emits "error" (handled in
+        // wireUpdaterEvents); a reject-only failure must still restore the
+        // pre-check status so the renderer is neither stuck on "checking" nor
+        // denied the stale-check nudge once the streak crosses the threshold
+        // (#3526). Record before restoring so the restore broadcast is stamped.
+        recordAutomaticCheckFailure(err);
+        restoreAutomaticCheckPreviousStatus();
+        throw err;
+      }
     });
   } catch (err) {
     console.error("auto-update check failed:", err);
@@ -652,7 +735,7 @@ export async function checkForUpdatesNow(
         reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
-        autoUpdater.autoInstallOnAppQuit = true;
+        applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         await autoUpdater.checkForUpdates();
       },
@@ -671,7 +754,8 @@ export async function checkForUpdatesNow(
     } else {
       broadcast({
         state: "error",
-        message: (err as Error)?.message ?? "Update check failed",
+        message: errorMessage(err),
+        ...(isNetError(err) ? { netError: true } : {}),
         requestId: options.requestId,
       });
     }
@@ -715,7 +799,7 @@ export async function returnToHome(
         reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
-        autoUpdater.autoInstallOnAppQuit = true;
+        applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         await autoUpdater.checkForUpdates();
       },
@@ -774,10 +858,94 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
   }
 }
 
+// getMacInstallBlocker is the macOS install preflight. An app launched straight
+// from where it was downloaded runs under App Translocation: a randomized
+// READ-ONLY mount beneath /private/var/folders/.../AppTranslocation. Squirrel
+// cannot replace that bundle, so quitAndInstall() silently does nothing: no
+// restart, no error, a dead button (#3527). The same dead end applies to any
+// bundle the user cannot write to, and to a writable bundle in a directory the
+// user cannot write to: ShipIt swaps by moving the bundle aside and moving the
+// new one in, so the PARENT is what has to be writable, not just the bundle.
+// Returns the user-facing explanation when installing cannot work from here,
+// undefined when the install may proceed. Fails open: only a positively
+// identified blocker suppresses the attempt.
+//
+// This is a backstop, not the primary fix. main.ts now hands off to an
+// equal-or-newer install rather than running from a stale location at all
+// (see main/relocation.ts); this catches what is left, such as a first launch
+// with nothing yet installed in /Applications.
+export function getMacInstallBlocker(): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  // .../Agent Orchestrator.app/Contents/MacOS/<binary> -> the .app bundle root
+  const bundle = path.resolve(process.execPath, "..", "..", "..");
+  // Everything below assumes that shape. Under `npm start`, and in tests,
+  // execPath is a bare node/electron binary and this resolves to some unrelated
+  // ancestor directory whose permissions say nothing about installability, so
+  // fail open rather than guess from it.
+  if (!bundle.endsWith(".app")) return undefined;
+  if (bundle.includes("/AppTranslocation/")) {
+    return (
+      "macOS is running Agent Orchestrator from a temporary read-only location " +
+      "because it was opened straight from where it was downloaded. Quit the app, " +
+      "move Agent Orchestrator.app into /Applications, reopen it from there, and " +
+      "then restart to update."
+    );
+  }
+  if (!existsSync(bundle)) return undefined;
+  try {
+    accessSync(bundle, fsConstants.W_OK);
+    // ShipIt writes into the enclosing directory, not just the bundle.
+    accessSync(path.dirname(bundle), fsConstants.W_OK);
+  } catch {
+    // Deliberately does NOT say "move it to /Applications": the app may already
+    // be there, and telling someone to do what they have done reads as a bug.
+    return (
+      "The update can't be installed because Agent Orchestrator's location isn't " +
+      `writable: ${path.dirname(bundle)}. Fix that folder's permissions, or move ` +
+      "Agent Orchestrator.app somewhere you can write to, reopen it, and then " +
+      "restart to update."
+    );
+  }
+  return undefined;
+}
+
+// applyInstallOnQuitPolicy keeps autoInstallOnAppQuit honest. Every check path
+// sets it to true, and the "downloaded" status row tells the user the build
+// installs on quit. When the install cannot work from this location that is a
+// lie in both directions: the quit-time install fails as silently as the button
+// did, and #3527's dialog only ever covered the button. Turning it off makes
+// the staged build wait for a location it can actually install from.
+function applyInstallOnQuitPolicy(): void {
+  const blocker = getMacInstallBlocker();
+  autoUpdater.autoInstallOnAppQuit = blocker === undefined;
+  if (blocker !== undefined) {
+    console.warn(
+      "install-on-quit disabled; the update cannot be installed from here:",
+      blocker,
+    );
+  }
+}
+
 // quitAndInstallUpdate installs a downloaded update and relaunches. isSilent
 // false keeps the installer UI on Windows; isForceRunAfter relaunches the app.
 export function quitAndInstallUpdate(): void {
   if (!app.isPackaged) return;
+  const blocker = getMacInstallBlocker();
+  if (blocker !== undefined) {
+    console.warn("update install blocked:", blocker);
+    // A dialog, not a status broadcast: the click came from the sidebar row,
+    // and replacing the "downloaded" status would hide that row (losing the
+    // retry affordance) without guaranteeing the user ever sees the message.
+    // The staged build stays staged; after the user moves the app the same
+    // row installs it.
+    void dialog.showMessageBox({
+      type: "warning",
+      message: "The update can't be installed from this location",
+      detail: blocker,
+      buttons: ["OK"],
+    });
+    return;
+  }
   autoUpdater.quitAndInstall(false, true);
 }
 

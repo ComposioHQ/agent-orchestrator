@@ -69,7 +69,9 @@ const shellMocks = vi.hoisted(() => {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
 			getQueryState: vi.fn(),
+			getQueryData: vi.fn(),
 			invalidateQueries: vi.fn(),
+			prefetchQuery: vi.fn(async () => undefined),
 			setQueryData: vi.fn(),
 		},
 		state,
@@ -139,6 +141,10 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
 	agentsQueryOptions: {},
 	refreshAgents: vi.fn(),
+	// The shell reports the install's agent inventory once per launch, so the
+	// mock has to answer this too. Undefined data means the hook reports nothing,
+	// which keeps these shortcut tests free of telemetry side effects.
+	useAgentsQuery: () => ({ data: undefined }),
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
@@ -163,6 +169,7 @@ vi.mock("../components/TitlebarNav", async () => {
 	};
 });
 vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
+vi.mock("../components/SettingsDialog", () => ({ SettingsDialog: () => null }));
 vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
@@ -287,19 +294,20 @@ beforeEach(() => {
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		settingsModal: null,
 	});
 });
 
 describe("shell workspace startup", () => {
-	it("places a full-width host above the sidebar on session routes", async () => {
+	it("leaves the session topbar row to the session split instead of reserving a full-width shell row", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
 
-		const host = screen.getByTestId("session-topbar-host");
 		const sidebar = screen.getByTestId("sidebar");
-		expect(host.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(host).toHaveClass("h-session-topbar");
-		expect(sidebar).toHaveAttribute("data-topbar-offset", "session");
+		expect(screen.queryByTestId("session-topbar-host")).not.toBeInTheDocument();
+		// The route shell owns only the frame. SessionView places its topbar host
+		// inside the terminal panel so the inspector header can occupy this row too.
+		expect(sidebar).not.toHaveAttribute("data-topbar-offset", "session");
 		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
 	});
 
@@ -556,7 +564,8 @@ describe("shell application shortcut subscriptions", () => {
 
 		act(() => shellMocks.state.openSettingsListener?.());
 
-		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
 	});
 
 	it("moves to the next active session in the current project", async () => {

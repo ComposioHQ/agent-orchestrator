@@ -1,10 +1,14 @@
 "use client";
 
-import { COMPANY, HERO_SUBHEADLINE, TAGLINE } from "@ao/shared/constants";
+import {
+  COMPANY,
+  HERO_SUBHEADLINE,
+  TAGLINE,
+} from "@ao/shared/constants";
 import { Star } from "lucide-react";
 import { useState } from "react";
 import { FaGithub } from "react-icons/fa";
-import { isMacPlatform, usePlatform } from "../../hooks/useOS";
+import { track } from "@/lib/analytics";
 import { DownloadButton } from "../DownloadButton";
 import { ProductDemo } from "./components/ProductDemo";
 
@@ -26,18 +30,20 @@ interface HeroSectionProps {
 
 export function HeroSection({ initialStars }: HeroSectionProps) {
   const [copiedCommand, setCopiedCommand] = useState(false);
-  const { platform } = usePlatform();
-  const showInstallCommand = isMacPlatform(platform);
+  const stars = initialStars;
 
   const githubButtonLabel =
-    initialStars === null
+    stars === null
       ? "Stars on GitHub"
-      : `${formatStarCount(initialStars)} Stars on GitHub`;
+      : `${formatStarCount(stars)} Stars on GitHub`;
 
   const copyInstallCommand = async () => {
     if (!navigator.clipboard) return;
 
     await navigator.clipboard.writeText(INSTALL_COMMAND);
+    // A copy is download intent that never touches a download button, so without
+    // this the brew path is invisible in the acquisition funnel.
+    track("install_command_copied", { method: "brew" });
     setCopiedCommand(true);
     window.setTimeout(() => setCopiedCommand(false), 1600);
   };
@@ -70,26 +76,26 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
               >
                 <FaGithub className="size-4" aria-hidden="true" />
                 <span>Star on GitHub</span>
-                {initialStars !== null ? (
+                {stars !== null ? (
                   <span className="flex items-center gap-1 pl-0.5 text-muted-foreground">
                     <Star
                       className="size-3.5 fill-yellow-400 text-yellow-400"
                       aria-hidden="true"
                     />
                     <span className="tabular-nums">
-                      {formatStarCount(initialStars)}
+                      {formatStarCount(stars)}
                     </span>
                   </span>
                 ) : null}
               </a>
             </div>
 
-            {showInstallCommand ? (
+            <div className="landing-install-command mt-4">
               <button
                 type="button"
                 aria-label={`Copy brew install command: ${INSTALL_COMMAND}`}
                 title="Click to copy"
-                className="group mt-4 flex min-h-11 w-full max-w-xl items-start gap-2 rounded-3xl border border-border bg-card/70 px-3 py-2.5 text-left font-mono text-xs tracking-[0.5px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground sm:w-auto sm:items-center sm:overflow-hidden sm:text-sm"
+                className="group flex min-h-11 w-full max-w-xl items-start gap-2 rounded-3xl border border-border bg-card/70 px-3 py-2.5 text-left font-mono text-xs tracking-[0.5px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground sm:w-auto sm:items-center sm:overflow-hidden sm:text-sm"
                 onClick={copyInstallCommand}
               >
                 <span className="text-foreground/40" aria-hidden="true">
@@ -121,7 +127,7 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
                   {copiedCommand ? "Copied" : "Copy"}
                 </span>
               </button>
-            ) : null}
+            </div>
           </div>
 
           <div className="relative w-full max-w-7xl mx-auto mt-12 sm:mt-16 lg:mt-20">

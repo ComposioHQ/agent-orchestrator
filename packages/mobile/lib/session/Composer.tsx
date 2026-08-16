@@ -4,6 +4,7 @@ import { MicKey } from "../voice/MicKey";
 import type { VoiceMode, VoiceState } from "../voice/types";
 import { useTheme, useThemedStyles, useThemeState } from "../ThemeProvider";
 import type { Theme } from "../theme";
+import { haptics } from "../haptics";
 import type { SendTarget } from "./sendRoute";
 
 // One field, one send button. The normal route sends a message to the agent; the
@@ -20,6 +21,7 @@ export function Composer({
 	voice,
 	keyboardVisible,
 	onDismissKeyboard,
+	targetLocked,
 }: {
 	value: string;
 	onChangeText: (v: string) => void;
@@ -30,6 +32,8 @@ export function Composer({
 	voice: { state: VoiceState; mode: VoiceMode; pressIn(): void; pressOut(): void };
 	keyboardVisible: boolean;
 	onDismissKeyboard: () => void;
+	/** Plain worktree shells have no agent route; hide the misleading toggle. */
+	targetLocked?: boolean;
 }) {
 	const t = useTheme();
 	const { scheme } = useThemeState();
@@ -51,11 +55,11 @@ export function Composer({
 					// No autoFocus: the bar is always mounted now, so focusing on mount
 					// would pop the keyboard over the terminal every time the screen opens.
 				/>
-				<Pressable
+				{!targetLocked ? <Pressable
 					accessibilityRole="button"
 					accessibilityLabel={target === "terminal" ? "Switch to chat" : "Switch to terminal"}
 					accessibilityState={{ selected: target === "terminal" }}
-					onPress={() => onTargetChange(target === "terminal" ? "agent" : "terminal")}
+					onPress={() => { haptics.select(); onTargetChange(target === "terminal" ? "agent" : "terminal"); }}
 					hitSlop={6}
 					style={({ pressed }) => [
 						styles.routeToggle,
@@ -68,14 +72,14 @@ export function Composer({
 						size={15}
 						color={target === "terminal" ? t.textTertiary : t.blue}
 					/>
-				</Pressable>
+				</Pressable> : null}
 				{/* Only offered while there is a keyboard to dismiss, instead of a
 				    permanent toggle that claimed to hide a keyboard it did not own. */}
 				{keyboardVisible ? (
 					<Pressable
 						accessibilityRole="button"
 						accessibilityLabel="Hide keyboard"
-						onPress={onDismissKeyboard}
+						onPress={() => { haptics.tap(); onDismissKeyboard(); }}
 						hitSlop={8}
 						style={({ pressed }) => [styles.dismiss, pressed && { opacity: 0.6 }]}
 					>
@@ -90,7 +94,7 @@ export function Composer({
 				accessibilityRole="button"
 				accessibilityLabel="Send"
 				disabled={!canSend}
-				onPress={onSend}
+				onPress={() => { haptics.tap(); onSend(); }}
 				style={({ pressed }) => [styles.send, !canSend && { opacity: 0.35 }, pressed && { opacity: 0.8 }]}
 			>
 				<Feather name="send" size={17} color={t.onAccent} />

@@ -16,9 +16,21 @@ export type ShortcutChord = {
 
 export const SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL =
 	"app:set-close-shell-terminal-shortcut-enabled";
+export const SET_TERMINAL_FOCUSED_CHANNEL = "terminal:set-focused";
+export const TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL = "terminal:font-size-shortcut";
+
+export function terminalFontSizeDelta(chord: ShortcutChord, isMac: boolean): -1 | 0 | 1 {
+	const hasPrimaryModifier = isMac
+		? chord.meta && !chord.ctrl
+		: chord.ctrl && !chord.meta;
+	if (!hasPrimaryModifier || chord.alt) return 0;
+	if (chord.key === "+" || chord.key === "=" || chord.code === "NumpadAdd") return 1;
+	if (chord.key === "-" || chord.code === "NumpadSubtract") return -1;
+	return 0;
+}
 
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
+	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "previous-tab" | "next-tab" | "focus-terminal" | "toggle-browser-devtools";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -98,6 +110,16 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "Navigation",
 	},
 	{
+		id: "previous-tab",
+		label: "Previous tab",
+		category: "Navigation",
+	},
+	{
+		id: "next-tab",
+		label: "Next tab",
+		category: "Navigation",
+	},
+	{
 		id: "toggle-inspector",
 		label: "Toggle inspector",
 		category: "Session",
@@ -105,6 +127,11 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 	{
 		id: "focus-terminal",
 		label: "Focus terminal",
+		category: "Session",
+	},
+	{
+		id: "toggle-browser-devtools",
+		label: "Toggle browser DevTools",
 		category: "Session",
 	},
 ];
@@ -145,8 +172,14 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 			return [isMac ? binding("ArrowUp", { meta: true, alt: true }) : binding("PageUp", { ctrl: true })];
 		case "next-session":
 			return [isMac ? binding("ArrowDown", { meta: true, alt: true }) : binding("PageDown", { ctrl: true })];
+		case "previous-tab":
+			return [binding("Tab", { ctrl: true, shift: true })];
+		case "next-tab":
+			return [binding("Tab", { ctrl: true })];
 		case "focus-terminal":
 			return [isMac ? binding("t", { meta: true, shift: true }) : binding("t", { ctrl: true, shift: true })];
+		case "toggle-browser-devtools":
+			return [isMac ? binding("i", { meta: true, alt: true }) : binding("i", { ctrl: true, shift: true })];
 	}
 }
 
@@ -263,6 +296,8 @@ export const CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL = "app:close-shell-terminal";
 export const OPEN_SETTINGS_SHORTCUT_CHANNEL = "app:open-settings";
 export const PREVIOUS_SESSION_SHORTCUT_CHANNEL = "app:previous-session";
 export const NEXT_SESSION_SHORTCUT_CHANNEL = "app:next-session";
+export const PREVIOUS_TAB_SHORTCUT_CHANNEL = "app:previous-tab";
+export const NEXT_TAB_SHORTCUT_CHANNEL = "app:next-tab";
 export const FOCUS_TERMINAL_SHORTCUT_CHANNEL = "app:focus-terminal";
 
 // New session: ⌘N on macOS, Ctrl+Shift+N on Windows/Linux. Plain Ctrl+N is a
@@ -297,6 +332,14 @@ export function matchesPreviousSessionShortcut(chord: ShortcutChord, isMac: bool
 
 export function matchesNextSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
 	return matchesAppShortcut("next-session", chord, isMac);
+}
+
+export function matchesPreviousTabShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	return matchesAppShortcut("previous-tab", chord, isMac);
+}
+
+export function matchesNextTabShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	return matchesAppShortcut("next-tab", chord, isMac);
 }
 
 export function matchesFocusTerminalShortcut(chord: ShortcutChord, isMac: boolean): boolean {

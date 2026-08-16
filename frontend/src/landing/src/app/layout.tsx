@@ -13,6 +13,7 @@ import {
 import { CTAButtons } from "./components/CTAButtons";
 import { Footer } from "./components/Footer";
 import { Header } from "./components/Header";
+import { LaunchAnalytics } from "./components/LaunchAnalytics";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -106,9 +107,28 @@ export default function RootLayout({
         <OrganizationJsonLd />
         <SoftwareApplicationJsonLd />
         <WebsiteJsonLd />
+        <link rel="preload" as="image" href="/optimized/hero-background.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature2.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature3.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature4.webp" type="image/webp" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                var ua = navigator.userAgent || "";
+                var isMobile = /iphone|ipad|ipod|android|mobile|tablet/i.test(ua) ||
+                  (/macintosh/i.test(ua) && navigator.maxTouchPoints > 1);
+                document.documentElement.dataset.landingPlatform =
+                  !isMobile && /mac os x|macintosh/i.test(ua) ? "mac" : "other";
+              })();
+            `,
+          }}
+        />
       </head>
       <body className="relative overscroll-none font-sans antialiased">
         <Providers>
+          <LaunchAnalytics />
           <Header ctaButtons={<CTAButtons />} />
           {children}
           <Footer />

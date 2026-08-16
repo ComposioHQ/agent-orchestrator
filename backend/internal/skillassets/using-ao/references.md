@@ -14,6 +14,8 @@ Natural-language-to-command mappings for common AO tasks.
 | Check frontend runtime failures | `ao browser errors` and `ao browser console` |
 | Diagnose a request/API/CORS/auth/redirect failure when normal page evidence is insufficient | `ao browser network start`, reproduce once, then `ao browser network stop` |
 | Check network capture without enabling it | `ao browser network status` or `ao browser network list` |
+| Open the user's real Chromium debugging surface | `ao browser devtools open` |
+| Close the shared DevTools window when explicitly requested | `ao browser devtools close` |
 | Capture the page | `ao browser screenshot [path]` |
 | Spawn a worker on issue N | `ao spawn --project <p> --issue N --name "<=20 chars>" --prompt "..."` |
 | Message a running agent | `ao send --session <id> --message "..."` |
@@ -31,7 +33,8 @@ Natural-language-to-command mappings for common AO tasks.
 | Run health checks | `ao doctor` |
 | Clear the preview panel | `ao preview clear` |
 | List orchestrator sessions | `ao orchestrator ls` |
-| Claim an existing PR for a session | `ao session claim-pr <id> <pr-ref>` |
+| Claim an existing PR for the current session | `ao session claim-pr <pr-ref>` (`AO_SESSION_ID`) |
+| Claim an existing PR for another session | `ao session claim-pr <id> <pr-ref>` |
 | Submit a code review verdict | `ao review submit <session-id> --run <run-id> --verdict approved` |
 | Configure a project's default branch or model | `ao project set-config <id> --default-branch <branch> --model <model>` |
 | Import projects from a legacy AO install | `ao import --dry-run` (preview), then `ao import -y` |

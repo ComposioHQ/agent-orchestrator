@@ -80,6 +80,10 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions",
 	"/api/v1/sessions/{sessionId}",
 	"/api/v1/sessions/{sessionId}/activity",
+	"/api/v1/sessions/{sessionId}/agent-switches",
+	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff",
+	"/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover",
+	"/api/v1/sessions/{sessionId}/interface-transition",
 	"/api/v1/sessions/{sessionId}/kill",
 	"/api/v1/sessions/{sessionId}/pr",
 	"/api/v1/sessions/{sessionId}/pr/claim",
@@ -88,8 +92,10 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/preview/server",
 	"/api/v1/sessions/{sessionId}/resume-agent",
 	"/api/v1/sessions/{sessionId}/restore",
+	"/api/v1/sessions/{sessionId}/switch-agent",
 	"/api/v1/sessions/{sessionId}/reviews",
 	"/api/v1/sessions/{sessionId}/reviews/cancel",
+	"/api/v1/sessions/{sessionId}/reviews/comments/resolve",
 	"/api/v1/sessions/{sessionId}/reviews/submit",
 	"/api/v1/sessions/{sessionId}/reviews/trigger",
 	"/api/v1/sessions/{sessionId}/rollback",
@@ -259,6 +265,15 @@ export function apiErrorCode(error: unknown): string | undefined {
 	if (typeof error === "object" && error !== null) {
 		const body = error as { code?: unknown };
 		if (typeof body.code === "string" && body.code !== "") return body.code;
+	}
+	return undefined;
+}
+
+/** Correlation id from the daemon's stable error envelope. */
+export function apiErrorRequestId(error: unknown): string | undefined {
+	if (typeof error === "object" && error !== null) {
+		const body = error as { requestId?: unknown };
+		if (typeof body.requestId === "string" && body.requestId !== "") return body.requestId;
 	}
 	return undefined;
 }
