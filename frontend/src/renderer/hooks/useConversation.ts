@@ -56,6 +56,14 @@ export function conversationQueryKey(sessionId: string) {
 	return ["conversation", sessionId] as const;
 }
 
+export function conversationModelsQueryKey(sessionId: string) {
+	return ["conversation-models", sessionId] as const;
+}
+
+export function conversationConfigOptionsQueryKey(sessionId: string) {
+	return ["conversation-config-options", sessionId] as const;
+}
+
 const CONVERSATION_PAGE_SIZE = 200;
 const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
 
@@ -214,6 +222,10 @@ export function useConversationCommands(sessionId: string | undefined) {
 			if (error) throw error;
 		},
 		onSuccess: invalidate,
+		// A failed interrupt (e.g. CHAT_NO_ACTIVE_TURN) means the cached turn
+		// state is wrong. Refetch so the UI discovers the real state instead of
+		// keeping a Working bar the user cannot dismiss.
+		onError: invalidate,
 	});
 
 	const resume = useMutation({
@@ -387,7 +399,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 		resumeAgent: () => resume.mutateAsync(),
 		resumingAgent: resume.isPending,
 		resumeError: resume.error ? apiErrorMessage(resume.error) : undefined,
-		compact: () => compact.mutate(),
+		compact: () => compact.mutateAsync(),
 		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
 		/** A compaction is in flight provider-side and takes seconds, so it reads as
 		 *  its own state rather than folding into the generic busy flag, which also
@@ -482,7 +494,7 @@ function steerRefusal(error: unknown): string | undefined {
  */
 export function useConversationModels(sessionId: string | undefined, enabled: boolean) {
 	const query = useQuery({
-		queryKey: ["conversation-models", sessionId ?? ""],
+		queryKey: conversationModelsQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId) && enabled,
 		// The catalog changes on the scale of provider releases, not turns.
 		staleTime: 5 * 60 * 1000,
@@ -514,7 +526,7 @@ export function useConversationModels(sessionId: string | undefined, enabled: bo
  */
 export function useConversationConfigOptions(sessionId: string | undefined, enabled: boolean) {
 	const queryClient = useQueryClient();
-	const queryKey = ["conversation-config-options", sessionId ?? ""] as const;
+	const queryKey = conversationConfigOptionsQueryKey(sessionId ?? "");
 	const query = useQuery({
 		queryKey,
 		enabled: Boolean(sessionId) && enabled,

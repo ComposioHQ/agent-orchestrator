@@ -243,9 +243,17 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			reviewcore.WithRunFilePath(cfg.RunFilePath),
 			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store,
+	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
-		reviewsvc.WithTelemetry(telemetry))
+		reviewsvc.WithTelemetry(telemetry),
+	}
+	if scmProvider != nil {
+		reviewOpts = append(reviewOpts,
+			reviewsvc.WithReviewRequester(scmProvider),
+			reviewsvc.WithReviewResolver(scmProvider),
+		)
+	}
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
 	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
@@ -437,6 +445,7 @@ type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
 var _ interface {
+	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
@@ -502,10 +511,19 @@ func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
 	return c.svc.HasLiveChatController(id)
 }
 
-// PrepareChatHandoff closes Chat intake and waits for the controller to become
-// quiescent before Session Manager stops it. These methods intentionally live
+// ArmChatHandoff closes Chat intake and dispatch synchronously at transition
+// acceptance. PrepareChatHandoff then settles interrupt work or waits for drain
+// work before Session Manager stops the source. These methods intentionally live
 // on the wiring adapter: Session Manager's handoff capability is optional, but
 // wrapping the concrete Chat service must not erase it.
+func (c chatLauncher) ArmChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	return c.svc.ArmChatHandoff(ctx, id, policy)
+}
+
 func (c chatLauncher) PrepareChatHandoff(
 	ctx context.Context,
 	id domain.SessionID,

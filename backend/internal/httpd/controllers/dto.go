@@ -696,6 +696,7 @@ type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
 	Line             int    `json:"line,omitempty"`
+	Body             string `json:"body,omitempty"`
 	AutoInjectReview bool   `json:"autoInjectReview"`
 }
 
@@ -768,7 +769,7 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 	for _, reviewer := range in.UnresolvedBy {
 		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
 		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, AutoInjectReview: link.AutoInjectReview})
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
 		}
 		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}
@@ -1820,6 +1821,28 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+}
+
+// ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.
+type ResolveReviewCommentRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	CommentURL     string `json:"commentUrl" description:"Provider URL of the unresolved review comment to resolve."`
+}
+
+// ResolveReviewCommentResponse is returned after AO resolves a provider review thread.
+type ResolveReviewCommentResponse struct {
+	OK bool `json:"ok"`
+}
+
+// RequestRereviewRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/rerequest.
+type RequestRereviewRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	ReviewerID     string `json:"reviewerId" description:"Provider login of the reviewer to ask for another review."`
+}
+
+// RequestRereviewResponse is returned after AO asks the SCM provider for another review.
+type RequestRereviewResponse struct {
+	OK bool `json:"ok"`
 }
 
 // MobileDeviceResponse is one row of the desktop's mobile-device roster: the

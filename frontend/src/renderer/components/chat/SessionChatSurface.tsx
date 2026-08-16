@@ -21,12 +21,18 @@ import {
 } from "../../hooks/useConversation";
 import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import { can } from "../../types/conversation";
+import type { Theme } from "../../stores/ui-store";
+import type { TerminalTarget } from "../../types/terminal";
 import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({
 	session,
 	reviewerTerminal,
 	onOpenReviewerTerminal,
+	reviewerTarget,
+	onSelectChat,
+	daemonReady,
+	theme,
 	onOpenShell,
 	openingShell,
 	shellError,
@@ -36,6 +42,10 @@ export function SessionChatSurface({
 	session: WorkspaceSession;
 	reviewerTerminal?: { handleId: string; harness: string };
 	onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
+	reviewerTarget?: Extract<TerminalTarget, { kind: "reviewer" }>;
+	onSelectChat?: () => void;
+	daemonReady?: boolean;
+	theme?: Theme;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
@@ -123,8 +133,13 @@ export function SessionChatSurface({
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}
+			session={session}
 			reviewerTerminal={reviewerTerminal}
 			onOpenReviewerTerminal={onOpenReviewerTerminal}
+			reviewerTarget={reviewerTarget}
+			onSelectChat={onSelectChat}
+			daemonReady={daemonReady}
+			theme={theme}
 			headerActions={headerActions}
 			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}

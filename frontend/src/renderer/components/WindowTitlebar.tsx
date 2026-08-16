@@ -34,7 +34,7 @@ const isWindows =
       "",
   );
 
-type MenuKey = "view" | "window" | "help";
+type MenuKey = "view" | "help";
 
 // Dispatch a native-menu action to the main process (see menu:action in main.ts).
 const act = (action: string) => () => {

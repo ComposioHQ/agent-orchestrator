@@ -94,7 +94,6 @@ describe("SwitchAgentDialog", () => {
 		expect(dialog).toHaveAttribute("data-slot", "dialog-content");
 		const backdrop = screen.getByTestId("switch-agent-terminal-backdrop");
 		expect(backdrop).toHaveClass("agent-switch-terminal-scrim");
-		expect(dialog).toHaveClass("w-dialog-md");
 		expect(
 			within(dialog).getByText(
 				"Move this session from Claude Code to another agent. AO will preserve the current native session and hand off the work.",
@@ -142,6 +141,42 @@ describe("SwitchAgentDialog", () => {
 		const options = switchMocks.mutate.mock.calls[0]?.[1] as { onSuccess: () => void };
 		options.onSuccess();
 		expect(onOpenChange).toHaveBeenCalledWith(false);
+	});
+
+	it("resets the previous target model when the active agent changes", async () => {
+		const { queryClient, rerender } = renderDialog();
+		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
+		await userEvent.click(within(dialog).getByRole("button", { name: "Model" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "GPT-5.4 Mini" }));
+		expect(within(dialog).getByRole("button", { name: "Model" })).toHaveTextContent("GPT-5.4 Mini");
+
+		const switchedSession = { ...worker, provider: "codex" as const };
+		rerender(
+			<QueryClientProvider client={queryClient}>
+				<SwitchAgentDialog
+					container={document.body}
+					onOpenChange={vi.fn()}
+					open
+					session={switchedSession}
+				/>
+			</QueryClientProvider>,
+		);
+
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: "Model" })).toHaveTextContent(
+				"Use Claude Code's default",
+			),
+		);
+		await userEvent.click(screen.getByRole("button", { name: "Switch" }));
+		expect(switchMocks.mutate).toHaveBeenLastCalledWith(
+			{
+				idempotencyKey: "idempotency-1",
+				model: "",
+				session: switchedSession,
+				targetHarness: "claude-code",
+			},
+			{ onSuccess: expect.any(Function) },
+		);
 	});
 
 	it("keeps admission controls visible but disabled while displaying Starting...", () => {

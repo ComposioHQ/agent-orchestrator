@@ -276,6 +276,16 @@ describe("Sidebar", () => {
 		const footer = document.querySelector('[data-sidebar="footer"]');
 		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
 		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
+		// Windowed: lift the hairline by the framed panel inset + 1px surface
+		// border. macOS also collapses that inset in native fullscreen.
+		if (footer?.className.includes("--size-center-panel-inset-mac")) {
+			expect(footer).toHaveClass(
+				"mb-[calc(var(--size-center-panel-inset-mac)+1px)]",
+				"in-[.native-fullscreen]:mb-px",
+			);
+		} else {
+			expect(footer).toHaveClass("mb-[calc(var(--size-center-panel-bottom-inset)+1px)]");
+		}
 	});
 
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
@@ -310,7 +320,7 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const content = document.querySelector('[data-sidebar="content"]');
-		expect(content).toHaveClass("overflow-y-auto");
+		expect(content).toHaveClass("overflow-y-auto", "project-sidebar-scrollbar");
 		expect(content).not.toHaveClass("scrollbar-none");
 		expect(content).not.toContainElement(screen.getByText("Projects"));
 	});
@@ -462,6 +472,58 @@ describe("Sidebar", () => {
 		expect(screen.queryByText("other task")).not.toBeInTheDocument();
 		expect(screen.getByText("fix login")).toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("lists worker sessions by last activity, newest first", () => {
+		const oldest: WorkspaceSession = {
+			...session,
+			id: "proj-1-old",
+			title: "old task",
+			createdAt: "2026-06-29T00:00:00Z",
+			updatedAt: "2026-07-02T00:00:00Z",
+			activity: { state: "idle", lastActivityAt: "2026-07-01T00:00:00Z" },
+		};
+		const newest: WorkspaceSession = {
+			...session,
+			id: "proj-1-new",
+			title: "new task",
+			createdAt: "2026-07-01T00:00:00Z",
+			updatedAt: "2026-07-01T00:00:00Z",
+			activity: { state: "active", lastActivityAt: "2026-07-02T00:00:00Z" },
+		};
+		const noActivity: WorkspaceSession = {
+			...session,
+			id: "proj-1-no-activity",
+			title: "no activity",
+			createdAt: "2026-06-29T00:00:00Z",
+			updatedAt: "2026-07-03T00:00:00Z",
+		};
+		const invalidActivity: WorkspaceSession = {
+			...session,
+			id: "proj-1-invalid-activity",
+			title: "invalid activity",
+			createdAt: "2026-06-29T00:00:00Z",
+			updatedAt: "2026-07-04T00:00:00Z",
+			activity: { state: "idle", lastActivityAt: "not-a-timestamp" },
+		};
+		const createdFallback: WorkspaceSession = {
+			...session,
+			id: "proj-1-created-fallback",
+			title: "created fallback",
+			createdAt: "2026-07-05T00:00:00Z",
+			updatedAt: "not-a-timestamp",
+			activity: { state: "idle", lastActivityAt: "also-not-a-timestamp" },
+		};
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [oldest, newest, noActivity, invalidActivity, createdFallback] }] });
+
+		const sessionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-session-row] button[aria-label^="Open "]'));
+		expect(sessionButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+			"Open created fallback",
+			"Open invalid activity",
+			"Open no activity",
+			"Open new task",
+			"Open old task",
+		]);
 	});
 
 	it("navigates to the project board when the project row button is clicked", async () => {

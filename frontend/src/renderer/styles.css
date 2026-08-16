@@ -1392,6 +1392,58 @@ textarea,
 	background: transparent;
 }
 
+/* Chromium uses the desktop theme's chunky native horizontal scrollbar on
+   Linux. Keep the board scroller compact and rounded there without changing
+   macOS overlay scrollbars or Windows behavior. */
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar {
+	height: 6px;
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-track,
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-thumb {
+	min-width: 24px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent);
+}
+
+.platform-linux .board-horizontal-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 56%, transparent);
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar {
+	width: 6px;
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-button {
+	display: none;
+	width: 0;
+	height: 0;
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-thumb {
+	min-height: 24px;
+	border-radius: 999px;
+	background-color: color-mix(in srgb, var(--color-scrollbar) 42%, transparent);
+}
+
+.platform-linux .project-sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+	background-color: color-mix(in srgb, var(--color-scrollbar) 56%, transparent);
+}
+
 @supports (-moz-appearance: none) {
 	.board-scrollbar {
 		scrollbar-width: thin;
@@ -1692,7 +1744,9 @@ body.is-resizing-x [data-slot="resize-handle"]::after {
 }
 
 body.is-resizing-x [data-slot="sidebar-gap"],
-body.is-resizing-x [data-slot="sidebar-container"] {
+body.is-resizing-x [data-slot="sidebar-container"],
+body.is-resizing-x [data-slot="inspector-gap"],
+body.is-resizing-x [data-slot="inspector-container"] {
 	transition: none;
 }
 
@@ -2099,7 +2153,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--color-text-topbar);
 }
 
-.session-collapsed-inspector-actions {
+.session-pinned-actions-reserve {
 	display: flex;
 	width: 0;
 	min-width: 0;
@@ -2108,18 +2162,18 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	justify-content: flex-end;
 	margin-left: calc(-1 * var(--space-2));
 	transition:
-		width var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
-		margin-left var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
+		width var(--session-inspector-motion-duration, 400ms)
+			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)),
+		margin-left var(--session-inspector-motion-duration, 400ms)
+			var(--session-inspector-motion-easing, linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1));
 }
 
-.session-collapsed-inspector-actions[data-state="expanded"] {
+.session-pinned-actions-reserve[data-state="expanded"] {
 	width: calc(var(--size-topbar-control) + var(--size-topbar-control) + var(--space-2));
 	margin-left: 0;
 }
 
-.session-inspector-persistent-actions {
+.session-pinned-actions {
 	-webkit-app-region: no-drag;
 	position: absolute;
 	top: 0;
@@ -2177,7 +2231,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition-duration: var(--session-inspector-motion-duration);
 	transition-timing-function: var(
 		--session-inspector-motion-easing,
-		cubic-bezier(0.16, 1, 0.3, 1)
+		linear(0, 0.333 12.5%, 0.642 25%, 0.813 37.5%, 0.902 50%, 0.949 62.5%, 0.974 75%, 0.986 87.5%, 1)
 	);
 }
 
@@ -2216,7 +2270,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 @media (prefers-reduced-motion: reduce) {
 	.workspace-topbar-actions .topbar-control,
 	.workspace-topbar-actions [data-compact-label],
-	.session-collapsed-inspector-actions,
+	.session-pinned-actions-reserve,
 	.session-split[data-terminal-live-resize="true"]
 		.workspace-topbar-actions
 		[data-priority="secondary"].topbar-control,
@@ -2459,6 +2513,16 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .window-titlebar__toggle:hover {
 	background: color-mix(in srgb, var(--fg) 8%, transparent);
 	color: var(--fg);
+}
+
+.window-titlebar__toggle:disabled {
+	cursor: not-allowed;
+	opacity: 0.45;
+}
+
+.window-titlebar__toggle:disabled:hover {
+	background: transparent;
+	color: var(--fg-muted);
 }
 
 .window-titlebar__toggle-icon {
@@ -2788,51 +2852,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Match the left sidebar's spring-like reveal while keeping direct separator
- * drags under the pointer. Both panels participate so neither edge snaps. */
-.session-split > [data-panel] {
-	transition: flex-grow var(--session-inspector-motion-duration, 320ms)
-		var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
-}
-
-.session-inspector-separator {
-	transition-duration: var(--session-inspector-motion-duration, 320ms);
-	transition-timing-function: var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
-}
-
-.session-split > .session-inspector-panel[data-panel] {
-	max-width: var(--session-inspector-max-width, 50%);
-}
-
-.session-split:has([data-separator="active"]) > [data-panel] {
-	transition: none;
-}
-
-.session-inspector-motion {
-	opacity: 1;
-	transform: translateX(0);
-	transition:
-		opacity var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1)),
-		transform var(--session-inspector-motion-duration, 320ms)
-			var(--session-inspector-motion-easing, cubic-bezier(0.16, 1, 0.3, 1));
-	will-change: opacity, transform;
-}
-
-.session-inspector-motion[data-motion-state="opening"],
-.session-inspector-motion[data-motion-state="closing"],
-.session-inspector-motion[data-motion-state="closed"] {
-	opacity: 0;
-	transform: translateX(12px);
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.session-split > [data-panel],
-	.session-inspector-separator,
-	.session-inspector-motion {
-		transition: none;
-	}
-}
+/* Inspector open/close uses the same Motion spring as the left sidebar
+ * (gap width + x-transform). Dragging updates --ao-inspector-w directly. */
 
 .session-inspector__topbar {
 	background: var(--bg);
@@ -2841,13 +2862,16 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 .session-inspector__tab-button {
+	flex: none;
 	gap: 0;
 }
 
 .session-inspector__responsive-label {
 	max-width: 5.5rem;
-	margin-left: var(--space-1);
+	margin-left: var(--space-0_5);
 	overflow: hidden;
+	/* Clip during the collapse animation — never ellipsize mid-label. */
+	text-overflow: clip;
 	opacity: 1;
 	transform: translateX(0);
 	transition:
@@ -2857,7 +2881,15 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-@container inspector (max-width: 359px) {
+.session-inspector__tablist {
+	container: inspector-tabs / inline-size;
+	justify-content: flex-start;
+}
+
+/* Keep labels until they nearly meet the pinned actions, then collapse to a
+ * tight icon cluster. Tuned just under the ~270px labeled content width so the
+ * default inspector (~274px tablist) still shows full words. */
+@container inspector-tabs (max-width: 268px) {
 	.session-inspector__responsive-label {
 		max-width: 0;
 		margin-left: 0;
@@ -2872,7 +2904,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .session-split[data-terminal-live-resize="true"][data-inspector-label-mode="expanded"]
 	.session-inspector__responsive-label {
 	max-width: 5.5rem;
-	margin-left: var(--space-1);
+	margin-left: var(--space-0_5);
 	opacity: 1;
 	transform: translateX(0);
 }
@@ -3862,9 +3894,7 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 
 @media (prefers-reduced-motion: reduce) {
 	.notification-row-enter,
-	.session-inspector-motion,
-	.session-inspector__responsive-label,
-	.session-split > [data-panel] {
+	.session-inspector__responsive-label {
 		animation: none;
 		transition: none;
 	}
@@ -3873,7 +3903,9 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 /* Reviewer picker menu: the agent list needs more room than the default option
    menu so harness names are not truncated mid-word. */
 @utility reviews-agent-menu-surface {
-	min-width: 13rem;
+	width: max-content;
+	min-width: 0;
+	max-width: min(13rem, calc(100vw - 2rem));
 	padding: var(--space-1_5);
 	gap: var(--space-1);
 }

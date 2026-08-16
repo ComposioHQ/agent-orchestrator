@@ -927,6 +927,15 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	if err != nil {
 		t.Fatalf("create AO session: %v", err)
 	}
+	conversation, err := s.CreateConversation(ctx, "conversation-switch-activation", domain.ConversationScopeSession, session.ProjectID, session.ID, now)
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := s.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+		Model: "source-model", ReasoningEffort: "source-mode", ApprovalMode: domain.PermissionModeAcceptEdits,
+	}, now); err != nil {
+		t.Fatalf("set source conversation settings: %v", err)
+	}
 	target := domain.AgentNativeSession{
 		ID: "activation-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
 		NativeSessionID: "codex-native-id",
@@ -1048,6 +1057,10 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	if ok, err := s.ActivateAgentSwitchTarget(ctx, activation); err != nil || ok {
 		t.Fatalf("stale runtime handle activation: ok=%v err=%v", ok, err)
 	}
+	unchangedConversation, err := s.ConversationForSession(ctx, session.ID)
+	if err != nil || unchangedConversation.Settings.Model != "source-model" || unchangedConversation.Settings.ReasoningEffort != "source-mode" {
+		t.Fatalf("stale activation changed conversation settings: conversation=%+v err=%v", unchangedConversation, err)
+	}
 	unchanged, ok, err = s.GetSession(ctx, session.ID)
 	if err != nil || !ok || unchanged.Harness != domain.HarnessClaudeCode || unchanged.Activity.State != domain.ActivityExited {
 		t.Fatalf("stale runtime handle partially mutated session: session=%+v ok=%v err=%v", unchanged, ok, err)
@@ -1067,6 +1080,13 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	}
 	if !activated.FirstSignalAt.IsZero() {
 		t.Fatalf("target activation retained old hook receipt: %v", activated.FirstSignalAt)
+	}
+	activatedConversation, err := s.ConversationForSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("get activated conversation: %v", err)
+	}
+	if activatedConversation.Settings.Model != "" || activatedConversation.Settings.ReasoningEffort != "" || activatedConversation.Settings.ApprovalMode != domain.PermissionModeAcceptEdits {
+		t.Fatalf("target activation conversation settings = %+v, want target-default model/mode and preserved approval", activatedConversation.Settings)
 	}
 	if activated.IsTerminated || activated.DisplayName != rec.DisplayName ||
 		activated.TerminateOnPRMerge != rec.TerminateOnPRMerge || activated.CleanupGeneration != rec.CleanupGeneration ||

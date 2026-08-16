@@ -95,6 +95,7 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/sessions/{sessionId}/switch-agent",
 	"/api/v1/sessions/{sessionId}/reviews",
 	"/api/v1/sessions/{sessionId}/reviews/cancel",
+	"/api/v1/sessions/{sessionId}/reviews/comments/resolve",
 	"/api/v1/sessions/{sessionId}/reviews/submit",
 	"/api/v1/sessions/{sessionId}/reviews/trigger",
 	"/api/v1/sessions/{sessionId}/rollback",

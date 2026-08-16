@@ -53,6 +53,7 @@ export type PullRequestReviewCommentLink = {
 	url?: string;
 	file?: string;
 	line?: number;
+	body?: string;
 	autoInjectReview: boolean;
 };
 

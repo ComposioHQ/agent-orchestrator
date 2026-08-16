@@ -156,6 +156,12 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 	const [refreshingRecovery, setRefreshingRecovery] = useState(false);
 	const operationPending = admissionPending || recoverAgentSwitch.isPending;
 	useEffect(() => {
+		setTargetHarness(session.provider === "claude-code" ? "codex" : "claude-code");
+		setModel("");
+		setMode("");
+		setModelWarning(undefined);
+	}, [session.provider]);
+	useEffect(() => {
 		if (open && durableSwitching) onOpenChange(false);
 	}, [durableSwitching, onOpenChange, open]);
 	const clearFailedAttempt = () => {
@@ -217,7 +223,7 @@ export function SwitchAgentDialog({ container, open, session, onOpenChange }: Sw
 					/>
 				}
 				showCloseButton={false}
-				className="absolute left-1/2 top-1/2 z-overlay w-dialog-md max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
+				className="absolute left-1/2 top-1/2 z-overlay w-[min(var(--size-dialog-md),calc(100%-var(--space-8)))] max-w-none -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-xl border border-border-strong bg-surface/95 p-0 text-foreground shadow-xl shadow-black/20 data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none"
 			>
 					<DialogClose asChild>
 						<button
