@@ -883,7 +883,7 @@ function ExternalReviewCard({
 				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<span className="flex min-w-0 items-center gap-1.5">
 						<span className="inline-flex min-w-0 items-center gap-1 text-xs font-semibold text-foreground">
-									<GithubAvatar className="size-5" login={entry.reviewerId} />
+							<GithubAvatar className="size-5" login={entry.reviewerId} />
 							<span className="truncate">{entry.reviewerId}</span>
 						</span>
 						{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
