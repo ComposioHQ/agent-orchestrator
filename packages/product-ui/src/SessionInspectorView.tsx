@@ -1104,6 +1104,11 @@ function InlineCommentRow({
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-mono text-passive">
 				<span className="font-semibold text-foreground">#{commentNumber}</span>
 				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
+				{parsed.priority ? (
+					<span aria-label={`priority ${parsed.priority}`} className="ml-auto font-mono text-2xs font-semibold tracking-wide text-error/80">
+						{parsed.priority}
+					</span>
+				) : null}
 			</div>
 			{parsed.body ? <p className="m-0 max-w-prose whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{parsed.body}</p> : null}
 			<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
@@ -1141,11 +1146,6 @@ function InlineCommentRow({
 					<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={comment.url}>
 						{labels.viewInFile}
 					</ExternalLink>
-				) : null}
-				{parsed.priority ? (
-					<span aria-label={`priority ${parsed.priority}`} className="ml-auto font-mono text-2xs font-semibold tracking-wide text-error/80">
-						{parsed.priority}
-					</span>
 				) : null}
 			</div>
 			{sendError && !sent ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
