@@ -883,7 +883,7 @@ function ExternalReviewCard({
 				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<span className="flex min-w-0 items-center gap-1.5">
 						<span className="inline-flex min-w-0 items-center gap-1 text-xs font-semibold text-foreground">
-							<GithubAvatar login={entry.reviewerId} />
+									<GithubAvatar className="size-5" login={entry.reviewerId} />
 							<span className="truncate">{entry.reviewerId}</span>
 						</span>
 						{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
@@ -908,7 +908,7 @@ function ExternalReviewCard({
 								</span>
 							) : (
 								<button
-									className="inline-flex min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-2.5 py-1.5 text-center text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
+									className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-2.5 text-center text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
 									onClick={async () => {
 										setRereviewError(false);
 										try {
@@ -1092,7 +1092,7 @@ function InlineCommentRow({
 			) : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-mono text-passive">
 				<span className="font-semibold text-foreground">#{commentNumber}</span>
-				{parsed.priority ? <span className="font-semibold text-error">{parsed.priority}</span> : null}
+				{parsed.priority ? <span className="rounded border border-error/30 bg-error/10 px-1.5 py-0.5 font-semibold text-error">{parsed.priority}</span> : null}
 				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
 			</div>
 			{parsed.body ? <p className="m-0 max-w-prose whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{parsed.body}</p> : null}
@@ -1104,12 +1104,11 @@ function InlineCommentRow({
 					</span>
 				) : (
 					<button
-						className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60 [&_svg]:size-icon-xs"
+						className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60"
 						disabled={sending || !onSend}
 						onClick={onSend}
 						type="button"
 					>
-						<BotIcon className="shrink-0 text-muted-foreground" />
 						{labels.sendToWorkerAgent}
 					</button>
 				)}
@@ -1120,7 +1119,7 @@ function InlineCommentRow({
 					</span>
 				) : (
 					<button
-						className="inline-flex h-control-md items-center rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground"
 						disabled={!onResolve || !comment.url}
 						onClick={onResolve}
 						type="button"
@@ -1129,7 +1128,7 @@ function InlineCommentRow({
 					</button>
 				)}
 				{comment.url ? (
-					<ExternalLink className="font-medium text-muted-foreground no-underline transition-colors hover:text-foreground" href={comment.url}>
+					<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={comment.url}>
 						{labels.viewInFile}
 					</ExternalLink>
 				) : null}
