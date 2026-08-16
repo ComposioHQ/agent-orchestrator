@@ -633,6 +633,7 @@
 	"settings.sessionInterface.label": "Interface de session par défaut",
 	"settings.sessionInterface.terminal": "Terminal",
 	"settings.sessionInterface.unavailable": "S’applique aux nouvelles sessions. Aucun agent installé ne prend encore en charge le chat.",
+	"settings.soundNotifications": "Notifications sonores",
 	"settings.project.trackerIntake": "Intake du tracker",
 	"settings.project.workspaceRepos": "Dépôts de l'espace de travail",
 	"settings.project.worktrees": "Worktrees",

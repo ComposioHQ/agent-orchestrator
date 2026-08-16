@@ -624,6 +624,7 @@
 	"settings.sessionInterface.label": "Standard-Sitzungsoberfläche",
 	"settings.sessionInterface.terminal": "Terminal",
 	"settings.sessionInterface.unavailable": "Gilt für neue Sitzungen. Noch unterstützt kein installierter Agent Chat.",
+	"settings.soundNotifications": "Tonbenachrichtigungen",
 	"settings.project.trackerIntake": "Tracker-Intake",
 	"settings.project.workspaceRepos": "Workspace-Repos",
 	"settings.project.worktrees": "Worktrees",

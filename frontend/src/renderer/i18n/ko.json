@@ -624,6 +624,7 @@
 	"settings.sessionInterface.label": "기본 세션 인터페이스",
 	"settings.sessionInterface.terminal": "터미널",
 	"settings.sessionInterface.unavailable": "새 세션에 적용됩니다. 아직 채팅을 지원하는 설치된 에이전트가 없습니다.",
+	"settings.soundNotifications": "소리 알림",
 	"settings.project.trackerIntake": "트래커 인테이크",
 	"settings.project.workspaceRepos": "워크스페이스 저장소",
 	"settings.project.worktrees": "워크트리",

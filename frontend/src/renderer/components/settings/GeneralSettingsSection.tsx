@@ -2,7 +2,9 @@ import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
+import { useSoundNotificationsStore } from "../../stores/sound-notifications-store";
 import { useUiStore } from "../../stores/ui-store";
+import { Switch } from "../ui/switch";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -94,6 +96,9 @@ export function GeneralSettingsSection({
 	const setLocale = useLocaleStore((state) => state.setLocale);
 	const localeSaving = useLocaleStore((state) => state.saving);
 	const localeSaveError = useLocaleStore((state) => state.saveError);
+	const soundNotificationsEnabled = useSoundNotificationsStore((state) => state.enabled);
+	const setSoundNotificationsEnabled = useSoundNotificationsStore((state) => state.setEnabled);
+	const soundNotificationsSaving = useSoundNotificationsStore((state) => state.saving);
 
 	const themeOptions = [
 		{ value: "light", label: t("settings.theme.light") },
@@ -150,6 +155,16 @@ export function GeneralSettingsSection({
 				</p>
 			) : null}
 			<SessionInterfaceRow />
+			<SettingsRow label={t("settings.soundNotifications")}>
+				<Switch
+					aria-label={t("settings.soundNotifications")}
+					checked={soundNotificationsEnabled}
+					disabled={soundNotificationsSaving}
+					onCheckedChange={(next) => {
+						void setSoundNotificationsEnabled(next);
+					}}
+				/>
+			</SettingsRow>
 			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
 		</SettingsSection>
 	);

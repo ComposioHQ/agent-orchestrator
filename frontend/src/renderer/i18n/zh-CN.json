@@ -606,6 +606,7 @@
 	"settings.sessionInterface.label": "默认会话界面",
 	"settings.sessionInterface.terminal": "终端",
 	"settings.sessionInterface.unavailable": "适用于新会话。目前没有已安装的代理支持聊天。",
+	"settings.soundNotifications": "声音通知",
 	"settings.project.trackerIntake": "议题接入",
 	"settings.project.workspaceRepos": "工作区仓库",
 	"settings.project.worktrees": "工作树",

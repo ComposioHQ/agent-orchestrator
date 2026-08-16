@@ -610,6 +610,7 @@
 	"settings.sessionInterface.label": "Default session interface",
 	"settings.sessionInterface.terminal": "Terminal",
 	"settings.sessionInterface.unavailable": "Applies to new sessions. No installed agent supports chat yet.",
+	"settings.soundNotifications": "Sound notifications",
 	"settings.project.trackerIntake": "Tracker intake",
 	"settings.project.workspaceRepos": "Workspace repos",
 	"settings.project.worktrees": "Worktrees",
