@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -29,6 +30,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	usagepipeline "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
@@ -326,12 +328,14 @@ func Run() error {
 		})
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
 	var prActions prsvc.ActionManager
-	if mergeProvider, mergeErr := newGitHubSCMProvider(log); mergeErr != nil {
-		logSCMProviderDisabled(log, mergeErr)
+	prReader := newMultiSCMProvider(cfg.GitLab, log)
+	prMerger := newMultiSCMMerger(cfg.GitLab, log)
+	if prReader != nil && prMerger != nil {
+		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: prMerger, Reader: prReader})
 	} else {
-		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: mergeProvider, Reader: mergeProvider})
+		log.Warn("pr action service disabled: no usable SCM provider")
 	}
 
 	// Durable agent-switch reconciliation is a startup safety boundary. The
@@ -351,22 +355,38 @@ func Run() error {
 	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
+	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
+	lcStack.autoReviewDone = autoReview.Start(ctx)
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
 	// to start the daemon. pushRegistry (interface) is assigned only when load
 	// succeeds so a failure leaves a true nil interface (not a non-nil interface
 	// wrapping a nil pointer), which the controller's nil guard relies on to
 	// return 501. pushDevices keeps the concrete registry for the dispatcher.
+	// deviceRoster (interface) mirrors the same nil-guard as pushRegistry: it is
+	// assigned only when load succeeds, so a failed load leaves a true nil
+	// interface rather than a non-nil interface wrapping a nil *DeviceRegistry
+	// (which would panic on first method call). The roster controller answers
+	// 503 DEVICE_REGISTRY_UNAVAILABLE in that state instead of crashing or
+	// silently no-oping.
 	var (
 		pushRegistry controllers.PushRegistry
 		pushDevices  *mobilebridge.DeviceRegistry
+		deviceRoster controllers.DeviceRoster
 	)
 	if reg, regErr := mobilebridge.LoadRegistry(mobilebridge.PushDevicesPath(cfg.DataDir)); regErr != nil {
 		log.Warn("load push device registry failed; push notifications disabled", "err", regErr)
 	} else {
 		pushRegistry = reg
 		pushDevices = reg
+		deviceRoster = reg
 	}
+
+	// One presence tracker instance shared by APIDeps.Presence (the
+	// heartbeat middleware that touches it) and APIDeps.DeviceLive (the roster
+	// controller that reads it) — must be the same instance or every device
+	// would silently report offline.
+	presenceTracker := presence.NewTracker()
 
 	// Push dispatcher: an additive notification-hub subscriber that relays each
 	// new notification to every registered device via the Expo Push Service. Runs
@@ -403,6 +423,9 @@ func Run() error {
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Push:               pushRegistry,
+		Presence:           presenceTracker,
+		DeviceRoster:       deviceRoster,
+		DeviceLive:         presenceTracker,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		ShellTerminals:     shellTermSvc,
 		Conversations:      chatSvc,
@@ -501,6 +524,11 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	switchStopCtx, switchCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	if err := sessMgr.WaitAgentSwitchWorkers(switchStopCtx); err != nil {
+		log.Error("agent switch worker shutdown", "err", err)
+	}
+	switchCancel()
 	managedPreview.Close()
 	<-previewDone
 	if androidDeviceImpl != nil {

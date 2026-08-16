@@ -42,12 +42,13 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	trackerDone   <-chan struct{}
+	LCM            *lifecycle.Manager
+	runtimeReaper  *reaper.Reaper
+	reaperDone     <-chan struct{}
+	activityDone   <-chan struct{}
+	autoReviewDone <-chan struct{}
+	scmDone        <-chan struct{}
+	trackerDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -104,6 +105,9 @@ func (l *lifecycleStack) Stop() {
 	if l.activityDone != nil {
 		<-l.activityDone
 	}
+	if l.autoReviewDone != nil {
+		<-l.autoReviewDone
+	}
 	if l.scmDone != nil {
 		<-l.scmDone
 	}
@@ -123,6 +127,7 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
@@ -198,25 +203,17 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Browser:             browserLifecycle,
 		BrowserCapabilities: browserCapabilities,
 		DataDir:             cfg.DataDir,
+		BackgroundContext:   ctx,
 		Logger:              log,
 		AndroidEnv:          androidsdk.EnvProvider(cfg.ToolsDir),
 	})
-	scmProvider, err := newGitHubSCMProvider(log)
-	if err != nil {
-		logSCMProviderDisabled(log, err)
-	}
-	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
-	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
-	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueContext and dereferences nil on the
-	// first issue lookup (issue #2685). Assigning the concrete value only on
-	// success leaves tracker as a real interface-nil otherwise.
-	var tracker ports.Tracker
-	if t, err := newGitHubTracker(); err != nil {
-		logTrackerDisabled(log, err)
-	} else {
-		tracker = t
-	}
+	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
+	// Build the multi-tracker dispatching to both GitHub and GitLab. The
+	// multi-tracker returns a true nil ports.Tracker when no provider has
+	// usable credentials, preserving the `s.tracker == nil` guard in
+	// withIssueContext (issue #2685). When one provider's token is missing,
+	// the other still serves issue lookups.
+	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,
 		Store:             store,
@@ -442,9 +439,14 @@ type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
 var _ interface {
+	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
+
+func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
+	return c.svc.SupportsChat(harness)
+}
 
 func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness)
@@ -503,10 +505,19 @@ func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
 	return c.svc.HasLiveChatController(id)
 }
 
-// PrepareChatHandoff closes Chat intake and waits for the controller to become
-// quiescent before Session Manager stops it. These methods intentionally live
+// ArmChatHandoff closes Chat intake and dispatch synchronously at transition
+// acceptance. PrepareChatHandoff then settles interrupt work or waits for drain
+// work before Session Manager stops the source. These methods intentionally live
 // on the wiring adapter: Session Manager's handoff capability is optional, but
 // wrapping the concrete Chat service must not erase it.
+func (c chatLauncher) ArmChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	return c.svc.ArmChatHandoff(ctx, id, policy)
+}
+
 func (c chatLauncher) PrepareChatHandoff(
 	ctx context.Context,
 	id domain.SessionID,
