@@ -364,7 +364,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+                $ref: '#/components/schemas/SimulatorInputResponse'
           description: OK
         "400":
           content:
@@ -395,7 +395,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+                $ref: '#/components/schemas/SimulatorInputResponse'
           description: OK
         "400":
           content:
@@ -426,7 +426,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+                $ref: '#/components/schemas/SimulatorInputResponse'
           description: OK
         "400":
           content:
@@ -457,7 +457,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+                $ref: '#/components/schemas/SimulatorInputResponse'
           description: OK
         "400":
           content:
@@ -482,7 +482,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ControllersSimulatorPermissionsResponse'
+                $ref: '#/components/schemas/SimulatorPermissionsResponse'
           description: OK
       summary: Check macOS permissions needed for iOS Simulator capture and input
       tags:
@@ -3167,26 +3167,6 @@ components:
       required:
       - action
       type: object
-    ControllersSimulatorInputResponse:
-      properties:
-        accepted:
-          type: boolean
-      required:
-      - accepted
-      type: object
-    ControllersSimulatorPermissionsResponse:
-      properties:
-        accessibility:
-          type: boolean
-        screenRecording:
-          type: boolean
-        supported:
-          type: boolean
-      required:
-      - screenRecording
-      - accessibility
-      - supported
-      type: object
     ControllersSpawnAttachmentInput:
       properties:
         data:
@@ -4452,6 +4432,26 @@ components:
       - workingDir
       - title
       - createdAt
+      type: object
+    SimulatorInputResponse:
+      properties:
+        accepted:
+          type: boolean
+      required:
+      - accepted
+      type: object
+    SimulatorPermissionsResponse:
+      properties:
+        accessibility:
+          type: boolean
+        screenRecording:
+          type: boolean
+        supported:
+          type: boolean
+      required:
+      - screenRecording
+      - accessibility
+      - supported
       type: object
     SimulatorScreenshotResponse:
       properties:

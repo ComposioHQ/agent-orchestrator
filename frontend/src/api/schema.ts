@@ -1211,14 +1211,6 @@ export interface components {
             /** Format: double */
             y2?: number;
         };
-        ControllersSimulatorInputResponse: {
-            accepted: boolean;
-        };
-        ControllersSimulatorPermissionsResponse: {
-            accessibility: boolean;
-            screenRecording: boolean;
-            supported: boolean;
-        };
         ControllersSpawnAttachmentInput: {
             data: string;
             mimeType?: string;
@@ -1715,6 +1707,14 @@ export interface components {
             sessionId?: string;
             title: string;
             workingDir: string;
+        };
+        SimulatorInputResponse: {
+            accepted: boolean;
+        };
+        SimulatorPermissionsResponse: {
+            accessibility: boolean;
+            screenRecording: boolean;
+            supported: boolean;
         };
         SimulatorScreenshotResponse: {
             data: string;
@@ -2334,7 +2334,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControllersSimulatorInputResponse"];
+                    "application/json": components["schemas"]["SimulatorInputResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2376,7 +2376,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControllersSimulatorInputResponse"];
+                    "application/json": components["schemas"]["SimulatorInputResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2418,7 +2418,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControllersSimulatorInputResponse"];
+                    "application/json": components["schemas"]["SimulatorInputResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2460,7 +2460,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControllersSimulatorInputResponse"];
+                    "application/json": components["schemas"]["SimulatorInputResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2498,7 +2498,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControllersSimulatorPermissionsResponse"];
+                    "application/json": components["schemas"]["SimulatorPermissionsResponse"];
                 };
             };
         };

@@ -152,6 +152,8 @@ var schemaNames = map[string]string{
 	"ControllersFetchRuntimeResponse":             "FetchRuntimeResponse",
 	"ControllersSimulatorStatusResponse":          "SimulatorStatusResponse",
 	"ControllersSimulatorScreenshotResponse":      "SimulatorScreenshotResponse",
+	"ControllersSimulatorPermissionsResponse":     "SimulatorPermissionsResponse",
+	"ControllersSimulatorInputResponse":           "SimulatorInputResponse",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
