@@ -59,6 +59,16 @@ func EnsureSnapshotValid(avdDir string, want SnapshotVersion) (cleared bool, err
 	return cleared, nil
 }
 
+// legacySnapshotVersion is the on-disk shape SnapshotVersion had before
+// SystemImageSHA1 (json:"systemImageSha1") was generalized to VersionKey
+// (json:"versionKey") to also cover a user-adopted external SDK's synthetic
+// fingerprint. Read as a fallback so a marker written before that rename
+// isn't misread as a version change and doesn't needlessly invalidate an
+// existing, still-valid quick-boot snapshot.
+type legacySnapshotVersion struct {
+	SystemImageSHA1 string `json:"systemImageSha1"`
+}
+
 func readSnapshotVersion(avdDir string) (SnapshotVersion, bool) {
 	data, err := os.ReadFile(versionMarkerPath(avdDir))
 	if err != nil {
@@ -67,6 +77,12 @@ func readSnapshotVersion(avdDir string) (SnapshotVersion, bool) {
 	var v SnapshotVersion
 	if err := json.Unmarshal(data, &v); err != nil {
 		return SnapshotVersion{}, false
+	}
+	if v.VersionKey == "" {
+		var legacy legacySnapshotVersion
+		if err := json.Unmarshal(data, &legacy); err == nil && legacy.SystemImageSHA1 != "" {
+			v.VersionKey = legacy.SystemImageSHA1
+		}
 	}
 	return v, true
 }

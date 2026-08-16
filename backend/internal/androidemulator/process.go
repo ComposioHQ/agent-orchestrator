@@ -89,6 +89,11 @@ type Process struct {
 
 	waitOnce sync.Once
 	waitErr  error
+
+	// killData is platform-specific state killTree needs beyond the PID
+	// (e.g. a Windows Job Object handle), set by afterSpawn once cmd.Process
+	// exists. nil on platforms (Unix) that need nothing extra.
+	killData any
 }
 
 // Spawn starts the subprocess described by cfg, capturing its combined
@@ -113,7 +118,14 @@ func Spawn(cfg SpawnConfig) (*Process, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("androidemulator: spawn %s: %w", cfg.Command, err)
 	}
-	return &Process{cmd: cmd, logs: logs}, nil
+	// afterSpawn's failure isn't fatal to Spawn itself (killTree still has the
+	// PID-based fallback), but is logged into the process's own output so
+	// it's visible via Status().Logs without adding a new field just for it.
+	killData, err := afterSpawn(cmd)
+	if err != nil {
+		_, _ = fmt.Fprintf(logs, "androidemulator: afterSpawn: %v\n", err)
+	}
+	return &Process{cmd: cmd, logs: logs, killData: killData}, nil
 }
 
 // Wait blocks until the process exits, returning a non-nil error for a
@@ -145,7 +157,7 @@ func (p *Process) Kill() error {
 	if p.cmd.Process == nil {
 		return nil
 	}
-	return killTree(p.cmd.Process.Pid)
+	return killTree(p.cmd.Process.Pid, p.killData)
 }
 
 // Pid returns the OS process id, or 0 if the process has not started.

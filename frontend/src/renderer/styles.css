@@ -3176,6 +3176,28 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .emulator
 	backdrop-filter: blur(10px);
 }
 
+.emulator-panel__toolbar {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex-shrink: 0;
+	min-width: 0;
+	/* Mirrors .browser-panel__toolbar exactly (see its comment above): sized
+	   to the same 28px (--size-control-md) buttons + 3px top/bottom, so the
+	   two toolbars read as the same control regardless of which panel is
+	   active. */
+	min-height: 34px;
+	padding: 3px 4px;
+	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
+		var(--surface);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+		0 1px 0 color-mix(in srgb, black 22%, transparent);
+	backdrop-filter: blur(10px);
+}
+
 .browser-panel__url,
 .browser-panel__url-wrap {
 	display: flex;
@@ -3286,6 +3308,36 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .emulator
 }
 
 .browser-popout-overlay .browser-panel__viewport {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+/* Mirrors .browser-panel__viewport: a "floating card" look while the panel
+   is showing an empty/setup/booting state. Once a live frame is actually
+   streaming (data-emulator-live="live" below), this is reset to edge-to-edge
+   -- matching how the browser panel drops its own card framing once it's
+   showing real page content instead of a placeholder. */
+.emulator-panel__viewport {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	margin: 8px;
+	overflow: hidden;
+	border: 0;
+	border-radius: 8px;
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
+		var(--bg);
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, var(--color-border) 28%, transparent),
+		inset 0 1px 0 color-mix(in srgb, white 3%, transparent),
+		0 12px 26px color-mix(in srgb, black 14%, transparent);
+}
+
+.emulator-panel[data-emulator-live="live"] .emulator-panel__viewport,
+.emulator-popout-overlay .emulator-panel__viewport {
 	margin: 0;
 	border: 0;
 	border-radius: 0;

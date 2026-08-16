@@ -101,11 +101,12 @@ export function EmulatorPanel({ active, poppedOut, onTogglePopOut }: EmulatorPan
 				"emulator-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
 				poppedOut && "emulator-panel--popped-out",
 			)}
+			data-emulator-live={emulatorState === "running" && frameUrl ? "live" : "empty"}
 			data-testid="emulator-panel"
 			role="tabpanel"
 		>
 			<div
-				className="emulator-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				className="emulator-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
 				data-testid="emulator-toolbar"
 			>
 				{emulatorState === "running" ? (

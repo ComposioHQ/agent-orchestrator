@@ -270,7 +270,9 @@ export function SessionInspector({
 						!browserPoppedOut &&
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
-					view === "emulator" && !emulatorPoppedOut && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
+					view === "emulator" &&
+						!emulatorPoppedOut &&
+						"session-inspector__body--emulator p-0 overflow-hidden [&>[role=tabpanel]]:h-full [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 				)}
 			>
 				{view === "summary" ? <SummaryView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}

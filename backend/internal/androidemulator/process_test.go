@@ -56,6 +56,20 @@ func TestHelperProcess(t *testing.T) {
 		_ = os.WriteFile(os.Getenv("AO_CHILD_PID_FILE"), []byte(strconv.Itoa(child.Process.Pid)), 0o644)
 		time.Sleep(10 * time.Second)
 		os.Exit(0)
+	case "spawn-child-then-exit":
+		// Mirrors a real, confirmed-live behavior: the emulator's own launcher
+		// process can exit on its own once its real VM backend is confirmed
+		// running, orphaning that backend rather than staying alive as its
+		// parent for the whole session. Kill must still reach the grandchild
+		// even though, by the time Kill is called, the originally-tracked PID
+		// (this process) no longer exists at all.
+		child := exec.Command(os.Args[0], "-test.run=TestHelperProcess")
+		child.Env = append(os.Environ(), "AO_WANT_HELPER_PROCESS=1", "AO_HELPER_MODE=sleep")
+		if err := child.Start(); err != nil {
+			os.Exit(1)
+		}
+		_ = os.WriteFile(os.Getenv("AO_CHILD_PID_FILE"), []byte(strconv.Itoa(child.Process.Pid)), 0o644)
+		os.Exit(0)
 	}
 }
 
@@ -171,6 +185,56 @@ func TestKillStopsTheWholeProcessTree(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("grandchild process %d is still alive 5s after Kill; Kill must terminate the whole tree, not just the direct child", childPID)
+}
+
+// TestKillStopsOrphanedGrandchildAfterLauncherExits covers a real, live-
+// confirmed failure: the Android emulator's own launcher process can exit on
+// its own (once its real VM backend is confirmed running) well before Stop
+// is ever called, orphaning that backend. By the time Kill runs, the
+// originally-tracked PID no longer exists at all -- on Windows, taskkill
+// /PID <pid> /T requires the target PID to still exist, so it fails outright
+// and the orphaned backend runs forever, holding the AVD's lock files (the
+// next boot then fails with "Running multiple emulators with the same AVD").
+func TestKillStopsOrphanedGrandchildAfterLauncherExits(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	p, err := Spawn(helperSpawnConfig("spawn-child-then-exit", "AO_CHILD_PID_FILE="+pidFile))
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+
+	var childPID int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(pidFile)
+		if err == nil && len(data) > 0 {
+			childPID, err = strconv.Atoi(string(data))
+			if err != nil {
+				t.Fatalf("parse child pid file: %v", err)
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if childPID == 0 {
+		t.Fatal("grandchild process never reported its PID")
+	}
+
+	// Confirm the exact scenario: the directly-spawned process (the
+	// "launcher") must have already exited on its own before Kill is called.
+	_ = p.Wait()
+
+	if err := p.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !processAlive(childPID) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("grandchild process %d is still alive 5s after Kill; Kill must terminate it even though the directly-spawned launcher process had already exited on its own", childPID)
 }
 
 func TestWaitIsSafeForConcurrentCallers(t *testing.T) {

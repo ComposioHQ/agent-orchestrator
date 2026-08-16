@@ -59,13 +59,23 @@ func (c *EmulatorClient) Screenshot(ctx context.Context) ([]byte, error) {
 	return img.GetImage(), nil
 }
 
-// Tap sends a single-point touch-down-and-up at (x, y) in device pixels.
+// Tap sends a single-point touch-down-and-up at (x, y) in device pixels: one
+// SendTouch with Pressure > 0 (down), then one with Pressure == 0 (up), same
+// identifier. Both calls are required -- the emulator's own TouchEvent.Pressure
+// doc comment states a touch identifier is only unregistered once a Pressure
+// of 0 is delivered for it; a down with no matching up leaves that identifier
+// permanently "active," silently dropping every subsequent tap.
 func (c *EmulatorClient) Tap(ctx context.Context, x, y int32) error {
-	_, err := c.client.SendTouch(ctx, &pb.TouchEvent{
-		Touches: []*pb.Touch{{X: x, Y: y, Identifier: 0, Pressure: 1}},
-	})
-	if err != nil {
-		return fmt.Errorf("androidemulator: send touch: %w", err)
+	const tapIdentifier = 0
+	if _, err := c.client.SendTouch(ctx, &pb.TouchEvent{
+		Touches: []*pb.Touch{{X: x, Y: y, Identifier: tapIdentifier, Pressure: 1}},
+	}); err != nil {
+		return fmt.Errorf("androidemulator: send touch down: %w", err)
+	}
+	if _, err := c.client.SendTouch(ctx, &pb.TouchEvent{
+		Touches: []*pb.Touch{{X: x, Y: y, Identifier: tapIdentifier, Pressure: 0}},
+	}); err != nil {
+		return fmt.Errorf("androidemulator: send touch up: %w", err)
 	}
 	return nil
 }

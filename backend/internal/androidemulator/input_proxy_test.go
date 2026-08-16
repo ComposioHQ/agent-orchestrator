@@ -73,8 +73,24 @@ func TestInputProxyHandleTap(t *testing.T) {
 	if err := p.Handle(context.Background(), InputAction{Type: "tap", X: 100, Y: 200}); err != nil {
 		t.Fatalf("Handle(tap): %v", err)
 	}
-	if len(fake.touchEvents) != 1 || fake.touchEvents[0].GetTouches()[0].GetX() != 100 {
-		t.Errorf("touchEvents = %+v, want one touch at x=100", fake.touchEvents)
+	// The emulator's own TouchEvent.Pressure doc comment: "Make sure to
+	// deliver a pressure of 0 for the given identifier when the touch event
+	// is completed, otherwise the touch identifier will not be
+	// unregistered!" -- a tap must send both a down (Pressure > 0) and an up
+	// (Pressure == 0) for the same identifier, or every tap after the first
+	// is silently dropped by the emulator.
+	if len(fake.touchEvents) != 2 {
+		t.Fatalf("touchEvents count = %d, want 2 (down, then up)", len(fake.touchEvents))
+	}
+	down, up := fake.touchEvents[0].GetTouches()[0], fake.touchEvents[1].GetTouches()[0]
+	if down.GetX() != 100 || down.GetY() != 200 || down.GetPressure() == 0 {
+		t.Errorf("down touch = %+v, want X=100 Y=200 Pressure>0", down)
+	}
+	if up.GetX() != 100 || up.GetY() != 200 || up.GetPressure() != 0 {
+		t.Errorf("up touch = %+v, want X=100 Y=200 Pressure=0", up)
+	}
+	if down.GetIdentifier() != up.GetIdentifier() {
+		t.Errorf("down identifier=%d, up identifier=%d, want the same identifier released", down.GetIdentifier(), up.GetIdentifier())
 	}
 }
 
