@@ -1184,5 +1184,17 @@
 	"inspector.usage.totalTokens": "Total des jetons",
 	"inspector.usage.totalTokensAria": "{{count}} jetons au total",
 	"inspector.usage.totalTokensUnavailable": "Total des jetons indisponible",
-	"inspector.usage.uncachedInputTokens": "Jetons d'entrée non mis en cache"
+	"inspector.usage.uncachedInputTokens": "Jetons d'entrée non mis en cache",
+	"emulator.title": "iOS Simulator",
+	"emulator.start": "Start",
+	"emulator.stop": "Stop",
+	"emulator.permissionsDescription": "Grant Screen Recording and Accessibility access to AO in macOS System Settings to enable Simulator capture and input.",
+	"emulator.screenRecording": "Screen Recording",
+	"emulator.accessibility": "Accessibility",
+	"emulator.textInput": "Simulator text input",
+	"emulator.textPlaceholder": "Type into Simulator…",
+	"emulator.send": "Send",
+	"emulator.enter": "Enter",
+	"emulator.startPrompt": "Start the simulator to see its screen.",
+	"inspector.emulator": "Emulator"
 }

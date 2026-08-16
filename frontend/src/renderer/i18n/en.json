@@ -205,6 +205,7 @@
 	"inspector.sessionControls": "Session controls",
 	"inspector.conflict": "Conflict",
 	"inspector.files": "Files",
+	"inspector.emulator": "Emulator",
 	"inspector.filesUnavailable": "Files are not available for this session.",
 	"inspector.issue": "Issue",
 	"inspector.loadingReviews": "Loading reviews...",
@@ -1150,5 +1151,16 @@
 	"inspector.usage.totalTokens": "Total tokens",
 	"inspector.usage.totalTokensAria": "{{count}} total tokens",
 	"inspector.usage.totalTokensUnavailable": "Total tokens unavailable",
-	"inspector.usage.uncachedInputTokens": "Uncached input tokens"
+	"inspector.usage.uncachedInputTokens": "Uncached input tokens",
+	"emulator.title": "iOS Simulator",
+	"emulator.start": "Start",
+	"emulator.stop": "Stop",
+	"emulator.permissionsDescription": "Grant Screen Recording and Accessibility access to AO in macOS System Settings to enable Simulator capture and input.",
+	"emulator.screenRecording": "Screen Recording",
+	"emulator.accessibility": "Accessibility",
+	"emulator.textInput": "Simulator text input",
+	"emulator.textPlaceholder": "Type into Simulator…",
+	"emulator.send": "Send",
+	"emulator.enter": "Enter",
+	"emulator.startPrompt": "Start the simulator to see its screen."
 }

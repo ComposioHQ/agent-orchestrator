@@ -19,7 +19,7 @@ import type {
 import { cn } from "./utils";
 import { GithubAvatar } from "./GithubAvatar";
 
-export type InspectorView = "summary" | "reviews" | "browser" | "files";
+export type InspectorView = "summary" | "reviews" | "browser" | "files" | "emulator";
 
 export type InspectorTab = {
 	badge?: boolean;
@@ -40,6 +40,7 @@ export function SessionInspectorShellView({
 	browserPoppedOut,
 	browserView,
 	filesView,
+	emulatorView,
 	headerActions,
 	isVisible = true,
 	loadingText,
@@ -53,6 +54,7 @@ export function SessionInspectorShellView({
 	browserPoppedOut: boolean;
 	browserView?: ReactNode;
 	filesView?: ReactNode;
+	emulatorView?: ReactNode;
 	headerActions?: ReactNode;
 	isVisible?: boolean;
 	loadingText?: string;
@@ -158,6 +160,7 @@ export function SessionInspectorShellView({
 				{activeView === "reviews" ? reviewsView : null}
 				{activeView === "browser" ? browserView : null}
 				{activeView === "files" ? filesView : null}
+				{activeView === "emulator" ? emulatorView : null}
 			</div>
 		</aside>
 	);

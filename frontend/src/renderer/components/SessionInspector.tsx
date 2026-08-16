@@ -68,6 +68,8 @@ import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
+import { EmulatorPanel } from "./EmulatorPanel";
+import { isMacPlatform } from "../lib/platform";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
 import {
 	openReviewStatesFor,
@@ -86,7 +88,7 @@ export type { InspectorView } from "@aoagents/product-ui";
 
 const VIEW_DEFS: {
 	id: InspectorView;
-	labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files";
+	labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files" | "inspector.emulator";
 	icon: ReactNode;
 }[] = [
 	{
@@ -123,6 +125,11 @@ const VIEW_DEFS: {
 		id: "files",
 		labelKey: "inspector.files",
 		icon: <FilesIcon aria-hidden="true" />,
+	},
+	{
+		id: "emulator",
+		labelKey: "inspector.emulator",
+		icon: <span aria-hidden="true">▣</span>,
 	},
 ];
 
@@ -176,7 +183,7 @@ export function SessionInspector({
 		if (next === "files") onOpenFiles?.();
 	};
 	const view: InspectorView = requestedView;
-	const tabs = VIEW_DEFS.map((entry) => {
+	const tabs = VIEW_DEFS.filter((entry) => entry.id !== "emulator" || isMacPlatform()).map((entry) => {
 		const label = t(entry.labelKey);
 		return {
 			...entry,
@@ -206,6 +213,7 @@ export function SessionInspector({
 				) : undefined
 			}
 			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
+			emulatorView={session ? <EmulatorPanel active={isInspectorVisible} /> : undefined}
 			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
 			isVisible={isInspectorVisible}
 			loadingText={session ? undefined : t("inspector.loadingSession")}

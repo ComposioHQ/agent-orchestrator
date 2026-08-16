@@ -1168,5 +1168,17 @@
 	"inspector.usage.totalTokens": "合計トークン",
 	"inspector.usage.totalTokensAria": "合計 {{count}} トークン",
 	"inspector.usage.totalTokensUnavailable": "合計トークンを利用できません",
-	"inspector.usage.uncachedInputTokens": "未キャッシュ入力トークン"
+	"inspector.usage.uncachedInputTokens": "未キャッシュ入力トークン",
+	"emulator.title": "iOS Simulator",
+	"emulator.start": "Start",
+	"emulator.stop": "Stop",
+	"emulator.permissionsDescription": "Grant Screen Recording and Accessibility access to AO in macOS System Settings to enable Simulator capture and input.",
+	"emulator.screenRecording": "Screen Recording",
+	"emulator.accessibility": "Accessibility",
+	"emulator.textInput": "Simulator text input",
+	"emulator.textPlaceholder": "Type into Simulator…",
+	"emulator.send": "Send",
+	"emulator.enter": "Enter",
+	"emulator.startPrompt": "Start the simulator to see its screen.",
+	"inspector.emulator": "Emulator"
 }

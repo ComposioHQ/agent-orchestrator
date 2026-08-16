@@ -1150,5 +1150,17 @@
 	"inspector.usage.totalTokens": "总令牌数",
 	"inspector.usage.totalTokensAria": "总计 {{count}} 个令牌",
 	"inspector.usage.totalTokensUnavailable": "总令牌数不可用",
-	"inspector.usage.uncachedInputTokens": "未缓存输入令牌"
+	"inspector.usage.uncachedInputTokens": "未缓存输入令牌",
+	"emulator.title": "iOS Simulator",
+	"emulator.start": "Start",
+	"emulator.stop": "Stop",
+	"emulator.permissionsDescription": "Grant Screen Recording and Accessibility access to AO in macOS System Settings to enable Simulator capture and input.",
+	"emulator.screenRecording": "Screen Recording",
+	"emulator.accessibility": "Accessibility",
+	"emulator.textInput": "Simulator text input",
+	"emulator.textPlaceholder": "Type into Simulator…",
+	"emulator.send": "Send",
+	"emulator.enter": "Enter",
+	"emulator.startPrompt": "Start the simulator to see its screen.",
+	"inspector.emulator": "Emulator"
 }

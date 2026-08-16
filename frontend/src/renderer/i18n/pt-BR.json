@@ -1184,5 +1184,17 @@
 	"inspector.usage.totalTokens": "Total de tokens",
 	"inspector.usage.totalTokensAria": "{{count}} tokens no total",
 	"inspector.usage.totalTokensUnavailable": "Total de tokens indisponível",
-	"inspector.usage.uncachedInputTokens": "Tokens de entrada sem cache"
+	"inspector.usage.uncachedInputTokens": "Tokens de entrada sem cache",
+	"emulator.title": "iOS Simulator",
+	"emulator.start": "Start",
+	"emulator.stop": "Stop",
+	"emulator.permissionsDescription": "Grant Screen Recording and Accessibility access to AO in macOS System Settings to enable Simulator capture and input.",
+	"emulator.screenRecording": "Screen Recording",
+	"emulator.accessibility": "Accessibility",
+	"emulator.textInput": "Simulator text input",
+	"emulator.textPlaceholder": "Type into Simulator…",
+	"emulator.send": "Send",
+	"emulator.enter": "Enter",
+	"emulator.startPrompt": "Start the simulator to see its screen.",
+	"inspector.emulator": "Emulator"
 }
