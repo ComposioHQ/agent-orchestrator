@@ -350,6 +350,99 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/ios-device/app/install:
+    post:
+      operationId: installIOSDeviceApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSimulatorAppRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: Install an iOS app bundle
+      tags:
+      - ios-device
+  /api/v1/ios-device/app/launch:
+    post:
+      operationId: launchIOSDeviceApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSimulatorAppRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: Launch an installed iOS app
+      tags:
+      - ios-device
+  /api/v1/ios-device/app/terminate:
+    post:
+      operationId: terminateIOSDeviceApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSimulatorAppRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersSimulatorInputResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: Terminate an iOS app
+      tags:
+      - ios-device
   /api/v1/ios-device/input:
     post:
       operationId: sendIOSDeviceInput
@@ -3043,6 +3136,13 @@ components:
       - updatedAt
       - status
       - prs
+      type: object
+    ControllersSimulatorAppRequest:
+      properties:
+        appPath:
+          type: string
+        bundleId:
+          type: string
       type: object
     ControllersSimulatorInputRequest:
       properties:

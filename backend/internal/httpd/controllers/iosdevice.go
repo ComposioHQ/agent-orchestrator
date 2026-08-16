@@ -136,6 +136,43 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (c *IOSDeviceController) InstallApp(w http.ResponseWriter, r *http.Request) {
+	var q SimulatorAppRequest
+	if json.NewDecoder(r.Body).Decode(&q) != nil || q.AppPath == "" {
+		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_APP", "appPath is required", nil)
+		return
+	}
+	if err := c.Simulator.Install(q.AppPath); err != nil {
+		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_INSTALL", err.Error(), nil)
+		return
+	}
+	envelope.WriteJSON(w, 200, SimulatorInputResponse{Accepted: true})
+}
+func (c *IOSDeviceController) LaunchApp(w http.ResponseWriter, r *http.Request) {
+	var q SimulatorAppRequest
+	if json.NewDecoder(r.Body).Decode(&q) != nil || q.BundleID == "" {
+		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_BUNDLE_ID", "bundleId is required", nil)
+		return
+	}
+	if err := c.Simulator.Launch(q.BundleID); err != nil {
+		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_LAUNCH", err.Error(), nil)
+		return
+	}
+	envelope.WriteJSON(w, 200, SimulatorInputResponse{Accepted: true})
+}
+func (c *IOSDeviceController) TerminateApp(w http.ResponseWriter, r *http.Request) {
+	var q SimulatorAppRequest
+	if json.NewDecoder(r.Body).Decode(&q) != nil || q.BundleID == "" {
+		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_BUNDLE_ID", "bundleId is required", nil)
+		return
+	}
+	if err := c.Simulator.Terminate(q.BundleID); err != nil {
+		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_TERMINATE", err.Error(), nil)
+		return
+	}
+	envelope.WriteJSON(w, 200, SimulatorInputResponse{Accepted: true})
+}
+
 func simulatorStatusResponse(status iossimulator.Status) SimulatorStatusResponse {
 	return SimulatorStatusResponse{Available: status.Available, DeviceID: status.DeviceID, Name: status.Name, State: status.State, Error: status.Error}
 }
@@ -161,4 +198,7 @@ func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Get("/ios-device/permissions", c.Permissions)
 	r.Post("/ios-device/input", c.Input)
 	r.Get("/ios-device/stream", c.Stream)
+	r.Post("/ios-device/app/install", c.InstallApp)
+	r.Post("/ios-device/app/launch", c.LaunchApp)
+	r.Post("/ios-device/app/terminate", c.TerminateApp)
 }

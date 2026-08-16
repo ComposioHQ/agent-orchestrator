@@ -34,6 +34,34 @@ type Manager struct {
 	restartAttempts  int
 }
 
+func (m *Manager) Install(path string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.device.DeviceID == "" {
+		return fmt.Errorf("iOS Simulator is not started")
+	}
+	_, err := m.run("xcrun", "simctl", "install", m.device.DeviceID, path)
+	return err
+}
+func (m *Manager) Launch(bundle string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.device.DeviceID == "" {
+		return fmt.Errorf("iOS Simulator is not started")
+	}
+	_, err := m.run("xcrun", "simctl", "launch", m.device.DeviceID, bundle)
+	return err
+}
+func (m *Manager) Terminate(bundle string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.device.DeviceID == "" {
+		return fmt.Errorf("iOS Simulator is not started")
+	}
+	_, err := m.run("xcrun", "simctl", "terminate", m.device.DeviceID, bundle)
+	return err
+}
+
 func (m *Manager) Screenshot() ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
