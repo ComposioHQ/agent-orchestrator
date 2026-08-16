@@ -176,7 +176,9 @@ async function refreshPresence(): Promise<void> {
 		return;
 	}
 	if (!client || connectionState !== "connected") return;
-	const { data: sessionsResp, error: sessionsErr } = await apiClient.GET("/api/v1/sessions", {});
+	const { data: sessionsResp, error: sessionsErr } = await apiClient.GET("/api/v1/sessions", {
+		params: { query: { orchestratorOnly: true } },
+	});
 	if (sessionsErr || !sessionsResp) return;
 	const sessions = (sessionsResp as { sessions?: { status: string; isTerminated: boolean; createdAt?: string }[] }).sessions ?? [];
 	const payload = buildActivityPayload(sessions, rpcStartTimestamp ?? undefined);
