@@ -27,13 +27,14 @@ type CatalogFetcher interface {
 // RefreshConfig supplies runtime dependencies and observable activation hooks.
 // Wait and Jitter are optional deterministic timing seams used by offline tests.
 type RefreshConfig struct {
-	Cache      *Cache
-	Fetcher    CatalogFetcher
-	Manager    *Manager
-	OnActivate func(context.Context, []ProviderActivation)
-	OnError    func(error)
-	Wait       func(context.Context, time.Duration) error
-	Jitter     func(time.Duration) time.Duration
+	Cache               *Cache
+	Fetcher             CatalogFetcher
+	Manager             *Manager
+	OnActivate          func(context.Context, []ProviderActivation)
+	AfterInitialAttempt func(context.Context)
+	OnError             func(error)
+	Wait                func(context.Context, time.Duration) error
+	Jitter              func(time.Duration) time.Duration
 }
 
 // Refresher synchronously publishes LKG state, then owns one non-overlapping
@@ -54,6 +55,9 @@ func NewRefresher(config RefreshConfig) (*Refresher, error) {
 	}
 	if config.OnActivate == nil {
 		config.OnActivate = func(context.Context, []ProviderActivation) {}
+	}
+	if config.AfterInitialAttempt == nil {
+		config.AfterInitialAttempt = func(context.Context) {}
 	}
 	if config.OnError == nil {
 		config.OnError = func(error) {}
@@ -115,6 +119,9 @@ func (r *Refresher) run(ctx context.Context, cacheAvailable bool, pending []Prov
 			}
 			pending = nil
 			firstAttempt = false
+			if ctx.Err() == nil {
+				r.config.AfterInitialAttempt(ctx)
+			}
 		} else if ctx.Err() == nil && len(remoteActivations) > 0 {
 			r.config.OnActivate(ctx, remoteActivations)
 		}

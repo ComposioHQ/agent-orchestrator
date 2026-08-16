@@ -18,9 +18,10 @@ type costBackfillStore interface {
 
 // CostBackfillerConfig supplies lifecycle callbacks and deterministic time.
 type CostBackfillerConfig struct {
-	Manager *pricing.Manager
-	Clock   func() time.Time
-	OnError func(error)
+	Manager   *pricing.Manager
+	Clock     func() time.Time
+	OnError   func(error)
+	RetryWait func(context.Context, time.Duration) error
 }
 
 // CostBackfiller prices bounded pages after provider catalog activation.
@@ -30,6 +31,7 @@ type CostBackfiller struct {
 	started atomic.Bool
 	done    chan struct{}
 	wake    chan struct{}
+	retryWG sync.WaitGroup
 
 	mu             sync.Mutex
 	nextSequence   uint64
@@ -43,7 +45,13 @@ type costBackfillJob struct {
 	version    string
 	snapshot   *pricing.Snapshot
 	sequence   uint64
+	retryDelay time.Duration
 }
+
+const (
+	costBackfillRetryInitial = time.Minute
+	costBackfillRetryMaximum = time.Hour
+)
 
 // NewCostBackfiller constructs one provider cost worker.
 func NewCostBackfiller(store costBackfillStore, config CostBackfillerConfig) *CostBackfiller {
@@ -52,6 +60,9 @@ func NewCostBackfiller(store costBackfillStore, config CostBackfillerConfig) *Co
 	}
 	if config.OnError == nil {
 		config.OnError = func(error) {}
+	}
+	if config.RetryWait == nil {
+		config.RetryWait = waitCostBackfillRetry
 	}
 	return &CostBackfiller{
 		store:          store,
@@ -129,6 +140,7 @@ func (b *CostBackfiller) Wait() {
 		return
 	}
 	<-b.done
+	b.retryWG.Wait()
 }
 
 func (b *CostBackfiller) run(ctx context.Context) {
@@ -137,6 +149,7 @@ func (b *CostBackfiller) run(ctx context.Context) {
 		if job, ok := b.nextJob(); ok {
 			if err := b.process(ctx, job); err != nil && ctx.Err() == nil {
 				b.config.OnError(err)
+				b.scheduleRetry(ctx, job)
 			}
 			continue
 		}
@@ -146,6 +159,35 @@ func (b *CostBackfiller) run(ctx context.Context) {
 		case <-b.wake:
 		}
 	}
+}
+
+func (b *CostBackfiller) scheduleRetry(ctx context.Context, job costBackfillJob) {
+	if ctx.Err() != nil || b.superseded(job) {
+		return
+	}
+	delay := job.retryDelay
+	if delay <= 0 {
+		delay = costBackfillRetryInitial
+	}
+	job.retryDelay = min(delay*2, costBackfillRetryMaximum)
+	b.retryWG.Add(1)
+	go func() {
+		defer b.retryWG.Done()
+		if err := b.config.RetryWait(ctx, delay); err != nil || ctx.Err() != nil {
+			return
+		}
+		b.mu.Lock()
+		if b.latestSequence[job.providerID] != job.sequence {
+			b.mu.Unlock()
+			return
+		}
+		b.pending[job.providerID] = job
+		b.mu.Unlock()
+		select {
+		case b.wake <- struct{}{}:
+		default:
+		}
+	}()
 }
 
 func (b *CostBackfiller) nextJob() (costBackfillJob, bool) {
@@ -227,5 +269,16 @@ func (b *CostBackfiller) process(ctx context.Context, job costBackfillJob) error
 		if complete {
 			return nil
 		}
+	}
+}
+
+func waitCostBackfillRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }

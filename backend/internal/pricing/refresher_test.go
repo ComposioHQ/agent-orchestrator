@@ -86,6 +86,56 @@ func TestRefresherPublishesLKGImmediatelyButDelaysActivationsUntilRemoteAttempt(
 	refresher.Wait()
 }
 
+// Break caught: legacy repair could start as soon as the LKG was published and
+// permanently price historical rows before the first remote refresh activated
+// a newer reviewed catalog.
+func TestRefresherRunsAfterInitialAttemptOnlyAfterActivationDelivery(t *testing.T) {
+	fixture := testCandidate(t, testBaseModels("0.1"))
+	catalog, err := ParseCatalog(fixture.manifest, fixture.providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetched := make(chan struct{})
+	fetcher := &fakeCatalogFetcher{fetch: func(context.Context, string, bool) (FetchResult, error) {
+		close(fetched)
+		return FetchResult{Catalog: catalog, ETag: `"new"`}, nil
+	}}
+	var activated atomic.Bool
+	afterInitial := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	refresher, err := NewRefresher(RefreshConfig{
+		Cache: NewCache(t.TempDir()), Fetcher: fetcher, Manager: NewManager(nil),
+		OnActivate: func(context.Context, []ProviderActivation) {
+			activated.Store(true)
+		},
+		AfterInitialAttempt: func(context.Context) {
+			if !activated.Load() {
+				t.Error("post-initial hook ran before remote activation delivery")
+			}
+			close(afterInitial)
+		},
+		Wait: blockUntilCanceled,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := refresher.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-afterInitial:
+	case <-time.After(time.Second):
+		t.Fatal("post-initial hook did not run")
+	}
+	select {
+	case <-fetched:
+	default:
+		t.Fatal("post-initial hook ran before the remote fetch")
+	}
+	cancel()
+	refresher.Wait()
+}
+
 func TestRefresherFailureReleasesCachedActivationsAndRetriesExponentially(t *testing.T) {
 	cache := NewCache(t.TempDir())
 	fixture := testCandidate(t, testBaseModels("0.1"))

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -114,6 +115,67 @@ func TestCostBackfillerRetriesUnavailableEventOnlyForNewVersion(t *testing.T) {
 	}
 	if store.candidates[0].PricingVersion != secondVersion {
 		t.Fatalf("unavailable candidate version = %q, want %q", store.candidates[0].PricingVersion, secondVersion)
+	}
+}
+
+// Break caught: removing a job from the pending map before processing meant a
+// transient store error permanently dropped that provider/version until a
+// daemon restart or a newer catalog activation.
+func TestCostBackfillerRetriesTransientFailureForSameVersion(t *testing.T) {
+	snapshot := backfillTestSnapshot(t, "0.000001")
+	version := snapshot.ProviderVersion("openai")
+	store := newFakeBackfillStore(1)
+	store.listFailures = 1
+	retryDelays := make(chan time.Duration, 1)
+	reported := make(chan error, 1)
+	backfiller := NewCostBackfiller(store, CostBackfillerConfig{
+		Manager: pricing.NewManager(snapshot),
+		OnError: func(err error) { reported <- err },
+		RetryWait: func(ctx context.Context, delay time.Duration) error {
+			retryDelays <- delay
+			return nil
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := backfiller.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := backfiller.Enqueue(ctx, snapshot, []pricing.ProviderActivation{{
+		ProviderID: "openai", Version: version,
+	}}); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	select {
+	case err := <-reported:
+		if err == nil || err.Error() != "transient list failure" {
+			t.Fatalf("reported error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("transient error was not reported")
+	}
+	select {
+	case delay := <-retryDelays:
+		if delay != time.Minute {
+			t.Fatalf("first retry delay = %s, want 1m", delay)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("same-version retry was not scheduled")
+	}
+	select {
+	case <-store.complete:
+	case <-time.After(time.Second):
+		t.Fatal("same-version retry did not finish the candidate")
+	}
+	cancel()
+	backfiller.Wait()
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if fmt.Sprint(store.listVersions) != fmt.Sprintf("[%s %s]", version, version) {
+		t.Fatalf("listed versions = %v, want same version retried once", store.listVersions)
+	}
+	if store.candidates[0].PricingVersion != version || !store.totalKnown[1] {
+		t.Fatalf("candidate was not priced by retry: %+v", store.candidates[0])
 	}
 }
 
@@ -284,6 +346,7 @@ type fakeBackfillStore struct {
 	listEntered       chan struct{}
 	releaseList       chan struct{}
 	listOnce          sync.Once
+	listFailures      int
 }
 
 type backfillFenceAdmissionContext struct {
@@ -338,6 +401,10 @@ func (s *fakeBackfillStore) ListUsageCostCandidates(
 	defer s.mu.Unlock()
 	s.listVersions = append(s.listVersions, version)
 	s.listAfterIDs = append(s.listAfterIDs, afterID)
+	if s.listFailures > 0 {
+		s.listFailures--
+		return nil, errors.New("transient list failure")
+	}
 	batch := make([]domain.UsageCostCandidate, 0, 256)
 	for _, candidate := range s.candidates {
 		if candidate.ID > afterID && !s.totalKnown[candidate.ID] && pricing.CanonicalProviderID(candidate.ProviderID) == providerID &&

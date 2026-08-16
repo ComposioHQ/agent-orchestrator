@@ -50,6 +50,9 @@ func newUsagePricingRuntime(config usagePricingRuntimeConfig) (*usagePricingRunt
 		Manager: manager,
 		OnError: func(err error) { logger.Warn("usage pricing backfill failed", "err", err) },
 	})
+	repairer := usagepipeline.NewLegacyRepairer(config.Store, manager, usagepipeline.LegacyRepairerConfig{
+		OnError: func(err error) { logger.Warn("legacy usage pricing repair failed", "err", err) },
+	})
 	refresher, err := pricing.NewRefresher(pricing.RefreshConfig{
 		Cache:   pricing.NewCache(config.DataDir),
 		Fetcher: fetcher,
@@ -59,14 +62,16 @@ func newUsagePricingRuntime(config usagePricingRuntimeConfig) (*usagePricingRunt
 				logger.Warn("enqueue usage pricing backfill", "err", err)
 			}
 		},
+		AfterInitialAttempt: func(ctx context.Context) {
+			if err := repairer.Start(ctx); err != nil && ctx.Err() == nil {
+				logger.Warn("start legacy usage pricing repair", "err", err)
+			}
+		},
 		OnError: func(err error) { logger.Warn("pricing catalog refresh failed", "err", err) },
 	})
 	if err != nil {
 		return nil, err
 	}
-	repairer := usagepipeline.NewLegacyRepairer(config.Store, manager, usagepipeline.LegacyRepairerConfig{
-		OnError: func(err error) { logger.Warn("legacy usage pricing repair failed", "err", err) },
-	})
 	return &usagePricingRuntime{
 		manager: manager, backfiller: backfiller, repairer: repairer, refresher: refresher,
 	}, nil
@@ -96,12 +101,6 @@ func (r *usagePricingRuntime) Start(ctx context.Context) error {
 	// start the transcript ingestion pipeline.
 	if err := r.refresher.Start(runtimeCtx); err != nil {
 		cancel()
-		r.backfiller.Wait()
-		return err
-	}
-	if err := r.repairer.Start(runtimeCtx); err != nil {
-		cancel()
-		r.refresher.Wait()
 		r.backfiller.Wait()
 		return err
 	}

@@ -112,8 +112,8 @@ func (u *upstreamRecord) UnmarshalJSON(data []byte) error {
 	if u.Write, err = decodeNumber(fields["cache_creation_input_token_cost"]); err != nil {
 		return fmt.Errorf("cache_creation_input_token_cost: %w", err)
 	}
-	if u.Write1H, err = decodeNumber(fields["cache_creation_input_token_cost_1hr"]); err != nil {
-		return fmt.Errorf("cache_creation_input_token_cost_1hr: %w", err)
+	if u.Write1H, err = decodeNumber(fields["cache_creation_input_token_cost_above_1hr"]); err != nil {
+		return fmt.Errorf("cache_creation_input_token_cost_above_1hr: %w", err)
 	}
 	return nil
 }
@@ -400,7 +400,8 @@ func normalizeDecimal(input string) (string, error) {
 		if len(digits) > maxCanonicalRateLen-2 || zeroes > maxCanonicalRateLen-2-len(digits) {
 			return "", errors.New("rate exceeds supported precision")
 		}
-		return "0." + strings.Repeat("0", zeroes) + digits, nil
+		result := "0." + strings.Repeat("0", zeroes) + digits
+		return strings.TrimRight(result, "0"), nil
 	}
 	if len(digits) >= maxCanonicalRateLen {
 		return "", errors.New("rate exceeds supported precision")
@@ -522,7 +523,18 @@ func findProvider(providers []providerRef, providerID string) providerRef {
 }
 
 func equalRates(left, right rates) bool {
-	return left == right
+	return left.UncachedInputUSDPerToken == right.UncachedInputUSDPerToken &&
+		equalOptionalRate(left.CacheReadUSDPerToken, right.CacheReadUSDPerToken) &&
+		equalOptionalRate(left.CacheWriteUSDPerToken, right.CacheWriteUSDPerToken) &&
+		equalOptionalRate(left.CacheWrite1HUSDPerToken, right.CacheWrite1HUSDPerToken) &&
+		left.OutputUSDPerToken == right.OutputUSDPerToken
+}
+
+func equalOptionalRate(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func isSHA(value string) bool {

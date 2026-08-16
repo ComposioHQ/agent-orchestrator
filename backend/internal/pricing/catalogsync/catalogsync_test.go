@@ -37,7 +37,7 @@ func TestSyncWritesCanonicalContentAddressedCatalog(t *testing.T) {
     "input_cost_per_token": 0.000003,
     "output_cost_per_token": 0.000015,
     "cache_creation_input_token_cost": 0.00000375,
-    "cache_creation_input_token_cost_1hr": 0.000006
+    "cache_creation_input_token_cost_above_1hr": 0.000006
   }
 }`)
 
@@ -156,6 +156,63 @@ func TestSyncCanonicalizesWholeDecimalAndScientificRates(t *testing.T) {
 	}
 	if got := blob.Models[0].Rates.OutputUSDPerToken; got != "2" {
 		t.Fatalf("output rate = %q, want %q", got, "2")
+	}
+}
+
+// Break caught: LiteLLM names Anthropic's one-hour cache-creation price with
+// the above_1hr suffix. Reading a made-up key silently drops the rate.
+func TestSyncMapsLiteLLMAnthropicOneHourCacheCreationRate(t *testing.T) {
+	root := t.TempDir()
+	upstream := []byte(`{
+"anthropic/a":{"litellm_provider":"anthropic","mode":"chat","input_cost_per_token":1,"output_cost_per_token":1,"cache_creation_input_token_cost_above_1hr":0.000006},
+"openai/o":{"litellm_provider":"openai","mode":"chat","input_cost_per_token":1,"output_cost_per_token":1},
+"zai/z":{"litellm_provider":"zai","mode":"chat","input_cost_per_token":1,"output_cost_per_token":1}
+}`)
+	if _, err := Sync(root, upstream, testSource("anthropic-one-hour")); err != nil {
+		t.Fatal(err)
+	}
+
+	blob := readProviderBlob(t, root, "anthropic")
+	if got := blob.Models[0].Rates.CacheWrite1HUSDPerToken; got == nil || *got != "0.000006" {
+		t.Fatalf("one-hour cache write rate = %v, want 0.000006", got)
+	}
+}
+
+// Break caught: sub-one-dollar decimal spellings kept insignificant trailing
+// zeroes, producing blobs rejected by the stricter runtime decoder.
+func TestNormalizeDecimalRemovesFractionalTrailingZeroes(t *testing.T) {
+	for input, want := range map[string]string{
+		"0.0010":     "0.001",
+		"1.2300e-3":  "0.00123",
+		"0.00000000": "0",
+	} {
+		got, err := normalizeDecimal(input)
+		if err != nil {
+			t.Fatalf("normalizeDecimal(%q): %v", input, err)
+		}
+		if got != want {
+			t.Errorf("normalizeDecimal(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// Break caught: identical optional cache prices used distinct string pointers,
+// so canonical duplicate records were incorrectly reported as conflicting.
+func TestSyncDeduplicatesIdenticalOptionalRates(t *testing.T) {
+	root := t.TempDir()
+	upstream := []byte(`{
+"anthropic/a":{"litellm_provider":"anthropic","mode":"chat","input_cost_per_token":1,"output_cost_per_token":1},
+"openai/gpt-test":{"litellm_provider":"openai","mode":"chat","input_cost_per_token":1,"output_cost_per_token":2,"cache_read_input_token_cost":0.5,"cache_creation_input_token_cost":1.25},
+"OPENAI/GPT-TEST":{"litellm_provider":" OPENAI ","mode":"responses","input_cost_per_token":1,"output_cost_per_token":2,"cache_read_input_token_cost":0.5,"cache_creation_input_token_cost":1.25},
+"zai/z":{"litellm_provider":"zai","mode":"chat","input_cost_per_token":1,"output_cost_per_token":1}
+}`)
+	if _, err := Sync(root, upstream, testSource("identical-optional-rates")); err != nil {
+		t.Fatalf("Sync identical canonical records: %v", err)
+	}
+
+	blob := readProviderBlob(t, root, "openai")
+	if got := len(blob.Models); got != 1 {
+		t.Fatalf("OpenAI model count = %d, want 1", got)
 	}
 }
 
@@ -292,4 +349,25 @@ func testSource(seed string) Source {
 		Revision:   fmt.Sprintf("%040x", sum)[:40],
 		Path:       "model_prices_and_context_window.json",
 	}
+}
+
+func readProviderBlob(t *testing.T, root, providerID string) providerBlob {
+	t.Helper()
+	manifestContents, err := os.ReadFile(filepath.Join(root, "pricing/catalog/v1/manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded manifest
+	if err := json.Unmarshal(manifestContents, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "pricing/catalog/v1", findProvider(decoded.Providers, providerID).Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var blob providerBlob
+	if err := json.Unmarshal(contents, &blob); err != nil {
+		t.Fatal(err)
+	}
+	return blob
 }
