@@ -83,6 +83,30 @@ describe("portable leaf components", () => {
 		expect(container.querySelector(".animate-status-pulse")).toBeInTheDocument();
 	});
 
+	it("keeps review details compact and inline with the review detail", () => {
+		const reviewDetailsAction = <button type="button">View review details ↗</button>;
+		render(
+			<PRCardStatusSummary
+				externalLink={ExternalLink}
+				presentation={{
+					primary: { key: "ci", label: "Checks passing", tone: "success", links: [] },
+					supporting: [],
+					statusRows: [
+						{ key: "ci", label: "Checks passing", tone: "success", links: [] },
+						{ key: "review", label: "Review status", detail: "Required review not submitted", tone: "review", links: [] },
+					],
+					readiness: { label: "Not mergeable yet", detail: "A required review is pending.", tone: "error" },
+				}}
+				reviewDetailsAction={reviewDetailsAction}
+			/>,
+		);
+
+		const detail = screen.getByText("Required review not submitted");
+		expect(detail.parentElement).toHaveClass("flex", "items-baseline");
+		expect(detail.parentElement).toContainElement(screen.getByRole("button", { name: "View review details ↗" }));
+		expect(detail.closest(".grid")).toHaveClass("grid-cols-1");
+	});
+
 	it("computes overflow against the requested link limit", () => {
 		const parts: PRSummaryPart[] = [
 			{

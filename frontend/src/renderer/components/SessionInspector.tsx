@@ -632,7 +632,7 @@ function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => 
 		href: prBrowserUrl(pr),
 		stateLabel: t(prStateLabelKeys[pr.state]),
 		reviewDetailsAction: (
-			<button className="text-2xs text-settings-label underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
+				<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
 				{t("pr.review.viewDetails")} ↗
 			</button>
 		),
