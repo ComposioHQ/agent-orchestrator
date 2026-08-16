@@ -897,10 +897,7 @@ function ExternalReviewCard({
 			{open ? (
 				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
 					{onRequestRereview ? (
-						<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
-							<span className="text-2xs text-muted-foreground">
-								{openInlineCount > 0 ? labels.unresolvedCount(openInlineCount) : null}
-							</span>
+						<div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
 							{rereviewRequested ? (
 								<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
 									<CheckIcon className="size-icon-xs shrink-0" />
@@ -983,6 +980,7 @@ function GithubInlineComments({
 	const [sendErrorCommentIds, setSendErrorCommentIds] = useState<Set<string>>(() => new Set());
 	const [resolvedCommentIds, setResolvedCommentIds] = useState<Set<string>>(() => new Set());
 	const [resolveErrorCommentIds, setResolveErrorCommentIds] = useState<Set<string>>(() => new Set());
+	const [visibleCount, setVisibleCount] = useState(3);
 	const comments = reviewers.flatMap((reviewer) =>
 		reviewer.links
 			.filter((link) => link.body?.trim() || link.file || link.url)
@@ -994,6 +992,8 @@ function GithubInlineComments({
 			})),
 	);
 	if (comments.length === 0) return null;
+	const visibleComments = comments.slice(0, visibleCount);
+	const hasMore = visibleComments.length < comments.length;
 	return (
 		<section className="min-w-0 border-t border-border/70 pt-4" data-testid="github-inline-comments">
 			<div className="flex min-w-0 items-center justify-between gap-2 pb-2 text-xs">
@@ -1001,7 +1001,7 @@ function GithubInlineComments({
 				<span className="shrink-0 font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
 			</div>
 			<div className="divide-y divide-border/60">
-				{comments.map((comment, index) => (
+				{visibleComments.map((comment, index) => (
 					<InlineCommentRow
 						comment={comment}
 						commentNumber={index + 1}
@@ -1050,6 +1050,15 @@ function GithubInlineComments({
 					/>
 				))}
 			</div>
+			{comments.length > 3 ? (
+				<button
+					className="mt-3 flex w-full items-center justify-center rounded-md border border-dashed border-border px-2 py-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
+					onClick={() => setVisibleCount(hasMore ? comments.length : 3)}
+					type="button"
+				>
+					{hasMore ? labels.showMore : labels.showLess}
+				</button>
+			) : null}
 		</section>
 	);
 }
