@@ -122,6 +122,7 @@
 	"createProject.createAndStart": "作成して開始",
 	"createProject.createWorkspaceAndStart": "ワークスペースを作成して開始",
 	"createProject.creating": "作成中...",
+	"createProject.dropToAdd": "ここにドロップしてプロジェクトを追加",
 	"createProject.error.bareBody": "AO には bare Git リポジトリではなく、通常の作業フォルダーが必要です。",
 	"createProject.error.bareTitle": "通常のチェックアウトを選択してください",
 	"createProject.error.createFailedTitle": "プロジェクトを作成できませんでした",

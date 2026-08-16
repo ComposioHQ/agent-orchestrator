@@ -13,6 +13,7 @@ export const aoBridge: AoBridge =
 			},
 			scanImportFolder: async ({ path }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getPathForFile: () => "",
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,

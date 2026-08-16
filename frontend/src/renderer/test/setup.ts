@@ -68,6 +68,7 @@ if (typeof window !== "undefined") {
 			openExternal: async () => undefined,
 			scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
 			checkAncestorRepo: async () => undefined,
+			getPathForFile: () => "",
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,

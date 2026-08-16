@@ -123,6 +123,7 @@
 	"createProject.createAndStart": "Criar e iniciar",
 	"createProject.createWorkspaceAndStart": "Criar workspace e iniciar",
 	"createProject.creating": "Criando...",
+	"createProject.dropToAdd": "Solte aqui para adicionar o projeto",
 	"createProject.error.bareBody": "O AO precisa de uma pasta de trabalho normal, não de um repositório Git bare.",
 	"createProject.error.bareTitle": "Escolha um checkout normal",
 	"createProject.error.createFailedTitle": "Não foi possível criar o projeto",

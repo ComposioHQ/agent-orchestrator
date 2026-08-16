@@ -1360,8 +1360,10 @@ function CreateProjectButton({
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
 	// reuses this flow via requestCreateProject().
 	const createProjectNonce = useUiStore((state) => state.createProjectNonce);
+	const folderDropRequest = useUiStore((state) => state.folderDropRequest);
 	return (
 		<CreateProjectFlow
+			droppedPath={folderDropRequest}
 			mode="choose"
 			onCreateProject={onCreateProject}
 			onInitializeProject={onInitializeProject}

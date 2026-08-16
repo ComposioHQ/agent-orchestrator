@@ -122,6 +122,7 @@
 	"createProject.createAndStart": "创建并启动",
 	"createProject.createWorkspaceAndStart": "创建工作区并启动",
 	"createProject.creating": "正在创建...",
+	"createProject.dropToAdd": "拖放到此处以添加项目",
 	"createProject.error.bareBody": "AO 需要常规工作目录，不能是裸 Git 仓库。",
 	"createProject.error.bareTitle": "请选择普通检出目录",
 	"createProject.error.createFailedTitle": "无法创建项目",

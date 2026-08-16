@@ -122,6 +122,7 @@
 	"createProject.createAndStart": "만들고 시작",
 	"createProject.createWorkspaceAndStart": "워크스페이스 만들고 시작",
 	"createProject.creating": "만드는 중...",
+	"createProject.dropToAdd": "여기에 놓아 프로젝트 추가",
 	"createProject.error.bareBody": "AO에는 bare Git 저장소가 아닌 일반 작업 폴더가 필요합니다.",
 	"createProject.error.bareTitle": "일반 체크아웃을 선택하세요",
 	"createProject.error.createFailedTitle": "프로젝트를 만들 수 없습니다",

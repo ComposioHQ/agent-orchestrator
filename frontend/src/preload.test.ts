@@ -6,6 +6,7 @@ const electronMocks = vi.hoisted(() => {
 	const listeners = new Map<string, (...args: unknown[]) => void>();
 	return {
 		exposeInMainWorld: vi.fn(),
+		getPathForFile: vi.fn(),
 		invoke: vi.fn(),
 		listeners,
 		off: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("electron", () => ({
 		on: electronMocks.on,
 		send: electronMocks.send,
 	},
+	webUtils: { getPathForFile: electronMocks.getPathForFile },
 }));
 
 await import("./preload");
@@ -36,10 +38,24 @@ function exposedBridge(): AoBridge {
 
 beforeEach(() => {
 	electronMocks.listeners.clear();
+	electronMocks.getPathForFile.mockClear();
 	electronMocks.invoke.mockClear();
 	electronMocks.off.mockClear();
 	electronMocks.on.mockClear();
 	electronMocks.send.mockClear();
+});
+
+describe("preload getPathForFile bridge", () => {
+	it("forwards the File to webUtils.getPathForFile without going through IPC", () => {
+		electronMocks.getPathForFile.mockReturnValue("/Users/x/dropped-folder");
+		const file = new File([], "dropped-folder");
+
+		const path = exposedBridge().app.getPathForFile(file);
+
+		expect(path).toBe("/Users/x/dropped-folder");
+		expect(electronMocks.getPathForFile).toHaveBeenCalledWith(file);
+		expect(electronMocks.invoke).not.toHaveBeenCalled();
+	});
 });
 
 describe("preload new-session shortcut bridge", () => {
