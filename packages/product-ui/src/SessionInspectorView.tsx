@@ -666,7 +666,7 @@ function ReviewDisclosure({
 				type="button"
 			>
 				<ChevronIcon className="size-icon-sm shrink-0 text-passive" direction={open ? "down" : "right"} />
-				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
+					<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<span className="whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
 						{title}
 					</span>
@@ -890,32 +890,20 @@ function ExternalReviewCard({
 					</span>
 					<span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-micro text-passive">
 						{entry.submittedAtLabel ? <span>{labels.reviewedAt(entry.submittedAtLabel)}</span> : null}
-						{entry.submittedAtLabel && openInlineCount > 0 ? <span aria-hidden="true">·</span> : null}
-						{openInlineCount > 0 ? (
-							<span className="font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
-						) : null}
 					</span>
 				</span>
 				<VerdictBadge verdict={entry.verdict} />
 			</button>
 			{open ? (
 				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
-					{body ? (
-						<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
-					) : null}
-					<ReviewLinks
-						clamped={false}
-						expanded={false}
-						externalLink={externalLink}
-						labels={labels}
-						onExpandedChange={() => undefined}
-						url={entry.reviewUrl}
-					/>
 					{onRequestRereview ? (
-						<div className="flex min-w-0 flex-wrap items-center gap-2">
+						<div className="flex min-w-0 items-center justify-between gap-2 border-y border-border/50 py-2">
+							<span className="text-2xs text-muted-foreground">
+								{openInlineCount > 0 ? labels.unresolvedCount(openInlineCount) : null}
+							</span>
 							{rereviewRequested ? (
-								<span className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 text-2xs font-medium text-foreground shadow-sm">
-									<CheckIcon className="shrink-0 text-success" />
+								<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
+									<CheckIcon className="size-icon-xs shrink-0" />
 									{labels.rereviewRequested}
 								</span>
 							) : (
@@ -935,9 +923,20 @@ function ExternalReviewCard({
 									{labels.requestRereviewPR}
 								</button>
 							)}
-							{rereviewError ? <p className="m-0 text-2xs font-medium text-error">{labels.rereviewRequestFailed}</p> : null}
 						</div>
 					) : null}
+					{rereviewError ? <p className="m-0 text-2xs font-medium text-error">{labels.rereviewRequestFailed}</p> : null}
+					{body ? (
+						<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
+					) : null}
+					<ReviewLinks
+						clamped={false}
+						expanded={false}
+						externalLink={externalLink}
+						labels={labels}
+						onExpandedChange={() => undefined}
+						url={entry.reviewUrl}
+					/>
 					{openInlineCount > 0 ? (
 						<GithubInlineComments
 							externalLink={externalLink}
@@ -1002,9 +1001,10 @@ function GithubInlineComments({
 				<span className="shrink-0 font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
 			</div>
 			<div className="divide-y divide-border/60">
-				{comments.map((comment) => (
+				{comments.map((comment, index) => (
 					<InlineCommentRow
 						comment={comment}
+						commentNumber={index + 1}
 						externalLink={ExternalLink}
 						key={comment.id}
 						labels={labels}
@@ -1056,6 +1056,7 @@ function GithubInlineComments({
 
 function InlineCommentRow({
 	comment,
+	commentNumber,
 	externalLink: ExternalLink,
 	labels,
 	onResolve,
@@ -1068,6 +1069,7 @@ function InlineCommentRow({
 	sent,
 }: {
 	comment: InspectorInlineComment & { reviewerId?: string };
+	commentNumber: number;
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onResolve?: () => void;
@@ -1089,6 +1091,7 @@ function InlineCommentRow({
 				</span>
 			) : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-mono text-passive">
+				<span className="font-semibold text-foreground">#{commentNumber}</span>
 				{parsed.priority ? <span className="font-semibold text-error">{parsed.priority}</span> : null}
 				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
 			</div>
