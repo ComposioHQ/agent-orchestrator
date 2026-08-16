@@ -1,13 +1,8 @@
 name: Frontend
 
-# Runs the renderer vitest suite. This suite was silently dead for months
-# because no workflow executed it (vitest only auto-loads vite.config.ts /
-# vitest.config.ts, and the repo had neither until #171) — this job is the
-# guard against that happening again.
+# Runs the renderer vitest suite and typechecks the codebase.
 #
-# Typecheck is intentionally NOT run here yet: forge.config.ts and
-# update-electron-app carry pre-existing type errors. Add `npm run typecheck`
-# once those are fixed.
+# This job ensures both compiler/type checking passes and vitest tests succeed.
 
 on:
   push:
@@ -15,6 +10,9 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - "contracts/cloud/**"
+      - "packages/cloud-client/**"
+      - "packages/product-ui/**"
       - ".github/workflows/frontend.yml"
 
 permissions:
@@ -31,13 +29,65 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/src/landing/package-lock.json
+            packages/cloud-client/package-lock.json
+            packages/product-ui/package-lock.json
 
-      - run: npm ci
+      - name: Install frontend dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "npm ci failed; retrying Electron dependency download ($attempt/3)"
+          done
+
+      - name: Install Cloud client dependencies
+        run: npm ci
+        working-directory: packages/cloud-client
+
+      - name: Install product UI dependencies
+        run: npm ci
+        working-directory: packages/product-ui
+
+      - name: Verify Cloud contract and client
+        run: |
+          npm run generate
+          git diff --exit-code -- src/schema.ts
+          npm run typecheck
+          npm test
+          npm pack --dry-run
+        working-directory: packages/cloud-client
+
+      - name: Verify product UI package
+        run: |
+          npm run typecheck
+          npm test
+          npm pack --dry-run
+        working-directory: packages/product-ui
+
+      - name: Prepare pinned agent-browser runtime
+        run: npm run browser-runtime:prepare -- --quiet
+
+      - name: Install landing dependencies
+        run: npm ci --prefix src/landing
+
+      - name: Typecheck project
+        run: npm run typecheck
+
+      - name: Typecheck E2E suite
+        run: npm run typecheck:e2e
 
       - name: Run vitest suite
+        env:
+          AO_AGENT_BROWSER_TEST_BINARY: ${{ github.workspace }}/frontend/agent-browser/agent-browser
         run: npx vitest run
 
   renderer-smoke:
@@ -57,7 +107,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

@@ -1,8 +1,10 @@
 import { QrCode } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 
 /** TestFlight beta for the Agent Orchestrator iOS app. */
 export const TESTFLIGHT_URL = "https://testflight.apple.com/join/t4U3fu2H";
@@ -19,36 +21,38 @@ const TESTFLIGHT_QR_SIZE = 140;
 // the LAN bridge is running. The QR (of the TestFlight URL itself) hides
 // behind a disclosure so the widened modal keeps its height.
 export function ConnectMobileGetApp() {
+	const { t } = useTranslation();
 	const [showQR, setShowQR] = useState(false);
 
 	return (
-		<div className="mt-6 flex flex-col rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-dialog)] px-3.5 py-3">
-			<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">Get the app</span>
+		<div className="flex flex-col">
+			<span className="px-3 py-3 text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">{t("mobile.getApp")}</span>
 
 			{/* iOS — items-center so the action cluster sits on the row's optical centre. */}
-			<div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border-settings-input)] pt-3">
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
 				<div className="flex min-w-0 flex-col">
-					<span className="text-sm leading-5 text-settings-label">iOS</span>
+					<span className="text-sm leading-5 text-settings-label">{t("mobile.ios")}</span>
 					<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-						Install Apple's TestFlight app first, then join the beta
+						{t("mobile.iosHint")}
 					</span>
 				</div>
 				<div className="flex shrink-0 items-center gap-1.5">
-					<button
+					<Button
 						type="button"
-						aria-label="Join the TestFlight beta"
+						variant="footer"
+						className="rounded-md"
+						aria-label={t("mobile.joinTestFlightAria")}
 						onClick={() => void aoBridge.app.openExternal(TESTFLIGHT_URL)}
-						className="settings-footer-button"
 					>
-						Join beta
-					</button>
+						{t("mobile.joinBeta")}
+					</Button>
 					<button
 						type="button"
-						aria-label={showQR ? "Hide TestFlight QR code" : "Show TestFlight QR code"}
+						aria-label={showQR ? t("mobile.hideQR") : t("mobile.showQR")}
 						aria-expanded={showQR}
 						onClick={() => setShowQR((v) => !v)}
 						className={cn(
-							"inline-flex size-(--size-settings-action-height) items-center justify-center rounded-(--radius-settings-action) transition-colors hover:bg-[var(--color-bg-settings-input)]",
+							"inline-flex size-(--size-settings-action-height) items-center justify-center rounded-md border border-transparent transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)]",
 							showQR ? "bg-[var(--color-bg-settings-input)] text-settings-title" : "text-settings-muted",
 						)}
 					>
@@ -65,37 +69,38 @@ export function ConnectMobileGetApp() {
 				)}
 				aria-hidden={!showQR}
 			>
-				<div className="overflow-hidden">
+				<div className="overflow-hidden px-4">
 					<div
 						className={cn(
 							"flex flex-col items-center pt-3 transition-opacity duration-300 ease-out",
 							showQR ? "opacity-100" : "opacity-0",
 						)}
 					>
-						<div className="rounded-xl bg-white p-2 shadow-[var(--shadow-settings-qr)]">
+						<div className="rounded-md border border-(--color-border-settings-input) bg-white p-2">
 							<QRCodeSVG value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} className="block" />
 						</div>
-						<p className="mt-2 text-caption text-settings-muted">Install TestFlight, then scan to join the beta</p>
+						<p className="mt-2 text-caption text-settings-muted">{t("mobile.qrHint")}</p>
 					</div>
 				</div>
 			</div>
 
 			{/* Android — internal testing signup until a Play Store beta is live. */}
-			<div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border-settings-input)] pt-3">
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
 				<div className="flex min-w-0 flex-col">
-					<span className="text-sm leading-5 text-settings-label">Android</span>
+					<span className="text-sm leading-5 text-settings-label">{t("mobile.android")}</span>
 					<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
-						Join the internal testing program
+						{t("mobile.androidHint")}
 					</span>
 				</div>
-				<button
+				<Button
 					type="button"
-					aria-label="Sign up for Android internal testing"
+					variant="footer"
+					className="rounded-md"
+					aria-label={t("mobile.androidSignupAria")}
 					onClick={() => void aoBridge.app.openExternal(ANDROID_SIGNUP_URL)}
-					className="settings-footer-button"
 				>
-					Join waitlist
-				</button>
+					{t("mobile.joinWaitlist")}
+				</Button>
 			</div>
 		</div>
 	);

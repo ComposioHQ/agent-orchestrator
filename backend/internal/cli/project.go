@@ -76,6 +76,7 @@ type workspaceRepoDetails struct {
 // agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
 type agentConfig struct {
 	Model       string `json:"model,omitempty"`
+	Mode        string `json:"mode,omitempty"`
 	Permissions string `json:"permissions,omitempty"`
 }
 
@@ -309,7 +310,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
+	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch for new worktrees; auto infers each repository's Git default")
 	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")

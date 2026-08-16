@@ -1,89 +1,20 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
+import {
+	AGENT_OPTIONS,
+	toSessionActivity,
+	toSessionStatus,
+	type AgentId,
+	type SessionActivity,
+	type SessionActivityState,
+	type SessionStatus,
+} from "@aoagents/product-ui";
 
-export type SessionStatus =
-	| "working"
-	| "pr_open"
-	| "draft"
-	| "ci_failed"
-	| "review_pending"
-	| "changes_requested"
-	| "approved"
-	| "mergeable"
-	| "merged"
-	| "needs_input"
-	| "no_signal"
-	| "idle"
-	| "terminated"
-	| "unknown";
+import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
-const sessionStatuses = new Set<SessionStatus>([
-	"working",
-	"pr_open",
-	"draft",
-	"ci_failed",
-	"review_pending",
-	"changes_requested",
-	"approved",
-	"mergeable",
-	"merged",
-	"needs_input",
-	"no_signal",
-	"idle",
-	"terminated",
-]);
+export { toSessionActivity, toSessionStatus };
+export type { SessionActivity, SessionActivityState, SessionStatus };
 
-export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
-	if (status && sessionStatuses.has(status as SessionStatus)) return status as SessionStatus;
-	return isTerminated ? "terminated" : "unknown";
-}
-
-export type SessionActivityState = "active" | "idle" | "waiting_input" | "blocked" | "exited" | "unknown";
-
-const sessionActivityStates = new Set<SessionActivityState>(["active", "idle", "waiting_input", "blocked", "exited"]);
-
-export type SessionActivity = {
-	state: SessionActivityState;
-	lastActivityAt: string;
-};
-
-export function toSessionActivity(
-	activity?: { state?: string; lastActivityAt?: string } | null,
-): SessionActivity | undefined {
-	if (!activity) return undefined;
-	const state = sessionActivityStates.has(activity.state as SessionActivityState)
-		? (activity.state as SessionActivityState)
-		: "unknown";
-	return {
-		state,
-		lastActivityAt: activity.lastActivityAt ?? "",
-	};
-}
-
-export type AgentProvider =
-	| "codex"
-	| "claude-code"
-	| "opencode"
-	| "aider"
-	| "grok"
-	| "droid"
-	| "amp"
-	| "agy"
-	| "crush"
-	| "cursor"
-	| "qwen"
-	| "copilot"
-	| "goose"
-	| "auggie"
-	| "continue"
-	| "devin"
-	| "cline"
-	| "kimi"
-	| "kiro"
-	| "kilocode"
-	| "vibe"
-	| "pi"
-	| "autohand"
-	| "fake";
+export type AgentProvider = AgentId | "fake";
 
 /** A file changed in a worker workspace (drives the review rail). */
 export type ChangedFile = {
@@ -115,6 +46,18 @@ export type PullRequestFacts = {
 	updatedAt: string;
 };
 
+/** The daemon-committed controller currently responsible for the session. */
+export type SessionMode = "chat" | "tui";
+
+export type AgentSwitchSummary = {
+	agentHandoffStatus: string;
+	errorCode?: string;
+	fromHarness: string;
+	id: string;
+	state: string;
+	targetHarness: string;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -124,15 +67,38 @@ export type WorkspaceSession = {
 	/** Raw issue/task identifier from the daemon. Intake ids are provider-prefixed. */
 	issueId?: string;
 	provider: AgentProvider;
+	/** Reviewer selected for this session; absent means use the project default. */
+	reviewerHarness?: ReviewerHarnessId;
+	/** Whether the daemon may automatically review this session after it becomes idle. */
+	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
+	/**
+	 * Which controller is currently committed for this session. The session
+	 * surface renders from THIS value, never from the current creation default.
+	 * Only the daemon's durable interface-transition coordinator may change it.
+	 */
+	mode?: SessionMode;
 	branch?: string;
 	status: SessionStatus;
+	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
+	scmStatus?: SessionStatus;
+	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
+	isTerminated?: boolean;
+	/** User preference to tear down this session when its PR set completes through a merge. */
+	terminateOnPrMerge?: boolean;
+	/** Whether SCM review feedback is automatically injected into the worker. */
+	autoInjectReview?: boolean;
+	/** Default captured by newly created PRs for automatic CI-failure injection. */
+	autoInjectCI?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	isPinned?: boolean;
+	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
+	activeAgentSwitch?: AgentSwitchSummary;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.
@@ -154,11 +120,6 @@ export type WorkspaceSession = {
 	 * done server-side, so {@link status} already reflects all of these.
 	 */
 	prs: PullRequestFacts[];
-	/**
-	 * Display status as derived by the daemon at read time. Optional override; when
-	 * absent it is derived from {@link SessionStatus} via {@link workerDisplayStatus}.
-	 */
-	displayStatus?: WorkerDisplayStatus;
 };
 
 // Tracker providers whose ids the intake daemon stamps sessions with, in
@@ -190,34 +151,6 @@ export type WorkspaceRepoSummary = {
 	relativePath: string;
 	repo: string;
 };
-
-/** Glanceable worker status. Maps 1:1 to the accent colors in DESIGN.md. */
-export type WorkerDisplayStatus =
-	"working" | "needs_you" | "mergeable" | "ci_failed" | "no_signal" | "done" | "unknown";
-
-export function workerDisplayStatus(session: WorkspaceSession): WorkerDisplayStatus {
-	if (session.displayStatus) return session.displayStatus;
-	switch (session.status) {
-		case "needs_input":
-		case "changes_requested":
-		case "review_pending":
-			return "needs_you";
-		case "ci_failed":
-			return "ci_failed";
-		case "no_signal":
-			return "no_signal";
-		case "approved":
-		case "mergeable":
-			return "mergeable";
-		case "merged":
-		case "terminated":
-			return "done";
-		case "unknown":
-			return "unknown";
-		default:
-			return "working";
-	}
-}
 
 // Open PRs (actionable) sort above merged/closed; ties break by number.
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
@@ -279,37 +212,49 @@ function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	return a.id > b.id;
 }
 
+function sessionLastActiveNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
+	const aLastActive = sessionLastActiveTimestamp(a);
+	const bLastActive = sessionLastActiveTimestamp(b);
+	if (aLastActive !== bLastActive) return aLastActive > bLastActive;
+	return a.id > b.id;
+}
+
+function sessionLastActiveTimestamp(session: WorkspaceSession): number {
+	return (
+		validTimestamp(session.activity?.lastActivityAt) ??
+		validTimestamp(session.updatedAt) ??
+		validTimestamp(session.createdAt) ??
+		0
+	);
+}
+
 function timestamp(value?: string): number {
-	if (!value) return 0;
+	return validTimestamp(value) ?? 0;
+}
+
+function validTimestamp(value?: string): number | undefined {
+	if (!value) return undefined;
 	const parsed = Date.parse(value);
-	return Number.isNaN(parsed) ? 0 : parsed;
+	return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
 	return sessions.filter((s) => !isOrchestratorSession(s));
 }
 
+/** Worker sessions ordered by agent activity, newest first. */
+export function sortedWorkerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
+	return workerSessions(sessions).sort((a, b) =>
+		sessionLastActiveNewer(b, a) ? 1 : sessionLastActiveNewer(a, b) ? -1 : 0,
+	);
+}
+
 export function sessionIsActive(session: WorkspaceSession): boolean {
-	return session.status !== "merged" && session.status !== "terminated";
+	return session.isTerminated !== true && session.status !== "terminated";
 }
 
 export function sessionNeedsAttention(session: WorkspaceSession): boolean {
 	return presentationAttentionZone(session) === "action";
-}
-
-export const workerStatusLabel: Record<WorkerDisplayStatus, string> = {
-	working: "working",
-	needs_you: "needs you",
-	mergeable: "mergeable",
-	ci_failed: "ci failed",
-	no_signal: "no signal",
-	done: "done",
-	unknown: "unknown",
-};
-
-/** Whether a status should breathe (alive/working). */
-export function workerStatusPulses(status: WorkerDisplayStatus): boolean {
-	return status === "working" || status === "needs_you";
 }
 
 export { attentionZone, attentionZoneLabel, attentionZoneOrder } from "../lib/session-presentation";
@@ -330,6 +275,12 @@ export type WorkspaceSummary = {
 	};
 	sessions: WorkspaceSession[];
 };
+
+export function hasConfiguredOrchestratorAgent(
+	workspace: Pick<WorkspaceSummary, "orchestratorAgent"> | undefined,
+): boolean {
+	return Boolean(workspace?.orchestratorAgent);
+}
 
 export function orchestratorNeedsRestart(workspace: WorkspaceSummary, orchestrator?: WorkspaceSession): boolean {
 	if (!orchestrator || !workspace.orchestratorAgent) return false;
@@ -372,32 +323,6 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 }
 
 export function toAgentProvider(provider?: string): AgentProvider {
-	switch (provider) {
-		case "claude-code":
-		case "opencode":
-		case "aider":
-		case "grok":
-		case "droid":
-		case "amp":
-		case "agy":
-		case "crush":
-		case "cursor":
-		case "qwen":
-		case "copilot":
-		case "goose":
-		case "auggie":
-		case "continue":
-		case "devin":
-		case "cline":
-		case "kimi":
-		case "kiro":
-		case "kilocode":
-		case "vibe":
-		case "pi":
-		case "autohand":
-		case "fake":
-			return provider;
-		default:
-			return "codex";
-	}
+	if (provider === "fake") return provider;
+	return AGENT_OPTIONS.find((candidate) => candidate === provider) ?? "codex";
 }

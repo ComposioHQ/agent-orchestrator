@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 
-const { getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+const { captureRendererEventMock, getMock, hasTrustedApiBaseUrlMock } = vi.hoisted(() => ({
+	captureRendererEventMock: vi.fn().mockResolvedValue(undefined),
 	getMock: vi.fn(),
 	hasTrustedApiBaseUrlMock: vi.fn(() => true),
 }));
@@ -12,6 +13,8 @@ vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock },
 	hasTrustedApiBaseUrl: hasTrustedApiBaseUrlMock,
 }));
+
+vi.mock("../lib/telemetry", () => ({ captureRendererEvent: captureRendererEventMock }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
 
@@ -33,18 +36,19 @@ function respondWith(payload: {
 }
 
 beforeEach(() => {
+	captureRendererEventMock.mockClear();
 	getMock.mockReset();
 	hasTrustedApiBaseUrlMock.mockReset().mockReturnValue(true);
 });
 
 describe("useWorkspaceQuery", () => {
-	it("returns an empty workspace list while the daemon base URL is untrusted", async () => {
+	it("rejects workspace reads while the daemon base URL is untrusted", async () => {
 		hasTrustedApiBaseUrlMock.mockReturnValue(false);
 
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 
-		await waitFor(() => expect(result.current.isSuccess).toBe(true));
-		expect(result.current.data).toEqual([]);
+		await waitFor(() => expect(result.current.isError).toBe(true));
+		expect(result.current.error).toEqual(new Error("AO daemon API is not ready"));
 		expect(getMock).not.toHaveBeenCalled();
 	});
 
@@ -73,10 +77,29 @@ describe("useWorkspaceQuery", () => {
 							displayName: "fix-bug",
 							issueId: "github:acme/project-one#42",
 							harness: "claude-code",
+							reviewerHarness: "qwen",
 							branch: "qa/modal-worker",
 							status: "mergeable",
+							scmStatus: "review_pending",
 							isTerminated: false,
+							autoInjectReview: false,
+							autoInjectCI: false,
 							activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
+							activeAgentSwitch: {
+								agentHandoffStatus: "received",
+								errorCode: "delivery_unconfirmed",
+								fromHarness: "claude-code",
+								id: "switch-1",
+								privateFutureField: "must-not-leak",
+								requestedAt: "2026-06-10T15:31:00Z",
+								semanticHandoffIncluded: true,
+								sessionId: "sess-1",
+								sourceTranscriptStatus: "available",
+								state: "delivering_context",
+								targetHarness: "codex",
+								targetStartMode: "resumed",
+								updatedAt: "2026-06-10T15:32:00Z",
+							},
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
 						{
@@ -85,6 +108,7 @@ describe("useWorkspaceQuery", () => {
 							id: "sess-2",
 							projectId: "proj-1",
 							harness: "mystery-agent",
+							reviewerHarness: "mystery-reviewer",
 							status: "bogus",
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
@@ -114,16 +138,39 @@ describe("useWorkspaceQuery", () => {
 			title: "fix-bug",
 			issueId: "github:acme/project-one#42",
 			provider: "claude-code",
+			reviewerHarness: "qwen",
 			branch: "qa/modal-worker",
 			status: "mergeable",
+			scmStatus: "review_pending",
 			activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
+			autoInjectReview: false,
+			autoInjectCI: false,
+		});
+		expect(workspace.sessions[0].activeAgentSwitch).toEqual({
+			agentHandoffStatus: "received",
+			errorCode: "delivery_unconfirmed",
+			fromHarness: "claude-code",
+			id: "switch-1",
+			state: "delivering_context",
+			targetHarness: "codex",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",
 			title: "sess-2",
 			provider: "codex",
+			reviewerHarness: undefined,
 			status: "unknown",
 			branch: undefined,
+			autoInjectReview: true,
+			autoInjectCI: true,
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "status",
+			reason: "unrecognized",
+		});
+		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
+			field: "activity",
+			reason: "missing",
 		});
 	});
 
@@ -253,6 +300,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("merged");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("falls back to terminated for terminated sessions without a known backend status", async () => {
@@ -278,6 +326,7 @@ describe("useWorkspaceQuery", () => {
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
 		expect(result.current.data?.[0].sessions[0].status).toBe("terminated");
+		expect(result.current.data?.[0].sessions[0].isTerminated).toBe(true);
 	});
 
 	it("surfaces a projects fetch error", async () => {

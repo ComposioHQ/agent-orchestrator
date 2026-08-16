@@ -10,12 +10,33 @@ func revParseVerifyArgs(repo, ref string) []string {
 	return []string{"-C", repo, "rev-parse", "--verify", "--quiet", ref}
 }
 
-func worktreeAddBranchArgs(repo, path, branch string) []string {
-	return []string{"-C", repo, "worktree", "add", path, branch}
+// worktreeAddForce is git's documented override for "<path> is a missing but
+// already registered worktree" (git's own hint for that failure is "use
+// 'add -f' to override"). It re-registers a path whose registration outlived
+// its directory in one step, so recovering a stale registration never needs a
+// destructive `worktree remove --force` or a repo-wide `worktree prune` first.
+//
+// Verified against git 2.54: `worktree add --force` still refuses a path that
+// exists and is non-empty ("fatal: '<path>' already exists"), so it can never
+// clobber a live worktree or an agent's uncommitted work, and a single --force
+// still refuses a missing-but-LOCKED registration (that needs `-f -f`), which
+// is what keeps a lock an effective "do not touch" signal. Never pass it twice.
+const worktreeAddForce = "--force"
+
+func worktreeAddBranchArgs(repo, path, branch string, force bool) []string {
+	args := []string{"-C", repo, "worktree", "add"}
+	if force {
+		args = append(args, worktreeAddForce)
+	}
+	return append(args, path, branch)
 }
 
-func worktreeAddNewBranchArgs(repo, branch, path, baseRef string) []string {
-	return []string{"-C", repo, "worktree", "add", "-b", branch, path, baseRef}
+func worktreeAddNewBranchArgs(repo, branch, path, baseRef string, force bool) []string {
+	args := []string{"-C", repo, "worktree", "add"}
+	if force {
+		args = append(args, worktreeAddForce)
+	}
+	return append(args, "-b", branch, path, baseRef)
 }
 
 // worktreeRemoveArgs intentionally omits --force: a dirty worktree (uncommitted
@@ -107,17 +128,14 @@ func ignoredCountArgs(worktree string) []string {
 	return []string{"-C", worktree, "status", "--ignored", "--porcelain"}
 }
 
-func baseRefCandidates(branch, defaultBranch string) []string {
-	candidates := []string{"origin/" + branch}
+func configuredBaseRefCandidates(defaultBranch string) []string {
 	if strings.Contains(defaultBranch, "/") {
 		// A qualified default ("upstream/main") is used verbatim; git's refname
 		// disambiguation already falls back to refs/heads/<defaultBranch>.
-		candidates = append(candidates, defaultBranch)
-	} else {
-		// The local head comes after origin/<defaultBranch> so remote-tracking
-		// still wins when present, but a remoteless repo can base new branches
-		// on its local default branch instead of failing BRANCH_NOT_FETCHED.
-		candidates = append(candidates, "origin/"+defaultBranch, "refs/heads/"+defaultBranch)
+		return []string{defaultBranch}
 	}
-	return append(candidates, branch)
+	// The local head comes after origin/<defaultBranch> so remote-tracking
+	// still wins when present, but a remoteless repo can base new branches
+	// on its local default branch instead of failing BRANCH_NOT_FETCHED.
+	return []string{"origin/" + defaultBranch, "refs/heads/" + defaultBranch}
 }

@@ -1,16 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	canSubmitProjectSetup,
+	ProjectSetupFormView,
+	ProjectSetupHeaderView,
+} from "@aoagents/product-ui";
+import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
-import { TriangleAlert, X } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
+import {
+	agentLabelCompare,
+	buildRankedAgentOptions,
+	DEFAULT_AGENT_PRIORITY,
+	DEFAULT_AGENT_PRIORITY_RANK,
+} from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
+import { AgentAvatar } from "./AgentAvatar";
+import { FieldDefaultHint } from "./FieldDefaultHint";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
+import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
+import { SettingsRow } from "./settings/SettingsRow";
+import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import type { ProjectKind } from "../types/workspace";
-import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { appI18n } from "../i18n";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -23,15 +40,6 @@ export type CreateProjectAgentSelection = {
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
-const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
-const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
-	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
-);
-
-function agentLabelCompare(a: AgentInfo, b: AgentInfo): number {
-	return a.label.localeCompare(b.label) || a.id.localeCompare(b.id);
-}
-
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;
@@ -42,6 +50,7 @@ type CreateProjectAgentSheetProps = {
 	open: boolean;
 	path: string | null;
 	repositorySetupNeeded?: boolean;
+	repositorySetupWarning?: string | null;
 };
 
 type SheetError = {
@@ -59,26 +68,28 @@ function projectSheetError(error: string): SheetError {
 	switch (code) {
 		case "PROJECT_PATH_NOT_REPO_ROOT":
 			return {
-				title: "Select the repository root",
-				message: "This folder is inside another Git repository. Choose the top-level folder and try again.",
+				title: appI18n.t("createProject.error.notRepoRootTitle"),
+				message: appI18n.t("createProject.error.notRepoRootBody"),
 				tone: "warning",
 			};
 		case "PROJECT_BARE_REPOSITORY":
 			return {
-				title: "Choose a normal checkout",
-				message: "AO needs a regular working folder, not a bare Git repository.",
+				title: appI18n.t("createProject.error.bareTitle"),
+				message: appI18n.t("createProject.error.bareBody"),
 				tone: "warning",
 			};
 		case "UNSUPPORTED_GIT_REPO":
 			return {
-				title: "Choose a valid Git folder",
-				message: "AO could not read the Git metadata here. Repair the repository or choose a plain folder.",
+				title: appI18n.t("createProject.error.unsupportedTitle"),
+				message: appI18n.t("createProject.error.unsupportedBody"),
 				tone: "warning",
 			};
 		default:
 			return {
-				title: error.toLowerCase().startsWith("setup failed:") ? "Repository setup failed" : "Could not create project",
-				message: message || "Try again, or choose a different folder.",
+				title: error.toLowerCase().startsWith("setup failed:")
+					? appI18n.t("createProject.error.setupFailedTitle")
+					: appI18n.t("createProject.error.createFailedTitle"),
+				message: message || appI18n.t("createProject.error.tryAgain"),
 				tone: "error",
 			};
 	}
@@ -94,7 +105,9 @@ export function CreateProjectAgentSheet({
 	open,
 	path,
 	repositorySetupNeeded = false,
+	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
 		...agentsQueryOptions,
@@ -112,12 +125,12 @@ export function CreateProjectAgentSheet({
 	const agentsError = agentsQuery.isError
 		? agentsQuery.error instanceof Error
 			? agentsQuery.error.message
-			: "Could not load agent catalog."
+			: t("createProject.couldNotLoadAgents")
 		: null;
 	const displayError = refreshAgentsMutation.isError
 		? refreshAgentsMutation.error instanceof Error
 			? refreshAgentsMutation.error.message
-			: "Could not refresh agent catalog."
+			: t("createProject.couldNotRefreshAgents")
 		: agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
@@ -126,7 +139,16 @@ export function CreateProjectAgentSheet({
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isBusy && !isLoadingAgents;
+	const canSubmit =
+		canSubmitProjectSetup({
+			workerAgent,
+			orchestratorAgent,
+			intakeEnabled: intake.enabled,
+			intakeAssignee: intake.assignee,
+		}) &&
+		!intakeIncomplete &&
+		!isBusy &&
+		!isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
 
 	useEffect(() => {
@@ -151,102 +173,93 @@ export function CreateProjectAgentSheet({
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-agents-sheet border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-0 text-[var(--color-text-agents-sheet-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
-					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] px-6 py-5">
-						<div className="min-w-0">
-							<Dialog.Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
-								{kind === "workspace" ? "Workspace agents" : "Project agents"}
-							</Dialog.Title>
-							<Dialog.Description className="mt-1 break-all text-xs text-[var(--color-text-agents-sheet-description)]">
-								{path ?? ""}
-							</Dialog.Description>
-						</div>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-agents-sheet-description)] transition hover:bg-interactive-hover hover:text-[var(--color-text-agents-sheet-title)] disabled:pointer-events-none disabled:opacity-50"
-								aria-label="Close project agents dialog"
-								disabled={isBusy}
-							>
-								<X className="size-icon-base" aria-hidden="true" />
-							</button>
-						</Dialog.Close>
-					</div>
-					<form
-						className="space-y-5 px-6 py-5"
-						onSubmit={(event) => {
-							event.preventDefault();
-							if (!canSubmit) return;
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) });
+					<ProjectSetupHeaderView
+						CloseButton={ProjectSheetCloseButton}
+						Description={Dialog.Description}
+						Title={Dialog.Title}
+						closeIcon={<X className="size-icon-base" aria-hidden="true" />}
+						closeLabel={t("createProject.closeAgents")}
+						disabled={isBusy}
+						path={path ?? ""}
+						title={
+							kind === "workspace"
+								? t("createProject.workspaceAgents")
+								: t("createProject.projectAgents")
+						}
+					/>
+					<ProjectSetupFormView
+						agentControls={{
+							worker: (
+								<RequiredAgentField
+									id="newProjectWorkerAgent"
+									label={t("createProject.workerAgent")}
+									placeholder={t("createProject.selectWorker")}
+									value={workerAgent}
+									authorized={agentOptions}
+									installed={installedAgents}
+									supported={supportedAgents}
+									disabled={isLoadingAgents}
+									labelClassName="agents-sheet-label"
+									triggerClassName="agents-sheet-control"
+									contentClassName="agents-sheet-menu"
+									onChange={(value) => {
+										setWorkerAgent(value);
+										setWorkerAgentTouched(true);
+									}}
+								/>
+							),
+							orchestrator: (
+								<RequiredAgentField
+									id="newProjectOrchestratorAgent"
+									label={t("createProject.orchestratorAgent")}
+									placeholder={t("createProject.selectOrchestrator")}
+									value={orchestratorAgent}
+									authorized={agentOptions}
+									installed={installedAgents}
+									supported={supportedAgents}
+									disabled={isLoadingAgents}
+									labelClassName="agents-sheet-label"
+									triggerClassName="agents-sheet-control"
+									contentClassName="agents-sheet-menu"
+									onChange={(value) => {
+										setOrchestratorAgent(value);
+										setOrchestratorAgentTouched(true);
+									}}
+								/>
+							),
 						}}
-					>
-						<div className="grid gap-4 sm:grid-cols-2">
-							<RequiredAgentField
-								id="newProjectWorkerAgent"
-								label="Worker agent"
-								placeholder="Select worker agent"
-								value={workerAgent}
-								authorized={agentOptions}
-								installed={installedAgents}
-								supported={supportedAgents}
-								disabled={isLoadingAgents}
-								labelClassName="agents-sheet-label"
-								triggerClassName="agents-sheet-control"
-								contentClassName="agents-sheet-menu"
-								onChange={(value) => {
-									setWorkerAgent(value);
-									setWorkerAgentTouched(true);
-								}}
-							/>
-							<RequiredAgentField
-								id="newProjectOrchestratorAgent"
-								label="Orchestrator agent"
-								placeholder="Select orchestrator agent"
-								value={orchestratorAgent}
-								authorized={agentOptions}
-								installed={installedAgents}
-								supported={supportedAgents}
-								disabled={isLoadingAgents}
-								labelClassName="agents-sheet-label"
-								triggerClassName="agents-sheet-control"
-								contentClassName="agents-sheet-menu"
-								onChange={(value) => {
-									setOrchestratorAgent(value);
-									setOrchestratorAgentTouched(true);
-								}}
-							/>
-						</div>
-
-						{isLoadingAgents && (
-							<p className="text-xs leading-row text-[var(--color-text-agents-sheet-description)]">Loading agents...</p>
-						)}
-
-						<div className="flex items-center justify-between gap-3 text-xs leading-row text-[var(--color-text-agents-sheet-description)]">
-							<span>Agent availability is cached.</span>
-							<button
-								type="button"
-								className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-								disabled={refreshAgentsMutation.isPending}
-								onClick={() => refreshAgentsMutation.mutate()}
-							>
-								{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
-							</button>
-						</div>
-
-						{displayError && (
-							<div className="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-row text-destructive">
-								<span>{displayError}</span>
-								<button
-									type="button"
-									className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-									disabled={refreshAgentsMutation.isPending}
-									onClick={() => refreshAgentsMutation.mutate()}
-								>
-									Retry
-								</button>
-							</div>
-						)}
-
-						<div className="border-t border-[var(--color-border-agents-sheet)] pt-5">
+						agents={{
+							cacheMessage: t("createProject.agentsCached"),
+							error: displayError,
+							loading: isLoadingAgents,
+							loadingMessage: t("createProject.loadingAgents"),
+							onRefresh: () => refreshAgentsMutation.mutate(),
+							refreshLabel: refreshAgentsMutation.isPending
+								? t("createProject.refreshing")
+								: t("createProject.refreshAgents"),
+							refreshing: refreshAgentsMutation.isPending,
+							retryLabel: t("createProject.retry"),
+						}}
+						alert={
+							sheetError
+								? {
+										...sheetError,
+										icon: (
+											<TriangleAlert
+												className={
+													sheetError.tone === "warning"
+														? "mt-0.5 size-icon-sm shrink-0 text-warning"
+														: "mt-0.5 size-icon-sm shrink-0 text-destructive"
+												}
+												aria-hidden="true"
+											/>
+										),
+									}
+								: null
+						}
+						canSubmit={canSubmit}
+						cancelLabel={t("createProject.cancel")}
+						intakeControl={
 							<IntakeFields
 								form={intake}
 								onChange={(patch) => setIntake((f) => ({ ...f, ...patch }))}
@@ -254,76 +267,61 @@ export function CreateProjectAgentSheet({
 								controlClassName="agents-sheet-control"
 								labelClassName="agents-sheet-label"
 							/>
-						</div>
-
-						{repositorySetupNeeded && (
-							<div className="rounded-lg border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet-control)]/80 px-3 py-2.5 text-xs leading-body-md text-[var(--color-text-agents-sheet-description)]">
-								If this folder needs Git setup, AO will initialize it and create the first commit before starting.
-							</div>
-						)}
-
-						{sheetError && (
-							<div
-								role="alert"
-								className={
-									sheetError.tone === "warning"
-										? "flex gap-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5 text-xs leading-body-md"
-										: "flex gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-xs leading-body-md"
-								}
-							>
-								<TriangleAlert
-									className={
-										sheetError.tone === "warning"
-											? "mt-0.5 size-icon-sm shrink-0 text-warning"
-											: "mt-0.5 size-icon-sm shrink-0 text-destructive"
-									}
-									aria-hidden="true"
-								/>
-								<div className="min-w-0 space-y-0.5">
-									<p
-										className={
-											sheetError.tone === "warning"
-												? "font-medium text-[var(--color-text-agents-sheet-title)]"
-												: "font-medium text-destructive"
-										}
-									>
-										{sheetError.title}
-									</p>
-									<p className="text-[var(--color-text-agents-sheet-description)]">{sheetError.message}</p>
-								</div>
-							</div>
-						)}
-
-						<div className="flex items-center justify-end gap-2 pt-1">
-							<Button
-								type="button"
-								variant="outline"
-								disabled={isBusy}
-								className="rounded-lg border-[var(--color-border-agents-sheet)] bg-transparent text-[var(--color-text-agents-sheet-title)] hover:bg-interactive-hover"
-								onClick={() => onOpenChange(false)}
-							>
-								Cancel
-							</Button>
-							<Button type="submit" variant="primary" className="rounded-lg" disabled={!canSubmit}>
-								{isInitializing
-									? "Setting up..."
-									: isCreating
-										? "Creating..."
-										: kind === "workspace"
-											? "Create workspace and start"
-											: "Create and start"}
-							</Button>
-						</div>
-					</form>
+						}
+						isBusy={isBusy}
+						onCancel={() => onOpenChange(false)}
+						onSubmit={() =>
+							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) })
+						}
+						setupNotice={
+							repositorySetupNeeded
+								? { message: t("createProject.gitSetupNotice"), warning: repositorySetupWarning }
+								: null
+						}
+						submitLabel={
+							isInitializing
+								? t("createProject.settingUp")
+								: isCreating
+									? t("createProject.creating")
+									: kind === "workspace"
+										? t("createProject.createWorkspaceAndStart")
+										: t("createProject.createAndStart")
+						}
+					/>
 				</Dialog.Content>
 			</Dialog.Portal>
 		</Dialog.Root>
 	);
 }
 
+function ProjectSheetCloseButton({
+	children,
+	disabled,
+	"aria-label": ariaLabel,
+}: {
+	children: ReactNode;
+	disabled: boolean;
+	"aria-label": string;
+}) {
+	return (
+		<Dialog.Close asChild>
+			<button
+				type="button"
+				className="settings-close-button"
+				aria-label={ariaLabel}
+				disabled={disabled}
+			>
+				{children}
+			</button>
+		</Dialog.Close>
+	);
+}
+
 export const RequiredAgentField = memo(function RequiredAgentField({
 	authorized,
 	disabled = false,
+	hint,
+	icon,
 	id,
 	invalid = false,
 	installed,
@@ -335,9 +333,13 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	labelClassName,
 	contentClassName,
 	value,
+	variant = "stacked",
 }: {
 	authorized?: AgentInfo[];
 	disabled?: boolean;
+	/** Caption beside the label, e.g. naming where a preselected default came from. */
+	hint?: string;
+	icon?: LucideIcon;
 	id: string;
 	invalid?: boolean;
 	installed?: AgentInfo[];
@@ -349,45 +351,144 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	labelClassName?: string;
 	contentClassName?: string;
 	value: string;
+	variant?: "stacked" | "settings-row" | "chip";
 }) {
 	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
-	const supportedAgents = supported ?? fallbackAgents;
-	const installedAgents = installed ?? supportedAgents;
-	const authorizedAgents = authorized ?? supportedAgents;
-	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
-	const installedById = new Map(installedAgents.map((agent) => [agent.id, agent]));
-	const options = supportedAgents
-		.map((agent) => {
-			const installedAgent = installedById.get(agent.id);
-			const authStatus = installedAgent?.authStatus;
-			const isAuthorized = authorizedIds.has(agent.id) || authStatus === "authorized";
-			const isAuthUnknown = Boolean(installedAgent) && !isAuthorized && authStatus !== "unauthorized";
-			const isSelectable = isAuthorized || isAuthUnknown;
-			const rank = isAuthorized ? 0 : isAuthUnknown ? 1 : installedAgent ? 2 : 3;
-			return {
-				...agent,
-				disabled: !isSelectable,
-				priorityRank: DEFAULT_AGENT_PRIORITY_RANK.get(agent.id) ?? Number.MAX_SAFE_INTEGER,
-				rank,
-				reason: !installedAgent ? "Needs install" : isAuthUnknown ? "Auth unknown" : !isAuthorized ? "Needs auth" : "",
-				warning: isAuthUnknown,
-			};
-		})
-		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
+	const options = buildRankedAgentOptions({
+		supported,
+		installed,
+		authorized,
+		priorityRank: DEFAULT_AGENT_PRIORITY_RANK,
+		fallbackAgents,
+	});
+
+	if (variant === "settings-row") {
+		const menuOptions = options.map((agent) => ({
+			value: agent.id,
+			label: agent.label,
+			disabled: agent.disabled,
+		}));
+
+		return (
+			<SettingsRow icon={icon} label={label}>
+				<SettingsOptionMenu
+					aria-label={label}
+					value={value}
+					placeholder={placeholder}
+					options={menuOptions}
+					disabled={disabled}
+					onChange={onChange}
+					triggerClassName={invalid ? "text-error" : undefined}
+					menuClassName="settings-agent-menu-surface"
+					menuItemClassName="settings-agent-menu-item"
+					renderTrigger={(selected, triggerPlaceholder) => (
+						<>
+							{selected ? <AgentAvatar provider={selected.value} className="size-icon-lg" /> : null}
+							<span className="min-w-0 truncate">{selected?.label ?? triggerPlaceholder}</span>
+						</>
+					)}
+					renderMenuItem={(option, selected) => {
+						const agent = options.find((entry) => entry.id === option.value);
+						if (!agent) return option.label;
+						return (
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={selected}
+								status={agent.status}
+								statusTone={agent.statusTone}
+								disabled={agent.disabled}
+							/>
+						);
+					}}
+				/>
+			</SettingsRow>
+		);
+	}
+
+	const selectedOption = options.find((agent) => agent.id === value);
+
+	// Chip: the value reads as part of a sentence ("Runs with Codex") rather than
+	// as a form field, so the label is carried by that sentence, not by a <Label>.
+	// Built on the same SettingsOptionMenu as the settings-row variant (and the
+	// model chip beside it) so both halves of the pill share one dropdown
+	// component instead of a Select-based menu and a DropdownMenu-based one.
+	if (variant === "chip") {
+		const menuOptions = options.map((agent) => ({
+			value: agent.id,
+			label: agent.label,
+			disabled: agent.disabled,
+		}));
+
+		return (
+			<SettingsOptionMenu
+				aria-label={label}
+				value={value}
+				placeholder={placeholder}
+				options={menuOptions}
+				disabled={disabled}
+				onChange={onChange}
+				menuAlign="start"
+				triggerClassName={cn(
+					"composer-chip composer-toolbar-option w-full justify-between",
+					invalid && "text-error",
+					triggerClassName,
+				)}
+				menuClassName={contentClassName}
+				renderTrigger={() => (
+					<span className="flex min-w-0 items-center gap-2">
+						{selectedOption ? (
+							<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
+						) : null}
+						<span className="min-w-0 truncate text-control text-foreground" title={selectedOption?.label ?? placeholder}>
+							{selectedOption?.label ?? placeholder}
+						</span>
+					</span>
+				)}
+				renderMenuItem={(option, selected) => {
+					const agent = options.find((entry) => entry.id === option.value);
+					if (!agent) return option.label;
+					return (
+						<AgentSelectMenuItem
+							agentId={agent.id}
+							label={agent.label}
+							selected={selected}
+							status={agent.status}
+							statusTone={agent.statusTone}
+							disabled={agent.disabled}
+						/>
+					);
+				}}
+			/>
+		);
+	}
 
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
-				{label}
-			</Label>
+			<div className="flex min-w-0 items-baseline gap-1.5">
+				<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
+					{label}
+				</Label>
+				{hint && <FieldDefaultHint text={hint} />}
+			</div>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
 				<SelectTrigger
 					id={id}
 					size="sm"
 					className={cn("w-full text-control", triggerClassName)}
+					aria-label={label}
 					aria-invalid={invalid || undefined}
 				>
-					<SelectValue placeholder={placeholder} />
+					{/* Radix would otherwise clone the whole menu row into the trigger,
+					    dragging the selected checkmark and install status with it. */}
+					<SelectValue placeholder={placeholder}>
+						{selectedOption ? (
+							<span className="flex min-w-0 items-center gap-3">
+								<AgentAvatar provider={selectedOption.id} className="size-icon-lg" decorative />
+								<span className="min-w-0 truncate">{selectedOption.label}</span>
+							</span>
+						) : null}
+					</SelectValue>
 				</SelectTrigger>
 				<SelectContent
 					position="popper"
@@ -403,15 +504,14 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 							disabled={agent.disabled}
 							className="[&>span:last-child]:w-full"
 						>
-							<span className="flex min-w-0 w-full items-center justify-between gap-4">
-								<span className="truncate">{agent.label}</span>
-								{agent.reason && (
-									<span className="inline-flex shrink-0 items-center gap-1 text-caption text-muted-foreground">
-										{agent.warning && <TriangleAlert className="size-3 text-warning" aria-hidden="true" />}
-										{agent.reason}
-									</span>
-								)}
-							</span>
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={value === agent.id}
+								status={agent.status}
+								statusTone={agent.statusTone}
+								disabled={agent.disabled}
+							/>
 						</SelectItem>
 					))}
 				</SelectContent>

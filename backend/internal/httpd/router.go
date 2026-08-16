@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -46,6 +45,7 @@ type ControlDeps struct {
 // REST routes, never long-lived terminal streams or health probes.
 func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
 	log = loggerOrDefault(log)
+	deps = normalizeAPIDeps(deps, log)
 	r := chi.NewRouter()
 	api := NewAPI(cfg, deps)
 
@@ -65,8 +65,9 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountHealth(r, cfg)
 	mountTerminalMux(r, termMgr, log)
 	mountControl(r, control)
-	mountTelemetry(r, deps.Telemetry)
+	mountTelemetry(r, cfg, deps.Telemetry)
 	mountMobile(r, deps.Mobile)
+	mountMobileDevices(r, &controllers.MobileDevicesController{Registry: deps.DeviceRoster, Presence: deps.DeviceLive})
 	api.Register(r)
 
 	return r
@@ -137,11 +138,34 @@ func mountMobile(r chi.Router, c *controllers.MobileController) {
 	r.Post("/api/v1/mobile/enable", c.Enable)
 	r.Post("/api/v1/mobile/disable", c.Disable)
 	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
+	r.Post("/api/v1/mobile/secure-pairing", c.SecurePairing)
+}
+
+// mountMobileDevices registers the desktop-only mobile device roster. These sit
+// under /api/v1/mobile deliberately: lanControlBlock already 404s that prefix on
+// the LAN socket, so the "a phone must not manage the roster" invariant is
+// enforced by the transport rather than by a spoofable header.
+//
+// The routes are mounted unconditionally, even when c.Registry is nil (a
+// corrupt ~/.ao/data/mobile/push-devices.json failed to load): each handler
+// answers 503 DEVICE_REGISTRY_UNAVAILABLE in that case, so the desktop can tell
+// "the registry failed to load" apart from "this route doesn't exist / talking
+// to an old daemon" (a 404 would be ambiguous with both). Only a nil controller
+// pointer — meaning the roster surface was never wired into APIDeps at all —
+// skips mounting, matching mountMobile's convention for an absent controller.
+func mountMobileDevices(r chi.Router, c *controllers.MobileDevicesController) {
+	if c == nil {
+		return
+	}
+	r.Get("/api/v1/mobile/devices", c.List)
+	r.Patch("/api/v1/mobile/devices/{installId}", c.Mute)
+	r.Delete("/api/v1/mobile/devices/{installId}", c.Remove)
 }
 
 type cliInvokedRequest struct {
 	Command     string `json:"command"`
 	CommandPath string `json:"commandPath"`
+	ActorType   string `json:"actorType"`
 }
 
 type cliUsageErrorRequest struct {
@@ -150,47 +174,19 @@ type cliUsageErrorRequest struct {
 	Error       string `json:"error"`
 }
 
-func mountTelemetry(r chi.Router, sink ports.EventSink) {
+func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 	if sink == nil {
 		return
 	}
-	// CLI telemetry is capped to daily uniques: ao.app.active once per UTC day
-	// (matching the renderer heartbeat) and ao.cli.invoked once per command
-	// path per UTC day. Scripts and agent sessions invoke read-only commands
-	// (status, ls, get) in polling loops, so raw invocation counts measure
-	// automation, not usage; daily uniques keep the "which commands, how many
-	// users" signal without the firehose. In-memory state: a daemon restart may
-	// re-emit once that day, which dashboards dedupe by distinct ID anyway.
-	var (
-		cliTelemetryMu sync.Mutex
-		cliActiveDay   string
-		cliInvokedDay  string
-		cliInvokedSeen map[string]struct{}
-	)
-	reserveCLIActive := func(now time.Time) bool {
-		day := now.UTC().Format("2006-01-02")
-		cliTelemetryMu.Lock()
-		defer cliTelemetryMu.Unlock()
-		if cliActiveDay == day {
-			return false
-		}
-		cliActiveDay = day
-		return true
-	}
-	reserveCLIInvoked := func(now time.Time, commandPath string) bool {
-		day := now.UTC().Format("2006-01-02")
-		cliTelemetryMu.Lock()
-		defer cliTelemetryMu.Unlock()
-		if cliInvokedDay != day {
-			cliInvokedDay = day
-			cliInvokedSeen = make(map[string]struct{})
-		}
-		if _, seen := cliInvokedSeen[commandPath]; seen {
-			return false
-		}
-		cliInvokedSeen[commandPath] = struct{}{}
-		return true
-	}
+	// CLI telemetry is capped to bounded uniques: ao.app.active once per UTC day
+	// for user-context CLI activity (matching the renderer
+	// heartbeat) and ao.cli.invoked once per actor type + command path per UTC
+	// day. Scripts and agent sessions invoke read-only commands (status, ls,
+	// get) in polling loops, so raw invocation counts measure automation, not
+	// usage; bounded uniques keep the "which commands, how many users" signal
+	// without the firehose. The reservation state is persisted under DataDir so
+	// daemon restarts cannot turn polling loops back into raw event volume.
+	cliTelemetry := newCLITelemetryReservoir(cfg.DataDir)
 	r.Post("/internal/telemetry/cli-invoked", func(w http.ResponseWriter, req *http.Request) {
 		if !localControlRequest(req) {
 			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
@@ -211,8 +207,18 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 			envelope.WriteAPIError(w, req, http.StatusBadRequest, "bad_request", "COMMAND_PATH_REQUIRED", "commandPath is required", nil)
 			return
 		}
+		commandPath := telemetrymeta.NormalizeCommandPath(body.CommandPath)
+		actorType := telemetrymeta.CLIActorType(body.ActorType, commandPath)
+		if actorType == "system" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 
-		if now := time.Now(); reserveCLIInvoked(now, body.CommandPath) {
+		if now := time.Now(); cliTelemetry.reserveInvoked(now, actorType, commandPath) {
 			sink.Emit(req.Context(), ports.TelemetryEvent{
 				Name:       "ao.cli.invoked",
 				Source:     "cli",
@@ -221,23 +227,27 @@ func mountTelemetry(r chi.Router, sink ports.EventSink) {
 				RequestID:  middleware.GetReqID(req.Context()),
 				Payload: map[string]any{
 					"command":      body.Command,
-					"command_path": body.CommandPath,
+					"command_path": commandPath,
+					"actor_type":   actorType,
 				},
 			})
 		}
-		if now := time.Now(); reserveCLIActive(now) {
-			sink.Emit(req.Context(), ports.TelemetryEvent{
-				Name:       "ao.app.active",
-				Source:     "cli",
-				OccurredAt: now.UTC(),
-				Level:      ports.TelemetryLevelInfo,
-				RequestID:  middleware.GetReqID(req.Context()),
-				Payload: map[string]any{
-					"channel":      "cli",
-					"command":      body.Command,
-					"command_path": body.CommandPath,
-				},
-			})
+		if actorType == "user" {
+			if now := time.Now(); cliTelemetry.reserveActive(now) {
+				sink.Emit(req.Context(), ports.TelemetryEvent{
+					Name:       "ao.app.active",
+					Source:     "cli",
+					OccurredAt: now.UTC(),
+					Level:      ports.TelemetryLevelInfo,
+					RequestID:  middleware.GetReqID(req.Context()),
+					Payload: map[string]any{
+						"channel":      "cli",
+						"command":      body.Command,
+						"command_path": commandPath,
+						"actor_type":   actorType,
+					},
+				})
+			}
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
@@ -321,6 +331,13 @@ func daemonProbePayload(status string, cfg config.Config) map[string]any {
 	}
 	if cfg.StartupWorkingDirectory != "" {
 		payload["startupWorkingDirectory"] = cfg.StartupWorkingDirectory
+	}
+	// AO_APPIMAGE is set by the Electron app at spawn time when it runs from an
+	// AppImage. The value is the stable outer .AppImage file path, which the
+	// app's daemon identity check compares instead of the transient
+	// /tmp/.mount_* executable path (regenerated on every AppImage launch).
+	if appImage := os.Getenv("AO_APPIMAGE"); appImage != "" {
+		payload["appImagePath"] = appImage
 	}
 	return payload
 }
