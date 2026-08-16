@@ -150,6 +150,7 @@ var schemaNames = map[string]string{
 	"ControllersProjectOrDegraded":                "ProjectOrDegraded",
 	"ControllersStatusResponse":                   "StatusResponse",
 	"ControllersFetchRuntimeResponse":             "FetchRuntimeResponse",
+	"ControllersSimulatorStatusResponse":          "SimulatorStatusResponse",
 	"ControllersListSessionsQuery":                "ListSessionsQuery",
 	"ControllersCleanupSessionsQuery":             "CleanupSessionsQuery",
 	"ControllersListSessionsResponse":             "ListSessionsResponse",
@@ -357,6 +358,9 @@ func iosDeviceOperations() []operation {
 		{method: http.MethodGet, path: "/api/v1/ios-device/toolchain/status", id: "getIOSDeviceToolchainStatus", tag: "ios-device", summary: "Check Xcode and iOS Simulator toolchain availability", resps: []respUnit{{http.StatusOK, controllers.StatusResponse{}}, {http.StatusForbidden, envelope.APIError{}}}},
 		{method: http.MethodPost, path: "/api/v1/ios-device/toolchain/recheck", id: "recheckIOSDeviceToolchain", tag: "ios-device", summary: "Re-evaluate Xcode and iOS Simulator toolchain availability", resps: []respUnit{{http.StatusOK, controllers.StatusResponse{}}, {http.StatusForbidden, envelope.APIError{}}}},
 		{method: http.MethodPost, path: "/api/v1/ios-device/toolchain/fetch-runtime", id: "fetchIOSDeviceRuntime", tag: "ios-device", summary: "Return guidance for acquiring the iOS Simulator runtime", resps: []respUnit{{http.StatusOK, controllers.FetchRuntimeResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusForbidden, envelope.APIError{}}}},
+		{method: http.MethodGet, path: "/api/v1/ios-device/status", id: "getIOSDeviceStatus", tag: "ios-device", summary: "Get the AO-managed iOS Simulator status", resps: []respUnit{{http.StatusOK, controllers.SimulatorStatusResponse{}}, {http.StatusNotImplemented, envelope.APIError{}}}},
+		{method: http.MethodPost, path: "/api/v1/ios-device/start", id: "startIOSDevice", tag: "ios-device", summary: "Create and boot the AO-managed iOS Simulator", resps: []respUnit{{http.StatusOK, controllers.SimulatorStatusResponse{}}, {http.StatusInternalServerError, envelope.APIError{}}}},
+		{method: http.MethodPost, path: "/api/v1/ios-device/stop", id: "stopIOSDevice", tag: "ios-device", summary: "Shut down the AO-managed iOS Simulator", resps: []respUnit{{http.StatusOK, controllers.SimulatorStatusResponse{}}, {http.StatusInternalServerError, envelope.APIError{}}}},
 	}
 }
 

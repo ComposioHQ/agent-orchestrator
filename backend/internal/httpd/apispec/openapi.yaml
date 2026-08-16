@@ -350,6 +350,63 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/ios-device/start:
+    post:
+      operationId: startIOSDevice
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulatorStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Create and boot the AO-managed iOS Simulator
+      tags:
+      - ios-device
+  /api/v1/ios-device/status:
+    get:
+      operationId: getIOSDeviceStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulatorStatusResponse'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the AO-managed iOS Simulator status
+      tags:
+      - ios-device
+  /api/v1/ios-device/stop:
+    post:
+      operationId: stopIOSDevice
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimulatorStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Shut down the AO-managed iOS Simulator
+      tags:
+      - ios-device
   /api/v1/ios-device/toolchain/fetch-runtime:
     post:
       operationId: fetchIOSDeviceRuntime
@@ -4176,6 +4233,22 @@ components:
       - workingDir
       - title
       - createdAt
+      type: object
+    SimulatorStatusResponse:
+      properties:
+        available:
+          type: boolean
+        deviceId:
+          type: string
+        error:
+          type: string
+        name:
+          type: string
+        state:
+          type: string
+      required:
+      - available
+      - state
       type: object
     SpawnOrchestratorRequest:
       properties:

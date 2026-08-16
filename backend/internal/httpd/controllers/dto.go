@@ -30,6 +30,14 @@ type FetchRuntimeResponse struct {
 	Message string `json:"message"`
 }
 
+type SimulatorStatusResponse struct {
+	Available bool   `json:"available"`
+	DeviceID  string `json:"deviceId,omitempty"`
+	Name      string `json:"name,omitempty"`
+	State     string `json:"state"`
+	Error     string `json:"error,omitempty"`
+}
+
 // HTTP response envelopes for the projects surface — the SINGLE definition of
 // each wire shape. The handlers encode these (envelope.WriteJSON), and
 // apispec.Build reflects these same types into openapi.yaml, so the served
