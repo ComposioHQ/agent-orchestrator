@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 struct SimulatorCaptureProbe {
     static func main() async {
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let window = content.windows.first(where: { $0.owningApplication?.applicationName == "Simulator" }) else {
                 throw NSError(domain: "AO.Capture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Simulator window not found"])
             }
