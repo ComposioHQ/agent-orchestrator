@@ -920,7 +920,7 @@ function ExternalReviewCard({
 								</span>
 							) : (
 								<button
-									className="inline-flex h-control-md items-center rounded-md px-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+									className="inline-flex h-control-md items-center rounded-md border border-border-strong px-2.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 									onClick={async () => {
 										setRereviewError(false);
 										try {
@@ -996,10 +996,10 @@ function GithubInlineComments({
 	);
 	if (comments.length === 0) return null;
 	return (
-		<section className="min-w-0 border-t border-border/70 pt-3" data-testid="github-inline-comments">
-			<div className="flex min-w-0 items-center justify-between gap-2 pb-2 text-2xs">
+		<section className="min-w-0 border-t border-border/70 pt-4" data-testid="github-inline-comments">
+			<div className="flex min-w-0 items-center justify-between gap-2 pb-2 text-xs">
 				<span className="font-semibold uppercase tracking-wide text-muted-foreground">{labels.openComments}</span>
-				<span className="shrink-0 font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
+				<span className="shrink-0 font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
 			</div>
 			<div className="divide-y divide-border/60">
 				{comments.map((comment) => (
@@ -1079,17 +1079,21 @@ function InlineCommentRow({
 	showReviewer?: boolean;
 	sent: boolean;
 }) {
-	const body = comment.body?.trim();
+	const parsed = parseInlineCommentBody(comment.body);
 	return (
-		<div className="flex min-w-0 flex-col gap-2 px-0 py-3 text-xs first:pt-1 last:pb-0">
+		<div className="flex min-w-0 flex-col gap-2 px-0 py-4 text-xs first:pt-2 last:pb-0">
 			{showReviewer && comment.reviewerId ? (
 				<span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
 					<GithubAvatar login={comment.reviewerId} />
 					<span className="truncate">{comment.reviewerId}</span>
 				</span>
 			) : null}
-			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{body}</p> : null}
-			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-mono text-passive">
+				{parsed.priority ? <span className="font-semibold text-error">{parsed.priority}</span> : null}
+				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
+			</div>
+			{parsed.body ? <p className="m-0 max-w-prose whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{parsed.body}</p> : null}
+			<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
 				{sent ? (
 					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs">
 						<CheckIcon className="shrink-0 text-success" />
@@ -1113,7 +1117,7 @@ function InlineCommentRow({
 					</span>
 				) : (
 					<button
-						className="inline-flex h-control-md items-center rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
+						className="inline-flex h-control-md items-center rounded-md border border-border-strong px-2.5 font-medium text-foreground transition-colors hover:bg-interactive-hover"
 						disabled={!onResolve || !comment.url}
 						onClick={onResolve}
 						type="button"
@@ -1131,6 +1135,15 @@ function InlineCommentRow({
 			{resolveError && !resolved ? <p className="m-0 text-2xs font-medium text-error">{labels.resolveReviewFailed}</p> : null}
 		</div>
 	);
+}
+
+function parseInlineCommentBody(body?: string): { body?: string; priority?: string } {
+	const trimmed = body?.trim();
+	if (!trimmed) return {};
+	const match = trimmed.match(/^\[(P\d)\]\s*/i);
+	return match
+		? { body: trimmed.slice(match[0].length), priority: match[1].toUpperCase() }
+		: { body: trimmed };
 }
 
 function ReviewSummaryCard({

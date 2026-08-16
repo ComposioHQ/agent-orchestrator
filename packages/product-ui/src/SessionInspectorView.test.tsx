@@ -533,7 +533,7 @@ describe("portable inspector presentations", () => {
     expect(screen.getAllByText("2 unresolved").length).toBeGreaterThanOrEqual(
       1,
     );
-    expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
+    expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
     expect(
       screen.getByText("This branch leaks the resize listener on unmount."),
     ).toBeInTheDocument();

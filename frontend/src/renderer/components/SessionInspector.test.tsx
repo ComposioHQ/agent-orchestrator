@@ -2127,8 +2127,8 @@ describe("SessionInspector summary reviews", () => {
     expect(comments).toHaveTextContent("Open comments");
     expect(comments).not.toHaveTextContent("maya");
     expect(comments).toHaveTextContent("Sent to worker agent");
-    expect(comments).not.toHaveTextContent("a.ts:3");
-    expect(comments).not.toHaveTextContent("a.ts:9");
+    expect(comments).toHaveTextContent("a.ts:3");
+    expect(comments).toHaveTextContent("a.ts:9");
     // AO's runs and the PR's own reviews share one section keyed by PR, so the
     // unresolved count rides the same row as the AO verdict.
     expect(screen.getByText("Review summary")).toBeInTheDocument();
