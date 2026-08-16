@@ -68,6 +68,18 @@ type SimulatorAppRequest struct {
 	BundleID string `json:"bundleId,omitempty"`
 }
 
+type SimulatorBuildRequest struct {
+	Project     string `json:"project,omitempty"`
+	Workspace   string `json:"workspace,omitempty"`
+	Scheme      string `json:"scheme"`
+	BundleID    string `json:"bundleId"`
+	DerivedData string `json:"derivedData,omitempty"`
+}
+type SimulatorBuildResponse struct {
+	AppPath  string `json:"appPath"`
+	Accepted bool   `json:"accepted"`
+}
+
 // HTTP response envelopes for the projects surface — the SINGLE definition of
 // each wire shape. The handlers encode these (envelope.WriteJSON), and
 // apispec.Build reflects these same types into openapi.yaml, so the served

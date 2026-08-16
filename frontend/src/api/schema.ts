@@ -141,6 +141,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ios-device/app/build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Build, install, and optionally launch an iOS app */
+        post: operations["buildIOSDeviceApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ios-device/app/install": {
         parameters: {
             query?: never;
@@ -1197,6 +1214,17 @@ export interface components {
         ControllersSimulatorAppRequest: {
             appPath?: string;
             bundleId?: string;
+        };
+        ControllersSimulatorBuildRequest: {
+            bundleId: string;
+            derivedData?: string;
+            project?: string;
+            scheme: string;
+            workspace?: string;
+        };
+        ControllersSimulatorBuildResponse: {
+            accepted: boolean;
+            appPath: string;
         };
         ControllersSimulatorInputRequest: {
             action: string;
@@ -2306,6 +2334,48 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    buildIOSDeviceApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSimulatorBuildRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersSimulatorBuildResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

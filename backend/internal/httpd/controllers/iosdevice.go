@@ -176,6 +176,34 @@ func (c *IOSDeviceController) TerminateApp(w http.ResponseWriter, r *http.Reques
 	envelope.WriteJSON(w, 200, SimulatorInputResponse{Accepted: true})
 }
 
+func (c *IOSDeviceController) BuildApp(w http.ResponseWriter, r *http.Request) {
+	var q SimulatorBuildRequest
+	if json.NewDecoder(r.Body).Decode(&q) != nil || q.Scheme == "" {
+		envelope.WriteAPIError(w, r, 400, "bad_request", "INVALID_BUILD", "scheme is required", nil)
+		return
+	}
+	app, err := iossimulator.BuildApp(q.Project, q.Workspace, q.Scheme, q.DerivedData)
+	if err != nil {
+		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_BUILD", err.Error(), nil)
+		return
+	}
+	if c.Simulator == nil {
+		http.Error(w, "not wired", 501)
+		return
+	}
+	if err := c.Simulator.Install(app); err != nil {
+		envelope.WriteAPIError(w, r, 409, "conflict", "IOS_INSTALL", err.Error(), nil)
+		return
+	}
+	if q.BundleID != "" {
+		if err := c.Simulator.Launch(q.BundleID); err != nil {
+			envelope.WriteAPIError(w, r, 409, "conflict", "IOS_LAUNCH", err.Error(), nil)
+			return
+		}
+	}
+	envelope.WriteJSON(w, 200, SimulatorBuildResponse{AppPath: app, Accepted: true})
+}
+
 func simulatorStatusResponse(status iossimulator.Status) SimulatorStatusResponse {
 	return SimulatorStatusResponse{Available: status.Available, DeviceID: status.DeviceID, Name: status.Name, State: status.State, Error: status.Error}
 }
@@ -204,4 +232,5 @@ func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Post("/ios-device/app/install", c.InstallApp)
 	r.Post("/ios-device/app/launch", c.LaunchApp)
 	r.Post("/ios-device/app/terminate", c.TerminateApp)
+	r.Post("/ios-device/app/build", c.BuildApp)
 }

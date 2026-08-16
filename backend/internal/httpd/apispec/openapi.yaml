@@ -350,6 +350,37 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/ios-device/app/build:
+    post:
+      operationId: buildIOSDeviceApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersSimulatorBuildRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersSimulatorBuildResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+      summary: Build, install, and optionally launch an iOS app
+      tags:
+      - ios-device
   /api/v1/ios-device/app/install:
     post:
       operationId: installIOSDeviceApp
@@ -3143,6 +3174,32 @@ components:
           type: string
         bundleId:
           type: string
+      type: object
+    ControllersSimulatorBuildRequest:
+      properties:
+        bundleId:
+          type: string
+        derivedData:
+          type: string
+        project:
+          type: string
+        scheme:
+          type: string
+        workspace:
+          type: string
+      required:
+      - scheme
+      - bundleId
+      type: object
+    ControllersSimulatorBuildResponse:
+      properties:
+        accepted:
+          type: boolean
+        appPath:
+          type: string
+      required:
+      - appPath
+      - accepted
       type: object
     ControllersSimulatorInputRequest:
       properties:

@@ -371,6 +371,7 @@ func iosDeviceOperations() []operation {
 		{method: http.MethodPost, path: "/api/v1/ios-device/app/install", id: "installIOSDeviceApp", tag: "ios-device", summary: "Install an iOS app bundle", reqBody: controllers.SimulatorAppRequest{}, resps: []respUnit{{http.StatusOK, controllers.SimulatorInputResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}}},
 		{method: http.MethodPost, path: "/api/v1/ios-device/app/launch", id: "launchIOSDeviceApp", tag: "ios-device", summary: "Launch an installed iOS app", reqBody: controllers.SimulatorAppRequest{}, resps: []respUnit{{http.StatusOK, controllers.SimulatorInputResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}}},
 		{method: http.MethodPost, path: "/api/v1/ios-device/app/terminate", id: "terminateIOSDeviceApp", tag: "ios-device", summary: "Terminate an iOS app", reqBody: controllers.SimulatorAppRequest{}, resps: []respUnit{{http.StatusOK, controllers.SimulatorInputResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}}},
+		{method: http.MethodPost, path: "/api/v1/ios-device/app/build", id: "buildIOSDeviceApp", tag: "ios-device", summary: "Build, install, and optionally launch an iOS app", reqBody: controllers.SimulatorBuildRequest{}, resps: []respUnit{{http.StatusOK, controllers.SimulatorBuildResponse{}}, {http.StatusBadRequest, envelope.APIError{}}, {http.StatusConflict, envelope.APIError{}}}},
 	}
 }
 
