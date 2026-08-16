@@ -4,6 +4,7 @@ package iossimulator
 
 /*
 #cgo CFLAGS: -x objective-c
+#cgo LDFLAGS: -framework ApplicationServices -framework CoreGraphics
 #include <ApplicationServices/ApplicationServices.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <unistd.h>
