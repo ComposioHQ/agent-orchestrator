@@ -90,6 +90,15 @@ const api = {
 		// called directly on the File from a drop event, in the same tick, per
 		// Electron's documented webUtils usage.
 		getPathForFile: (file: File) => webUtils.getPathForFile(file),
+		// Fired by the main process when a folder is dropped onto the app's
+		// taskbar icon/shortcut (cold start or an already-running instance).
+		onOpenFolderPath: (listener: (path: string) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, path: string) => listener(path);
+			ipcRenderer.on("app:openFolderPath", wrapped);
+			return () => {
+				ipcRenderer.off("app:openFolderPath", wrapped);
+			};
+		},
 		// Fired by the main process when the app-level new-session shortcut
 		// (⌘N / Ctrl+Shift+N) is pressed in any web contents.
 		onNewSessionShortcut: (listener: () => void) => {

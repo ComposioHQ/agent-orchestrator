@@ -644,6 +644,14 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
+	// A folder was dropped on the app's taskbar icon/shortcut (main process,
+	// cold start or an already-running instance) — feeds the same drop flow as
+	// dragging a folder into the open window.
+	useEffect(
+		() => aoBridge.app.onOpenFolderPath((path) => requestCreateProjectFromPath(path)),
+		[requestCreateProjectFromPath],
+	);
+
 	// New standalone terminal (⌘T / Ctrl+T), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
 	// tab-strip + button so the two cannot drift apart.

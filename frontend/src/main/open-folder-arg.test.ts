@@ -1,0 +1,46 @@
+// @vitest-environment node
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseOpenFolderPathArg } from "./open-folder-arg";
+
+const tempRoots: string[] = [];
+
+async function tempDir(): Promise<string> {
+	const dir = await mkdtemp(path.join(os.tmpdir(), "ao-open-folder-arg-"));
+	tempRoots.push(dir);
+	return dir;
+}
+
+beforeEach(() => {
+	tempRoots.length = 0;
+});
+
+afterEach(async () => {
+	await Promise.all(tempRoots.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("parseOpenFolderPathArg", () => {
+	it("returns the resolved path of a real directory in argv", async () => {
+		const dir = await tempDir();
+		expect(parseOpenFolderPathArg(["electron.exe", dir])).toBe(path.resolve(dir));
+	});
+
+	it("returns undefined when no argv entry is a real directory", () => {
+		expect(parseOpenFolderPathArg(["electron.exe", "C:\\app\\main.js", "--installed-via=msi"])).toBeUndefined();
+	});
+
+	it("ignores flag-like entries even if a path happens to follow the dash", () => {
+		expect(parseOpenFolderPathArg(["-x", "--no-sandbox", "--installed-via=msi"])).toBeUndefined();
+	});
+
+	it("ignores URL-scheme entries such as the ao-app:// deep link", () => {
+		expect(parseOpenFolderPathArg(["electron.exe", "ao-app://callback?token=abc"])).toBeUndefined();
+	});
+
+	it("skips a file path (not a directory) before finding the real directory", async () => {
+		const dir = await tempDir();
+		expect(parseOpenFolderPathArg(["electron.exe", __filename, dir])).toBe(path.resolve(dir));
+	});
+});

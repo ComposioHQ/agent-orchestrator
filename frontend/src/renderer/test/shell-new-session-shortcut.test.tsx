@@ -15,6 +15,7 @@ const shellMocks = vi.hoisted(() => {
 		previousSessionListener: undefined as (() => void) | undefined,
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
+		openFolderPathListener: undefined as ((path: string) => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		routeSearch: {} as Record<string, unknown>,
 		workspaces: [] as WorkspaceSummary[],
@@ -63,6 +64,10 @@ const shellMocks = vi.hoisted(() => {
 			return vi.fn();
 		}),
 		getPathForFile: vi.fn((file: File) => `/dropped/${file.name}`),
+		onOpenFolderPath: vi.fn((listener: (path: string) => void) => {
+			state.openFolderPathListener = listener;
+			return vi.fn();
+		}),
 		getKeybindings: vi.fn(async () => ({})),
 		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
 		setKeybindingRecording: vi.fn(async () => undefined),
@@ -108,6 +113,7 @@ vi.mock("../lib/bridge", () => ({
 			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
 			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
 			getPathForFile: shellMocks.getPathForFile,
+			onOpenFolderPath: shellMocks.onOpenFolderPath,
 		},
 		keybindings: {
 			get: shellMocks.getKeybindings,
@@ -276,12 +282,14 @@ beforeEach(() => {
 	shellMocks.onNextSessionShortcut.mockClear();
 	shellMocks.onFocusTerminalShortcut.mockClear();
 	shellMocks.getPathForFile.mockClear();
+	shellMocks.onOpenFolderPath.mockClear();
 	shellMocks.state.newSessionListener = undefined;
 	shellMocks.state.keyboardShortcutsListener = undefined;
 	shellMocks.state.openSettingsListener = undefined;
 	shellMocks.state.previousSessionListener = undefined;
 	shellMocks.state.nextSessionListener = undefined;
 	shellMocks.state.focusTerminalListener = undefined;
+	shellMocks.state.openFolderPathListener = undefined;
 	shellMocks.state.routeParams = {};
 	shellMocks.state.routeSearch = {};
 	shellMocks.state.workspaces = workspaces;
@@ -702,5 +710,19 @@ describe("shell folder drag-and-drop", () => {
 		fireEvent.drop(window, { dataTransfer: fileDragTransfer({ fileName: "second", isDirectory: true }) });
 
 		expect(useUiStore.getState().folderDropRequest).toEqual({ nonce: 2, path: "/dropped/second" });
+	});
+});
+
+describe("shell taskbar-icon folder drop subscription", () => {
+	it("opens the create-project flow for a folder dropped on the app's icon/shortcut", async () => {
+		await renderShell();
+		expect(shellMocks.onOpenFolderPath).toHaveBeenCalledTimes(1);
+
+		const listener = shellMocks.state.openFolderPathListener;
+		if (!listener) throw new Error("open-folder-path listener was not registered");
+		act(() => listener("/dropped-on-icon/my-project"));
+
+		expect(useUiStore.getState().folderDropRequest).toEqual({ nonce: 1, path: "/dropped-on-icon/my-project" });
+		expect(screen.getByTestId("create-project-flow")).toHaveAttribute("data-path", "/dropped-on-icon/my-project");
 	});
 });
