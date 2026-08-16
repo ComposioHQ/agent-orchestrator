@@ -897,7 +897,10 @@ function ExternalReviewCard({
 			{open ? (
 				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
 					{onRequestRereview ? (
-						<div className="flex min-w-0 flex-wrap items-center justify-end gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
+						<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
+							{openInlineCount > 0 ? (
+								<span className="font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
+							) : <span aria-hidden="true" />}
 							{rereviewRequested ? (
 								<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
 									<CheckIcon className="size-icon-xs shrink-0" />
@@ -980,7 +983,7 @@ function GithubInlineComments({
 	const [sendErrorCommentIds, setSendErrorCommentIds] = useState<Set<string>>(() => new Set());
 	const [resolvedCommentIds, setResolvedCommentIds] = useState<Set<string>>(() => new Set());
 	const [resolveErrorCommentIds, setResolveErrorCommentIds] = useState<Set<string>>(() => new Set());
-	const [visibleCount, setVisibleCount] = useState(3);
+	const [visibleCount, setVisibleCount] = useState(1);
 	const comments = reviewers.flatMap((reviewer) =>
 		reviewer.links
 			.filter((link) => link.body?.trim() || link.file || link.url)
@@ -998,7 +1001,6 @@ function GithubInlineComments({
 		<section className="min-w-0 border-t border-border/70 pt-4" data-testid="github-inline-comments">
 			<div className="flex min-w-0 items-center justify-between gap-2 pb-2 text-xs">
 				<span className="font-semibold uppercase tracking-wide text-muted-foreground">{labels.openComments}</span>
-				<span className="shrink-0 font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
 			</div>
 			<div className="divide-y divide-border/60">
 				{visibleComments.map((comment, index) => (
@@ -1050,10 +1052,10 @@ function GithubInlineComments({
 					/>
 				))}
 			</div>
-			{comments.length > 3 ? (
+			{comments.length > 1 ? (
 				<button
 					className="mt-3 flex w-full items-center justify-center rounded-md border border-dashed border-border px-2 py-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
-					onClick={() => setVisibleCount(hasMore ? comments.length : 3)}
+					onClick={() => setVisibleCount(hasMore ? Math.min(visibleCount + 3, comments.length) : 1)}
 					type="button"
 				>
 					{hasMore ? labels.showMore : labels.showLess}

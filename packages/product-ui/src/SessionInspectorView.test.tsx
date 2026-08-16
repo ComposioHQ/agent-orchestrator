@@ -530,13 +530,12 @@ describe("portable inspector presentations", () => {
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
     expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
     expect(screen.getByText("Open comments")).toBeInTheDocument();
-    expect(screen.getAllByText("2 unresolved").length).toBeGreaterThanOrEqual(
-      1,
-    );
+    expect(screen.getByText("#12 · 2 unresolved")).toBeInTheDocument();
     expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
     expect(
       screen.getByText("This branch leaks the resize listener on unmount."),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Send to worker agent" }),
     );
@@ -698,6 +697,7 @@ describe("portable inspector presentations", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     const sendButtons = screen.getAllByRole("button", {
       name: "Send to worker agent",
     });
