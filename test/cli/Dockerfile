@@ -30,8 +30,9 @@ RUN cd backend && CGO_ENABLED=0 go build -trimpath \
 FROM debian:bookworm-slim AS run
 
 # Runtime deps a fresh user would need: git is required by `ao doctor`; curl
-# drives the HTTP-level guard checks; ca-certificates for good measure. Zellij is
-# optional for this smoke test, so doctor reports a WARN if it is absent.
+# drives the HTTP-level guard checks; ca-certificates for good measure. tmux is
+# deliberately absent so `ao start` also exercises the non-interactive first-run
+# warning path without attempting a privileged install.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*

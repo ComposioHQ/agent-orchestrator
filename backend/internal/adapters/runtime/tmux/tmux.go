@@ -490,24 +490,28 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 
 // IsAlive reports whether the handle's session still exists via `tmux
 // has-session`. Exit 0 means alive. A non-zero exit with output naming this
-// session as missing is a definitive false, nil. A server-level failure ("no
-// server running", "error connecting") wraps ports.ErrRuntimeUnavailable: the
-// probe learned nothing about this session — the agent process may well still
-// be running as an orphan of the dead server — so it must never be read as
-// per-session death (issue #3475). Any other non-zero exit is a plain probe
-// error so callers (the reaper feeding the LCM) treat it as a failed probe
-// and never kill a session on a transient error.
+// session as missing is a definitive false, nil. A server-level absence wraps
+// ports.ErrRuntimeServerAbsent; other reachability failures wrap
+// ports.ErrRuntimeUnavailable. Both remain errors so each caller must
+// explicitly decide whether authoritative server absence is safe to consume.
+// Any other non-zero exit is a plain probe error.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
 		return false, err
 	}
-	out, err := r.run(ctx, hasSessionArgs(id)...)
+	// The ENOENT suffix used below comes from strerror(3), so force a stable
+	// diagnostic locale for this probe before classifying its output.
+	out, err := r.runCommandWithEnv(ctx, []string{"LC_ALL=C"}, r.binary, hasSessionArgs(id)...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			if sessionMissingOutput(string(out)) {
 				return false, nil
+			}
+			if serverAbsentOutput(string(out)) {
+				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
+					id, ports.ErrRuntimeServerAbsent, strings.TrimSpace(string(out)))
 			}
 			if serverUnreachableOutput(string(out)) {
 				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
@@ -765,9 +769,13 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (r *Runtime) runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return r.runCommandWithEnv(ctx, nil, name, args...)
+}
+
+func (r *Runtime) runCommandWithEnv(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	out, err := r.runner.Run(cmdCtx, nil, name, args...)
+	out, err := r.runner.Run(cmdCtx, env, name, args...)
 	if cmdCtx.Err() != nil {
 		return out, cmdCtx.Err()
 	}
@@ -958,13 +966,22 @@ func sessionMissingOutput(out string) bool {
 		strings.Contains(s, "session not found")
 }
 
-// serverUnreachableOutput reports whether a non-zero tmux exit means the
-// server itself could not be reached, which is inconclusive for any single
-// session's liveness.
-func serverUnreachableOutput(out string) bool {
+// serverAbsentOutput reports tmux diagnostics that prove the server does not
+// exist. tmux versions use both spellings below for the same missing Unix
+// socket. ENOENT is authoritative even if a new server races to start later:
+// the old server's panes cannot survive its exit. IsAlive pins LC_ALL=C before
+// passing the diagnostic here so the strerror suffix is not localized.
+func serverAbsentOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "no server running") ||
-		strings.Contains(s, "error connecting")
+		(strings.Contains(s, "error connecting") && strings.Contains(s, "no such file or directory"))
+}
+
+// serverUnreachableOutput reports a non-zero tmux exit that failed to reach
+// the server without proving absence, such as a permission failure.
+func serverUnreachableOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "error connecting")
 }
 
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`
@@ -972,7 +989,7 @@ func serverUnreachableOutput(out string) bool {
 // missing server also means there is nothing left to kill, so it shares the
 // server-level patterns that liveness probing must not use.
 func killSessionMissingOutput(out string) bool {
-	return sessionMissingOutput(out) || serverUnreachableOutput(out)
+	return sessionMissingOutput(out) || serverAbsentOutput(out) || serverUnreachableOutput(out)
 }
 
 // -- text helpers --

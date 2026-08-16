@@ -88,6 +88,12 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 	out := cmd.OutOrStdout()
 	res := startResult{}
 
+	// Check tmux while a terminal is still available. The desktop-owned daemon
+	// cannot safely prompt for sudo or a package-manager confirmation. Failure to
+	// install is a warning rather than an app-launch blocker because Chat mode and
+	// settings remain usable without the terminal runtime.
+	c.ensureTmux(ctx, runtime.GOOS, cmd.InOrStdin(), cmd.ErrOrStderr())
+
 	appPath := c.resolveApp()
 	res.Resolved = appPath != ""
 
