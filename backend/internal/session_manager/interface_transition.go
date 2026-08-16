@@ -43,6 +43,7 @@ type interfaceTransitionStore interface {
 }
 
 type chatHandoffLauncher interface {
+	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 }
@@ -85,6 +86,9 @@ func (m *Manager) InterfaceTransitionStatus(
 	if rec.IsTerminated {
 		status.ReasonCode = "SESSION_TERMINATED"
 		status.Reason = "Terminated sessions must be restored before switching interfaces."
+	} else if target == domain.SessionModeChat && (m.chat == nil || !m.chat.SupportsChat(rec.Harness)) {
+		status.ReasonCode = "CHAT_UNSUPPORTED"
+		status.Reason = fmt.Sprintf("%s does not support Chat UI.", rec.Harness)
 	} else if _, _, err := m.nativeConversationID(ctx, rec); err != nil {
 		if errors.Is(err, ErrInterfaceHandoffUnsupported) {
 			status.ReasonCode = "INTERFACE_HANDOFF_UNSUPPORTED"
@@ -161,7 +165,28 @@ func (m *Manager) StartInterfaceTransition(
 		return domain.SessionInterfaceTransition{}, err
 	}
 	if !created {
-		return transition, ErrSwitchInProgress
+		return transition, ErrInterfaceTransitionInProgress
+	}
+	if source == domain.SessionModeChat {
+		handoff, ok := m.chat.(chatHandoffLauncher)
+		if !ok {
+			err := ErrInterfaceHandoffUnsupported
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed,
+				"SOURCE_FENCE_FAILED", err.Error())
+			return domain.SessionInterfaceTransition{}, err
+		}
+		// This is the acceptance boundary visible to the caller. The transition
+		// must not return while a Chat completion can still promote queued work;
+		// target preflight and provider cancellation happen asynchronously later.
+		if err := handoff.ArmChatHandoff(ctx, id, policy); err != nil {
+			finishErr := m.finishInterfaceTransition(transition.ID,
+				domain.SessionInterfaceTransitionFailed, "SOURCE_FENCE_FAILED", err.Error())
+			if finishErr != nil {
+				return domain.SessionInterfaceTransition{}, errors.Join(err,
+					fmt.Errorf("record source fence failure: %w", finishErr))
+			}
+			return domain.SessionInterfaceTransition{}, err
+		}
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -240,9 +265,13 @@ func (m *Manager) runInterfaceTransition(
 		m.transitionMu.Unlock()
 	}()
 
-	sourcePrepared := false
+	// Chat was armed synchronously before StartInterfaceTransition returned. TUI
+	// installs its raw-input gate below because that gate is tied to this worker's
+	// lifetime. Any failure before Chat stops must therefore reopen Chat intake.
+	sourcePrepared := transition.SourceMode == domain.SessionModeChat
 	sourceStopped := false
 	modeChanged := false
+	var sourceRuntimeHandle ports.RuntimeHandle
 	fail := func(code string, cause error) {
 		if sourcePrepared && !sourceStopped {
 			m.abortSourceHandoff(transition)
@@ -253,7 +282,7 @@ func (m *Manager) runInterfaceTransition(
 			return
 		}
 		if sourceStopped {
-			m.rollbackInterfaceTransition(transition, modeChanged, code, cause)
+			m.rollbackInterfaceTransition(transition, sourceRuntimeHandle, modeChanged, code, cause)
 			return
 		}
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
@@ -275,6 +304,7 @@ func (m *Manager) runInterfaceTransition(
 		fail("SESSION_CHANGED", fmt.Errorf("session changed before the interface switch could start"))
 		return
 	}
+	sourceRuntimeHandle = runtimeHandle(rec.Metadata)
 	// Claim the raw terminal input path before target preflight or the first idle
 	// observation. Without this gate a mux client can submit work after the TUI is
 	// observed idle but before Destroy, and that accepted work is then killed by
@@ -357,6 +387,14 @@ func (m *Manager) runInterfaceTransition(
 	}
 }
 
+// nativeConversationID resolves the adapter's native conversation id for the
+// session's current interface. An empty id is only safe to pass through when
+// the adapter can distinguish a fresh TUI from a real conversation (it
+// implements AgentInterfaceHandoffHistoryProbe) AND the session has no
+// hook-derived conversation history. If any conversation metadata is set but
+// the native id is empty, the hooks fired but failed to capture the id — a
+// bug state where fresh-starting would silently discard the conversation, so
+// hard-block with ErrNativeConversationMissing instead.
 func (m *Manager) nativeConversationID(
 	ctx context.Context,
 	rec domain.SessionRecord,
@@ -380,6 +418,12 @@ func (m *Manager) nativeConversationID(
 	}
 	id = strings.TrimSpace(id)
 	if !ok || id == "" {
+		if _, hasProbe := handoff.(ports.AgentInterfaceHandoffHistoryProbe); hasProbe &&
+			rec.Metadata.LatestUserPrompt == "" &&
+			rec.Metadata.LatestAssistantUpdate == "" &&
+			rec.Metadata.NativeTranscriptPath == "" {
+			return "", handoff, nil
+		}
 		return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
 	}
 	return id, handoff, nil
@@ -699,6 +743,7 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 
 func (m *Manager) rollbackInterfaceTransition(
 	transition domain.SessionInterfaceTransition,
+	sourceRuntimeHandle ports.RuntimeHandle,
 	modeChanged bool,
 	code string,
 	cause error,
@@ -726,6 +771,17 @@ func (m *Manager) rollbackInterfaceTransition(
 			}
 			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 				"RECOVERY_REQUIRED", detail)
+			return
+		}
+	}
+	// A conclusive liveness probe can prove the source process exited even when
+	// its first teardown timed out. Clear any stale runtime registration using
+	// the handle captured before the controller epoch erased it, or rollback can
+	// fail to recreate the TUI with "session already exists" on ConPTY.
+	if transition.SourceMode != domain.SessionModeChat && sourceRuntimeHandle.ID != "" {
+		if err := m.runtime.Destroy(ctx, sourceRuntimeHandle); err != nil {
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+				"RECOVERY_REQUIRED", cause.Error()+"; source runtime cleanup: "+err.Error())
 			return
 		}
 	}

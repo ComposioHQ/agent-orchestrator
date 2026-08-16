@@ -76,7 +76,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
-				terminal: { saveDroppedFile: async () => "" },
+				terminal: {
+					saveDroppedFile: async () => "",
+					setFocused: () => undefined,
+					onFontSizeShortcut: () => () => undefined,
+				},
 				window: {
 					setOverlay: async () => undefined,
 					isFullScreen: async () => false,
@@ -102,12 +106,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getBootstrap: async () => null,
 				},
 				browser: {
+					nativeCompositionEnabled: true,
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
+					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId }: { viewId: string }) => navState(viewId),
 					clear: async (viewId: string) => navState(viewId),
-					capture: async () => null,
-					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
 					reload: async (viewId: string) => navState(viewId),
@@ -123,6 +127,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						tabs: [{ id: tabId, url: "", title: "", active: true }],
 					}),
 					closeTab: async ({ viewId }: { viewId: string; tabId: string }) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
+					openTab: async ({ viewId }: { viewId: string; url?: string }) => ({
 						viewId,
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
@@ -181,6 +190,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				featureBuilds: {
 					list: async () => [],
 					getActive: async () => null,
+				},
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
@@ -493,7 +508,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
-				terminal: { saveDroppedFile: async () => "" },
+				terminal: {
+					saveDroppedFile: async () => "",
+					setFocused: () => undefined,
+					onFontSizeShortcut: () => () => undefined,
+				},
 				window: {
 					setOverlay: async () => undefined,
 					isFullScreen: async () => false,
@@ -514,13 +533,13 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				},
 				telemetry: { getBootstrap: async () => null },
 				browser: {
+					nativeCompositionEnabled: true,
 					ensure: async (sessionId: string) => navState(`preview:${sessionId}`),
 					setBounds: () => undefined,
+					setOverlayOpen: () => undefined,
 					navigate: async ({ viewId, url }: { viewId: string; url: string }) =>
 						state.browserError ? navState(viewId, "", state.browserError) : navState(viewId, url),
 					clear: async (viewId: string) => navState(viewId),
-					capture: async () => null,
-					requestMirror: async () => false,
 					goBack: async (viewId: string) => navState(viewId),
 					goForward: async (viewId: string) => navState(viewId),
 					reload: async (viewId: string) => navState(viewId),
@@ -536,6 +555,11 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						tabs: [{ id: tabId, url: "", title: "", active: true }],
 					}),
 					closeTab: async ({ viewId }: { viewId: string; tabId: string }) => ({
+						viewId,
+						activeTabId: "t1",
+						tabs: [{ id: "t1", url: "", title: "", active: true }],
+					}),
+					openTab: async ({ viewId }: { viewId: string; url?: string }) => ({
 						viewId,
 						activeTabId: "t1",
 						tabs: [{ id: "t1", url: "", title: "", active: true }],
@@ -588,6 +612,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				featureBuilds: {
 					list: async () => [],
 					getActive: async () => null,
+				},
+				cloud: {
+					getSession: async () => null,
+					signIn: async () => undefined,
+					signOut: async () => undefined,
+					onSessionChanged: unsubscribe,
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;

@@ -25,21 +25,13 @@ export type SettingsModal =
 			projectId: string;
 	  };
 
-export type DevSettings = {
-	/** Number of fixture sessions to generate per attention zone (0 = off). */
-	fixtureCount: number;
-	/** Number of minutes of random activity to spread sessions across. */
-	randomSpreadMinutes: number;
-};
-
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
-export type InspectorView = "summary" | "browser" | "files";
+export type InspectorView = "summary" | "reviews" | "browser" | "files";
 
 export type InspectorSessionState = {
 	isOpen: boolean;
 	view: InspectorView;
-	previewKey?: string;
 	/** The current non-empty browser content lifecycle has already been revealed. */
 	browserContentRevealed?: boolean;
 	/** Real browser activity occurred while Browser was not visible. */
@@ -61,7 +53,7 @@ type UiState = {
 	resolvedTheme: Theme;
 	/** Named color style theme (e.g. "catppuccin", "nord") — independent of light/dark mode. */
 	themeStyle: ThemeStyle;
-	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
+	/** When true, developer-only release controls are available. Default off. */
 	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
@@ -90,23 +82,19 @@ type UiState = {
 	// session. Surfaces outside the session subtree (the notification runtime)
 	// need that distinction, and SessionView's own target is local state.
 	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
-	/** Dev-only settings persisted to localStorage. */
-	devSettings: DevSettings;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
+	setDeveloperMode: (enabled: boolean) => void;
 	openGlobalSettings: () => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
-	setDevSettings: (devSettings: DevSettings) => void;
-	setDeveloperMode: (enabled: boolean) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
-	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
 	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
@@ -129,23 +117,6 @@ export type OrchestratorReplacementFailure = {
 
 const sidebarStorageKey = "ao.sidebar.open";
 const developerModeStorageKey = "ao.developerMode";
-const devSettingsStorageKey = "ao.devSettings";
-const defaultDevSettings: DevSettings = { fixtureCount: 8, randomSpreadMinutes: 120 };
-
-function initialDevSettings(): DevSettings {
-	try {
-		const raw = getLocalStorage()?.getItem(devSettingsStorageKey);
-		if (raw) {
-			const parsed = JSON.parse(raw) as Partial<DevSettings>;
-			return {
-				fixtureCount: typeof parsed.fixtureCount === "number" ? parsed.fixtureCount : defaultDevSettings.fixtureCount,
-				randomSpreadMinutes: typeof parsed.randomSpreadMinutes === "number" ? parsed.randomSpreadMinutes : defaultDevSettings.randomSpreadMinutes,
-			};
-		}
-	} catch { /* use defaults */ }
-	return defaultDevSettings;
-}
-
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -184,7 +155,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
-	devSettings: initialDevSettings(),
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
 		if (get().themePreference === themePreference) return;
@@ -203,17 +173,13 @@ export const useUiStore = create<UiState>((set, get) => ({
 			set({ themeStyle });
 		});
 	},
-	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
-	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
-	closeSettings: () => set({ settingsModal: null }),
-	setDevSettings: (devSettings) => {
-		getLocalStorage()?.setItem(devSettingsStorageKey, JSON.stringify(devSettings));
-		set({ devSettings });
-	},
 	setDeveloperMode: (developerMode) => {
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
+	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
+	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
 		const { themePreference, resolvedTheme } = get();
 		if (themePreference !== "system") return;
@@ -258,16 +224,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, view, browserUnseen },
-				},
-			};
-		}),
-	markInspectorPreviewSeen: (sessionId, previewKey) =>
-		set((state) => {
-			const current = inspectorState(state.inspectorSessions, sessionId);
-			return {
-				inspectorSessions: {
-					...state.inspectorSessions,
-					[sessionId]: { ...current, previewKey },
 				},
 			};
 		}),

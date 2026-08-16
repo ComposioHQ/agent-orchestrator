@@ -294,6 +294,106 @@ func TestHooks_StopReportsIdle(t *testing.T) {
 	}
 }
 
+func TestHooks_StopReportsConversationFacts(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	payload := `{"prompt":"finish the regression test","last_assistant_message":"I updated the generation fence.","transcript_path":"/tmp/provider/session.jsonl"}`
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(payload),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LatestUserPrompt != "finish the regression test" || req.LatestAssistantUpdate != "I updated the generation fence." {
+		t.Fatalf("conversation facts = %#v", req)
+	}
+	if req.TranscriptPath != "/tmp/provider/session.jsonl" {
+		t.Fatalf("transcript path = %q", req.TranscriptPath)
+	}
+}
+
+func TestHooks_NonSwitchingHarnessDoesNotReportConversationFacts(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	payload := `{"prompt":"private cursor prompt","last_assistant_message":"private cursor response","transcript_path":"/tmp/cursor/session.jsonl"}`
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(payload),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "cursor", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LatestUserPrompt != "" || req.LatestAssistantUpdate != "" || req.TranscriptPath != "" {
+		t.Fatalf("non-switching harness reported conversation facts: %#v", req)
+	}
+}
+
+func TestHookConversationFactsExcludesAOCoordinationUserTurns(t *testing.T) {
+	for _, prompt := range []string{
+		"<ao-handoff-request>\nprepare context",
+		"<ao-handoff-request switch-id=\"switch-1\">\nprepare context",
+		"AO transferred the previous agent's context in hidden system instructions. Continue the unfinished action.",
+	} {
+		got := hookConversationFacts([]byte(`{"prompt":` + mustJSONString(t, prompt) + `,"lastAssistantMessage":"ok"}`))
+		if got.LatestUserPrompt != "" {
+			t.Fatalf("prompt %q was retained as real user intent", prompt)
+		}
+		wantAssistant := "ok"
+		if strings.HasPrefix(prompt, "<ao-handoff-request") {
+			wantAssistant = ""
+		}
+		if got.LatestAssistantUpdate != wantAssistant {
+			t.Fatalf("assistant update = %q, want %q", got.LatestAssistantUpdate, wantAssistant)
+		}
+	}
+}
+
+func TestHookMetadataAndConversationFactsTolerateMalformedOtherProjection(t *testing.T) {
+	t.Run("malformed usage retains conversation", func(t *testing.T) {
+		payload := []byte(`{"prompt":"continue investigating","lastAssistantMessage":"updated","transcriptPath":"/tmp/conversation.jsonl","model":false}`)
+		conversation := hookConversationFacts(payload)
+		if conversation.LatestUserPrompt != "continue investigating" || conversation.LatestAssistantUpdate != "updated" || conversation.TranscriptPath != "/tmp/conversation.jsonl" {
+			t.Fatalf("conversation = %+v", conversation)
+		}
+		if usage := hookUsageMetadata("claude-code", payload); usage != nil {
+			t.Fatalf("usage = %+v, want nil", usage)
+		}
+	})
+
+	t.Run("malformed conversation retains usage", func(t *testing.T) {
+		payload := []byte(`{"prompt":false,"transcript_path":"/tmp/usage.jsonl","model":"claude-sonnet","agent_id":"sub-1"}`)
+		usage := hookUsageMetadata("claude-code", payload)
+		if usage == nil || usage.TranscriptPath != "/tmp/usage.jsonl" || usage.ModelID != "claude-sonnet" || usage.SubagentID != "sub-1" {
+			t.Fatalf("usage = %+v", usage)
+		}
+	})
+}
+
+func mustJSONString(t *testing.T, value string) string {
+	t.Helper()
+	b, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func TestHooks_SessionStartReportsNativeSessionIDWithoutActivity(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)

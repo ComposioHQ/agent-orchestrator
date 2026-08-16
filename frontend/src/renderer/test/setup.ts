@@ -1,5 +1,11 @@
 import "@testing-library/jest-dom/vitest";
+import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
+import { expect } from "vitest";
 import "../i18n";
+
+// Vitest 4 can load the convenience entry against a different matcher
+// instance. Register the matchers on the active test runtime as well.
+expect.extend(jestDomMatchers);
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
@@ -76,6 +82,8 @@ if (typeof window !== "undefined") {
 		},
 		terminal: {
 			saveDroppedFile: async () => "",
+			setFocused: () => undefined,
+			onFontSizeShortcut: () => () => undefined,
 		},
 		window: {
 			setOverlay: async () => undefined,
@@ -104,6 +112,7 @@ if (typeof window !== "undefined") {
 			getBootstrap: async () => null,
 		},
 		browser: {
+			nativeCompositionEnabled: true,
 			ensure: async (sessionId: string) => ({
 				viewId: `test:${sessionId}`,
 				url: "",
@@ -113,8 +122,7 @@ if (typeof window !== "undefined") {
 				isLoading: false,
 			}),
 			setBounds: () => undefined,
-			capture: async () => null,
-			requestMirror: async () => false,
+			setOverlayOpen: () => undefined,
 			navigate: async ({ viewId }: { viewId: string }) => ({
 				viewId,
 				url: "",
@@ -166,6 +174,7 @@ if (typeof window !== "undefined") {
 			getTabs: async (viewId: string) => ({ viewId, activeTabId: "t1", tabs: [] }),
 			selectTab: async ({ viewId, tabId }) => ({ viewId, activeTabId: tabId, tabs: [] }),
 			closeTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
+			openTab: async ({ viewId }) => ({ viewId, activeTabId: "", tabs: [] }),
 			devtools: async ({ viewId, operation }) => ({
 				viewId,
 				open: operation !== "close",
@@ -221,6 +230,12 @@ if (typeof window !== "undefined") {
 		featureBuilds: {
 			list: async () => [],
 			getActive: async () => null,
+		},
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
 		},
 	};
 } // end if (typeof window !== "undefined")

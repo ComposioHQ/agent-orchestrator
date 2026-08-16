@@ -35,7 +35,8 @@ var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentBinaryResolver = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
-var _ ports.ActivitySignaler = (*Plugin)(nil)
+var _ ports.SubmitActivitySignaler = (*Plugin)(nil)
+var _ ports.BlockedActivitySignaler = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {

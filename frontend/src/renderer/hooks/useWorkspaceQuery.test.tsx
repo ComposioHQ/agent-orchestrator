@@ -82,7 +82,24 @@ describe("useWorkspaceQuery", () => {
 							status: "mergeable",
 							scmStatus: "review_pending",
 							isTerminated: false,
+							autoInjectReview: false,
+							autoInjectCI: false,
 							activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
+							activeAgentSwitch: {
+								agentHandoffStatus: "received",
+								errorCode: "delivery_unconfirmed",
+								fromHarness: "claude-code",
+								id: "switch-1",
+								privateFutureField: "must-not-leak",
+								requestedAt: "2026-06-10T15:31:00Z",
+								semanticHandoffIncluded: true,
+								sessionId: "sess-1",
+								sourceTranscriptStatus: "available",
+								state: "delivering_context",
+								targetHarness: "codex",
+								targetStartMode: "resumed",
+								updatedAt: "2026-06-10T15:32:00Z",
+							},
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
 						{
@@ -126,6 +143,16 @@ describe("useWorkspaceQuery", () => {
 			status: "mergeable",
 			scmStatus: "review_pending",
 			activity: { state: "idle", lastActivityAt: "2026-06-10T15:30:00Z" },
+			autoInjectReview: false,
+			autoInjectCI: false,
+		});
+		expect(workspace.sessions[0].activeAgentSwitch).toEqual({
+			agentHandoffStatus: "received",
+			errorCode: "delivery_unconfirmed",
+			fromHarness: "claude-code",
+			id: "switch-1",
+			state: "delivering_context",
+			targetHarness: "codex",
 		});
 		expect(workspace.sessions[1]).toMatchObject({
 			id: "sess-2",
@@ -134,6 +161,8 @@ describe("useWorkspaceQuery", () => {
 			reviewerHarness: undefined,
 			status: "unknown",
 			branch: undefined,
+			autoInjectReview: true,
+			autoInjectCI: true,
 		});
 		expect(captureRendererEventMock).toHaveBeenCalledWith("ao.renderer.session_state_unknown", {
 			field: "status",

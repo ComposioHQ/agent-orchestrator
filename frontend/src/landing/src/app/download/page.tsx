@@ -5,18 +5,20 @@ import {
   DOWNLOAD_URL_MAC_X64,
   DOWNLOAD_URL_WINDOWS,
 } from "@ao/shared/constants";
-import { Download } from "lucide-react";
+import { Cloud, Download } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
-import { FaAndroid, FaApple, FaLinux, FaWindows } from "react-icons/fa";
-import { TestFlightDialog } from "./TestFlightDialog";
+import Link from "next/link";
+import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { AndroidAppCTA } from "./AndroidAppCTA";
+import { MobileAppCTA } from "./MobileAppCTA";
 import { PlatformDownloadButton } from "./PlatformDownloadButton";
 import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
 
 export const metadata: Metadata = {
   title: "Download",
   description:
-    "Download Agent Orchestrator for macOS, Windows, or Linux, and join the iOS TestFlight beta of the mobile companion.",
+    "Download Agent Orchestrator for macOS, Windows, or Linux, or join the AO Mobile beta on iOS and Android.",
 };
 
 interface GitHubReleaseAsset {
@@ -93,17 +95,48 @@ export default async function DownloadPage() {
     {
       name: "macOS",
       icon: FaApple,
+      // Prefer the .dmg. Mounting it gives the drag-to-Applications window, so
+      // the app lands in /Applications instead of being unzipped into
+      // ~/Downloads and launched from there, which is what leaves macOS running
+      // it translocated or as a stale copy (#3617, #3527).
+      //
+      // Only the STABLE channel builds one. The container costs its own
+      // notarization submission per architecture and nightly publishes far too
+      // often to pay for it, so the nightly rows resolve to their zip
+      // permanently, not just until some later rollout step.
+      //
+      // Every row falls back to the zip FROM THE SAME RELEASE before it falls
+      // back to a DOWNLOAD_URL_* constant. That ordering is load-bearing: those
+      // constants now point at the dmg too, so they are not a safe fallback on
+      // their own. Reading the live release list is what lets this page serve a
+      // real asset rather than a 404 in the window before the first stable dmg
+      // ships, and if the GitHub call fails outright the constant is a guess of
+      // last resort.
       builds: available([
-        build("Mac (Apple silicon)", DOWNLOAD_URL_MAC_ARM64, "Stable"),
-        build("Mac (Intel)", DOWNLOAD_URL_MAC_X64, "Stable"),
         build(
           "Mac (Apple silicon)",
-          assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
+          assetUrl(stable, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-arm64.zip") ??
+            DOWNLOAD_URL_MAC_ARM64,
+          "Stable",
+        ),
+        build(
+          "Mac (Intel)",
+          assetUrl(stable, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(stable, "agent-orchestrator-darwin-x64.zip") ??
+            DOWNLOAD_URL_MAC_X64,
+          "Stable",
+        ),
+        build(
+          "Mac (Apple silicon)",
+          assetUrl(nightly, "agent-orchestrator-darwin-arm64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-arm64.zip"),
           "Nightly",
         ),
         build(
           "Mac (Intel)",
-          assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
+          assetUrl(nightly, "agent-orchestrator-darwin-x64.dmg") ??
+            assetUrl(nightly, "agent-orchestrator-darwin-x64.zip"),
           "Nightly",
         ),
       ]),
@@ -172,7 +205,7 @@ export default async function DownloadPage() {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-2 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-1">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
                   src="/optimized/feature3.webp"
@@ -200,7 +233,7 @@ export default async function DownloadPage() {
               </div>
             </article>
 
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-1 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-2">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
                   src="/optimized/feature.webp"
@@ -221,15 +254,36 @@ export default async function DownloadPage() {
                   anywhere.
                 </p>
                 <div className="mt-6 flex flex-wrap items-center gap-3">
-                  <TestFlightDialog />
-                  <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-3xl border border-border px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-muted-foreground sm:px-6 sm:py-3 sm:text-base">
-                    <FaAndroid className="size-4 shrink-0" aria-hidden="true" />
-                    Android coming soon
-                  </span>
+                  <MobileAppCTA />
+                  <AndroidAppCTA />
                 </div>
               </div>
             </article>
           </div>
+
+          <section className="mt-8 overflow-hidden rounded-2xl border border-border bg-card">
+            <div className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[1fr_auto] lg:items-center">
+              <div className="max-w-3xl">
+                <p className="inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  <Cloud className="size-3.5" aria-hidden="true" />
+                  AO Cloud
+                </p>
+                <h2 className="mt-3 text-2xl font-semibold text-foreground">
+                  Join the AO Cloud waitlist
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Request early access for shared agent sessions, team handoffs,
+                  and hosted runs.
+                </p>
+              </div>
+              <Link
+                href="/waitlist"
+                className="inline-flex shrink-0 items-center justify-center whitespace-nowrap rounded-3xl bg-foreground px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:px-6 sm:py-3 sm:text-base"
+              >
+                Join waitlist
+              </Link>
+            </div>
+          </section>
 
           <div className="mt-16 space-y-16">
             {[

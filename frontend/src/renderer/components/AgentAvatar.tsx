@@ -1,4 +1,8 @@
-import { cn } from "../lib/utils";
+import {
+	AgentAvatar as ProductAgentAvatar,
+	type AgentAvatarProps,
+	type AgentLogoSources,
+} from "@aoagents/product-ui";
 import agyLogo from "../assets/agents/agy.png";
 import aiderLogo from "../assets/agents/aider.png";
 import ampLogo from "../assets/agents/amp.svg";
@@ -18,6 +22,7 @@ import gooseLogo from "../assets/agents/goose.svg";
 import grokLogo from "../assets/agents/grok.png";
 import kilocodeLogo from "../assets/agents/kilocode.svg";
 import kimiLogo from "../assets/agents/kimi.png";
+import kimchiLogo from "../assets/agents/kimchi.svg";
 import kiroLogo from "../assets/agents/kiro.png";
 import museLogo from "../assets/agents/muse.png";
 import opencodeLogo from "../assets/agents/opencode.svg";
@@ -28,7 +33,7 @@ import vibeLogo from "../assets/agents/vibe.png";
 
 // Real brand logos keyed by the harness name AO stores on session.provider.
 // Agents without an asset fall back to a lettered tile (fake).
-const LOGOS: Record<string, string> = {
+const LOGOS: AgentLogoSources = {
 	codex: codexLogo,
 	"claude-code": claudeCodeLogo,
 	claude: claudeLogo,
@@ -49,19 +54,13 @@ const LOGOS: Record<string, string> = {
 	kilocode: kilocodeLogo,
 	vibe: vibeLogo,
 	pi: piLogo,
+	kimchi: kimchiLogo,
 	"prime-agent": primeAgentLogo,
 	amp: ampLogo,
 	cline: clineLogo,
 	agy: agyLogo,
 	auggie: auggieLogo,
 	autohand: autohandLogo,
-};
-
-type AgentAvatarProps = {
-	provider: string;
-	className?: string;
-	/** When true, the logo is purely decorative (label is shown beside it). */
-	decorative?: boolean;
 };
 
 /**
@@ -75,30 +74,7 @@ type AgentAvatarProps = {
  * e.g. the archive cards — still name the agent for screen readers.
  */
 export function AgentAvatar({ provider, className, decorative = false }: AgentAvatarProps) {
-	const logo = LOGOS[provider];
-	if (logo) {
-		return (
-			<img
-				src={logo}
-				alt={decorative ? "" : provider}
-				aria-hidden={decorative || undefined}
-				className={cn("size-icon-xl shrink-0 object-contain", className)}
-				draggable={false}
-				title={decorative ? undefined : provider}
-			/>
-		);
-	}
-	return (
-		<span
-			role="img"
-			aria-label={provider}
-			className={cn(
-				"inline-flex size-icon-xl shrink-0 items-center justify-center text-caption font-bold uppercase leading-none text-muted-foreground",
-				className,
-			)}
-			title={provider}
-		>
-			{provider.charAt(0) || "?"}
-		</span>
-	);
+	return <ProductAgentAvatar className={className} decorative={decorative} logoSources={LOGOS} provider={provider} />;
 }
+
+export type { AgentAvatarProps };

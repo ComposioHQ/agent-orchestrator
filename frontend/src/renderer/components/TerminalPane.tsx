@@ -44,8 +44,15 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/** Resize this terminal without changing application zoom. */
+	onChangeFontSize?: (delta: number) => void;
+	isFullscreen?: boolean;
+	/** Enter or exit fullscreen for the terminal pane that owns this xterm. */
+	onToggleFullscreen?: () => void;
 	/** Refuse agent PTY input while a controller transition owns the source. */
 	inputDisabled?: boolean;
+	/** Focus the terminal when an in-flight controller asks for human input. */
+	focusRequested?: boolean;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
 };
@@ -104,7 +111,11 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.theme === right.theme &&
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
+		left.onChangeFontSize === right.onChangeFontSize &&
+		left.isFullscreen === right.isFullscreen &&
+		left.onToggleFullscreen === right.onToggleFullscreen &&
 		left.inputDisabled === right.inputDisabled &&
+		left.focusRequested === right.focusRequested &&
 		left.createMux === right.createMux &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
@@ -638,7 +649,11 @@ export function TerminalPane({
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
+	onChangeFontSize,
+	isFullscreen,
+	onToggleFullscreen,
 	inputDisabled,
+	focusRequested,
 }: TerminalPaneProps) {
 	const terminalTarget =
 		requestedTerminalTarget &&
@@ -702,7 +717,18 @@ export function TerminalPane({
 		);
 	}
 
-	const props = { session, theme, daemonReady, terminalTarget, fontSize, inputDisabled };
+	const props = {
+		session,
+		theme,
+		daemonReady,
+		terminalTarget,
+		fontSize,
+		onChangeFontSize,
+		isFullscreen,
+		onToggleFullscreen,
+		inputDisabled,
+		focusRequested,
+	};
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
 		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
@@ -715,7 +741,11 @@ export function TerminalPane({
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			isFullscreen={isFullscreen}
 			inputDisabled={inputDisabled}
+			onChangeFontSize={onChangeFontSize}
+			onToggleFullscreen={onToggleFullscreen}
+			focusRequested={focusRequested}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -836,9 +866,10 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // Agents whose full-screen TUI keeps its own transcript and scrolls it only by
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
 // PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
-// kilocode is a fork of opencode and shares its TUI surface; grok and Muse Code
-// also use full-screen keyboard-scroll TUIs, so they scroll the same way.
-const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok", "muse"]);
+// kilocode is a fork of opencode and shares its TUI surface; grok also uses a
+// full-screen keyboard-scroll TUI, so both scroll the same way. Muse Code uses
+// the normal terminal buffer instead and must keep the SGR -> tmux scroll path.
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok"]);
 
 // Whether the given provider's TUI is one of the keyboard-scroll agents above.
 export function providerScrollsByKeyboard(provider?: string): boolean {
@@ -857,7 +888,11 @@ function AttachedTerminal({
 	daemonReady,
 	terminalTarget,
 	fontSize,
+	onChangeFontSize,
+	isFullscreen,
+	onToggleFullscreen,
 	inputDisabled,
+	focusRequested,
 	createMux,
 	isVisible = true,
 	onFatal,
@@ -1031,10 +1066,14 @@ function AttachedTerminal({
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
+					focusRequested={focusRequested}
+					isFullscreen={isFullscreen}
 					isVisible={isVisible}
+					onChangeFontSize={onChangeFontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
+					onToggleFullscreen={onToggleFullscreen}
 					onVisibleSize={syncVisibleSize}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}
 					theme={theme}

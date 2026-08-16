@@ -1,4 +1,4 @@
-import type { BrowserWindow, IpcMainEvent } from "electron";
+import type { BrowserWindow, IpcMainEvent, WebContents } from "electron";
 import type { TrayController } from "./tray";
 import { TRAY_OPEN_SESSION_CHANNEL, type TrayAttentionState, type TrayOpenSessionTarget } from "../shared/tray";
 
@@ -8,6 +8,7 @@ export function isTrayEnabled(platform: NodeJS.Platform, isPackaged: boolean, ap
 
 export type TrayLifecycleDeps = {
 	getWindow: () => BrowserWindow | null;
+	getContents?: () => WebContents | null;
 	getTrayController: () => TrayController | null;
 	focusWindow: () => void;
 };
@@ -24,9 +25,13 @@ export type TrayLifecycle = {
 export function createTrayLifecycle(deps: TrayLifecycleDeps): TrayLifecycle {
 	let pendingTarget: TrayOpenSessionTarget | null = null;
 
+	function getContents(): WebContents | null {
+		return deps.getContents?.() ?? deps.getWindow()?.webContents ?? null;
+	}
+
 	function isFromMainWindow(event: IpcMainEvent): boolean {
-		const window = deps.getWindow();
-		return window !== null && event.sender === window.webContents;
+		const contents = getContents();
+		return contents !== null && event.sender === contents;
 	}
 
 	function clearPendingTarget(): void {
@@ -35,7 +40,7 @@ export function createTrayLifecycle(deps: TrayLifecycleDeps): TrayLifecycle {
 
 	return {
 		openSession(target) {
-			const contents = deps.getWindow()?.webContents;
+			const contents = getContents();
 			deps.focusWindow();
 			if (contents && !contents.isLoading()) {
 				contents.send(TRAY_OPEN_SESSION_CHANNEL, target);
@@ -52,7 +57,7 @@ export function createTrayLifecycle(deps: TrayLifecycleDeps): TrayLifecycle {
 			if (!isFromMainWindow(event)) return;
 			const target = pendingTarget;
 			pendingTarget = null;
-			if (target) deps.getWindow()?.webContents.send(TRAY_OPEN_SESSION_CHANNEL, target);
+			if (target) getContents()?.send(TRAY_OPEN_SESSION_CHANNEL, target);
 		},
 		clear() {
 			clearPendingTarget();

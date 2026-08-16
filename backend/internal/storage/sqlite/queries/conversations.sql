@@ -6,8 +6,11 @@
 -- concurrent writers cannot mint the same position.
 
 -- name: InsertConversation :exec
-INSERT INTO conversations (id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, 0, ?, ?);
+INSERT INTO conversations (
+    id, scope, project_id, session_id, current_session_id, latest_sequence,
+    active_branch_id, created_at, updated_at
+)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?);
 
 -- name: SelectConversationBySession :one
 SELECT * FROM conversations WHERE current_session_id = ? LIMIT 1;
@@ -22,6 +25,123 @@ WHERE id = ? AND scope = 'project';
 -- name: SelectConversationByID :one
 SELECT * FROM conversations WHERE id = ? LIMIT 1;
 
+-- name: InsertConversationBranch :exec
+INSERT INTO conversation_branches (
+    id, conversation_id, session_id, provider_conversation_id,
+    parent_branch_id, fork_after_turn_id, replaced_turn_id,
+    replacement_turn_id, fork_after_sequence, created_at
+) VALUES (
+    sqlc.arg(id), sqlc.arg(conversation_id), sqlc.narg(session_id),
+    sqlc.arg(provider_conversation_id), sqlc.narg(parent_branch_id),
+    sqlc.narg(fork_after_turn_id), sqlc.narg(replaced_turn_id),
+    sqlc.narg(replacement_turn_id), sqlc.arg(fork_after_sequence), sqlc.arg(created_at)
+);
+
+-- name: SelectConversationBranch :one
+SELECT b.*, b.id = c.active_branch_id AS active
+FROM conversation_branches AS b
+JOIN conversations AS c ON c.id = b.conversation_id
+WHERE b.conversation_id = sqlc.arg(conversation_id)
+  AND b.id = sqlc.arg(branch_id)
+LIMIT 1;
+
+-- name: SelectConversationBranches :many
+SELECT b.*, b.id = c.active_branch_id AS active
+FROM conversation_branches AS b
+JOIN conversations AS c ON c.id = b.conversation_id
+WHERE b.conversation_id = ?
+ORDER BY b.created_at, b.id;
+
+-- The selected human prompt must belong to the active lineage. Its immutable
+-- sequence determines one ancestry boundary for turns, messages, activities and
+-- provider events. The previous provider turn is the fork target; it is empty for
+-- the first prompt, which tells the service to start a fresh provider thread.
+-- name: SelectConversationEditAnchor :one
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+), active_branch AS (
+    SELECT branch.*
+    FROM conversations AS conversation
+    JOIN conversation_branches AS branch ON branch.id = conversation.active_branch_id
+    WHERE conversation.id = sqlc.arg(conversation_id)
+), selected_message AS (
+    SELECT message.conversation_id,
+           message.turn_id,
+           message.sequence,
+           message.delivery_content_json,
+           active_branch.parent_branch_id IS NOT NULL
+               AND active_branch.replaced_turn_id = message.turn_id
+               AND active_branch.replacement_turn_id IS NULL AS retry_active_branch
+    FROM conversation_messages AS message
+    JOIN active_path AS path ON path.branch_id = message.branch_id
+    CROSS JOIN active_branch
+    WHERE message.conversation_id = sqlc.arg(conversation_id)
+      AND message.turn_id = sqlc.arg(replaced_turn_id)
+      AND message.role = 'user'
+      AND message.origin = 'human'
+      AND (
+          path.max_sequence IS NULL
+          OR message.sequence <= path.max_sequence
+          OR (
+              active_branch.replaced_turn_id = message.turn_id
+              AND active_branch.replacement_turn_id IS NULL
+          )
+      )
+    LIMIT 1
+)
+SELECT selected_message.conversation_id,
+       conversation.active_branch_id AS source_branch_id,
+       selected_message.turn_id AS replaced_turn_id,
+       CAST(COALESCE((
+           SELECT previous_turn.provider_turn_id
+           FROM conversation_messages AS previous_message
+           JOIN conversation_turns AS previous_turn
+             ON previous_turn.id = previous_message.turn_id
+           JOIN active_path AS previous_path
+             ON previous_path.branch_id = previous_message.branch_id
+           WHERE previous_message.conversation_id = selected_message.conversation_id
+             AND previous_message.role = 'user'
+             AND previous_message.sequence < selected_message.sequence
+             AND previous_turn.provider_turn_id <> ''
+             AND previous_turn.rolled_back_at IS NULL
+             AND (previous_path.max_sequence IS NULL
+                  OR previous_message.sequence <= previous_path.max_sequence)
+           ORDER BY previous_message.sequence DESC
+           LIMIT 1
+       ), '') AS TEXT) AS previous_provider_turn_id,
+       selected_message.sequence - 1 AS fork_after_sequence,
+       selected_message.delivery_content_json AS original_delivery_content_json,
+       selected_message.retry_active_branch
+FROM selected_message
+JOIN conversations AS conversation ON conversation.id = selected_message.conversation_id;
+
+-- name: UpdateConversationBranchReplacement :execrows
+UPDATE conversation_branches
+SET replacement_turn_id = sqlc.arg(replacement_turn_id)
+WHERE conversation_branches.id = sqlc.arg(branch_id)
+  AND conversation_branches.conversation_id = (
+      SELECT conversation_turns.conversation_id
+      FROM conversation_turns
+      WHERE conversation_turns.id = sqlc.arg(replacement_turn_id)
+  );
+
+-- name: ActivateConversationBranch :execrows
+UPDATE conversations
+SET active_branch_id = ?, updated_at = ?
+WHERE id = ?;
+
 -- The next turn's provider choices. Written only when the user picks something,
 -- so NULL keeps meaning "use whatever the conversation was started with".
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
@@ -30,6 +150,13 @@ SELECT * FROM conversations WHERE id = ? LIMIT 1;
 UPDATE conversations
 SET model = ?, reasoning_effort = ?, approval_mode = ?, updated_at = ?
 WHERE id = ?;
+
+-- An agent switch starts a new provider/model scope. Clear only the source
+-- harness choices; approval posture is AO-owned and remains applicable.
+-- name: ResetConversationAgentOverridesForSession :exec
+UPDATE conversations
+SET model = NULL, reasoning_effort = NULL, updated_at = ?
+WHERE current_session_id = ?;
 
 -- Token position for the conversation, latest wins.
 --
@@ -209,6 +336,42 @@ SET state = 'failed',
     completed_at = ?
 WHERE handled_by_session_id = ? AND state IN ('queued', 'running');
 
+-- The running turns visible on the active branch, in the same order as the
+-- snapshot. Interrupt uses this exact projection when in-memory turn tracking
+-- has lost what the UI is showing; nested provider turns mean more than one row
+-- can legitimately be running at once, and Stop must not leave one behind.
+-- name: ListVisibleRunningTurnsForConversation :many
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_turns.provider_turn_id FROM conversation_turns
+JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
+WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_turns.state = 'running'
+  AND conversation_turns.promoted_to_turn_id IS NULL
+  AND (path.max_sequence IS NULL OR EXISTS (
+      SELECT 1 FROM conversation_messages AS lineage_message
+      WHERE lineage_message.turn_id = conversation_turns.id
+        AND lineage_message.sequence <= path.max_sequence
+      UNION ALL
+      SELECT 1 FROM conversation_activities AS lineage_activity
+      WHERE lineage_activity.turn_id = conversation_turns.id
+        AND lineage_activity.sequence <= path.max_sequence
+  ))
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
+
 -- Overwrite the turn's changed-file summary. The provider re-sends the whole diff
 -- on every update, so the latest payload is the complete answer and there is
 -- nothing to merge with what was there before.
@@ -240,18 +403,70 @@ SELECT * FROM conversation_turns WHERE id = ? LIMIT 1;
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: SelectConversationTurns :many
-SELECT * FROM conversation_turns
-WHERE conversation_id = ?
-ORDER BY requested_at, rowid;
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_turns.* FROM conversation_turns
+JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
+WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_turns.promoted_to_turn_id IS NULL
+  AND (path.max_sequence IS NULL OR EXISTS (
+      SELECT 1 FROM conversation_messages AS lineage_message
+      WHERE lineage_message.turn_id = conversation_turns.id
+        AND lineage_message.sequence <= path.max_sequence
+      UNION ALL
+      SELECT 1 FROM conversation_activities AS lineage_activity
+      WHERE lineage_activity.turn_id = conversation_turns.id
+        AND lineage_activity.sequence <= path.max_sequence
+  ))
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
 
 -- Turns represented by one bounded timeline page. Active turns are included
 -- even before their first item arrives, so the live-turn controls never vanish.
 -- name: SelectConversationTurnsPage :many
-SELECT * FROM conversation_turns
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_turns.* FROM conversation_turns
+JOIN active_path AS path ON path.branch_id = conversation_turns.branch_id
 WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_turns.promoted_to_turn_id IS NULL
+  AND (path.max_sequence IS NULL OR EXISTS (
+      SELECT 1 FROM conversation_messages AS lineage_message
+      WHERE lineage_message.turn_id = conversation_turns.id
+        AND lineage_message.sequence <= path.max_sequence
+      UNION ALL
+      SELECT 1 FROM conversation_activities AS lineage_activity
+      WHERE lineage_activity.turn_id = conversation_turns.id
+        AND lineage_activity.sequence <= path.max_sequence
+  ))
   AND (
-    state IN ('queued', 'running')
-    OR id IN (
+    conversation_turns.state IN ('queued', 'running')
+    OR conversation_turns.id IN (
       SELECT turn_id FROM conversation_messages
       WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
         AND turn_id IS NOT NULL
@@ -265,7 +480,7 @@ WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
         AND conversation_activities.sequence < sqlc.arg(before_sequence)
     )
   )
-ORDER BY requested_at, rowid;
+ORDER BY conversation_turns.requested_at, conversation_turns.rowid;
 
 -- Everything from the named turn to the end of the conversation, which is the range
 -- an undo discards. Inclusive of the named turn: the state a person wants back is
@@ -365,9 +580,64 @@ FROM conversation_turns
 JOIN conversation_messages
     ON conversation_messages.turn_id = conversation_turns.id
     AND conversation_messages.role = 'user'
-WHERE conversation_turns.conversation_id = ? AND conversation_turns.state = 'queued'
+WHERE conversation_turns.conversation_id = ?
+  AND conversation_turns.state = 'queued'
+  AND conversation_turns.promotion_started_at IS NULL
 ORDER BY conversation_turns.requested_at, conversation_turns.rowid
 LIMIT 1;
+
+-- Claim one selected queue item before contacting the provider. execrows is the
+-- compare-and-set result: zero means the turn is absent, settled, or already being
+-- promoted, and the provider must not be called.
+-- name: ReserveQueuedConversationTurnForPromotion :execrows
+UPDATE conversation_turns
+SET promotion_started_at = sqlc.arg(promotion_started_at)
+WHERE id = sqlc.arg(id)
+  AND conversation_id = sqlc.arg(conversation_id)
+  AND state = 'queued'
+  AND promotion_started_at IS NULL;
+
+-- The content is loaded after the compare-and-set, from AO's durable message
+-- rather than from a client request that could be stale or substituted.
+-- name: SelectReservedConversationTurnForPromotion :one
+SELECT conversation_turns.id,
+       conversation_messages.text,
+       conversation_messages.client_message_id,
+       conversation_messages.origin,
+       conversation_messages.delivery_content_json
+FROM conversation_turns
+JOIN conversation_messages
+    ON conversation_messages.turn_id = conversation_turns.id
+    AND conversation_messages.role = 'user'
+WHERE conversation_turns.id = sqlc.arg(id)
+  AND conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_turns.state = 'queued'
+  AND conversation_turns.promotion_started_at IS NOT NULL
+LIMIT 1;
+
+-- A provider refusal returns the item to exactly the queue position it already
+-- owned; requested_at is deliberately untouched.
+-- name: ReleaseQueuedConversationTurnPromotion :execrows
+UPDATE conversation_turns
+SET promotion_started_at = NULL
+WHERE id = sqlc.arg(id)
+  AND conversation_id = sqlc.arg(conversation_id)
+  AND state = 'queued'
+  AND promotion_started_at IS NOT NULL;
+
+-- The provider has accepted the guidance. Link the durable source to the AO turn
+-- that absorbed it and take it out of the queue in the same transaction that
+-- inserts the visible steer activity.
+-- name: CompleteQueuedConversationTurnPromotion :execrows
+UPDATE conversation_turns
+SET state = 'completed',
+    completed_at = sqlc.arg(completed_at),
+    promotion_started_at = NULL,
+    promoted_to_turn_id = sqlc.arg(promoted_to_turn_id)
+WHERE id = sqlc.arg(id)
+  AND conversation_id = sqlc.arg(conversation_id)
+  AND state = 'queued'
+  AND promotion_started_at IS NOT NULL;
 
 -- Stopping the agent stops the queue with it: a brake that starts new work
 -- instead of ending it would be the wrong shape for the button the user pressed.
@@ -377,6 +647,15 @@ LIMIT 1;
 UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
 WHERE conversation_id = ? AND state = 'queued' AND requested_at <= ?;
+
+-- An interrupt interface handoff closes intake under the controller's dispatch
+-- lock before this runs. There can be no later accepted row to preserve, so the
+-- correct operation is independent of wall-clock ordering and cancels the whole
+-- durable queue.
+-- name: CancelAllQueuedConversationTurns :exec
+UPDATE conversation_turns
+SET state = 'interrupted', completed_at = ?
+WHERE conversation_id = ? AND state = 'queued';
 
 -- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (
@@ -430,22 +709,57 @@ LIMIT 1;
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: SelectConversationMessages :many
-SELECT * FROM conversation_messages
-WHERE conversation_messages.conversation_id = ?
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.* FROM conversation_messages
+JOIN active_path AS path ON path.branch_id = conversation_messages.branch_id
+WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
+  AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
-      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+      WHERE discarded.conversation_id = sqlc.arg(conversation_id)
+        AND (discarded.rolled_back_at IS NOT NULL OR discarded.promoted_to_turn_id IS NOT NULL)
   ))
 ORDER BY conversation_messages.sequence;
 
 -- name: SelectConversationMessagesPage :many
-SELECT * FROM conversation_messages
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_messages.* FROM conversation_messages
+JOIN active_path AS path ON path.branch_id = conversation_messages.branch_id
 WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
   AND conversation_messages.sequence < sqlc.arg(before_sequence)
+  AND (path.max_sequence IS NULL OR conversation_messages.sequence <= path.max_sequence)
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = sqlc.arg(conversation_id)
-        AND discarded.rolled_back_at IS NOT NULL
+        AND (discarded.rolled_back_at IS NOT NULL OR discarded.promoted_to_turn_id IS NOT NULL)
   ))
 ORDER BY conversation_messages.sequence DESC
 LIMIT sqlc.arg(page_limit);
@@ -498,6 +812,9 @@ WHERE conversation_id = ? AND kind = 'user_input' AND status = 'pending';
 --
 -- execrows so the caller can tell "appended" from "no such activity yet", which
 -- is a real case: a delta can arrive before the item/started that creates the row.
+-- Once truncation is recorded, later deltas are deliberate no-ops. Keeping the
+-- revision stable prevents the activity CDC trigger from invalidating every live
+-- conversation client for text the row can no longer retain.
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: AppendConversationActivityOutput :execrows
@@ -511,7 +828,8 @@ SET command_output = substr(command_output || sqlc.arg(delta), 1, sqlc.arg(max_o
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND provider_item_id = sqlc.arg(provider_item_id)
-  AND status <> 'cancelled';
+  AND status <> 'cancelled'
+  AND command_output_truncated = 0;
 
 -- Append provider prose streamed for one activity, capped in one statement.
 --
@@ -524,6 +842,8 @@ WHERE conversation_id = sqlc.arg(conversation_id)
 -- execrows so the caller can tell "appended" from "no such activity yet", which is
 -- a real case: a reasoning delta can arrive before the item/started that creates
 -- the row.
+-- As with command output, a capped stream stays immutable so a provider that keeps
+-- emitting cannot create a no-visible-change CDC storm.
 -- NOTE: keep these comments ASCII. sqlc locates its star-expansion edits by byte
 -- offset, so a multi-byte character here silently corrupts later queries.
 -- name: AppendConversationActivityStreamedText :execrows
@@ -537,7 +857,20 @@ SET streamed_text = substr(streamed_text || sqlc.arg(delta), 1, sqlc.arg(max_tex
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
   AND provider_item_id = sqlc.arg(provider_item_id)
-  AND status <> 'cancelled';
+  AND status <> 'cancelled'
+  AND streamed_text_truncated = 0;
+
+-- A capped delta is still associated with a real activity. Append callers use
+-- this probe to distinguish that harmless no-op from the ordinary provider race
+-- where output arrives before item/started creates the activity.
+-- name: ConversationActivityExistsForProviderItem :one
+SELECT EXISTS(
+    SELECT 1
+    FROM conversation_activities
+    WHERE conversation_id = sqlc.arg(conversation_id)
+      AND provider_item_id = sqlc.arg(provider_item_id)
+      AND status <> 'cancelled'
+);
 
 -- Replace the streamed text with the provider's settled version.
 --
@@ -561,18 +894,52 @@ LIMIT 1;
 -- Activities the agent still remembers, filtered the same way messages are and for
 -- the same reason. See SelectConversationMessages.
 -- name: SelectConversationActivities :many
-SELECT * FROM conversation_activities
-WHERE conversation_activities.conversation_id = ?
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_activities.* FROM conversation_activities
+JOIN active_path AS path ON path.branch_id = conversation_activities.branch_id
+WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
+  AND (path.max_sequence IS NULL OR conversation_activities.sequence <= path.max_sequence)
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
-      WHERE discarded.conversation_id = ? AND discarded.rolled_back_at IS NOT NULL
+      WHERE discarded.conversation_id = sqlc.arg(conversation_id) AND discarded.rolled_back_at IS NOT NULL
   ))
 ORDER BY conversation_activities.sequence;
 
 -- name: SelectConversationActivitiesPage :many
-SELECT * FROM conversation_activities
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_activities.* FROM conversation_activities
+JOIN active_path AS path ON path.branch_id = conversation_activities.branch_id
 WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
   AND conversation_activities.sequence < sqlc.arg(before_sequence)
+  AND (path.max_sequence IS NULL OR conversation_activities.sequence <= path.max_sequence)
   AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
       WHERE discarded.conversation_id = sqlc.arg(conversation_id)
@@ -606,7 +973,24 @@ INSERT OR IGNORE INTO conversation_provider_events (
 ) VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: SelectConversationProviderEvents :many
-SELECT * FROM conversation_provider_events
-WHERE conversation_id = ? AND id > ?
-ORDER BY id
-LIMIT ?;
+WITH RECURSIVE active_path(branch_id, max_sequence) AS (
+    SELECT conversations.active_branch_id, CAST(NULL AS INTEGER)
+    FROM conversations
+    WHERE conversations.id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT branch.parent_branch_id,
+           CASE
+               WHEN path.max_sequence IS NULL THEN branch.fork_after_sequence
+               WHEN branch.fork_after_sequence < path.max_sequence THEN branch.fork_after_sequence
+               ELSE path.max_sequence
+           END
+    FROM active_path AS path
+    JOIN conversation_branches AS branch ON branch.id = path.branch_id
+    WHERE branch.parent_branch_id IS NOT NULL
+)
+SELECT conversation_provider_events.* FROM conversation_provider_events
+JOIN active_path AS path ON path.branch_id = conversation_provider_events.branch_id
+WHERE conversation_provider_events.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_provider_events.id > sqlc.arg(id)
+ORDER BY conversation_provider_events.id
+LIMIT sqlc.arg(page_limit);

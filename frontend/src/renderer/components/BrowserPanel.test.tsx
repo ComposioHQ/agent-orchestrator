@@ -1,4 +1,4 @@
-import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
@@ -26,28 +26,19 @@ const hookState = vi.hoisted(() => ({
 	goForward: vi.fn(),
 	reload: vi.fn(),
 	stop: vi.fn(),
-	mirrorFrame: null as {
-		dataUrl: string;
-		pixelWidth: number;
-		pixelHeight: number;
-		nativeBounds: { x: number; y: number; width: number; height: number };
-		cssLeft: number;
-		cssTop: number;
-		cssWidth: number;
-		cssHeight: number;
-	} | null,
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
+	openTab: vi.fn(),
+	reorderTabs: vi.fn(),
 	openDevTools: vi.fn(),
 	closeDevTools: vi.fn(),
 	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1" },
-	prepareForOverlay: vi.fn(async () => undefined),
-	finishOverlay: vi.fn(),
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
 	tabNotice: "",
-	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
+	agentBrowserActive: false,
+	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -65,7 +56,6 @@ vi.mock("../hooks/useBrowserView", () => ({
 		return {
 			viewId: "42:sess-1",
 			navState: hookState.navState,
-			mirrorFrame: hookState.mirrorFrame,
 			slotRef: vi.fn(),
 			navigate: hookState.navigate,
 			goBack: hookState.goBack,
@@ -75,14 +65,15 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabs: hookState.tabs,
 			activeTabId: hookState.activeTabId,
 			tabNotice: hookState.tabNotice,
-			visualTransition: hookState.visualTransition,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
+			openTab: hookState.openTab,
+			reorderTabs: hookState.reorderTabs,
+			agentBrowserActive: hookState.agentBrowserActive,
+			agentBrowserActivity: hookState.agentBrowserActivity,
 			devtoolsState: hookState.devtoolsState,
 			openDevTools: hookState.openDevTools,
 			closeDevTools: hookState.closeDevTools,
-			prepareForOverlay: hookState.prepareForOverlay,
-			finishOverlay: hookState.finishOverlay,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
 		};
@@ -117,8 +108,7 @@ function annotationPayload(instruction: string): ElementAnnotationPayload {
 				tag: "button",
 				classes: [],
 				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				nearbyText: [],
+				size: { width: 80, height: 30 },
 				computedStyle: {},
 			},
 		},
@@ -166,14 +156,11 @@ describe("BrowserPanel", () => {
 		hookState.goForward.mockReset();
 		hookState.reload.mockReset();
 		hookState.stop.mockReset();
-		hookState.mirrorFrame = null;
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
 		hookState.openDevTools.mockReset();
 		hookState.closeDevTools.mockReset();
 		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1" };
-		hookState.prepareForOverlay.mockReset();
-		hookState.finishOverlay.mockReset();
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -196,7 +183,6 @@ describe("BrowserPanel", () => {
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
-		hookState.visualTransition = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -241,6 +227,20 @@ describe("BrowserPanel", () => {
 		expect(hookState.previewUrl).toBe("file:///tmp/preview/index.html");
 	});
 
+	it("uses the active app theme for the static browser preview", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		const ao = window.ao;
+		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
+		try {
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+			const preview = screen.getByText("Demo app preview").closest(".bg-preview, .bg-background");
+			expect(preview).toHaveClass("bg-background", "text-foreground");
+		} finally {
+			Object.defineProperty(window, "ao", { configurable: true, value: ao });
+		}
+	});
+
 	it("binds navigation controls to nav state", async () => {
 		hookState.navState = {
 			viewId: "42:sess-1",
@@ -260,7 +260,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.stop).toHaveBeenCalled();
 	});
 
-	it("shows a compact tab count and lets the user select and close tabs", async () => {
+	it("lets the user select a tab from the hover flyout", async () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
@@ -268,21 +268,22 @@ describe("BrowserPanel", () => {
 		hookState.activeTabId = "t2";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		const tabsButton = screen.getByRole("button", { name: "Browser tabs (2)" });
-		expect(tabsButton).toHaveClass("bg-accent-weak");
-		expect(tabsButton).toHaveClass("text-muted-foreground");
-		expect(tabsButton.querySelector("svg")).toHaveClass("size-icon-base", "text-muted-foreground");
-		expect(screen.getByText("2", { exact: true })).toHaveClass("text-foreground");
-		await userEvent.click(tabsButton);
-		expect(screen.getByText("Second app").closest('[role="menuitem"]')?.querySelector("svg")).toHaveClass("text-foreground");
-		await userEvent.click(screen.getByText("First app"));
-		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
-		expect(hookState.finishOverlay).toHaveBeenCalledTimes(1);
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		// Docked defaults to a collapsed (0px) rail once there's more than one
+		// tab, so tabs are only reachable through the hover flyout unless the
+		// user has pinned the rail — same open sequence as the flyout tests below.
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 
-		await userEvent.click(tabsButton);
-		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
-		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+		await userEvent.click(screen.getByRole("button", { name: "First app" }));
+
+		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
 	});
 
 	it("does not render a tab-specific agent marker", async () => {
@@ -294,51 +295,44 @@ describe("BrowserPanel", () => {
 		hookState.activeTabId = "t2";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 
 		expect(screen.queryByText("Agent", { exact: true })).not.toBeInTheDocument();
 	});
 
-	it("renders a rounded native mirror viewport without edge-cropping", () => {
-		hookState.navState = {
-			...hookState.navState,
-			url: "http://localhost:5173/",
-		};
-		hookState.mirrorFrame = {
-			dataUrl: "data:image/jpeg;base64,snapshot",
-			pixelWidth: 798,
-			pixelHeight: 598,
-			nativeBounds: { x: 125, y: 25, width: 399, height: 299 },
-			cssLeft: -0.25,
-			cssTop: -0.25,
-			cssWidth: 319.2,
-			cssHeight: 239.2,
-		};
-
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		const frame = screen.getByTestId("browser-mirror-frame");
-		expect(frame).toHaveStyle({
-			height: "239.2px",
-			left: "-0.25px",
-			objectFit: "fill",
-			objectPosition: "top left",
-			top: "-0.25px",
-			width: "319.2px",
-		});
-		expect(frame).not.toHaveClass("object-cover");
-	});
-
 	it("opens DevTools from a direct toolbar control", async () => {
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		const toolbarButtonCount = screen.getAllByRole("button").length;
 
 		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
 		expect(hookState.openDevTools).toHaveBeenCalledOnce();
 
 		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getAllByRole("button")).toHaveLength(toolbarButtonCount);
 		await userEvent.click(screen.getByRole("button", { name: "Close DevTools" }));
 		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
+	});
+
+	it("marks blank native panels as opaque and loaded panels as live", () => {
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "empty");
+
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-panel")).toHaveAttribute("data-browser-native-page", "live");
 	});
 
 	it("releases the tabs overlay when tab selection fails", async () => {
@@ -349,36 +343,81 @@ describe("BrowserPanel", () => {
 		hookState.selectTab.mockRejectedValueOnce(new Error("selection failed"));
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
-		await userEvent.click(screen.getByText("Second app"));
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
 
-		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalled());
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Second app" }));
+
+		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t2"));
 	});
 
-	it("releases the tabs overlay when the menu is dismissed", async () => {
+	it("opens the flyout on hover, after the hover-intent delay", () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
 		];
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		const rail = screen.getByTestId("browser-tabs-rail");
+		const flyout = screen.getByTestId("browser-tabs-flyout");
 
-		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
-		expect(await screen.findByRole("menu")).toBeInTheDocument();
-		hookState.finishOverlay.mockClear();
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(rail);
+			expect(flyout).toHaveAttribute("data-state", "closed");
 
-		await userEvent.keyboard("{Escape}");
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(flyout).toHaveAttribute("data-state", "open");
+			expect(flyout).toHaveTextContent("First app");
 
-		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalledTimes(1));
-		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+			fireEvent.pointerLeave(rail);
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+			expect(flyout).toHaveAttribute("data-state", "closed");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
-	it("surfaces a popup-created tab without adding a full tab strip", () => {
+	it("lets the user close a tab from the hover flyout", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
+
+		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("surfaces a popup-created tab notice alongside the rail", () => {
 		hookState.tabNotice = "Opened new tab";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		expect(screen.getByRole("status")).toHaveTextContent("Opened new tab");
-		expect(screen.getByRole("button", { name: "Browser tabs (1)" })).toBeInTheDocument();
+		// Not getByRole("status"): the rail's DndContext renders its own
+		// role="status" live region for drag accessibility announcements.
+		expect(screen.getByText("Opened new tab")).toBeInTheDocument();
+		expect(screen.getByTestId("browser-tabs-rail")).toBeInTheDocument();
 	});
 
 	it("shows empty and error states", () => {
@@ -399,15 +438,15 @@ describe("BrowserPanel", () => {
 		expect(onTogglePopOut).toHaveBeenCalledWith(true);
 	});
 
-	it("does not pop out an empty browser", async () => {
+	it("pops out an empty browser", async () => {
 		const onTogglePopOut = vi.fn();
 		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
 
 		const popOut = screen.getByRole("button", { name: /pop out/i });
-		expect(popOut).toBeDisabled();
+		expect(popOut).not.toBeDisabled();
 		await userEvent.click(popOut);
 
-		expect(onTogglePopOut).not.toHaveBeenCalled();
+		expect(onTogglePopOut).toHaveBeenCalledWith(true);
 	});
 
 	it("enables annotation mode from the toolbar when a page is loaded", async () => {
@@ -444,23 +483,6 @@ describe("BrowserPanel", () => {
 		expect(icon).not.toHaveClass("top-1/2");
 		expect(icon).not.toHaveClass("-translate-y-1/2");
 	});
-
-	it("warms the browser tabs menu before opening it above the native browser", async () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.tabs = [
-			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
-			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
-		];
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		await userEvent.click(screen.getByRole("button", { name: /browser tabs/i }));
-
-		expect(hookState.prepareForOverlay).toHaveBeenCalled();
-		expect(await screen.findByRole("menu")).not.toHaveAttribute("data-ao-browser-native-overlay");
-		expect(screen.getByText("First app").closest('[role="menuitem"]')).toHaveClass("cursor-pointer");
-		expect(screen.getByRole("menuitem", { name: "Close tab First app" })).toHaveClass("cursor-pointer");
-	});
-
 	it("disables annotation mode when no page is loaded", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
@@ -492,9 +514,8 @@ describe("BrowserPanel", () => {
 							id: "save",
 							classes: ["primary"],
 							selector: "button#save",
-							rect: { x: 16, y: 24, width: 140, height: 36 },
+							size: { width: 140, height: 36 },
 							visibleText: "Save changes",
-							nearbyText: ["Profile settings"],
 							computedStyle: {},
 						},
 					},
@@ -512,6 +533,41 @@ describe("BrowserPanel", () => {
 		const body = postMock.mock.calls[0][1].body as { message: string };
 		expect(body.message).toContain("button#save");
 		expect(body.message.length).toBeLessThanOrEqual(4096);
+	});
+
+	it("forwards the captured snapshot as the /send body's attachment field", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					...annotationPayload("Make this button blue."),
+					snapshot: { mimeType: "image/png", data: "cG5nLWJ5dGVz" },
+				}),
+			);
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: { mimeType: string; data: string } };
+		expect(body.attachment).toEqual({ mimeType: "image/png", data: "cG5nLWJ5dGVz" });
+	});
+
+	it("omits the attachment field when the payload has no snapshot", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button blue.")));
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: unknown };
+		expect(body.attachment).toBeUndefined();
 	});
 
 	it("sends a follow-up annotation without waiting for an activity-state cycle", async () => {
@@ -578,7 +634,7 @@ describe("BrowserPanel", () => {
 		expect(postMock).toHaveBeenCalledTimes(3);
 		expect(
 			postMock.mock.calls.map(
-				(call) => (call[1].body as { message: string }).message.match(/Change request:\n(.+)/)?.[1],
+				(call) => (call[1].body as { message: string }).message.match(/Request: (.+)/)?.[1],
 			),
 		).toEqual(instructions);
 	});
@@ -642,8 +698,7 @@ describe("BrowserPanel", () => {
 					tag: "button",
 					classes: [],
 					selector: "button",
-					rect: { x: 0, y: 0, width: 80, height: 30 },
-					nearbyText: [],
+					size: { width: 80, height: 30 },
 					computedStyle: {},
 				},
 			},
@@ -701,8 +756,7 @@ describe("BrowserPanel", () => {
 							tag: "section",
 							classes: [],
 							selector: "section",
-							rect: { x: 0, y: 0, width: 320, height: 180 },
-							nearbyText: [],
+							size: { width: 320, height: 180 },
 							computedStyle: {},
 						},
 					},
@@ -764,8 +818,7 @@ describe("BrowserPanel", () => {
 							tag: "button",
 							classes: [],
 							selector: "button",
-							rect: { x: 0, y: 0, width: 80, height: 30 },
-							nearbyText: [],
+							size: { width: 80, height: 30 },
 							computedStyle: {},
 						},
 					},

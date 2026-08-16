@@ -6,8 +6,9 @@ import type {
 	Session,
 	View,
 	WebContents,
-	WebFrameMain,
+	OpenDevToolsOptions,
 } from "electron";
+import { nativeImage } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -16,9 +17,11 @@ import type {
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSelection,
+	BrowserAnnotationSnapshot,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
+import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
@@ -30,25 +33,16 @@ function isValidAnnotationContext(value: unknown): value is BrowserAnnotationCon
 		tag?: unknown;
 		classes?: unknown;
 		selector?: unknown;
-		rect?: unknown;
-		nearbyText?: unknown;
+		size?: unknown;
 		computedStyle?: unknown;
 	};
 	if (typeof context.url !== "string") return false;
 	if (typeof context.tag !== "string") return false;
 	if (!Array.isArray(context.classes)) return false;
 	if (typeof context.selector !== "string") return false;
-	if (typeof context.rect !== "object" || context.rect === null) return false;
-	const rect = context.rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
-	if (
-		typeof rect.x !== "number" ||
-		typeof rect.y !== "number" ||
-		typeof rect.width !== "number" ||
-		typeof rect.height !== "number"
-	) {
-		return false;
-	}
-	if (!Array.isArray(context.nearbyText)) return false;
+	if (typeof context.size !== "object" || context.size === null) return false;
+	const size = context.size as { width?: unknown; height?: unknown };
+	if (typeof size.width !== "number" || typeof size.height !== "number") return false;
 	if (typeof context.computedStyle !== "object" || context.computedStyle === null) return false;
 	return true;
 }
@@ -71,23 +65,6 @@ function isValidAnnotationSelection(value: unknown): value is BrowserAnnotationS
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
-/**
- * A renderer replacement for a captured native browser viewport. The pixel
- * size describes the encoded NativeImage (and therefore includes display
- * scale), while the css* fields describe the rounded native viewport and its
- * offset in the renderer's page-zoomed CSS pixels.
- */
-export type BrowserMirrorFrame = {
-	dataUrl: string;
-	pixelWidth: number;
-	pixelHeight: number;
-	nativeBounds: BrowserRect;
-	cssLeft: number;
-	cssTop: number;
-	cssWidth: number;
-	cssHeight: number;
-};
-
 export type BrowserNavState = {
 	viewId: string;
 	url: string;
@@ -103,6 +80,7 @@ export type BrowserTabState = {
 	url: string;
 	title: string;
 	active: boolean;
+	favicon?: string;
 };
 
 export type BrowserTabsState = {
@@ -127,11 +105,15 @@ export type BrowserDevToolsState = {
 	viewId: string;
 	open: boolean;
 	activeTabId: string;
+	placement?: BrowserDevToolsPlacement;
 };
+
+export type BrowserDevToolsPlacement = "right" | "bottom" | "left" | "undocked";
 
 export type BrowserDevToolsInput = {
 	viewId: string;
-	operation: "open" | "close";
+	operation: "open" | "close" | "setPlacement";
+	placement?: BrowserDevToolsPlacement;
 };
 
 type InternalBrowserDevToolsOperation = BrowserDevToolsInput["operation"] | "toggle";
@@ -140,7 +122,6 @@ type BrowserBoundsInput = {
 	viewId: string;
 	rect: BrowserRect;
 	visible: boolean;
-	parked?: boolean;
 };
 
 type BrowserNavigateInput = {
@@ -151,6 +132,11 @@ type BrowserNavigateInput = {
 type BrowserTabInput = {
 	viewId: string;
 	tabId: string;
+};
+
+type BrowserOpenTabInput = {
+	viewId: string;
+	url?: string;
 };
 
 type BrowserWebContents = Pick<
@@ -176,6 +162,8 @@ type BrowserWebContents = Pick<
 	| "setWindowOpenHandler"
 	| "stop"
 > & {
+	openDevTools?: (options?: Pick<OpenDevToolsOptions, "mode" | "activate">) => void;
+	closeDevTools?: () => void;
 	close?: () => void;
 	session?: Pick<Session, "setPermissionCheckHandler" | "setPermissionRequestHandler">;
 };
@@ -193,19 +181,8 @@ type BrowserWindowLike = {
 		removeChildView?: (view: BrowserViewLike) => void;
 	};
 	getContentBounds: () => BrowserRect;
-	webContents: Pick<WebContents, "focus" | "id" | "send"> & {
-		session?: Pick<Session, "setDisplayMediaRequestHandler">;
-	};
+	webContents?: WebContents;
 	isDestroyed?: () => boolean;
-};
-
-type BrowserDevToolsWindowLike = {
-	webContents: Pick<BrowserWebContents, "focus" | "loadURL" | "on">;
-	show: () => void;
-	focus: () => void;
-	close: () => void;
-	isDestroyed?: () => boolean;
-	on: (event: "closed", listener: () => void) => unknown;
 };
 
 type ShellLike = {
@@ -216,7 +193,7 @@ type WebContentsViewConstructor = new (options: { webPreferences: Electron.WebPr
 
 export type BrowserViewHostOptions = {
 	mainWindow: BrowserWindowLike;
-	createDevToolsWindow?: () => BrowserDevToolsWindowLike;
+	shellWebContents?: WebContents;
 	ipcMain: Pick<IpcMain, "handle" | "on" | "removeHandler" | "off">;
 	shell: ShellLike;
 	WebContentsView: WebContentsViewConstructor;
@@ -252,6 +229,16 @@ type BrowserEntry = {
 	state: BrowserNavState;
 	annotationEnabled: boolean;
 	networkCapture?: BrowserNetworkCapture;
+	favicon?: string;
+	// URL of the favicon currently applied to `favicon` (fetch succeeded).
+	faviconSourceUrl?: string;
+	// URL of a favicon fetch currently in flight, so a duplicate event for the
+	// same URL doesn't start a second fetch while one is already pending.
+	faviconPendingUrl?: string;
+	// Origin `favicon` was captured for, so a same-tab navigation to a new
+	// origin can drop the (now-stale) favicon immediately instead of leaving
+	// the previous site's icon showing until the new one finishes loading.
+	faviconOrigin?: string;
 };
 
 type BrowserSessionEntry = {
@@ -265,13 +252,15 @@ type BrowserSessionEntry = {
 	rendererBounds: BrowserRect;
 	zoomFactor: number;
 	visible: boolean;
-	parked: boolean;
 	networkTabId?: string;
 	agentBrowserCommands: number;
 	nativeActiveTabId?: string;
 	nativeOperationQueue: Promise<void>;
+	devtoolsPlacement: BrowserDevToolsPlacement;
 	devtools?: {
-		window: BrowserDevToolsWindowLike;
+		contents: BrowserWebContents;
+		placement: BrowserDevToolsPlacement;
+		nativeCloseForReopen?: boolean;
 		targetTabId: string;
 		desiredTabId: string;
 		retargetGeneration: number;
@@ -330,12 +319,24 @@ type BrowserNetworkCapture = {
 // Hidden targets still need a real viewport for screenshots, responsive
 // layout, scrolling, and pointer automation before the panel is first shown.
 const OFFSCREEN_BOUNDS: BrowserRect = { x: -10_000, y: -10_000, width: 1280, height: 720 };
-const BROWSER_VIEW_BORDER_RADIUS = 8;
+// Must match `--radius-lg` (tokens.css, 0.625rem = 10px) — `.browser-panel`'s own
+// `rounded-lg` corner. The native view isn't a DOM node, so CSS never clips it;
+// this is the only thing rounding its corners. A mismatch here leaves a sliver of
+// the page's own background peeking past the DOM panel's rounded corner curve.
+const BROWSER_VIEW_BORDER_RADIUS = 10;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
-const MAX_BROWSER_TABS = 16;
+const FAVICON_SIZE = 32;
+const MAX_FAVICON_BYTES = 256 * 1024;
+const DEFAULT_NATIVE_DEVTOOLS_PLACEMENT: BrowserDevToolsPlacement = "right";
 const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
+// Annotation submit must never feel laggy: capture is best-effort and bounded
+// so a slow/hung capturePage() can't delay the send past this ceiling.
+const ANNOTATION_SNAPSHOT_TIMEOUT_MS = 200;
+// Caps the longest edge so the encoded image stays small and matches Claude
+// vision's effective resolution — larger just costs more tokens for no gain.
+const ANNOTATION_SNAPSHOT_MAX_DIMENSION = 1568;
 const UNTRUSTED_BEGIN = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>";
 const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // Browser targets are shared with session automation after navigation. Keep
@@ -400,6 +401,8 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserSessionEntry>();
+	const shellWebContents = options.shellWebContents ?? options.mainWindow.webContents;
+	if (!shellWebContents) throw new Error("Browser view host requires shell WebContents");
 	const viewIdsBySessionId = new Map<string, string>();
 	const rendererOwnersByViewId = new Map<string, Set<number>>();
 	const tabsByWebContentsId = new Map<number, BrowserEntry>();
@@ -418,7 +421,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		phase?: BrowserAgentActivityState["phase"],
 	): void => {
 		session.agentBrowserCommands = Math.max(0, session.agentBrowserCommands + (active ? 1 : -1));
-		options.mainWindow.webContents.send("browser:agentActivity", {
+		shellWebContents.send("browser:agentActivity", {
 			viewId: session.viewId,
 			active: session.agentBrowserCommands > 0,
 			action,
@@ -431,71 +434,28 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (visible !== undefined) view.setVisible?.(visible);
 		view.setBorderRadius?.(BROWSER_VIEW_BORDER_RADIUS);
 	};
-	let pendingMirror: { viewId: string; expires: number; frame: WebFrameMain } | null = null;
-
-	const sameFrame = (a: WebFrameMain, b: WebFrameMain | null | undefined): boolean =>
-		Boolean(b) && a.processId === b!.processId && a.routingId === b!.routingId;
-
 	const pushDevToolsState = (session: BrowserSessionEntry): BrowserDevToolsState => {
 		const state: BrowserDevToolsState = {
 			viewId: session.viewId,
 			open: Boolean(session.devtools),
 			activeTabId: session.activeTabId,
+			placement: session.devtools?.placement ?? session.devtoolsPlacement,
 		};
-		options.mainWindow.webContents.send("browser:devtoolsState", state);
+		shellWebContents.send("browser:devtoolsState", state);
 		return state;
-	};
-
-	const devtoolsURL = (endpoint: string): string => {
-		// Chromium's inspector frontend expects ws=<host/path>, not a nested
-		// ws:// URL. Passing the scheme through URLSearchParams produces
-		// ws=ws%3A%2F%2F..., which loads the frontend but leaves it disconnected.
-		const parsed = new URL(endpoint);
-		const websocketTarget = `${parsed.host}${parsed.pathname}${parsed.search}`;
-		// This endpoint is page-shaped, so use the inspector's normal frame target.
-		// targetType=tab expects Chromium to provide a separate child page target;
-		// forcing it here creates the empty intermediary target surface. Omit
-		// can_dock as well so the window stays detached and non-dockable.
-		const query = new URLSearchParams({ ws: websocketTarget });
-		return `devtools://devtools/bundled/inspector.html?${query.toString()}`;
 	};
 
 	const destroyDevTools = (session: BrowserSessionEntry): void => {
 		const devtools = session.devtools;
 		if (!devtools) return;
 		session.devtools = undefined;
-		if (!devtools.window.isDestroyed?.()) devtools.window.close();
+		try {
+			devtools.contents.closeDevTools?.();
+		} catch {
+			// Chromium may already have torn down the native DevTools surface.
+		}
 		pushDevToolsState(session);
 	};
-
-	const displayMediaSession = options.mainWindow.webContents.session;
-	const mirrorSupported = Boolean(displayMediaSession?.setDisplayMediaRequestHandler);
-	if (mirrorSupported) {
-		displayMediaSession!.setDisplayMediaRequestHandler((request, callback) => {
-			const pending = pendingMirror;
-			pendingMirror = null;
-			const session =
-				pending && pending.expires > Date.now() && sameFrame(pending.frame, request.frame)
-					? entries.get(pending.viewId)
-					: undefined;
-			try {
-				if (session) {
-					callback({ video: activeEntry(session).view.webContents.mainFrame });
-				} else {
-					callback({});
-				}
-			} catch {
-				return;
-			}
-		});
-		ipcDisposers.push(() => {
-			try {
-				displayMediaSession?.setDisplayMediaRequestHandler(null);
-			} catch {
-				return;
-			}
-		});
-	}
 
 	const createTab = (session: BrowserSessionEntry, activate: boolean, syncNativeOnActivate = false): BrowserEntry => {
 		if (session.tabs.size >= MAX_BROWSER_TABS) {
@@ -528,6 +488,20 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		};
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
+		// Native Chromium DevTools can be closed from its own window controls. Keep
+		// the renderer's toggle state in sync with that user action. Programmatic
+		// close/reopen cycles used for retargeting or placement changes are marked
+		// and ignored so they do not look like a user close.
+		view.webContents.on("devtools-closed", () => {
+			const devtools = session.devtools;
+			if (!devtools || devtools.contents !== view.webContents) return;
+			if (devtools.nativeCloseForReopen) {
+				devtools.nativeCloseForReopen = false;
+				return;
+			}
+			session.devtools = undefined;
+			pushDevToolsState(session);
+		});
 		hardenWebContents(view.webContents, options, entry, () => {
 			const popup = createTab(session, true, true);
 			pushTabsState(options, session, { kind: "popup", tabId: popup.tabId });
@@ -541,6 +515,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			() => applySessionBounds(session, entry),
 			() => pushTabsState(options, session),
 		);
+		wireFaviconEvents(view.webContents, entry, () => pushTabsState(options, session));
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
@@ -548,7 +523,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		attachAppShortcuts(
 			view.webContents,
 			Boolean(options.isMac),
-			options.mainWindow.webContents,
+			shellWebContents,
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
@@ -556,11 +531,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			(id) => {
 				if (id !== "toggle-browser-devtools") return;
 				lastFocusedViewId = session.viewId;
-				void devtoolsAction(session, "toggle")
-					.then((state) => {
-						if (state.open) session.devtools?.window.focus();
-					})
-					.catch(() => undefined);
+				void devtoolsAction(session, "toggle").catch(() => undefined);
 			},
 		);
 		view.webContents.on("focus", () => {
@@ -599,9 +570,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				rendererBounds: OFFSCREEN_BOUNDS,
 				zoomFactor: 1,
 				visible: false,
-				parked: false,
 				agentBrowserCommands: 0,
 				nativeOperationQueue: Promise.resolve(),
+				devtoolsPlacement: DEFAULT_NATIVE_DEVTOOLS_PLACEMENT,
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -717,7 +688,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			activateTab(session, nextTabId, false);
 		}
 		const state = listTabs(session, { kind: "closed", tabId });
-		options.mainWindow.webContents.send("browser:tabsState", state);
+		shellContents(options).send("browser:tabsState", state);
 		return state;
 	}
 
@@ -763,27 +734,32 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
 				return pushDevToolsState(session);
 			}
-			if (!options.agentBrowserRuntime) {
+			const contents = entry.view.webContents;
+			if (!contents.openDevTools) {
 				throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
 			}
-			const endpoint = await options.agentBrowserRuntime.devtoolsEndpoint(
-				session.sessionId,
-				entry.tabId,
-				agentBrowserTargets(session),
-			);
-			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
-				return pushDevToolsState(session);
+			const targetChanged = devtools.contents !== contents || devtools.targetTabId !== entry.tabId;
+			if (targetChanged) {
+				const previousContents = devtools.contents;
+				devtools.contents = contents;
+				if (devtools.targetTabId || previousContents !== contents) {
+					if (previousContents === contents) devtools.nativeCloseForReopen = true;
+					try {
+						previousContents.closeDevTools?.();
+					} catch {
+						// Chromium may already have closed the previous native surface.
+					}
+				}
 			}
-			await devtools.window.webContents.loadURL(devtoolsURL(endpoint));
-			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
-				return pushDevToolsState(session);
+			if (targetChanged || devtools.revealRequested) {
+				contents.openDevTools({
+					mode: devtools.placement,
+					activate: devtools.revealRequested,
+				});
 			}
 			devtools.targetTabId = entry.tabId;
-			if (devtools.revealRequested) {
-				devtools.revealRequested = false;
-				devtools.window.show();
-				devtools.window.focus();
-			}
+			devtools.revealRequested = false;
+			applySessionBounds(session, entry);
 			return pushDevToolsState(session);
 		};
 		const result = devtools.retargetQueue.then(retarget, retarget);
@@ -798,38 +774,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session: BrowserSessionEntry,
 	): Promise<BrowserDevToolsState> => {
 		const entry = activeEntry(session);
-		if (!options.agentBrowserRuntime || !options.createDevToolsWindow) {
+		if (!entry.view.webContents.openDevTools) {
 			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
 		}
-		if (!session.devtools || session.devtools.window.isDestroyed?.()) {
-			const window = options.createDevToolsWindow();
-			// The detached DevTools window is outside the shell renderer, so keep
-			// the application-owned toggle shortcut available while it is focused.
-			attachAppShortcuts(
-				window.webContents,
-				Boolean(options.isMac),
-				options.mainWindow.webContents,
-				false,
-				options.getKeybindingOverrides,
-				options.isKeybindingRecording,
-				(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
-				(id) => {
-					if (id !== "toggle-browser-devtools") return;
-					void devtoolsAction(session, "toggle")
-						.then((state) => {
-							if (state.open) session.devtools?.window.focus();
-							else activeEntry(session).view.webContents.focus?.();
-						})
-						.catch(() => undefined);
-				},
-			);
-			window.on("closed", () => {
-				if (session.devtools?.window !== window) return;
-				session.devtools = undefined;
-				pushDevToolsState(session);
-			});
+		if (!session.devtools) {
 			session.devtools = {
-				window,
+				contents: entry.view.webContents,
+				placement: session.devtoolsPlacement,
 				targetTabId: "",
 				desiredTabId: entry.tabId,
 				retargetGeneration: 0,
@@ -843,6 +794,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const devtoolsAction = async (
 		session: BrowserSessionEntry,
 		operation: InternalBrowserDevToolsOperation,
+		placement?: BrowserDevToolsPlacement,
 	): Promise<BrowserDevToolsState> => {
 		switch (operation) {
 			case "open":
@@ -856,7 +808,44 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			case "close":
 				destroyDevTools(session);
 				return pushDevToolsState(session);
+			case "setPlacement":
+				if (!placement) throw browserError("INVALID_ARGUMENT", "DevTools placement is required");
+				return setDevToolsPlacement(session, placement);
 		}
+	};
+
+	const setDevToolsPlacement = (
+		session: BrowserSessionEntry,
+		placement: BrowserDevToolsPlacement,
+	): BrowserDevToolsState => {
+		if (!Object.hasOwn({ right: true, bottom: true, left: true, undocked: true }, placement)) {
+			throw browserError("INVALID_ARGUMENT", "Unsupported browser DevTools placement");
+		}
+		session.devtoolsPlacement = placement;
+		const devtools = session.devtools;
+		if (!devtools) return pushDevToolsState(session);
+		devtools.placement = placement;
+		const contents = activeEntry(session).view.webContents;
+		if (!contents.openDevTools) {
+			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
+		}
+		const previousContents = devtools.contents;
+		if (previousContents === contents) devtools.nativeCloseForReopen = true;
+		devtools.contents = contents;
+		try {
+			previousContents.closeDevTools?.();
+		} catch {
+			// Chromium may already have closed the native surface.
+			devtools.nativeCloseForReopen = false;
+		}
+		devtools.targetTabId = session.activeTabId;
+		try {
+			contents.openDevTools({ mode: placement, activate: placement === "undocked" });
+		} catch (error) {
+			devtools.nativeCloseForReopen = false;
+			throw error;
+		}
+		return pushDevToolsState(session);
 	};
 
 	function applySessionBounds(session: BrowserSessionEntry, entry: BrowserEntry): void {
@@ -874,33 +863,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		applyBrowserViewBounds(
 			entry.view,
 			session.bounds,
-			session.parked || (session.bounds.width > 0 && session.bounds.height > 0),
+			session.bounds.width > 0 && session.bounds.height > 0,
 		);
 	}
 
 	const isRendererOwned = (event: IpcMainInvokeEvent | IpcMainEvent, viewId: string): boolean =>
 		rendererOwnersByViewId.get(viewId)?.has(event.sender.id) ?? false;
 
-	const setBounds = ({ viewId, rect, visible, parked }: BrowserBoundsInput, zoomFactor = 1): void => {
+	const setBounds = ({ viewId, rect, visible }: BrowserBoundsInput, zoomFactor = 1): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
 		const effectiveZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 		session.zoomFactor = effectiveZoomFactor;
 		const entry = activeEntry(session);
-		if (parked) {
-			const scaled = scaleBoundsForZoom(rect, effectiveZoomFactor);
-			const width = Math.max(1, Math.round(scaled.width));
-			const height = Math.max(1, Math.round(scaled.height));
-			session.bounds = { x: OFFSCREEN_BOUNDS.x, y: 0, width, height };
-			session.visible = true;
-			session.parked = true;
-			applySessionBounds(session, entry);
-			return;
-		}
 		if (!visible) {
 			session.bounds = OFFSCREEN_BOUNDS;
 			session.visible = false;
-			session.parked = false;
 			applySessionBounds(session, entry);
 			forgetIfFocused(viewId);
 			return;
@@ -914,7 +892,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			options.mainWindow.getContentBounds(),
 		);
 		session.visible = true;
-		session.parked = false;
 		applySessionBounds(session, entry);
 		// The shell toolbar can receive focus immediately after the Browser panel
 		// becomes visible. Remember that active panel too, so the DevTools shortcut
@@ -941,7 +918,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if ((err as { errorCode?: number })?.errorCode === -3) return pushNavState(options, entry);
 			entry.view.setVisible?.(false);
 			entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to load page") };
-			options.mainWindow.webContents.send("browser:navState", entry.state);
+			shellWebContents.send("browser:navState", entry.state);
 			return entry.state;
 		}
 		const session = entries.get(entry.state.viewId);
@@ -959,7 +936,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = activeEntry(session);
 		cancelAnnotation(options, entry, "navigation");
 		session.visible = false;
-		session.parked = false;
 		session.bounds = OFFSCREEN_BOUNDS;
 		applySessionBounds(session, entry);
 		forgetIfFocused(viewId);
@@ -969,28 +945,33 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return pushNavState(options, entry);
 	};
 
-	const capture = async (viewId: string): Promise<BrowserMirrorFrame | null> => {
-		const session = entries.get(viewId);
-		if (!session) return null;
-		const entry = activeEntry(session);
+	// Best-effort full-viewport capture for a browser-annotation submit. Bounded
+	// by ANNOTATION_SNAPSHOT_TIMEOUT_MS so a slow/hung capturePage() can never
+	// delay the send — on timeout, error, or an empty frame this resolves
+	// undefined and the caller proceeds with a text-only message.
+	const captureAnnotationSnapshot = async (entry: BrowserEntry): Promise<BrowserAnnotationSnapshot | undefined> => {
 		try {
-			await entry.ready;
-			const image = await entry.view.webContents.capturePage();
-			if (image.isEmpty()) return null;
-			const size = image.getSize();
-			const dataUrl = `data:image/jpeg;base64,${image.toJPEG(70).toString("base64")}`;
-			return {
-				dataUrl,
-				pixelWidth: size.width,
-				pixelHeight: size.height,
-				nativeBounds: { ...session.bounds },
-				cssLeft: session.bounds.x / session.zoomFactor - session.rendererBounds.x,
-				cssTop: session.bounds.y / session.zoomFactor - session.rendererBounds.y,
-				cssWidth: session.bounds.width / session.zoomFactor,
-				cssHeight: session.bounds.height / session.zoomFactor,
-			};
+			const timedOut = Symbol("annotation-snapshot-timeout");
+			const image = await Promise.race([
+				entry.view.webContents.capturePage(),
+				new Promise<typeof timedOut>((resolve) => {
+					setTimeout(() => resolve(timedOut), ANNOTATION_SNAPSHOT_TIMEOUT_MS);
+				}),
+			]);
+			if (image === timedOut || image.isEmpty()) return undefined;
+			const { width, height } = image.getSize();
+			const longestEdge = Math.max(width, height);
+			const resized =
+				longestEdge > ANNOTATION_SNAPSHOT_MAX_DIMENSION
+					? image.resize(
+							width >= height
+								? { width: ANNOTATION_SNAPSHOT_MAX_DIMENSION }
+								: { height: ANNOTATION_SNAPSHOT_MAX_DIMENSION },
+						)
+					: image;
+			return { mimeType: "image/png", data: resized.toPNG().toString("base64") };
 		} catch {
-			return null;
+			return undefined;
 		}
 	};
 
@@ -1056,10 +1037,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (input.enabled) entry.view.webContents.focus();
 	};
 
-	const forwardAnnotationSubmit = (
-		event: IpcMainEvent,
+	const forwardAnnotationSubmit = async (
+		event: IpcMainInvokeEvent,
 		payload: BrowserAnnotationPageSubmitPayload | undefined,
-	): void => {
+	): Promise<void> => {
 		const entry = tabsByWebContentsId.get(event.sender.id);
 		const viewId = entry?.state.viewId;
 		if (
@@ -1072,12 +1053,18 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return;
 		}
 		entry.annotationEnabled = false;
+		// Captured now, before returning: the preload only tears down the
+		// highlight overlay after this handler resolves, so the frame we grab
+		// here still has the selection ring(s) on it and not the prompt box
+		// (the preload hides that synchronously before invoking).
+		const snapshot = await captureAnnotationSnapshot(entry);
 		const forwarded: BrowserAnnotationSubmitPayload = {
 			viewId,
 			instruction: payload.instruction,
 			selection: payload.selection,
+			...(snapshot ? { snapshot } : {}),
 		};
-		options.mainWindow.webContents.send("browser:annotation:submitted", forwarded);
+		shellWebContents.send("browser:annotation:submitted", forwarded);
 	};
 
 	const forwardAnnotationCancel = (
@@ -1092,7 +1079,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			viewId,
 			reason: payload?.reason ?? "cancel",
 		};
-		options.mainWindow.webContents.send("browser:annotation:canceled", forwarded);
+		shellWebContents.send("browser:annotation:canceled", forwarded);
 	};
 
 	const handle = <Args extends unknown[], Result>(
@@ -1121,14 +1108,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:clear", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? clear(viewId) : emptyNavState(viewId),
 	);
-	handle("browser:capture", (event, viewId: string) => (isRendererOwned(event, viewId) ? capture(viewId) : null));
-	handle("browser:requestMirror", (event, viewId: string) => {
-		if (!mirrorSupported || !isRendererOwned(event, viewId) || !entries.has(viewId)) return false;
-		const frame = event.senderFrame;
-		if (!frame) return false;
-		pendingMirror = { viewId, expires: Date.now() + 5000, frame };
-		return true;
-	});
 	handle("browser:goBack", (event, viewId: string) =>
 		isRendererOwned(event, viewId) ? invokeNav(viewId, (contents) => contents.goBack(), true) : emptyNavState(viewId),
 	);
@@ -1185,16 +1164,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		const session = entries.get(input.viewId);
 		if (!session) return emptyDevToolsState(input.viewId);
-		if (!["open", "close"].includes(input.operation)) {
+		if (!["open", "close", "setPlacement"].includes(input.operation)) {
 			throw browserError("INVALID_ARGUMENT", "Unsupported browser DevTools operation");
 		}
-		return devtoolsAction(session, input.operation);
+		return devtoolsAction(session, input.operation, input.placement);
+	});
+	handle("browser:openTab", async (event, input: BrowserOpenTabInput) => {
+		const session = entries.get(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		await openTab(session, input.url, true);
+		return listTabs(session);
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
 	});
-	on("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
+	handle("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
 		forwardAnnotationSubmit(event, payload),
 	);
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>
@@ -1467,7 +1452,7 @@ function emptyTabsState(viewId: string): BrowserTabsState {
 }
 
 function emptyDevToolsState(viewId: string): BrowserDevToolsState {
-	return { viewId, open: false, activeTabId: "" };
+	return { viewId, open: false, activeTabId: "", placement: "undocked" };
 }
 
 function activeEntry(session: BrowserSessionEntry): BrowserEntry {
@@ -1482,6 +1467,7 @@ function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { un
 		url: entry.view.webContents.getURL(),
 		title: entry.view.webContents.getTitle(),
 		active,
+		...(entry.favicon ? { favicon: entry.favicon } : {}),
 		untrustedExternalContent: true,
 	};
 }
@@ -1505,8 +1491,14 @@ function pushTabsState(
 	change?: BrowserTabsState["change"],
 ): BrowserTabsState {
 	const state = listTabs(session, change);
-	options.mainWindow.webContents.send("browser:tabsState", state);
+	shellContents(options).send("browser:tabsState", state);
 	return state;
+}
+
+function shellContents(options: BrowserViewHostOptions): WebContents {
+	const contents = options.shellWebContents ?? options.mainWindow.webContents;
+	if (!contents) throw new Error("Browser view host requires shell WebContents");
+	return contents;
 }
 
 function hardenWebContents(
@@ -1529,7 +1521,7 @@ function hardenWebContents(
 		if (!isAllowedBrowserURL(url, options.rendererOrigin)) {
 			event.preventDefault();
 			entry.state = { ...entry.state, error: "Unsupported browser URL" };
-			options.mainWindow.webContents.send("browser:navState", entry.state);
+			shellContents(options).send("browser:navState", entry.state);
 		}
 	};
 	contents.on("will-navigate", blockUnsafeNavigation);
@@ -1548,7 +1540,8 @@ function wireNavEvents(
 		syncTabs();
 		if (isActive()) pushNavState(options, entry);
 	};
-	contents.on("did-navigate", () => {
+	contents.on("did-navigate", (_event, url) => {
+		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
 		update();
 	});
@@ -1565,8 +1558,87 @@ function wireNavEvents(
 		if (errorCode === -3) return;
 		if (isActive()) entry.view.setVisible?.(false);
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
-		if (isActive()) options.mainWindow.webContents.send("browser:navState", entry.state);
+		if (isActive()) shellContents(options).send("browser:navState", entry.state);
 	});
+}
+
+// A same-tab navigation to a different site (search result, link, address bar)
+// keeps the previous site's favicon displayed until the new one has been
+// fetched and decoded — a real network round trip — which reads as a laggy
+// icon swap. Clear it as soon as the new origin is known (favicons are
+// near-always origin-scoped, so a same-origin navigation likely keeps the
+// same one and is left alone) so the rail falls back to the generic icon
+// immediately instead of showing the *wrong* one while it waits. Called from
+// wireNavEvents' own did-navigate handler rather than registering a second
+// listener for the same event.
+function clearStaleFavicon(entry: BrowserEntry, url: string): void {
+	const origin = originOf(url);
+	if (origin && origin === entry.faviconOrigin) return;
+	entry.favicon = undefined;
+	entry.faviconSourceUrl = undefined;
+	entry.faviconPendingUrl = undefined;
+	entry.faviconOrigin = undefined;
+}
+
+function wireFaviconEvents(contents: BrowserWebContents, entry: BrowserEntry, syncTabs: () => void): void {
+	contents.on("page-favicon-updated", (_event, favicons) => {
+		const url = favicons[0];
+		// Not yet applied (faviconSourceUrl) and not already in flight
+		// (faviconPendingUrl) — a page re-announcing the same favicon while a
+		// prior fetch for it is still pending must not start a duplicate.
+		if (!url || url === entry.faviconSourceUrl || url === entry.faviconPendingUrl) return;
+		entry.faviconPendingUrl = url;
+		void fetchFavicon(entry, url).then((dataUrl) => {
+			if (entry.faviconPendingUrl === url) entry.faviconPendingUrl = undefined;
+			// Leave faviconSourceUrl unset on failure (rather than marking the
+			// URL "seen") so a later page-favicon-updated event for the same
+			// URL — browsers re-fire these on soft/in-page navigations — gets a
+			// fresh attempt instead of being permanently stuck on the fallback
+			// icon from one transient fetch failure.
+			if (entry.faviconSourceUrl !== url && dataUrl) {
+				entry.faviconSourceUrl = url;
+				entry.favicon = dataUrl;
+				entry.faviconOrigin = originOf(url);
+				syncTabs();
+			}
+		});
+	});
+}
+
+function originOf(url: string): string | undefined {
+	try {
+		return new URL(url).origin;
+	} catch {
+		return undefined;
+	}
+}
+
+// Fetched through the tab's own isolated partition (not the shell session), so
+// it carries whatever cookies/proxy config that site's tab already has, and
+// resized/re-encoded like other browser-view thumbnail capture in this file.
+async function fetchFavicon(entry: BrowserEntry, url: string): Promise<string | undefined> {
+	try {
+		// Some sites inline a tiny favicon as a data: URI rather than serving a
+		// file — decode it directly instead of rejecting it as an unsupported
+		// scheme, still normalized/capped through the same resize path.
+		if (url.startsWith("data:")) {
+			const image = nativeImage.createFromDataURL(url);
+			if (image.isEmpty()) return undefined;
+			return image.resize({ width: FAVICON_SIZE, height: FAVICON_SIZE, quality: "good" }).toDataURL();
+		}
+		const parsed = new URL(url);
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+		const tabSession = (entry.view.webContents as unknown as WebContents).session;
+		const response = await tabSession.fetch(url);
+		if (!response.ok) return undefined;
+		const buffer = Buffer.from(await response.arrayBuffer());
+		if (buffer.byteLength === 0 || buffer.byteLength > MAX_FAVICON_BYTES) return undefined;
+		const image = nativeImage.createFromBuffer(buffer);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: FAVICON_SIZE, height: FAVICON_SIZE, quality: "good" }).toDataURL();
+	} catch {
+		return undefined;
+	}
 }
 
 function cancelAnnotation(
@@ -1577,12 +1649,15 @@ function cancelAnnotation(
 	if (!entry.annotationEnabled) return;
 	entry.annotationEnabled = false;
 	entry.view.webContents.send("browser:annotation:setMode", { enabled: false });
-	options.mainWindow.webContents.send("browser:annotation:canceled", { viewId: entry.state.viewId, reason });
+	shellContents(options).send("browser:annotation:canceled", {
+		viewId: entry.state.viewId,
+		reason,
+	});
 }
 
 function pushNavState(options: BrowserViewHostOptions, entry: BrowserEntry): BrowserNavState {
 	entry.state = readNavState(entry);
-	options.mainWindow.webContents.send("browser:navState", entry.state);
+	shellContents(options).send("browser:navState", entry.state);
 	return entry.state;
 }
 

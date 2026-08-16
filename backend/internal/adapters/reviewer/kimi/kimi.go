@@ -18,7 +18,8 @@ import (
 const skillsDirectoryName = "kimi-reviewer-skills"
 
 // HostTrustWarning describes the authority retained by Kimi's interactive
-// terminal. Plan mode reduces accidental model actions, but AO deliberately
+// terminal. Plan mode limits Kimi to read-only tools, while auto mode handles
+// approvals and questions without pausing for user input. AO deliberately
 // does not replace the TUI with print/headless mode or place it in a sandbox.
 const HostTrustWarning = "experimental host-trusted reviewer: Kimi has no OS isolation; terminal users can invoke shell mode, change Plan mode, open an external editor, or alter configuration"
 
@@ -46,7 +47,8 @@ func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptRe
 
 // ReviewCommand starts only Kimi's normal interactive TUI. The initial task is
 // injected after the pane starts; --prompt, --print, --quiet, --command, ACP,
-// Wire, AFK, YOLO, and sandbox wrappers are never emitted.
+// Wire, AFK, YOLO, and sandbox wrappers are never emitted. Auto mode is paired
+// with Plan mode so read-only reviewer tools run unattended.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ReviewCommandSpec{}, err
@@ -61,7 +63,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	// Preflight builds the permanent interactive command before request-scoped
 	// prompt paths exist.
 	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
-		return ports.ReviewCommandSpec{Argv: []string{binary, "--plan"}}, nil
+		return ports.ReviewCommandSpec{Argv: []string{binary, "--plan", "--auto"}}, nil
 	}
 	if strings.TrimSpace(inv.SystemPromptFile) == "" {
 		return ports.ReviewCommandSpec{}, errors.New("kimi reviewer: system prompt file is required")
@@ -76,7 +78,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		strings.TrimSpace(inv.Prompt),
 	)
 	return ports.ReviewCommandSpec{
-		Argv:           []string{binary, "--plan", "--skills-dir", skillsDir},
+		Argv:           []string{binary, "--plan", "--auto", "--skills-dir", skillsDir},
 		InitialMessage: message,
 	}, nil
 }
@@ -96,11 +98,11 @@ func (*Reviewer) ReviewMessage(ctx context.Context, inv ports.ReviewInvocation) 
 	return inv.Prompt, nil
 }
 
-// ReviewCancel uses Kimi's documented single Ctrl-C active-operation
-// interrupt. An idle session requires another confirmation before exiting.
+// ReviewCancel sends Kimi's Ctrl-C sequence twice so an active operation is
+// interrupted and the reviewer cannot continue executing after cancellation.
 func (*Reviewer) ReviewCancel(ctx context.Context) (ports.ReviewCancelSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ReviewCancelSpec{}, err
 	}
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 1}, nil
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
 }

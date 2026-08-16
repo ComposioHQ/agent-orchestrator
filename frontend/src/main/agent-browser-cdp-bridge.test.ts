@@ -89,7 +89,7 @@ describe("worker-scoped agent-browser CDP bridge", () => {
 		}
 	});
 
-	it("keeps one physical debugger attached while the agent and DevTools share a target", async () => {
+	it("keeps one physical debugger attached while restricted clients share a target", async () => {
 		const debug = new FakeDebugger();
 		const targets: AgentBrowserTarget[] = [
 			{ id: "t1", url: "http://localhost:5173/", title: "AO fixture", debugger: debug },
@@ -103,56 +103,27 @@ describe("worker-scoped agent-browser CDP bridge", () => {
 		const bridge = new AgentBrowserCDPBridge(provider);
 		const endpoint = await bridge.start();
 		const agentSocket = await connect(endpoint);
-		const devtoolsEndpoint = bridge.endpointForTarget("t1");
-		expect(devtoolsEndpoint).toContain("devtools=");
-		expect(devtoolsEndpoint).not.toContain("target=t1");
-		expect(devtoolsEndpoint).not.toContain("client=devtools");
-		const devtoolsSocket = await connect(devtoolsEndpoint);
+		const siblingSocket = await connect(endpoint);
 
 		try {
 			const agentAttach = await rpc(agentSocket, 1, "Target.attachToTarget", { targetId: "t1", flatten: true });
-			expect((agentAttach.result as { sessionId: string }).sessionId).toMatch(/^ao-/);
-			const devtoolsTargets = await rpc(devtoolsSocket, 2, "Target.getTargets");
-			expect(devtoolsTargets.result).toEqual({ method: "Target.getTargets" });
-			const directPageCommand = await rpc(devtoolsSocket, 3, "Runtime.enable");
-			expect(directPageCommand.error).toBeUndefined();
-			const autoAttach = await rpc(devtoolsSocket, 31, "Target.setAutoAttach", {
-				autoAttach: true,
-				waitForDebuggerOnStart: false,
-				flatten: true,
-			});
-			expect(autoAttach.error).toBeUndefined();
-			expect(debug.sendCommand).toHaveBeenCalledWith("Target.setAutoAttach", {
-				autoAttach: true,
-				waitForDebuggerOnStart: false,
-				flatten: true,
-			});
-			const childCommand = await rpc(devtoolsSocket, 32, "Runtime.enable", {}, "chromium-child-session");
-			expect(childCommand.result).toEqual({
-				method: "Runtime.enable",
-				params: {},
-				sessionId: "chromium-child-session",
-			});
-			const devtoolsAttach = await rpc(devtoolsSocket, 4, "Target.attachToTarget", { targetId: "t1", flatten: true });
-			const devtoolsSession = (devtoolsAttach.result as { sessionId?: string }).sessionId;
+			const siblingAttach = await rpc(siblingSocket, 2, "Target.attachToTarget", { targetId: "t1", flatten: true });
+			const agentSession = (agentAttach.result as { sessionId: string }).sessionId;
+			const siblingSession = (siblingAttach.result as { sessionId: string }).sessionId;
+			expect(agentSession).toMatch(/^ao-/);
+			expect(siblingSession).toMatch(/^ao-/);
 			expect(debug.attached).toBe(true);
-			const unrestricted = await rpc(
-				devtoolsSocket,
-				5,
-				"Page.navigate",
-				{ url: "file:///tmp/user-debug-target" },
-				devtoolsSession,
-			);
-			expect(unrestricted.error).toBeUndefined();
+			await expectRPCResult(agentSocket, 3, "Runtime.enable", {}, agentSession);
+			await expectRPCResult(siblingSocket, 4, "Runtime.enable", {}, siblingSession);
 
 			agentSocket.close();
 			await waitFor(() => expect(debug.attached).toBe(true));
-			await expectRPCResult(devtoolsSocket, 6, "Runtime.enable", {}, devtoolsSession);
+			await expectRPCResult(siblingSocket, 5, "Runtime.enable", {}, siblingSession);
 
-			devtoolsSocket.close();
+			siblingSocket.close();
 			await waitFor(() => expect(debug.attached).toBe(false));
 		} finally {
-			devtoolsSocket.close();
+			siblingSocket.close();
 			agentSocket.close();
 			await bridge.close();
 		}
@@ -265,7 +236,7 @@ describe("worker-scoped agent-browser CDP bridge", () => {
 		}
 	});
 
-	it("does not serialize independent DevTools protocol requests", async () => {
+	it("does not serialize independent target protocol requests", async () => {
 		const debug = new FakeDebugger();
 		let releaseSlow: (() => void) | undefined;
 		debug.sendCommand.mockImplementation((method: string) => {
@@ -286,20 +257,22 @@ describe("worker-scoped agent-browser CDP bridge", () => {
 			activateTarget: vi.fn(),
 			closeTarget: vi.fn(),
 		});
-		await bridge.start();
-		const socket = await connect(bridge.endpointForTarget("t1"));
+		const endpoint = await bridge.start();
+		const socket = await connect(endpoint);
 
 		try {
-			const slow = rpc(socket, 1, "Runtime.enable");
-			const fast = rpc(socket, 2, "Page.enable");
+			const attached = await rpc(socket, 1, "Target.attachToTarget", { targetId: "t1", flatten: true });
+			const sessionId = (attached.result as { sessionId: string }).sessionId;
+			const slow = rpc(socket, 2, "Runtime.enable", {}, sessionId);
+			const fast = rpc(socket, 3, "Page.enable", {}, sessionId);
 			await expect(
 				Promise.race([
 					fast,
 					new Promise((_, reject) => setTimeout(() => reject(new Error("fast CDP request was serialized")), 500)),
 				]),
-			).resolves.toMatchObject({ id: 2, result: { method: "Page.enable" } });
+			).resolves.toMatchObject({ id: 3, result: { method: "Page.enable" } });
 			releaseSlow?.();
-			await expect(slow).resolves.toMatchObject({ id: 1 });
+			await expect(slow).resolves.toMatchObject({ id: 2 });
 		} finally {
 			releaseSlow?.();
 			socket.close();

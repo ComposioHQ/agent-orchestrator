@@ -57,11 +57,11 @@ surface (`npm run sqlc`, `npm run api`).
   `POST /reviews/{id}/send`.
 - Interactive reviewer panes for Aider, Agy, Amp, Auggie, Autohand,
   Claude Code, Cline, Codex, Continue, GitHub Copilot, Crush, Cursor, Devin,
-  Droid, Goose, Grok, Kilo Code, Kiro, Kimi, OpenCode, Pi, Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
+  Droid, Goose, Grok, Kilo Code, Kimchi, Kiro, Kimi, OpenCode, Pi, Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
   resources disabled, structured read-only inspection/reporting tools, and
   Escape-based turn cancellation. Kiro also uses its native Escape
   cancellation. Continue, Qwen, and Vibe also use Escape cancellation. Agy,
-  Continue, Devin, Droid, Goose, Kimi, Qwen, and Vibe are explicitly experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers that retain their native approval prompts instead of receiving broad unattended flags:
+  Continue, Devin, Droid, Goose, Kimchi, Kimi, Qwen, and Vibe are explicitly experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers that retain their native approval prompts instead of receiving broad unattended flags:
   native modes, autonomous settings, and prompts are not OS or network containment.
 - The provider-neutral interactive-reviewer capability gateway and neutral
   AO-owned working-directory contract are available. The experimental
@@ -127,9 +127,10 @@ surface (`npm run sqlc`, `npm run api`).
   surface for TUI, or the durable Chat timeline/composer for Chat. Chat retains
   access to session-scoped worktree shells without creating an agent tmux pane.
 - Compatible Claude Code and Codex sessions expose an in-session “Open Chat” /
-  “Open Terminal UI” action. Idle sessions switch directly; busy sessions offer
-  an explicit finish-and-drain or stop-and-interrupt policy and show durable
-  progress/recovery state.
+  “Open Terminal UI” action. Chat→TUI is the recovery path and always fences
+  queued work before interrupting the active turn; a busy TUI→Chat switch offers
+  the explicit finish-and-drain or stop-and-interrupt choice. Both directions
+  show durable progress/recovery state.
 - Desktop status and SCM summary V1: session status comes from
   `GET /api/v1/sessions`; visible/active PR context comes from
   `GET /api/v1/sessions/{sessionId}/pr`; `GET /api/v1/events` is kept open as

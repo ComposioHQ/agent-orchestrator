@@ -121,6 +121,11 @@ export function buildTelemetryContext(
 ): TelemetryProperties {
 	const version = appVersion.trim() || "unknown";
 	return {
+		// Classifies this install as the desktop app across every event, so a
+		// shared event like ao.app.active splits cleanly by `client` alongside
+		// the mobile app (client="mobile") and the CLI (client="cli"), rather
+		// than by inferring from the platform value set.
+		client: "desktop",
 		app_version: version,
 		ao_version: version,
 		platform,
@@ -642,7 +647,7 @@ export function buildPostHogConfig(distinctId: string): PostHogInitOptions {
 
 export async function initTelemetry(): Promise<boolean> {
 	if (initPromise) return initPromise;
-	initPromise = (async () => {
+	const attempt = (async () => {
 		if (!POSTHOG_KEY) return false;
 		const bootstrap = await aoBridge.telemetry.getBootstrap();
 		// Null means the supervisor withheld it: no key, no data dir, or an
@@ -664,6 +669,11 @@ export async function initTelemetry(): Promise<boolean> {
 			storage: telemetryStorage(),
 			window,
 			document,
+			// Ride the batched request queue like every other renderer event
+			// (loaded, route_viewed). An earlier `send_instantly: true` here
+			// fired an immediate, un-retried send during init that never
+			// reached PostHog in packaged builds, so renderer app-active
+			// dropped to zero while batched events kept landing.
 			capture: async () =>
 				isDeniedEvent("ao.app.active")
 					? true
@@ -671,7 +681,6 @@ export async function initTelemetry(): Promise<boolean> {
 					posthog.capture(
 						postHogEventName("ao.app.active"),
 						withTelemetryContext(await sanitizeRendererProperties("ao.app.active", { channel: "renderer" })),
-						{ send_instantly: true },
 					),
 				),
 		});
@@ -682,8 +691,18 @@ export async function initTelemetry(): Promise<boolean> {
 			);
 		}
 		return true;
-	})().catch(() => false);
-	return initPromise;
+	})().catch(() => {
+		// A thrown error is transient (the bridge not ready yet, or a hiccup in
+		// posthog.init): drop the memoized promise so the next captured event
+		// retries init rather than the whole session going dark after one bad
+		// moment. A deliberate `return false` above (no key, not opted in) is
+		// not an error and stays cached, so an intentionally-withheld client is
+		// not retried forever.
+		if (initPromise === attempt) initPromise = null;
+		return false;
+	});
+	initPromise = attempt;
+	return attempt;
 }
 
 export async function captureRendererEvent(event: string, properties?: Record<string, unknown>): Promise<void> {
