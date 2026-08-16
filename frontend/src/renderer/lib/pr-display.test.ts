@@ -203,6 +203,19 @@ describe("prDiffSummary", () => {
 });
 
 describe("prCardPresentation", () => {
+	const priorityCases: Array<[string, Partial<SessionPRSummary>, string]> = [
+		["conflict + passing + approval", { mergeability: { state: "conflicting", reasons: [], prUrl: "" } }, "Not mergeable yet"],
+		["clean + passing + approval", { mergeability: { state: "mergeable", reasons: [], prUrl: "" } }, "Mergeable"],
+		["clean + failing + approval", { ci: { autoInjectCI: true, state: "failing", failingChecks: [] }, mergeability: { state: "mergeable", reasons: [], prUrl: "" } }, "Not mergeable yet"],
+	];
+	it.each(priorityCases)("renders the priority stack for %s", (_name, overrides, readiness) => {
+		const presentation = prCardPresentation(summary(overrides));
+		expect(presentation.statusRows?.map((status) => status.label)).toEqual(
+			readiness === "Mergeable" ? ["Checks passing", "Review status"] : overrides.mergeability?.state === "conflicting" ? ["Merge conflict", "Checks passing", "Review status"] : ["Checks failing", "Review status"],
+		);
+		expect(presentation.readiness?.label).toBe(readiness);
+	});
+
 	it("shows a required review once instead of repeating it as a merge blocker", () => {
 		const presentation = prCardPresentation(
 			summary({

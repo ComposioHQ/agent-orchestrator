@@ -125,17 +125,50 @@ export function PRCardStatusSummary({
 	externalLink,
 	omit,
 	presentation,
+	reviewDetailsAction,
 }: {
 	action?: ReactNode;
 	className?: string;
 	externalLink: ExternalLinkComponent;
 	omit?: PRSummaryPartKey[];
 	presentation: PRCardPresentation;
+	reviewDetailsAction?: ReactNode;
 }) {
 	const omitted = omit ? new Set(omit) : undefined;
 	const supporting = presentation.supporting.filter(
 		(status) => status.key === "lifecycle" || !omitted?.has(status.key),
 	);
+	const rows = presentation.statusRows?.filter((status) => status.key === "lifecycle" || !omitted?.has(status.key));
+	if (rows && presentation.readiness) {
+		return (
+			<div className={cn("border-t border-border pt-2", className)}>
+				<div className="grid min-w-0 grid-cols-1 gap-x-5 gap-y-1.5 sm:grid-cols-2">
+					{rows.map((status) => (
+						<div className="min-w-0" key={status.key}>
+							<div className={cn("flex min-w-0 items-center gap-2 text-xs font-medium leading-4", toneClass[status.tone])}>
+								<span aria-hidden="true" className={cn("size-dot-sm shrink-0 rounded-full bg-current", status.breathe && "animate-status-pulse")} />
+								<PRCardStatusLink externalLink={externalLink} status={status} />
+							</div>
+							{status.detail ? <div className="mt-0.5 pl-4 text-2xs leading-4 text-muted-foreground">{status.detail}</div> : null}
+							{status.key === "review" && reviewDetailsAction ? <div className="mt-0.5 pl-4">{reviewDetailsAction}</div> : null}
+						</div>
+					))}
+				</div>
+				<div className="mt-2 border-t border-border pt-2">
+					<div className="flex min-w-0 items-center justify-between gap-3">
+						<div className="min-w-0">
+							<div className={cn("flex items-center gap-2 text-xs font-medium leading-4", toneClass[presentation.readiness.tone])}>
+								<span aria-hidden="true" className="size-dot-sm shrink-0 rounded-full bg-current" />
+								{presentation.readiness.label}
+							</div>
+							<div className="mt-0.5 pl-4 text-2xs leading-4 text-muted-foreground">{presentation.readiness.detail}</div>
+						</div>
+						{action ? <div className="shrink-0 self-center">{action}</div> : null}
+					</div>
+				</div>
+			</div>
+		);
+	}
 	return (
 		<div className={cn("border-t border-border pt-2", className)}>
 			<div className="flex min-w-0 items-center gap-3">
