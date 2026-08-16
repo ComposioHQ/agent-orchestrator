@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image/png"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -22,6 +23,21 @@ type Status struct {
 	Name      string `json:"name,omitempty"`
 	State     string `json:"state"`
 	Error     string `json:"error,omitempty"`
+}
+
+// NativeScreenshot invokes the optional ScreenCaptureKit helper. The helper
+// path is supplied by packaging/runtime wiring; keeping it optional preserves
+// the simctl screenshot fallback for development and non-macOS builds.
+func (m *Manager) NativeScreenshot() ([]byte, error) {
+	helper := os.Getenv("AO_IOS_CAPTURE_HELPER")
+	if helper == "" {
+		return nil, fmt.Errorf("AO_IOS_CAPTURE_HELPER is not configured")
+	}
+	data, err := exec.Command(helper).Output()
+	if err != nil {
+		return nil, fmt.Errorf("ScreenCaptureKit helper: %w", err)
+	}
+	return data, nil
 }
 
 type Manager struct {

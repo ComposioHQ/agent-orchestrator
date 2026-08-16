@@ -124,7 +124,10 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-ticker.C:
-			data, captureErr := c.Simulator.Screenshot()
+			data, captureErr := c.Simulator.NativeScreenshot()
+			if captureErr != nil {
+				data, captureErr = c.Simulator.Screenshot()
+			}
 			if captureErr != nil {
 				_ = wsjson.Write(context.Background(), conn, map[string]string{"error": captureErr.Error()})
 				continue
