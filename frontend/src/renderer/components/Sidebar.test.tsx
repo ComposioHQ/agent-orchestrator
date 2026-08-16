@@ -474,6 +474,29 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
+	it("lists worker sessions by last activity, newest first", () => {
+		const oldest: WorkspaceSession = {
+			...session,
+			id: "proj-1-old",
+			title: "old task",
+			createdAt: "2026-06-29T00:00:00Z",
+			updatedAt: "2026-07-02T00:00:00Z",
+			activity: { state: "idle", lastActivityAt: "2026-07-01T00:00:00Z" },
+		};
+		const newest: WorkspaceSession = {
+			...session,
+			id: "proj-1-new",
+			title: "new task",
+			createdAt: "2026-07-01T00:00:00Z",
+			updatedAt: "2026-07-01T00:00:00Z",
+			activity: { state: "active", lastActivityAt: "2026-07-02T00:00:00Z" },
+		};
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [oldest, newest] }] });
+
+		const sessionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-session-row] button[aria-label^="Open "]'));
+		expect(sessionButtons.map((button) => button.getAttribute("aria-label"))).toEqual(["Open new task", "Open old task"]);
+	});
+
 	it("navigates to the project board when the project row button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();

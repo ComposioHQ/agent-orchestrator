@@ -212,6 +212,16 @@ function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	return a.id > b.id;
 }
 
+function sessionLastActiveNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
+	const aActivity = timestamp(a.activity?.lastActivityAt);
+	const bActivity = timestamp(b.activity?.lastActivityAt);
+	if (aActivity !== bActivity) return aActivity > bActivity;
+	const aUpdated = timestamp(a.updatedAt);
+	const bUpdated = timestamp(b.updatedAt);
+	if (aUpdated !== bUpdated) return aUpdated > bUpdated;
+	return sessionNewer(a, b);
+}
+
 function timestamp(value?: string): number {
 	if (!value) return 0;
 	const parsed = Date.parse(value);
@@ -220,6 +230,13 @@ function timestamp(value?: string): number {
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
 	return sessions.filter((s) => !isOrchestratorSession(s));
+}
+
+/** Worker sessions ordered by agent activity, newest first. */
+export function sortedWorkerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
+	return workerSessions(sessions).sort((a, b) =>
+		sessionLastActiveNewer(b, a) ? 1 : sessionLastActiveNewer(a, b) ? -1 : 0,
+	);
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {
