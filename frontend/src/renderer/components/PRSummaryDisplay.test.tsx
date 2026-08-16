@@ -39,7 +39,7 @@ describe("PRSummaryParts", () => {
 			</>,
 		);
 
-		expect(screen.getByRole("link", { name: "@ada" })).toHaveAttribute("href", "https://github.com/ada");
+		expect(screen.getByRole("link", { name: "ada" })).toHaveAttribute("href", "https://github.com/ada");
 		expect(screen.getByRole("link", { name: "Checks passing" })).toHaveAttribute(
 			"href",
 			"https://github.com/acme/repo/pull/7/checks",

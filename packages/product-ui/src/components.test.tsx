@@ -62,7 +62,7 @@ describe("portable leaf components", () => {
 
 		expect(screen.getByText("feature → main")).toBeInTheDocument();
 		expect(screen.getByText("2 localized-file")).toBeInTheDocument();
-		expect(screen.getByRole("link", { name: "@ada" })).toHaveAttribute("href", "https://github.com/ada");
+		expect(screen.getByRole("link", { name: "ada" })).toHaveAttribute("href", "https://github.com/ada");
 		expect(screen.getByText("feature → main")).toHaveClass("break-words");
 	});
 

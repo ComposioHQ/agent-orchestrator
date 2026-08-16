@@ -44,23 +44,22 @@ export function PRSummaryMeta({
 	const hasDiff = hasDiffMetadata(pr);
 	const authorHandle = pr.author?.replace(/^@/, "") ?? "";
 	const primary: ReactNode[] = [leading, branchRange].filter(Boolean);
+	let author: ReactNode = null;
 	if (authorHandle) {
-		primary.push(
+		author =
 			pr.provider === "github" ? (
 				<ExternalLink
 					className="inline-flex min-w-0 items-center gap-1 text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 					href={`https://github.com/${encodeURIComponent(authorHandle)}`}
-					key="author"
 				>
-					{pr.provider === "github" ? <GithubAvatar className="size-3" login={authorHandle} /> : null}
-					@{authorHandle}
+					<GithubAvatar className="size-3" login={authorHandle} />
+					{authorHandle}
 				</ExternalLink>
 			) : (
-				<span key="author">@{authorHandle}</span>
-			),
-		);
+				<span>{authorHandle}</span>
+			);
 	}
-	if (primary.length === 0 && !hasDiff) {
+	if (primary.length === 0 && !hasDiff && !author) {
 		return null;
 	}
 	return (
@@ -75,6 +74,7 @@ export function PRSummaryMeta({
 					))}
 				</div>
 			) : null}
+			{author ? <div className="mt-0.5 min-w-0 break-words [overflow-wrap:anywhere] text-muted-foreground">{author}</div> : null}
 			{hasDiff ? <PRDiffMeta countNounLabel={countNounLabel} pr={pr} /> : null}
 		</div>
 	);
