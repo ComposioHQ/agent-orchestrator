@@ -10,8 +10,9 @@ const repoRoot = resolve(frontendRoot, "..");
 const backendRoot = join(repoRoot, "backend");
 const outDir = join(frontendRoot, "daemon");
 const outPath = join(outDir, process.platform === "win32" ? "ao.exe" : "ao");
+const isWindowsDev = process.platform === "win32" && process.argv.includes("--dev");
 const windowsDevOutDir = join(outDir, `dev-${Date.now()}-${process.pid}`);
-const buildOutPath = process.platform === "win32" ? join(windowsDevOutDir, "ao.exe") : outPath;
+const buildOutPath = isWindowsDev ? join(windowsDevOutDir, "ao.exe") : outPath;
 const windowsDevManifestPath = join(outDir, "dev-daemon.json");
 const minimumGoVersion = parseMinimumGoVersion(readFileSync(join(backendRoot, "go.mod"), "utf8"));
 
@@ -34,7 +35,7 @@ if (versionResult.status !== 0 || !actualGoVersion || !meetsMinimumVersion(actua
 	process.exit(1);
 }
 
-if (process.platform === "win32") {
+if (isWindowsDev) {
 	mkdirSync(windowsDevOutDir, { recursive: true });
 } else {
 	rmSync(outDir, { recursive: true, force: true });
@@ -56,7 +57,7 @@ if (result.status !== 0) {
 	process.exit(result.status ?? 1);
 }
 
-if (process.platform === "win32") {
+if (isWindowsDev) {
 	writeFileSync(windowsDevManifestPath, `${JSON.stringify({ path: buildOutPath }, null, 2)}\n`);
 	cleanupOldWindowsDevDaemons(buildOutPath);
 }
