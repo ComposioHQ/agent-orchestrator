@@ -53,6 +53,18 @@ describe("WindowTitlebar", () => {
 		expect(actionMock).toHaveBeenNthCalledWith(3, "window.close");
 	});
 
+	it("shows only View and Help in the top menu", async () => {
+		const { WindowTitlebar } = await loadWindowTitlebar();
+
+		render(<WindowTitlebar />);
+
+		expect(screen.getByRole("button", { name: "View" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Help" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "File" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Window" })).not.toBeInTheDocument();
+	});
+
 	it("switches the maximize control to a restore icon when the window is maximized", async () => {
 		let reportMaximized: ((maximized: boolean) => void) | undefined;
 		window.ao!.window.isMaximized = vi.fn().mockResolvedValue(false);

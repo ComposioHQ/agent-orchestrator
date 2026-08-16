@@ -30,7 +30,7 @@ const act = (action: string) => () => {
 	void window.ao?.menu?.action(action);
 };
 
-// One top-level menu (File/Edit/…). Declared at module scope, not inside
+// One top-level menu (View/Help). Declared at module scope, not inside
 // WindowTitlebar, so React keeps it mounted across renders and the open dropdown
 // doesn't reset while `openMenu` state changes.
 function TopMenu({
@@ -48,7 +48,7 @@ function TopMenu({
 }) {
 	return (
 		// modal={false} so pointer events still reach the sibling triggers while a
-		// menu is open — that's what lets hover switch File → Edit like a real menu bar.
+		// menu is open — that's what lets hover switch between the visible menus.
 		<DropdownMenu modal={false} open={openMenu === id} onOpenChange={(open) => setOpenMenu(open ? id : null)}>
 			<DropdownMenuTrigger asChild>
 				<button
@@ -178,12 +178,6 @@ export function WindowTitlebar({
 						{t("titlebar.fullscreen")}
 						<DropdownMenuShortcut>F11</DropdownMenuShortcut>
 					</DropdownMenuItem>
-				</TopMenu>
-
-				<TopMenu id="window" label={t("titlebar.window")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={act("window.minimize")}>{t("titlebar.minimize")}</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("window.maximize")}>{t("titlebar.maximize")}</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("window.close")}>{t("titlebar.close")}</DropdownMenuItem>
 				</TopMenu>
 
 				<TopMenu id="help" label={t("titlebar.help")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
