@@ -197,7 +197,7 @@ func (s *Service) RequestRereview(ctx context.Context, workerID domain.SessionID
 	}
 	ref, err := reviewRequestRef(pr)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if err := s.requester.RequestReview(ctx, ports.SCMReviewRequest{PR: ref, Reviewer: reviewer}); err != nil {
 		if errors.Is(err, ports.ErrSCMNotFound) {
@@ -347,7 +347,7 @@ func (s *Service) ResolveReviewComment(ctx context.Context, workerID domain.Sess
 	}
 	ref, err := reviewRequestRef(pr)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalid, err)
+		return fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	if err := s.resolver.ResolveReviewThread(ctx, ports.SCMReviewResolveRequest{PR: ref, ThreadID: target.ThreadID}); err != nil {
 		if errors.Is(err, ports.ErrSCMNotFound) {
