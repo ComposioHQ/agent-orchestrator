@@ -1042,6 +1042,25 @@ describe("ChatWorkspace shell tabs", () => {
 		expect(onSelectChat).toHaveBeenCalledOnce();
 	});
 
+	it("cycles from the focused worker tab on Ctrl+Tab", () => {
+		const onSelectShellTerminal = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				onSelectShellTerminal={onSelectShellTerminal}
+				onSelectChat={vi.fn()}
+			/>,
+		);
+
+		const workerTab = screen.getByRole("tab", { name: "ao-14" });
+		workerTab.focus();
+		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
+
+		expect(onSelectShellTerminal).toHaveBeenCalledWith("shell-1");
+	});
+
 	it("cycles shell → reviewer → chat on the desktop previous-tab shortcut", () => {
 		const onOpenReviewerTerminal = vi.fn();
 		const onSelectShellTerminal = vi.fn();

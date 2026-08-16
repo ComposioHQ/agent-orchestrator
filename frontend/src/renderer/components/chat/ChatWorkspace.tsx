@@ -484,6 +484,24 @@ export function ChatWorkspace({
 		shellTarget,
 		shellTerminals,
 	]);
+	const handleChatTabsKeyDown = useCallback(
+		(event: ReactKeyboardEvent<HTMLDivElement>) => {
+			if (
+				event.target instanceof HTMLElement &&
+				event.target.getAttribute("role") === "tab" &&
+				event.key === "Tab" &&
+				event.ctrlKey &&
+				!event.altKey &&
+				!event.metaKey
+			) {
+				event.preventDefault();
+				selectAdjacentTab(event.shiftKey ? -1 : 1);
+				return;
+			}
+			handleTerminalTabListKeyDown(event);
+		},
+		[selectAdjacentTab],
+	);
 
 	useEffect(
 		() =>
@@ -538,6 +556,7 @@ export function ChatWorkspace({
 				onSelectShellTerminal={onSelectShellTerminal}
 				onCloseShellTerminal={onCloseShellTerminal}
 				onRenameShellTerminal={onRenameShellTerminal}
+				onTabsKeyDown={handleChatTabsKeyDown}
 				switchAgentControl={switchAgentControl}
 				headerActions={headerActions}
 				inline={isFullscreen}
@@ -865,6 +884,7 @@ function ChatHeader({
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onRenameShellTerminal,
+	onTabsKeyDown,
 	switchAgentControl,
 	headerActions,
 	inline,
@@ -885,6 +905,7 @@ function ChatHeader({
 	onSelectShellTerminal?: (handleId: string) => void;
 	onCloseShellTerminal?: (handleId: string) => void;
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
+	onTabsKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
 	/** The in-place agent-switch control, same entry point as the terminal pane. */
 	switchAgentControl?: ReactNode;
 	headerActions?: ReactNode;
@@ -914,7 +935,7 @@ function ChatHeader({
 					<div
 						aria-label="Chat tabs"
 						className="scrollbar-none flex h-full min-w-flex-min flex-1 items-center overflow-x-auto"
-						onKeyDown={handleTerminalTabListKeyDown}
+						onKeyDown={onTabsKeyDown ?? handleTerminalTabListKeyDown}
 						role="tablist"
 					>
 						<span
