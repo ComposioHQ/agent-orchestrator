@@ -474,8 +474,14 @@ async function createWindowInternal(): Promise<void> {
 		if (!mainWindow) return;
 		getShellWebContents()?.send("window:fullscreen", mainWindow.isFullScreen());
 	};
+	const pushMaximized = () => {
+		if (!mainWindow) return;
+		getShellWebContents()?.send("window:maximized", mainWindow.isMaximized());
+	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
+	mainWindow.on("maximize", pushMaximized);
+	mainWindow.on("unmaximize", pushMaximized);
 	mainWindow.on("blur", () => {
 		keybindingRecordingActive = false;
 	});
@@ -1469,6 +1475,7 @@ ipcMain.handle("app:openExternal", async (_event, url: string) => {
 });
 
 ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false);
+ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 
 // Drive Electron's nativeTheme from the app's theme preference so embedded
 // preview WebContentsViews (which follow prefers-color-scheme) flip in step with

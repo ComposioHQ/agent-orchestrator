@@ -86,6 +86,8 @@ if (typeof window !== "undefined") {
 			onFontSizeShortcut: () => () => undefined,
 		},
 		window: {
+			isMaximized: async () => false,
+			onMaximized: () => () => undefined,
 			isFullScreen: async () => false,
 			onFullScreen: () => () => undefined,
 		},

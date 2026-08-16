@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Minus, PanelLeft, Square, X } from "lucide-react";
+import { Copy, Minus, PanelLeft, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useUiStore } from "../stores/ui-store";
 import {
@@ -23,7 +23,7 @@ const isWindows =
 			"",
 	);
 
-type MenuKey = "file" | "edit" | "view" | "window" | "help";
+type MenuKey = "view" | "window" | "help";
 
 // Dispatch a native-menu action to the main process (see menu:action in main.ts).
 const act = (action: string) => () => {
@@ -72,7 +72,7 @@ function TopMenu({
 	);
 }
 
-function WindowControls({ t }: { t: TFunction }) {
+function WindowControls({ isMaximized, t }: { isMaximized: boolean; t: TFunction }) {
 	return (
 		<div aria-label={t("titlebar.window")} className="window-titlebar__controls" role="group">
 			<button
@@ -89,7 +89,11 @@ function WindowControls({ t }: { t: TFunction }) {
 				onClick={act("window.maximize")}
 				type="button"
 			>
-				<Square aria-hidden="true" className="window-titlebar__control-icon window-titlebar__control-icon--maximize" />
+				{isMaximized ? (
+					<Copy aria-hidden="true" className="window-titlebar__control-icon window-titlebar__control-icon--maximize" />
+				) : (
+					<Square aria-hidden="true" className="window-titlebar__control-icon window-titlebar__control-icon--maximize" />
+				)}
 			</button>
 			<button
 				aria-label={t("titlebar.close")}
@@ -109,8 +113,22 @@ export function WindowTitlebar({
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
 	const { t } = useTranslation();
-	const { isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
+	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
+	const [isMaximized, setIsMaximized] = useState(false);
+
+	useEffect(() => {
+		if (!isWindows) return;
+		let active = true;
+		void window.ao?.window?.isMaximized().then((maximized) => {
+			if (active) setIsMaximized(maximized);
+		});
+		const unsubscribe = window.ao?.window?.onMaximized((maximized) => setIsMaximized(maximized));
+		return () => {
+			active = false;
+			unsubscribe?.();
+		};
+	}, []);
 
 	// Tell main to forget the last-focused panel whenever real shell UI (not this menu) gets focus, so its fallback target doesn't go stale.
 	useEffect(() => {
@@ -142,43 +160,6 @@ export function WindowTitlebar({
 				<PanelLeft aria-hidden="true" className="window-titlebar__toggle-icon" />
 			</button>
 			<nav className="window-titlebar__menus">
-				<TopMenu id="file" label={t("titlebar.file")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={() => openGlobalSettings()}>{t("shell.settings")}</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={act("app.quit")}>
-						{t("titlebar.quit")}
-						<DropdownMenuShortcut>Alt+F4</DropdownMenuShortcut>
-					</DropdownMenuItem>
-				</TopMenu>
-
-				<TopMenu id="edit" label={t("titlebar.edit")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={act("edit.undo")}>
-						{t("titlebar.undo")}
-						<DropdownMenuShortcut>Ctrl+Z</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.redo")}>
-						{t("titlebar.redo")}
-						<DropdownMenuShortcut>Ctrl+Y</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={act("edit.cut")}>
-						{t("titlebar.cut")}
-						<DropdownMenuShortcut>Ctrl+X</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.copy")}>
-						{t("titlebar.copy")}
-						<DropdownMenuShortcut>Ctrl+C</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.paste")}>
-						{t("titlebar.paste")}
-						<DropdownMenuShortcut>Ctrl+V</DropdownMenuShortcut>
-					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={act("edit.selectAll")}>
-						{t("titlebar.selectAll")}
-						<DropdownMenuShortcut>Ctrl+A</DropdownMenuShortcut>
-					</DropdownMenuItem>
-				</TopMenu>
-
 				<TopMenu id="view" label={t("titlebar.view")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
 					<DropdownMenuItem onSelect={act("view.reload")}>
 						{t("titlebar.reload")}
@@ -215,7 +196,7 @@ export function WindowTitlebar({
 				</TopMenu>
 			</nav>
 			<div className="window-titlebar__spacer" />
-			<WindowControls t={t} />
+			<WindowControls isMaximized={isMaximized} t={t} />
 		</header>
 	);
 }

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,6 +51,23 @@ describe("WindowTitlebar", () => {
 		expect(actionMock).toHaveBeenNthCalledWith(1, "window.minimize");
 		expect(actionMock).toHaveBeenNthCalledWith(2, "window.maximize");
 		expect(actionMock).toHaveBeenNthCalledWith(3, "window.close");
+	});
+
+	it("switches the maximize control to a restore icon when the window is maximized", async () => {
+		let reportMaximized: ((maximized: boolean) => void) | undefined;
+		window.ao!.window.isMaximized = vi.fn().mockResolvedValue(false);
+		window.ao!.window.onMaximized = (listener) => {
+			reportMaximized = listener;
+			return () => undefined;
+		};
+		const { WindowTitlebar } = await loadWindowTitlebar();
+
+		render(<WindowTitlebar />);
+		const maximizeButton = screen.getByRole("button", { name: "Maximize / Restore" });
+		await waitFor(() => expect(maximizeButton.querySelector(".lucide-square")).not.toBeNull());
+
+		reportMaximized?.(true);
+		await waitFor(() => expect(maximizeButton.querySelector(".lucide-copy")).not.toBeNull());
 	});
 
 	it.each(["Linux x86_64", "MacIntel"])("does not render Windows controls on %s", async (platform) => {
