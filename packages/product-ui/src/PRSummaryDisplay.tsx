@@ -66,7 +66,7 @@ export function PRSummaryMeta({
 	return (
 		<div className={cn("min-w-0 font-mono text-2xs leading-4", className)}>
 			{primary.length > 0 ? (
-				<div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-muted-foreground">
+				<div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-muted-foreground">
 					{primary.map((part, index) => (
 						<Fragment key={index}>
 							{index > 0 ? <span className="shrink-0 text-passive">·</span> : null}
@@ -198,7 +198,7 @@ export function PRCardStatusSummary({
 								<PRCardStatusLink externalLink={externalLink} status={presentation.primary} />
 							</div>
 							{presentation.primary.detail ? (
-								<div className="mt-0.5 text-2xs leading-4 text-muted-foreground">
+								<div className="mt-0.5 min-w-0 break-words text-2xs leading-4 text-muted-foreground">
 									{presentation.primary.detail}
 								</div>
 							) : null}
