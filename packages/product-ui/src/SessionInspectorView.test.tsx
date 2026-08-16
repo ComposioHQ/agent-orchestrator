@@ -552,10 +552,7 @@ describe("portable inspector presentations", () => {
     await waitFor(() => {
       const sentLabels = screen.getAllByText("Sent to worker agent");
       expect(sentLabels).toHaveLength(2);
-      expect(sentLabels[0]?.closest("span")).toHaveClass(
-        "bg-overlay/80",
-        "border-border-strong",
-      );
+      expect(sentLabels[0]?.closest("span")).toHaveClass("text-muted-foreground");
       expect(sentLabels[0]?.closest("span")?.querySelector("svg")).toHaveClass(
         "text-success",
       );

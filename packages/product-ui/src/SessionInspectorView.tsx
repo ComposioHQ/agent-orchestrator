@@ -872,10 +872,10 @@ function ExternalReviewCard({
 	const inlineComments = entry.inlineComments ?? [];
 	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
 	return (
-		<article className="overflow-hidden rounded-md border border-border bg-overlay/45" data-testid="github-review-card">
+		<article className="min-w-0 border-b border-border/70 py-3 first:pt-0 last:border-b-0 last:pb-0" data-testid="github-review-card">
 			<button
 				aria-expanded={open}
-				className="flex w-full min-w-0 items-start gap-2 px-2.5 py-2 text-left transition-colors hover:bg-interactive-hover/30"
+				className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-interactive-hover/30"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -899,7 +899,7 @@ function ExternalReviewCard({
 				<VerdictBadge verdict={entry.verdict} />
 			</button>
 			{open ? (
-				<div className="flex min-w-0 flex-col gap-2 border-t border-border/70 px-2.5 py-2.5">
+				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
 					{body ? (
 						<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
 					) : null}
@@ -920,7 +920,7 @@ function ExternalReviewCard({
 								</span>
 							) : (
 								<button
-									className="inline-flex h-control-md items-center rounded-md border border-border-strong bg-overlay/80 px-2.5 text-2xs font-medium text-foreground shadow-sm"
+									className="inline-flex h-control-md items-center rounded-md px-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 									onClick={async () => {
 										setRereviewError(false);
 										try {
@@ -996,9 +996,9 @@ function GithubInlineComments({
 	);
 	if (comments.length === 0) return null;
 	return (
-		<section className="overflow-hidden rounded-md border border-border/70 bg-background/35" data-testid="github-inline-comments">
-			<div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/70 px-2.5 py-2 text-2xs">
-				<span className="font-semibold text-foreground">{labels.openComments}</span>
+		<section className="min-w-0 border-t border-border/70 pt-3" data-testid="github-inline-comments">
+			<div className="flex min-w-0 items-center justify-between gap-2 pb-2 text-2xs">
+				<span className="font-semibold uppercase tracking-wide text-muted-foreground">{labels.openComments}</span>
 				<span className="shrink-0 font-semibold text-error">{labels.unresolvedCount(comments.length)}</span>
 			</div>
 			<div className="divide-y divide-border/60">
@@ -1081,7 +1081,7 @@ function InlineCommentRow({
 }) {
 	const body = comment.body?.trim();
 	return (
-		<div className="flex min-w-0 flex-col gap-1.5 px-2.5 py-2 text-2xs">
+		<div className="flex min-w-0 flex-col gap-2 px-0 py-3 text-xs first:pt-1 last:pb-0">
 			{showReviewer && comment.reviewerId ? (
 				<span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
 					<GithubAvatar login={comment.reviewerId} />
@@ -1091,13 +1091,13 @@ function InlineCommentRow({
 			{body ? <p className="m-0 whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{body}</p> : null}
 			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
 				{sent ? (
-					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm [&_svg]:size-icon-xs">
+					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs">
 						<CheckIcon className="shrink-0 text-success" />
 						{labels.sentToWorkerAgent}
 					</span>
 				) : (
 					<button
-						className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60 [&_svg]:size-icon-xs"
+						className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60 [&_svg]:size-icon-xs"
 						disabled={sending || !onSend}
 						onClick={onSend}
 						type="button"
@@ -1107,13 +1107,13 @@ function InlineCommentRow({
 					</button>
 				)}
 				{resolved ? (
-					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm">
+					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground">
 						<CheckIcon className="shrink-0 text-success" />
 						{labels.resolvedReview}
 					</span>
 				) : (
 					<button
-						className="inline-flex h-control-md items-center rounded-md border border-border-strong bg-overlay/80 px-2.5 font-medium text-foreground shadow-sm"
+						className="inline-flex h-control-md items-center rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
 						disabled={!onResolve || !comment.url}
 						onClick={onResolve}
 						type="button"
@@ -1212,7 +1212,7 @@ function ReviewMarkdownBody({
 	return (
 		<div
 			className={cn(
-				"min-w-0 select-text break-words text-2xs leading-relaxed text-muted-foreground",
+				"min-w-0 select-text break-words text-xs leading-relaxed text-muted-foreground",
 				"[&_a]:font-medium [&_a]:text-foreground [&_a]:underline [&_a]:underline-offset-2",
 				"[&_code]:rounded [&_code]:bg-muted/55 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-foreground",
 				"[&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-1.5 [&_pre]:my-2",
