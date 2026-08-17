@@ -875,6 +875,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								<SessionInterfaceTransitionNotice
 									transition={interfaceSwitch.transition}
 									onDismiss={() => setDismissedTransitionID(interfaceSwitch.transition?.id ?? "")}
+									onSwitchWithInterrupt={() => {
+										interfaceSwitch.resetStartError();
+										void beginInterfaceSwitch("interrupt");
+									}}
+									interrupting={interfaceSwitch.starting}
 								/>
 							) : null}
 						</div>

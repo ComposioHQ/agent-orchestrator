@@ -191,6 +191,7 @@ export function SessionInterfaceSwitchDialog({
 						<span className="mt-1 block text-xs leading-5 text-muted-foreground">
 							Cancel the running turn before switching. Files already changed remain in the worktree, but
 							unfinished output and queued Chat turns are cancelled.
+							{target === "chat" ? " Any unsent Terminal UI draft is discarded." : null}
 						</span>
 					</button>
 					{waitingForInput ? (
@@ -219,31 +220,53 @@ export function SessionInterfaceSwitchDialog({
 export function SessionInterfaceTransitionNotice({
 	transition,
 	onDismiss,
+	onSwitchWithInterrupt,
+	interrupting,
 }: {
 	transition?: SessionInterfaceTransition;
 	onDismiss: () => void;
+	onSwitchWithInterrupt?: () => void;
+	interrupting?: boolean;
 }) {
 	if (!transition || (transition.phase !== "failed" && transition.phase !== "recovery_required")) {
 		return null;
 	}
 	return (
 		<div className="absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-2 rounded-lg border border-warning/30 bg-popover px-3 py-2.5 shadow-md">
-		<TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
-		<div className="min-w-0 flex-1">
-			<strong className="block text-xs font-medium text-foreground">{phaseCopy[transition.phase]}</strong>
-			<p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-				{transition.errorDetail || "The original interface remains available. You can retry the switch."}
-			</p>
+			<TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+			<div className="min-w-0 flex-1">
+				<strong className="block text-xs font-medium text-foreground">{phaseCopy[transition.phase]}</strong>
+				<p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
+					{transition.errorDetail || "The original interface remains available. You can retry the switch."}
+				</p>
+				{transition.phase === "failed" &&
+				(transition.errorCode === "DRAIN_DRAFT_PRESENT" ||
+					transition.errorCode === "DRAIN_DECISION_PENDING") &&
+				onSwitchWithInterrupt ? (
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						className="mt-2 h-7 text-[11px]"
+						disabled={interrupting}
+						onClick={onSwitchWithInterrupt}
+					>
+						{interrupting ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : null}
+						{transition.errorCode === "DRAIN_DRAFT_PRESENT"
+							? "Discard draft and switch"
+							: "Cancel request and switch"}
+					</Button>
+				) : null}
+			</div>
+			<button
+				type="button"
+				className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+				onClick={onDismiss}
+				aria-label="Dismiss interface switch message"
+			>
+				<X aria-hidden="true" className="size-3.5" />
+			</button>
 		</div>
-		<button
-			type="button"
-			className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-			onClick={onDismiss}
-			aria-label="Dismiss interface switch message"
-		>
-			<X aria-hidden="true" className="size-3.5" />
-		</button>
-	</div>
 	);
 }
 

@@ -400,6 +400,7 @@ type Session struct {
 	NativeTranscriptPath      string
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
+	AgentSessionIDLaunchID    string
 }
 
 type SessionCleanupFact struct {
