@@ -159,6 +159,7 @@ it("opens and edits repository files in the right inspector", async () => {
       "org-1",
       "session-1",
       { path: "README.md", content: "updated\n" },
+      expect.objectContaining({ signal: expect.anything() }),
     ),
   );
 });
@@ -222,9 +223,71 @@ it("shows orchestrator and child worker changes in the orchestrator inspector", 
     "org-1",
     "orchestrator-1",
     "random-fact.txt",
+    expect.objectContaining({ signal: expect.anything() }),
   ));
-  expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith("org-1", "orchestrator-1");
-  expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith("org-1", "worker-1");
+  expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith(
+    "org-1",
+    "orchestrator-1",
+    expect.objectContaining({ signal: expect.anything() }),
+  );
+  expect(mocks.getWorkspaceDiff).toHaveBeenCalledWith(
+    "org-1",
+    "worker-1",
+    expect.objectContaining({ signal: expect.anything() }),
+  );
+});
+
+it("discards a previous session's file request when the selected session changes", async () => {
+  let resolveRead: ((value: { path: string; content: string; size: number }) => void) | undefined;
+  mocks.readWorkspaceFile.mockClear();
+  mocks.writeWorkspaceFile.mockClear();
+  mocks.listWorkspaceFiles.mockImplementation(async (_orgId: string, sessionId: string) => ({
+    path: "",
+    items: [
+      {
+        name: `${sessionId}.md`,
+        path: `${sessionId}.md`,
+        isDir: false,
+        size: 6,
+        mode: "-rw-------",
+        modTime: "2026-08-12T00:00:00Z",
+      },
+    ],
+    hasMore: false,
+  }));
+  mocks.readWorkspaceFile.mockImplementation(() => new Promise((resolve) => {
+    resolveRead = resolve;
+  }));
+  const { rerender } = render(
+    <CloudSessionWorkspace
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
+      organizationId="org-1"
+      session={session}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("tab", { name: "Files" }));
+  fireEvent.click(await screen.findByText("session-1.md"));
+  await waitFor(() => expect(mocks.readWorkspaceFile).toHaveBeenCalledTimes(1));
+
+  rerender(
+    <CloudSessionWorkspace
+      onClose={vi.fn()} onDelete={vi.fn()} onNewTask={vi.fn()} onShare={vi.fn()}
+      organizationId="org-1"
+      session={{ ...session, id: "session-2", displayName: "Second session" }}
+    />,
+  );
+  resolveRead?.({ path: "session-1.md", content: "old session\n", size: 12 });
+
+  await waitFor(() => expect(mocks.listWorkspaceFiles).toHaveBeenCalledWith(
+    "org-1",
+    "session-2",
+    "",
+    expect.objectContaining({ limit: 100, signal: expect.anything() }),
+  ));
+  expect(screen.queryByLabelText("Edit session-1.md")).not.toBeInTheDocument();
+  expect(await screen.findByText("session-2.md")).toBeVisible();
+  expect(mocks.writeWorkspaceFile).not.toHaveBeenCalled();
 });
 
 it("uses one durable refresh domain for an orchestrator and its active workers", async () => {

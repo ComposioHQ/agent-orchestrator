@@ -5,6 +5,7 @@ import {
   browserCloudClient,
   browserTerminalUrl,
 } from "@/lib/cloud-client";
+import { scheduleCloudSessionOperation } from "@/lib/cloud-session-operations";
 
 export type CloudTerminalKind = "agent" | "workspace";
 export type CloudTerminalConnectionState =
@@ -68,6 +69,7 @@ class CloudTerminalConnection {
   private size = { rows: 24, cols: 80 };
   private canOperate = true;
   private terminalReady = false;
+  private connectAbortController: AbortController | null = null;
 
   constructor(
     private readonly client: CloudClient,
@@ -143,6 +145,8 @@ class CloudTerminalConnection {
     }
     window.removeEventListener("online", this.reconnectNow);
     window.removeEventListener("focus", this.reconnectNow);
+    this.connectAbortController?.abort();
+    this.connectAbortController = null;
     this.socket?.close();
     this.socket = null;
     this.terminalReady = false;
@@ -171,13 +175,20 @@ class CloudTerminalConnection {
     this.connectInFlight = true;
     if (this.state !== "waking") this.setState("connecting");
     const abortController = new AbortController();
+    this.connectAbortController = abortController;
     try {
-      const { ticket, scopes } = await this.client.createTerminalTicket(
-        this.organizationId,
-        this.sessionId,
-        this.kind,
-        { signal: abortController.signal },
-      );
+      const { ticket, scopes } = await scheduleCloudSessionOperation({
+        organizationId: this.organizationId,
+        sessionId: this.sessionId,
+        key: `terminal-ticket:${this.kind}`,
+        signal: abortController.signal,
+        run: (signal) => this.client.createTerminalTicket(
+          this.organizationId,
+          this.sessionId,
+          this.kind,
+          { signal },
+        ),
+      });
       this.canOperate = !scopes || scopes.includes("terminal:operate");
       if (this.closed) return;
 
@@ -320,6 +331,9 @@ class CloudTerminalConnection {
       }
     } finally {
       this.connectInFlight = false;
+      if (this.connectAbortController === abortController) {
+        this.connectAbortController = null;
+      }
     }
   };
 

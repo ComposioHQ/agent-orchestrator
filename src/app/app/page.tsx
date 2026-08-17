@@ -36,6 +36,7 @@ import {
   clearCloudTerminalConnections,
   retainCloudSessionConnections,
 } from "@/lib/cloud-terminal-pool";
+import { clearCloudSessionOperations } from "@/lib/cloud-session-operations";
 import { CloudBoard } from "./CloudBoard";
 import {
   AddAgentToProjectDialog,
@@ -94,7 +95,8 @@ export function CloudWorkspace() {
   const [organizationId, setOrganizationId] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [sessionProjectionRevision, setSessionProjectionRevision] = useState(0);
+  const refreshSessionsRef = useRef<() => void>(() => {});
+  const sessionRefreshTimer = useRef<number | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -483,16 +485,42 @@ export function CloudWorkspace() {
     };
   }, [client, loadOrganization, loadSharedProjects, loadUserProviders]);
 
+  const handleSessionProjectionEvent = useCallback(() => {
+    if (sessionRefreshTimer.current !== null) return;
+    sessionRefreshTimer.current = window.setTimeout(() => {
+      sessionRefreshTimer.current = null;
+      refreshSessionsRef.current();
+    }, 200);
+  }, []);
+
+  useEffect(() => () => {
+    if (sessionRefreshTimer.current !== null) {
+      window.clearTimeout(sessionRefreshTimer.current);
+      sessionRefreshTimer.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!organizationId) return;
     let active = true;
     let refreshing = false;
+    let refreshQueued = false;
+    const abortController = new AbortController();
     const refreshSessions = async () => {
-      if (refreshing || document.visibilityState === "hidden") return;
+      if (document.visibilityState === "hidden") return;
+      if (refreshing) {
+        refreshQueued = true;
+        return;
+      }
       refreshing = true;
       try {
-        const page = await client.listSessions(organizationId, { limit: 100 });
-        if (active) {
+        do {
+          refreshQueued = false;
+          const page = await client.listSessions(organizationId, {
+            limit: 100,
+            signal: abortController.signal,
+          });
+          if (!active) return;
           setSessions(
             page.items.filter(
               (session) =>
@@ -500,7 +528,7 @@ export function CloudWorkspace() {
                 !deletingSessionIds.current.has(session.id),
             ),
           );
-        }
+        } while (active && refreshQueued && !document.hidden);
       } catch (cause) {
         if (
           active &&
@@ -513,23 +541,24 @@ export function CloudWorkspace() {
         refreshing = false;
       }
     };
-    // The durable per-session stream refreshes visible state immediately. This
-    // interval is only a bounded reconciliation fallback for sessions that are
-    // not currently open in the browser.
+    const refresh = () => void refreshSessions();
+    refreshSessionsRef.current = refresh;
+    // The durable per-session stream refreshes state when a state projection
+    // changes. This interval remains the bounded reconciliation fallback.
     void refreshSessions();
     const interval = window.setInterval(() => void refreshSessions(), 15_000);
     const onVisibility = () => void refreshSessions();
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       active = false;
+      abortController.abort();
+      if (refreshSessionsRef.current === refresh) {
+        refreshSessionsRef.current = () => {};
+      }
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [client, organizationId, sessionProjectionRevision]);
-
-  const handleSessionProjectionEvent = useCallback(() => {
-    setSessionProjectionRevision((current) => current + 1);
-  }, []);
+  }, [client, organizationId]);
 
   useEffect(() => {
     if (!organizationId) return;
@@ -542,7 +571,10 @@ export function CloudWorkspace() {
     );
   }, [client, organizationId, sessions]);
 
-  useEffect(() => () => clearCloudTerminalConnections(), []);
+  useEffect(() => () => {
+    clearCloudTerminalConnections();
+    clearCloudSessionOperations();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1422,6 +1454,7 @@ export function CloudWorkspace() {
         <CloudMainShell parity={previewUi}>
           {activeSession ? (
             <CloudSessionWorkspace
+              key={`${activeSessionOrgId}:${activeSession.id}`}
               onClose={() => { setSelectedSessionId(null); setSharedSession(null); }}
               onDelete={() => { if (!sharedSession) void deleteSession(activeSession); setSelectedSessionId(null); setSharedSession(null); }}
               onNewTask={() => { if (!sharedSession) setNewSessionProjectId(activeSession.projectId); }}
