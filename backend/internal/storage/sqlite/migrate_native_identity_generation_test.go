@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-func TestMigration0095LeavesLegacyNativeIdentitiesUnverified(t *testing.T) {
+func TestMigration0098LeavesLegacyNativeIdentitiesUnverified(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 94)
+	upTo(t, db, 97)
 
 	now := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
 	mustExec(t, db, `
@@ -29,7 +29,7 @@ INSERT INTO sessions (
 );
 `, now, now, now, now, now, now, now)
 
-	upTo(t, db, 95)
+	upTo(t, db, 98)
 
 	rows, err := db.Query(`
 SELECT id, agent_session_id_launch_id

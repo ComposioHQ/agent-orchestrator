@@ -62,6 +62,9 @@ export function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggeri
 	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
 		return appI18n.t("inspector.review.reviewing");
 	}
+	if (reviewStates.some((reviewState) => reviewState.status === "needs_review")) {
+		return appI18n.t("inspector.review.runLatest");
+	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
 		return appI18n.t("inspector.review.rerun");
 	}

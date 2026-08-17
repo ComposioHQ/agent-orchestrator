@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/attachmentstore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -48,8 +51,8 @@ const (
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
 	// body, so the caps are deliberately conservative.
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 10 MiB per file, decoded
-	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
+	maxAttachmentBytes  = attachmentstore.MaxFileBytes // 10 MiB per file, decoded
+	maxAttachmentsBytes = 25 << 20                     // 25 MiB total, decoded
 	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
 	// per-attachment and total caps above only apply after the whole body is
 	// materialized, so without this an oversized body (base64 inflates the
@@ -145,6 +148,7 @@ type SessionsController struct {
 	Svc           SessionService
 	Activity      ActivityRecorder
 	Usage         UsageHookRecorder
+	Attachments   *attachmentstore.Store
 	PreviewServer ManagedPreviewServer
 	Capabilities  SessionCapabilityValidator
 }
@@ -423,7 +427,16 @@ func (c *SessionsController) previewFile(w http.ResponseWriter, r *http.Request)
 		envelope.WriteError(w, r, err)
 		return
 	}
-	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, chi.URLParam(r, "*"))
+	assetPath := chi.URLParam(r, "*")
+	if name, ok := attachmentstore.NameFromWorkspacePath(assetPath); ok && c.Attachments != nil {
+		file, info, openErr := c.Attachments.Open(r.Context(), sess.ID, name)
+		if openErr == nil {
+			defer func() { _ = file.Close() }()
+			serveOpenedPreviewFile(w, r, file, info, assetPath)
+			return
+		}
+	}
+	c.serveWorkspacePreviewFile(w, r, sess.Metadata.WorkspacePath, assetPath)
 }
 
 // PreviewOrigin serves a workspace preview from its isolated *.localhost
@@ -499,6 +512,10 @@ func (c *SessionsController) serveWorkspacePreviewFile(w http.ResponseWriter, r 
 		return
 	}
 	defer func() { _ = file.Close() }()
+	serveOpenedPreviewFile(w, r, file, info, clean)
+}
+
+func serveOpenedPreviewFile(w http.ResponseWriter, r *http.Request, file *os.File, info fs.FileInfo, clean string) {
 	if !previewutil.IsMarkdownPath(clean) {
 		http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 		return

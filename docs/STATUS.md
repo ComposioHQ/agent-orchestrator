@@ -127,9 +127,10 @@ surface (`npm run sqlc`, `npm run api`).
   surface for TUI, or the durable Chat timeline/composer for Chat. Chat retains
   access to session-scoped worktree shells without creating an agent tmux pane.
 - Compatible Claude Code and Codex sessions expose an in-session “Open Chat” /
-  “Open Terminal UI” action. Idle sessions switch directly; busy sessions offer
-  an explicit finish-and-drain or stop-and-interrupt policy and show durable
-  progress/recovery state.
+  “Open Terminal UI” action. Chat→TUI is the recovery path and always fences
+  queued work before interrupting the active turn; a busy TUI→Chat switch offers
+  the explicit finish-and-drain or stop-and-interrupt choice. Both directions
+  show durable progress/recovery state.
 - Desktop status and SCM summary V1: session status comes from
   `GET /api/v1/sessions`; visible/active PR context comes from
   `GET /api/v1/sessions/{sessionId}/pr`; `GET /api/v1/events` is kept open as

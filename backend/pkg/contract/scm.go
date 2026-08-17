@@ -87,6 +87,7 @@ type PullRequestReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
 	Line             int    `json:"line,omitempty"`
+	Body             string `json:"body,omitempty"`
 	AutoInjectReview bool   `json:"autoInjectReview"`
 }
 

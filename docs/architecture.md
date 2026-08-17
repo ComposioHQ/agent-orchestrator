@@ -337,11 +337,17 @@ sequenceDiagram
 
     Client->>Manager: POST interface-transition(target, policy)
     Manager->>DB: Claim one active transition
+    alt source = Chat
+        Manager->>Source: Arm handoff; close intake and queue dispatch
+    else source = TUI
+        Manager->>Source: Gate new terminal input
+    end
     Manager->>Target: Preflight binary/auth/protocol
     alt policy = drain
-        Manager->>Source: Close intake; finish accepted work
+        Manager->>Source: Finish accepted work
     else policy = interrupt
-        Manager->>Source: Cancel active and queued work
+        Source->>DB: Cancel queued Chat turns
+        Manager->>Source: Cancel active provider turn
     end
     Manager->>Source: Stop and wait for shutdown
     Manager->>Lifecycle: CommitControllerEpoch(source, target, native id)
@@ -363,8 +369,13 @@ events are fenced by controller generation; old TUI hooks are fenced by runtime
 launch id.
 
 `drain` is loss-minimizing and may wait on an approval or user-input request;
-`interrupt` sends the provider's cancellation first, allows a short transcript
-flush, and then stops the source. Files and completed provider context survive.
+`interrupt` synchronously closes source intake and queue dispatch at transition
+acceptance. After target preflight succeeds, it settles queued Chat turns and
+then sends the provider's active-turn cancellation, allows a short transcript
+flush, and stops the source. The reversible first phase preserves queued work if
+the target is unavailable; its dispatch fence prevents a completion callback
+from promoting that work during preflight or provider cancellation. Files and
+completed provider context survive.
 There is no provider-neutral way to migrate a currently executing tool call or a
 detached background process, and AO does not synthesize terminal screen output
 into structured Chat history.
