@@ -65,6 +65,13 @@ func TestDetectTerminalActivityRejectsTranscriptText(t *testing.T) {
 	}
 }
 
+func TestDetectTerminalActivityDoesNotOverrideToolApproval(t *testing.T) {
+	got, ok := (&Plugin{}).DetectTerminalActivity(readClineFixture(t, "tool_approval.txt"))
+	if ok {
+		t.Fatalf("DetectTerminalActivity(tool approval) = (%q, true), want no signal", got)
+	}
+}
+
 func TestClineManagedHooksClearCompletedTurns(t *testing.T) {
 	want := map[string]string{
 		"TaskComplete": "stop",
