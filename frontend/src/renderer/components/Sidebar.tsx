@@ -29,6 +29,7 @@ import {
 	newestActiveOrchestrator,
 	type WorkspaceSession,
 	type WorkspaceSummary,
+	sortedWorkerSessions,
 	workerSessions,
 } from "../types/workspace";
 import { getAgentActivityView } from "../lib/session-presentation";
@@ -391,7 +392,7 @@ export function Sidebar({
 				</div>
 			</div>
 
-			<SidebarContent className="gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+			<SidebarContent className="project-sidebar-scrollbar gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
 				<SidebarGroup className="p-0">
 					{/* Tree (project-sidebar__tree) */}
 					<SidebarGroupContent>
@@ -545,7 +546,7 @@ function ProjectItem({
 	// Keep completed PR sessions reachable while their runtime still exists.
 	// Only termination removes a worker from the sidebar; archived sessions stay
 	// reachable through SessionsBoard.
-	const sessions = workerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
+	const sessions = sortedWorkerSessions(workspace.sessions).filter((session) => session.isTerminated !== true);
 	// The project's live orchestrator (if any) backs the hover Orchestrator
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);

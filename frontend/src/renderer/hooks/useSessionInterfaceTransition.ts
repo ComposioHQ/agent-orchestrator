@@ -65,12 +65,12 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 		refetchInterval: (state) => {
 			const status = state.state.data;
 			if (interfaceTransitionIsActive(status?.transition)) return 250;
-			// Codex reports its native thread id from an asynchronous SessionStart
-			// hook. The first status request can therefore race that hook and return
-			// NATIVE_SESSION_MISSING. Recheck only this transient readiness state so
-			// a supported switch enables without polling permanently unsupported
-			// harnesses or ordinary idle sessions.
-			return status?.reasonCode === "NATIVE_SESSION_MISSING"
+			// A missing or not-yet-current native identity is transient while the
+			// terminal's session-start hook is arriving. Recheck only those readiness
+			// states so supported switches enable without polling permanently
+			// unsupported harnesses or ordinary idle sessions.
+			return status?.reasonCode === "NATIVE_SESSION_MISSING" ||
+				status?.reasonCode === "NATIVE_SESSION_UNVERIFIED"
 				? nativeSessionReadinessPoll
 				: false;
 		},

@@ -459,6 +459,31 @@ describe("ProjectSettingsForm", () => {
 		expect(reviewerAgent).toHaveTextContent("Claude Code");
 	});
 
+	it("keeps the automatic default branch unpinned when saving other settings", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "trunk",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		expect(await beginEdit("Default branch")).toHaveValue("auto");
+		await userEvent.keyboard("{Escape}");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const request = putMock.mock.calls[0]?.[1];
+		expect(request?.body.config.defaultBranch).toBeUndefined();
+	});
+
 	it("shows the full model catalog again after selecting a model", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents") return agentCatalogResponse;

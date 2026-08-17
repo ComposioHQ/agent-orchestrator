@@ -83,7 +83,7 @@ describe("scanImportFolder", () => {
 				name: "repo",
 				path: repo,
 				relativePath: ".",
-				branch: "main",
+				branch: "auto",
 				hasRemote: true,
 				status: "ok",
 			}),

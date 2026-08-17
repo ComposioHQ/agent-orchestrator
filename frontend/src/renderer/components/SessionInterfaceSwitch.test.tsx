@@ -1,7 +1,11 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionInterfaceTransition } from "../hooks/useSessionInterfaceTransition";
-import { SessionInterfaceSwitchButton } from "./SessionInterfaceSwitch";
+import {
+	SessionInterfaceSwitchButton,
+	SessionInterfaceSwitchDialog,
+	SessionInterfaceTransitionNotice,
+} from "./SessionInterfaceSwitch";
 import { TooltipProvider } from "./ui/tooltip";
 
 function renderSwitchButton(target: "chat" | "tui", onClick = vi.fn()) {
@@ -74,5 +78,89 @@ describe("SessionInterfaceSwitchButton", () => {
 		expect(button.querySelector(`.${iconClass}`)).not.toBeNull();
 		fireEvent.click(button);
 		expect(onClick).toHaveBeenCalledOnce();
+	});
+});
+
+describe("SessionInterfaceSwitchDialog", () => {
+	it("discloses that interrupting discards an unsent terminal draft", () => {
+		render(<SessionInterfaceSwitchDialog open target="chat" onOpenChange={vi.fn()} onChoose={vi.fn()} />);
+
+		expect(screen.getByText(/Any unsent Terminal UI draft is discarded/)).toBeInTheDocument();
+	});
+});
+
+describe("SessionInterfaceTransitionNotice", () => {
+	it("offers an explicit discard action when drain preserves a draft", () => {
+		const onSwitchWithInterrupt = vi.fn();
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("failed"),
+					errorCode: "DRAIN_DRAFT_PRESENT",
+					errorDetail: "AO found unsent text and left the source untouched.",
+				}}
+				onDismiss={vi.fn()}
+				onSwitchWithInterrupt={onSwitchWithInterrupt}
+			/>,
+		);
+
+		const action = screen.getByRole("button", {
+			name: "Discard draft and switch",
+		});
+		fireEvent.click(action);
+		expect(onSwitchWithInterrupt).toHaveBeenCalledOnce();
+	});
+
+	it("offers an explicit cancellation action when a provider decision blocks drain", () => {
+		const onSwitchWithInterrupt = vi.fn();
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("failed"),
+					errorCode: "DRAIN_DECISION_PENDING",
+					errorDetail: "AO found a provider decision waiting in Terminal.",
+				}}
+				onDismiss={vi.fn()}
+				onSwitchWithInterrupt={onSwitchWithInterrupt}
+			/>,
+		);
+
+		const action = screen.getByRole("button", {
+			name: "Cancel request and switch",
+		});
+		fireEvent.click(action);
+		expect(onSwitchWithInterrupt).toHaveBeenCalledOnce();
+	});
+
+	it("does not offer a destructive retry for unrelated failures", () => {
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("failed"),
+					errorCode: "TARGET_UNAVAILABLE",
+				}}
+				onDismiss={vi.fn()}
+				onSwitchWithInterrupt={vi.fn()}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Stop now and switch" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Discard draft and switch" })).not.toBeInTheDocument();
+	});
+
+	it("does not offer a destructive retry when terminal quiescence is unverified", () => {
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("failed"),
+					errorCode: "DRAIN_QUIESCENCE_UNVERIFIED",
+					errorDetail: "AO could not classify the current Terminal screen.",
+				}}
+				onDismiss={vi.fn()}
+				onSwitchWithInterrupt={vi.fn()}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Stop now and switch" })).not.toBeInTheDocument();
 	});
 });

@@ -562,6 +562,12 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	if !ok || prompt["append"] != "Recomputed AO instructions" {
 		t.Fatalf("session/resume metadata = %#v, want recomputed system prompt", resumeMeta)
 	}
+	if conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("resume-only ACP conversation advertised replayable history")
+	}
+	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnavailable) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnavailable after session/resume", err)
+	}
 }
 
 func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
@@ -583,9 +589,6 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	agent := &fakeAgent{
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
-			SessionCapabilities: acpsdk.SessionCapabilities{
-				Resume: &acpsdk.SessionResumeCapabilities{},
-			},
 		},
 		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo},
 	}
@@ -662,6 +665,9 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	if history[0].ProviderTurnID == history[6].ProviderTurnID {
 		t.Fatalf("both native turns share provider id %q", history[0].ProviderTurnID)
 	}
+	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("session/load conversation did not advertise replayable history")
+	}
 
 	ready := nextEvent(t, conv.Events())
 	if ready.Kind != ports.ChatEventControllerState || ready.ControllerState != ports.ChatControllerReady {
@@ -671,6 +677,41 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	case event := <-conv.Events():
 		t.Fatalf("history leaked onto the live event stream: %#v", event)
 	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverRejectsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
+	userID := "55555555-5555-4555-8555-555555555555"
+	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
+	user.UserMessageChunk.MessageId = &userID
+	agent := &fakeAgent{
+		capabilities: &acpsdk.AgentCapabilities{
+			LoadSession: true,
+			SessionCapabilities: acpsdk.SessionCapabilities{
+				Resume: &acpsdk.SessionResumeCapabilities{},
+			},
+		},
+		loadUpdates: []acpsdk.SessionUpdate{user},
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+
+	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnsettled", err)
 	}
 }
 

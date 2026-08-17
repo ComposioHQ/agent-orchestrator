@@ -24,7 +24,11 @@ describe("ChatComposer steering", () => {
 
 	it("defaults Enter to the durable queue path used by ao send", () => {
 		composer();
-		expect(screen.getByText("Enter to queue")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
 	});
 
 	it("queues by default while a turn is running", async () => {
@@ -43,7 +47,12 @@ describe("ChatComposer steering", () => {
 		composer({ onSteer, onSend });
 
 		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-		expect(screen.getByText("Enter to steer")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Steer this turn" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeInTheDocument();
+		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
 
 		await userEvent.type(screen.getByRole("combobox"), "and then ship it{Enter}");
 		expect(onSteer).toHaveBeenCalledWith("and then ship it");
@@ -105,13 +114,15 @@ describe("ChatComposer steering", () => {
 	it("offers nothing when the harness cannot steer", () => {
 		composer({ onSteer: undefined, canSteer: false });
 		expect(screen.queryByRole("button", { name: "Steer this turn" })).not.toBeInTheDocument();
-		expect(screen.getByText("Enter to queue")).toBeInTheDocument();
+		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
 	});
 
 	it("offers nothing when no turn is in flight to steer", () => {
 		composer({ canSteer: false, willQueue: false });
 		expect(screen.queryByRole("button", { name: "Steer this turn" })).not.toBeInTheDocument();
-		expect(screen.getByText("Enter to send")).toBeInTheDocument();
+		expect(screen.queryByText(/Enter to/)).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
 	});
 });
 
