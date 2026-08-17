@@ -380,11 +380,18 @@ There is no provider-neutral way to migrate a currently executing tool call or a
 detached background process, and AO does not synthesize terminal screen output
 into structured Chat history.
 
-For TUI drains, AO gates new terminal input before checking quiescence. It accepts
-either an idle fact newer than the last accepted input or an adapter-confirmed
-idle terminal held across the settle window. A contradictory stale-idle fact has
-a bounded proof window and fails without stopping the source; activity reported
-as active work or a user-paced decision remains unbounded.
+For TUI drains, AO gates new terminal input before checking quiescence. Agent
+adapters that can interpret their rendered TUI report work state and composer
+occupancy as separate ephemeral facts. The runtime side of that contract must
+provide the current rendered viewport with ANSI cell styles: tmux uses styled
+`capture-pane`, while the Windows ConPTY host maintains a VT cell model beside
+its historical replay ring. AO accepts only repeated observations of an idle
+surface with an empty composer, held across the settle window; a visible draft
+fails with the source untouched and requires the user to submit, clear, or
+explicitly discard it. Adapter/runtime pairs without rendered-surface support
+retain the causally newer idle-fact or legacy terminal-idle fallback. An
+unverified idle state has a bounded proof window; active work or a user-paced
+decision remains unbounded.
 
 ### Observation Flow
 

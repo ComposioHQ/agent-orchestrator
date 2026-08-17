@@ -880,6 +880,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										const transitionID = interfaceSwitch.transition?.id;
 										if (transitionID) void interfaceSwitch.acknowledgeNotice(transitionID).catch(() => {});
 									}}
+									onSwitchWithInterrupt={() => {
+										interfaceSwitch.resetStartError();
+										void beginInterfaceSwitch("interrupt");
+									}}
+									interrupting={interfaceSwitch.starting}
 								/>
 							) : null}
 						</div>

@@ -32,6 +32,7 @@ import {
 	mobileInterfaceTransitionIsCancellable,
 	useInterfaceTransition,
 } from "./useInterfaceTransition";
+import { terminalInterfaceFailureRecovery } from "./terminalInterfaceRecovery";
 
 const FONT_SIZE = 12;
 
@@ -624,6 +625,10 @@ export default function TerminalScreen() {
 			: interfaceTransitionNotice?.phase === "recovery_required"
 				? "The interface switch needs recovery before more work is sent."
 				: "The interface switch failed; Terminal UI remains available.");
+	const interfaceFailureRecovery = useMemo(
+		() => terminalInterfaceFailureRecovery(interfaceSwitch.transition),
+		[interfaceSwitch.transition?.errorCode],
+	);
 	const interfaceBusy = Boolean(
 		known &&
 		(known.status === "working" ||
@@ -1010,6 +1015,11 @@ export default function TerminalScreen() {
 		);
 	}, [interfaceBusy, interfaceSwitch, known?.activity, startInterfaceSwitch]);
 
+	const requestInterfaceFailureRecovery = useCallback(() => {
+		if (!interfaceFailureRecovery) return;
+		interfaceFailureRecovery.confirm((policy) => void startInterfaceSwitch(policy));
+	}, [interfaceFailureRecovery, startInterfaceSwitch]);
+
 	// The browser toggle lives in the nav bar, beside the session name, to keep the
 	// status row uncluttered. Separate from the headerLeft effect above because
 	// `toggleBrowser` is declared here — referencing it in that effect's dep array
@@ -1227,27 +1237,42 @@ export default function TerminalScreen() {
 				</Pressable>
 			)}
 			{interfaceTransitionNotice ? (
-				<Pressable
-					disabled={interfaceSwitch.acknowledgingNotice}
-					onPress={() => {
-						haptics.tap();
-						void interfaceSwitch
-							.acknowledgeNotice(interfaceTransitionNotice.id)
-							.catch(() => {});
-					}}
-					style={styles.banner}
-					accessibilityRole="button"
-					accessibilityLabel="Dismiss interface switch message"
-				>
+				<View style={styles.banner}>
 					<Text style={styles.bannerText}>
 						{interfaceTransitionNoticeText}
 						{interfaceSwitch.acknowledgeNoticeError
 							? ` Could not dismiss: ${interfaceSwitch.acknowledgeNoticeError}`
-							: interfaceSwitch.acknowledgingNotice
-								? " Dismissing…"
-								: " (tap to dismiss)"}
+							: ""}
 					</Text>
-				</Pressable>
+					<View style={styles.interfaceFailureActions}>
+						{interfaceFailureRecovery ? (
+							<Pressable
+								accessibilityRole="button"
+								onPress={() => {
+									haptics.tap();
+									requestInterfaceFailureRecovery();
+								}}
+							>
+								<Text style={styles.interfaceFailureActionText}>{interfaceFailureRecovery.actionLabel}</Text>
+							</Pressable>
+						) : null}
+						<Pressable
+							accessibilityRole="button"
+							accessibilityLabel="Dismiss interface switch error"
+							disabled={interfaceSwitch.acknowledgingNotice}
+							onPress={() => {
+								haptics.tap();
+								void interfaceSwitch
+									.acknowledgeNotice(interfaceTransitionNotice.id)
+									.catch(() => {});
+							}}
+						>
+							<Text style={styles.interfaceFailureDismissText}>
+								{interfaceSwitch.acknowledgingNotice ? "Dismissing…" : "Dismiss"}
+							</Text>
+						</Pressable>
+					</View>
+				</View>
 			) : null}
 
 			<View style={styles.termWrap}>
@@ -1416,6 +1441,15 @@ const makeStyles = (t: Theme) =>
 		borderBottomColor: t.borderDefault,
 	},
 	bannerText: { color: t.attention, fontSize: 12 },
+	interfaceFailureActions: {
+		marginTop: 8,
+		flexDirection: "row",
+		alignItems: "center",
+		justifyContent: "flex-end",
+		gap: 16,
+	},
+	interfaceFailureActionText: { color: t.red, fontSize: 12, fontWeight: "700" },
+	interfaceFailureDismissText: { color: t.textSecondary, fontSize: 12, fontWeight: "600" },
 	termWrap: { flex: 1, backgroundColor: t.bgBase },
 	dock: {
 		borderTopWidth: 1,

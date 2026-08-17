@@ -199,6 +199,7 @@ export function SessionInterfaceSwitchDialog({
 						<span className="mt-1 block text-xs leading-5 text-muted-foreground">
 							Cancel the running turn before switching. Files already changed remain in the worktree, but
 							unfinished output and queued Chat turns are cancelled.
+							{target === "chat" ? " Any unsent Terminal UI draft is discarded." : null}
 						</span>
 					</button>
 					{waitingForInput ? (
@@ -229,11 +230,15 @@ export function SessionInterfaceTransitionNotice({
 	onDismiss,
 	dismissing,
 	dismissError,
+	onSwitchWithInterrupt,
+	interrupting,
 }: {
 	transition?: SessionInterfaceTransition;
 	onDismiss: () => void;
 	dismissing?: boolean;
 	dismissError?: string;
+	onSwitchWithInterrupt?: () => void;
+	interrupting?: boolean;
 }) {
 	if (
 		!transition ||
@@ -268,6 +273,24 @@ export function SessionInterfaceTransitionNotice({
 								? "Restart AO to reconcile this session before sending more work."
 								: "The original interface remains available. You can retry the switch.")}
 				</p>
+				{transition.phase === "failed" &&
+				(transition.errorCode === "DRAIN_DRAFT_PRESENT" ||
+					transition.errorCode === "DRAIN_DECISION_PENDING") &&
+				onSwitchWithInterrupt ? (
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						className="mt-2 h-7 text-[11px]"
+						disabled={interrupting}
+						onClick={onSwitchWithInterrupt}
+					>
+						{interrupting ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : null}
+						{transition.errorCode === "DRAIN_DRAFT_PRESENT"
+							? "Discard draft and switch"
+							: "Cancel request and switch"}
+					</Button>
+				) : null}
 				{dismissError ? (
 					<p role="alert" className="mt-1 text-[11px] leading-4 text-destructive">
 						Could not dismiss this message. Try again.

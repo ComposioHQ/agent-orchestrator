@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
--- A terminal transition remains durable diagnostics. This separate user fact
+-- A terminal transition remains as durable diagnostics. This separate user fact
 -- prevents its notice from looking new again after a client remount/restart or
 -- when the same session is viewed from another client.
 ALTER TABLE session_interface_transitions
