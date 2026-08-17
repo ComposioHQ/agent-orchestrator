@@ -2114,7 +2114,7 @@ describe("SessionInspector summary reviews", () => {
     expect(
       (await screen.findAllByText("Reviewable change 3")).length,
     ).toBeGreaterThan(0);
-    expect(screen.getAllByText(/2 unresolved/).length).toBeGreaterThanOrEqual(
+    expect(screen.getAllByText(/2 unresolved comments/).length).toBeGreaterThanOrEqual(
       1,
     );
     expect(
@@ -2124,11 +2124,12 @@ describe("SessionInspector summary reviews", () => {
       screen.getByRole("button", { name: /maya.*Commented/i }),
     );
     const comments = screen.getByTestId("github-inline-comments");
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
     expect(comments).toHaveTextContent("Open comments");
     expect(comments).not.toHaveTextContent("maya");
     expect(comments).toHaveTextContent("Sent to worker agent");
-    expect(comments).not.toHaveTextContent("a.ts:3");
-    expect(comments).not.toHaveTextContent("a.ts:9");
+    expect(comments).toHaveTextContent("a.ts:3");
+    expect(comments).toHaveTextContent("a.ts:9");
     // AO's runs and the PR's own reviews share one section keyed by PR, so the
     // unresolved count rides the same row as the AO verdict.
     expect(screen.getByText("Review summary")).toBeInTheDocument();
@@ -2392,6 +2393,7 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(
       screen.getByRole("button", { name: /maya.*Changes requested/i }),
     );
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
     const sendButton = screen.getByRole("button", {
       name: "Send to worker agent",
     });

@@ -41,6 +41,7 @@ import {
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
 import {
+	interfaceTransitionHasUnacknowledgedNotice,
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
@@ -261,7 +262,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
-	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
 	const stopTerminalLiveResize = useCallback(() => {
 		if (terminalLiveResizeTimerRef.current !== null) {
@@ -624,9 +624,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
 		? terminalTarget
 		: ({ kind: "worker" } satisfies TerminalTarget);
-	// Chat surface stays mounted in chat mode for worker + reviewer targets;
-	// it renders the terminal pane as a tab when the reviewer is the active target.
-	const showChatSurface = session?.mode === "chat" && (routedTerminalTarget.kind === "worker" || routedTerminalTarget.kind === "reviewer");
+	// Chat surface stays mounted in chat mode for worker, reviewer, and shell
+	// targets. A terminal pane (reviewer or shell) renders as a tab inside the
+	// chat surface, so opening one never costs the user the conversation.
+	const chatTargetKind = routedTerminalTarget.kind;
+	const showChatSurface =
+		session?.mode === "chat" &&
+		(chatTargetKind === "worker" || chatTargetKind === "reviewer" || chatTargetKind === "shell");
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
 	// takes the agent's terminal off screen while the route still points here.
@@ -835,6 +839,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 										routedTerminalTarget.kind === "reviewer" ? routedTerminalTarget : undefined
 									}
 									onSelectChat={selectSessionTerminal}
+									shellTerminals={shellTerminals}
+									shellTarget={
+										routedTerminalTarget.kind === "shell" ? routedTerminalTarget : undefined
+									}
+									onSelectShellTerminal={selectShellTerminal}
+									onCloseShellTerminal={closeShellTerminalByHandle}
+									onRenameShellTerminal={renameShellTerminalByHandle}
 									daemonReady={daemonStatus.state === "ready"}
 									theme={theme}
 									headerActions={sessionHeaderActions}
@@ -864,10 +875,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									topbarActions={sessionHeaderActions}
 								/>
 							)}
-							{interfaceSwitch.transition?.id !== dismissedTransitionID ? (
+							{interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (
 								<SessionInterfaceTransitionNotice
 									transition={interfaceSwitch.transition}
-									onDismiss={() => setDismissedTransitionID(interfaceSwitch.transition?.id ?? "")}
+									dismissing={interfaceSwitch.acknowledgingNotice}
+									dismissError={interfaceSwitch.acknowledgeNoticeError}
+									onDismiss={() => {
+										const transitionID = interfaceSwitch.transition?.id;
+										if (transitionID) void interfaceSwitch.acknowledgeNotice(transitionID).catch(() => {});
+									}}
+									onSwitchWithInterrupt={() => {
+										interfaceSwitch.resetStartError();
+										void beginInterfaceSwitch("interrupt");
+									}}
+									interrupting={interfaceSwitch.starting}
 								/>
 							) : null}
 						</div>

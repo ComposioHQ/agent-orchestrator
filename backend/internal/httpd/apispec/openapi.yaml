@@ -3234,6 +3234,58 @@ paths:
       summary: Switch a live session between its TUI and Chat controllers
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement:
+    put:
+      operationId: acknowledgeSessionInterfaceTransitionNotice
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Durable interface-transition identifier.
+        in: path
+        name: transitionId
+        required: true
+        schema:
+          description: Durable interface-transition identifier.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcknowledgeSessionInterfaceTransitionNoticeResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Acknowledge a failed or recovered interface handoff notice
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -5035,6 +5087,19 @@ components:
       - error
       - code
       - message
+      type: object
+    AcknowledgeSessionInterfaceTransitionNoticeResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+        transition:
+          $ref: '#/components/schemas/SessionInterfaceTransition'
+      required:
+      - ok
+      - sessionId
+      - transition
       type: object
     ActivateConversationBranchResponse:
       properties:
@@ -7427,6 +7492,11 @@ components:
           type: string
         id:
           type: string
+        noticeAcknowledgedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         phase:
           enum:
           - requested

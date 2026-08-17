@@ -16,10 +16,30 @@ const interfaceTransitionMock = vi.hoisted(() => ({
 	start: vi.fn(),
 	resetStartError: vi.fn(),
 	cancel: vi.fn(),
+	acknowledgeNotice: vi.fn(),
 }));
 const interfaceTransitionState = vi.hoisted(() => ({
 	status: undefined as
-		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string; reasonCode?: string }
+		| {
+				supported: boolean;
+				targetMode?: "chat" | "tui";
+				reason?: string;
+				reasonCode?: string;
+				transition?: {
+					id: string;
+					sessionId: string;
+					sourceMode: "chat" | "tui";
+					targetMode: "chat" | "tui";
+					policy: "drain" | "interrupt";
+					phase: "failed" | "recovery_required";
+					errorCode?: string;
+					errorDetail?: string;
+					createdAt: string;
+					updatedAt: string;
+					completedAt?: string;
+					noticeAcknowledgedAt?: string;
+				};
+		  }
 		| undefined,
 }));
 const reviewGetMock = vi.hoisted(() => vi.fn());
@@ -40,9 +60,18 @@ vi.mock("../hooks/useWindowFullScreen", () => ({
 }));
 vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 	interfaceTransitionIsActive: () => false,
+	interfaceTransitionHasUnacknowledgedNotice: (transition?: {
+		phase?: string;
+		noticeAcknowledgedAt?: string;
+	}) =>
+		Boolean(
+			transition &&
+				!transition.noticeAcknowledgedAt &&
+				(transition.phase === "failed" || transition.phase === "recovery_required"),
+		),
 	useSessionInterfaceTransition: () => ({
 		status: interfaceTransitionState.status,
-		transition: undefined,
+		transition: interfaceTransitionState.status?.transition,
 		isLoading: false,
 		statusError: undefined,
 		start: interfaceTransitionMock.start,
@@ -52,6 +81,9 @@ vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 		cancel: interfaceTransitionMock.cancel,
 		cancelling: false,
 		cancelError: undefined,
+		acknowledgeNotice: interfaceTransitionMock.acknowledgeNotice,
+		acknowledgingNotice: false,
+		acknowledgeNoticeError: undefined,
 	}),
 }));
 
@@ -142,6 +174,9 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		onOpenReviewerTerminal,
 		reviewerTarget,
 		onSelectChat,
+		shellTerminals = [],
+		shellTarget,
+		onSelectShellTerminal,
 	}: {
 		onOpenShell?: () => void;
 		headerActions?: ReactNode;
@@ -149,6 +184,9 @@ vi.mock("./chat/SessionChatSurface", () => ({
 		onOpenReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		reviewerTarget?: { kind: "reviewer"; handleId: string; harness: string; sessionId: string };
 		onSelectChat?: () => void;
+		shellTerminals?: Array<{ handleId: string; title: string }>;
+		shellTarget?: { kind: "shell"; handleId: string };
+		onSelectShellTerminal?: (handleId: string) => void;
 	}) => (
 		<div data-testid="chat-surface">
 			chat surface
@@ -162,6 +200,23 @@ vi.mock("./chat/SessionChatSurface", () => ({
 				<div data-testid="terminal-target">reviewer</div>
 			) : null}
 			{reviewerTarget ? (
+				<button type="button" onClick={onSelectChat}>
+					select chat tab
+				</button>
+			) : null}
+			<div data-testid="shell-tabs">
+				{shellTerminals.map((shell) => (
+					<button
+						key={shell.handleId}
+						onClick={() => onSelectShellTerminal?.(shell.handleId)}
+						type="button"
+					>
+						{shell.title}
+					</button>
+				))}
+			</div>
+			{shellTarget ? <div data-testid="terminal-target">shell</div> : null}
+			{shellTarget ? (
 				<button type="button" onClick={onSelectChat}>
 					select chat tab
 				</button>
@@ -410,7 +465,8 @@ describe("SessionView", () => {
 	closeShellTerminalMock.mockReset();
 	interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
-		interfaceTransitionMock.cancel.mockReset();
+	interfaceTransitionMock.cancel.mockReset();
+		interfaceTransitionMock.acknowledgeNotice.mockReset();
 		interfaceTransitionState.status = undefined;
 		reviewGetMock.mockReset();
 		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
@@ -489,12 +545,15 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
 
+		// Selecting the shell keeps the chat surface mounted — the shell renders
+		// as a tab inside it instead of swapping in the terminal CenterPane.
 		act(() => useUiStore.getState().setActiveShellTerminal("chat-shell"));
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(screen.queryByTestId("chat-surface")).not.toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
 		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 	});
 
 	// The strip only ever shows the session on screen — pinning another session's
@@ -543,12 +602,16 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 		expect(screen.getByText("chat surface")).toBeInTheDocument();
 
+		// Opening a shell from chat keeps the chat surface mounted: the shell is
+		// a tab in its header and renders as the surface's active pane.
 		fireEvent.click(screen.getByRole("button", { name: "open shell from chat" }));
-		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("chat shell");
-
-		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
 		expect(screen.getByText("chat surface")).toBeInTheDocument();
+		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("chat shell");
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select chat tab" }));
+		expect(screen.getByText("chat surface")).toBeInTheDocument();
+		expect(screen.queryByTestId("terminal-target")).not.toBeInTheDocument();
 	});
 
 	it.each([
@@ -676,6 +739,37 @@ describe("SessionView", () => {
 
 		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 		expect(interfaceTransitionMock.start).toHaveBeenCalledWith({ targetMode: "chat", policy: "drain" });
+	});
+
+	it("does not resurrect an acknowledged recovery notice after the session view remounts", async () => {
+		const transition = {
+			id: "transition-recovered",
+			sessionId: "sess-1",
+			sourceMode: "chat" as const,
+			targetMode: "tui" as const,
+			policy: "drain" as const,
+			phase: "recovery_required" as const,
+			errorCode: "DAEMON_RESTARTED",
+			errorDetail: "AO recovered the session in its last committed mode.",
+			createdAt: "2026-08-12T10:00:00Z",
+			updatedAt: "2026-08-12T10:01:00Z",
+			completedAt: "2026-08-12T10:01:00Z",
+		};
+		interfaceTransitionState.status = { supported: true, targetMode: "chat", transition };
+		interfaceTransitionMock.acknowledgeNotice.mockImplementation(async () => {
+			Object.assign(transition, { noticeAcknowledgedAt: "2026-08-13T08:00:00Z" });
+		});
+
+		const view = render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByText(transition.errorDetail)).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Dismiss interface switch message" }));
+		await waitFor(() =>
+			expect(interfaceTransitionMock.acknowledgeNotice).toHaveBeenCalledWith("transition-recovered"),
+		);
+
+		view.unmount();
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.queryByText(transition.errorDetail)).not.toBeInTheDocument();
 	});
 
 	it.each([
