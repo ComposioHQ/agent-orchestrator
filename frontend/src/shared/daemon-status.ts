@@ -13,10 +13,22 @@ export type DaemonFailureCode =
 	| "port_unconfirmed"
 	| "not_ready"
 	| "identity_mismatch"
-	| "datadir_unwritable";
+	| "datadir_unwritable"
+	| "remote_unauthorized"
+	| "remote_unreachable"
+	| "remote_tls"
+	| "remote_incompatible_api"
+	| "remote_disconnected";
+
+// DaemonConnectionMode distinguishes a daemon the app spawned/attached to on
+// this machine ("local") from one it reaches through the loopback forwarding
+// proxy to a remote host ("remote"). Undefined means local — older statuses
+// and every local path leave it unset.
+export type DaemonConnectionMode = "local" | "remote";
 
 export type DaemonStatus = {
 	state: "starting" | "ready" | "stopped" | "error";
+	connection?: DaemonConnectionMode;
 	port?: number;
 	pid?: number;
 	executablePath?: string;

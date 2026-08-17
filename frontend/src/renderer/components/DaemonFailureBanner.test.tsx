@@ -101,4 +101,37 @@ describe("DaemonFailureBanner", () => {
 
 		expect(await screen.findByText("Daemon did not stop")).toBeInTheDocument();
 	});
+
+	it("labels the recovery button Reconnect for a remote failure and still calls restart", async () => {
+		const restart = vi.spyOn(aoBridge.daemon, "restart").mockResolvedValue({ state: "starting" });
+		render(
+			<DaemonFailureBanner
+				status={{
+					state: "error",
+					connection: "remote",
+					code: "remote_unreachable",
+					message: "The remote daemon could not be reached.",
+				}}
+			/>,
+		);
+
+		expect(screen.getByRole("alert")).toHaveTextContent("Remote daemon connection failed");
+		expect(screen.getByRole("alert")).toHaveTextContent("Check that the host is online and Tailscale is connected");
+		expect(screen.queryByRole("button", { name: "Restart daemon" })).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "Reconnect" }));
+
+		// The main process maps restart → reconnect for a remote connection.
+		await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+	});
+
+	it("points remote disconnects at the Daemon connection settings", () => {
+		render(
+			<DaemonFailureBanner
+				status={{ state: "error", connection: "remote", code: "remote_disconnected" }}
+			/>,
+		);
+
+		expect(screen.getByRole("alert")).toHaveTextContent("Reconnect from Settings → Daemon connection.");
+	});
 });

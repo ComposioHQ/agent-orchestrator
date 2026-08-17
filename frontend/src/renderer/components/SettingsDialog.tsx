@@ -1,4 +1,4 @@
-import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, TriangleAlert, X } from "lucide-react";
+import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, Network, RefreshCw, Settings2, TriangleAlert, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
@@ -9,6 +9,7 @@ import {
 } from "./ProjectSettingsForm";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
+import { useShellMaybe } from "../lib/shell-context";
 import {
 	Dialog,
 	DialogClose,
@@ -43,6 +44,7 @@ export function SettingsDialog() {
 	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
 	const [connectMobileOpen, setConnectMobileOpen] = useState(false);
+	const daemonStatus = useShellMaybe()?.daemonStatus;
 	const keyboardShortcutsRestoreRef = useRef<SettingsModal | null>(null);
 	const connectMobileRestoreRef = useRef<SettingsModal | null>(null);
 
@@ -58,6 +60,7 @@ export function SettingsDialog() {
 
 	const globalSections: Array<{ id: Exclude<GlobalSettingsSection, "all">; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
+		{ id: "daemon", label: t("settings.daemonConnection"), icon: Network },
 		{ id: "updates", label: t("settings.updates"), icon: RefreshCw },
 		{ id: "help", label: t("settings.help"), icon: CircleHelp },
 	];
@@ -95,6 +98,9 @@ export function SettingsDialog() {
 
 	const openConnectMobile = () => {
 		if (!settingsModal) return;
+		// The mobile bridge routes are 404 through the remote daemon listener by
+		// design; pairing is managed with `ao remote` on the daemon host instead.
+		if (daemonStatus?.connection === "remote") return;
 		connectMobileRestoreRef.current = settingsModal;
 		setConnectMobileOpen(true);
 		closeSettings();

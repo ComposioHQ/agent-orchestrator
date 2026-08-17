@@ -88,6 +88,10 @@ import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/exter
 import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
+import { createRemoteSettingsStore, type RemoteSettingsStore } from "./main/remote-settings";
+import { startRemoteProxy, type RemoteProxyHandle } from "./main/remote-proxy";
+import { probeRemoteDaemon } from "./main/remote-mode";
+import { validateRemoteUrl, type RemoteConnectResult } from "./shared/remote-url";
 
 // Globals injected at compile time by @electron-forge/plugin-vite.
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -301,7 +305,9 @@ function setDaemonStatus(nextStatus: DaemonStatus): void {
 	if (nextStatus.state !== "ready") disposeBrowserRuntimeLink();
 	daemonStatus = nextStatus;
 	getShellWebContents()?.send("daemon:status", daemonStatus);
-	if (nextStatus.state === "ready" && browserViewHost) {
+	// The browser runtime link is machine-local (running.json + a per-spawn
+	// token); a remote daemon has neither, so remote mode never links.
+	if (nextStatus.state === "ready" && browserViewHost && nextStatus.connection !== "remote") {
 		establishBrowserRuntimeLink();
 	}
 }
@@ -549,6 +555,70 @@ function runFilePath(): string | null {
 	if (process.env.AO_RUN_FILE) return process.env.AO_RUN_FILE;
 	if (isDev) return path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "running.json");
 	return defaultRunFilePath(process.platform, process.env, os.homedir());
+}
+
+// --- Remote daemon mode -----------------------------------------------------
+// When the persisted connection mode is "remote", the app never spawns,
+// attaches to, identity-checks, or shuts down a local daemon, and never reads
+// running.json for liveness. It runs a loopback forwarding proxy
+// (main/remote-proxy.ts) to the remote daemon's authenticated listener and
+// reports the proxy's port as the daemon port, so the renderer's transports
+// work unchanged.
+
+let remoteProxy: RemoteProxyHandle | null = null;
+let remoteModeActive = false;
+let remoteStoreCache: { dir: string; store: RemoteSettingsStore } | null = null;
+// Serializes connect/disconnect/forget so a settings action cannot interleave
+// with a status refresh and leave two proxies (or none) behind.
+let remoteOpQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueRemoteOp<T>(op: () => Promise<T>): Promise<T> {
+	const next = remoteOpQueue.then(op, op);
+	remoteOpQueue = next.catch(() => {});
+	return next;
+}
+
+function remoteStore(): RemoteSettingsStore | null {
+	const runFile = runFilePath();
+	if (!runFile) return null;
+	// Memoized per state dir: when safeStorage is unavailable the password is
+	// memory-only per store instance, so handing out a fresh instance per call
+	// would lose it between IPC handlers.
+	const dir = path.dirname(runFile);
+	if (remoteStoreCache?.dir !== dir) {
+		remoteStoreCache = { dir, store: createRemoteSettingsStore(dir) };
+	}
+	return remoteStoreCache.store;
+}
+
+// Connect (or reconnect) to the persisted remote daemon: probe it directly
+// (auth + API compatibility), then start the loopback proxy and publish its
+// port as the daemon port. Never throws — failures land in daemonStatus.
+async function startRemoteDaemon(): Promise<DaemonStatus> {
+	const store = remoteStore();
+	const config = store ? await store.readConfig() : null;
+	const password = config?.url && store ? await store.readPassword() : null;
+	if (!config || config.mode !== "remote" || !config.url || !password) {
+		// Saved remote mode without a usable password (e.g. safeStorage was
+		// unavailable, so the password was memory-only and is gone after
+		// relaunch): the user must re-enter it via Settings.
+		setDaemonStatus({
+			state: "error",
+			connection: "remote",
+			message: "Reconnect to the remote daemon from Settings → Daemon connection.",
+			code: "remote_disconnected",
+		});
+		return daemonStatus;
+	}
+	const probe = await probeRemoteDaemon(config.url, password, fetch);
+	if (!probe.ok) {
+		setDaemonStatus({ state: "error", connection: "remote", message: probe.message, code: probe.code });
+		return daemonStatus;
+	}
+	await remoteProxy?.stop();
+	remoteProxy = await startRemoteProxy({ remoteUrl: config.url, password });
+	setDaemonStatus({ state: "ready", connection: "remote", port: remoteProxy.port });
+	return daemonStatus;
 }
 
 // How long to wait for the login shell to print its env before giving up. A
@@ -884,6 +954,26 @@ async function gracefullyReplaceDaemonForBrowser(status: DaemonStatus): Promise<
 }
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
+	if (remoteModeActive) {
+		// Remote mode never inspects run-files or processes. While ready, re-probe
+		// the remote (the renderer polls this on a slow cadence) so a dropped
+		// tunnel flips to the same unreachable state a local drop would.
+		if (daemonStatus.state === "ready") {
+			const store = remoteStore();
+			const config = store ? await store.readConfig() : null;
+			const password = config?.url && store ? await store.readPassword() : null;
+			const probe = config?.url && password ? await probeRemoteDaemon(config.url, password, fetch) : null;
+			if (!probe || !probe.ok) {
+				setDaemonStatus({
+					state: "stopped",
+					connection: "remote",
+					message: "AO daemon is no longer reachable.",
+					code: "daemon_unreachable",
+				});
+			}
+		}
+		return daemonStatus;
+	}
 	if (daemonProcess) {
 		return daemonStatus;
 	}
@@ -916,6 +1006,11 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 }
 
 async function startDaemon(): Promise<DaemonStatus> {
+	// Remote mode: "start" means (re)connect through the proxy. Serialized with
+	// the other remote operations; no local daemon is ever spawned.
+	if (remoteModeActive) {
+		return enqueueRemoteOp(startRemoteDaemon);
+	}
 	if (daemonStartPromise) {
 		return daemonStartPromise;
 	}
@@ -1484,8 +1579,15 @@ async function restartDaemon(): Promise<DaemonStatus> {
 
 ipcMain.handle("daemon:getStatus", () => refreshDaemonStatus());
 ipcMain.handle("daemon:start", () => startDaemon());
-ipcMain.handle("daemon:stop", () => stopDaemon());
+ipcMain.handle("daemon:stop", () => {
+	// Remote mode owns no local daemon; there is nothing to stop.
+	if (remoteModeActive) return daemonStatus;
+	return stopDaemon();
+});
 ipcMain.handle("daemon:restart", async () => {
+	// Remote mode: "restart" reconnects to the remote daemon through a fresh
+	// proxy (startDaemon funnels to startRemoteDaemon when remoteModeActive).
+	if (remoteModeActive) return startDaemon();
 	try {
 		return await restartDaemon();
 	} catch (error) {
@@ -1696,6 +1798,68 @@ ipcMain.handle("keybindings:setRecording", (event, active: unknown): void => {
 	if (event.sender !== getShellWebContents() || typeof active !== "boolean") return;
 	keybindingRecordingActive = active;
 });
+
+// Remote daemon connection management. The password crosses IPC only on
+// testAndConnect; getConfig exposes hasPassword, never the secret.
+ipcMain.handle("remote:getConfig", async () => {
+	const store = remoteStore();
+	if (!store) return { mode: "local" as const, url: undefined, hasPassword: false, passwordPersistent: false };
+	const config = await store.readConfig();
+	const password = config.url ? await store.readPassword() : null;
+	return {
+		mode: config.mode,
+		url: config.url,
+		hasPassword: password !== null,
+		passwordPersistent: store.isPasswordPersistent(),
+	};
+});
+
+ipcMain.handle("remote:testAndConnect", async (_event, url: string, password: string): Promise<RemoteConnectResult> => {
+	const store = remoteStore();
+	if (!store) {
+		return { ok: false, code: "remote_unreachable", message: "Cannot resolve the AO state directory." };
+	}
+	const validated = validateRemoteUrl(url);
+	if (!validated.ok) return { ok: false, code: "invalid_input", message: validated.reason };
+	if (!password) return { ok: false, code: "invalid_input", message: "Enter the connection password." };
+	return enqueueRemoteOp(async () => {
+		const probe = await probeRemoteDaemon(validated.url, password, fetch);
+		if (!probe.ok) return probe;
+		await store.writeConfig({ mode: "remote", url: validated.url });
+		await store.writePassword(validated.url, password);
+		remoteModeActive = true;
+		await startRemoteDaemon();
+		return { ok: true as const };
+	});
+});
+
+ipcMain.handle("remote:disconnect", () =>
+	enqueueRemoteOp(async () => {
+		await remoteProxy?.stop();
+		remoteProxy = null;
+		setDaemonStatus({
+			state: "stopped",
+			connection: "remote",
+			message: "Disconnected from the remote daemon.",
+			code: "remote_disconnected",
+		});
+		return daemonStatus;
+	}),
+);
+
+ipcMain.handle("remote:forget", () =>
+	enqueueRemoteOp(async () => {
+		await remoteProxy?.stop();
+		remoteProxy = null;
+		remoteModeActive = false;
+		const store = remoteStore();
+		if (store) await store.clear();
+		setDaemonStatus({ state: "stopped", message: "Remote daemon forgotten." });
+		// Resume the normal local attach/spawn flow.
+		void startDaemon();
+		return daemonStatus;
+	}),
+);
 
 ipcMain.handle("featureBuilds:list", () => listFeatureBuilds());
 ipcMain.handle("featureBuilds:getActive", () => getActiveFeatureBuild());
@@ -2004,6 +2168,14 @@ app.whenReady().then(async () => {
 		});
 	}
 	await createWindow();
+	// Remote mode never spawns or attaches locally: when the persisted
+	// connection mode is "remote", startDaemon funnels to startRemoteDaemon,
+	// which probes the remote daemon and brings up the loopback proxy.
+	{
+		const store = remoteStore();
+		const config = store ? await store.readConfig() : null;
+		remoteModeActive = config?.mode === "remote";
+	}
 	void startDaemon();
 	initAutoUpdates();
 
@@ -2027,6 +2199,9 @@ app.whenReady().then(async () => {
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
 app.on("before-quit", (event) => {
 	browserQuitRequested = true;
+	// Closing the app only closes the local proxy; the remote daemon is never
+	// linked to this app's lifecycle.
+	void remoteProxy?.stop();
 	disposeBrowserRuntimeLink();
 	trayLifecycle.dispose();
 	trayController = null;

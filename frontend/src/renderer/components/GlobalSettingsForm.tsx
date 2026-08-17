@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { DaemonConnectionSection } from "./settings/DaemonConnectionSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
 
-export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
+export type GlobalSettingsSection = "general" | "daemon" | "updates" | "help" | "all";
 
 export function GlobalSettingsForm({
 	section = "all",
@@ -45,6 +46,7 @@ export function GlobalSettingsForm({
 						</SettingsSection>
 					</>
 				)}
+				{(section === "all" || section === "daemon") && <DaemonConnectionSection titleHidden={leadingTitleHidden} />}
 				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
 				{(section === "all" || section === "help") && (
 					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>

@@ -20,12 +20,21 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 	const details = status.details?.trim();
 	const hint = daemonFailureHint(status, t);
 	const title = daemonFailureTitle(status, t);
+	// Remote mode maps restart → reconnect in the main process, so the same
+	// button is the recovery affordance for every remote failure class.
+	const isRemote = status.connection === "remote";
 	const canRestart =
 		status.code === "not_ready" ||
 		status.code === "spawn_failed" ||
 		status.code === "exited" ||
 		status.code === "identity_mismatch" ||
-		status.code === "daemon_unreachable";
+		status.code === "daemon_unreachable" ||
+		(isRemote &&
+			(status.code === "remote_unauthorized" ||
+				status.code === "remote_unreachable" ||
+				status.code === "remote_tls" ||
+				status.code === "remote_incompatible_api" ||
+				status.code === "remote_disconnected"));
 	useEffect(() => {
 		setCopied(false);
 		return () => {
@@ -82,7 +91,13 @@ function DaemonFailureContent({ status }: { status: DaemonStatus }) {
 							disabled={restarting}
 							onClick={() => void restartDaemon()}
 						>
-							{restarting ? t("daemon.restarting") : t("daemon.restart")}
+							{restarting
+								? isRemote
+									? t("daemon.reconnecting")
+									: t("daemon.restarting")
+								: isRemote
+									? t("daemon.reconnect")
+									: t("daemon.restart")}
 						</button>
 					) : null}
 					{restartError ? <p className="mt-2 text-error">{restartError}</p> : null}

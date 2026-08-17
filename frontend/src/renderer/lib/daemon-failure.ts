@@ -22,6 +22,12 @@ export function daemonFailureTitle(status: DaemonStatus, t: TFunction = appI18n.
 			return t("daemon.title.identityMismatch");
 		case "binary_missing":
 			return t("daemon.title.binaryMissing");
+		case "remote_unauthorized":
+		case "remote_unreachable":
+		case "remote_tls":
+		case "remote_incompatible_api":
+		case "remote_disconnected":
+			return t("daemon.title.remote");
 		case "spawn_failed":
 		case "exited":
 		default:
@@ -43,6 +49,16 @@ export function daemonFailureHint(status: DaemonStatus, t: TFunction = appI18n.t
 		case "daemon_unreachable":
 		case "identity_mismatch":
 			return t("daemon.hint.conflict");
+		case "remote_unauthorized":
+			return t("daemon.hint.remoteUnauthorized");
+		case "remote_unreachable":
+			return t("daemon.hint.remoteUnreachable");
+		case "remote_tls":
+			return t("daemon.hint.remoteTls");
+		case "remote_incompatible_api":
+			return t("daemon.hint.remoteIncompatibleApi");
+		case "remote_disconnected":
+			return t("daemon.hint.remoteDisconnected");
 		default:
 			return t("daemon.hint.default");
 	}

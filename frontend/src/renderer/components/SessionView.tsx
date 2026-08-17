@@ -562,7 +562,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		</SessionInterfaceActionGroup>
 	) : null;
 	const sessionHeaderActions = <ShellTopbar embedded sessionAction={sessionLocalActions} />;
-	const previewUrl = session?.previewUrl?.trim() || undefined;
+	const previewUrlRaw = session?.previewUrl?.trim() || undefined;
+	// Remote mode: the daemon-set preview target is loopback on the daemon host
+	// and unreachable from this machine, so it must not auto-reveal the Browser
+	// tab or count as browser content.
+	const previewUrl = daemonStatus.connection === "remote" ? undefined : previewUrlRaw;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
 		session && hasInspector && (browserPoppedOut || (isInspectorOpen && inspectorView === "browser")),
