@@ -4,10 +4,9 @@
 // activity events:
 //   session.created                       -> `ao hooks opencode session-start`
 //   message.updated / message.part.updated -> `ao hooks opencode user-prompt-submit`
-//   message.updated (assistant in_progress) -> `ao hooks opencode active`
-//   tool.start / tool.end                  -> `ao hooks opencode active`
+//   tool.execute.before / tool.execute.after -> `ao hooks opencode active`
 //   session.status (status.type == idle)   -> `ao hooks opencode stop`
-//   client.permissionRequest               -> `ao hooks opencode permission-blocked`
+//   permission.ask (status == ask)         -> `ao hooks opencode permission-blocked`
 //
 // The opencode-native session id (and prompt/model where known) is piped to the
 // hook command as JSON on stdin, run with cwd set to the worktree so AO can
@@ -130,13 +129,6 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
               callHookSync("session-start", { session_id: msg.sessionID })
             }
             if (msg.role === "assistant" && msg.modelID) currentModel = msg.modelID
-            // Detect when assistant is actively working (not just idle)
-            if (msg.role === "assistant" && msg.status === "in_progress") {
-              const sessionID = msg.sessionID ?? currentSessionID
-              if (sessionID) {
-                callHookSync("active", { session_id: sessionID, model: currentModel ?? "" })
-              }
-            }
             // Fallback: some `opencode run` flows never deliver message.part.updated
             // for the prompt, so start the turn from the user message itself.
             if (msg.role === "user") {
@@ -174,40 +166,24 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             break
           }
 
-          case "client.permissionRequest": {
-            // Detect permission blocker dialogs (e.g., directory access, tool use)
-            // and notify AO so the session moves to "needs you" section.
-            const props = (event as any).properties
-            const sessionID = props?.sessionID ?? currentSessionID
-            if (!sessionID) break
-            callHookSync("permission-blocked", { session_id: sessionID, model: currentModel ?? "" })
-            break
-          }
-
-          case "tool.start": {
-            // Detect when opencode starts using a tool - indicates active work
-            const props = (event as any).properties
-            const sessionID = props?.sessionID ?? currentSessionID
-            if (!sessionID) break
-            callHookSync("active", { session_id: sessionID, model: currentModel ?? "" })
-            break
-          }
-
-          case "tool.end": {
-            // When tool completes, report activity but don't immediately go idle
-            // - let session.status idle handle that
-            const props = (event as any).properties
-            const sessionID = props?.sessionID ?? currentSessionID
-            if (!sessionID) break
-            callHookSync("active", { session_id: sessionID, model: currentModel ?? "" })
-            break
-          }
         }
       } catch (err) {
         // A malformed/unexpected event payload must never crash opencode; log
         // it (tagged with the event type) for diagnosis and move on.
         logHookFailure(`event:${(event as any)?.type ?? "unknown"}`, err instanceof Error ? err.message : String(err))
       }
+    },
+    "permission.ask": async (input, output) => {
+      if (output.status !== "ask") return
+      callHookSync("permission-blocked", { session_id: input.sessionID, model: currentModel ?? "" })
+    },
+    "tool.execute.before": async (input) => {
+      callHookSync("active", { session_id: input.sessionID, model: currentModel ?? "" })
+    },
+    "tool.execute.after": async (input) => {
+      // Tool completion is still activity; session.status(idle) owns the
+      // transition back to idle after the turn finishes.
+      callHookSync("active", { session_id: input.sessionID, model: currentModel ?? "" })
     },
   }
 }

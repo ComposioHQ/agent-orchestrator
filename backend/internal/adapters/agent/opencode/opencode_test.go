@@ -560,6 +560,18 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 			t.Fatalf("installed plugin missing opencode event %q:\n%s", marker, body)
 		}
 	}
+	// Permissions and tool execution are exposed as named plugin hooks, not
+	// event-bus event types.
+	for _, hook := range []string{`"permission.ask":`, `"tool.execute.before":`, `"tool.execute.after":`} {
+		if !strings.Contains(body, hook) {
+			t.Fatalf("installed plugin missing opencode hook %q:\n%s", hook, body)
+		}
+	}
+	for _, unsupported := range []string{`"client.permissionRequest"`, `"permission.asked"`, `"tool.start"`, `"tool.end"`} {
+		if strings.Contains(body, unsupported) {
+			t.Fatalf("plugin subscribes to unsupported opencode event %q:\n%s", unsupported, body)
+		}
+	}
 	// Guard against regressing back to subscribing to the deprecated/unreliable
 	// session.idle event (the quoted event string is how a `case` would name it;
 	// the explanatory comment mentions it unquoted, which is fine).
