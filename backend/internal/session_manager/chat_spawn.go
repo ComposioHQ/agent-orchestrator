@@ -119,7 +119,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	var diffBaseSHA, diffBaseRef string
 	if in.projectKind == domain.ProjectKindSingleRepo {
 		diffBaseSHA, diffBaseRef = resolveSpawnDiffBase(
-			ctx, in.workspace.Path, in.project.Config.WithDefaults().DefaultBranch)
+			ctx, in.workspace.Path, in.workspace.BaseRef)
 	}
 
 	var (

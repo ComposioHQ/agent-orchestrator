@@ -669,10 +669,14 @@ type fakeWorkspace struct {
 	// trip (production Create resolves this path; the zero default keeps every
 	// other test's behavior unchanged).
 	createRepoPath string
+	// baseRef is the authoritative ref returned with single-repo workspaces.
+	// When empty, an explicit BaseBranch is echoed to match the real adapter.
+	baseRef string
 	// lastDestroyInfo records the WorkspaceInfo passed to the most recent Destroy
 	// so tests can assert teardown fed it the persisted repo path.
 	lastDestroyInfo   ports.WorkspaceInfo
 	lastCfg           ports.WorkspaceConfig
+	restoreConfigs    []ports.WorkspaceConfig
 	projectErr        error
 	projectDestroyed  int
 	lastProjectCfg    ports.WorkspaceProjectConfig
@@ -707,7 +711,11 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	if path == "" {
 		path = "/ws/" + string(cfg.SessionID)
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: w.createRepoPath}, nil
+	baseRef := w.baseRef
+	if baseRef == "" {
+		baseRef = cfg.BaseBranch
+	}
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, BaseRef: baseRef, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: w.createRepoPath}, nil
 }
 func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.WorkspaceProjectConfig) (ports.WorkspaceProjectInfo, error) {
 	if w.projectErr != nil {
@@ -722,7 +730,11 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 		rootPath = "/ws/" + string(cfg.SessionID)
 	}
 	branch := cfg.Branch
-	root := ports.WorkspaceInfo{Path: rootPath, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}
+	rootBaseRef := cfg.BaseBranch
+	if rootBaseRef == "" {
+		rootBaseRef = "refs/remotes/origin/main"
+	}
+	root := ports.WorkspaceInfo{Path: rootPath, Branch: branch, BaseRef: rootBaseRef, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}
 	out := ports.WorkspaceProjectInfo{
 		Root: root,
 		Worktrees: []ports.WorkspaceRepoInfo{{
@@ -731,6 +743,7 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 			Path:      rootPath,
 			Branch:    branch,
 			BaseSHA:   "root-base",
+			BaseRef:   rootBaseRef,
 			SessionID: cfg.SessionID,
 			ProjectID: cfg.ProjectID,
 		}},
@@ -742,6 +755,7 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 			Path:         filepath.Join(rootPath, filepath.FromSlash(repo.RelativePath)),
 			Branch:       branch,
 			BaseSHA:      repo.Name + "-base",
+			BaseRef:      "refs/remotes/origin/" + repo.Name,
 			SessionID:    cfg.SessionID,
 			ProjectID:    cfg.ProjectID,
 			RelativePath: repo.RelativePath,
@@ -766,6 +780,8 @@ func (w *fakeWorkspace) DestroyWorkspaceProject(context.Context, ports.Workspace
 	return w.destroyErr
 }
 func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	w.lastCfg = cfg
+	w.restoreConfigs = append(w.restoreConfigs, cfg)
 	if cfg.RepoPath != "" {
 		entry := "Restore:" + fakeWorkspaceRepoName(ports.WorkspaceInfo{
 			Path:      cfg.Path,
@@ -773,7 +789,7 @@ func (w *fakeWorkspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) 
 			RepoPath:  cfg.RepoPath,
 		})
 		w.calls = append(w.calls, entry)
-		return ports.WorkspaceInfo{Path: cfg.Path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: cfg.RepoPath}, nil
+		return ports.WorkspaceInfo{Path: cfg.Path, Branch: cfg.Branch, BaseRef: cfg.BaseRef, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: cfg.RepoPath}, nil
 	}
 	return w.Create(ctx, cfg)
 }
@@ -1126,6 +1142,9 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	if !agent.lastConfig.IsZero() {
 		t.Fatalf("launch config = %#v, want zero for project without config", agent.lastConfig)
 	}
+	if got := ws.lastCfg.BaseBranch; got != "" {
+		t.Fatalf("automatic workspace base branch = %q, want empty for adapter inference", got)
+	}
 }
 
 func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
@@ -1143,6 +1162,33 @@ func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
 	wantBase := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "main"))
 	if rec.Metadata.DiffBaseSHA != wantBase || rec.Metadata.DiffBaseRef != "main" {
 		t.Fatalf("spawn diff base = sha:%q ref:%q, want %s main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, wantBase)
+	}
+}
+
+func TestSpawnAutoRecordsResolvedDiffBaseInsteadOfFeatureTip(t *testing.T) {
+	m, st, _, ws := newManager()
+	repo := newManagerGitRepo(t)
+	wantBase := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "main"))
+	runManagerGit(t, repo, "switch", "-c", "feature/temporary")
+	if err := os.WriteFile(filepath.Join(repo, "existing-feature.txt"), []byte("already here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runManagerGit(t, repo, "add", "existing-feature.txt")
+	runManagerGit(t, repo, "commit", "-m", "existing feature work")
+	featureTip := strings.TrimSpace(runManagerGit(t, repo, "rev-parse", "HEAD"))
+
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: repo, Config: testRoleAgents()}
+	ws.path = repo
+	ws.baseRef = "refs/heads/main"
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Metadata.DiffBaseSHA != wantBase || rec.Metadata.DiffBaseRef != "refs/heads/main" {
+		t.Fatalf("auto diff base = sha:%q ref:%q, want %s refs/heads/main", rec.Metadata.DiffBaseSHA, rec.Metadata.DiffBaseRef, wantBase)
+	}
+	if rec.Metadata.DiffBaseSHA == featureTip {
+		t.Fatal("auto diff base incorrectly collapsed to the existing feature tip")
 	}
 }
 
@@ -2053,6 +2099,9 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	if got := ws.lastProjectCfg.RootRepoPath; got != projectPath {
 		t.Fatalf("root repo path = %q, want %q", got, projectPath)
 	}
+	if got := ws.lastProjectCfg.BaseBranch; got != "" {
+		t.Fatalf("root base branch = %q, want empty so adapter infers the repo default", got)
+	}
 	if len(ws.lastProjectCfg.Repos) != 2 {
 		t.Fatalf("child repo configs = %d, want 2", len(ws.lastProjectCfg.Repos))
 	}
@@ -2062,11 +2111,11 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	if want := filepath.Join(projectPath, "apps", "web"); ws.lastProjectCfg.Repos[1].RepoPath != want {
 		t.Fatalf("web repo path = %q, want %q", ws.lastProjectCfg.Repos[1].RepoPath, want)
 	}
-	if got := ws.lastProjectCfg.Repos[0].BaseBranch; got != "dev" {
-		t.Fatalf("api base branch = %q, want dev", got)
+	if got := ws.lastProjectCfg.Repos[0].BaseBranch; got != "" {
+		t.Fatalf("api base branch = %q, want empty so the adapter verifies the repo default", got)
 	}
-	if got := ws.lastProjectCfg.Repos[1].BaseBranch; got != "main" {
-		t.Fatalf("web base branch = %q, want main", got)
+	if got := ws.lastProjectCfg.Repos[1].BaseBranch; got != "" {
+		t.Fatalf("web base branch = %q, want empty so the adapter verifies the repo default", got)
 	}
 	rows := st.worktrees["mer-1"]
 	if len(rows) != 3 {
@@ -2086,6 +2135,9 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 		}
 		if row.BaseSHA == "" {
 			t.Fatalf("row %s missing base sha", row.RepoName)
+		}
+		if row.BaseRef == "" {
+			t.Fatalf("row %s missing resolved base ref", row.RepoName)
 		}
 	}
 	if rt.created != 1 {
@@ -3009,6 +3061,19 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 	if !st.sessions[s.ID].AutoInjectReview {
 		t.Fatal("automatic review injection must default to enabled")
+	}
+}
+
+func TestPromptProjectContextOmitsAutomaticBranchSentinel(t *testing.T) {
+	automatic := promptProjectContext("mer", domain.ProjectRecord{ID: "mer"})
+	if automatic.DefaultBranch != "" {
+		t.Fatalf("automatic prompt default branch = %q, want omitted", automatic.DefaultBranch)
+	}
+	explicit := promptProjectContext("mer", domain.ProjectRecord{
+		ID: "mer", Config: domain.ProjectConfig{DefaultBranch: "trunk"},
+	})
+	if explicit.DefaultBranch != "trunk" {
+		t.Fatalf("explicit prompt default branch = %q, want trunk", explicit.DefaultBranch)
 	}
 }
 
@@ -5958,6 +6023,45 @@ func TestRestoreAll_RestoresBothWorkerAndOrchestrator(t *testing.T) {
 	}
 }
 
+func TestRestoreAllCarriesConfiguredAndRecordedBaseToWorkspaceRestore(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	project := st.projects["mer"]
+	project.Config.DefaultBranch = "trunk"
+	st.projects["mer"] = project
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:  "/ws/mer-1",
+			Branch:         "ao/mer-1/root",
+			DiffBaseRef:    "refs/remotes/origin/trunk",
+			AgentSessionID: "agent-w",
+		},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{{
+		SessionID: "mer-1",
+		RepoName:  domain.RootWorkspaceRepoName,
+		State:     "removed",
+	}}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if len(ws.restoreConfigs) != 1 {
+		t.Fatalf("restore configs = %d, want 1", len(ws.restoreConfigs))
+	}
+	if got := ws.restoreConfigs[0].BaseBranch; got != "trunk" {
+		t.Fatalf("restore BaseBranch = %q, want trunk", got)
+	}
+	if got := ws.restoreConfigs[0].BaseRef; got != "refs/remotes/origin/trunk" {
+		t.Fatalf("restore BaseRef = %q, want refs/remotes/origin/trunk", got)
+	}
+}
+
 func TestRestoreAll_RestoresLegacyShutdownMarkerWithoutState(t *testing.T) {
 	m, st, rt, _ := newLifecycleManager()
 	st.sessions["mer-1"] = domain.SessionRecord{
@@ -6211,8 +6315,8 @@ func TestRestoreAll_WorkspaceProjectRestoresAndAppliesEachRepo(t *testing.T) {
 		Activity:     domain.Activity{State: domain.ActivityExited},
 	}
 	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
-		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", WorktreePath: "/ws/mer-1", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
-		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/api", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", BaseRef: "refs/remotes/origin/main", WorktreePath: "/ws/mer-1", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
+		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", BaseRef: "refs/remotes/origin/dev", WorktreePath: "/ws/mer-1/api", PreservedRef: "refs/ao/preserved/mer-1", State: "removed"},
 	}
 
 	if err := m.RestoreAll(ctx); err != nil {
@@ -6221,6 +6325,9 @@ func TestRestoreAll_WorkspaceProjectRestoresAndAppliesEachRepo(t *testing.T) {
 	wantPrefix := []string{"Restore:__root__", "Restore:api"}
 	if got := ws.calls[:2]; strings.Join(got, ",") != strings.Join(wantPrefix, ",") {
 		t.Fatalf("restore prefix = %v, want %v; all calls %v", got, wantPrefix, ws.calls)
+	}
+	if len(ws.restoreConfigs) != 2 || ws.restoreConfigs[0].BaseRef != "refs/remotes/origin/main" || ws.restoreConfigs[1].BaseRef != "refs/remotes/origin/dev" {
+		t.Fatalf("restore base refs = %#v, want root main and api dev", ws.restoreConfigs)
 	}
 	applied := strings.Join(ws.calls, ",")
 	if !strings.Contains(applied, "ApplyPreserved:__root__:refs/ao/preserved/mer-1") ||

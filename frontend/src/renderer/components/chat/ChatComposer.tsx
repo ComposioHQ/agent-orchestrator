@@ -81,6 +81,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
+	footerAction,
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -105,6 +106,8 @@ export function ChatComposer({
 	 * queue/steer addon so those controls can sit immediately before Approvals.
 	 */
 	settings?: ReactNode | ((slots: { delivery: ReactNode | null }) => ReactNode);
+	/** Optional secondary action rendered with message tools in the lower input row. */
+	footerAction?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -647,7 +650,18 @@ export function ChatComposer({
 							</Button>
 						</>
 					) : null}
+					{canAttach && settingsNode ? (
+						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+					) : null}
 					{settingsNode}
+					{footerAction ? (
+						<>
+							{canAttach || settingsNode ? (
+								<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+							) : null}
+							{footerAction}
+						</>
+					) : null}
 				</div>
 
 				<div

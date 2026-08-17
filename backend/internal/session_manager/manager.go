@@ -873,7 +873,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
-		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WithDefaults().DefaultBranch)
+		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
@@ -919,7 +919,7 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
 	projectKind := project.Kind.WithDefault()
 	if projectKind != domain.ProjectKindWorkspace {
-		baseBranch := project.Config.WithDefaults().DefaultBranch
+		baseBranch := project.Config.WorktreeBaseBranch()
 		if projectKind == domain.ProjectKindScratch {
 			baseBranch = ""
 		}
@@ -950,7 +950,10 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			Name:         repo.Name,
 			RelativePath: repo.RelativePath,
 			RepoPath:     filepath.Join(project.Path, filepath.FromSlash(repo.RelativePath)),
-			BaseBranch:   repo.DefaultBranch,
+			// Older rows may have captured the branch checked out during
+			// registration. Leave automatic resolution to the adapter so only
+			// remote-derived repository metadata can select a default.
+			BaseBranch: "",
 		})
 	}
 	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
@@ -960,7 +963,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		SessionPrefix: sessionPrefix(project),
 		Branch:        branch,
 		RootRepoPath:  project.Path,
-		BaseBranch:    project.Config.WithDefaults().DefaultBranch,
+		BaseBranch:    project.Config.WorktreeBaseBranch(),
 		Repos:         childRepos,
 	})
 	if err != nil {
@@ -972,6 +975,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			RepoName:     wt.RepoName,
 			Branch:       wt.Branch,
 			BaseSHA:      wt.BaseSHA,
+			BaseRef:      wt.BaseRef,
 			WorktreePath: wt.Path,
 			State:        "active",
 		}); err != nil {
@@ -2144,6 +2148,8 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 				Kind:          rec.Kind,
 				SessionPrefix: sessionPrefix(project),
 				Branch:        rec.Metadata.Branch,
+				BaseBranch:    project.Config.WorktreeBaseBranch(),
+				BaseRef:       rec.Metadata.DiffBaseRef,
 				Path:          rec.Metadata.WorkspacePath,
 			})
 			if restoreErr != nil {
@@ -2254,6 +2260,8 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
+			BaseBranch:    project.Config.WorktreeBaseBranch(),
+			BaseRef:       rec.Metadata.DiffBaseRef,
 			Path:          rec.Metadata.WorkspacePath,
 		})
 		if err != nil {
@@ -2302,11 +2310,12 @@ func (m *Manager) workspaceProjectRestoreRowsFromMarkers(ctx context.Context, pr
 	}
 	rootPath := rec.Metadata.WorkspacePath
 	rootBranch := rec.Metadata.Branch
-	var rootBaseSHA string
+	var rootBaseSHA, rootBaseRef string
 	if len(rows) == 1 && (rows[0].RepoName == "" || rows[0].RepoName == domain.RootWorkspaceRepoName) {
 		rootPath = firstNonEmptyString(rows[0].WorktreePath, rootPath)
 		rootBranch = firstNonEmptyString(rows[0].Branch, rootBranch)
 		rootBaseSHA = rows[0].BaseSHA
+		rootBaseRef = rows[0].BaseRef
 	}
 	out := []ports.WorkspaceRepoInfo{{
 		RepoName:  domain.RootWorkspaceRepoName,
@@ -2314,6 +2323,7 @@ func (m *Manager) workspaceProjectRestoreRowsFromMarkers(ctx context.Context, pr
 		Path:      rootPath,
 		Branch:    rootBranch,
 		BaseSHA:   rootBaseSHA,
+		BaseRef:   rootBaseRef,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 	}}
@@ -2376,6 +2386,7 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 			Path:         row.WorktreePath,
 			Branch:       firstNonEmptyString(row.Branch, rec.Metadata.Branch),
 			BaseSHA:      row.BaseSHA,
+			BaseRef:      row.BaseRef,
 			SessionID:    rec.ID,
 			ProjectID:    rec.ProjectID,
 			RelativePath: relPaths[row.RepoName],
@@ -2395,6 +2406,7 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 			RepoName:     row.RepoName,
 			Branch:       row.Branch,
 			BaseSHA:      row.BaseSHA,
+			BaseRef:      row.BaseRef,
 			WorktreePath: row.Path,
 			PreservedRef: ref,
 			State:        "removed",
@@ -2463,6 +2475,7 @@ func (m *Manager) upsertWorkspaceProjectRowState(ctx context.Context, row ports.
 		RepoName:     row.RepoName,
 		Branch:       row.Branch,
 		BaseSHA:      row.BaseSHA,
+		BaseRef:      row.BaseRef,
 		WorktreePath: row.Path,
 		State:        state,
 	})
@@ -2475,6 +2488,7 @@ func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.
 			ProjectID: row.ProjectID,
 			SessionID: row.SessionID,
 			Branch:    row.Branch,
+			BaseRef:   row.BaseRef,
 			RepoPath:  row.RepoPath,
 			Path:      row.Path,
 		})
@@ -2483,6 +2497,7 @@ func (m *Manager) restoreWorkspaceProjectRows(ctx context.Context, rows []ports.
 		}
 		row.Path = restored.Path
 		row.Branch = restored.Branch
+		row.BaseRef = firstNonEmptyString(restored.BaseRef, row.BaseRef)
 		if row.RepoName == domain.RootWorkspaceRepoName {
 			root = row
 		}
@@ -3043,7 +3058,7 @@ func promptRoleForKind(kind domain.SessionKind) sessionPromptRole {
 
 func promptProjectContext(projectID domain.ProjectID, project domain.ProjectRecord) promptProject {
 	cfg := project.Config.WithDefaults()
-	if project.Kind.WithDefault() == domain.ProjectKindScratch {
+	if project.Kind.WithDefault() == domain.ProjectKindScratch || cfg.DefaultBranch == domain.DefaultBranchAuto {
 		cfg.DefaultBranch = ""
 	}
 	id := project.ID
@@ -4115,6 +4130,7 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 	return ports.WorkspaceInfo{
 		Path:      rec.Metadata.WorkspacePath,
 		Branch:    rec.Metadata.Branch,
+		BaseRef:   rec.Metadata.DiffBaseRef,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
 		RepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -4125,6 +4141,7 @@ func workspaceInfoFromRepoInfo(info ports.WorkspaceRepoInfo) ports.WorkspaceInfo
 	return ports.WorkspaceInfo{
 		Path:      info.Path,
 		Branch:    info.Branch,
+		BaseRef:   info.BaseRef,
 		SessionID: info.SessionID,
 		ProjectID: info.ProjectID,
 		RepoPath:  info.RepoPath,
