@@ -123,8 +123,13 @@ type ScopedIdentityResolver interface {
 
 // SCMPRObservation carries provider-neutral PR metadata.
 type SCMPRObservation struct {
+	// ProviderID is the provider-owned immutable identifier for this PR/MR.
+	// Consumers scope it by the observation's provider and host.
+	ProviderID string
 	// URL is the canonical PR URL used as the persistence key.
 	URL string
+	// URLAlias is the previously requested URL when it resolved to URL.
+	URLAlias string
 	// Number is the provider's PR number in the repository.
 	Number int
 	// State is AO's normalized PR state: draft, open, merged, or closed.

@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -530,13 +531,12 @@ describe("portable inspector presentations", () => {
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
     expect(screen.getByTestId("github-inline-comments")).toBeInTheDocument();
     expect(screen.getByText("Open comments")).toBeInTheDocument();
-    expect(screen.getAllByText("2 unresolved").length).toBeGreaterThanOrEqual(
-      1,
-    );
-    expect(screen.queryByText("src/panel.tsx:42")).not.toBeInTheDocument();
+    expect(screen.getByText("#12 · 2 unresolved")).toBeInTheDocument();
+    expect(screen.getByText("src/panel.tsx:42")).toBeInTheDocument();
     expect(
       screen.getByText("This branch leaks the resize listener on unmount."),
     ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Send to worker agent" }),
     );
@@ -552,10 +552,7 @@ describe("portable inspector presentations", () => {
     await waitFor(() => {
       const sentLabels = screen.getAllByText("Sent to worker agent");
       expect(sentLabels).toHaveLength(2);
-      expect(sentLabels[0]?.closest("span")).toHaveClass(
-        "bg-overlay/80",
-        "border-border-strong",
-      );
+      expect(sentLabels[0]?.closest("span")).toHaveClass("text-muted-foreground");
       expect(sentLabels[0]?.closest("span")?.querySelector("svg")).toHaveClass(
         "text-success",
       );
@@ -635,6 +632,72 @@ describe("portable inspector presentations", () => {
     expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
   });
 
+  it("shows a resolved comment before removing it from the list", async () => {
+    const onResolveInlineComment = vi.fn().mockResolvedValue(undefined);
+    render(
+      <InspectorReviewsView
+        externalLink={ExternalLink}
+        groups={[
+          {
+            github: {
+              entries: [
+                {
+                  body: undefined,
+                  id: "unresolved-maya",
+                  inlineComments: [
+                    {
+                      body: "Please tighten this spacing.",
+                      url: "https://example.com/comment",
+                    },
+                  ],
+                  reviewerId: "maya",
+                  reviewUrl: "https://example.com/review",
+                  submittedAt: "",
+                  submittedAtLabel: "",
+                  verdict: { label: "Commented", tone: "neutral" },
+                },
+              ],
+              unresolved: 1,
+              unresolvedBy: [
+                {
+                  count: 1,
+                  links: [
+                    {
+                      body: "Please tighten this spacing.",
+                      url: "https://example.com/comment",
+                    },
+                  ],
+                  reviewerId: "maya",
+                },
+              ],
+            },
+            meta: "#12 · 1 unresolved",
+            number: 12,
+            title: "Portable inspector",
+          },
+        ]}
+        isLoading={false}
+        labels={reviewLabels}
+        onResolveInlineComment={onResolveInlineComment}
+        renderAvatar={() => null}
+        renderMarkdown={(body) => <p>{body}</p>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
+    await waitFor(() => {
+      expect(onResolveInlineComment).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Resolved")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    expect(screen.queryByText("Please tighten this spacing.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Resolved")).not.toBeInTheDocument();
+  });
+
   it("tracks URL-less inline comments independently when they share a review URL", async () => {
     const onSendInlineComment = vi.fn().mockResolvedValue(undefined);
     render(
@@ -701,6 +764,7 @@ describe("portable inspector presentations", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     const sendButtons = screen.getAllByRole("button", {
       name: "Send to worker agent",
     });

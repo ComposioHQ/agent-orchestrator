@@ -431,14 +431,14 @@ func (w *Workspace) StashUncommitted(ctx context.Context, info ports.WorkspaceIn
 
 	// Stage all tracked and non-ignored untracked files into the temp index.
 	// GIT_INDEX_FILE overrides the index so the real index is never touched.
-	addCmd := exec.CommandContext(ctx, w.binary, addAllTempIndexArgs(path)...)
+	addCmd := aoprocess.CommandContext(ctx, w.binary, addAllTempIndexArgs(path)...)
 	addCmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpIdxPath)
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return "", commandError{args: append([]string{w.binary}, addAllTempIndexArgs(path)...), output: string(out), err: err}
 	}
 
 	// Write the staged tree to get a tree SHA.
-	writeTreeCmd := exec.CommandContext(ctx, w.binary, writeTreeArgs(path)...)
+	writeTreeCmd := aoprocess.CommandContext(ctx, w.binary, writeTreeArgs(path)...)
 	writeTreeCmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+tmpIdxPath)
 	treeOut, err := writeTreeCmd.CombinedOutput()
 	if err != nil {
@@ -710,7 +710,7 @@ func parseObservedWorkspaceCommits(output string) []ports.WorkspaceCommit {
 // returned commandError. Exit code detection happens in the caller.
 func (w *Workspace) runCherryPickNoCommit(ctx context.Context, worktree, commitSHA string) error {
 	args := cherryPickNoCommitArgs(worktree, commitSHA)
-	cmd := exec.CommandContext(ctx, w.binary, args...)
+	cmd := aoprocess.CommandContext(ctx, w.binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return commandError{args: append([]string{w.binary}, args...), output: string(out), err: err}

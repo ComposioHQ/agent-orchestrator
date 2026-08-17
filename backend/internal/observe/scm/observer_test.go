@@ -332,6 +332,31 @@ func testObs(num int) ports.SCMObservation {
 	}
 }
 
+func TestDomainFromObservationPreservesStableIdentityAndAliases(t *testing.T) {
+	oldURL := "https://github.com/old-owner/repo/pull/7"
+	currentURL := "https://github.com/new-owner/repo/pull/7"
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github",
+		Host:     "github.com",
+		Repo:     "new-owner/repo",
+		PR: ports.SCMPRObservation{
+			ProviderID: "PR_stable_7",
+			URL:        currentURL,
+			URLAlias:   oldURL,
+			Number:     7,
+		},
+	}
+
+	pr, _, _, _, _ := domainFromObservation("repo-1", domain.SessionRecord{}, obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
+	if pr.ProviderID != "PR_stable_7" {
+		t.Fatalf("ProviderID = %q, want PR_stable_7", pr.ProviderID)
+	}
+	if pr.URLAlias != oldURL {
+		t.Fatalf("URLAlias = %q, want %s", pr.URLAlias, oldURL)
+	}
+}
+
 func knownPR(num int) domain.PullRequest {
 	obs := testObs(num)
 	pr, _, _, _, _ := domainFromObservation("p-1", domain.SessionRecord{AutoInjectReview: true}, obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
@@ -599,7 +624,7 @@ func TestPoll_RepoETag200DiscoversPRAndRefreshesSamePoll(t *testing.T) {
 	store := testStoreWithSession()
 	provider := &fakeProvider{
 		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "v2"}},
-		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1"}}},
+		openPRs:      map[string][]ports.SCMPRObservation{prKey(testRepo, 0): {{ProviderID: "PR_stable_1", URL: "https://github.com/o/r/pull/1", Number: 1, SourceBranch: "feat", HeadRepo: "o/r", TargetBranch: "main", HeadSHA: "sha1"}}},
 		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): testObs(1)},
 	}
 	lc := &fakeLifecycle{}
@@ -615,6 +640,9 @@ func TestPoll_RepoETag200DiscoversPRAndRefreshesSamePoll(t *testing.T) {
 	}
 	if len(store.writes) < 1 || len(lc.observed) != 1 {
 		t.Fatalf("write/lifecycle missing: writes=%d lifecycle=%d", len(store.writes), len(lc.observed))
+	}
+	if store.writes[0].pr.ProviderID != "PR_stable_1" {
+		t.Fatalf("discovery ProviderID = %q, want PR_stable_1", store.writes[0].pr.ProviderID)
 	}
 }
 
