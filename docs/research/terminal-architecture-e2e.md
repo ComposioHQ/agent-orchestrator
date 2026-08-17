@@ -30,7 +30,7 @@ This is an architectural inference from AO's failure modes and the referenced sy
 
 ## Baseline: what AO has today
 
-On Unix, the agent command runs in a tmux pane with `TERM=tmux-256color`; tmux owns the durable screen. For every WebSocket viewer, the daemon starts `tmux -u -T RGB attach-session` on a new local PTY whose `TERM` is `xterm-256color`, then relays raw bytes. Each attach therefore has its own terminal handshake and repaint. AO intentionally chose per-client tmux attaches because a shared attach stream would emit terminal queries only once and break later clients. [AO01] [AO02]
+On Unix, the agent command runs in a tmux pane whose `TERM` is `tmux-256color` under tmux's default configuration; a user's tmux `default-terminal` setting can override it. Tmux owns the durable screen. For every WebSocket viewer, the daemon starts `tmux -u -T RGB attach-session` on a new local PTY whose `TERM` is `xterm-256color`, then relays raw bytes. Each attach therefore has its own terminal handshake and repaint. AO intentionally chose per-client tmux attaches because a shared attach stream would emit terminal queries only once and break later clients. [AO01] [AO02]
 
 The React client feeds those bytes into xterm.js 5.5. It prefers WebGL, falls back to canvas, fits and refits around layout changes, and contains explicit replay buffering and cover logic to suppress the initial visible walk through history. [AO05] [AO06] [AO07] On Windows, a per-session host owns ConPTY, retains a raw byte ring, and broadcasts output; each attachment receives the ring as its initial replay. [AO04] The terminal manager reconciles competing attachment sizes, making size selection a server concern even though each viewer measures independently. [AO03]
 
