@@ -781,6 +781,50 @@ func TestHooks_AgySessionStartReportsConversationID(t *testing.T) {
 	}
 }
 
+func TestHooks_AgyModernEventsReturnValidJSON(t *testing.T) {
+	for _, event := range []string{"pre-invocation", "post-tool-use", "stop"} {
+		t.Run(event, func(t *testing.T) {
+			t.Setenv("AO_SESSION_ID", "ao-7")
+			cfg := setConfigEnv(t)
+			srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+			writeRunFileFor(t, cfg, srv)
+
+			out, _, err := executeCLI(t, Deps{
+				In:           strings.NewReader(`{"conversationId":"agy-native-1"}`),
+				ProcessAlive: func(int) bool { return true },
+			}, "hooks", "agy", event)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var response map[string]any
+			if err := json.Unmarshal([]byte(out), &response); err != nil {
+				t.Fatalf("hook output is not valid JSON: %q: %v", out, err)
+			}
+			if len(response) != 0 {
+				t.Fatalf("hook output = %s, want empty JSON object", out)
+			}
+			if capture.hits != 1 {
+				t.Fatalf("daemon calls = %d, want 1", capture.hits)
+			}
+		})
+	}
+
+	t.Run("outside AO session", func(t *testing.T) {
+		t.Setenv("AO_SESSION_ID", "")
+		out, _, err := executeCLI(t, Deps{}, "hooks", "agy", "stop")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var response map[string]any
+		if err := json.Unmarshal([]byte(out), &response); err != nil {
+			t.Fatalf("hook output is not valid JSON: %q: %v", out, err)
+		}
+		if len(response) != 0 {
+			t.Fatalf("hook output = %s, want empty JSON object", out)
+		}
+	})
+}
+
 func TestHooks_CopilotSessionStartReportsSessionID(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)

@@ -255,6 +255,11 @@ func newHooksCommand(ctx *commandContext) *cobra.Command {
 }
 
 func (c *commandContext) runHook(ctx context.Context, agent, event string) error {
+	if isAgyModernHookEvent(agent, event) {
+		// AGY requires every modern hook handler to return a JSON object, even
+		// when the command is running outside an AO-managed session.
+		_, _ = fmt.Fprintln(c.deps.Out, "{}")
+	}
 	reviewSessionID := strings.TrimSpace(os.Getenv("AO_REVIEW_SESSION_ID"))
 	if reviewSessionID != "" {
 		if !sessionIDPattern.MatchString(reviewSessionID) {
@@ -319,6 +324,18 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		c.reportHookFailure(agent, event, sessionID, err)
 	}
 	return nil
+}
+
+func isAgyModernHookEvent(agent, event string) bool {
+	if domain.AgentHarness(agent) != domain.HarnessAgy {
+		return false
+	}
+	switch event {
+	case "pre-invocation", "post-tool-use", "stop":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *commandContext) runReviewHook(ctx context.Context, agent, event, reviewSessionID string) error {
