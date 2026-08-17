@@ -444,7 +444,7 @@ it("reports an unavailable worker as waking and retries only the terminal ticket
   });
 
   await vi.waitFor(() => expect(client.createTerminalTicket).toHaveBeenCalledTimes(1));
-  expect(states).toContain("waking");
+  await vi.waitFor(() => expect(states).toContain("waking"));
   expect(states).not.toContain("error");
 
   await vi.advanceTimersByTimeAsync(1_000);

@@ -35,6 +35,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { browserCloudClient, subscribeBrowserSessionEvents } from "@/lib/cloud-client";
+import { scheduleCloudSessionOperation } from "@/lib/cloud-session-operations";
 import { CloudExternalLink } from "./CloudBoard";
 import { CloudTerminal } from "./CloudTerminal";
 import { harnessLogoSource } from "./harness-logo";
@@ -53,14 +54,34 @@ const reviewLabels = {
   noPastReviewSummaries: "No earlier review passes.",
   notInjected: "Not delivered",
   openComments: "Open comments",
+  openInlineComments: (count: number) => `Open inline comments (${count})`,
+  requestRereviewPR: "Request re-review on PR",
   reviews: "Reviews",
+  reviewedAt: (time: string) => `Reviewed ${time}`,
+  resolvedComments: (count: number) => `Resolved comments (${count})`,
+  rereviewRequested: "Re-review requested",
+  rereviewRequestFailed: "Could not request re-review.",
+  resolveComment: "Resolve comment",
+  resolvedReview: "Resolved review",
+  resolveReviewFailed: "Could not resolve review.",
+  sendToWorkerAgent: "Send to worker agent",
+  sentToWorkerAgent: "Sent to worker agent",
+  sendToWorkerAgentError: "Could not send to worker agent.",
   showLatestReviewOnly: "Show latest only",
   showLess: "Show less",
   showMore: "Show more",
   commentNumber: (number: number) => `Comment ${number}`,
   unresolvedCount: (count: number) => `${count} unresolved`,
+  viewInFile: "View in file",
   viewOnPR: "View on PR",
 };
+
+const inspectorProjectionEventTypes = new Set([
+  "workspace.changed",
+  "pull_request.created",
+  "pull_request.claimed",
+  "review.submitted",
+]);
 
 export function CloudSessionWorkspace({
   onClose,
@@ -90,6 +111,7 @@ export function CloudSessionWorkspace({
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
   const [selectedFile, setSelectedFile] = useState<WorkspaceFile | null>(null);
   const [selectedFileSessionId, setSelectedFileSessionId] = useState(session.id);
+  const [selectedFileViewSessionId, setSelectedFileViewSessionId] = useState(session.id);
   const [fileContent, setFileContent] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -101,6 +123,11 @@ export function CloudSessionWorkspace({
   const diffInFlight = useRef(false);
   const shownErrors = useRef(new Set<string>());
   const projectionRefreshTimer = useRef<number | null>(null);
+  const pendingProjectionRefresh = useRef({ inspector: false, session: false });
+  const requestControllers = useRef(new Set<AbortController>());
+  const sessionScope = `${organizationId}:${session.id}`;
+  const currentSessionScope = useRef(sessionScope);
+  currentSessionScope.current = sessionScope;
   const projectRuntimeKey = Array.from(
     new Map([session, ...projectSessions].map((candidate) => [candidate.id, candidate])).values(),
   )
@@ -121,6 +148,55 @@ export function CloudSessionWorkspace({
     session.runtimeState !== "failed" &&
     !session.runtimeError;
 
+  const isCurrentSession = () => currentSessionScope.current === sessionScope;
+
+  const runWorkerOperation = <T,>(
+    targetSessionId: string,
+    key: string,
+    run: (signal: AbortSignal) => Promise<T>,
+    coalesce = true,
+  ) => {
+    const controller = new AbortController();
+    requestControllers.current.add(controller);
+    return scheduleCloudSessionOperation({
+      organizationId,
+      sessionId: targetSessionId,
+      key,
+      run,
+      signal: controller.signal,
+      coalesce,
+    }).finally(() => requestControllers.current.delete(controller));
+  };
+
+  useEffect(() => {
+    return () => {
+      for (const controller of requestControllers.current) controller.abort();
+      requestControllers.current.clear();
+      diffInFlight.current = false;
+    };
+  }, [sessionScope]);
+
+  useEffect(() => {
+    // This component is normally keyed by the selected session, but retaining
+    // this reset makes callers that rerender it directly just as safe.
+    setDiff(null);
+    setProjectDiffs([]);
+    setDirectory("");
+    setEntries([]);
+    setSelectedFile(null);
+    setSelectedFileSessionId(session.id);
+    setSelectedFileViewSessionId(session.id);
+    setFileContent("");
+    setBusy(false);
+    setError("");
+    setToastError("");
+    setPullRequests([]);
+    setReviewGroups([]);
+    setReviewsLoading(true);
+    setProjectionVersion(0);
+    shownErrors.current.clear();
+  }, [sessionScope, session.id]);
+
   useEffect(() => {
     if (!error || error === "Too many workspace operations are already in progress." || shownErrors.current.has(error)) return;
     shownErrors.current.add(error);
@@ -130,14 +206,23 @@ export function CloudSessionWorkspace({
   }, [error]);
 
   useEffect(() => {
-    const refreshProjections = () => {
+    const refreshProjections = ({ type }: { type: string }) => {
+      const refreshInspector = inspectorProjectionEventTypes.has(type);
+      // Assistant deltas belong to the terminal/chat stream. They must not
+      // cause a full session-list refetch while an agent is producing output.
+      const refreshSession = !refreshInspector && type !== "chat.assistant_delta";
+      if (!refreshInspector && !refreshSession) return;
+      pendingProjectionRefresh.current.inspector ||= refreshInspector;
+      pendingProjectionRefresh.current.session ||= refreshSession;
       if (projectionRefreshTimer.current !== null) {
         window.clearTimeout(projectionRefreshTimer.current);
       }
       projectionRefreshTimer.current = window.setTimeout(() => {
         projectionRefreshTimer.current = null;
-        setProjectionVersion((current) => current + 1);
-        onSessionEvent?.();
+        const pending = pendingProjectionRefresh.current;
+        pendingProjectionRefresh.current = { inspector: false, session: false };
+        if (pending.inspector) setProjectionVersion((current) => current + 1);
+        if (pending.session) onSessionEvent?.();
       }, 125);
     };
     const unsubscribers = projectionSessionKey.split("|").filter(Boolean).map((sessionId) =>
@@ -153,6 +238,7 @@ export function CloudSessionWorkspace({
         window.clearTimeout(projectionRefreshTimer.current);
         projectionRefreshTimer.current = null;
       }
+      pendingProjectionRefresh.current = { inspector: false, session: false };
     };
   }, [onSessionEvent, organizationId, projectionSessionKey]);
 
@@ -170,12 +256,14 @@ export function CloudSessionWorkspace({
         client.listSessionPullRequests(organizationId, session.id),
         client.getSessionReviewState(organizationId, session.id),
       ]);
+      if (!isCurrentSession()) return;
       setPullRequests(pullRequestPage.pullRequests);
       setReviewGroups(toInspectorReviewGroups(reviewPage.reviews));
     } catch (cause) {
+      if (!isCurrentSession() || isAbortError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Could not load pull requests.");
     } finally {
-      setReviewsLoading(false);
+      if (isCurrentSession()) setReviewsLoading(false);
     }
   };
 
@@ -196,18 +284,29 @@ export function CloudSessionWorkspace({
         const results = await Promise.allSettled(
           projectRepositories.map(async (projectSession) => ({
             session: projectSession,
-            diff: await client.getWorkspaceDiff(organizationId, projectSession.id),
+            diff: await runWorkerOperation(
+              projectSession.id,
+              "workspace.diff",
+              (signal) => client.getWorkspaceDiff(organizationId, projectSession.id, { signal }),
+            ),
           })),
         );
+        if (!isCurrentSession()) return;
         setProjectDiffs(results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
         setDiff(null);
       } else {
-        const next = await client.getWorkspaceDiff(organizationId, session.id);
+        const next = await runWorkerOperation(
+          session.id,
+          "workspace.diff",
+          (signal) => client.getWorkspaceDiff(organizationId, session.id, { signal }),
+        );
+        if (!isCurrentSession()) return;
         setDiff(next);
         setProjectDiffs([]);
       }
       setError("");
     } catch (cause) {
+      if (!isCurrentSession() || isAbortError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Could not load changes.");
     } finally {
       diffInFlight.current = false;
@@ -218,20 +317,26 @@ export function CloudSessionWorkspace({
     if (!session.runtimeConnected) return;
     setBusy(true);
     try {
-      const page = await client.listWorkspaceFiles(
-        organizationId,
+      const page = await runWorkerOperation(
         session.id,
-        path,
-        { limit: 100 },
+        `workspace.list:${path}`,
+        (signal) => client.listWorkspaceFiles(
+          organizationId,
+          session.id,
+          path,
+          { limit: 100, signal },
+        ),
       );
+      if (!isCurrentSession()) return;
       setDirectory(page.path);
       setEntries(page.items);
       setSelectedFile(null);
       setError("");
     } catch (cause) {
+      if (!isCurrentSession() || isAbortError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Could not load files.");
     } finally {
-      setBusy(false);
+      if (isCurrentSession()) setBusy(false);
     }
   };
 
@@ -239,32 +344,54 @@ export function CloudSessionWorkspace({
     if (!session.runtimeConnected) return;
     setBusy(true);
     try {
-      const file = await client.readWorkspaceFile(
-        organizationId,
+      const file = await runWorkerOperation(
         sourceSessionId,
-        path,
+        `workspace.read:${path}`,
+        (signal) => client.readWorkspaceFile(
+          organizationId,
+          sourceSessionId,
+          path,
+          { signal },
+        ),
       );
+      if (!isCurrentSession()) return;
       setSelectedFile(file);
       setSelectedFileSessionId(sourceSessionId);
+      setSelectedFileViewSessionId(session.id);
       setFileContent(file.content);
       setTab("files");
       setError("");
     } catch (cause) {
+      if (!isCurrentSession() || isAbortError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Could not read file.");
     } finally {
-      setBusy(false);
+      if (isCurrentSession()) setBusy(false);
     }
   };
 
   const saveFile = async () => {
-    if (!selectedFile || session.mode === "read-only" || !session.runtimeConnected) return;
+    if (
+      !selectedFile ||
+      selectedFileViewSessionId !== session.id ||
+      session.mode === "read-only" ||
+      !session.runtimeConnected
+    ) return;
+    const targetSessionId = selectedFileSessionId;
+    const input = { path: selectedFile.path, content: fileContent };
     setBusy(true);
     try {
-      const file = await client.writeWorkspaceFile(
-        organizationId,
-        selectedFileSessionId,
-        { path: selectedFile.path, content: fileContent },
+      const file = await runWorkerOperation(
+        targetSessionId,
+        `workspace.write:${input.path}`,
+        (signal) => client.writeWorkspaceFile(
+          organizationId,
+          targetSessionId,
+          input,
+          { signal },
+        ),
+        false,
       );
+      if (!isCurrentSession()) return;
       setSelectedFile(file);
       setFileContent(file.content);
       // Do not issue a competing workspace diff request while the file pane is
@@ -272,14 +399,15 @@ export function CloudSessionWorkspace({
       setDiff(null);
       setProjectDiffs([]);
     } catch (cause) {
+      if (!isCurrentSession() || isAbortError(cause)) return;
       setError(cause instanceof Error ? cause.message : "Could not save file.");
     } finally {
-      setBusy(false);
+      if (isCurrentSession()) setBusy(false);
     }
   };
 
   useEffect(() => {
-    if (tab === "files" && entries.length === 0) void loadDirectory("");
+    if (tab === "files") void loadDirectory("");
   }, [tab, session.id]);
 
   useEffect(() => {
@@ -728,6 +856,10 @@ function ProjectChangesView({
 
 function isHiddenPath(path: string): boolean {
   return path.split("/").some((segment) => segment.startsWith("."));
+}
+
+function isAbortError(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === "AbortError";
 }
 
 function FileBrowser({
