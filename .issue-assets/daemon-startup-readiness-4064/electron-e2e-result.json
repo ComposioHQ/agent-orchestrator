@@ -1,0 +1,130 @@
+{
+  "scenario": "real Electron supervisor slow-start-to-ready transition over a real AO fixture",
+  "app": {
+    "sourceCheckout": "/Users/dhruvsharma/Development/agent-orchestrator-1",
+    "rendererUrl": "http://localhost:5173/",
+    "loopbackPort": 60112,
+    "cdpPort": 60113,
+    "isolatedDataDir": "/tmp/ao-4064-e2e.jZGO1T/data"
+  },
+  "slowStartup": {
+    "capturedAt": "2026-08-17T12:11:49.344Z",
+    "elapsedSinceElectronLaunchSeconds": 53,
+    "statusRoleCount": 2,
+    "alertRoleCount": 0,
+    "restartButtonCount": 0,
+    "detailsExpanded": true,
+    "screenshot": "01-slow-start.png"
+  },
+  "transition": {
+    "gateReleased": true,
+    "gateReleaseToDaemonReadyMs": 68,
+    "bannerClearedWithoutRestart": true,
+    "daemonReadyVisible": true
+  },
+  "recoveredBoard": {
+    "capturedAt": "2026-08-17T12:12:23.508Z",
+    "recoveredSessionCount": 8,
+    "sessionNames": [
+      "Recovery 01",
+      "Recovery 02",
+      "Recovery 03",
+      "Recovery 04",
+      "Recovery 05",
+      "Recovery 06",
+      "Recovery 07",
+      "Recovery 08"
+    ],
+    "screenshot": "02-recovered-board.png"
+  },
+  "assertions": {
+    "allEightSessionsStillLive": true,
+    "allOriginalLaunchesWereRotatedByRecovery": true,
+    "allDirtySentinelsStillByteIdentical": true,
+    "noFalseFailureAlertAt53Seconds": true,
+    "noRestartActionAt53Seconds": true,
+    "automaticReadyTransitionObserved": true
+  },
+  "sessions": [
+    {
+      "id": "startup-e2e-1",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-1",
+      "originalLaunchId": "1eaab3de-d8ca-4a69-bae6-730c79abb49b",
+      "finalLaunchId": "68fef84c-808f-41ae-8ac5-878636fe0fa7",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "9c4d570b4fadbcc8c3ae6d6f4995abccfbd887cd250deaf35b100d01159affaa",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-2",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-2",
+      "originalLaunchId": "b1508e02-9a18-4c02-ae97-6136296b6e49",
+      "finalLaunchId": "9e863c60-4480-484d-a016-4ff82f5e0ba9",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "1e762c788f406f23bbfb92be3bc31d6fcb42a8e0dc5bd259baebb8485d6261b9",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-3",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-3",
+      "originalLaunchId": "4c8bcdd1-ddda-4a50-8e88-6fa2cc3b5b23",
+      "finalLaunchId": "786cd5dd-1110-4d90-9f0c-939bd7a0fa75",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "f3b87501aecee1ba24139d0537472e65401509dfeb5dd794f1743651d15984ea",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-4",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-4",
+      "originalLaunchId": "f515aa84-64df-437a-877a-60dc23b8752f",
+      "finalLaunchId": "172168e4-ecd0-456f-9e9d-d10dd0ec01f5",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "34875e8ba0211b2884dcce348b3c328f1bf5ef185846565fe8c041ebf70f61e1",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-5",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-5",
+      "originalLaunchId": "89dee37b-af7e-46a4-b789-a96fa75994ae",
+      "finalLaunchId": "a1221f4e-b4ab-4dc3-9351-4e6ad752164f",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "f609c699068bcbce77a0e6117b75cd7583c804e83a6cc72a2062a02eb4725ba9",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-6",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-6",
+      "originalLaunchId": "9ac85780-17fb-4a6f-910e-c3013c8f8a58",
+      "finalLaunchId": "215f99a7-d94e-4f61-9276-62ba81432e02",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "307f657165687018b04d4a2c3c7f8141467888395fd187c8e913cfd36badf308",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-7",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-7",
+      "originalLaunchId": "887179cf-ab3e-41b5-9328-843869356946",
+      "finalLaunchId": "b1deb654-334c-4ef6-8016-30a6fcc1bc74",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "069b901b84ba063f768edf0159035f3700d4d1e02acb565b33cc8a9be15320b8",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-8",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-8",
+      "originalLaunchId": "275f368e-dd2c-4486-855b-3be0f5772ea0",
+      "finalLaunchId": "623ce5d9-cb7b-465b-bca7-2c74f9f72bce",
+      "launchRotatedDuringRecovery": true,
+      "isTerminated": false,
+      "sentinelSha256": "e839a7070e2f7e57b28836ea59db22e0f5611a4dede6874a67c65b8db25a7c15",
+      "sentinelPreserved": true
+    }
+  ]
+}
