@@ -76,14 +76,20 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec reports no agent-specific config keys. Model selection is owned
-// by the DeepSeek Harness profile/settings, so there is nothing for AO to
-// expose.
+// GetConfigSpec reports the fixed DeepSeek Harness profile AO launches. Model
+// selection is owned by the DeepSeek Harness profile/settings, so AO exposes the
+// runtime mode rather than a misleading raw-model field.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ConfigSpec{}, err
 	}
-	return ports.ConfigSpec{}, nil
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key:         "mode",
+		Type:        ports.ConfigFieldEnum,
+		Description: "DeepSeek Harness profile.",
+		Default:     "headless",
+		Enum:        []string{"headless"},
+	}}}, nil
 }
 
 // GetLaunchCommand builds the argv to run a single official DeepSeek Harness task:

@@ -81,6 +81,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
+	footerAction,
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -102,6 +103,8 @@ export function ChatComposer({
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
 	settings?: ReactNode;
+	/** Optional secondary action rendered with message tools in the lower input row. */
+	footerAction?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -631,6 +634,14 @@ export function ChatComposer({
 						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
 					) : null}
 					{settings}
+					{footerAction ? (
+						<>
+							{canAttach || settings ? (
+								<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+							) : null}
+							{footerAction}
+						</>
+					) : null}
 				</div>
 
 				<div

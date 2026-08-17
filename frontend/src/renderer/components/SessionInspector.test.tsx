@@ -245,7 +245,7 @@ beforeEach(() => {
   navigateMock.mockReset();
   patchMock.mockReset();
   postMock.mockReset();
-  useUiStore.setState({ inspectorSessions: {} });
+  useUiStore.setState({ developerMode: false, inspectorSessions: {} });
   putMock.mockReset();
   mockCommonGets();
   patchMock.mockResolvedValue({
@@ -458,7 +458,13 @@ describe("SessionInspector PR section", () => {
       undefined,
       (client) => {
         client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
-          prSummary(7, "open"),
+          prSummary(7, "open", {
+            review: {
+              decision: "approved",
+              hasUnresolvedHumanComments: false,
+              unresolvedBy: [],
+            },
+          }),
         ]);
       },
     );
@@ -467,8 +473,9 @@ describe("SessionInspector PR section", () => {
     expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
     expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
     expect(
-      prSection("Pull request").getByText("Ready to merge"),
+      prSection("Pull request").getByText("Mergeable"),
     ).toBeInTheDocument();
+    expect(prSection("Pull request").getByText("PR approved")).toBeInTheDocument();
     expect(
       prSection("Pull request").getByText("Checks passing"),
     ).toBeInTheDocument();
@@ -491,6 +498,11 @@ describe("SessionInspector PR section", () => {
     const readyPR = prSummary(7, "open", {
       url: "https://example.com/pr/7",
       headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      review: {
+        decision: "approved",
+        hasUnresolvedHumanComments: false,
+        unresolvedBy: [],
+      },
     });
     renderWithQuery(
       <SessionInspector session={session([pr(7, "open")])} />,
@@ -531,6 +543,44 @@ describe("SessionInspector PR section", () => {
     expect(
       screen.queryByRole("button", { name: "Merge PR #7" }),
     ).not.toBeInTheDocument();
+  });
+
+  it.each(["unknown", "blocked", "unstable"] as const)(
+    "does not offer Merge when provider mergeability is %s",
+    (mergeability) => {
+      renderWithQuery(
+        <SessionInspector session={session([pr(7, "open")])} />,
+        undefined,
+        (client) => {
+          client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
+            prSummary(7, "open", {
+              ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
+              review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+              mergeability: { state: mergeability, reasons: [], prUrl: "https://example.com/pr/7" },
+            }),
+          ]);
+        },
+      );
+      expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
+    },
+  );
+
+  it("does not offer Merge without a current head SHA", () => {
+    renderWithQuery(
+      <SessionInspector session={session([pr(7, "open")])} />,
+      undefined,
+      (client) => {
+        client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [
+          prSummary(7, "open", {
+            headSha: "",
+            ci: { autoInjectCI: true, state: "passing", failingChecks: [] },
+            review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+            mergeability: { state: "mergeable", reasons: [], prUrl: "https://example.com/pr/7" },
+          }),
+        ]);
+      },
+    );
+    expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
   });
 
   it("uses the state chip as the single merged-state indicator", () => {
@@ -660,7 +710,7 @@ describe("SessionInspector PR section", () => {
     expect(toggle).toBeChecked();
   });
 
-  it("shows that failing CI was not injected while preserving the failing checks", () => {
+  it("shows failing checks without an injection notice", () => {
     const failingPR = prSummary(7, "open", {
       ci: {
         autoInjectCI: false,
@@ -691,13 +741,8 @@ describe("SessionInspector PR section", () => {
     const card = prSection("Pull request")
       .getByText("PR #7")
       .closest("article") as HTMLElement;
-    expect(
-      within(card).getByText("CI failures not injected"),
-    ).toBeInTheDocument();
-    expect(within(card).getByRole("link", { name: "unit" })).toHaveAttribute(
-      "href",
-      "https://ci.example/unit",
-    );
+    expect(within(card).getByText("Checks failing")).toBeInTheDocument();
+    expect(within(card).queryByText("CI failures not injected")).not.toBeInTheDocument();
   });
 
   it("links each PR to its url", () => {
@@ -717,6 +762,31 @@ describe("SessionInspector PR section", () => {
       "https://example.com/pr/42",
     ]);
   });
+});
+
+describe("SessionInspector usage", () => {
+	it("shows detailed token statistics only when Developer Mode is enabled", async () => {
+		useUiStore.getState().setDeveloperMode(true);
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return {
+					data: {
+						sessionId: "sess-1",
+						incomplete: false,
+						totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 },
+						harnesses: [{ harness: "codex", totals: { inputTokens: 1200, outputTokens: 300, cacheReadTokens: 12, cacheWriteTokens: 0, reasoningTokens: 5, uncachedInputTokens: 20 }, models: [] }],
+					},
+					error: undefined,
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+		expect(await screen.findByText("Usage & cost")).toBeInTheDocument();
+		expect(screen.getByText("Total tokens")).toBeInTheDocument();
+		expect(screen.getByText("Codex")).toBeInTheDocument();
+	});
 });
 
 describe("SessionInspector completion controls", () => {

@@ -357,13 +357,23 @@ func TestExitDetectionUsesProcessSupervisor(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecReportsNoFields(t *testing.T) {
+func TestGetConfigSpecReportsHeadlessMode(t *testing.T) {
 	spec, err := New().GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("spec.Fields = %#v, want empty", spec.Fields)
+	if len(spec.Fields) != 1 {
+		t.Fatalf("spec.Fields = %#v, want one field", spec.Fields)
+	}
+	field := spec.Fields[0]
+	if field.Key != "mode" || field.Type != ports.ConfigFieldEnum {
+		t.Fatalf("field = %#v, want mode enum", field)
+	}
+	if field.Default != "headless" {
+		t.Fatalf("field.Default = %#v, want headless", field.Default)
+	}
+	if want := []string{"headless"}; !reflect.DeepEqual(field.Enum, want) {
+		t.Fatalf("field.Enum = %#v, want %#v", field.Enum, want)
 	}
 }
 

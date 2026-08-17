@@ -25,4 +25,10 @@ describe("AgentAvatar", () => {
 			).toBe(true);
 		}
 	});
+
+	it("renders the OMP brand asset", () => {
+		render(<AgentAvatar provider="omp" />);
+
+		expect(screen.getByRole("img", { name: "omp" })).toHaveAttribute("src", expect.stringContaining("omp.png"));
+	});
 });
