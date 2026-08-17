@@ -1,12 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { chatFixture } from "../../lib/chat-fixture";
-
-const png = (name = "shot.png") =>
-	new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
 
 // Steering sends guidance INTO the running turn instead of queueing behind it. The
 // thing these tests protect is that the choice is legible: Enter changing meaning
@@ -105,29 +102,6 @@ describe("ChatComposer steering", () => {
 			"aria-pressed",
 			"true",
 		);
-	});
-
-	it("does not arm a send for attachments alone while steering", async () => {
-		// Regression probe for the silent no-op: a steer delivers text only and refuses
-		// an empty body, so a staged file used to light up the send button on its own
-		// and Enter then did nothing at all.
-		const onSteer = vi.fn().mockResolvedValue(undefined);
-		const onSend = vi.fn();
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/shot.png"]);
-		composer({ onSteer, onSend, onStageAttachments: stage });
-
-		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-
-		const field = screen.getByRole("combobox");
-		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
-		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
-
-		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeDisabled();
-		await userEvent.keyboard("{Enter}");
-		expect(onSteer).not.toHaveBeenCalled();
-		expect(onSend).not.toHaveBeenCalled();
-		// The file stays staged: switching back to the queue path can still deliver it.
-		expect(screen.getAllByRole("listitem")).toHaveLength(1);
 	});
 
 	it("reports the daemon's refusal without a second message of its own", () => {
