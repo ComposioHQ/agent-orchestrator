@@ -963,6 +963,8 @@ function ExternalReviewCard({
 	);
 }
 
+const RESOLVED_COMMENT_DISPLAY_MS = 1000;
+
 function GithubInlineComments({
 	externalLink: ExternalLink,
 	labels,
@@ -984,6 +986,7 @@ function GithubInlineComments({
 	const [sendingCommentIds, setSendingCommentIds] = useState<Set<string>>(() => new Set());
 	const [sendErrorCommentIds, setSendErrorCommentIds] = useState<Set<string>>(() => new Set());
 	const [resolvedCommentIds, setResolvedCommentIds] = useState<Set<string>>(() => new Set());
+	const [removedResolvedCommentIds, setRemovedResolvedCommentIds] = useState<Set<string>>(() => new Set());
 	const [resolveErrorCommentIds, setResolveErrorCommentIds] = useState<Set<string>>(() => new Set());
 	const [visibleCount, setVisibleCount] = useState(1);
 	const comments = reviewers.flatMap((reviewer) =>
@@ -996,9 +999,21 @@ function GithubInlineComments({
 				url: link.url || reviewer.reviewUrl,
 			})),
 	);
-	if (comments.length === 0) return null;
-	const visibleComments = comments.slice(0, visibleCount);
-	const hasMore = visibleComments.length < comments.length;
+	useEffect(() => {
+		if (resolvedCommentIds.size === 0) return;
+		const timeout = window.setTimeout(() => {
+			setRemovedResolvedCommentIds((current) => {
+				const next = new Set(current);
+				for (const id of resolvedCommentIds) next.add(id);
+				return next;
+			});
+		}, RESOLVED_COMMENT_DISPLAY_MS);
+		return () => window.clearTimeout(timeout);
+	}, [resolvedCommentIds]);
+	const remainingComments = comments.filter((comment) => !removedResolvedCommentIds.has(comment.id));
+	if (remainingComments.length === 0) return null;
+	const visibleComments = remainingComments.slice(0, visibleCount);
+	const hasMore = visibleComments.length < remainingComments.length;
 	return (
 		<section className="min-w-0 border-t border-border/70 pt-4" data-testid="github-inline-comments">
 			<div className="flex min-w-0 items-center justify-between gap-2 pb-2 text-xs">
@@ -1054,10 +1069,10 @@ function GithubInlineComments({
 					/>
 				))}
 			</div>
-			{comments.length > 1 ? (
+			{remainingComments.length > 1 ? (
 				<button
 					className="mt-3 flex w-full items-center justify-center rounded-md border border-dashed border-border px-2 py-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
-					onClick={() => setVisibleCount(hasMore ? Math.min(visibleCount + 3, comments.length) : 1)}
+					onClick={() => setVisibleCount(hasMore ? Math.min(visibleCount + 3, remainingComments.length) : 1)}
 					type="button"
 				>
 					{hasMore ? labels.showMore : labels.showLess}

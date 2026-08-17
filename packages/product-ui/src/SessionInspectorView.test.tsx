@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -629,6 +630,72 @@ describe("portable inspector presentations", () => {
       screen.getByRole("button", { name: "Send to worker agent" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Sent to worker agent")).not.toBeInTheDocument();
+  });
+
+  it("shows a resolved comment before removing it from the list", async () => {
+    const onResolveInlineComment = vi.fn().mockResolvedValue(undefined);
+    render(
+      <InspectorReviewsView
+        externalLink={ExternalLink}
+        groups={[
+          {
+            github: {
+              entries: [
+                {
+                  body: undefined,
+                  id: "unresolved-maya",
+                  inlineComments: [
+                    {
+                      body: "Please tighten this spacing.",
+                      url: "https://example.com/comment",
+                    },
+                  ],
+                  reviewerId: "maya",
+                  reviewUrl: "https://example.com/review",
+                  submittedAt: "",
+                  submittedAtLabel: "",
+                  verdict: { label: "Commented", tone: "neutral" },
+                },
+              ],
+              unresolved: 1,
+              unresolvedBy: [
+                {
+                  count: 1,
+                  links: [
+                    {
+                      body: "Please tighten this spacing.",
+                      url: "https://example.com/comment",
+                    },
+                  ],
+                  reviewerId: "maya",
+                },
+              ],
+            },
+            meta: "#12 · 1 unresolved",
+            number: 12,
+            title: "Portable inspector",
+          },
+        ]}
+        isLoading={false}
+        labels={reviewLabels}
+        onResolveInlineComment={onResolveInlineComment}
+        renderAvatar={() => null}
+        renderMarkdown={(body) => <p>{body}</p>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Resolve comment" }));
+    await waitFor(() => {
+      expect(onResolveInlineComment).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("Resolved")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+    });
+    expect(screen.queryByText("Please tighten this spacing.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Resolved")).not.toBeInTheDocument();
   });
 
   it("tracks URL-less inline comments independently when they share a review URL", async () => {
