@@ -121,6 +121,28 @@ func TestRegistryIncludesOMP(t *testing.T) {
 	t.Fatal("Harnessed does not contain omp")
 }
 
+func TestRegistryIncludesDeepSeekHarness(t *testing.T) {
+	reg, err := Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, ok := reg.Get("deepseek-harness")
+	if !ok {
+		t.Fatal("registry does not contain deepseek-harness")
+	}
+	manifest := adapter.Manifest()
+	if manifest.Name != "DeepSeek" {
+		t.Fatalf("deepseek-harness manifest name = %q, want DeepSeek", manifest.Name)
+	}
+
+	for _, item := range Harnessed() {
+		if item.Harness == domain.HarnessDeepSeek {
+			return
+		}
+	}
+	t.Fatal("Harnessed does not contain deepseek-harness")
+}
+
 func TestHarnessedExcludesFakeHarness(t *testing.T) {
 	for _, ha := range Harnessed() {
 		if ha.Harness == domain.HarnessFake {

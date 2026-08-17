@@ -445,6 +445,49 @@ VALUES ('agent-orchestrator-1', 'agent-orchestrator', 1, 'omp', ?, ?, ?);
 	}
 }
 
+// TestMigrateRepairsDeepSeekHarnessConstraint reproduces a dev profile that has
+// the DeepSeek migration recorded but still carries the pre-DeepSeek physical
+// CHECK constraint. Startup must repair the schema so new DeepSeek sessions can
+// be inserted without losing existing harness variants.
+func TestMigrateRepairsDeepSeekHarnessConstraint(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 97)
+	if _, err := db.Exec(
+		`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`,
+		98,
+	); err != nil {
+		t.Fatalf("seed migration 98: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate pre-deepseek profile: %v", err)
+	}
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read sessions schema: %v", err)
+	}
+	for _, harness := range []string{"'omp'", "'deepseek-harness'"} {
+		if !strings.Contains(schema, harness) {
+			t.Fatalf("sessions.harness CHECK is missing %s after repair:\n%s", harness, schema)
+		}
+	}
+	if _, err := db.Exec(`
+INSERT INTO projects (id, path, registered_at, config)
+VALUES ('agent-orchestrator', '/repo/agent-orchestrator', ?, '{}');
+INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
+VALUES ('agent-orchestrator-1', 'agent-orchestrator', 1, 'deepseek-harness', ?, ?, ?);
+`, time.Unix(100, 0).UTC(), time.Unix(101, 0).UTC(), time.Unix(101, 0).UTC(), time.Unix(101, 0).UTC()); err != nil {
+		t.Fatalf("insert deepseek-harness session after repair: %v", err)
+	}
+}
+
 func TestOpenReadOnlyDoesNotCreateDatabase(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "missing")
 	if _, err := OpenReadOnly(context.Background(), dataDir); err == nil {
