@@ -1,11 +1,9 @@
-// Package deepseekharness implements AO's DeepSeek CLI agent adapter. The
-// registry id stays "deepseek-harness" for compatibility with existing project
-// settings and stored sessions, but the runtime launches the authenticated
-// `deepseek` CLI.
+// Package deepseekharness implements AO's DeepSeek Harness (dsh) agent adapter.
+// It targets the official deepseek-ai/deepseek-harness runtime.
 //
 // The adapter is deliberately minimal:
-//   - launches `deepseek` in interactive mode, optionally seeding the first
-//     prompt with `--prompt-interactive`;
+//   - launches one official `dsh --profile headless` task and exits, so AO does
+//     not need an interactive terminal protocol from the developer preview;
 //   - does not attempt native resume, so GetRestoreCommand is false;
 //   - does not consult or install hooks, so the inherited no-op GetAgentHooks
 //     is correct.
@@ -13,12 +11,14 @@ package deepseekharness
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -26,23 +26,25 @@ import (
 // `ao spawn --agent`. It matches domain.HarnessDeepSeek.
 const adapterID = "deepseek-harness"
 
-// deepseekBinarySpec locates the DeepSeek CLI: PATH first, then the
+const promptlessOrchestratorPrompt = "Start an AO orchestrator session for this workspace."
+
+// dshBinarySpec locates the official DeepSeek Harness CLI: PATH first, then the
 // install-script and Homebrew locations, the standard Node-managed fallback
 // paths, and the npm shims under %APPDATA% on Windows.
-var deepseekBinarySpec = binaryutil.BinarySpec{
+var dshBinarySpec = binaryutil.BinarySpec{
 	Label:         "deepseek-harness",
-	Names:         []string{"deepseek"},
-	WinNames:      []string{"deepseek.cmd", "deepseek.exe", "deepseek"},
-	UnixPaths:     []string{"/usr/local/bin/deepseek", "/opt/homebrew/bin/deepseek"},
-	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("deepseek"),
+	Names:         []string{"dsh"},
+	WinNames:      []string{"dsh.cmd", "dsh.exe", "dsh"},
+	UnixPaths:     []string{"/usr/local/bin/dsh", "/opt/homebrew/bin/dsh"},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("dsh"),
 	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
-		{Base: binaryutil.WinAppData, Parts: []string{"npm", "deepseek.cmd"}},
-		{Base: binaryutil.WinAppData, Parts: []string{"npm", "deepseek.exe"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "dsh.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "dsh.exe"}},
 	},
 }
 
-// Plugin is the DeepSeek CLI agent adapter. It is safe for concurrent use;
+// Plugin is the DeepSeek Harness agent adapter. It is safe for concurrent use;
 // the binary path is resolved once and cached under binaryMu.
 type Plugin struct {
 	agentbase.Base
@@ -50,7 +52,7 @@ type Plugin struct {
 	resolvedBinary string
 }
 
-// New returns a ready-to-register DeepSeek adapter.
+// New returns a ready-to-register DeepSeek Harness adapter.
 func New() *Plugin {
 	return &Plugin{}
 }
@@ -65,8 +67,8 @@ var _ ports.AgentExitDetector = (*Plugin)(nil)
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
 		ID:          adapterID,
-		Name:        "DeepSeek CLI",
-		Description: "Run DeepSeek CLI interactive sessions.",
+		Name:        "DeepSeek Harness",
+		Description: "Run official DeepSeek Harness tasks (developer preview).",
 		Version:     "0.0.1",
 		Capabilities: []adapters.Capability{
 			adapters.CapabilityAgent,
@@ -75,7 +77,8 @@ func (p *Plugin) Manifest() adapters.Manifest {
 }
 
 // GetConfigSpec reports no agent-specific config keys. Model selection is owned
-// by the DeepSeek CLI config, so there is nothing for AO to expose.
+// by the DeepSeek Harness profile/settings, so there is nothing for AO to
+// expose.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ConfigSpec{}, err
@@ -83,9 +86,9 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, nil
 }
 
-// GetLaunchCommand builds the argv to run an interactive DeepSeek CLI session:
+// GetLaunchCommand builds the argv to run a single official DeepSeek Harness task:
 //
-//	deepseek [--prompt-interactive <prompt>]
+//	dsh --profile headless <prompt>
 //
 // The runtime sets cwd to cfg.WorkspacePath, matching every other shipped
 // adapter.
@@ -94,21 +97,24 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 	prompt := strings.TrimSpace(cfg.Prompt)
+	if prompt == "" && cfg.Kind == domain.KindOrchestrator {
+		prompt = promptlessOrchestratorPrompt
+	}
+	if prompt == "" {
+		return nil, fmt.Errorf("deepseek-harness: initial prompt is required for headless profile")
+	}
 
-	binary, err := p.deepseekBinary(ctx)
+	binary, err := p.dshBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd = []string{binary}
-	if prompt != "" {
-		cmd = append(cmd, "--prompt-interactive", prompt)
-	}
+	cmd = []string{binary, "--profile", "headless", prompt}
 	return cmd, nil
 }
 
-// SessionInfo surfaces DeepSeek CLI metadata persisted by AO under the shared
-// ports.MetadataKey* keys.
+// SessionInfo surfaces DeepSeek Harness metadata persisted by AO under the
+// shared ports.MetadataKey* keys.
 func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.SessionInfo{}, false, err
@@ -117,20 +123,20 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, ok, nil
 }
 
-// ExitDetectionMode opts DeepSeek CLI into AO's process supervisor.
+// ExitDetectionMode opts DeepSeek Harness into AO's process supervisor.
 func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
 	return ports.AgentExitDetectionSupervisor
 }
 
-// ResolveDeepSeekBinary returns the path to the `deepseek` binary on this machine,
+// ResolveDSHBinary returns the path to the official `dsh` binary on this machine,
 // searching PATH then a handful of well-known install locations. It returns a
-// wrapped ports.ErrAgentBinaryNotFound when `deepseek` is absent.
-func ResolveDeepSeekBinary(ctx context.Context) (string, error) {
-	return binaryutil.ResolveBinary(ctx, deepseekBinarySpec)
+// wrapped ports.ErrAgentBinaryNotFound when `dsh` is absent.
+func ResolveDSHBinary(ctx context.Context) (string, error) {
+	return binaryutil.ResolveBinary(ctx, dshBinarySpec)
 }
 
-// deepseekBinary returns the cached resolved path, populating it on first use.
-func (p *Plugin) deepseekBinary(ctx context.Context) (string, error) {
+// dshBinary returns the cached resolved path, populating it on first use.
+func (p *Plugin) dshBinary(ctx context.Context) (string, error) {
 	p.binaryMu.Lock()
 	defer p.binaryMu.Unlock()
 
@@ -138,7 +144,7 @@ func (p *Plugin) deepseekBinary(ctx context.Context) (string, error) {
 		return p.resolvedBinary, nil
 	}
 
-	binary, err := ResolveDeepSeekBinary(ctx)
+	binary, err := ResolveDSHBinary(ctx)
 	if err != nil {
 		return "", err
 	}

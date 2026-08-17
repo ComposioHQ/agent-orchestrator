@@ -36,11 +36,11 @@ func TestManifestID(t *testing.T) {
 	if m.ID != "deepseek-harness" {
 		t.Fatalf("manifest ID = %q, want %q", m.ID, "deepseek-harness")
 	}
-	if m.Name != "DeepSeek CLI" {
-		t.Fatalf("manifest Name = %q, want %q", m.Name, "DeepSeek CLI")
+	if m.Name != "DeepSeek Harness" {
+		t.Fatalf("manifest Name = %q, want %q", m.Name, "DeepSeek Harness")
 	}
-	if !strings.Contains(m.Description, "DeepSeek CLI") {
-		t.Fatalf("manifest Description = %q, want it to mention DeepSeek CLI", m.Description)
+	if !strings.Contains(m.Description, "DeepSeek Harness") {
+		t.Fatalf("manifest Description = %q, want it to mention DeepSeek Harness", m.Description)
 	}
 	hasAgent := false
 	for _, c := range m.Capabilities {
@@ -65,23 +65,23 @@ func TestLaunchCommand(t *testing.T) {
 		{
 			name:   "valid prompt",
 			prompt: "write tests",
-			want:   []string{"deepseek", "--prompt-interactive", "write tests"},
+			want:   []string{"dsh", "--profile", "headless", "write tests"},
 		},
 		{
 			name: "promptless orchestrator",
 			kind: domain.KindOrchestrator,
-			want: []string{"deepseek"},
+			want: []string{"dsh", "--profile", "headless", "Start an AO orchestrator session for this workspace."},
 		},
 		{
-			name:   "empty prompt",
-			prompt: "",
-			want:   []string{"deepseek"},
+			name:        "empty prompt",
+			prompt:      "",
+			wantErrText: "initial prompt is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Plugin{resolvedBinary: "deepseek"}
+			p := &Plugin{resolvedBinary: "dsh"}
 			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 				Prompt: tt.prompt,
 				Kind:   tt.kind,
@@ -109,13 +109,13 @@ func TestLaunchCommandMissingBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("missing-binary test is POSIX-only")
 	}
-	if hasSystemDeepSeek(t) {
-		t.Skip("a real deepseek exists at a UnixPath on this machine; cannot assert missing-binary behavior")
+	if hasSystemDSH(t) {
+		t.Skip("a real dsh exists at a UnixPath on this machine; cannot assert missing-binary behavior")
 	}
 	binDir := t.TempDir()
 	t.Setenv("PATH", binDir)
 
-	// Clear env-derived paths so the resolver does not find a system deepseek.
+	// Clear env-derived paths so the resolver does not find a system dsh.
 	t.Setenv("HOME", binDir)
 	t.Setenv("USERPROFILE", binDir)
 	t.Setenv("XDG_DATA_HOME", binDir)
@@ -130,7 +130,7 @@ func TestLaunchCommandMissingBinary(t *testing.T) {
 	p := &Plugin{}
 	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "do the thing"})
 	if err == nil {
-		t.Fatal("expected error when deepseek binary is absent, got nil")
+		t.Fatal("expected error when dsh binary is absent, got nil")
 	}
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
@@ -159,7 +159,7 @@ func TestRestoreCommand(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if ok {
-		t.Fatalf("ok = true, want false (deepseek resume is not wired)")
+		t.Fatalf("ok = true, want false (dsh resume is not wired)")
 	}
 	if cmd != nil {
 		t.Fatalf("cmd = %#v, want nil", cmd)
@@ -195,11 +195,11 @@ func TestSessionInfo(t *testing.T) {
 
 func TestBinaryResolution(t *testing.T) {
 	binDir := t.TempDir()
-	fake := filepath.Join(binDir, "deepseek")
+	fake := filepath.Join(binDir, "dsh")
 	writeFakeExecutable(t, fake, "#!/bin/sh\nexit 0\n")
 
 	t.Run("path hit", func(t *testing.T) {
-		// Isolate PATH and home so the resolver finds only our fake deepseek.
+		// Isolate PATH and home so the resolver finds only our fake dsh.
 		cleanEnv(t, binDir)
 		t.Setenv("PATH", binDir)
 
@@ -214,8 +214,8 @@ func TestBinaryResolution(t *testing.T) {
 	})
 
 	t.Run("well-known path hit", func(t *testing.T) {
-		if hasSystemDeepSeek(t) {
-			t.Skip("a real deepseek exists at a UnixPath on this machine; UnixPaths win over UnixHomePaths")
+		if hasSystemDSH(t) {
+			t.Skip("a real dsh exists at a UnixPath on this machine; UnixPaths win over UnixHomePaths")
 		}
 		// Use a fresh, dsh-free PATH so the resolver falls through to the
 		// well-known UnixHomePaths branch instead of finding the outer fake.
@@ -224,7 +224,7 @@ func TestBinaryResolution(t *testing.T) {
 		t.Setenv("PATH", pathDir)
 
 		home := t.TempDir()
-		wellKnown := filepath.Join(home, ".npm-global", "bin", "deepseek")
+		wellKnown := filepath.Join(home, ".npm-global", "bin", "dsh")
 		writeFakeExecutable(t, wellKnown, "#!/bin/sh\nexit 0\n")
 
 		t.Setenv("HOME", home)
@@ -242,8 +242,8 @@ func TestBinaryResolution(t *testing.T) {
 	})
 
 	t.Run("missing binary", func(t *testing.T) {
-		if hasSystemDeepSeek(t) {
-			t.Skip("a real deepseek exists at a UnixPath on this machine; cannot assert missing-binary behavior")
+		if hasSystemDSH(t) {
+			t.Skip("a real dsh exists at a UnixPath on this machine; cannot assert missing-binary behavior")
 		}
 		emptyHome := t.TempDir()
 		cleanEnv(t, emptyHome)
@@ -273,31 +273,9 @@ func TestAuthStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("deepseek settings select api key auth", func(t *testing.T) {
-		t.Setenv("DEEPSEEK_API_KEY", "")
-		home := t.TempDir()
-		t.Setenv("HOME", home)
-		settingsDir := filepath.Join(home, ".deepseek")
-		if err := os.MkdirAll(settingsDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{"security":{"auth":{"selectedType":"deepseek-api-key"}}}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		p := &Plugin{}
-		got, err := p.AuthStatus(context.Background())
-		if err != nil {
-			t.Fatalf("err = %v", err)
-		}
-		if got != ports.AgentAuthStatusAuthorized {
-			t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusAuthorized)
-		}
-	})
-
 	t.Run("missing binary", func(t *testing.T) {
-		if hasSystemDeepSeek(t) {
-			t.Skip("a real deepseek exists at a UnixPath on this machine; cannot assert missing-binary behavior")
+		if hasSystemDSH(t) {
+			t.Skip("a real dsh exists at a UnixPath on this machine; cannot assert missing-binary behavior")
 		}
 		t.Setenv("DEEPSEEK_API_KEY", "")
 		emptyHome := t.TempDir()
@@ -320,9 +298,9 @@ func TestAuthStatus(t *testing.T) {
 	t.Run("binary present", func(t *testing.T) {
 		t.Setenv("DEEPSEEK_API_KEY", "")
 		binDir := t.TempDir()
-		fake := filepath.Join(binDir, "deepseek")
-		// deepseek --version exits 0; the probe only confirms runnability.
-		writeFakeExecutable(t, fake, "#!/bin/sh\necho 1.1.1\nexit 0\n")
+		fake := filepath.Join(binDir, "dsh")
+		// dsh --version exits 0; the probe only confirms runnability.
+		writeFakeExecutable(t, fake, "#!/bin/sh\necho dsh 0.1.0\nexit 0\n")
 
 		cleanEnv(t, binDir)
 		t.Setenv("PATH", binDir)
@@ -342,7 +320,7 @@ func TestAuthStatus(t *testing.T) {
 
 func TestResolveBinaryDelegatesToCachedPath(t *testing.T) {
 	binDir := t.TempDir()
-	fake := filepath.Join(binDir, "deepseek")
+	fake := filepath.Join(binDir, "dsh")
 	writeFakeExecutable(t, fake, "#!/bin/sh\nexit 0\n")
 
 	cleanEnv(t, binDir)
@@ -391,8 +369,8 @@ func TestGetConfigSpecReportsNoFields(t *testing.T) {
 
 func TestSuggestedInstallCommand(t *testing.T) {
 	got := SuggestedInstallCommand()
-	if got != "npm install -g @sluisr/deepseek-cli" {
-		t.Fatalf("SuggestedInstallCommand = %q, want %q", got, "npm install -g @sluisr/deepseek-cli")
+	if got != "npm install -g @deepseek-ai/dsh" {
+		t.Fatalf("SuggestedInstallCommand = %q, want %q", got, "npm install -g @deepseek-ai/dsh")
 	}
 }
 
@@ -434,15 +412,15 @@ func cleanEnv(t *testing.T, fallback string) {
 	}
 }
 
-// hasSystemDeepSeek returns true when a real `deepseek` executable lives at any of the
+// hasSystemDSH returns true when a real `dsh` executable lives at any of the
 // absolute UnixPaths the resolver consults. Tests that need a deterministic
 // "no binary on disk" environment skip themselves in that case.
-func hasSystemDeepSeek(t *testing.T) bool {
+func hasSystemDSH(t *testing.T) bool {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		return false
 	}
-	for _, p := range deepseekBinarySpec.UnixPaths {
+	for _, p := range dshBinarySpec.UnixPaths {
 		if info, err := os.Stat(p); err == nil && !info.IsDir() {
 			return true
 		}

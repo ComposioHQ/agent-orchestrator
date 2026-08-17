@@ -65,7 +65,7 @@ export const AGENT_LABELS: Record<AgentId, string> = {
 	kimchi: "Kimchi",
 	"prime-agent": "Prime Agent",
 	autohand: "Autohand",
-	"deepseek-harness": "DeepSeek CLI",
+	"deepseek-harness": "DeepSeek Harness",
 };
 
 export const AGENT_IDENTITIES: ReadonlyMap<AgentId, AgentIdentity> = new Map(
