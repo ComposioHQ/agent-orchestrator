@@ -30,6 +30,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
+const startupReconcileWorkers = 4
+
 type notificationSink interface {
 	Notify(context.Context, ports.NotificationIntent) error
 	Resolve(context.Context, ports.NotificationResolution) error
@@ -204,6 +206,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		DataDir:             cfg.DataDir,
 		BackgroundContext:   ctx,
 		Logger:              log,
+		ReconcileWorkers:    startupReconcileWorkers,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
 	// Build the multi-tracker dispatching to both GitHub and GitLab. The

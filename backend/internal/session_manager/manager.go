@@ -308,6 +308,7 @@ type Manager struct {
 	attachmentSuffix    func() (string, error)
 	dataDir             string
 	clock               func() time.Time
+	reconcileWorkers    int
 	// openTranscriptFile is os.Open in production. The narrow seam lets tests
 	// deterministically prove that a post-stop transcript read failure falls
 	// back without advertising the provider path.
@@ -572,6 +573,10 @@ type Deps struct {
 	Executable func() (string, error)
 	// NewLaunchID overrides supervised-process generation for deterministic tests.
 	NewLaunchID func() string
+	// ReconcileWorkers bounds concurrent live-session recovery during daemon
+	// startup. Values below one preserve the serial default for embedders/tests;
+	// production explicitly opts into a small worker pool.
+	ReconcileWorkers int
 	// BackgroundContext owns work admitted by request-scoped methods. Nil keeps
 	// focused tests and embedders compatible by defaulting to Background.
 	BackgroundContext context.Context
@@ -598,6 +603,7 @@ func New(d Deps) *Manager {
 		attachmentSuffix:             randomSuffix,
 		dataDir:                      d.DataDir,
 		clock:                        d.Clock,
+		reconcileWorkers:             d.ReconcileWorkers,
 		openTranscriptFile:           os.Open,
 		lookPath:                     d.LookPath,
 		executable:                   d.Executable,
@@ -635,6 +641,9 @@ func New(d Deps) *Manager {
 		// write (rename, activity) — all of which use time.Now().UTC(). A local
 		// default produced mixed-timezone timestamps in `ao session get`.
 		m.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if m.reconcileWorkers < 1 {
+		m.reconcileWorkers = 1
 	}
 	if m.backgroundContext == nil {
 		m.backgroundContext = context.Background()
@@ -1937,16 +1946,13 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 // reconcileLive handles a single non-terminated session on boot. If its runtime
 // session is still alive (tmux is the persistence layer, so it survives a daemon
 // crash) we adopt it: a no-op, the agent keeps running. If the runtime is gone,
-// the agent died with the daemon, so we save-and-tear-down to the SAME end state
-// a graceful shutdown produces: capture uncommitted work into a preserve ref,
-// record the session_worktrees restore marker, mark terminated, and remove the
-// worktree. RestoreAll (which Reconcile runs immediately after) then relaunches
-// it on this same boot, resuming history. Crash recovery thus matches graceful
-// restart instead of silently abandoning the session.
+// reattach the existing worktree and relaunch the controller in place. An
+// ordinary daemon restart must not turn every live session into a serial
+// stash/remove/recreate cycle before the HTTP listener can bind.
 //
-// If the work capture fails we mark terminated WITHOUT a marker and leave the
-// worktree intact: better to skip the relaunch than to tear down un-preserved
-// work or relaunch onto an inconsistent worktree.
+// The old capture-and-teardown path remains the safety fallback when in-place
+// recovery fails. It records a durable restore marker before removing anything,
+// so RestoreAll can retry without risking uncommitted work.
 func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) error {
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
@@ -1958,10 +1964,7 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	}
 	// A chat controller is an in-process child of the daemon, so unlike tmux it can
 	// never have survived the crash: there is nothing to adopt and nothing to
-	// probe. It falls through to the same save-and-teardown a dead runtime gets,
-	// which is what records the restore marker RestoreAll needs — skipping that
-	// would leave the session marked live with no controller behind it, and it
-	// would never be resumed.
+	// probe. It falls through to the same in-place relaunch as a dead TUI runtime.
 	isChat := domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat
 
 	if !isChat {
@@ -1972,7 +1975,7 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 			case err == nil:
 			case errors.Is(err, ports.ErrRuntimeUnavailable):
 				// Normal after a machine reboot: the runtime is conclusively gone,
-				// so preserve work and create the restore marker below.
+				// so proceed to the in-place relaunch below.
 				alive = false
 			default:
 				// A failed probe is not proof of death: leave the session as-is.
@@ -1986,6 +1989,23 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	if projectKind == domain.ProjectKindScratch {
 		return m.lcm.MarkTerminated(ctx, rec.ID)
 	}
+	ws, restoreErr := m.restoreSessionWorkspace(ctx, project, rec)
+	if restoreErr == nil {
+		_, relaunchErr := m.relaunchRestoredSession(ctx, rec, project, ws)
+		if relaunchErr == nil {
+			return nil
+		}
+		committed, verifyErr := m.liveRelaunchCommitted(ctx, rec)
+		if verifyErr != nil {
+			return fmt.Errorf("reconcile %s: relaunch failed (%w), then commit state became uncertain: %w", rec.ID, relaunchErr, verifyErr)
+		}
+		if committed {
+			m.logger.Warn("reconcile: relaunch reported an error after the controller commit; preserving the live session", "sessionID", rec.ID, "error", relaunchErr)
+			return nil
+		}
+		restoreErr = relaunchErr
+	}
+	m.logger.Warn("reconcile: in-place relaunch failed; falling back to save-and-teardown", "sessionID", rec.ID, "error", restoreErr)
 	if err := m.saveAndTeardownOne(ctx, rec, false); err != nil {
 		m.logger.Warn("reconcile: save-and-teardown failed; terminating without restore marker", "sessionID", rec.ID, "error", err)
 		if mErr := m.lcm.MarkTerminated(ctx, rec.ID); mErr != nil {
@@ -1993,6 +2013,29 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 		}
 	}
 	return nil
+}
+
+func (m *Manager) liveRelaunchCommitted(ctx context.Context, before domain.SessionRecord) (bool, error) {
+	after, ok, err := m.store.GetSession(ctx, before.ID)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, ErrNotFound
+	}
+	if after.IsTerminated {
+		return false, nil
+	}
+	if domain.NormalizeSessionMode(before.Mode) == domain.SessionModeChat {
+		generation := after.Metadata.ControllerGeneration
+		return generation != "" && generation != before.Metadata.ControllerGeneration, nil
+	}
+	launchID := after.Metadata.RuntimeLaunchID
+	if launchID != "" && launchID != before.Metadata.RuntimeLaunchID {
+		return true, nil
+	}
+	handleID := after.Metadata.RuntimeHandleID
+	return handleID != "" && handleID != before.Metadata.RuntimeHandleID, nil
 }
 
 // reconcileReap kills the leaked tmux session of a session the DB already marks
@@ -2051,18 +2094,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)
 	}
-	for _, rec := range recs {
-		if rec.IsTerminated {
-			continue
-		}
-		if m.SessionMutationInProgress(rec.ID) {
-			m.logger.Warn("reconcile: session remains input-gated pending unambiguous agent-switch recovery", "sessionID", rec.ID)
-			continue
-		}
-		if err := m.reconcileLive(ctx, rec); err != nil {
-			m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
-		}
-	}
+	m.reconcileLivePass(ctx, recs)
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue
@@ -2079,6 +2111,45 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	}
 	m.wakeTransitionMessageDispatcher()
 	return nil
+}
+
+func (m *Manager) reconcileLivePass(ctx context.Context, recs []domain.SessionRecord) {
+	live := make([]domain.SessionRecord, 0, len(recs))
+	for _, rec := range recs {
+		if rec.IsTerminated {
+			continue
+		}
+		if m.SessionMutationInProgress(rec.ID) {
+			m.logger.Warn("reconcile: session remains input-gated pending unambiguous agent-switch recovery", "sessionID", rec.ID)
+			continue
+		}
+		live = append(live, rec)
+	}
+	if len(live) == 0 {
+		return
+	}
+	workers := m.reconcileWorkers
+	if workers > len(live) {
+		workers = len(live)
+	}
+	jobs := make(chan domain.SessionRecord)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for range workers {
+		go func() {
+			defer wg.Done()
+			for rec := range jobs {
+				if err := m.reconcileLive(ctx, rec); err != nil {
+					m.logger.Error("reconcile: live pass failed, skipping", "sessionID", rec.ID, "error", err)
+				}
+			}
+		}()
+	}
+	for _, rec := range live {
+		jobs <- rec
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 // RestoreAll relaunches every terminated session that was saved by the last

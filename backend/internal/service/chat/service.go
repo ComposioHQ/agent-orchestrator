@@ -47,6 +47,8 @@ type Service struct {
 	startConfigs map[domain.SessionID]StartConfig
 	gateMu       sync.Mutex
 	gates        map[domain.SessionID]controllerGate
+	probeMu      sync.Mutex
+	probed       map[domain.AgentHarness]struct{}
 }
 
 // controllerGate serializes start/stop for one session without making provider
@@ -103,6 +105,7 @@ func New(opts Options) *Service {
 		controllers:  make(map[domain.SessionID]*Controller),
 		startConfigs: make(map[domain.SessionID]StartConfig),
 		gates:        make(map[domain.SessionID]controllerGate),
+		probed:       make(map[domain.AgentHarness]struct{}),
 	}
 }
 
@@ -240,12 +243,8 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, fmt.Errorf("chat driver for %s: %w", cfg.Harness, err)
 	}
 
-	caps, err := driver.Probe(ctx)
-	if err != nil {
+	if err := s.ensureDriverReady(ctx, cfg.Harness, driver); err != nil {
 		return nil, err
-	}
-	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
-		return nil, fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, cfg.Harness, missing)
 	}
 
 	scope := domain.ConversationScopeSession
@@ -801,6 +800,21 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 	if err != nil {
 		return fmt.Errorf("%w: %s has no chat driver", ports.ErrChatUnsupported, harness)
 	}
+	return s.ensureDriverReady(ctx, harness, driver)
+}
+
+// ensureDriverReady performs the provider capability probe once per harness for
+// the lifetime of this service. Reconciliation can resume many sessions using
+// the same provider; launching a throwaway provider process for every one makes
+// startup scale with twice the number of sessions. Only successful production-
+// capable probes are cached, so a repaired install can be retried without a
+// daemon restart.
+func (s *Service) ensureDriverReady(ctx context.Context, harness domain.AgentHarness, driver ports.ChatDriver) error {
+	s.probeMu.Lock()
+	defer s.probeMu.Unlock()
+	if _, ok := s.probed[harness]; ok {
+		return nil
+	}
 	caps, err := driver.Probe(ctx)
 	if err != nil {
 		return err
@@ -808,6 +822,7 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 	if missing := ports.MissingProductionCapabilities(caps); len(missing) > 0 {
 		return fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, harness, missing)
 	}
+	s.probed[harness] = struct{}{}
 	return nil
 }
 

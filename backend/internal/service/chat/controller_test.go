@@ -194,6 +194,7 @@ type fakeDriver struct {
 	conv      ports.ChatConversation
 	startCfg  *ports.ChatStartConfig
 	resumeCfg *ports.ChatResumeConfig
+	probe     func() error
 	start     func(ports.ChatStartConfig) (ports.ChatConversation, error)
 	resume    func(ports.ChatResumeConfig) (ports.ChatConversation, error)
 }
@@ -226,6 +227,11 @@ func (d *sequenceDriver) Resume(context.Context, ports.ChatResumeConfig) (ports.
 
 func (d fakeDriver) Harness() domain.AgentHarness { return domain.HarnessCodex }
 func (d fakeDriver) Probe(context.Context) (ports.ChatCapabilities, error) {
+	if d.probe != nil {
+		if err := d.probe(); err != nil {
+			return nil, err
+		}
+	}
 	return productionCaps(), nil
 }
 func (d fakeDriver) Start(_ context.Context, cfg ports.ChatStartConfig) (ports.ChatConversation, error) {
@@ -280,6 +286,66 @@ func productionCaps() ports.ChatCapabilities {
 		ports.ChatCapabilityApprovals: true,
 		ports.ChatCapabilityInterrupt: true,
 		ports.ChatCapabilityResume:    true,
+	}
+}
+
+func TestSuccessfulChatProbeIsReusedByStart(t *testing.T) {
+	st := openStore(t)
+	probes := 0
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{
+			conv: newFakeConversation(),
+			probe: func() error {
+				probes++
+				return nil
+			},
+		}},
+		Log: slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			nextID++
+			return fmt.Sprintf("probe-cache-%d", nextID)
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+		t.Fatalf("PreflightChat: %v", err)
+	}
+	if _, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if probes != 1 {
+		t.Fatalf("Probe calls = %d, want 1 successful probe reused by Start", probes)
+	}
+}
+
+func TestFailedChatProbeCanBeRetriedThenCached(t *testing.T) {
+	attempts := 0
+	driver := fakeDriver{probe: func() error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("provider still installing")
+		}
+		return nil
+	}}
+	svc := chatsvc.New(chatsvc.Options{Drivers: fakeRegistry{driver: driver}})
+
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err == nil {
+		t.Fatal("first PreflightChat must surface the transient probe failure")
+	}
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+		t.Fatalf("second PreflightChat: %v", err)
+	}
+	if err := svc.PreflightChat(context.Background(), domain.HarnessCodex); err != nil {
+		t.Fatalf("cached PreflightChat: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("Probe attempts = %d, want one failed attempt plus one cached success", attempts)
 	}
 }
 
