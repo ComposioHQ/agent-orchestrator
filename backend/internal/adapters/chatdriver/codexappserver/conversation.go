@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver/codexproto"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/commanddetail"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -848,7 +849,7 @@ func parseApproval(method string, params json.RawMessage) ([]ports.ChatDecisionO
 
 	detail := map[string]any{"method": method}
 	if p.Command != "" {
-		detail["command"] = unwrapShell(p.Command)
+		detail["command"] = commanddetail.UnwrapShell(p.Command)
 		detail["rawCommand"] = p.Command
 	}
 	if p.Cwd != "" {

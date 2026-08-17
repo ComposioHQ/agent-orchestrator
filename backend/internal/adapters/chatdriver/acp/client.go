@@ -12,6 +12,7 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/commanddetail"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -576,13 +577,17 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 		copyDetail(detailMap, terminal, "signal", "signal")
 	}
 	if activityKindFromTool(tool.kind) == domain.ActivityKindCommand {
-		if cmd := commandFromInput(tool.rawInput); cmd != "" {
+		if rawCommand := rawCommandFromInput(tool.rawInput); rawCommand != "" {
 			// The neutral command-detail contract (`detail.command`) is what the
 			// chat timeline renders as the row's subject. rawInput is a
 			// provider-shaped object (claude-code Bash: {"command": "..."}); the
 			// codex driver sets this key directly, and ACP-backed harnesses must
 			// too or the UI can only ever say "Ran command".
-			detailMap["command"] = cmd
+			detailMap["command"] = commanddetail.UnwrapShell(rawCommand)
+			// Keep the exact provider value beside the display form. The timeline is
+			// an audit surface, so callers must be able to recover what actually ran
+			// even when a provider wraps it in a shell invocation.
+			detailMap["rawCommand"] = rawCommand
 		}
 	}
 	detail, _ := json.Marshal(detailMap)
@@ -632,48 +637,23 @@ func toolOutputText(raw any) string {
 	return string(encoded)
 }
 
-// commandFromInput extracts the shell command from a tool's provider-defined
-// rawInput so execute activities can carry AO's neutral `detail.command`.
+// rawCommandFromInput extracts the verbatim shell command from a tool's
+// provider-defined rawInput so execute activities can carry AO's neutral command
+// detail without making the provider object itself part of that contract.
 // Providers wrap the command differently (claude-code Bash uses
 // {"command": "..."}); anything unrecognizable stays empty rather than putting
 // a provider DTO on the wire as if it were the command.
-func commandFromInput(raw any) string {
+func rawCommandFromInput(raw any) string {
 	value, ok := raw.(map[string]any)
 	if !ok {
 		return ""
 	}
 	for _, key := range []string{"command", "cmd"} {
 		if text, ok := value[key].(string); ok && strings.TrimSpace(text) != "" {
-			return unwrapShell(text)
+			return text
 		}
 	}
 	return ""
-}
-
-// unwrapShell strips a leading `<shell> -lc '<cmd>'` wrapper when present, so
-// the timeline shows the command the reader cares about, not the wrapper the
-// provider ran it through.
-func unwrapShell(command string) string {
-	for _, flag := range []string{" -lc ", " -c "} {
-		if idx := strings.Index(command, flag); idx > 0 && looksLikeShell(command[:idx]) {
-			inner := strings.TrimSpace(command[idx+len(flag):])
-			return strings.Trim(inner, `"'`)
-		}
-	}
-	return command
-}
-
-func looksLikeShell(prefix string) bool {
-	base := prefix
-	if idx := strings.LastIndex(prefix, "/"); idx >= 0 {
-		base = base[idx+1:]
-	}
-	switch base {
-	case "sh", "bash", "zsh", "dash", "fish":
-		return true
-	default:
-		return false
-	}
 }
 
 func parentToolUseID(meta map[string]any) string {

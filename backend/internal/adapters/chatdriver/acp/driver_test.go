@@ -905,12 +905,15 @@ func TestACPDriverExtractsCommandFromExecuteToolInput(t *testing.T) {
 	if detail["command"] != "ao session ls" {
 		t.Fatalf("detail.command = %#v, want unwrapped %q", detail["command"], "ao session ls")
 	}
+	if detail["rawCommand"] != "/bin/zsh -lc 'ao session ls'" {
+		t.Fatalf("detail.rawCommand = %#v, want the verbatim provider command", detail["rawCommand"])
+	}
 	if detail["input"] == nil {
 		t.Fatalf("detail.input dropped: %#v", detail)
 	}
 }
 
-func TestCommandFromInput(t *testing.T) {
+func TestRawCommandFromInput(t *testing.T) {
 	tests := []struct {
 		name string
 		raw  any
@@ -926,7 +929,7 @@ func TestCommandFromInput(t *testing.T) {
 		{
 			name: "shell-wrapped command",
 			raw:  map[string]any{"command": "/bin/bash -c 'go build ./...'"},
-			want: "go build ./...",
+			want: "/bin/bash -c 'go build ./...'",
 		},
 		{name: "empty command", raw: map[string]any{"command": "  "}, want: ""},
 		{name: "cmd key", raw: map[string]any{"cmd": "ls"}, want: "ls"},
@@ -938,8 +941,8 @@ func TestCommandFromInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := commandFromInput(tt.raw); got != tt.want {
-				t.Fatalf("commandFromInput(%v) = %q, want %q", tt.raw, got, tt.want)
+			if got := rawCommandFromInput(tt.raw); got != tt.want {
+				t.Fatalf("rawCommandFromInput(%v) = %q, want %q", tt.raw, got, tt.want)
 			}
 		})
 	}
