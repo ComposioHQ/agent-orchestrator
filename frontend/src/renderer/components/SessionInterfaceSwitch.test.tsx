@@ -79,6 +79,39 @@ describe("SessionInterfaceSwitchButton", () => {
 		fireEvent.click(button);
 		expect(onClick).toHaveBeenCalledOnce();
 	});
+
+	it("describes recovered history accurately and hides it after durable acknowledgement", () => {
+		const recovered = { ...transition("recovery_required"), errorCode: "DAEMON_RESTARTED" };
+		const { rerender } = render(
+			<SessionInterfaceTransitionNotice transition={recovered} onDismiss={vi.fn()} />,
+		);
+
+		expect(screen.getByText("Interface switch recovered")).toBeInTheDocument();
+		expect(screen.queryByText("Interface switch needs recovery")).not.toBeInTheDocument();
+
+		rerender(
+			<SessionInterfaceTransitionNotice
+				transition={{ ...recovered, noticeAcknowledgedAt: "2026-08-13T08:00:00Z" }}
+				onDismiss={vi.fn()}
+			/>,
+		);
+		expect(screen.queryByText("Interface switch recovered")).not.toBeInTheDocument();
+	});
+
+	it("does not claim an unresolved recovery-required transition was recovered", () => {
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("recovery_required"),
+					errorCode: "SOURCE_STOP_UNCERTAIN",
+				}}
+				onDismiss={vi.fn()}
+			/>,
+		);
+
+		expect(screen.getByText("Interface switch needs attention")).toBeInTheDocument();
+		expect(screen.queryByText("Interface switch recovered")).not.toBeInTheDocument();
+	});
 });
 
 describe("SessionInterfaceSwitchDialog", () => {

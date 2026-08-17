@@ -580,7 +580,6 @@ export default function TerminalScreen() {
 	const [status, setStatus] = useState<MuxStatus>("connecting");
 	const [size, setSize] = useState<{ cols: number; rows: number } | null>(null);
 	const [banner, setBanner] = useState<string | null>(null);
-	const [dismissedInterfaceTransitionID, setDismissedInterfaceTransitionID] = useState("");
 	const [kbHeight, setKbHeight] = useState(0); // iOS: space to reserve for keyboard
 	const [kbVisible, setKbVisible] = useState(false); // both platforms
 	const [msg, setMsg] = useState("");
@@ -609,6 +608,23 @@ export default function TerminalScreen() {
 	const known = sessions.find((s) => s.id === sessionId) ?? orchestrators.find((o) => o.id === sessionId) ?? null;
 	const interfaceSwitch = useInterfaceTransition(cfg, shellOnly ? "" : sessionId, refresh);
 	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
+	const interfaceTransitionNotice =
+		!interfaceTransitionActive &&
+		!interfaceSwitch.transition?.noticeAcknowledgedAt &&
+		(interfaceSwitch.transition?.phase === "failed" ||
+			interfaceSwitch.transition?.phase === "recovery_required")
+			? interfaceSwitch.transition
+			: undefined;
+	const interfaceTransitionRecovered =
+		interfaceTransitionNotice?.phase === "recovery_required" &&
+		interfaceTransitionNotice.errorCode === "DAEMON_RESTARTED";
+	const interfaceTransitionNoticeText =
+		interfaceTransitionNotice?.errorDetail ||
+		(interfaceTransitionRecovered
+			? "AO restored the session in its last committed interface."
+			: interfaceTransitionNotice?.phase === "recovery_required"
+				? "The interface switch needs recovery before more work is sent."
+				: "The interface switch failed; Terminal UI remains available.");
 	const interfaceFailureRecovery = useMemo(
 		() => terminalInterfaceFailureRecovery(interfaceSwitch.transition),
 		[interfaceSwitch.transition?.errorCode],
@@ -1220,11 +1236,14 @@ export default function TerminalScreen() {
 					<Text style={styles.bannerText}>{banner} (tap to dismiss)</Text>
 				</Pressable>
 			)}
-			{!interfaceTransitionActive &&
-			interfaceSwitch.transition?.id !== dismissedInterfaceTransitionID &&
-			(interfaceSwitch.transition?.phase === "failed" || interfaceSwitch.transition?.phase === "recovery_required") ? (
+			{interfaceTransitionNotice ? (
 				<View style={styles.banner}>
-					<Text style={styles.bannerText}>{interfaceSwitch.transition.errorDetail || "The interface switch failed; Terminal UI remains available."}</Text>
+					<Text style={styles.bannerText}>
+						{interfaceTransitionNoticeText}
+						{interfaceSwitch.acknowledgeNoticeError
+							? ` Could not dismiss: ${interfaceSwitch.acknowledgeNoticeError}`
+							: ""}
+					</Text>
 					<View style={styles.interfaceFailureActions}>
 						{interfaceFailureRecovery ? (
 							<Pressable
@@ -1240,12 +1259,17 @@ export default function TerminalScreen() {
 						<Pressable
 							accessibilityRole="button"
 							accessibilityLabel="Dismiss interface switch error"
+							disabled={interfaceSwitch.acknowledgingNotice}
 							onPress={() => {
 								haptics.tap();
-								setDismissedInterfaceTransitionID(interfaceSwitch.transition?.id ?? "");
+								void interfaceSwitch
+									.acknowledgeNotice(interfaceTransitionNotice.id)
+									.catch(() => {});
 							}}
 						>
-							<Text style={styles.interfaceFailureDismissText}>Dismiss</Text>
+							<Text style={styles.interfaceFailureDismissText}>
+								{interfaceSwitch.acknowledgingNotice ? "Dismissing…" : "Dismiss"}
+							</Text>
 						</Pressable>
 					</View>
 				</View>

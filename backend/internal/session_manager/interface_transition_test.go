@@ -136,6 +136,26 @@ func (s *transitionStore) AdvanceSessionInterfaceTransition(_ context.Context, i
 	return true, nil
 }
 
+func (s *transitionStore) AcknowledgeSessionInterfaceTransitionNotice(
+	_ context.Context,
+	sessionID domain.SessionID,
+	transitionID string,
+	now time.Time,
+) (domain.SessionInterfaceTransition, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.transitions[transitionID]
+	if !ok || rec.SessionID != sessionID ||
+		(rec.Phase != domain.SessionInterfaceTransitionFailed && rec.Phase != domain.SessionInterfaceTransitionRecovery) {
+		return domain.SessionInterfaceTransition{}, false, nil
+	}
+	if rec.NoticeAcknowledgedAt.IsZero() {
+		rec.NoticeAcknowledgedAt = now
+		s.transitions[transitionID] = rec
+	}
+	return rec, true, nil
+}
+
 func (s *transitionStore) EnqueueSessionInterfaceTransitionMessage(_ context.Context, transitionID, clientMessageID, message string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2086,6 +2106,68 @@ func TestCancelInterfaceTransitionDoesNotAcknowledgeALostStopBoundaryRace(t *tes
 	transition, _, _ := store.GetSessionInterfaceTransition(context.Background(), "transition-1")
 	if transition.Phase != domain.SessionInterfaceTransitionSourceStopping {
 		t.Fatalf("phase = %q, want source_stopping", transition.Phase)
+	}
+}
+
+func TestAcknowledgeInterfaceTransitionNoticePersistsAndIsIdempotent(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	settledAt := time.Date(2026, 8, 13, 8, 0, 0, 0, time.UTC)
+	store.transitions["transition-1"] = domain.SessionInterfaceTransition{
+		ID: "transition-1", SessionID: "session-1",
+		SourceMode: domain.SessionModeChat, TargetMode: domain.SessionModeTUI,
+		Policy: domain.SessionInterfaceTransitionDrain,
+		Phase:  domain.SessionInterfaceTransitionRecovery, ErrorCode: "DAEMON_RESTARTED",
+		CreatedAt: settledAt.Add(-time.Minute), UpdatedAt: settledAt, CompletedAt: settledAt,
+	}
+
+	acknowledged, err := manager.AcknowledgeInterfaceTransitionNotice(
+		context.Background(), "session-1", "transition-1",
+	)
+	if err != nil {
+		t.Fatalf("acknowledge notice: %v", err)
+	}
+	if acknowledged.NoticeAcknowledgedAt.IsZero() {
+		t.Fatal("notice acknowledgement was not persisted")
+	}
+	if !acknowledged.UpdatedAt.Equal(settledAt) {
+		t.Fatalf("acknowledgement changed transition settlement time to %v", acknowledged.UpdatedAt)
+	}
+
+	again, err := manager.AcknowledgeInterfaceTransitionNotice(
+		context.Background(), "session-1", "transition-1",
+	)
+	if err != nil {
+		t.Fatalf("acknowledge notice again: %v", err)
+	}
+	if !again.NoticeAcknowledgedAt.Equal(acknowledged.NoticeAcknowledgedAt) {
+		t.Fatalf("idempotent acknowledgement changed timestamp from %v to %v",
+			acknowledged.NoticeAcknowledgedAt, again.NoticeAcknowledgedAt)
+	}
+}
+
+func TestAcknowledgeInterfaceTransitionNoticeIsScopedToTerminalFailureNotice(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	now := time.Now()
+	store.transitions["transition-1"] = domain.SessionInterfaceTransition{
+		ID: "transition-1", SessionID: "session-1",
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy: domain.SessionInterfaceTransitionDrain,
+		Phase:  domain.SessionInterfaceTransitionCompleted, CreatedAt: now, UpdatedAt: now,
+	}
+
+	if _, err := manager.AcknowledgeInterfaceTransitionNotice(
+		context.Background(), "session-1", "transition-1",
+	); !errors.Is(err, ErrInterfaceTransitionNoticeNotAcknowledgeable) {
+		t.Fatalf("completed acknowledgement error = %v, want ErrInterfaceTransitionNoticeNotAcknowledgeable", err)
+	}
+
+	transition := store.transitions["transition-1"]
+	transition.Phase = domain.SessionInterfaceTransitionFailed
+	store.transitions["transition-1"] = transition
+	if _, err := manager.AcknowledgeInterfaceTransitionNotice(
+		context.Background(), "different-session", "transition-1",
+	); !errors.Is(err, ErrInterfaceTransitionNotFound) {
+		t.Fatalf("cross-session acknowledgement error = %v, want ErrInterfaceTransitionNotFound", err)
 	}
 }
 

@@ -41,6 +41,7 @@ type interfaceTransitionStore interface {
 	ListActiveSessionInterfaceTransitions(context.Context) ([]domain.SessionInterfaceTransition, error)
 	ListDeliverableSessionInterfaceTransitions(context.Context) ([]domain.SessionInterfaceTransition, error)
 	AdvanceSessionInterfaceTransition(context.Context, string, domain.SessionInterfaceTransitionPhase, domain.SessionInterfaceTransitionPhase, string, string, string, time.Time) (bool, error)
+	AcknowledgeSessionInterfaceTransitionNotice(context.Context, domain.SessionID, string, time.Time) (domain.SessionInterfaceTransition, bool, error)
 	EnqueueSessionInterfaceTransitionMessage(context.Context, string, string, string, time.Time) error
 	ListPendingSessionInterfaceTransitionMessages(context.Context, string) ([]domain.SessionInterfaceTransitionMessage, error)
 	MarkSessionInterfaceTransitionMessageDelivered(context.Context, int64, time.Time) error
@@ -254,6 +255,42 @@ func (m *Manager) CancelInterfaceTransition(ctx context.Context, id domain.Sessi
 	}
 	m.wakeTransitionMessageDispatcher()
 	return nil
+}
+
+// AcknowledgeInterfaceTransitionNotice records that a failed/recovered handoff
+// notice has been seen without deleting the transition's audit history. Both
+// ids are checked so a stale client cannot accidentally dismiss a newer row or
+// a transition owned by another session.
+func (m *Manager) AcknowledgeInterfaceTransitionNotice(
+	ctx context.Context,
+	id domain.SessionID,
+	transitionID string,
+) (domain.SessionInterfaceTransition, error) {
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return domain.SessionInterfaceTransition{}, ErrInterfaceHandoffUnsupported
+	}
+	transition, found, err := store.GetSessionInterfaceTransition(ctx, transitionID)
+	if err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
+	if !found || transition.SessionID != id {
+		return domain.SessionInterfaceTransition{}, ErrInterfaceTransitionNotFound
+	}
+	if transition.Phase != domain.SessionInterfaceTransitionFailed &&
+		transition.Phase != domain.SessionInterfaceTransitionRecovery {
+		return domain.SessionInterfaceTransition{}, ErrInterfaceTransitionNoticeNotAcknowledgeable
+	}
+	acknowledged, changed, err := store.AcknowledgeSessionInterfaceTransitionNotice(
+		ctx, id, transitionID, m.clock(),
+	)
+	if err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
+	if !changed {
+		return domain.SessionInterfaceTransition{}, ErrInterfaceTransitionNoticeNotAcknowledgeable
+	}
+	return acknowledged, nil
 }
 
 func (m *Manager) runInterfaceTransition(

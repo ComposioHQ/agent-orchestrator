@@ -1,4 +1,12 @@
-import { ArrowRightLeft, Loader2, MessageSquare, SquareTerminal, TriangleAlert, X } from "lucide-react";
+import {
+	ArrowRightLeft,
+	CheckCircle2,
+	Loader2,
+	MessageSquare,
+	SquareTerminal,
+	TriangleAlert,
+	X,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import type {
 	SessionInterfaceMode,
@@ -41,7 +49,7 @@ const phaseCopy: Record<SessionInterfaceTransition["phase"], string> = {
 	completed: "Interface switched",
 	failed: "Interface switch failed",
 	cancelled: "Interface switch cancelled",
-	recovery_required: "Interface switch needs recovery",
+	recovery_required: "Interface switch needs attention",
 };
 
 export function SessionInterfaceSwitchButton({
@@ -220,24 +228,50 @@ export function SessionInterfaceSwitchDialog({
 export function SessionInterfaceTransitionNotice({
 	transition,
 	onDismiss,
+	dismissing,
+	dismissError,
 	onSwitchWithInterrupt,
 	interrupting,
 }: {
 	transition?: SessionInterfaceTransition;
 	onDismiss: () => void;
+	dismissing?: boolean;
+	dismissError?: string;
 	onSwitchWithInterrupt?: () => void;
 	interrupting?: boolean;
 }) {
-	if (!transition || (transition.phase !== "failed" && transition.phase !== "recovery_required")) {
+	if (
+		!transition ||
+		transition.noticeAcknowledgedAt ||
+		(transition.phase !== "failed" && transition.phase !== "recovery_required")
+	) {
 		return null;
 	}
+	const recovered =
+		transition.phase === "recovery_required" && transition.errorCode === "DAEMON_RESTARTED";
 	return (
-		<div className="absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-2 rounded-lg border border-warning/30 bg-popover px-3 py-2.5 shadow-md">
-			<TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+		<div
+			className={cn(
+				"absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-1.5rem))] -translate-x-1/2 items-start gap-2 rounded-lg border bg-popover px-3 py-2.5 shadow-md",
+				recovered ? "border-success/30" : "border-warning/30",
+			)}
+		>
+			{recovered ? (
+				<CheckCircle2 aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-success" />
+			) : (
+				<TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+			)}
 			<div className="min-w-0 flex-1">
-				<strong className="block text-xs font-medium text-foreground">{phaseCopy[transition.phase]}</strong>
+				<strong className="block text-xs font-medium text-foreground">
+					{recovered ? "Interface switch recovered" : phaseCopy[transition.phase]}
+				</strong>
 				<p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-					{transition.errorDetail || "The original interface remains available. You can retry the switch."}
+					{transition.errorDetail ||
+						(recovered
+							? "AO restored the session in its last committed interface."
+							: transition.phase === "recovery_required"
+								? "Restart AO to reconcile this session before sending more work."
+								: "The original interface remains available. You can retry the switch.")}
 				</p>
 				{transition.phase === "failed" &&
 				(transition.errorCode === "DRAIN_DRAFT_PRESENT" ||
@@ -257,14 +291,24 @@ export function SessionInterfaceTransitionNotice({
 							: "Cancel request and switch"}
 					</Button>
 				) : null}
+				{dismissError ? (
+					<p role="alert" className="mt-1 text-[11px] leading-4 text-destructive">
+						Could not dismiss this message. Try again.
+					</p>
+				) : null}
 			</div>
 			<button
 				type="button"
 				className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
 				onClick={onDismiss}
+				disabled={dismissing}
 				aria-label="Dismiss interface switch message"
 			>
-				<X aria-hidden="true" className="size-3.5" />
+				{dismissing ? (
+					<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+				) : (
+					<X aria-hidden="true" className="size-3.5" />
+				)}
 			</button>
 		</div>
 	);

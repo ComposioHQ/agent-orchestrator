@@ -79,6 +79,7 @@ type interfaceTransitionCommander interface {
 	InterfaceTransitionStatus(context.Context, domain.SessionID) (sessionmanager.InterfaceTransitionStatus, error)
 	StartInterfaceTransition(context.Context, domain.SessionID, domain.SessionMode, domain.SessionInterfaceTransitionPolicy) (domain.SessionInterfaceTransition, error)
 	CancelInterfaceTransition(context.Context, domain.SessionID) error
+	AcknowledgeInterfaceTransitionNotice(context.Context, domain.SessionID, string) (domain.SessionInterfaceTransition, error)
 }
 
 // RollbackOutcome reports what happened in a rollback: either the seed row was
@@ -589,6 +590,22 @@ func (s *Service) CancelInterfaceTransition(ctx context.Context, id domain.Sessi
 	return toAPIError(manager.CancelInterfaceTransition(ctx, id))
 }
 
+// AcknowledgeInterfaceTransitionNotice durably dismisses one terminal failure
+// or recovery notice while retaining the transition record for diagnostics.
+func (s *Service) AcknowledgeInterfaceTransitionNotice(
+	ctx context.Context,
+	id domain.SessionID,
+	transitionID string,
+) (domain.SessionInterfaceTransition, error) {
+	manager, ok := s.manager.(interfaceTransitionCommander)
+	if !ok {
+		return domain.SessionInterfaceTransition{}, apierr.Conflict(
+			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
+	}
+	transition, err := manager.AcknowledgeInterfaceTransitionNotice(ctx, id, transitionID)
+	return transition, toAPIError(err)
+}
+
 func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
 	switch mode {
 	case sessionmanager.RestoreModeNative:
@@ -907,11 +924,14 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotCancellable):
 		return apierr.Conflict("INTERFACE_TRANSITION_NOT_CANCELLABLE",
 			"The source controller has already stopped; AO must finish or recover the switch", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNoticeNotAcknowledgeable):
+		return apierr.Conflict("INTERFACE_TRANSITION_NOTICE_NOT_ACKNOWLEDGEABLE",
+			"This interface switch has no failure or recovery notice to acknowledge", nil)
 	case errors.Is(err, sessionmanager.ErrInterfaceAlreadySelected):
 		return apierr.Conflict("INTERFACE_ALREADY_SELECTED",
 			"The session is already using the requested interface", nil)
 	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotFound):
-		return apierr.NotFound("INTERFACE_TRANSITION_NOT_FOUND", "No active interface switch exists")
+		return apierr.NotFound("INTERFACE_TRANSITION_NOT_FOUND", "Interface switch not found")
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)

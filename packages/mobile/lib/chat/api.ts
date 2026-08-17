@@ -55,6 +55,7 @@ export type SessionInterfaceTransition = {
 	createdAt: string;
 	updatedAt: string;
 	completedAt?: string;
+	noticeAcknowledgedAt?: string;
 };
 
 export type SessionInterfaceTransitionStatus = {
@@ -94,6 +95,20 @@ export async function cancelSessionInterfaceTransition(
 	await apiRequest(cfg, `${API}/sessions/${encodeURIComponent(sessionId)}/interface-transition`, {
 		method: "DELETE",
 	});
+}
+
+export async function acknowledgeSessionInterfaceTransitionNotice(
+	cfg: ServerConfig,
+	sessionId: string,
+	transitionId: string,
+): Promise<SessionInterfaceTransition> {
+	const res = await apiRequest(
+		cfg,
+		`${API}/sessions/${encodeURIComponent(sessionId)}/interface-transition/${encodeURIComponent(transitionId)}/notice-acknowledgement`,
+		{ method: "PUT" },
+	);
+	const body = (await res.json()) as { transition: SessionInterfaceTransition };
+	return body.transition;
 }
 
 type WireSnapshot = Omit<ConversationSnapshot, "items" | "controller"> & {

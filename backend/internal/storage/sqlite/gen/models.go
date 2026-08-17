@@ -427,6 +427,7 @@ type SessionInterfaceTransition struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	CompletedAt          sql.NullTime
+	NoticeAcknowledgedAt sql.NullTime
 }
 
 type SessionInterfaceTransitionMessage struct {

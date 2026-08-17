@@ -119,10 +119,13 @@ var (
 	ErrInterfaceTransitionInProgress = errors.New("session: interface transition already in progress")
 	// ErrInterfaceTransitionNotFound distinguishes a missing handoff from a
 	// missing session when DELETE is retried after the transition settled.
-	ErrInterfaceTransitionNotFound = errors.New("session: no active interface transition")
+	ErrInterfaceTransitionNotFound = errors.New("session: interface transition not found")
 	// ErrInterfaceTransitionNotCancellable protects the no-overlap invariant once
 	// the source controller is already stopping or stopped.
 	ErrInterfaceTransitionNotCancellable = errors.New("session: interface transition can no longer be cancelled")
+	// ErrInterfaceTransitionNoticeNotAcknowledgeable rejects acknowledgements for
+	// active/successful rows that have no failure or recovery notice to dismiss.
+	ErrInterfaceTransitionNoticeNotAcknowledgeable = errors.New("session: interface transition has no acknowledgeable notice")
 	// ErrResumeInProgress prevents concurrent resume requests from replacing the
 	// same runtime twice.
 	ErrResumeInProgress = errors.New("session: agent resume already in progress")

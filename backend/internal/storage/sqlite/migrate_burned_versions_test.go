@@ -102,6 +102,7 @@ var shippedMigrations = map[int64]string{
 	96: "0096_session_worktree_base_ref.sql",
 	97: "0097_pr_provider_identity.sql",
 	98: "0098_session_native_identity_generation.sql",
+	99: "0099_interface_transition_notice_acknowledgement.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
