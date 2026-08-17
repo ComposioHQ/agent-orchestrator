@@ -2,8 +2,6 @@ package deepseekharness
 
 import (
 	"context"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -12,21 +10,13 @@ import (
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
-// deepseekAPIKeyEnvVar is the name of the env var DeepSeek Harness reads for
-// an API key. A non-empty value is treated as a positive auth signal — it
-// short-circuits the binary probe entirely.
-//
-//nolint:gosec // G101: this is the env var name, not a credential value.
-const deepseekAPIKeyEnvVar = "DEEPSEEK_API_KEY"
-
-// AuthStatus reports DeepSeek Harness's local auth posture without making a
+// AuthStatus reports DeepSeek CLI's local auth posture without making a
 // model call.
 //
-//   - DEEPSEEK_API_KEY non-empty → authorized.
 //   - binary missing on PATH and well-known locations → unknown, with
 //     ports.ErrAgentBinaryNotFound so callers surface the install step.
-//   - binary present → run `dsh --version` with a 3 s timeout. A zero exit
-//     means the CLI is runnable; we still cannot prove a key is configured,
+//   - binary present → run `deepseek --version` with a 3 s timeout. A zero exit
+//     means the CLI is runnable; we still cannot prove its /auth state,
 //     so the probe returns unknown. The actual launch remains the
 //     authoritative check.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
@@ -34,11 +24,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnknown, err
 	}
 
-	if strings.TrimSpace(os.Getenv(deepseekAPIKeyEnvVar)) != "" {
-		return ports.AgentAuthStatusAuthorized, nil
-	}
-
-	binary, err := p.dshBinary(ctx)
+	binary, err := p.deepseekBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
