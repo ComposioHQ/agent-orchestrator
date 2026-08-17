@@ -131,8 +131,8 @@ func TestRegistryIncludesDeepSeekHarness(t *testing.T) {
 		t.Fatal("registry does not contain deepseek-harness")
 	}
 	manifest := adapter.Manifest()
-	if manifest.Name != "DeepSeek Harness" {
-		t.Fatalf("deepseek-harness manifest name = %q, want DeepSeek Harness", manifest.Name)
+	if manifest.Name != "DeepSeek" {
+		t.Fatalf("deepseek-harness manifest name = %q, want DeepSeek", manifest.Name)
 	}
 
 	for _, item := range Harnessed() {

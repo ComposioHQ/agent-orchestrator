@@ -66,7 +66,7 @@ export const AGENT_LABELS: Record<AgentId, string> = {
 	kimchi: "Kimchi",
 	"prime-agent": "Prime Agent",
 	autohand: "Autohand",
-	"deepseek-harness": "DeepSeek Harness",
+	"deepseek-harness": "DeepSeek",
 	omp: "OMP",
 };
 

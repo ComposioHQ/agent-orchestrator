@@ -16,6 +16,7 @@ import continueLogo from "../assets/agents/continue.png";
 import copilotLogo from "../assets/agents/copilot.svg";
 import crushLogo from "../assets/agents/crush.png";
 import cursorLogo from "../assets/agents/cursor.svg";
+import deepseekLogo from "../assets/agents/deepseek-harness.svg";
 import devinLogo from "../assets/agents/devin.png";
 import droidLogo from "../assets/agents/droid.png";
 import gooseLogo from "../assets/agents/goose.svg";
@@ -39,6 +40,7 @@ const LOGOS: AgentLogoSources = {
 	"claude-code": claudeCodeLogo,
 	claude: claudeLogo,
 	cursor: cursorLogo,
+	"deepseek-harness": deepseekLogo,
 	opencode: opencodeLogo,
 	copilot: copilotLogo,
 	aider: aiderLogo,

@@ -36,8 +36,8 @@ func TestManifestID(t *testing.T) {
 	if m.ID != "deepseek-harness" {
 		t.Fatalf("manifest ID = %q, want %q", m.ID, "deepseek-harness")
 	}
-	if m.Name != "DeepSeek Harness" {
-		t.Fatalf("manifest Name = %q, want %q", m.Name, "DeepSeek Harness")
+	if m.Name != "DeepSeek" {
+		t.Fatalf("manifest Name = %q, want %q", m.Name, "DeepSeek")
 	}
 	if !strings.Contains(m.Description, "DeepSeek Harness") {
 		t.Fatalf("manifest Description = %q, want it to mention DeepSeek Harness", m.Description)

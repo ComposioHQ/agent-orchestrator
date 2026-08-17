@@ -12,18 +12,12 @@ describe("AgentAvatar", () => {
 		);
 	});
 
-	it("renders the DeepSeek Harness brand asset", () => {
+	it("renders the DeepSeek brand asset", () => {
 		render(<AgentAvatar provider="deepseek-harness" />);
 
-		const img = screen.queryByRole("img", { name: "deepseek-harness" });
-		if (img?.tagName.toLowerCase() === "img") {
-			expect(img).toHaveAttribute("src", expect.stringContaining("data:image/svg+xml"));
-		} else {
-			const el = screen.getByLabelText("deepseek-harness");
-			expect(
-				["svg", "img"].includes(el.tagName.toLowerCase()) || el.getAttribute("role") === "img",
-			).toBe(true);
-		}
+		const image = screen.getByRole("img", { name: "deepseek-harness" });
+		expect(image).toHaveAttribute("src", expect.stringMatching(/^data:image\/svg\+xml/));
+		expect(image.getAttribute("src")).toContain("DeepSeek");
 	});
 
 	it("renders the OMP brand asset", () => {
