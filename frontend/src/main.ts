@@ -116,6 +116,18 @@ if (process.platform === "win32") {
 	app.setAppUserModelId("dev.agent-orchestrator.desktop");
 }
 
+// Escape hatch for hosts whose GPU driver stack crashes Chromium on startup
+// (Linux/Wayland in practice, #3961). Chromium still runs a GPU process; what
+// this drops is the vendor driver, falling the process back to Electron's
+// bundled SwiftShader. There is no window yet when the crashes happen, so an
+// in-app setting is unreachable and an env var is the only knob that works.
+// Truthy allowlist mirrors keepDaemonAlive() so "off"/"no" cannot accidentally
+// turn the GPU off. Must run before app ready — the call throws after that.
+const disableGpu = process.env.AO_DISABLE_GPU?.trim().toLowerCase();
+if (disableGpu === "1" || disableGpu === "true" || disableGpu === "yes" || disableGpu === "on") {
+	app.disableHardwareAcceleration();
+}
+
 // Pin ALL Electron-owned state (Chromium cache, cookies, local/session storage,
 // crash dumps) under the canonical AO home at ~/.ao instead of Electron's macOS
 // default ~/Library/Application Support/<name>. Keeps the app's entire footprint
