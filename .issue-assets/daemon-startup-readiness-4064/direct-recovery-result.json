@@ -1,0 +1,133 @@
+{
+  "scenario": "real daemon restart with eight dead TUI runtimes and eight dirty registered worktrees",
+  "fixture": {
+    "projectId": "startup-e2e",
+    "sessionCount": 8,
+    "runtime": "tmux + ao agent-process supervise + deterministic fake claude executable",
+    "dataDir": "/tmp/ao-4064-e2e.jZGO1T/data",
+    "loopbackPort": 60112
+  },
+  "timing": {
+    "fromAgentResolverLogToListeningMs": 1174,
+    "startedAt": "2026-08-17T17:34:51.630+05:30",
+    "listeningAt": "2026-08-17T17:34:52.804+05:30"
+  },
+  "assertions": {
+    "readyWithin30Seconds": true,
+    "allSessionRowsStillLive": true,
+    "allRuntimeLaunchesRotated": true,
+    "allDirtySentinelsByteIdentical": true,
+    "allWorkspacePathsUnchanged": true,
+    "allTmuxRuntimesRecreated": true,
+    "pendingSessionWorktreeMarkers": 0,
+    "stashOperationsObservedInDaemonLog": 0,
+    "forceDestroyOperationsObservedInDaemonLog": 0,
+    "fallbackTeardownsObservedInDaemonLog": 0
+  },
+  "sessions": [
+    {
+      "id": "startup-e2e-1",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-1",
+      "runtimeHandleId": "startup-e2e-1",
+      "originalLaunchId": "1eaab3de-d8ca-4a69-bae6-730c79abb49b",
+      "recoveredLaunchId": "a9053417-ec61-406a-9a69-319fa117a339",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_1.txt",
+      "expectedSha256": "9c4d570b4fadbcc8c3ae6d6f4995abccfbd887cd250deaf35b100d01159affaa",
+      "recoveredSha256": "9c4d570b4fadbcc8c3ae6d6f4995abccfbd887cd250deaf35b100d01159affaa",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-2",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-2",
+      "runtimeHandleId": "startup-e2e-2",
+      "originalLaunchId": "b1508e02-9a18-4c02-ae97-6136296b6e49",
+      "recoveredLaunchId": "fad0b6ea-ae9a-4b3b-a7c8-cc8076a57b8f",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_2.txt",
+      "expectedSha256": "1e762c788f406f23bbfb92be3bc31d6fcb42a8e0dc5bd259baebb8485d6261b9",
+      "recoveredSha256": "1e762c788f406f23bbfb92be3bc31d6fcb42a8e0dc5bd259baebb8485d6261b9",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-3",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-3",
+      "runtimeHandleId": "startup-e2e-3",
+      "originalLaunchId": "4c8bcdd1-ddda-4a50-8e88-6fa2cc3b5b23",
+      "recoveredLaunchId": "4b5448e8-f506-414c-88e6-13f4e7fbddb1",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_3.txt",
+      "expectedSha256": "f3b87501aecee1ba24139d0537472e65401509dfeb5dd794f1743651d15984ea",
+      "recoveredSha256": "f3b87501aecee1ba24139d0537472e65401509dfeb5dd794f1743651d15984ea",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-4",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-4",
+      "runtimeHandleId": "startup-e2e-4",
+      "originalLaunchId": "f515aa84-64df-437a-877a-60dc23b8752f",
+      "recoveredLaunchId": "b93c1b09-fdd0-4816-b2e8-23a2466b1182",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_4.txt",
+      "expectedSha256": "34875e8ba0211b2884dcce348b3c328f1bf5ef185846565fe8c041ebf70f61e1",
+      "recoveredSha256": "34875e8ba0211b2884dcce348b3c328f1bf5ef185846565fe8c041ebf70f61e1",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-5",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-5",
+      "runtimeHandleId": "startup-e2e-5",
+      "originalLaunchId": "89dee37b-af7e-46a4-b789-a96fa75994ae",
+      "recoveredLaunchId": "f3e26bee-336e-4657-aaac-9c005c26696b",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_5.txt",
+      "expectedSha256": "f609c699068bcbce77a0e6117b75cd7583c804e83a6cc72a2062a02eb4725ba9",
+      "recoveredSha256": "f609c699068bcbce77a0e6117b75cd7583c804e83a6cc72a2062a02eb4725ba9",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-6",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-6",
+      "runtimeHandleId": "startup-e2e-6",
+      "originalLaunchId": "9ac85780-17fb-4a6f-910e-c3013c8f8a58",
+      "recoveredLaunchId": "3849603a-27b6-4c89-87e3-5ab2a15e2108",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_6.txt",
+      "expectedSha256": "307f657165687018b04d4a2c3c7f8141467888395fd187c8e913cfd36badf308",
+      "recoveredSha256": "307f657165687018b04d4a2c3c7f8141467888395fd187c8e913cfd36badf308",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-7",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-7",
+      "runtimeHandleId": "startup-e2e-7",
+      "originalLaunchId": "887179cf-ab3e-41b5-9328-843869356946",
+      "recoveredLaunchId": "06e4686f-ca68-4040-a722-cb31ffa0b0ab",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_7.txt",
+      "expectedSha256": "069b901b84ba063f768edf0159035f3700d4d1e02acb565b33cc8a9be15320b8",
+      "recoveredSha256": "069b901b84ba063f768edf0159035f3700d4d1e02acb565b33cc8a9be15320b8",
+      "sentinelPreserved": true
+    },
+    {
+      "id": "startup-e2e-8",
+      "workspacePath": "/private/tmp/ao-4064-e2e.jZGO1T/data/worktrees/startup-e2e/startup-e2e-8",
+      "runtimeHandleId": "startup-e2e-8",
+      "originalLaunchId": "275f368e-dd2c-4486-855b-3be0f5772ea0",
+      "recoveredLaunchId": "37132a8e-915e-4503-b576-4f1e1eac862c",
+      "launchRotated": true,
+      "isTerminated": false,
+      "sentinel": "E2E_UNCOMMITTED_8.txt",
+      "expectedSha256": "e839a7070e2f7e57b28836ea59db22e0f5611a4dede6874a67c65b8db25a7c15",
+      "recoveredSha256": "e839a7070e2f7e57b28836ea59db22e0f5611a4dede6874a67c65b8db25a7c15",
+      "sentinelPreserved": true
+    }
+  ]
+}
