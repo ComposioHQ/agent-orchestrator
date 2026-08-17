@@ -1823,6 +1823,28 @@ type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
 
+// ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.
+type ResolveReviewCommentRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	CommentURL     string `json:"commentUrl" description:"Provider URL of the unresolved review comment to resolve."`
+}
+
+// ResolveReviewCommentResponse is returned after AO resolves a provider review thread.
+type ResolveReviewCommentResponse struct {
+	OK bool `json:"ok"`
+}
+
+// RequestRereviewRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/rerequest.
+type RequestRereviewRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	ReviewerID     string `json:"reviewerId" description:"Provider login of the reviewer to ask for another review."`
+}
+
+// RequestRereviewResponse is returned after AO asks the SCM provider for another review.
+type RequestRereviewResponse struct {
+	OK bool `json:"ok"`
+}
+
 // MobileDeviceResponse is one row of the desktop's mobile-device roster: the
 // stored registration plus whether that phone is running the app right now.
 type MobileDeviceResponse struct {

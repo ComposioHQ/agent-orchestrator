@@ -474,6 +474,58 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
+	it("lists worker sessions by last activity, newest first", () => {
+		const oldest: WorkspaceSession = {
+			...session,
+			id: "proj-1-old",
+			title: "old task",
+			createdAt: "2026-06-29T00:00:00Z",
+			updatedAt: "2026-07-02T00:00:00Z",
+			activity: { state: "idle", lastActivityAt: "2026-07-01T00:00:00Z" },
+		};
+		const newest: WorkspaceSession = {
+			...session,
+			id: "proj-1-new",
+			title: "new task",
+			createdAt: "2026-07-01T00:00:00Z",
+			updatedAt: "2026-07-01T00:00:00Z",
+			activity: { state: "active", lastActivityAt: "2026-07-02T00:00:00Z" },
+		};
+		const noActivity: WorkspaceSession = {
+			...session,
+			id: "proj-1-no-activity",
+			title: "no activity",
+			createdAt: "2026-06-29T00:00:00Z",
+			updatedAt: "2026-07-03T00:00:00Z",
+		};
+		const invalidActivity: WorkspaceSession = {
+			...session,
+			id: "proj-1-invalid-activity",
+			title: "invalid activity",
+			createdAt: "2026-06-29T00:00:00Z",
+			updatedAt: "2026-07-04T00:00:00Z",
+			activity: { state: "idle", lastActivityAt: "not-a-timestamp" },
+		};
+		const createdFallback: WorkspaceSession = {
+			...session,
+			id: "proj-1-created-fallback",
+			title: "created fallback",
+			createdAt: "2026-07-05T00:00:00Z",
+			updatedAt: "not-a-timestamp",
+			activity: { state: "idle", lastActivityAt: "also-not-a-timestamp" },
+		};
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [oldest, newest, noActivity, invalidActivity, createdFallback] }] });
+
+		const sessionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-session-row] button[aria-label^="Open "]'));
+		expect(sessionButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
+			"Open created fallback",
+			"Open invalid activity",
+			"Open no activity",
+			"Open new task",
+			"Open old task",
+		]);
+	});
+
 	it("navigates to the project board when the project row button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();

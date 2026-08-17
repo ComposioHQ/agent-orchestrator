@@ -901,6 +901,9 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrNativeConversationMissing):
 		return apierr.Conflict("NATIVE_SESSION_MISSING",
 			"The agent has not exposed a native conversation that can resume in the other interface", nil)
+	case errors.Is(err, sessionmanager.ErrNativeConversationUnverified):
+		return apierr.Conflict("NATIVE_SESSION_UNVERIFIED",
+			"The current terminal launch has not confirmed that it owns the stored native conversation yet", nil)
 	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotCancellable):
 		return apierr.Conflict("INTERFACE_TRANSITION_NOT_CANCELLABLE",
 			"The source controller has already stopped; AO must finish or recover the switch", nil)
@@ -968,6 +971,8 @@ func toAPIError(err error) error {
 		return apierr.Invalid("SCRATCH_BRANCH_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceDefaultBranchUnresolved):
+		return apierr.Invalid("DEFAULT_BRANCH_UNRESOLVED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):
 		return apierr.Invalid("BRANCH_NOT_FETCHED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchInvalid):
