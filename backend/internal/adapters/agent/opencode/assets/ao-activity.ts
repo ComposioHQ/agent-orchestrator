@@ -1,10 +1,11 @@
 // agent-orchestrator: managed opencode activity plugin (do not edit)
 //
-// It maps opencode's native lifecycle events onto AO's three normalized
+// It maps opencode's native lifecycle events onto AO's normalized
 // activity events:
 //   session.created                       -> `ao hooks opencode session-start`
 //   message.updated / message.part.updated -> `ao hooks opencode user-prompt-submit`
 //   session.status (status.type == idle)   -> `ao hooks opencode stop`
+//   client.permissionRequest               -> `ao hooks opencode permission-blocked`
 //
 // The opencode-native session id (and prompt/model where known) is piped to the
 // hook command as JSON on stdin, run with cwd set to the worktree so AO can
@@ -161,6 +162,16 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             const sessionID = props?.sessionID ?? currentSessionID
             if (!sessionID) break
             callHookSync("stop", { session_id: sessionID, model: currentModel ?? "" })
+            break
+          }
+
+          case "client.permissionRequest": {
+            // Detect permission blocker dialogs (e.g., directory access, tool use)
+            // and notify AO so the session moves to "needs you" section.
+            const props = (event as any).properties
+            const sessionID = props?.sessionID ?? currentSessionID
+            if (!sessionID) break
+            callHookSync("permission-blocked", { session_id: sessionID, model: currentModel ?? "" })
             break
           }
         }
