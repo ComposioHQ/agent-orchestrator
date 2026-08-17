@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A visual companion to AO's end-to-end terminal architecture research and migration recommendation.">
+  <title>Where terminal truth lives — AO visual architecture study</title>
+  <style>
+    :root {
+      --paper: #f2efe7;
+      --paper-deep: #e8e3d8;
+      --ink: #122027;
+      --ink-soft: #43545a;
+      --night: #101c22;
+      --night-2: #172931;
+      --line: rgba(18, 32, 39, .16);
+      --cream: #fffaf0;
+      --coral: #f06c55;
+      --coral-soft: #ffd8cf;
+      --cyan: #62d7d0;
+      --cyan-soft: #caf5ef;
+      --acid: #d4e66d;
+      --gold: #e4b455;
+      --blue: #87aef4;
+      --shadow: 0 20px 60px rgba(18, 32, 39, .12);
+      --radius: 20px;
+      --serif: "Iowan Old Style", "Baskerville", "Times New Roman", serif;
+      --sans: "Avenir Next", "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(18, 32, 39, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(18, 32, 39, .035) 1px, transparent 1px),
+        var(--paper);
+      background-size: 36px 36px;
+      font: 17px/1.65 var(--sans);
+      text-rendering: optimizeLegibility;
+    }
+
+    a { color: inherit; }
+    button { font: inherit; }
+    code { font-family: var(--mono); }
+
+    .skip-link {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 100;
+      padding: 10px 14px;
+      color: var(--cream);
+      background: var(--night);
+      border-radius: 8px;
+      transform: translateY(-150%);
+    }
+    .skip-link:focus { transform: none; }
+
+    .reading-progress {
+      position: fixed;
+      inset: 0 auto auto 0;
+      z-index: 80;
+      width: 0;
+      height: 4px;
+      background: linear-gradient(90deg, var(--coral), var(--gold), var(--cyan));
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      max-width: 1500px;
+      margin: 0 auto;
+    }
+
+    .rail {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      padding: 36px 24px;
+      border-right: 1px solid var(--line);
+      background: rgba(242, 239, 231, .84);
+      backdrop-filter: blur(14px);
+    }
+    .rail-mark {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 44px;
+      font: 800 12px/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .rail-mark::before {
+      width: 14px;
+      height: 14px;
+      content: "";
+      background: var(--coral);
+      border-radius: 50% 50% 8% 50%;
+      transform: rotate(45deg);
+    }
+    .rail nav { display: grid; gap: 4px; }
+    .rail nav a {
+      position: relative;
+      padding: 8px 10px 8px 18px;
+      color: #6d7778;
+      font: 650 13px/1.25 var(--sans);
+      text-decoration: none;
+      border-radius: 8px;
+      transition: .2s ease;
+    }
+    .rail nav a::before {
+      position: absolute;
+      top: 13px;
+      left: 3px;
+      width: 5px;
+      height: 5px;
+      content: "";
+      background: currentColor;
+      border-radius: 50%;
+      opacity: .35;
+    }
+    .rail nav a:hover,
+    .rail nav a.active {
+      color: var(--ink);
+      background: rgba(255, 255, 255, .6);
+    }
+    .rail nav a.active::before { background: var(--coral); opacity: 1; }
+    .rail-meta {
+      position: absolute;
+      right: 24px;
+      bottom: 28px;
+      left: 24px;
+      color: #6b7779;
+      font: 11px/1.6 var(--mono);
+    }
+
+    main { min-width: 0; overflow: hidden; }
+    section { scroll-margin-top: 30px; }
+    .page { padding: 0 clamp(28px, 6vw, 90px); }
+
+    .hero {
+      position: relative;
+      min-height: 94vh;
+      display: grid;
+      align-content: center;
+      padding-top: 70px;
+      padding-bottom: 70px;
+      isolation: isolate;
+    }
+    .hero::before {
+      position: absolute;
+      z-index: -1;
+      top: 9%;
+      right: -5%;
+      width: 430px;
+      aspect-ratio: 1;
+      content: "";
+      border: 1px solid rgba(18, 32, 39, .13);
+      border-radius: 50%;
+      box-shadow: inset 0 0 0 55px var(--paper), inset 0 0 0 56px rgba(18, 32, 39, .09), inset 0 0 0 110px var(--paper), inset 0 0 0 111px rgba(18, 32, 39, .07);
+      opacity: .85;
+    }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 24px;
+      color: var(--coral);
+      font: 800 12px/1 var(--mono);
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+    .eyebrow::after { width: 74px; height: 1px; content: ""; background: currentColor; }
+    h1 {
+      max-width: 980px;
+      margin: 0;
+      font: 500 clamp(58px, 8vw, 126px)/.88 var(--serif);
+      letter-spacing: -.065em;
+    }
+    h1 em { color: var(--coral); font-style: italic; }
+    .hero-deck {
+      max-width: 760px;
+      margin: 36px 0 0 clamp(0px, 9vw, 120px);
+      color: var(--ink-soft);
+      font: 500 clamp(20px, 2.2vw, 30px)/1.35 var(--sans);
+    }
+    .hero-deck strong { color: var(--ink); }
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      max-width: 940px;
+      margin-top: 58px;
+      overflow: hidden;
+      background: var(--line);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .stat { padding: 20px; background: rgba(255, 250, 240, .7); }
+    .stat b { display: block; font: 500 34px/1 var(--serif); }
+    .stat span { color: var(--ink-soft); font: 700 10px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+
+    .chapter {
+      padding-top: 110px;
+      padding-bottom: 110px;
+      border-top: 1px solid var(--line);
+    }
+    .chapter-head {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 26px;
+      margin-bottom: 52px;
+    }
+    .chapter-no { padding-top: 12px; color: var(--coral); font: 800 12px/1 var(--mono); letter-spacing: .12em; }
+    h2 { max-width: 900px; margin: 0; font: 500 clamp(40px, 5vw, 74px)/.98 var(--serif); letter-spacing: -.045em; }
+    .chapter-intro { max-width: 800px; margin: 20px 0 0; color: var(--ink-soft); font-size: 20px; }
+    h3 { margin: 0; font: 600 25px/1.18 var(--serif); }
+    .kicker { color: var(--coral); font: 800 10px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+
+    .terminal-chain {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 34px;
+      padding: 36px;
+      color: var(--cream);
+      background: var(--night);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .terminal-chain::after {
+      position: absolute;
+      right: 36px;
+      bottom: 24px;
+      color: rgba(255,255,255,.28);
+      content: "RAW BYTES → RAW BYTES → RAW BYTES";
+      font: 10px/1 var(--mono);
+      letter-spacing: .14em;
+    }
+    .chain-node { position: relative; min-height: 180px; padding: 20px; border: 1px solid rgba(255,255,255,.15); border-radius: 14px; background: rgba(255,255,255,.035); }
+    .chain-node:not(:last-child)::after {
+      position: absolute;
+      top: 50%;
+      right: -27px;
+      width: 20px;
+      content: "→";
+      color: var(--coral);
+      font: 26px/1 var(--mono);
+    }
+    .chain-node .index { color: var(--cyan); font: 11px/1 var(--mono); }
+    .chain-node b { display: block; margin: 24px 0 10px; font: 600 22px/1.1 var(--serif); }
+    .chain-node p { margin: 0; color: #aebdc1; font-size: 13px; line-height: 1.5; }
+    .chain-node.state-owner { border-color: rgba(240,108,85,.7); }
+    .chain-node.state-owner::before { position: absolute; top: -9px; right: 12px; padding: 4px 7px; content: "STATE"; color: var(--night); background: var(--coral); border-radius: 4px; font: 800 8px/1 var(--mono); letter-spacing: .1em; }
+
+    .pain-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 22px; }
+    .pain-card { min-height: 190px; padding: 24px; background: rgba(255,250,240,.72); border: 1px solid var(--line); border-radius: 14px; }
+    .pain-card .glyph { display: grid; place-items: center; width: 34px; height: 34px; margin-bottom: 26px; color: var(--night); background: var(--coral-soft); border-radius: 50%; font: 800 14px/1 var(--mono); }
+    .pain-card p { margin: 10px 0 0; color: var(--ink-soft); font-size: 14px; }
+
+    .thesis {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .thesis > div { padding: clamp(30px, 5vw, 68px); }
+    .thesis .no { background: var(--cream); }
+    .thesis .yes { color: var(--cream); background: var(--night); }
+    .thesis-label { margin-bottom: 28px; font: 800 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .no .thesis-label { color: var(--coral); }
+    .yes .thesis-label { color: var(--cyan); }
+    .thesis blockquote { margin: 0 0 26px; font: 500 clamp(29px, 3vw, 47px)/1.04 var(--serif); }
+    .thesis p { margin: 0; color: var(--ink-soft); }
+    .thesis .yes p { color: #b9c8cc; }
+
+    .landscape { display: grid; gap: 14px; }
+    .option {
+      display: grid;
+      grid-template-columns: 190px 120px 1fr 200px;
+      gap: 24px;
+      align-items: center;
+      padding: 22px 24px;
+      background: rgba(255,250,240,.76);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .option.recommended { border: 2px solid var(--coral); background: var(--cream); }
+    .option-name b { display: block; font: 650 21px/1.1 var(--serif); }
+    .option-name small { color: var(--ink-soft); font: 10px/1.4 var(--mono); }
+    .status-pill { justify-self: start; padding: 6px 9px; border-radius: 99px; font: 800 9px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+    .status-now { background: var(--cyan-soft); }
+    .status-core { background: var(--coral-soft); }
+    .status-study { background: #e4e5de; }
+    .option-copy { color: var(--ink-soft); font-size: 14px; }
+    .option-role { padding-left: 18px; border-left: 1px solid var(--line); font-size: 13px; }
+    .option-role b { display: block; color: var(--coral); font: 800 9px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+
+    .evidence-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 40px; }
+    .evidence { padding: 22px; border-top: 4px solid var(--cyan); background: var(--night); color: var(--cream); border-radius: 4px 4px 14px 14px; }
+    .evidence:nth-child(2) { border-color: var(--coral); }
+    .evidence:nth-child(3) { border-color: var(--gold); }
+    .evidence:nth-child(4) { border-color: var(--blue); }
+    .evidence b { display: block; margin-bottom: 11px; font: 600 20px/1 var(--serif); }
+    .evidence p { margin: 0; color: #afbec2; font-size: 13px; }
+    .evidence a { display: inline-block; margin-top: 18px; color: var(--cyan); font: 700 10px/1 var(--mono); text-decoration: none; }
+
+    .candidate-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+    .candidate { position: relative; min-height: 320px; padding: 30px; overflow: hidden; background: var(--cream); border: 1px solid var(--line); border-radius: var(--radius); }
+    .candidate::after { position: absolute; right: -30px; bottom: -56px; width: 160px; height: 160px; content: ""; border: 26px solid var(--paper-deep); border-radius: 50%; }
+    .candidate.target { color: var(--cream); background: var(--night); border-color: var(--night); }
+    .candidate.recommend { border: 3px solid var(--coral); }
+    .candidate-letter { color: var(--coral); font: 800 12px/1 var(--mono); letter-spacing: .12em; }
+    .candidate h3 { max-width: 75%; margin-top: 28px; font-size: 30px; }
+    .candidate p { max-width: 78%; color: var(--ink-soft); font-size: 14px; }
+    .candidate.target p { color: #aebfc3; }
+    .score { position: absolute; top: 26px; right: 26px; display: grid; place-items: center; width: 70px; height: 70px; background: conic-gradient(var(--coral) var(--score), rgba(120,130,132,.18) 0); border-radius: 50%; }
+    .score::before { position: absolute; width: 54px; height: 54px; content: ""; background: var(--cream); border-radius: 50%; }
+    .target .score::before { background: var(--night); }
+    .score b { position: relative; font: 700 17px/1 var(--mono); }
+    .candidate-tags { position: absolute; bottom: 26px; left: 30px; display: flex; flex-wrap: wrap; gap: 6px; max-width: 72%; }
+    .candidate-tags span { padding: 5px 8px; background: var(--paper-deep); border-radius: 4px; font: 700 9px/1 var(--mono); }
+    .target .candidate-tags span { color: var(--night); background: var(--cyan); }
+
+    .recommendation-banner {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 26px;
+      align-items: center;
+      margin-top: 22px;
+      padding: 30px;
+      background: var(--coral);
+      border-radius: 16px;
+    }
+    .recommendation-banner .arrow { font: 400 82px/1 var(--serif); text-align: center; }
+    .recommendation-banner b { display: block; font: 600 27px/1.1 var(--serif); }
+    .recommendation-banner p { margin: 8px 0 0; }
+
+    .architecture {
+      position: relative;
+      padding: clamp(28px, 5vw, 60px);
+      overflow: hidden;
+      color: var(--cream);
+      background: var(--night);
+      border-radius: 24px;
+      box-shadow: 0 35px 90px rgba(18,32,39,.22);
+    }
+    .architecture::before { position: absolute; inset: 0; content: ""; background: radial-gradient(circle at 80% 20%, rgba(98,215,208,.13), transparent 30%), radial-gradient(circle at 20% 90%, rgba(240,108,85,.11), transparent 26%); pointer-events: none; }
+    .arch-title { position: relative; display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 42px; }
+    .arch-title h3 { max-width: 700px; font-size: clamp(32px, 4vw, 53px); }
+    .arch-title span { color: var(--cyan); font: 700 10px/1 var(--mono); letter-spacing: .12em; }
+    .arch-grid { position: relative; display: grid; grid-template-columns: 1fr 90px 1.25fr 90px 1.7fr; gap: 14px; align-items: center; }
+    .arch-column { display: grid; gap: 12px; }
+    .arch-label { margin-bottom: 7px; color: #7f9399; font: 800 9px/1 var(--mono); letter-spacing: .13em; text-transform: uppercase; }
+    .arch-box { padding: 17px; border: 1px solid rgba(255,255,255,.16); border-radius: 11px; background: rgba(255,255,255,.045); }
+    .arch-box b { display: block; font: 600 17px/1.1 var(--serif); }
+    .arch-box small { display: block; margin-top: 5px; color: #91a5aa; font: 11px/1.35 var(--mono); }
+    .arch-box.client { border-left: 3px solid var(--blue); }
+    .arch-box.gateway { border-color: var(--gold); }
+    .arch-box.host { padding: 22px; border: 2px solid var(--coral); background: rgba(240,108,85,.06); }
+    .host-core { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 18px; }
+    .host-core div { padding: 12px; color: #c7d2d4; background: rgba(255,255,255,.055); border-radius: 7px; font: 10px/1.35 var(--mono); }
+    .arch-arrow { color: var(--cyan); font: 400 39px/1 var(--serif); text-align: center; }
+    .arch-foot { position: relative; display: flex; justify-content: space-between; gap: 20px; margin-top: 30px; padding-top: 22px; border-top: 1px solid rgba(255,255,255,.12); color: #9bafb4; font-size: 12px; }
+    .arch-foot b { color: var(--cream); }
+
+    .truth-rule { margin: 32px auto 0; max-width: 900px; padding: 32px; border-left: 5px solid var(--coral); font: 500 clamp(24px, 3vw, 38px)/1.2 var(--serif); background: rgba(255,250,240,.64); }
+
+    .protocol-flow { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+    .protocol-step { position: relative; min-height: 230px; padding: 23px; background: var(--cream); border: 1px solid var(--line); border-radius: 14px; }
+    .protocol-step:not(:last-child)::after { position: absolute; z-index: 2; top: 31px; right: -16px; width: 20px; content: "→"; color: var(--coral); font: 24px/1 var(--mono); }
+    .protocol-step .num { display: grid; place-items: center; width: 28px; height: 28px; margin-bottom: 35px; color: var(--cream); background: var(--night); border-radius: 50%; font: 800 10px/1 var(--mono); }
+    .protocol-step h3 { font-size: 20px; }
+    .protocol-step p { margin: 9px 0 0; color: var(--ink-soft); font-size: 13px; }
+    .protocol-step code { display: inline-block; margin-top: 16px; padding: 5px 7px; color: #0a5755; background: var(--cyan-soft); border-radius: 4px; font-size: 10px; }
+
+    .lease-demo { display: grid; grid-template-columns: 1fr 1.4fr; gap: 30px; margin-top: 46px; align-items: center; }
+    .lease-copy h3 { font-size: 36px; }
+    .lease-copy p { color: var(--ink-soft); }
+    .lease-copy ol { padding-left: 19px; color: var(--ink-soft); font-size: 14px; }
+    .lease-copy li { margin: 8px 0; padding-left: 7px; }
+    .screens { position: relative; min-height: 390px; }
+    .screen { position: absolute; overflow: hidden; color: var(--cyan); background: var(--night); border: 5px solid #263a43; border-radius: 12px; box-shadow: 0 20px 50px rgba(18,32,39,.22); }
+    .screen::before { display: block; height: 19px; content: "●  ●  ●"; padding: 7px 10px; color: #677b80; background: #263a43; font: 8px/1 var(--mono); }
+    .screen::after { display: block; padding: 16px; white-space: pre; content: "$ ao work\A session ready\A ▋"; font: 12px/1.7 var(--mono); }
+    .screen.controller { z-index: 2; top: 20px; left: 0; width: 68%; height: 300px; border-color: var(--coral); }
+    .screen.controller .screen-label { background: var(--coral); }
+    .screen.observer { z-index: 3; right: 0; bottom: 5px; width: 45%; height: 210px; }
+    .screen.phone { z-index: 4; right: 18%; bottom: 0; width: 23%; height: 245px; border-radius: 20px; transform: translateY(35px); }
+    .screen-label { position: absolute; right: 8px; bottom: 8px; padding: 5px 7px; color: var(--night); background: var(--cyan); border-radius: 3px; font: 800 8px/1 var(--mono); letter-spacing: .08em; }
+
+    .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .feature { min-height: 185px; padding: 23px; background: rgba(255,250,240,.72); border: 1px solid var(--line); border-radius: 14px; }
+    .feature-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+    .feature-no { color: var(--coral); font: 800 10px/1 var(--mono); }
+    .feature-state { width: 10px; height: 10px; background: var(--acid); border-radius: 50%; box-shadow: 0 0 0 5px rgba(212,230,109,.25); }
+    .feature h3 { margin-top: 28px; font-size: 22px; }
+    .feature p { margin: 9px 0 0; color: var(--ink-soft); font-size: 13px; }
+
+    .roadmap { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+    .roadmap::before { position: absolute; top: 53px; right: 10%; left: 10%; height: 2px; content: ""; background: linear-gradient(90deg, var(--coral), var(--gold), var(--cyan)); }
+    .phase { position: relative; padding-top: 82px; }
+    .phase::before { position: absolute; z-index: 2; top: 42px; left: 28px; width: 22px; height: 22px; content: ""; background: var(--paper); border: 6px solid var(--coral); border-radius: 50%; }
+    .phase:nth-child(2)::before { border-color: var(--gold); }
+    .phase:nth-child(3)::before { border-color: var(--cyan); }
+    .phase-card { min-height: 500px; padding: 28px; background: var(--cream); border: 1px solid var(--line); border-radius: var(--radius); }
+    .phase:nth-child(2) .phase-card { background: #fff6e2; }
+    .phase:nth-child(3) .phase-card { color: var(--cream); background: var(--night); }
+    .phase-time { color: var(--coral); font: 800 11px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    .phase:nth-child(2) .phase-time { color: #9b6c12; }
+    .phase:nth-child(3) .phase-time { color: var(--cyan); }
+    .phase h3 { margin-top: 20px; font-size: 32px; }
+    .phase-outcome { margin: 18px 0 24px; padding-bottom: 22px; color: var(--ink-soft); border-bottom: 1px solid var(--line); font-size: 14px; }
+    .phase:nth-child(3) .phase-outcome { color: #aabdc1; border-color: rgba(255,255,255,.13); }
+    .phase ul { margin: 0; padding: 0; list-style: none; }
+    .phase li { position: relative; margin: 12px 0; padding-left: 20px; font-size: 13px; }
+    .phase li::before { position: absolute; top: 8px; left: 0; width: 7px; height: 7px; content: ""; background: currentColor; border-radius: 50%; opacity: .32; }
+    .phase-gate { margin-top: 24px; padding: 14px; color: var(--ink); background: var(--cyan-soft); border-radius: 8px; font: 700 11px/1.4 var(--mono); }
+
+    .risk-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    details { background: rgba(255,250,240,.75); border: 1px solid var(--line); border-radius: 12px; }
+    summary { position: relative; padding: 20px 50px 20px 22px; cursor: pointer; font: 650 16px/1.3 var(--sans); list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { position: absolute; top: 18px; right: 20px; content: "+"; color: var(--coral); font: 25px/1 var(--serif); }
+    details[open] summary::after { content: "−"; }
+    details p { margin: 0; padding: 0 22px 22px; color: var(--ink-soft); font-size: 14px; }
+
+    .closing {
+      position: relative;
+      min-height: 78vh;
+      display: grid;
+      align-content: center;
+      color: var(--cream);
+      background: var(--night);
+    }
+    .closing .page { position: relative; }
+    .closing .eyebrow { color: var(--cyan); }
+    .closing h2 { max-width: 1050px; font-size: clamp(50px, 7vw, 105px); }
+    .closing h2 em { color: var(--coral); font-style: italic; }
+    .closing p { max-width: 780px; color: #acbec2; font-size: 20px; }
+    .closing-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 36px; }
+    .button { display: inline-flex; align-items: center; gap: 12px; padding: 13px 18px; color: var(--night); background: var(--cyan); border-radius: 7px; font: 800 11px/1 var(--mono); letter-spacing: .05em; text-decoration: none; }
+    .button.secondary { color: var(--cream); background: transparent; border: 1px solid rgba(255,255,255,.25); }
+    .closing-meta { margin-top: 50px; color: #758a90; font: 11px/1.7 var(--mono); }
+
+    .reveal { opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s ease; }
+    .reveal.visible { opacity: 1; transform: none; }
+
+    @media (max-width: 1120px) {
+      body { padding-bottom: 72px; }
+      .shell { grid-template-columns: 1fr; }
+      .rail { position: fixed; z-index: 70; top: auto; right: 12px; bottom: 12px; left: 12px; width: auto; height: auto; padding: 10px; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+      .rail-mark, .rail-meta { display: none; }
+      .rail nav { display: flex; width: max-content; }
+      .rail nav a { padding: 8px 11px; font-size: 11px; }
+      .rail nav a::before { display: none; }
+      .hero-stats { grid-template-columns: repeat(2, 1fr); }
+      .terminal-chain { grid-template-columns: repeat(2, 1fr); }
+      .chain-node:nth-child(2)::after { display: none; }
+      .option { grid-template-columns: 160px 105px 1fr; }
+      .option-role { grid-column: 3; padding: 0; border: 0; }
+      .arch-grid { grid-template-columns: 1fr 55px 1fr; }
+      .arch-grid .arch-arrow:nth-of-type(4), .arch-grid .arch-column:last-child { grid-column: 3; }
+      .protocol-flow { grid-template-columns: repeat(3, 1fr); }
+      .protocol-step:nth-child(3)::after { display: none; }
+    }
+
+    @media (max-width: 760px) {
+      body { font-size: 16px; }
+      .page { padding-right: 20px; padding-left: 20px; }
+      .hero { min-height: auto; padding-top: 90px; }
+      .hero::before { width: 270px; }
+      h1 { font-size: clamp(52px, 17vw, 80px); }
+      .hero-deck { margin-left: 0; }
+      .hero-stats { grid-template-columns: repeat(2, 1fr); }
+      .chapter { padding-top: 78px; padding-bottom: 78px; }
+      .chapter-head { grid-template-columns: 1fr; gap: 8px; }
+      .terminal-chain, .pain-grid, .thesis, .candidate-grid, .feature-grid, .roadmap, .risk-list, .lease-demo { grid-template-columns: 1fr; }
+      .terminal-chain { gap: 18px; }
+      .chain-node:not(:last-child)::after { top: auto; right: 50%; bottom: -19px; transform: rotate(90deg); }
+      .chain-node:nth-child(2)::after { display: block; }
+      .option { grid-template-columns: 1fr; gap: 12px; }
+      .option-role { grid-column: auto; }
+      .evidence-strip { grid-template-columns: repeat(2, 1fr); }
+      .recommendation-banner { grid-template-columns: 1fr; }
+      .recommendation-banner .arrow { text-align: left; }
+      .arch-grid { grid-template-columns: 1fr; }
+      .arch-arrow { transform: rotate(90deg); }
+      .arch-grid .arch-arrow:nth-of-type(4), .arch-grid .arch-column:last-child { grid-column: auto; }
+      .host-core { grid-template-columns: 1fr; }
+      .arch-foot { display: grid; }
+      .protocol-flow { grid-template-columns: 1fr; }
+      .protocol-step:not(:last-child)::after { top: auto; right: 50%; bottom: -17px; transform: rotate(90deg); }
+      .protocol-step:nth-child(3)::after { display: block; }
+      .screens { min-height: 350px; }
+      .roadmap::before { display: none; }
+      .phase { padding-top: 16px; }
+      .phase::before { display: none; }
+      .phase-card { min-height: auto; }
+      .closing { min-height: 84vh; padding-bottom: 70px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .reveal { opacity: 1; transform: none; transition: none; }
+    }
+
+    @media print {
+      .rail, .reading-progress { display: none; }
+      .shell { display: block; }
+      .hero, .chapter, .closing { break-inside: avoid; }
+      body { background: white; }
+      .reveal { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="reading-progress" aria-hidden="true"></div>
+
+  <div class="shell">
+    <aside class="rail" aria-label="Document navigation">
+      <div class="rail-mark">AO systems study</div>
+      <nav>
+        <a href="#thesis">The problem</a>
+        <a href="#landscape">The landscape</a>
+        <a href="#candidates">The decision</a>
+        <a href="#target">Target system</a>
+        <a href="#protocol">State protocol</a>
+        <a href="#experience">Feature bar</a>
+        <a href="#migration">Migration</a>
+        <a href="#risks">Risks</a>
+      </nav>
+      <div class="rail-meta">VISUAL COMPANION<br>2026 · RESEARCH / DIRECTION</div>
+    </aside>
+
+    <main id="main">
+      <header class="hero page">
+        <p class="eyebrow">Terminal architecture · end to end</p>
+        <h1>Where terminal <em>truth</em> lives.</h1>
+        <p class="hero-deck">AO’s terminal is not just a canvas. It is a <strong>distributed state machine</strong> stretched across an agent, tmux, a PTY stream, the network, and a browser renderer.</p>
+        <div class="hero-stats" aria-label="Architecture summary">
+          <div class="stat"><b>3</b><span>stateful terminal layers today</span></div>
+          <div class="stat"><b>1</b><span>authority in the target system</span></div>
+          <div class="stat"><b>4.05</b><span>recommended bridge score / 5</span></div>
+          <div class="stat"><b>Now → Later</b><span>staged, reversible migration</span></div>
+        </div>
+      </header>
+
+      <section class="chapter page" id="thesis">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">01 / THE PROBLEM</div>
+          <div><h2>Three layers can all be “right” and the screen can still be wrong.</h2><p class="chapter-intro">Today each viewer receives a fresh tmux attach stream and rebuilds a screen in xterm.js. That delivers local persistence, but every boundary can introduce a different idea of size, history, modes, and repaint timing.</p></div>
+        </div>
+
+        <div class="terminal-chain reveal" aria-label="Current AO terminal chain">
+          <div class="chain-node state-owner"><span class="index">01</span><b>Agent / TUI</b><p>Writes VT sequences inside a tmux pane. Its behavior depends on the pane’s TERM and current grid.</p></div>
+          <div class="chain-node state-owner"><span class="index">02</span><b>tmux</b><p>Owns the durable Unix process, screen, history, terminal modes, and pane dimensions.</p></div>
+          <div class="chain-node"><span class="index">03</span><b>Attach PTY</b><p>One fresh <code>tmux attach</code> per viewer emits handshakes and a non-atomic repaint.</p></div>
+          <div class="chain-node state-owner"><span class="index">04</span><b>xterm.js 5.5</b><p>Parses the stream again, owns client scrollback, fits the layout, then paints via WebGL or canvas.</p></div>
+        </div>
+
+        <div class="pain-grid reveal">
+          <article class="pain-card"><div class="glyph">↻</div><h3>Reattach artifacts</h3><p>A current screen arrives as a timed sequence of redraws, so users can see history fast-forward or stale intermediate frames.</p></article>
+          <article class="pain-card"><div class="glyph">↔</div><h3>Resize fights</h3><p>One PTY has one grid. Desktop, web, and phone viewers all measure different grids and can trigger reflow.</p></article>
+          <article class="pain-card"><div class="glyph">⌁</div><h3>WAN backlog</h3><p>Raw bytes preserve obsolete animations. A slow viewer can receive every paint instead of jumping to current state.</p></article>
+          <article class="pain-card"><div class="glyph">Aa</div><h3>Font / GPU drift</h3><p>Glyph metrics, font loading, DPR, WebGL atlases, and canvas fallback are coupled to session symptoms.</p></article>
+          <article class="pain-card"><div class="glyph">?</div><h3>Weak attribution</h3><p>The agent, tmux, attach PTY, transport, parser, and renderer can each plausibly own the same visual bug.</p></article>
+          <article class="pain-card"><div class="glyph">⊞</div><h3>Platform split</h3><p>Unix relies on tmux; Windows already has a centralized ConPTY host with a raw replay ring.</p></article>
+        </div>
+
+        <div class="thesis reveal" style="margin-top: 44px">
+          <div class="no"><div class="thesis-label">Tempting first move</div><blockquote>“Replace xterm.js and the regressions go away.”</blockquote><p>A new renderer still consumes a per-client attach stream, negotiates another size, reconstructs history from bytes, and inherits Unix/Windows divergence.</p></div>
+          <div class="yes"><div class="thesis-label">The architectural move</div><blockquote>Move terminal authority next to the process.</blockquote><p>Own the PTY, canonical size, VT state, scrollback, and ordered history once. Make every UI a resumable view of that truth.</p></div>
+        </div>
+      </section>
+
+      <section class="chapter page" id="landscape">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">02 / THE LANDSCAPE</div>
+          <div><h2>Use each terminal project for what it is actually good at.</h2><p class="chapter-intro">No available project is a complete drop-in answer for AO’s cloud, browser, mobile, multi-client, Unix, and Windows requirements. The right architecture composes a strong core with an AO-owned protocol and client boundary.</p></div>
+        </div>
+
+        <div class="landscape reveal">
+          <article class="option"><div class="option-name"><b>xterm.js 6</b><small>BROWSER RENDERER</small></div><span class="status-pill status-now">ready now</span><div class="option-copy">Healthy, widely deployed, browser-native, rich addon ecosystem. Main-thread parsing, mobile gaps, and incomplete graphics remain.</div><div class="option-role"><b>AO role</b>Compatibility renderer and tactical upgrade</div></article>
+          <article class="option recommended"><div class="option-name"><b>libghostty-vt</b><small>HEADLESS VT CORE</small></div><span class="status-pill status-core">recommended</span><div class="option-copy">Cross-platform C/WASM API, damage rows, input encoding, and VT/text/HTML formatting. Renderer-agnostic; API still in flux.</div><div class="option-role"><b>AO role</b>Server state core, future WASM candidate</div></article>
+          <article class="option"><div class="option-name"><b>alacritty_terminal</b><small>RUST VT CORE</small></div><span class="status-pill status-study">fallback</span><div class="option-copy">Proven grid, search, damage, and serialization. Zed and Warp validate it—but their forks show the ownership cost.</div><div class="option-role"><b>AO role</b>Strong fallback if Ghostty integration fails</div></article>
+          <article class="option"><div class="option-name"><b>WezTerm / Termwiz</b><small>TERMINAL + MUX</small></div><span class="status-pill status-study">study</span><div class="option-copy">Excellent change journal and full-repaint fallback. Broad product surface and unstable extraction boundary.</div><div class="option-role"><b>AO role</b>Copy sequence and delta semantics</div></article>
+          <article class="option"><div class="option-name"><b>Zellij / tmux -CC</b><small>SESSION LAYERS</small></div><span class="status-pill status-study">bridge only</span><div class="option-copy">Useful collaboration and explicit control protocols. Neither provides AO’s final cross-platform semantic state contract.</div><div class="option-role"><b>AO role</b>Legacy bridge and UX reference</div></article>
+          <article class="option"><div class="option-name"><b>Mosh</b><small>SYNC MODEL</small></div><span class="status-pill status-study">steal ideas</span><div class="option-copy">Treats the screen as replicated state, skips obsolete frames, acknowledges state, and predicts conservative input.</div><div class="option-role"><b>AO role</b>WAN state-sync mental model</div></article>
+        </div>
+
+        <div class="evidence-strip reveal">
+          <article class="evidence"><b>VS Code</b><p>Persistent PTY service, headless xterm serializer, explicit replay completion, and high/low-watermark output acknowledgements.</p><a href="https://github.com/microsoft/vscode/blob/main/src/vs/platform/terminal/node/ptyService.ts">VIEW SOURCE ↗</a></article>
+          <article class="evidence"><b>Mosh</b><p>The current screen is state. Slow clients can skip old frames. Prediction is reconciled, not trusted blindly.</p><a href="https://mosh.org/mosh-paper-draft.pdf">READ PAPER ↗</a></article>
+          <article class="evidence"><b>Zellij</b><p>Read-only access, visible collaboration, independent client focus, and phone-specific viewport/touch affordances.</p><a href="https://zellij.dev/documentation/web-client.html">VIEW DOCS ↗</a></article>
+          <article class="evidence"><b>Warp / Zed</b><p>Keep execution remote and rendering local; preserve shell-semantic regions for richer command navigation.</p><a href="https://zed.dev/docs/remote-development">VIEW MODEL ↗</a></article>
+        </div>
+      </section>
+
+      <section class="chapter page" id="candidates">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">03 / THE DECISION</div>
+          <div><h2>Bridge deliberately. Don’t force the final renderer into the first milestone.</h2><p class="chapter-intro">Candidate C wins as the next system because it moves authority without making browser rendering, accessibility, font shaping, and mobile interaction simultaneous launch blockers. Candidate D remains the destination.</p></div>
+        </div>
+
+        <div class="candidate-grid reveal">
+          <article class="candidate"><span class="candidate-letter">A / HARDEN</span><div class="score" style="--score:49%"><b>2.45</b></div><h3>tmux attach + xterm.js 6</h3><p>Improve measurement, replay markers, acknowledgements, and resize ownership while retaining the current chain.</p><div class="candidate-tags"><span>LOW RISK</span><span>ROLLBACK</span><span>NOT TARGET</span></div></article>
+          <article class="candidate"><span class="candidate-letter">B / BRIDGE</span><div class="score" style="--score:57%"><b>2.85</b></div><h3>tmux control mode + headless client</h3><p>Removes per-viewer attach PTYs, but leaves tmux as a Unix-only authority and cannot reconstruct every hidden mode safely.</p><div class="candidate-tags"><span>MEDIUM RISK</span><span>UNIX ONLY</span></div></article>
+          <article class="candidate recommend"><span class="candidate-letter">C / RECOMMENDED NEXT</span><div class="score" style="--score:81%"><b>4.05</b></div><h3>AO Terminal Host + VT compatibility</h3><p>The host owns PTY/ConPTY and libghostty state. Existing xterm clients receive one coherent VT snapshot, then live output.</p><div class="candidate-tags"><span>ATOMIC REATTACH</span><span>CROSS-PLATFORM</span><span>INCREMENTAL</span></div></article>
+          <article class="candidate target"><span class="candidate-letter">D / TARGET</span><div class="score" style="--score:92%"><b>4.60</b></div><h3>AO state protocol + purpose-built clients</h3><p>Clients render atomic snapshots and semantic deltas. No raw-history replay, nested parsing, or transport-level renderer lock-in.</p><div class="candidate-tags"><span>BEST CEILING</span><span>HIGHEST OWNERSHIP</span></div></article>
+        </div>
+
+        <div class="recommendation-banner reveal"><div class="arrow">C → D</div><div><b>Build the authority first. Earn the new renderer later.</b><p>Use A as stabilization and rollback. Use C to unify state and platforms. Let measured cloud and client needs pull the system toward D.</p></div></div>
+      </section>
+
+      <section class="chapter page" id="target">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">04 / TARGET SYSTEM</div>
+          <div><h2>One terminal authority. Many resumable views.</h2><p class="chapter-intro">Run the state owner inside the workspace, beside the agent. The local daemon or cloud gateway authorizes and routes; it does not become the durable owner of terminal cells or secrets.</p></div>
+        </div>
+
+        <div class="architecture reveal" role="img" aria-label="Recommended AO terminal architecture">
+          <div class="arch-title"><h3>Workspace-side AO Terminal Host</h3><span>ONE HOST / TERMINAL SESSION</span></div>
+          <div class="arch-grid">
+            <div class="arch-column"><div class="arch-label">Resumable views</div><div class="arch-box client"><b>Electron</b><small>controller or observer</small></div><div class="arch-box client"><b>Web</b><small>browser over WAN</small></div><div class="arch-box client"><b>Phone</b><small>viewer by default</small></div></div>
+            <div class="arch-arrow">⇄</div>
+            <div class="arch-column"><div class="arch-label">Control plane</div><div class="arch-box gateway"><b>AO gateway / daemon</b><small>auth · attach ticket · routing · capability negotiation</small></div><div class="arch-box"><b>Legacy adapter</b><small>existing tmux sessions + rollback</small></div></div>
+            <div class="arch-arrow">⇄</div>
+            <div class="arch-column"><div class="arch-label">Inside the workspace</div><div class="arch-box host"><b>Terminal Host</b><small>owns process · PTY grid · generation · lease</small><div class="host-core"><div>LIBGHOSTTY-VT<br>screen + input modes</div><div>SNAPSHOT + DELTAS<br>bounded journal</div><div>SCROLLBACK<br>logical lines + search</div><div>IMAGE BLOBS<br>quota + references</div></div></div><div class="arch-box"><b>POSIX PTY / ConPTY → agent</b><small>the only platform-specific boundary</small></div></div>
+          </div>
+          <div class="arch-foot"><span><b>Local:</b> host and gateway may share a machine.</span><span><b>Cloud:</b> host stays with the workspace when every UI disconnects.</span><span><b>Recovery:</b> retain a raw-VT/manual attach path.</span></div>
+        </div>
+
+        <blockquote class="truth-rule reveal">The host owns the child process, PTY dimensions, VT state, and ordered history. Clients own presentation, selection, accessibility, and device interaction.</blockquote>
+      </section>
+
+      <section class="chapter page" id="protocol">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">05 / STATE PROTOCOL</div>
+          <div><h2>Resume the screen you need—not every frame you missed.</h2><p class="chapter-intro">The protocol is AO-owned and versioned. It carries semantic terminal operations, never Ghostty structs or renderer buffers. WebSocket is enough initially; message semantics remain transport-independent.</p></div>
+        </div>
+
+        <div class="protocol-flow reveal">
+          <article class="protocol-step"><div class="num">01</div><h3>Negotiate</h3><p>Client declares protocol, renderer, input, viewport, and resume capabilities.</p><code>ClientHello</code></article>
+          <article class="protocol-step"><div class="num">02</div><h3>Authorize</h3><p>Gateway grants session-scoped viewer or controller role with a short-lived ticket.</p><code>Attach</code></article>
+          <article class="protocol-step"><div class="num">03</div><h3>Snapshot</h3><p>One atomic transfer: buffers, cursor, modes, palette, links, wrap metadata, and size.</p><code>Snapshot @ seq 840</code></article>
+          <article class="protocol-step"><div class="num">04</div><h3>Advance</h3><p>Small semantic row, cursor, mode, and metadata operations carry monotonic sequence IDs.</p><code>Delta 841…n</code></article>
+          <article class="protocol-step"><div class="num">05</div><h3>Acknowledge</h3><p>Slow viewers coalesce or reset to a new snapshot. Input and control are never dropped.</p><code>Ack / ResetRequired</code></article>
+        </div>
+
+        <div class="lease-demo reveal">
+          <div class="lease-copy"><span class="kicker">THE RESIZE RULE</span><h3>One grid needs one visible controller.</h3><p>A PTY cannot be 160×48 for a desktop and 52×22 for a phone at the same time. Make the tradeoff explicit instead of hiding it in “largest socket wins.”</p><ol><li>The controller’s measured grid sets canonical PTY dimensions.</li><li>Observers crop, pan, or letterbox without resizing the process.</li><li>Control transfer changes a visible lease generation atomically.</li><li>Phones join read-only and explicitly request takeover.</li></ol></div>
+          <div class="screens" aria-label="Controller and observer screen size illustration"><div class="screen controller"><span class="screen-label">CONTROLLER · CANONICAL GRID</span></div><div class="screen observer"><span class="screen-label">OBSERVER · CROP</span></div><div class="screen phone"><span class="screen-label">PHONE · VIEW</span></div></div>
+        </div>
+      </section>
+
+      <section class="chapter page" id="experience">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">06 / FEATURE BAR</div>
+          <div><h2>“Best in class” is a complete interaction contract.</h2><p class="chapter-intro">Rendering ANSI is table stakes. Production readiness means local-feeling latency, coherent reattach, search, modern text, accessibility, rich content, and phone behavior all survive the same state model.</p></div>
+        </div>
+
+        <div class="feature-grid reveal">
+          <article class="feature"><div class="feature-head"><span class="feature-no">01 · LATENCY</span><span class="feature-state"></span></div><h3>Current state wins</h3><p>No obsolete animation backlog. Measure input → PTY → delta → paint. Predict only verified normal-shell input.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">02 · REATTACH</span><span class="feature-state"></span></div><h3>Atomic first frame</h3><p>Cursor, title, palette, modes, alt screen, links, and mouse state arrive before input is enabled.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">03 · HISTORY</span><span class="feature-state"></span></div><h3>Server search</h3><p>Page logical scrollback, preserve hard/soft wraps, and copy text without padded cells or full-history downloads.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">04 · TEXT</span><span class="feature-state"></span></div><h3>Modern input + glyphs</h3><p>Graphemes, combining marks, fallback, ligatures, CJK IME, emoji, Kitty keyboard, compose, and dead keys.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">05 · RICH CONTENT</span><span class="feature-state"></span></div><h3>Links and images</h3><p>Safe OSC 8 links and quota-controlled Kitty/SIXEL blobs that reconnect by reference, not giant inline replay.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">06 · ACCESS</span><span class="feature-state"></span></div><h3>Semantics, not pixels</h3><p>DOM accessibility mirror, screen-reader updates, contrast, reduced motion, and keyboard-only selection/search.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">07 · MOBILE</span><span class="feature-state"></span></div><h3>Touch-native viewing</h3><p>Long-press selection, touch scroll, pinch font size, safe areas, modifier row, and viewer-first control.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">08 · COLLAB</span><span class="feature-state"></span></div><h3>Visible roles</h3><p>One controller, many observers, presence, explicit takeover, and no surprise resize from a dashboard thumbnail.</p></article>
+          <article class="feature"><div class="feature-head"><span class="feature-no">09 · DIAGNOSIS</span><span class="feature-state"></span></div><h3>Layer attribution</h3><p>Generation, sequence, resize lease, parser, font, DPR, and GPU backend—without terminal content in telemetry.</p></article>
+        </div>
+      </section>
+
+      <section class="chapter page" id="migration">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">07 / MIGRATION</div>
+          <div><h2>Now, next, later—with an exit gate at every boundary.</h2><p class="chapter-intro">The plan avoids a flag day. Each phase improves the system independently, produces evidence for the next decision, and preserves a known rollback path.</p></div>
+        </div>
+
+        <div class="roadmap reveal">
+          <article class="phase"><div class="phase-card"><span class="phase-time">Now · Stabilize</span><h3>Make failure observable.</h3><p class="phase-outcome">Keep tmux and xterm deployable while defining the contracts the new host will inherit.</p><ul><li>Fixture corpus: output, input, resize, timing, semantic hashes, screenshots</li><li>Test xterm.js 6 across WebGL/canvas, DPR, fonts, IME, Unicode, and search</li><li>Add stream generation, replay completion, acknowledgements, and bounded queues</li><li>Introduce controller/viewer roles and a single resize lease</li><li>Measure attach-to-stable-frame and input-to-first-paint</li></ul><div class="phase-gate">GATE · Every regression is reproducible and no observer resizes the PTY.</div></div></article>
+          <article class="phase"><div class="phase-card"><span class="phase-time">Next · Establish authority</span><h3>Ship the Terminal Host.</h3><p class="phase-outcome">Move process and state ownership into the workspace without requiring a new renderer.</p><ul><li>Supervised per-session host with POSIX PTY and ConPTY adapters</li><li>Pin libghostty-vt behind a narrow AO-owned boundary</li><li>Shadow-parse current streams and compare fixture state</li><li>Send one coherent VT snapshot, replay barrier, then live output to xterm</li><li>Canary new sessions; retain legacy tmux sessions and creation fallback</li><li>Add bounded logical scrollback and server search</li></ul><div class="phase-gate">GATE · Atomic reconnect and identical POSIX/Windows protocol fixtures.</div></div></article>
+          <article class="phase"><div class="phase-card"><span class="phase-time">Later · Native state</span><h3>Earn renderer independence.</h3><p class="phase-outcome">Let cloud performance and interaction evidence justify a semantic client renderer.</p><ul><li>Version AO snapshot/delta protocol from observed host behavior</li><li>Run a hidden state renderer beside xterm and compare hashes</li><li>Build accessibility, IME, touch, shaping, and mobile into release gates</li><li>Move images to content-addressed blobs; preserve OSC 133 regions</li><li>Add guarded Mosh-style prediction for known-safe shell states</li><li>Graduate web, phone, and Electron independently</li></ul><div class="phase-gate">GATE · Native clients meet or beat xterm across the full feature bar.</div></div></article>
+        </div>
+      </section>
+
+      <section class="chapter page" id="risks">
+        <div class="chapter-head reveal">
+          <div class="chapter-no">08 / RISKS</div>
+          <div><h2>The difficult parts are known—and can become gates instead of surprises.</h2><p class="chapter-intro">The target trades inherited tmux behavior for deliberate product ownership. These are the questions that must stay visible while the bridge is built.</p></div>
+        </div>
+
+        <div class="risk-list reveal">
+          <details><summary>libghostty-vt API churn</summary><p>Pin revisions, wrap a tiny surface, keep AO-owned protocol types, and run a golden corpus on every upstream upgrade.</p></details>
+          <details><summary>The host crashes while owning the PTY</summary><p>Use per-session isolation, a supervisor, fault tests, and visible exit reasons. Keep tmux creation fallback until reliability is demonstrated.</p></details>
+          <details><summary>Cell width and shaping disagree</summary><p>The server determines semantic cells and negotiates width-table versions; clients shape inside those cells and report font metrics.</p></details>
+          <details><summary>A slow observer exhausts memory</summary><p>Use a bounded shared journal, per-client credit, delta coalescing, snapshot reset, and disconnection thresholds.</p></details>
+          <details><summary>Graphics become a resource attack</summary><p>Start disabled. Bound decoded bytes, dimensions, image count, storage, hyperlinks, OSC payloads, and retention before allocation.</p></details>
+          <details><summary>Accessibility arrives too late</summary><p>Treat the semantic accessibility tree, keyboard control, contrast, and reduced motion as first-renderer release gates.</p></details>
+          <details><summary>Recordings leak secrets</summary><p>Collect content-free timings by default. Make capture explicit, local-redacted, short-lived, and excluded from ordinary telemetry.</p></details>
+          <details><summary>Prediction corrupts TUI input</summary><p>Require narrow positive safety conditions, visually distinguish predicted cells, reconcile immediately, and disable on any uncertainty.</p></details>
+        </div>
+      </section>
+
+      <footer class="closing">
+        <div class="page reveal">
+          <p class="eyebrow">The recommendation in one line</p>
+          <h2>Move <em>truth</em> before pixels.</h2>
+          <p>Make the workspace Terminal Host authoritative. Use libghostty-vt to avoid reinventing terminal semantics. Keep xterm.js as a reversible client until AO’s state protocol, accessibility, and mobile experience prove a replacement is ready.</p>
+          <div class="closing-actions"><a class="button" href="terminal-architecture-e2e.md">READ THE FULL RESEARCH →</a><a class="button secondary" href="https://github.com/Untrivial-ai/agent-orchestrator/pull/4069">OPEN PR #4069 ↗</a></div>
+          <div class="closing-meta">Visual companion · canonical source: terminal-architecture-e2e.md · 40 external sources + 7 AO implementation references · prepared 2026-08-17</div>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const progress = document.querySelector('.reading-progress');
+      const links = [...document.querySelectorAll('.rail nav a')];
+      const sections = links.map((link) => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+      const reveals = [...document.querySelectorAll('.reveal')];
+
+      const updateProgress = () => {
+        const scrollable = document.documentElement.scrollHeight - window.innerHeight;
+        progress.style.width = `${scrollable > 0 ? (window.scrollY / scrollable) * 100 : 0}%`;
+      };
+
+      const sectionObserver = new IntersectionObserver((entries) => {
+        const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+        if (!visible) return;
+        links.forEach((link) => link.classList.toggle('active', link.getAttribute('href') === `#${visible.target.id}`));
+      }, { rootMargin: '-20% 0px -65%', threshold: [0, .2, .6] });
+
+      const revealObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('visible');
+          observer.unobserve(entry.target);
+        });
+      }, { threshold: .08 });
+
+      sections.forEach((section) => sectionObserver.observe(section));
+      reveals.forEach((item, index) => {
+        item.style.transitionDelay = `${Math.min(index % 3, 2) * 70}ms`;
+        revealObserver.observe(item);
+      });
+      window.addEventListener('scroll', updateProgress, { passive: true });
+      updateProgress();
+    })();
+  </script>
+</body>
+</html>

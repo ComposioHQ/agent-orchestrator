@@ -4,6 +4,8 @@
 **Date:** 2026-08-16  
 **Scope:** terminal process ownership, persistence, transport, multi-client synchronization, rendering, and interaction across AO desktop, web, mobile, local, cloud, Unix, and Windows
 
+**Visual companion:** [Read the illustrated architecture and migration guide](terminal-architecture-e2e-visual.html).
+
 ## Executive summary
 
 AO should not begin by replacing xterm.js. It should first replace the raw-byte, per-client terminal attachment model with a workspace-side **AO Terminal Host** that owns the PTY or ConPTY, maintains authoritative terminal state, and synchronizes atomic snapshots plus sequenced screen deltas to every client. The host should use `libghostty-vt` behind an AO-owned adapter, while xterm.js remains the compatibility renderer during the transition.
