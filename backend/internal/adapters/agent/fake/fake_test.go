@@ -205,8 +205,9 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 }
 
 // lifecycleStore is a minimal in-memory implementation of the store the
-// lifecycle reducer writes. Only GetSession/UpdateSession carry the activity
-// path; the PR methods are inert stubs (the fake never opens a PR row).
+// lifecycle reducer writes. Only the session read/activity-write methods carry
+// the activity path; the PR methods are inert stubs (the fake never opens a PR
+// row).
 type lifecycleStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 }
@@ -221,8 +222,29 @@ func (s *lifecycleStore) UpdateSession(_ context.Context, rec domain.SessionReco
 	return nil
 }
 
+func (s *lifecycleStore) UpdateSessionFromActivitySignal(_ context.Context, rec domain.SessionRecord) (bool, error) {
+	s.sessions[rec.ID] = rec
+	return true, nil
+}
+
 func (s *lifecycleStore) ListPRsBySession(_ context.Context, _ domain.SessionID) ([]domain.PullRequest, error) {
 	return nil, nil
+}
+
+func (s *lifecycleStore) GetPR(_ context.Context, prURL string) (domain.PullRequest, bool, error) {
+	return domain.PullRequest{URL: prURL, AutoInjectCI: true}, true, nil
+}
+
+func (s *lifecycleStore) ListPRReviews(_ context.Context, _ string) ([]domain.PullRequestReview, error) {
+	return nil, nil
+}
+
+func (s *lifecycleStore) ListPRComments(_ context.Context, _ string) ([]domain.PullRequestComment, error) {
+	return nil, nil
+}
+
+func (s *lifecycleStore) GetProject(_ context.Context, _ string) (domain.ProjectRecord, bool, error) {
+	return domain.ProjectRecord{}, false, nil
 }
 
 func (s *lifecycleStore) GetPRLastNudgeSignature(_ context.Context, _ string) (string, error) {

@@ -152,6 +152,11 @@ var schemaNames = map[string]string{
 	"ControllersConversationImageContentRequest":      "ConversationImageContentRequest",
 	"ControllersConversationResourceContentRequest":   "ConversationResourceContentRequest",
 	"ControllersSendConversationMessageResponse":      "SendConversationMessageResponse",
+	"ControllersEditConversationMessageRequest":       "EditConversationMessageRequest",
+	"ControllersConversationContentSummaryResponse":   "ConversationContentSummaryResponse",
+	"ControllersEditConversationMessageResponse":      "EditConversationMessageResponse",
+	"ControllersActivateConversationBranchResponse":   "ActivateConversationBranchResponse",
+	"ControllersConversationBranchPointResponse":      "ConversationBranchPointResponse",
 	"ControllersResolveConversationApprovalRequest":   "ResolveConversationApprovalRequest",
 	"ControllersResolveConversationInputRequest":      "ResolveConversationInputRequest",
 	"ControllersConversationModelsResponse":           "ConversationModelsResponse",
@@ -178,6 +183,7 @@ var schemaNames = map[string]string{
 	"ControllersSetConversationTitleResponse":         "SetConversationTitleResponse",
 	"ControllersSteerConversationRequest":             "SteerConversationRequest",
 	"ControllersSteerConversationResponse":            "SteerConversationResponse",
+	"ControllersPromoteQueuedTurnResponse":            "PromoteQueuedTurnResponse",
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
@@ -213,11 +219,20 @@ var schemaNames = map[string]string{
 	"ControllersBrowserCommandResponse":                   "BrowserCommandResponse",
 	"ControllersSetSessionMergePolicyRequest":             "SetSessionMergePolicyRequest",
 	"ControllersSetSessionMergePolicyResponse":            "SetSessionMergePolicyResponse",
+	"ControllersSetSessionAutoInjectReviewRequest":        "SetSessionAutoInjectReviewRequest",
+	"ControllersSetSessionAutoInjectReviewResponse":       "SetSessionAutoInjectReviewResponse",
+	"ControllersSetSessionAutoInjectCIRequest":            "SetSessionAutoInjectCIRequest",
+	"ControllersSetSessionAutoInjectCIResponse":           "SetSessionAutoInjectCIResponse",
 	"ControllersRenameSessionRequest":                     "RenameSessionRequest",
 	"ControllersSetSessionReviewerRequest":                "SetSessionReviewerRequest",
 	"ControllersRenameSessionResponse":                    "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":                   "RestoreSessionResponse",
 	"ControllersResumeAgentResponse":                      "ResumeAgentResponse",
+	"ControllersSwitchAgentRequest":                       "SwitchAgentRequest",
+	"ControllersAgentSwitchView":                          "AgentSwitch",
+	"ControllersAgentSwitchResponse":                      "AgentSwitchResponse",
+	"ControllersListAgentSwitchesResponse":                "ListAgentSwitchesResponse",
+	"ControllersSubmitAgentHandoffRequest":                "SubmitAgentHandoffRequest",
 	"ControllersStartSessionInterfaceTransitionRequest":   "StartSessionInterfaceTransitionRequest",
 	"ControllersSessionInterfaceTransitionView":           "SessionInterfaceTransition",
 	"ControllersSessionInterfaceTransitionStatusResponse": "SessionInterfaceTransitionStatusResponse",
@@ -228,6 +243,7 @@ var schemaNames = map[string]string{
 	"ControllersWorkspaceFileQuery":                       "WorkspaceFileQuery",
 	"ControllersStageSessionAttachmentsRequest":           "StageSessionAttachmentsRequest",
 	"ControllersStageSessionAttachmentsResponse":          "StageSessionAttachmentsResponse",
+	"ControllersAttachmentInput":                          "AttachmentInput",
 	"ControllersListWorkspaceFilesResponse":               "ListWorkspaceFilesResponse",
 	"ControllersWorkspaceFileSummary":                     "WorkspaceFileSummary",
 	"ControllersWorkspaceFileResponse":                    "WorkspaceFileResponse",
@@ -252,6 +268,8 @@ var schemaNames = map[string]string{
 	"ControllersListSessionPRsResponse":                   "ListSessionPRsResponse",
 	"ControllersSetActivityRequest":                       "SetActivityRequest",
 	"ControllersSetActivityResponse":                      "SetActivityResponse",
+	"ControllersSetReviewActivityRequest":                 "SetReviewActivityRequest",
+	"ControllersSetReviewActivityResponse":                "SetReviewActivityResponse",
 	"ControllersSpawnOrchestratorRequest":                 "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":                "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":                     "OrchestratorResponse",
@@ -295,6 +313,8 @@ var schemaNames = map[string]string{
 	"ControllersReviewRunResponse":     "ReviewRunResponse",
 	"ControllersTriggerReviewResponse": "TriggerReviewResponse",
 	"ControllersCancelReviewResponse":  "CancelReviewResponse",
+	"ControllersKillReviewResponse":    "KillReviewResponse",
+	"ControllersRestoreReviewResponse": "RestoreReviewResponse",
 	"ControllersSubmitReviewItem":      "SubmitReviewItem",
 	"ControllersSubmitReviewInput":     "SubmitReviewInput",
 	// domain review entities
@@ -307,7 +327,12 @@ var schemaNames = map[string]string{
 	"ControllersDevImportProjectsRequest":  "DevImportProjectsRequest",
 	"ControllersDevImportProjectsResponse": "DevImportProjectsResponse",
 	// httpd/controllers: mobile wire envelopes
-	"ControllersMobileStatusResponse": "MobileStatusResponse",
+	"ControllersMobileStatusResponse":  "MobileStatusResponse",
+	"ControllersMobileDeviceResponse":  "MobileDeviceResponse",
+	"ControllersMobileDevicesResponse": "MobileDevicesResponse",
+	"ControllersMuteDeviceRequest":     "MuteDeviceRequest",
+	"ControllersInstallIDParam":        "InstallIDParam",
+	"ControllersPushPairingIDParam":    "PushPairingIDParam",
 	// devimport report
 	"DevimportReport":   "DevImportProjectsReport",
 	"DevimportConflict": "DevImportProjectsConflict",
@@ -418,6 +443,7 @@ func operations() []operation {
 	ops = append(ops, importOperations()...)
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
+	ops = append(ops, mobileDeviceOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
 	ops = append(ops, prerequisiteOperations()...)
@@ -533,6 +559,32 @@ func shellTerminalOperations() []operation {
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.SendConversationMessageResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit", id: "editSessionConversationMessage", tag: "conversations",
+			summary:    "Branch before and replace an earlier human prompt",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			reqBody:    controllers.EditConversationMessageRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.EditConversationMessageResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate", id: "activateSessionConversationBranch", tag: "conversations",
+			summary:    "Resume a durable conversation branch without sending",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationBranchIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.ActivateConversationBranchResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -674,6 +726,19 @@ func shellTerminalOperations() []operation {
 			reqBody:    controllers.SteerConversationRequest{},
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.SteerConversationResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/steer", id: "promoteQueuedSessionConversationTurn", tag: "conversations",
+			summary:    "Promote a queued message into the in-flight turn",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.ConversationTurnIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.PromoteQueuedTurnResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
@@ -838,7 +903,7 @@ func agentOperations() []operation {
 	}
 }
 
-// mobileOperations declares the 4 /mobile control operations. These are
+// mobileOperations declares the 5 /mobile control operations. These are
 // mounted on the loopback router (mountMobile in router.go), not the REST
 // /api/v1 group — only the desktop/CLI may enable, disable, or regenerate the
 // phone's LAN access; the phone never toggles its own connection. Must stay
@@ -878,6 +943,58 @@ func mobileOperations() []operation {
 				{http.StatusOK, controllers.MobileStatusResponse{}},
 				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/secure-pairing", id: "setMobileSecurePairing", tag: "mobile",
+			summary: "Turn TLS-over-Tailscale secure pairing on or off",
+			reqBody: controllers.SetSecurePairingRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// mobileDeviceOperations declares the desktop-only mobile device roster
+// routes. These sit under /api/v1/mobile — like mobileOperations above — so
+// they inherit the LAN listener's transport-level block; a paired phone can
+// neither list nor manage the household's other devices. Must stay 1:1 with
+// the routes mountMobileDevices registers (enforced by the parity test).
+func mobileDeviceOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/mobile/devices", id: "listMobileDevices", tag: "mobile",
+			summary: "List paired mobile devices with their live/muted status",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileDevicesResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/mobile/devices/{installId}", id: "muteMobileDevice", tag: "mobile",
+			summary:    "Mute or unmute push notifications for a paired device",
+			pathParams: []any{controllers.InstallIDParam{}},
+			reqBody:    controllers.MuteDeviceRequest{},
+			resps: []respUnit{
+				{http.StatusOK, map[string]bool{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/mobile/devices/{installId}", id: "removeMobileDevice", tag: "mobile",
+			summary:    "Remove a paired device from the roster",
+			pathParams: []any{controllers.InstallIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
 			},
 		},
 	}
@@ -997,10 +1114,20 @@ func pushOperations() []operation {
 		},
 		{
 			method: http.MethodDelete, path: "/api/v1/push/devices/{token}", id: "unregisterPushDevice", tag: "push",
-			summary:    "Unregister a phone's Expo push token",
+			summary:    "Unregister a phone's Expo push token, leaving it paired",
 			pathParams: []any{controllers.PushDeviceTokenParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.UnregisterPushDeviceResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodDelete, path: "/api/v1/push/pairings/{id}", id: "unpairPushDevice", tag: "push",
+			summary:    "Unpair this phone from the daemon, removing it from the roster",
+			pathParams: []any{controllers.PushPairingIDParam{}},
+			resps: []respUnit{
+				{http.StatusNoContent, nil},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
@@ -1036,11 +1163,72 @@ func reviewOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/comments/resolve", id: "resolveReviewComment", tag: "reviews",
+			summary:    "Resolve an external review comment thread",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.ResolveReviewCommentRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ResolveReviewCommentResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/rerequest", id: "requestRereview", tag: "reviews",
+			summary:    "Ask an external reviewer to re-review a worker's PR",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.RequestRereviewRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RequestRereviewResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/cancel", id: "cancelReview", tag: "reviews",
 			summary:    "Cancel a running code review",
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.CancelReviewResponse{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/kill", id: "killReviewSession", tag: "reviews",
+			summary:    "Kill a worker's reviewer terminal session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.KillReviewResponse{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/restore", id: "restoreReviewSession", tag: "reviews",
+			summary:    "Restore a worker's reviewer terminal session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RestoreReviewResponse{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/switch", id: "switchReviewSession", tag: "reviews",
+			summary:    "Switch a worker's reviewer harness",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionReviewerRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListReviewsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
@@ -1412,6 +1600,31 @@ func sessionOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/auto-inject-review", id: "setSessionAutoInjectReview", tag: "sessions",
+			summary:    "Set the auto-inject review setting for a session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionAutoInjectReviewRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetSessionAutoInjectReviewResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPatch, path: "/api/v1/sessions/{sessionId}/auto-inject-ci", id: "setSessionAutoInjectCI", tag: "sessions",
+			summary:    "Set the automatic CI-failure injection default for new session PRs",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionAutoInjectCIRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetSessionAutoInjectCIResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPut, path: "/api/v1/sessions/{sessionId}/reviewer", id: "setSessionReviewer", tag: "sessions",
 			summary:    "Set the reviewer harness for a session",
 			pathParams: []any{controllers.SessionIDParam{}},
@@ -1421,6 +1634,19 @@ func sessionOperations() []operation {
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/sessions/{sessionId}/auto-review", id: "setSessionAutoReview", tag: "sessions",
+			summary:    "Enable or disable automatic review for a session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionAutoReviewRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
@@ -1452,6 +1678,57 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ResumeAgentResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/switch-agent", id: "switchSessionAgent", tag: "sessions",
+			summary:    "Switch a logical AO session to another agent harness",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SwitchAgentRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.AgentSwitchResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/agent-switches", id: "listSessionAgentSwitches", tag: "sessions",
+			summary:    "List a session's durable agent-switch history",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListAgentSwitchesResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/recover", id: "recoverSessionAgentSwitch", tag: "sessions",
+			summary:    "Retry safe source restoration for an agent switch",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.AgentSwitchIDParam{}},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.AgentSwitchResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff", id: "submitSessionAgentHandoff", tag: "sessions",
+			summary:    "Submit a generation-fenced source-agent handoff",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.AgentSwitchIDParam{}},
+			reqBody:    controllers.SubmitAgentHandoffRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentSwitchResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -1541,6 +1818,19 @@ func sessionOperations() []operation {
 			reqBody:    controllers.SetActivityRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SetActivityResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/reviews/{reviewSessionID}/activity", id: "setReviewActivity", tag: "reviews",
+			summary:    "Report a reviewer-owned hook signal",
+			pathParams: []any{controllers.ReviewSessionIDParam{}},
+			reqBody:    controllers.SetReviewActivityRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetReviewActivityResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

@@ -1,4 +1,3 @@
-import { Languages, MessageSquare, Monitor, Moon, Palette, Smartphone, SquareTerminal, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
@@ -8,6 +7,7 @@ import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 import { cn } from "../../lib/utils";
+import { Switch } from "../ui/switch";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
 import type { SessionMode } from "../../types/workspace";
 
@@ -27,12 +27,10 @@ function SessionInterfaceRow() {
 		{
 			value: "tui",
 			label: t("settings.sessionInterface.terminal"),
-			icon: <SquareTerminal className="size-icon-lg" aria-hidden="true" />,
 		},
 		{
 			value: "chat",
 			label: t("settings.sessionInterface.chat"),
-			icon: <MessageSquare className="size-icon-lg" aria-hidden="true" />,
 		},
 	] satisfies SettingsOption<SessionMode>[];
 
@@ -44,8 +42,8 @@ function SessionInterfaceRow() {
 	const note = saveError ?? error ?? help;
 
 	return (
-		<div className="flex flex-col">
-			<SettingsRow icon={MessageSquare} label={t("settings.sessionInterface.label")}>
+		<div className="flex w-full flex-col">
+			<SettingsRow className="rounded-none" label={t("settings.sessionInterface.label")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.sessionInterface.label")}
 					value={settings?.defaultSessionMode ?? "tui"}
@@ -59,7 +57,7 @@ function SessionInterfaceRow() {
 			    here can move a session that already exists. */}
 			<p
 				className={cn(
-					"px-2 pb-2 text-xs leading-relaxed",
+					"px-3 pt-0 pb-4 text-xs leading-relaxed",
 					saveError || error ? "text-destructive" : "text-muted-foreground",
 				)}
 			>
@@ -97,14 +95,15 @@ export function GeneralSettingsSection({
 	const setLocale = useLocaleStore((state) => state.setLocale);
 	const localeSaving = useLocaleStore((state) => state.saving);
 	const localeSaveError = useLocaleStore((state) => state.saveError);
+	const developerMode = useUiStore((state) => state.developerMode);
+	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
 
 	const themeOptions = [
-		{ value: "light", label: t("settings.theme.light"), icon: <Sun className="size-icon-lg" aria-hidden="true" /> },
-		{ value: "dark", label: t("settings.theme.dark"), icon: <Moon className="size-icon-lg" aria-hidden="true" /> },
+		{ value: "light", label: t("settings.theme.light") },
+		{ value: "dark", label: t("settings.theme.dark") },
 		{
 			value: "system",
 			label: t("settings.theme.system"),
-			icon: <Monitor className="size-icon-lg" aria-hidden="true" />,
 		},
 	] satisfies SettingsOption<ThemePreference>[];
 
@@ -120,8 +119,8 @@ export function GeneralSettingsSection({
 	] satisfies SettingsOption<AppLocale>[];
 
 	return (
-		<SettingsSection title={t("settings.general")} titleHidden={titleHidden}>
-			<SettingsRow icon={Palette} label={t("settings.colorTheme")}>
+		<SettingsSection title={t("settings.general")} titleHidden={titleHidden} grouped>
+			<SettingsRow label={t("settings.colorTheme")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.colorTheme")}
 					value={themeStyle}
@@ -129,7 +128,7 @@ export function GeneralSettingsSection({
 					onChange={setThemeStyle}
 				/>
 			</SettingsRow>
-			<SettingsRow icon={Moon} label={t("settings.theme")}>
+			<SettingsRow label={t("settings.theme")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.theme")}
 					value={themePreference}
@@ -137,7 +136,7 @@ export function GeneralSettingsSection({
 					onChange={setThemePreference}
 				/>
 			</SettingsRow>
-			<SettingsRow icon={Languages} label={t("settings.language")}>
+			<SettingsRow label={t("settings.language")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.language")}
 					disabled={localeSaving}
@@ -154,7 +153,14 @@ export function GeneralSettingsSection({
 				</p>
 			) : null}
 			<SessionInterfaceRow />
-			<SettingsLinkRow icon={Smartphone} label={t("settings.connectMobile")} onClick={onConnectMobile} />
+			<SettingsRow label={t("settings.developerMode")}>
+				<Switch
+					aria-label={t("settings.developerMode")}
+					checked={developerMode}
+					onCheckedChange={setDeveloperMode}
+				/>
+			</SettingsRow>
+			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />
 		</SettingsSection>
 	);
 }

@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Loader2, TriangleAlert, X } from "lucide-react";
+import { ArrowRightLeft, Loader2, MessageSquare, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
 	SessionInterfaceMode,
@@ -10,6 +10,7 @@ import {
 	interfaceTransitionIsCancellable,
 } from "../hooks/useSessionInterfaceTransition";
 import { cn } from "../lib/utils";
+import { TopbarButton } from "./TopbarButton";
 import { Button } from "./ui/button";
 import {
 	Dialog,
@@ -19,6 +20,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "./ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 function targetLabel(target: SessionInterfaceMode): string {
 	return target === "chat" ? "chat UI" : "terminal UI";
@@ -106,29 +108,31 @@ export function SessionInterfaceSwitchButton({
 	}
 
 	const label = `Switch to ${targetLabel(target)}`;
+	const tooltipLabel = supported ? `${label} using this agent's native conversation` : disabledReason || label;
+	const TargetIcon = target === "chat" ? MessageSquare : SquareTerminal;
 	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="ghost"
-			className={cn(
-				"h-7 gap-1.5 px-2.5 text-xs text-muted-foreground",
-				supported && "hover:text-foreground",
-				!supported && "opacity-50",
-				className,
-			)}
-			disabled={!supported || pending}
-			onClick={onClick}
-			title={supported ? `${label} using this agent's native conversation` : disabledReason}
-			aria-label={label}
-		>
-			{pending ? (
-				<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
-			) : (
-				<ArrowRightLeft aria-hidden="true" className="size-3.5" />
-			)}
-			<span className="whitespace-nowrap">{label}</span>
-		</Button>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span className="inline-flex">
+					<TopbarButton
+						aria-label={label}
+						className={cn(!supported && "opacity-50", className)}
+						disabled={!supported || pending}
+						onClick={onClick}
+						title={tooltipLabel}
+						type="button"
+						variant="icon"
+					>
+						{pending ? (
+							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+						) : (
+							<TargetIcon aria-hidden="true" className="size-icon-md" />
+						)}
+					</TopbarButton>
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="bottom">{tooltipLabel}</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -244,5 +248,5 @@ export function SessionInterfaceTransitionNotice({
 }
 
 export function SessionInterfaceActionGroup({ children }: { children: ReactNode }) {
-	return <div className="flex items-center gap-1">{children}</div>;
+	return <div className="inline-flex shrink-0 items-center gap-px">{children}</div>;
 }

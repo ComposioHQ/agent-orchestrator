@@ -508,6 +508,42 @@ func TestNotificationsBecomeNeutralEvents(t *testing.T) {
 	}
 }
 
+// app-server multiplexes child-agent thread notifications over the root
+// connection. The adapter's fallback target must remain the root turn; otherwise
+// an interrupt without an explicit id can stop a child and leave the requested
+// root work running.
+func TestNestedThreadDoesNotReplaceRootActiveTurn(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	srv.push(`{"method":"turn/started","params":{"threadId":"thread-1","turn":{"id":"root-turn","status":"inProgress","items":[]}}}`)
+	srv.push(`{"method":"turn/started","params":{"threadId":"child-thread-1","turn":{"id":"child-turn","status":"inProgress","items":[]}}}`)
+	root := nextEvent(t, conv.Events(), ports.ChatEventTurnStarted)
+	child := nextEvent(t, conv.Events(), ports.ChatEventTurnStarted)
+	if root.ProviderConversationID != "thread-1" || child.ProviderConversationID != "child-thread-1" {
+		t.Fatalf("normalized lifecycle threads = root %q child %q", root.ProviderConversationID, child.ProviderConversationID)
+	}
+
+	if err := conv.Interrupt(context.Background(), ""); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	sent := srv.awaitFrame(func(f frame) bool { return f.Method == "turn/interrupt" })
+	var params struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+	}
+	if err := json.Unmarshal(sent.Params, &params); err != nil {
+		t.Fatalf("decode turn/interrupt params: %v", err)
+	}
+	if params.ThreadID != "thread-1" || params.TurnID != "root-turn" {
+		t.Fatalf("interrupt target = %q/%q, want thread-1/root-turn", params.ThreadID, params.TurnID)
+	}
+}
+
 // Resume must not quietly become a fresh thread: that would present unrelated
 // history as continuous.
 func TestResumeFailureDoesNotFallBackToStart(t *testing.T) {
@@ -791,14 +827,15 @@ func TestNoTurnSettingsSendsNoSettingsFields(t *testing.T) {
 	}
 }
 
-// The catalog is the provider's. Hidden models are dropped because the provider
-// marks them hidden when the account should not be offered them, and offering one
-// anyway is a choice that then fails.
-func TestListModelsDropsHiddenAndKeepsProviderOrder(t *testing.T) {
+// The catalog is the provider's. Hidden models are dropped because offering one
+// would fail, while the opened thread's effort is more specific than the generic
+// model default returned by model/list.
+func TestListModelsKeepsCatalogAndUsesThreadEffort(t *testing.T) {
 	d, srv := newTestDriver(t)
 	// Scripted before Start: the server goroutine reads this map, so writing it
 	// afterwards would race the connection it is already serving.
-	srv.reply("model/list", `{"data":[{"id":"a","displayName":"Model A","description":"first","isDefault":true,"hidden":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"}]},{"id":"secret","displayName":"Hidden","isDefault":false,"hidden":true,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]},{"id":"b","displayName":"Model B","isDefault":false,"hidden":false,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]}]}`)
+	srv.reply("thread/start", `{"thread":{"id":"thread-1"},"model":"a","reasoningEffort":"xhigh","cwd":"/tmp/ws"}`)
+	srv.reply("model/list", `{"data":[{"id":"a","displayName":"Model A","description":"first","isDefault":true,"hidden":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"xhigh"}]},{"id":"secret","displayName":"Hidden","isDefault":false,"hidden":true,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]},{"id":"b","displayName":"Model B","isDefault":false,"hidden":false,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]}]}`)
 
 	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
 	if err != nil {
@@ -824,11 +861,11 @@ func TestListModelsDropsHiddenAndKeepsProviderOrder(t *testing.T) {
 	if !models[0].Default {
 		t.Error("the provider's default was not carried through")
 	}
-	if got := models[0].Efforts; len(got) != 2 || got[0] != "low" || got[1] != "high" {
-		t.Errorf("efforts = %v, want [low high]", got)
+	if got := models[0].Efforts; len(got) != 2 || got[0] != "low" || got[1] != "xhigh" {
+		t.Errorf("efforts = %v, want [low xhigh]", got)
 	}
-	if models[0].DefaultEffort != "medium" {
-		t.Errorf("default effort = %q, want medium", models[0].DefaultEffort)
+	if models[0].DefaultEffort != "xhigh" {
+		t.Errorf("default effort = %q, want the thread's xhigh", models[0].DefaultEffort)
 	}
 }
 

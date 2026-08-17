@@ -77,6 +77,9 @@ frontend/test-results/
 frontend/daemon/
 frontend/resources/acp-runtime/
 
+# pinned native browser automation binary copied during package preparation
+frontend/agent-browser/
+
 # Locally-added agent skills (not for the team), except curated project skills
 .agents/
 !.agents/
@@ -85,6 +88,8 @@ frontend/resources/acp-runtime/
 .agents/skills/*
 !.agents/skills/ao-desktop-dev/
 !.agents/skills/ao-desktop-dev/**
+!.agents/skills/bug-triage/
+!.agents/skills/bug-triage/**
 skills-lock.json
 
 # e2e pod gate: downloaded pod logs/traces (uploaded as CI artifacts, not committed)

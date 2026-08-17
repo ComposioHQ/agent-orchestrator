@@ -41,12 +41,13 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	trackerDone   <-chan struct{}
+	LCM            *lifecycle.Manager
+	runtimeReaper  *reaper.Reaper
+	reaperDone     <-chan struct{}
+	activityDone   <-chan struct{}
+	autoReviewDone <-chan struct{}
+	scmDone        <-chan struct{}
+	trackerDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -103,6 +104,9 @@ func (l *lifecycleStack) Stop() {
 	if l.activityDone != nil {
 		<-l.activityDone
 	}
+	if l.autoReviewDone != nil {
+		<-l.autoReviewDone
+	}
 	if l.scmDone != nil {
 		<-l.scmDone
 	}
@@ -122,15 +126,38 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
-	Send(ctx context.Context, id domain.SessionID, message string) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
 	// is built after Session Manager during boot (see startShellTerminals), so
 	// this cannot be a constructor argument.
 	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
+	// AcquireSessionInput holds direct terminal writes across the actual pane
+	// write while ownership may move between provider processes.
+	AcquireSessionInput(id domain.SessionID) (release func(), ok bool)
+	// SessionMutationInProgress suppresses observation-driven termination while
+	// Session Manager deliberately replaces or relaunches a provider process.
+	SessionMutationInProgress(id domain.SessionID) bool
 	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
 	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
+	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
+	// service, which is built alongside the controller-facing service below.
+	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
+}
+
+// sessionLifecycleMessenger adapts sessionLifecycle to ports.AgentMessenger so
+// the fully-wired manager can replace the boot-time pane messenger once ready.
+// None of the daemon-internal sends this feeds (interface-transition drains,
+// lifecycle nudges) carry an attachment, so it is always nil here; the
+// attachment-aware send path only exists at the HTTP /send endpoint.
+type sessionLifecycleMessenger struct {
+	sessionLifecycle
+}
+
+func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return m.sessionLifecycle.Send(ctx, id, message, nil)
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -138,7 +165,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -175,32 +202,26 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Browser:             browserLifecycle,
 		BrowserCapabilities: browserCapabilities,
 		DataDir:             cfg.DataDir,
+		BackgroundContext:   ctx,
 		Logger:              log,
 	})
-	scmProvider, err := newGitHubSCMProvider(log)
-	if err != nil {
-		logSCMProviderDisabled(log, err)
-	}
-	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
-	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
-	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueContext and dereferences nil on the
-	// first issue lookup (issue #2685). Assigning the concrete value only on
-	// success leaves tracker as a real interface-nil otherwise.
-	var tracker ports.Tracker
-	if t, err := newGitHubTracker(); err != nil {
-		logTrackerDisabled(log, err)
-	} else {
-		tracker = t
-	}
+	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
+	// Build the multi-tracker dispatching to both GitHub and GitLab. The
+	// multi-tracker returns a true nil ports.Tracker when no provider has
+	// usable credentials, preserving the `s.tracker == nil` guard in
+	// withIssueContext (issue #2685). When one provider's token is missing,
+	// the other still serves issue lookups.
+	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
-		Manager:   mgr,
-		Store:     store,
-		PRClaimer: store,
-		SCM:       scmProvider,
-		DataDir:   cfg.DataDir,
-		Tracker:   tracker,
-		Telemetry: telemetry,
+		Manager:           mgr,
+		Store:             store,
+		PRClaimer:         store,
+		SCM:               scmProvider,
+		DataDir:           cfg.DataDir,
+		Tracker:           tracker,
+		Telemetry:         telemetry,
+		Logger:            log,
+		BackgroundContext: ctx,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
@@ -218,11 +239,22 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir,
+			reviewcore.WithRunFilePath(cfg.RunFilePath),
+			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store,
+	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
-		reviewsvc.WithTelemetry(telemetry))
+		reviewsvc.WithTelemetry(telemetry),
+	}
+	if scmProvider != nil {
+		reviewOpts = append(reviewOpts,
+			reviewsvc.WithReviewRequester(scmProvider),
+			reviewsvc.WithReviewResolver(scmProvider),
+		)
+	}
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
+	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 
@@ -334,6 +366,26 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 	return agent, ok
 }
 
+type reviewerAgentAuth struct {
+	agents ports.AgentResolver
+}
+
+func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	if r.agents == nil {
+		return "", false, nil
+	}
+	agent, ok := r.agents.Agent(domain.AgentHarness(harness))
+	if !ok {
+		return "", false, nil
+	}
+	checker, ok := agent.(ports.AgentAuthChecker)
+	if !ok {
+		return "", false, nil
+	}
+	status, err := checker.AuthStatus(ctx)
+	return status, true, err
+}
+
 // buildAgentResolver constructs the per-session agent resolver the Session
 // Manager consumes (sessionmanager.Deps.Agents): a registry of the shipped
 // adapters. It still validates AO_AGENT at startup for compatibility with the
@@ -393,9 +445,14 @@ type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
 var _ interface {
+	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
+
+func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
+	return c.svc.SupportsChat(harness)
+}
 
 func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness)
@@ -415,6 +472,15 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SystemPrompt:           cfg.SystemPrompt,
 		AdditionalDirectories:  cfg.AdditionalDirectories,
 		ProviderConversationID: cfg.ProviderConversationID,
+		ControllerReady: func(out chatsvc.StartResult) error {
+			if cfg.ControllerReady == nil {
+				return nil
+			}
+			return cfg.ControllerReady(sessionmanager.ChatStarted{
+				ProviderConversationID: out.ProviderConversationID,
+				ControllerGeneration:   out.ControllerGeneration,
+			})
+		},
 	})
 	if err != nil {
 		return sessionmanager.ChatStarted{}, err
@@ -441,10 +507,23 @@ func (c chatLauncher) RelayChatTurnWithID(
 	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
 }
 
-// PrepareChatHandoff closes Chat intake and waits for the controller to become
-// quiescent before Session Manager stops it. These methods intentionally live
+func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
+	return c.svc.HasLiveChatController(id)
+}
+
+// ArmChatHandoff closes Chat intake and dispatch synchronously at transition
+// acceptance. PrepareChatHandoff then settles interrupt work or waits for drain
+// work before Session Manager stops the source. These methods intentionally live
 // on the wiring adapter: Session Manager's handoff capability is optional, but
 // wrapping the concrete Chat service must not erase it.
+func (c chatLauncher) ArmChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	return c.svc.ArmChatHandoff(ctx, id, policy)
+}
+
 func (c chatLauncher) PrepareChatHandoff(
 	ctx context.Context,
 	id domain.SessionID,

@@ -28,10 +28,13 @@ const maxConversationBody = maxSpawnBodyBytes
 type ConversationService interface {
 	Snapshot(ctx context.Context, session domain.SessionID) (chatsvc.Snapshot, error)
 	Send(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (domain.ConversationTurn, error)
+	EditMessage(ctx context.Context, session domain.SessionID, turnID string, msg ports.ChatUserMessage) (chatsvc.EditMessageResult, error)
+	ActivateBranch(ctx context.Context, session domain.SessionID, branchID string) (string, error)
 	Resolve(ctx context.Context, session domain.SessionID, requestID string, decision ports.ChatDecision) error
 	ResolveInput(ctx context.Context, session domain.SessionID, requestID string, response ports.ChatInputResponse) error
 	Interrupt(ctx context.Context, session domain.SessionID) error
 	Steer(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (chatsvc.SteerResult, error)
+	PromoteQueuedTurn(ctx context.Context, session domain.SessionID, turnID string) (chatsvc.PromoteQueuedTurnResult, error)
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
 	ConfigOptions(ctx context.Context, session domain.SessionID) ([]ports.ChatConfigOption, error)
 	SetConfigOption(ctx context.Context, session domain.SessionID, configID string, value ports.ChatConfigOptionValue) ([]ports.ChatConfigOption, error)
@@ -64,6 +67,7 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/inputs/{requestId}/resolve", c.resolveInput)
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
 	r.Post("/sessions/{sessionId}/conversation/steer", c.steer)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/steer", c.promoteQueuedTurn)
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
 	r.Get("/sessions/{sessionId}/conversation/config-options", c.configOptions)
@@ -71,8 +75,86 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/conversation/skills", c.skills)
 	r.Patch("/sessions/{sessionId}/conversation/settings", c.setSettings)
 	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/rollback", c.rollback)
+	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/edit", c.editMessage)
+	r.Post("/sessions/{sessionId}/conversation/branches/{branchId}/activate", c.activateBranch)
 	r.Put("/sessions/{sessionId}/conversation/title", c.setTitle)
 	r.Post("/sessions/{sessionId}/conversation/mcp/reload", c.reloadMCPServers)
+}
+
+func (c *ConversationsController) editMessage(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST",
+			"/api/v1/sessions/{sessionId}/conversation/turns/{turnId}/edit")
+		return
+	}
+	var req EditConversationMessageRequest
+	if !decodeConversationBody(w, r, &req) {
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_EDIT_TURN_INVALID", "edited message text is required", nil)
+		return
+	}
+	result, err := c.Svc.EditMessage(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")),
+		chi.URLParam(r, "turnId"), ports.ChatUserMessage{
+			Text: req.Text, ClientMessageID: req.ClientMessageID, Origin: domain.MessageOriginHuman,
+		})
+	if err != nil {
+		writeConversationEditError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, EditConversationMessageResponse{
+		SourceBranchID: result.SourceBranchID,
+		ActiveBranchID: result.ActiveBranchID,
+		TurnID:         result.Turn.ID,
+		ProviderTurnID: result.Turn.ProviderTurnID,
+		State:          result.Turn.State,
+	})
+}
+
+func (c *ConversationsController) activateBranch(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST",
+			"/api/v1/sessions/{sessionId}/conversation/branches/{branchId}/activate")
+		return
+	}
+	active, err := c.Svc.ActivateBranch(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")),
+		chi.URLParam(r, "branchId"))
+	if errors.Is(err, domain.ErrNoConversationBranch) {
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found",
+			"CHAT_BRANCH_NOT_FOUND", "that conversation branch does not exist", nil)
+		return
+	}
+	if errors.Is(err, chatsvc.ErrTurnRunning) || errors.Is(err, chatsvc.ErrControllerHandoff) {
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_EDIT_BUSY", "stop the current turn before switching conversation branches", nil)
+		return
+	}
+	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusAccepted, ActivateConversationBranchResponse{ActiveBranchID: active})
+}
+
+func writeConversationEditError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, chatsvc.ErrForkUnsupported):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_EDIT_UNSUPPORTED", "this agent cannot branch an earlier prompt", nil)
+	case errors.Is(err, chatsvc.ErrTurnRunning), errors.Is(err, chatsvc.ErrControllerHandoff):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_EDIT_BUSY", "stop the current turn before branching", nil)
+	case errors.Is(err, chatsvc.ErrEditTurnInvalid) && errors.Is(err, domain.ErrNoConversationTurn):
+		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found",
+			"CHAT_EDIT_TURN_INVALID", "that editable prompt is not in this conversation", nil)
+	case errors.Is(err, chatsvc.ErrEditTurnInvalid):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_EDIT_TURN_INVALID", err.Error(), nil)
+	default:
+		writeConversationError(w, r, err)
+	}
 }
 
 // configOptions serves every live control the provider advertises. Empty is a
@@ -429,10 +511,10 @@ func (c *ConversationsController) send(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func conversationContent(req SendConversationMessageRequest) ([]ports.ChatContent, *spawnAttachmentError) {
-	spawnInputs := make([]SpawnAttachmentInput, 0, len(req.Attachments))
+func conversationContent(req SendConversationMessageRequest) ([]ports.ChatContent, *attachmentError) {
+	spawnInputs := make([]AttachmentInput, 0, len(req.Attachments))
 	for _, attachment := range req.Attachments {
-		spawnInputs = append(spawnInputs, SpawnAttachmentInput{
+		spawnInputs = append(spawnInputs, AttachmentInput{
 			MimeType: attachment.MIMEType,
 			Data:     attachment.Data,
 		})
@@ -449,7 +531,7 @@ func conversationContent(req SendConversationMessageRequest) ([]ports.ChatConten
 	}
 	for _, resource := range req.Resources {
 		if strings.TrimSpace(resource.URI) == "" || strings.TrimSpace(resource.Name) == "" {
-			return nil, &spawnAttachmentError{"INVALID_RESOURCE", "resource uri and name are required"}
+			return nil, &attachmentError{"INVALID_RESOURCE", "resource uri and name are required"}
 		}
 		kind, text := "resource_link", ""
 		if resource.Text != nil {
@@ -687,27 +769,30 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 // Items arrive already ordered by sequence, so nothing is re-sorted here.
 func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotResponse {
 	out := ConversationSnapshotResponse{
-		ConversationID: s.Conversation.ID,
-		SessionID:      string(s.SessionID),
-		Harness:        string(s.Harness),
-		Mode:           string(s.Mode),
-		Controller:     string(s.Controller),
-		LatestSequence: s.Conversation.LatestSequence,
-		OldestSequence: s.OldestSequence,
-		HasMoreBefore:  s.HasMoreBefore,
-		Turns:          make([]ConversationTurnResponse, 0, len(s.Turns)),
-		Messages:       make([]ConversationMessageResponse, 0, len(s.Messages)),
-		Activities:     make([]ConversationActivityResponse, 0, len(s.Activities)),
-		Settings:       turnSettingsPayload(s.Conversation.Settings),
-		Usage:          usagePayload(s.Usage),
-		RateLimits:     rateLimitsPayload(s.RateLimits),
-		CompactedAt:    optionalTimestamp(s.Conversation.CompactedAt),
-		Title:          s.Conversation.ProviderTitle,
-		ModelReroute:   modelReroutePayload(s.Conversation.ModelReroute),
-		Account:        accountPayload(s.Conversation.Account),
-		ThreadState:    threadStatePayload(s.Conversation.ThreadState),
-		MCPServers:     mcpServersPayload(s.Conversation.MCPServers),
-		Capabilities:   capabilityNames(s.Capabilities),
+		ConversationID:             s.Conversation.ID,
+		ActiveBranchID:             s.Conversation.ActiveBranchID,
+		BranchedFromEarlierMessage: s.BranchedFromEarlierMessage,
+		SessionID:                  string(s.SessionID),
+		Harness:                    string(s.Harness),
+		Mode:                       string(s.Mode),
+		Controller:                 string(s.Controller),
+		LatestSequence:             s.Conversation.LatestSequence,
+		OldestSequence:             s.OldestSequence,
+		HasMoreBefore:              s.HasMoreBefore,
+		Turns:                      make([]ConversationTurnResponse, 0, len(s.Turns)),
+		Messages:                   make([]ConversationMessageResponse, 0, len(s.Messages)),
+		Activities:                 make([]ConversationActivityResponse, 0, len(s.Activities)),
+		BranchPoints:               make([]ConversationBranchPointResponse, 0, len(s.BranchPoints)),
+		Settings:                   turnSettingsPayload(s.Conversation.Settings),
+		Usage:                      usagePayload(s.Usage),
+		RateLimits:                 rateLimitsPayload(s.RateLimits),
+		CompactedAt:                optionalTimestamp(s.Conversation.CompactedAt),
+		Title:                      s.Conversation.ProviderTitle,
+		ModelReroute:               modelReroutePayload(s.Conversation.ModelReroute),
+		Account:                    accountPayload(s.Conversation.Account),
+		ThreadState:                threadStatePayload(s.Conversation.ThreadState),
+		MCPServers:                 mcpServersPayload(s.Conversation.MCPServers),
+		Capabilities:               capabilityNames(s.Capabilities),
 	}
 
 	for _, turn := range s.Turns {
@@ -726,7 +811,7 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 	}
 
 	for _, msg := range s.Messages {
-		out.Messages = append(out.Messages, ConversationMessageResponse{
+		message := ConversationMessageResponse{
 			Kind:      "message",
 			ID:        msg.ID,
 			TurnID:    msg.TurnID,
@@ -737,6 +822,14 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 			Text:      msg.Text,
 			Streaming: msg.Streaming,
 			CreatedAt: msg.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		message.Content, message.EditAvailable = conversationContentSummary(msg)
+		out.Messages = append(out.Messages, message)
+	}
+	for _, point := range s.BranchPoints {
+		out.BranchPoints = append(out.BranchPoints, ConversationBranchPointResponse{
+			TurnID: point.TurnID, Position: point.Position, Total: point.Total,
+			PreviousBranchID: point.PreviousBranchID, NextBranchID: point.NextBranchID,
 		})
 	}
 
@@ -757,6 +850,33 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		})
 	}
 	return out
+}
+
+func conversationContentSummary(msg domain.ConversationMessage) ([]ConversationContentSummaryResponse, bool) {
+	if msg.Role != domain.MessageRoleUser || msg.Origin != domain.MessageOriginHuman {
+		return nil, false
+	}
+	if msg.DeliveryContentJSON == "" {
+		return nil, true
+	}
+	var content []ports.ChatContent
+	if err := json.Unmarshal([]byte(msg.DeliveryContentJSON), &content); err != nil {
+		return nil, false
+	}
+	summaries := make([]ConversationContentSummaryResponse, 0, len(content))
+	for _, block := range content {
+		if block.Type == "text" {
+			continue
+		}
+		name := block.Name
+		if name == "" && block.Type != "image" && block.Type != "resource" && block.Type != "resource_link" {
+			name = block.Type
+		}
+		summaries = append(summaries, ConversationContentSummaryResponse{
+			Type: block.Type, MIMEType: block.MIMEType, URI: block.URI, Name: name,
+		})
+	}
+	return summaries, true
 }
 
 // usagePayload maps the conversation's token position onto the wire shape. A nil

@@ -16,9 +16,21 @@ export type ShortcutChord = {
 
 export const SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL =
 	"app:set-close-shell-terminal-shortcut-enabled";
+export const SET_TERMINAL_FOCUSED_CHANNEL = "terminal:set-focused";
+export const TERMINAL_FONT_SIZE_SHORTCUT_CHANNEL = "terminal:font-size-shortcut";
+
+export function terminalFontSizeDelta(chord: ShortcutChord, isMac: boolean): -1 | 0 | 1 {
+	const hasPrimaryModifier = isMac
+		? chord.meta && !chord.ctrl
+		: chord.ctrl && !chord.meta;
+	if (!hasPrimaryModifier || chord.alt) return 0;
+	if (chord.key === "+" || chord.key === "=" || chord.code === "NumpadAdd") return 1;
+	if (chord.key === "-" || chord.code === "NumpadSubtract") return -1;
+	return 0;
+}
 
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "previous-tab" | "next-tab" | "focus-terminal";
+	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "previous-tab" | "next-tab" | "focus-terminal" | "toggle-browser-devtools";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -117,6 +129,11 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		label: "Focus terminal",
 		category: "Session",
 	},
+	{
+		id: "toggle-browser-devtools",
+		label: "Toggle browser DevTools",
+		category: "Session",
+	},
 ];
 
 const binding = (
@@ -161,6 +178,8 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 			return [binding("Tab", { ctrl: true })];
 		case "focus-terminal":
 			return [isMac ? binding("t", { meta: true, shift: true }) : binding("t", { ctrl: true, shift: true })];
+		case "toggle-browser-devtools":
+			return [isMac ? binding("i", { meta: true, alt: true }) : binding("i", { ctrl: true, shift: true })];
 	}
 }
 

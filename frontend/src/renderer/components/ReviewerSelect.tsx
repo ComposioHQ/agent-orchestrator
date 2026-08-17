@@ -1,34 +1,28 @@
 import type { components } from "../../api/schema";
+import { agentLabel } from "../lib/agent-options";
 import { buildRankedAgentOptions } from "../lib/agent-select-options";
+import { KNOWN_REVIEWER_HARNESS_IDS } from "../lib/reviewer-harnesses";
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 
-// Reviewers are a narrower vocabulary than worker agents on purpose: a
-// reviewer-only tool must not become a valid worker, and the daemon rejects
-// anything outside this set.
-//
-// The set itself comes from the daemon rather than being maintained here. The
-// review trigger's request schema is generated from domain.AllReviewerHarnesses,
-// so this union IS the server's list — no second copy to drift, and no runtime
-// fetch for something that is part of the API contract and known at build time.
-type ReviewerHarnessId = NonNullable<components["schemas"]["TriggerReviewRequest"]["harness"]>;
-
-const REVIEWER_HARNESS_IDS = ["claude-code", "codex", "opencode"] as const satisfies readonly ReviewerHarnessId[];
-
-// `satisfies` above rejects an id the daemon does not accept. This rejects the
-// other direction: add a harness in Go, regenerate, and forgetting to list it
-// here stops compiling instead of silently hiding the new reviewer.
-type UnlistedReviewerHarness = Exclude<ReviewerHarnessId, (typeof REVIEWER_HARNESS_IDS)[number]>;
-const _everyReviewerHarnessIsListed: UnlistedReviewerHarness extends never ? true : never = true;
-void _everyReviewerHarnessIsListed;
-
-export const KNOWN_REVIEWER_HARNESS_IDS: ReadonlySet<string> = new Set(REVIEWER_HARNESS_IDS);
-
-const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
+const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "muse", "aider"] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );
+
+const HOST_TRUSTED_REVIEWERS = new Set(["agy", "continue", "devin", "droid", "goose", "kimchi", "kimi", "qwen", "vibe"]);
+const USER_APPROVED_REVIEWERS = new Set(["auggie", "autohand", "cline", "crush", "grok"]);
+
+export function reviewerTrustWarning(harness: string): string | null {
+	if (HOST_TRUSTED_REVIEWERS.has(harness)) {
+		return "Experimental host-trusted reviewer: this agent is not OS-isolated and may retain shell, plugin, editor, and network access.";
+	}
+	if (USER_APPROVED_REVIEWERS.has(harness)) {
+		return "Experimental user-approved reviewer: AO keeps the agent's native permission prompts enabled; review execution may pause for your approval.";
+	}
+	return null;
+}
 
 export function ReviewerSelect({
 	value,
@@ -42,26 +36,35 @@ export function ReviewerSelect({
 	defaultHarness,
 	defaultOptionLabel,
 	defaultTriggerLabel,
+	showDefaultOption = true,
+	contentAlign = "start",
 	disabled = false,
 	authorized,
 	installed,
 	supported,
+	excludedHarness,
 }: {
 	value: string;
 	onChange: (value: string) => void;
 	triggerClassName?: string;
 	ariaLabel?: string;
 	defaultHarness?: string;
-	defaultOptionLabel: string;
+	defaultOptionLabel?: string;
 	defaultTriggerLabel?: string;
+	showDefaultOption?: boolean;
+	contentAlign?: "start" | "end";
 	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
 	installed?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
+	excludedHarness?: string;
 }) {
+	// Until the daemon's catalog arrives these entries carry the whole menu, so
+	// label them the way the catalog would rather than printing bare ids: without
+	// this the same row reads "claude-code" now and "Claude Code" a moment later.
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
-		label: id,
+		label: agentLabel(id),
 	}));
 	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
 	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
@@ -72,15 +75,13 @@ export function ReviewerSelect({
 		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,
 		fallbackAgents,
 	});
+	const selectableOptions = options.filter((agent) => agent.id !== excludedHarness);
 
-	// The trigger shows the agent that will actually run, since "project default"
-	// names the setting rather than answering the question. The menu keeps the
-	// longer wording, where there is room for it.
 	const menuOptions = [
-		{ value: "__default__", label: defaultOptionLabel },
-		...options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
+		...(showDefaultOption && defaultOptionLabel ? [{ value: "__default__", label: defaultOptionLabel }] : []),
+		...selectableOptions.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
 	];
-	const selectedValue = value || "__default__";
+	const selectedValue = value && value !== excludedHarness ? value : "__default__";
 
 	return (
 		<SettingsOptionMenu
@@ -90,7 +91,7 @@ export function ReviewerSelect({
 			disabled={disabled}
 			menuClassName="reviews-agent-menu-surface"
 			menuItemClassName="reviews-agent-menu-item"
-			menuAlign="start"
+			menuAlign={contentAlign}
 			triggerClassName={triggerClassName}
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 			renderTrigger={(selected) => (
@@ -100,8 +101,10 @@ export function ReviewerSelect({
 					) : defaultHarness ? (
 						<AgentAvatar provider={defaultHarness} className="size-icon-lg" />
 					) : null}
-					<span className="min-w-0 truncate">
-						{selected && selected.value !== "__default__" ? selected.label : (defaultTriggerLabel ?? defaultOptionLabel)}
+					<span className={contentAlign === "end" ? "min-w-0 truncate text-right" : "min-w-0 truncate"}>
+						{selected && selected.value !== "__default__"
+							? selected.label
+							: (defaultTriggerLabel ?? defaultOptionLabel ?? defaultHarness)}
 					</span>
 				</>
 			)}
@@ -109,7 +112,7 @@ export function ReviewerSelect({
 				if (option.value === "__default__") {
 					return <AgentSelectMenuItem label={option.label} selected={selected} />;
 				}
-				const agent = options.find((entry) => entry.id === option.value);
+				const agent = selectableOptions.find((entry) => entry.id === option.value);
 				if (!agent) return option.label;
 				return (
 					<AgentSelectMenuItem

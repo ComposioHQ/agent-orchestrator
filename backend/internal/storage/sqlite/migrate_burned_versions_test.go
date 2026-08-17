@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pressly/goose/v3"
 
@@ -63,8 +64,11 @@ var shippedMigrations = map[int64]string{
 	43: "0043_add_session_pinned.sql",
 	44: "0044_backfill_review_run_batch_id.sql",
 	47: "0047_agent_model_catalog.sql",
+	48: "0048_review_agent_session_id.sql",
+	49: "0049_review_per_harness.sql",
 	52: "0052_model_usage.sql",
 	53: "0053_allow_muse_harness.sql",
+	54: "0054_allow_kimchi_harness.sql",
 	66: "0066_chat_session_mode.sql",
 	67: "0067_app_settings.sql",
 	68: "0068_conversation_turn_settings.sql",
@@ -79,6 +83,24 @@ var shippedMigrations = map[int64]string{
 	77: "0077_cancelled_conversation_activities.sql",
 	78: "0078_session_interface_transitions.sql",
 	79: "0079_session_interface_transition_delivery.sql",
+	80: "0080_review_per_harness.sql",
+	81: "0081_browser_capability_verifier.sql",
+	82: "0082_allow_prime_agent_harness.sql",
+	83: "0083_reconcile_kimchi_prime_agent_harnesses.sql",
+	84: "0084_add_session_auto_inject_review.sql",
+	85: "0085_agent_switching.sql",
+	86: "0086_workspace_repo_default_branch.sql",
+	87: "0087_conversation_branches.sql",
+	88: "0088_add_auto_inject_ci_toggle.sql",
+	89: "0089_conversation_turn_promotion.sql",
+	90: "0090_workspace_git_status.sql",
+	91: "0091_session_auto_review.sql",
+	92: "0092_pr_reviews_target_sha.sql",
+	93: "0093_review_run_trigger_source.sql",
+	94: "0094_agent_switch_recovery.sql",
+	95: "0095_allow_omp_harness.sql",
+	96: "0096_session_worktree_base_ref.sql",
+	97: "0097_pr_provider_identity.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -215,6 +237,26 @@ INSERT INTO projects (
 		t.Fatalf("diff base metadata = (%q, %q), want it round-tripped",
 			sessions[0].Metadata.DiffBaseSHA, sessions[0].Metadata.DiffBaseRef)
 	}
+	now := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
+	if err := store.UpsertReview(ctx, domain.Review{
+		ID:               "review-1",
+		SessionID:        created.ID,
+		ProjectID:        "mer",
+		Harness:          domain.ReviewerCodex,
+		ReviewerHandleID: "review-mer-1",
+		AgentSessionID:   "reviewer-native-1",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("upsert review on repaired schema: %v", err)
+	}
+	review, ok, err := store.GetReviewBySessionAndHarness(ctx, created.ID, domain.ReviewerCodex)
+	if err != nil {
+		t.Fatalf("get review on repaired schema: %v", err)
+	}
+	if !ok || review.AgentSessionID != "reviewer-native-1" {
+		t.Fatalf("review = %+v, ok=%v, want persisted reviewer native id", review, ok)
+	}
 
 	// The repair is idempotent: a second startup on the repaired database (and
 	// on any healthy database) is a no-op, never a duplicate-column error.
@@ -222,7 +264,8 @@ INSERT INTO projects (
 		t.Fatalf("repeat migrate on repaired schema: %v", err)
 	}
 	for table, want := range map[string][]string{
-		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness"},
+		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness", "browser_capability_verifier", "auto_inject_review", "auto_inject_ci"},
+		"pr":            {"auto_inject_ci"},
 		"notifications": {"resolved_at"},
 	} {
 		for _, column := range want {

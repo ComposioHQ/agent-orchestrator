@@ -47,6 +47,8 @@ type conversation struct {
 
 	threadID string
 	events   chan ports.ChatEvent
+	// Effective defaults returned when Codex opened or resumed this thread.
+	threadModel, threadEffort string
 
 	mu      sync.Mutex
 	pending map[string]*parkedRequest
@@ -114,8 +116,10 @@ func newConversation(proc *process, log *slog.Logger) *conversation {
 // start records the opened thread and begins translating notifications. It is
 // called once, after the thread is open, so no event is emitted for a
 // conversation the caller does not yet have a handle to.
-func (c *conversation) start(threadID string) {
+func (c *conversation) start(threadID, model, effort string) {
 	c.threadID = threadID
+	c.threadModel = model
+	c.threadEffort = effort
 	go c.pump()
 }
 
@@ -144,12 +148,20 @@ func (c *conversation) pump() {
 		// as an absolute instant and has to become a remaining duration, and a
 		// normalizer that reads the clock itself cannot be tested deterministically.
 		for _, ev := range normalizeNotification(n, time.Now()) {
-			if ev.Kind == ports.ChatEventTurnStarted && ev.ProviderTurnID != "" {
+			rootConversation := ev.ProviderConversationID == "" || ev.ProviderConversationID == c.threadID
+			if ev.Kind == ports.ChatEventTurnStarted && ev.ProviderTurnID != "" && rootConversation {
 				c.mu.Lock()
 				c.activeTurn = ev.ProviderTurnID
 				// Snapshot the context position this turn starts from. Cheap on every
 				// turn, and the only way to know what a compaction reclaimed.
 				c.contextAtTurnStart = c.contextTokens
+				c.mu.Unlock()
+			}
+			if ev.Kind == ports.ChatEventTurnCompleted && ev.ProviderTurnID != "" && rootConversation {
+				c.mu.Lock()
+				if c.activeTurn == ev.ProviderTurnID {
+					c.activeTurn = ""
+				}
 				c.mu.Unlock()
 			}
 			if ev.Kind == ports.ChatEventCompacted {
@@ -340,6 +352,13 @@ func (c *conversation) ListModels(ctx context.Context) ([]ports.ChatModel, error
 			Efforts:       efforts,
 			DefaultEffort: entry.DefaultEff,
 		})
+	}
+	// Thread settings include the user's config; model/list only has generic defaults.
+	for i := range models {
+		if models[i].ID == c.threadModel && c.threadEffort != "" {
+			models[i].DefaultEffort = c.threadEffort
+			break
+		}
 	}
 	return models, nil
 }

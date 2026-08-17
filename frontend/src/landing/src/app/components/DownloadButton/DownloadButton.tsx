@@ -1,15 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { track } from "@/lib/analytics";
+import { track } from "../../../lib/analytics";
 import { isMacPlatform, Platform, usePlatform } from "../../hooks/useOS";
 
 interface DownloadButtonProps {
   size?: "sm" | "md";
   className?: string;
+  /**
+   * Where on the page this button lives, e.g. "hero" or "footer".
+   *
+   * Without it every download click looks identical, so we cannot tell which
+   * CTA earns them. GitHub's own counts cannot answer this either: they are
+   * dominated by `latest-*.yml` update polls rather than installs.
+   */
+  placement?: string;
 }
 
 type DownloadPlatform = "apple" | "windows" | "linux";
+type DownloadIconKind = DownloadPlatform | "mobile";
 
 function AppleIcon() {
   return (
@@ -65,7 +74,12 @@ function getDownloadPlatform(platform: Platform): DownloadPlatform {
   return "apple";
 }
 
-function MonitorIcon() {
+export function getDownloadIconKind(platform: Platform): DownloadIconKind {
+  if (platform === Platform.Mobile) return "mobile";
+  return getDownloadPlatform(platform);
+}
+
+function MobileIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -78,8 +92,8 @@ function MonitorIcon() {
       className="size-4 shrink-0"
       aria-hidden="true"
     >
-      <rect x="2" y="3" width="20" height="14" rx="2" />
-      <path d="M8 21h8M12 17v4" />
+      <rect x="5" y="2" width="14" height="20" rx="2" />
+      <path d="M12 18h.01" />
     </svg>
   );
 }
@@ -90,42 +104,41 @@ function PlatformIcon({ platform }: { platform: DownloadPlatform }) {
   return <AppleIcon />;
 }
 
-function getLabel(size: "sm" | "md", platform: DownloadPlatform) {
-  if (size === "sm") return "Download";
-  if (platform === "windows") return "Download for Windows";
-  if (platform === "linux") return "Download for Linux";
-  return "Download for Mac";
-}
-
 export function DownloadButton({
   size = "md",
   className = "",
+  placement = "unknown",
 }: DownloadButtonProps) {
   const { platform } = usePlatform();
   const downloadPlatform = getDownloadPlatform(platform);
-  // AO is a desktop app, so a phone can't run any build — point mobile visitors
-  // at the desktop download with a label that sets that expectation.
-  const isMobile = platform === Platform.Mobile;
+  const iconKind = getDownloadIconKind(platform);
+  const isMobile = iconKind === "mobile";
   const sizeClasses =
     size === "sm"
       ? "h-8 px-3 text-sm"
       : "px-3 sm:px-6 py-2 sm:py-3 text-sm sm:text-base";
-  const label = isMobile
-    ? size === "sm"
-      ? "Get for desktop"
-      : "Get AO for desktop"
-    : getLabel(size, downloadPlatform);
-
   const buttonClasses = `bg-foreground text-background ${sizeClasses} rounded-2xl tracking-[-0.5px] font-semibold hover:opacity-90 transition-opacity flex items-center gap-2 whitespace-nowrap shrink-0 ${className}`;
 
   return (
     <Link
       href="/download"
       className={buttonClasses}
-      onClick={() => track("download_clicked")}
+      onClick={() =>
+        track("download_clicked", {
+          platform: downloadPlatform,
+          is_mobile: isMobile,
+          placement,
+          size,
+        })
+      }
     >
-      {isMobile ? <MonitorIcon /> : <PlatformIcon platform={downloadPlatform} />}
-      {label}
+      <span data-download-icon className="inline-flex md:hidden">
+        <MobileIcon />
+      </span>
+      <span data-download-icon className="hidden md:inline-flex">
+        <PlatformIcon platform={downloadPlatform} />
+      </span>
+      <span data-download-label>Download</span>
     </Link>
   );
 }

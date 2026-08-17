@@ -7,11 +7,13 @@ import { backdropFor, harnessInitial, hasLogo, LOGO_KEYS } from "./harnessLogo";
 const ALL_HARNESSES = [
 	"claude-code", "codex", "aider", "opencode", "grok", "droid", "amp", "agy",
 	"crush", "cursor", "qwen", "copilot", "goose", "auggie", "continue", "devin",
-	"cline", "kimi", "kiro", "kilocode", "vibe", "pi", "autohand", "fake",
+	"cline", "kimi", "muse", "kiro", "kilocode", "vibe", "pi", "autohand",
+	"kimchi", "prime-agent",
 ];
 
 // The fake harness exists only for tests and intentionally has no brand asset.
-const NO_ASSET = ["fake"];
+// prime-agent ships a mark on desktop but it has not been ported to mobile yet.
+const NO_ASSET = ["fake", "prime-agent"];
 
 describe("logo registry", () => {
 	it("has a mark for every harness that ships one", () => {
@@ -72,7 +74,7 @@ describe("backdropFor", () => {
 
 	// A chip behind every mark would turn a row of logos into a row of boxes.
 	it("leaves colourful marks bare", () => {
-		for (const h of ["claude-code", "codex", "amp", "qwen", "vibe", "aider", "crush", "kiro"]) {
+	for (const h of ["claude-code", "codex", "amp", "qwen", "vibe", "aider", "crush", "muse", "kiro"]) {
 			expect(backdropFor(h), h).toBe("neutral");
 		}
 	});

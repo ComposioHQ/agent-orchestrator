@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // clientName identifies AO to the provider. It shows up in the app-server's
@@ -225,7 +225,7 @@ func (v codexVersion) String() string {
 }
 
 func installedCodexVersion(ctx context.Context, bin string) (string, error) {
-	output, err := exec.CommandContext(ctx, bin, "--version").CombinedOutput()
+	output, err := aoprocess.CommandContext(ctx, bin, "--version").CombinedOutput()
 	if err != nil {
 		return "", err
 	}
@@ -262,6 +262,8 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoningEffort"`
 	}
 	openCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
@@ -274,7 +276,7 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		return nil, errors.New("thread/start returned no thread id")
 	}
 
-	conv.start(resp.Thread.ID)
+	conv.start(resp.Thread.ID, resp.Model, resp.ReasoningEffort)
 	return conv, nil
 }
 
@@ -308,7 +310,11 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 	resumeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	err = conv.conn.request(resumeCtx, "thread/resume", params, nil)
+	var resp struct {
+		Model           string `json:"model"`
+		ReasoningEffort string `json:"reasoningEffort"`
+	}
+	err = conv.conn.request(resumeCtx, "thread/resume", params, &resp)
 	if err != nil {
 		_ = conv.Close()
 		// Deliberately not falling back to thread/start: silently opening a new
@@ -316,7 +322,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 	}
 
-	conv.start(cfg.ProviderConversationID)
+	conv.start(cfg.ProviderConversationID, resp.Model, resp.ReasoningEffort)
 	return conv, nil
 }
 
@@ -381,7 +387,7 @@ func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 
 // spawnAppServer is the real launcher.
 func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*process, error) {
-	cmd := exec.Command(bin, "app-server")
+	cmd := aoprocess.Command(bin, "app-server")
 	cmd.Dir = workdir
 	if len(env) > 0 {
 		cmd.Env = env

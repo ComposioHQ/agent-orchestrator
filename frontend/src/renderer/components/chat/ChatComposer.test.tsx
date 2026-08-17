@@ -29,6 +29,33 @@ const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("grows with the draft, then scrolls after the seven-line cap", () => {
+		const { field } = renderComposer();
+		let scrollHeight = 112;
+		Object.defineProperty(field, "scrollHeight", {
+			configurable: true,
+			get: () => scrollHeight,
+		});
+		// JSDOM does not resolve Tailwind's generated max-height, so mirror the
+		// max-h-40 value inline while exercising the browser measurement path.
+		field.style.maxHeight = "160px";
+
+		fireEvent.change(field, { target: { value: "A prompt that wraps to a few lines" } });
+		expect(field.style.height).toBe("112px");
+		expect(field.style.overflowY).toBe("hidden");
+
+		scrollHeight = 240;
+		fireEvent.change(field, { target: { value: "A much longer prompt that exceeds seven lines" } });
+		expect(field.style.height).toBe("160px");
+		expect(field.style.overflowY).toBe("auto");
+
+		scrollHeight = 72;
+		fireEvent.change(field, { target: { value: "Short again" } });
+		expect(field.style.height).toBe("72px");
+		expect(field.style.overflowY).toBe("hidden");
+		expect(field).toHaveClass("chat-composer-scrollbar", "max-h-40");
+	});
+
 	it("separates secondary message tools from the primary send action", () => {
 		render(
 			<ChatComposer
@@ -44,7 +71,14 @@ describe("send keys", () => {
 
 		const actions = screen.getByRole("group", { name: "Send message controls" });
 		expect(within(actions).getByRole("button", { name: "Send message" })).toBeInTheDocument();
-		expect(within(actions).getByText("Enter to send")).toBeInTheDocument();
+		expect(within(actions).queryByText(/Enter to/)).not.toBeInTheDocument();
+	});
+
+	it("starts as a single-line field and grows only when the draft needs it", () => {
+		const { field } = renderComposer();
+		expect(field).toHaveAttribute("rows", "1");
+		expect(field).toHaveClass("min-h-9");
+		expect(field).not.toHaveClass("min-h-[3.25rem]");
 	});
 
 	it("uses the AO logo palette for the send control", async () => {
@@ -55,6 +89,20 @@ describe("send keys", () => {
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
 		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
+	});
+
+	it("turns the empty send action into Stop while the agent is working", async () => {
+		const onInterrupt = vi.fn();
+		const { field } = renderComposer({ willQueue: true, onInterrupt });
+
+		const stop = screen.getByRole("button", { name: "Stop turn" });
+		expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+		await userEvent.click(stop);
+		expect(onInterrupt).toHaveBeenCalledOnce();
+
+		await userEvent.type(field, "queue this next");
+		expect(screen.queryByRole("button", { name: "Stop turn" })).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
 	});
 
 	it("sends on Enter", async () => {
@@ -281,7 +329,7 @@ describe("attachments", () => {
 	// The chip has to mean something: the bytes get written and the message names
 	// the path the agent can open.
 	it("stages the image and names the returned path in the message", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-ab12cd34ef.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-ab12cd34ef.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage });
 
 		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
@@ -296,7 +344,7 @@ describe("attachments", () => {
 		]);
 		await waitFor(() =>
 			expect(onSend).toHaveBeenCalledWith(
-				"what is wrong here\n\nAttached files (read these files in the workspace):\n- .ao/attachments/image-ab12cd34ef.png",
+				"what is wrong here\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12cd34ef.png",
 			),
 		);
 		// Consumed, so the next message does not silently resend them.
@@ -304,7 +352,7 @@ describe("attachments", () => {
 	});
 
 	it("sends an image with no words, since the reference block carries the request", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-1.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-1.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage });
 
 		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
@@ -314,12 +362,12 @@ describe("attachments", () => {
 
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		expect(onSend.mock.calls[0]?.[0]).toBe(
-			"Attached files (read these files in the workspace):\n- .ao/attachments/image-1.png",
+			"Attached files (read these files in the workspace):\n- .ao/attachments/attachment-1.png",
 		);
 	});
 
 	it("also sends native image bytes when the provider negotiated image prompts", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-native.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-native.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
 
 		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
@@ -327,7 +375,7 @@ describe("attachments", () => {
 		await userEvent.type(field, "inspect this{Enter}");
 
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/image-native.png");
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/attachment-native.png");
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
 			{ mimeType: "image/png", data: expect.any(String) },
 		]);
@@ -335,7 +383,7 @@ describe("attachments", () => {
 
 	it("stages non-images by path without sending them as native image blocks", async () => {
 		const stage = vi.fn().mockResolvedValue([
-			".ao/attachments/image-native.png",
+			".ao/attachments/attachment-native.png",
 			".ao/attachments/notes.txt",
 		]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
@@ -371,7 +419,7 @@ describe("attachments", () => {
 	});
 
 	it("keeps attachments after a failed send and reuses their staged paths on retry", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-retry.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-retry.png"]);
 		const onSend = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined);
 		render(<ChatComposer onSend={onSend} onStageAttachments={stage} />);
 		const field = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
@@ -406,5 +454,28 @@ describe("unavailable states", () => {
 	it("says a mid-turn message will be held", () => {
 		const { field } = renderComposer({ willQueue: true });
 		expect(field.placeholder).toContain("sends when it finishes");
+	});
+
+	it("turns the primary composer action into stop while the agent is working and the draft is empty", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Stop turn" }));
+
+		expect(onInterrupt).toHaveBeenCalledTimes(1);
+		expect(onSend).not.toHaveBeenCalled();
+	});
+
+	it("keeps the primary action as queue while the agent is working and a draft exists", async () => {
+		const onSend = vi.fn();
+		const onInterrupt = vi.fn();
+		render(<ChatComposer onSend={onSend} willQueue onInterrupt={onInterrupt} />);
+
+		await userEvent.type(screen.getByLabelText("Message the agent"), "follow up");
+		await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+		expect(onSend).toHaveBeenCalledWith("follow up");
+		expect(onInterrupt).not.toHaveBeenCalled();
 	});
 });
