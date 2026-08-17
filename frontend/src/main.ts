@@ -50,6 +50,7 @@ import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
 	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
+	SET_TERMINAL_FOCUSED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
 import { createTrayController, type TrayController } from "./main/tray";
@@ -157,6 +158,7 @@ let browserRuntimeLinkIdentity: BrowserRuntimeIdentity | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
 let closeShellTerminalShortcutEnabled = false;
+let terminalFocused = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
@@ -446,6 +448,7 @@ async function createWindowInternal(): Promise<void> {
 			if (id !== "toggle-browser-devtools") return;
 			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
 		},
+		() => terminalFocused,
 	);
 
 	browserViewHost = createBrowserViewHost({
@@ -486,8 +489,12 @@ async function createWindowInternal(): Promise<void> {
 	});
 	shellWebContents.on("render-process-gone", () => {
 		keybindingRecordingActive = false;
+		terminalFocused = false;
 	});
-	shellWebContents.on("did-start-loading", () => trayLifecycle.clear());
+	shellWebContents.on("did-start-loading", () => {
+		terminalFocused = false;
+		trayLifecycle.clear();
+	});
 	shellWebContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
@@ -593,7 +600,7 @@ const runLoginShell: ShellRunner = (shellPath, args) =>
 		};
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn(shellPath, args, { stdio: ["ignore", "pipe", "ignore"] });
+			child = spawn(shellPath, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
 		} catch {
 			finish(null);
 			return;
@@ -929,6 +936,27 @@ function resolvedDaemonPort(): number {
 	return isDev && !process.env.AO_PORT ? DEV_DAEMON_PORT : expectedDaemonPort(process.env);
 }
 
+function daemonLaunchEnv(): NodeJS.ProcessEnv {
+	if (!isDev || process.platform !== "win32") {
+		return process.env;
+	}
+	try {
+		const daemonDir = path.resolve(app.getAppPath(), "daemon");
+		const manifestPath = path.join(daemonDir, "dev-daemon.json");
+		const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as { path?: unknown };
+		if (typeof parsed.path === "string") {
+			const daemonPath = path.resolve(parsed.path.trim());
+			const relativePath = path.relative(daemonDir, daemonPath);
+			if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+				return { ...process.env, AO_DEV_DAEMON_BINARY: daemonPath };
+			}
+		}
+	} catch {
+		// Fall back to the legacy fixed dev path; build-daemon writes the manifest.
+	}
+	return process.env;
+}
+
 async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
@@ -940,7 +968,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	await ensureShellEnv();
 
 	const launch = resolveDaemonLaunch(
-		process.env,
+		daemonLaunchEnv(),
 		app.isPackaged,
 		process.resourcesPath,
 		app.getAppPath(),
@@ -1504,6 +1532,11 @@ ipcMain.on("browser:overlay", (event, open: unknown) => {
 
 ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
 	closeShellTerminalShortcutEnabled = enabled === true;
+});
+
+ipcMain.on(SET_TERMINAL_FOCUSED_CHANNEL, (event, focused: unknown) => {
+	if (event.sender !== getShellWebContents() || typeof focused !== "boolean") return;
+	terminalFocused = focused;
 });
 
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same

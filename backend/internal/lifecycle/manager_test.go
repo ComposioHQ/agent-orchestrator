@@ -18,6 +18,7 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
+	projects   map[string]domain.ProjectRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	reviews    map[string][]domain.PullRequestReview
 	comments   map[string][]domain.PullRequestComment
@@ -25,6 +26,7 @@ type fakeStore struct {
 	signatures map[string]string
 
 	listPRsErr        error
+	listReviewsErr    error
 	signatureWriteErr error
 	signatureWrites   int
 }
@@ -32,6 +34,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		sessions:   map[domain.SessionID]domain.SessionRecord{},
+		projects:   map[string]domain.ProjectRecord{},
 		prs:        map[domain.SessionID][]domain.PullRequest{},
 		reviews:    map[string][]domain.PullRequestReview{},
 		comments:   map[string][]domain.PullRequestComment{},
@@ -74,7 +77,15 @@ func (f *fakeStore) GetPR(_ context.Context, prURL string) (domain.PullRequest, 
 }
 
 func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.listReviewsErr != nil {
+		return nil, f.listReviewsErr
+	}
 	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	rec, ok := f.projects[id]
+	return rec, ok, nil
 }
 
 func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
@@ -1523,6 +1534,38 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 	if got.Metadata.WorkspaceRepoPath != metadata.WorkspaceRepoPath {
 		t.Fatalf("workspace repo path = %q, want %q", got.Metadata.WorkspaceRepoPath, metadata.WorkspaceRepoPath)
+	}
+}
+
+func TestMarkSpawnedPersistsAndPreservesDiffBase(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", IsTerminated: true}
+
+	wantSHA := "0123456789abcdef"
+	wantRef := "refs/remotes/origin/main"
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath: "/ws",
+		DiffBaseSHA:   wantSHA,
+		DiffBaseRef:   wantRef,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"].Metadata
+	if got.DiffBaseSHA != wantSHA || got.DiffBaseRef != wantRef {
+		t.Fatalf("spawn diff base = sha:%q ref:%q, want sha:%q ref:%q", got.DiffBaseSHA, got.DiffBaseRef, wantSHA, wantRef)
+	}
+
+	// Restore does not recompute the base. Empty incoming values must preserve
+	// the durable comparison metadata recorded by the initial spawn.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:   "/ws",
+		RuntimeHandleID: "h2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions["mer-1"].Metadata
+	if got.DiffBaseSHA != wantSHA || got.DiffBaseRef != wantRef {
+		t.Fatalf("restored diff base = sha:%q ref:%q, want preserved sha:%q ref:%q", got.DiffBaseSHA, got.DiffBaseRef, wantSHA, wantRef)
 	}
 }
 

@@ -41,12 +41,13 @@ type lifecycleStack struct {
 	// LCM is the Lifecycle Manager (the canonical write path). It is exposed so
 	// startSession can share the same reducer the reaper drives, rather than
 	// standing up a second store+LCM pair that would diverge under writes.
-	LCM           *lifecycle.Manager
-	runtimeReaper *reaper.Reaper
-	reaperDone    <-chan struct{}
-	activityDone  <-chan struct{}
-	scmDone       <-chan struct{}
-	trackerDone   <-chan struct{}
+	LCM            *lifecycle.Manager
+	runtimeReaper  *reaper.Reaper
+	reaperDone     <-chan struct{}
+	activityDone   <-chan struct{}
+	autoReviewDone <-chan struct{}
+	scmDone        <-chan struct{}
+	trackerDone    <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -103,6 +104,9 @@ func (l *lifecycleStack) Stop() {
 	if l.activityDone != nil {
 		<-l.activityDone
 	}
+	if l.autoReviewDone != nil {
+		<-l.autoReviewDone
+	}
 	if l.scmDone != nil {
 		<-l.scmDone
 	}
@@ -122,6 +126,7 @@ func (l *lifecycleStack) Stop() {
 type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
+	WaitAgentSwitchWorkers(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
@@ -197,6 +202,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Browser:             browserLifecycle,
 		BrowserCapabilities: browserCapabilities,
 		DataDir:             cfg.DataDir,
+		BackgroundContext:   ctx,
 		Logger:              log,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
@@ -237,9 +243,17 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			reviewcore.WithRunFilePath(cfg.RunFilePath),
 			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
-	reviewSvc := reviewsvc.New(reviewEngine, store,
+	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
-		reviewsvc.WithTelemetry(telemetry))
+		reviewsvc.WithTelemetry(telemetry),
+	}
+	if scmProvider != nil {
+		reviewOpts = append(reviewOpts,
+			reviewsvc.WithReviewRequester(scmProvider),
+			reviewsvc.WithReviewResolver(scmProvider),
+		)
+	}
+	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
 	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
@@ -431,9 +445,14 @@ type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
 var _ interface {
+	ArmChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
 	AbortChatHandoff(domain.SessionID)
 } = chatLauncher{}
+
+func (c chatLauncher) SupportsChat(harness domain.AgentHarness) bool {
+	return c.svc.SupportsChat(harness)
+}
 
 func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness)
@@ -492,10 +511,19 @@ func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
 	return c.svc.HasLiveChatController(id)
 }
 
-// PrepareChatHandoff closes Chat intake and waits for the controller to become
-// quiescent before Session Manager stops it. These methods intentionally live
+// ArmChatHandoff closes Chat intake and dispatch synchronously at transition
+// acceptance. PrepareChatHandoff then settles interrupt work or waits for drain
+// work before Session Manager stops the source. These methods intentionally live
 // on the wiring adapter: Session Manager's handoff capability is optional, but
 // wrapping the concrete Chat service must not erase it.
+func (c chatLauncher) ArmChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	return c.svc.ArmChatHandoff(ctx, id, policy)
+}
+
 func (c chatLauncher) PrepareChatHandoff(
 	ctx context.Context,
 	id domain.SessionID,

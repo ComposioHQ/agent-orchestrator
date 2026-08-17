@@ -180,6 +180,7 @@ func summarizeReview(pr domain.PullRequest, comments []domain.PullRequestComment
 			URL:              c.URL,
 			File:             c.File,
 			Line:             c.Line,
+			Body:             c.Body,
 			AutoInjectReview: c.AutoInjectReview,
 		})
 	}

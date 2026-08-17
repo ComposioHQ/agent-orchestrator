@@ -49,6 +49,15 @@ export type PullRequestFacts = {
 /** The daemon-committed controller currently responsible for the session. */
 export type SessionMode = "chat" | "tui";
 
+export type AgentSwitchSummary = {
+	agentHandoffStatus: string;
+	errorCode?: string;
+	fromHarness: string;
+	id: string;
+	state: string;
+	targetHarness: string;
+};
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -60,6 +69,8 @@ export type WorkspaceSession = {
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: ReviewerHarnessId;
+	/** Whether the daemon may automatically review this session after it becomes idle. */
+	autoReviewEnabled?: boolean;
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session
@@ -87,6 +98,7 @@ export type WorkspaceSession = {
 	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
+	activeAgentSwitch?: AgentSwitchSummary;
 	/**
 	 * Live preview target set by the daemon (via `ao preview`) and streamed over
 	 * CDC. When non-empty, the browser panel opens and navigates here.
@@ -200,14 +212,41 @@ function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	return a.id > b.id;
 }
 
+function sessionLastActiveNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
+	const aLastActive = sessionLastActiveTimestamp(a);
+	const bLastActive = sessionLastActiveTimestamp(b);
+	if (aLastActive !== bLastActive) return aLastActive > bLastActive;
+	return a.id > b.id;
+}
+
+function sessionLastActiveTimestamp(session: WorkspaceSession): number {
+	return (
+		validTimestamp(session.activity?.lastActivityAt) ??
+		validTimestamp(session.updatedAt) ??
+		validTimestamp(session.createdAt) ??
+		0
+	);
+}
+
 function timestamp(value?: string): number {
-	if (!value) return 0;
+	return validTimestamp(value) ?? 0;
+}
+
+function validTimestamp(value?: string): number | undefined {
+	if (!value) return undefined;
 	const parsed = Date.parse(value);
-	return Number.isNaN(parsed) ? 0 : parsed;
+	return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
 	return sessions.filter((s) => !isOrchestratorSession(s));
+}
+
+/** Worker sessions ordered by agent activity, newest first. */
+export function sortedWorkerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
+	return workerSessions(sessions).sort((a, b) =>
+		sessionLastActiveNewer(b, a) ? 1 : sessionLastActiveNewer(a, b) ? -1 : 0,
+	);
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {

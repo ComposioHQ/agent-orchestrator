@@ -92,7 +92,16 @@ var shippedMigrations = map[int64]string{
 	86: "0086_workspace_repo_default_branch.sql",
 	87: "0087_conversation_branches.sql",
 	88: "0088_add_auto_inject_ci_toggle.sql",
-	89: "0089_interface_transition_notice_acknowledgement.sql",
+	89: "0089_conversation_turn_promotion.sql",
+	90: "0090_workspace_git_status.sql",
+	91: "0091_session_auto_review.sql",
+	92: "0092_pr_reviews_target_sha.sql",
+	93: "0093_review_run_trigger_source.sql",
+	94: "0094_agent_switch_recovery.sql",
+	95: "0095_allow_omp_harness.sql",
+	96: "0096_session_worktree_base_ref.sql",
+	97: "0097_pr_provider_identity.sql",
+	98: "0098_interface_transition_notice_acknowledgement.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
