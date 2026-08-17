@@ -523,6 +523,7 @@
 	"settings.close": "关闭设置",
 	"settings.connectMobile": "连接手机",
 	"settings.developerMode": "开发者模式",
+	"settings.mobileEmulator": "移动模拟器",
 	"settings.general": "通用",
 	"settings.getHelp": "获取帮助",
 	"settings.keyboardShortcuts": "键盘快捷键",
@@ -1162,5 +1163,8 @@
 	"emulator.send": "Send",
 	"emulator.enter": "Enter",
 	"emulator.startPrompt": "Start the simulator to see its screen.",
+	"emulator.toolchainMissing": "Xcode is required to run the iOS Simulator.",
+	"emulator.installXcode": "Install Xcode",
+	"emulator.recheck": "Recheck",
 	"inspector.emulator": "Emulator"
 }

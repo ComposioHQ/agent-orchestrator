@@ -541,6 +541,7 @@
 	"settings.close": "설정 닫기",
 	"settings.connectMobile": "모바일 연결",
 	"settings.developerMode": "개발자 모드",
+	"settings.mobileEmulator": "모바일 에뮬레이터",
 	"settings.general": "일반",
 	"settings.getHelp": "도움말",
 	"settings.keyboardShortcuts": "키보드 단축키",
@@ -1180,5 +1181,8 @@
 	"emulator.send": "Send",
 	"emulator.enter": "Enter",
 	"emulator.startPrompt": "Start the simulator to see its screen.",
+	"emulator.toolchainMissing": "Xcode is required to run the iOS Simulator.",
+	"emulator.installXcode": "Install Xcode",
+	"emulator.recheck": "Recheck",
 	"inspector.emulator": "Emulator"
 }

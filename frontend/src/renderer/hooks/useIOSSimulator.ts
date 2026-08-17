@@ -14,6 +14,28 @@ export function useIOSSimulator(enabled: boolean) {
 		enabled,
 		refetchInterval: 2000,
 	});
+	// Toolchain (Xcode/runtime) state drives the "load needed dependencies"
+	// flow — without Xcode there is nothing to boot.
+	const toolchain = useQuery({
+		queryKey: ["ios-device", "toolchain"],
+		queryFn: async () => {
+			const response = await apiClient.GET("/api/v1/ios-device/toolchain/status");
+			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to read iOS toolchain status"));
+			return response.data;
+		},
+		enabled,
+		refetchInterval: 10_000,
+	});
+	const recheck = useMutation({
+		mutationFn: async () => {
+			const response = await apiClient.POST("/api/v1/ios-device/toolchain/recheck");
+			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to recheck iOS toolchain"));
+			return response.data;
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["ios-device", "toolchain"] });
+		},
+	});
 	const start = useMutation({
 		mutationFn: async () => {
 			const response = await apiClient.POST("/api/v1/ios-device/start");
@@ -64,5 +86,5 @@ export function useIOSSimulator(enabled: boolean) {
 			return response.data;
 		},
 	});
-	return { status, start, stop, screenshot, streamFrame, permissions, input };
+	return { status, toolchain, recheck, start, stop, screenshot, streamFrame, permissions, input };
 }

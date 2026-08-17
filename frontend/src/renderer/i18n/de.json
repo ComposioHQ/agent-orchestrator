@@ -541,6 +541,7 @@
 	"settings.close": "Einstellungen schließen",
 	"settings.connectMobile": "Mobile verbinden",
 	"settings.developerMode": "Entwicklermodus",
+	"settings.mobileEmulator": "Mobiler Emulator",
 	"settings.general": "Allgemein",
 	"settings.getHelp": "Hilfe holen",
 	"settings.keyboardShortcuts": "Tastenkürzel",
@@ -1180,5 +1181,8 @@
 	"emulator.send": "Send",
 	"emulator.enter": "Enter",
 	"emulator.startPrompt": "Start the simulator to see its screen.",
+	"emulator.toolchainMissing": "Xcode is required to run the iOS Simulator.",
+	"emulator.installXcode": "Install Xcode",
+	"emulator.recheck": "Recheck",
 	"inspector.emulator": "Emulator"
 }
