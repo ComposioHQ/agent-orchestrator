@@ -3,6 +3,7 @@ package mobilebridge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -40,22 +41,41 @@ func QueryTailscale(ctx context.Context) TailscaleInfo {
 }
 
 func queryTailscale(ctx context.Context, run TailscaleRunner) TailscaleInfo {
+	info, err := checkTailscale(ctx, run)
+	if err != nil {
+		return TailscaleInfo{}
+	}
+	return info
+}
+
+// CheckTailscale is the error-returning variant of QueryTailscale for callers
+// that must fail closed with a precise reason (ao headless): a missing or
+// failing tailscale CLI, malformed output, and a missing MagicDNS name each
+// surface as a distinct error instead of collapsing into the zero value.
+func CheckTailscale(ctx context.Context) (TailscaleInfo, error) {
+	return checkTailscale(ctx, execTailscale)
+}
+
+func checkTailscale(ctx context.Context, run TailscaleRunner) (TailscaleInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, tailscaleTimeout)
 	defer cancel()
 	out, err := run(ctx, "status", "--json")
 	if err != nil {
-		return TailscaleInfo{}
+		return TailscaleInfo{}, fmt.Errorf("tailscale status: %w", err)
 	}
 	var parsed struct {
 		Self        *struct{ DNSName string } `json:"Self"`
 		CertDomains []string                  `json:"CertDomains"`
 	}
-	if err := json.Unmarshal(out, &parsed); err != nil || parsed.Self == nil {
-		return TailscaleInfo{}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return TailscaleInfo{}, fmt.Errorf("parse tailscale status: %w", err)
+	}
+	if parsed.Self == nil {
+		return TailscaleInfo{}, fmt.Errorf("tailscale status reports no self node — is tailscaled up and logged in?")
 	}
 	name := strings.TrimSuffix(parsed.Self.DNSName, ".")
 	if name == "" {
-		return TailscaleInfo{}
+		return TailscaleInfo{}, fmt.Errorf("tailscale: no MagicDNS name for this node — enable MagicDNS in the tailnet admin console")
 	}
-	return TailscaleInfo{Name: name, CertsEnabled: len(parsed.CertDomains) > 0}
+	return TailscaleInfo{Name: name, CertsEnabled: len(parsed.CertDomains) > 0}, nil
 }

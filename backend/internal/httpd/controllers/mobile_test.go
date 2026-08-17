@@ -421,3 +421,63 @@ func TestShutdownServeNoopWhenNotOwned(t *testing.T) {
 		})
 	}
 }
+
+// First headless boot: no persisted state, so EnableReusingPassword must
+// generate and persist a fresh password, exactly like Enable.
+func TestEnableReusingPasswordFirstBootGenerates(t *testing.T) {
+	b := newSecureBridge(t, tsUp, func() int { return 3011 })
+	res, err := b.EnableReusingPassword()
+	if err != nil {
+		t.Fatalf("EnableReusingPassword: %v", err)
+	}
+	if res.Password == "" {
+		t.Fatal("expected a generated password on first boot")
+	}
+	st, err := mobilebridge.Load(b.ConfigPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !st.Enabled || st.Password != res.Password {
+		t.Errorf("persisted state = %+v, want enabled with the returned password", st)
+	}
+}
+
+// A headless restart must re-arm with the persisted password so already-paired
+// clients keep working — no rotation.
+func TestEnableReusingPasswordReusesPersisted(t *testing.T) {
+	b := newSecureBridge(t, tsUp, func() int { return 3011 })
+	first, err := b.EnableReusingPassword()
+	if err != nil {
+		t.Fatalf("first enable: %v", err)
+	}
+	// Simulate a daemon restart: a fresh BridgeService over the same config.
+	restarted := newSecureBridge(t, tsUp, func() int { return 3011 })
+	restarted.ConfigPath = b.ConfigPath
+	second, err := restarted.EnableReusingPassword()
+	if err != nil {
+		t.Fatalf("second enable: %v", err)
+	}
+	if second.Password != first.Password {
+		t.Errorf("password rotated across restart (%q -> %q), want reuse", first.Password, second.Password)
+	}
+}
+
+// A disabled bridge (or one with no persisted password) must get a fresh
+// password, not resurrect an old one.
+func TestEnableReusingPasswordDisabledGeneratesFresh(t *testing.T) {
+	b := newSecureBridge(t, tsUp, func() int { return 3011 })
+	first, err := b.Enable()
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := b.Disable(); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	second, err := b.EnableReusingPassword()
+	if err != nil {
+		t.Fatalf("re-enable: %v", err)
+	}
+	if second.Password == first.Password {
+		t.Errorf("password %q reused after disable, want a fresh one", second.Password)
+	}
+}
