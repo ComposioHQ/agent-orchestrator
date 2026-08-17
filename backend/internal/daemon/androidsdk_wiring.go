@@ -251,6 +251,13 @@ func (s *androidDeviceService) StartDevice(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("check quick-boot snapshot validity: %w", err)
 	}
+	// A previous boot attempt may have crashed before it got a chance to
+	// clean up its own instance-lock directories; clear them before every
+	// attempt so a stale lock never causes a spurious "Running multiple
+	// emulators with the same AVD" failure (see ClearStaleLocks).
+	if err := androidemulator.ClearStaleLocks(avdDir); err != nil {
+		return fmt.Errorf("clear stale AVD locks: %w", err)
+	}
 
 	prefsRoot, err := ensureAndroidPrefsRoot(s.toolsDir)
 	if err != nil {

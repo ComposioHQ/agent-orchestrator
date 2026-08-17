@@ -3,6 +3,7 @@ package androidemulator
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,6 +90,34 @@ func TestManagerUnexpectedExitTriggersAutoRestart(t *testing.T) {
 		t.Errorf("Error = %q after successful auto-restart, want empty", final.Error)
 	}
 	_ = m.Stop(context.Background())
+}
+
+// TestManagerDetectsFastCrashInsteadOfWaitingFullTimeout covers a real,
+// live-reported bug: when the emulator process dies almost instantly with
+// a self-diagnosing FATAL message (e.g. an unsupported CPU architecture),
+// the old waitReady only polled ReadyCheck on a timer and never noticed the
+// process was gone, so it silently waited out the *entire* ReadyTimeout
+// before reporting a generic "did not become ready in time" -- hiding the
+// real, already-known cause and making every fast crash look like a slow
+// hang.
+func TestManagerDetectsFastCrashInsteadOfWaitingFullTimeout(t *testing.T) {
+	cfg := fastBootConfig("print-fatal-and-exit")
+	cfg.ReadyCheck = func(context.Context) (bool, error) { return false, nil } // never ready
+	cfg.ReadyTimeout = 10 * time.Second                                       // must NOT be waited out
+	cfg.RestartBackoff = nil                                                  // stay Crashed, no auto-restart noise
+
+	m := NewManager()
+	start := time.Now()
+	_ = m.Start(context.Background(), cfg) // error return is allowed either way; State is the real assertion
+	status := waitForManagerState(t, m, StateCrashed)
+	elapsed := time.Since(start)
+
+	if elapsed >= cfg.ReadyTimeout {
+		t.Fatalf("reaching Crashed took %s, want well under the %s ReadyTimeout (the process died almost instantly)", elapsed, cfg.ReadyTimeout)
+	}
+	if !strings.Contains(status.Error, "CPU Architecture 'arm64-v8a' is not supported") {
+		t.Errorf("Error = %q, want it to contain the emulator's own crash output instead of a generic timeout message", status.Error)
+	}
 }
 
 func TestManagerStaysCrashedAfterExhaustingRestartBudget(t *testing.T) {

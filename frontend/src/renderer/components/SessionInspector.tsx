@@ -190,6 +190,16 @@ export function SessionInspector({
 		if (next === "files") onOpenFiles?.();
 	};
 	const view: InspectorView = requestedView;
+	// If the emulator setting is switched off while its tab is the active
+	// one, the tab itself disappears from `tabs` below, but nothing else
+	// would otherwise move `view` off of "emulator" -- leaving no tab shown
+	// as selected while the setting-gated body render above still resolves.
+	// Fall back to Summary for a coherent UI rather than a dead tab state.
+	useEffect(() => {
+		if (emulatorEnabled || view !== "emulator") return;
+		setInternalView("summary");
+		onViewChange?.("summary");
+	}, [emulatorEnabled, view, onViewChange]);
 	const tabs = VIEW_DEFS.filter((entry) => entry.id !== "emulator" || emulatorEnabled).map((entry) => {
 		const label = t(entry.labelKey);
 		return {
@@ -221,7 +231,13 @@ export function SessionInspector({
 			}
 			emulatorPoppedOut={emulatorPoppedOut}
 			emulatorView={
-				session ? (
+				// Gated on emulatorEnabled (not just isActive below): once the
+				// setting is switched off, this must stop existing entirely --
+				// otherwise a stale view==="emulator" (this tab having just been
+				// hidden out of `tabs`) would keep EmulatorTabView mounted with
+				// its SDK/emulator polling hooks still running with no visible
+				// tab selected.
+				session && emulatorEnabled ? (
 					<EmulatorTabView
 						emulatorPoppedOut={emulatorPoppedOut}
 						isActive={isInspectorVisible && !emulatorPoppedOut}

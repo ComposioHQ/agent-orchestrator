@@ -3,6 +3,7 @@ package androidemulator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -142,13 +143,23 @@ func (m *Manager) bootOnce(ctx context.Context) error {
 	m.proc = proc
 	m.mu.Unlock()
 
-	if !waitReady(ctx, cfg) {
-		_ = proc.Kill()
+	result := waitReady(ctx, proc, cfg)
+	if !result.ready {
+		var lastErr string
+		if result.procExited {
+			// The process already died on its own; nothing left to kill, and
+			// the real cause is whatever it printed on its way out (e.g. a
+			// FATAL line), not a generic timeout.
+			lastErr = fmt.Sprintf("emulator exited before becoming ready: %s", lastNonEmptyLine(proc.Logs(20)))
+		} else {
+			_ = proc.Kill()
+			lastErr = fmt.Sprintf("emulator did not become ready in time: %s", lastNonEmptyLine(proc.Logs(20)))
+		}
 		m.mu.Lock()
 		m.state = StateCrashed
-		m.lastErr = "emulator did not become ready in time"
+		m.lastErr = lastErr
 		m.mu.Unlock()
-		return fmt.Errorf("androidemulator: emulator did not become ready in time")
+		return fmt.Errorf("androidemulator: %s", lastErr)
 	}
 
 	m.mu.Lock()
@@ -161,21 +172,65 @@ func (m *Manager) bootOnce(ctx context.Context) error {
 	return nil
 }
 
-func waitReady(ctx context.Context, cfg BootConfig) bool {
+// readyResult is waitReady's outcome: ready, or not ready because the
+// deadline passed while the process was still alive, or not ready because
+// the process exited on its own before ever becoming ready.
+type readyResult struct {
+	ready      bool
+	procExited bool
+}
+
+// waitReady polls cfg.ReadyCheck until it succeeds or ReadyTimeout elapses,
+// but also races that against proc exiting on its own -- a process that
+// dies almost instantly (e.g. a self-diagnosing FATAL error) must be
+// detected immediately, not discovered only after polling a corpse for the
+// rest of the timeout.
+func waitReady(ctx context.Context, proc *Process, cfg BootConfig) readyResult {
 	if cfg.ReadyCheck == nil {
-		return true
+		return readyResult{ready: true}
 	}
+
+	exited := make(chan struct{})
+	go func() {
+		_ = proc.Wait()
+		close(exited)
+	}()
+
 	deadline := time.Now().Add(cfg.ReadyTimeout)
 	for {
+		select {
+		case <-exited:
+			return readyResult{procExited: true}
+		default:
+		}
+
 		ok, _ := cfg.ReadyCheck(ctx)
 		if ok {
-			return true
+			return readyResult{ready: true}
 		}
 		if time.Now().After(deadline) {
-			return false
+			return readyResult{}
 		}
-		time.Sleep(cfg.ReadyPollInterval)
+
+		select {
+		case <-exited:
+			return readyResult{procExited: true}
+		case <-time.After(cfg.ReadyPollInterval):
+		}
 	}
+}
+
+// lastNonEmptyLine returns the last non-blank line from lines, or a
+// placeholder if there isn't one -- the most likely single line to carry a
+// process's own diagnosis of why it just exited (e.g. a FATAL message),
+// without dumping the whole log buffer into a one-line error string.
+func lastNonEmptyLine(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return "(no output captured)"
 }
 
 // watchExit blocks until proc exits, then either leaves the crash for an

@@ -330,6 +330,18 @@ describe("SessionInspector Emulator tab gating", () => {
 
 		expect(screen.getByTestId("emulator-panel")).toBeInTheDocument();
 	});
+
+	it("stops rendering the emulator panel (and its polling hooks) once the setting is switched off while its tab is active", async () => {
+		useUiStore.getState().setEmulatorEnabled(true);
+		renderWithQuery(<SessionInspector session={session([])} />);
+		await userEvent.click(screen.getByRole("tab", { name: "Emulator" }));
+		expect(screen.getByTestId("emulator-panel")).toBeInTheDocument();
+
+		act(() => useUiStore.getState().setEmulatorEnabled(false));
+
+		expect(screen.queryByTestId("emulator-panel")).not.toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: "Emulator" })).not.toBeInTheDocument();
+	});
 });
 
 describe("SessionInspector PR section", () => {

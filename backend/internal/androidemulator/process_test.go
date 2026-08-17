@@ -35,6 +35,14 @@ func TestHelperProcess(t *testing.T) {
 	case "sleep":
 		time.Sleep(10 * time.Second)
 		os.Exit(0)
+	case "print-fatal-and-exit":
+		// Mirrors a real, reported failure mode: the real emulator binary can
+		// print a self-diagnosing FATAL line and exit in well under a second
+		// (e.g. an unsupported CPU architecture on the actual host). The
+		// supervisor must notice the process died and surface this output,
+		// not silently poll a corpse for the rest of ReadyTimeout.
+		os.Stdout.WriteString("FATAL | CPU Architecture 'arm64-v8a' is not supported by the QEMU2 emulator\n")
+		os.Exit(1)
 	case "crash-once-then-sleep":
 		marker := os.Getenv("AO_CRASH_MARKER")
 		if _, err := os.Stat(marker); err != nil {
