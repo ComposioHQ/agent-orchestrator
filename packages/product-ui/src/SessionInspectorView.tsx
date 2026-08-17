@@ -871,7 +871,6 @@ function ExternalReviewCard({
 	const [rereviewRequested, setRereviewRequested] = useState(false);
 	const [rereviewError, setRereviewError] = useState(false);
 	const body = entry.body?.trim();
-	const canRequestRereview = entry.verdict.tone !== "success";
 	const inlineComments = entry.inlineComments ?? [];
 	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
 	return (
@@ -899,7 +898,7 @@ function ExternalReviewCard({
 			</button>
 			{open ? (
 				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
-					{onRequestRereview && canRequestRereview ? (
+					{onRequestRereview ? (
 						<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
 							{openInlineCount > 0 ? (
 								<span className="font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
@@ -932,6 +931,14 @@ function ExternalReviewCard({
 					{body ? (
 						<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
 					) : null}
+					<ReviewLinks
+						clamped={false}
+						expanded={false}
+						externalLink={externalLink}
+						labels={labels}
+						onExpandedChange={() => undefined}
+						url={entry.reviewUrl}
+					/>
 					{openInlineCount > 0 ? (
 						<GithubInlineComments
 							externalLink={externalLink}
