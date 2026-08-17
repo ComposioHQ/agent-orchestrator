@@ -1940,38 +1940,19 @@ describe("SessionInspector summary reviews", () => {
     expect(summary).not.toHaveTextContent("**auth validation**");
   });
 
-  // An AO pass only gets a review-comment anchor once it is submitted to
-  // GitHub, so without a fallback an unsubmitted pass is a dead end.
-  it("links a run to its GitHub review, falling back to the PR when it has none", async () => {
+  it("does not show a View on PR CTA for review summaries", async () => {
     mockCommonGets([], "reviewer-pane", [
       {
         ...reviewState(3, "up_to_date", "abc123"),
         latestRun: { ...approvedReview, githubReviewId: "98765" },
       },
     ]);
-    const { unmount } = renderWithQuery(
-      <SessionInspector session={session([pr(3, "open")])} />,
-    );
-    await openReviewsSection();
-    expect(
-      await screen.findByRole("link", { name: /View on PR/ }),
-    ).toHaveAttribute(
-      "href",
-      "https://example.com/pr/3#pullrequestreview-98765",
-    );
-    unmount();
 
-    mockCommonGets([], "reviewer-pane", [
-      {
-        ...reviewState(3, "up_to_date", "abc123"),
-        latestRun: { ...approvedReview, githubReviewId: "" },
-      },
-    ]);
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
-    expect(
-      await screen.findByRole("link", { name: /View on PR/ }),
-    ).toBeInTheDocument();
+
+    expect(await screen.findByTestId("review-run-summary")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /View on PR/ })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -2035,10 +2016,7 @@ describe("SessionInspector summary reviews", () => {
         expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
         expect(screen.queryByText("Earlier commit")).not.toBeInTheDocument();
       }
-      expect(screen.getByRole("link", { name: "View on PR" })).toHaveAttribute(
-        "href",
-        "https://example.com/pr/3#pullrequestreview-98765",
-      );
+      expect(screen.queryByRole("link", { name: "View on PR" })).not.toBeInTheDocument();
       // A run in flight gets its own live strip naming the harness, not just a
       // word on the button.
       if (status === "running") {
@@ -2213,8 +2191,11 @@ describe("SessionInspector summary reviews", () => {
       within(externalReview).getByText("Reviewed 3d ago"),
     ).toBeInTheDocument();
     expect(
-      within(externalReview).getByRole("link", { name: "View on PR" }),
-    ).toHaveAttribute("href", "https://example.com/pr/3#pullrequestreview-456");
+      within(externalReview).queryByRole("link", { name: "View on PR" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(externalReview).queryByRole("button", { name: "Request to re-review PR" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("External reviews")).toBeInTheDocument();
   });
 

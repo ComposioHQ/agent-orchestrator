@@ -408,6 +408,7 @@ export type InspectorInlineComment = {
 
 export type InspectorGithubReview = {
 	body?: string;
+	canRequestRereview?: boolean;
 	id: string;
 	inlineComments?: InspectorInlineComment[];
 	isBot?: boolean;
@@ -534,7 +535,6 @@ export function InspectorReviewsView({
 								</ReviewSourceLabel>
 								<ReviewRuns
 									dimmed={group.ao.dimmed}
-									externalLink={externalLink}
 									historical={group.ao.historical}
 									labels={labels}
 									renderAvatar={renderAvatar}
@@ -685,7 +685,6 @@ function ReviewDisclosure({
 
 function ReviewRuns({
 	dimmed,
-	externalLink,
 	historical,
 	labels,
 	renderAvatar,
@@ -693,7 +692,6 @@ function ReviewRuns({
 	runs,
 }: {
 	dimmed?: boolean;
-	externalLink: ExternalLinkComponent;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
 	renderAvatar: (harness: string) => ReactNode;
@@ -706,7 +704,6 @@ function ReviewRuns({
 	return (
 		<ReviewRunHistory
 			dimmed={dimmed}
-			externalLink={externalLink}
 			historical={historical}
 			labels={labels}
 			renderAvatar={renderAvatar}
@@ -718,7 +715,6 @@ function ReviewRuns({
 
 function ReviewRunHistory({
 	dimmed,
-	externalLink,
 	historical,
 	labels,
 	renderAvatar,
@@ -726,7 +722,6 @@ function ReviewRunHistory({
 	runs,
 }: {
 	dimmed?: boolean;
-	externalLink: ExternalLinkComponent;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
 	renderAvatar: (harness: string) => ReactNode;
@@ -744,7 +739,6 @@ function ReviewRunHistory({
 				<ReviewSummaryCard
 					actor={run.harness || "reviewer"}
 					body={run.status === "cancelled" || run.status === "failed" ? "" : run.body}
-					externalLink={externalLink}
 					isEarlier={historical || index > 0}
 					key={run.id}
 					labels={labels}
@@ -752,7 +746,6 @@ function ReviewRunHistory({
 					renderMarkdown={renderMarkdown}
 					testId="review-run-summary"
 					timestamp={run.createdAtLabel}
-					url={run.url}
 					verdict={run.verdict}
 				/>
 			))}
@@ -873,6 +866,7 @@ function ExternalReviewCard({
 	const body = entry.body?.trim();
 	const inlineComments = entry.inlineComments ?? [];
 	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
+	const showRereviewAction = Boolean(onRequestRereview && (entry.canRequestRereview ?? entry.verdict.tone !== "success"));
 	return (
 		<article className="min-w-0 border-b border-border/70 py-3 first:pt-0 last:border-b-0 last:pb-0" data-testid="github-review-card">
 			<button
@@ -898,7 +892,7 @@ function ExternalReviewCard({
 			</button>
 			{open ? (
 				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
-					{onRequestRereview ? (
+					{showRereviewAction ? (
 						<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
 							{openInlineCount > 0 ? (
 								<span className="font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
@@ -914,7 +908,7 @@ function ExternalReviewCard({
 									onClick={async () => {
 										setRereviewError(false);
 										try {
-											await onRequestRereview(entry);
+											await onRequestRereview?.(entry);
 											setRereviewRequested(true);
 										} catch {
 											setRereviewError(true);
@@ -931,14 +925,6 @@ function ExternalReviewCard({
 					{body ? (
 						<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
 					) : null}
-					<ReviewLinks
-						clamped={false}
-						expanded={false}
-						externalLink={externalLink}
-						labels={labels}
-						onExpandedChange={() => undefined}
-						url={entry.reviewUrl}
-					/>
 					{openInlineCount > 0 ? (
 						<GithubInlineComments
 							externalLink={externalLink}
@@ -1169,7 +1155,6 @@ function InlineCommentRow({
 function ReviewSummaryCard({
 	actor,
 	body: rawBody,
-	externalLink,
 	isBot = false,
 	isEarlier = false,
 	labels,
@@ -1177,12 +1162,10 @@ function ReviewSummaryCard({
 	renderMarkdown,
 	testId,
 	timestamp,
-	url,
 	verdict,
 }: {
 	actor: string;
 	body?: string;
-	externalLink: ExternalLinkComponent;
 	isBot?: boolean;
 	isEarlier?: boolean;
 	labels: InspectorReviewLabels;
@@ -1190,7 +1173,6 @@ function ReviewSummaryCard({
 	renderMarkdown: (body: string) => ReactNode;
 	testId: string;
 	timestamp: string;
-	url?: string | null;
 	verdict: InspectorVerdict;
 }) {
 	const [expanded, setExpanded] = useState(false);
@@ -1222,10 +1204,8 @@ function ReviewSummaryCard({
 			<ReviewLinks
 				clamped={clamped}
 				expanded={expanded}
-				externalLink={externalLink}
 				labels={labels}
 				onExpandedChange={() => setExpanded((open) => !open)}
-				url={url}
 			/>
 		</article>
 	);
@@ -1266,38 +1246,20 @@ function ReviewMarkdownBody({
 function ReviewLinks({
 	clamped,
 	expanded,
-	externalLink: ExternalLink,
 	labels,
 	onExpandedChange,
-	renderViewLabel,
-	url,
 }: {
 	clamped: boolean;
 	expanded: boolean;
-	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onExpandedChange: () => void;
-	renderViewLabel?: string;
-	url?: string | null;
 }) {
-	if (!clamped && !url) return null;
+	if (!clamped) return null;
 	return (
 		<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
-			{clamped ? (
-				<button className="font-medium transition-colors hover:text-foreground" onClick={onExpandedChange} type="button">
-					{expanded ? labels.showLess : labels.showMore}
-				</button>
-			) : null}
-			{clamped && url ? <span aria-hidden="true">·</span> : null}
-			{url ? (
-				<ExternalLink
-					className="inline-flex items-center gap-0.5 font-medium no-underline transition-colors hover:text-foreground"
-					href={url}
-				>
-					{renderViewLabel ?? labels.viewOnPR}
-					<ArrowUpRightIcon className="size-2.5 shrink-0" />
-				</ExternalLink>
-			) : null}
+			<button className="font-medium transition-colors hover:text-foreground" onClick={onExpandedChange} type="button">
+				{expanded ? labels.showLess : labels.showMore}
+			</button>
 		</span>
 	);
 }
