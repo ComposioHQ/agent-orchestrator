@@ -912,6 +912,7 @@
 	"startup.installingEllipsis": "Installation en cours…",
 	"startup.loadingWorkspaces": "Chargement des espaces de travail",
 	"startup.preparingBoard": "Préparation de votre tableau",
+	"startup.quit": "Quitter",
 	"startup.recommendedInstallGh": "Recommandé : installer gh",
 	"startup.retryPrefix": "Réessayer : {{label}}",
 	"startup.startingServices": "Démarrage des services locaux",

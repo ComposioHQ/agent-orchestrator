@@ -912,6 +912,7 @@
 	"startup.installingEllipsis": "Instalando…",
 	"startup.loadingWorkspaces": "Carregando workspaces",
 	"startup.preparingBoard": "Preparando seu quadro",
+	"startup.quit": "Sair",
 	"startup.recommendedInstallGh": "Recomendado: instalar gh",
 	"startup.retryPrefix": "Tentar novamente: {{label}}",
 	"startup.startingServices": "Iniciando serviços locais",

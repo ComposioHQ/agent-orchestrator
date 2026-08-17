@@ -901,6 +901,7 @@
 	"startup.installingEllipsis": "インストール中…",
 	"startup.loadingWorkspaces": "ワークスペースを読み込み中",
 	"startup.preparingBoard": "ボードを準備中",
+	"startup.quit": "終了",
 	"startup.recommendedInstallGh": "推奨: gh をインストール",
 	"startup.retryPrefix": "再試行: {{label}}",
 	"startup.startingServices": "ローカルサービスを起動中",

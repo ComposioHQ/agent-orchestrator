@@ -901,6 +901,7 @@
 	"startup.installingEllipsis": "설치 중…",
 	"startup.loadingWorkspaces": "워크스페이스 불러오는 중",
 	"startup.preparingBoard": "보드 준비 중",
+	"startup.quit": "종료",
 	"startup.recommendedInstallGh": "권장: gh 설치",
 	"startup.retryPrefix": "다시 시도: {{label}}",
 	"startup.startingServices": "로컬 서비스 시작 중",

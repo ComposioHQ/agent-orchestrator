@@ -239,7 +239,7 @@ export function InstallDependencyDialog({
 						className="settings-footer-button"
 						onClick={() => void window.ao?.menu?.action("app.quit")}
 					>
-						{t("titlebar.quit")}
+						{t("startup.quit")}
 					</button>
 				</div>
 			</DialogContent>

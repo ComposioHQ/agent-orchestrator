@@ -901,6 +901,7 @@
 	"startup.installingEllipsis": "Installation läuft …",
 	"startup.loadingWorkspaces": "Workspaces werden geladen",
 	"startup.preparingBoard": "Board wird vorbereitet",
+	"startup.quit": "Beenden",
 	"startup.recommendedInstallGh": "Empfohlen: gh installieren",
 	"startup.retryPrefix": "Erneut versuchen: {{label}}",
 	"startup.startingServices": "Lokale Dienste werden gestartet",

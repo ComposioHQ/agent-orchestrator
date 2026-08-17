@@ -888,6 +888,7 @@
 	"startup.installingEllipsis": "正在安装…",
 	"startup.loadingWorkspaces": "正在加载工作区",
 	"startup.preparingBoard": "正在准备看板",
+	"startup.quit": "退出",
 	"startup.recommendedInstallGh": "推荐：安装 gh",
 	"startup.retryPrefix": "重试：{{label}}",
 	"startup.startingServices": "正在启动本地服务",

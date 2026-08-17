@@ -902,6 +902,7 @@
 	"startup.installingEllipsis": "Installing…",
 	"startup.loadingWorkspaces": "Loading workspaces",
 	"startup.preparingBoard": "Preparing your board",
+	"startup.quit": "Quit",
 	"startup.recommendedInstallGh": "Recommended: install gh",
 	"startup.retryPrefix": "Retry: {{label}}",
 	"startup.startingServices": "Starting local services",
