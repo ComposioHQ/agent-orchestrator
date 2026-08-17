@@ -88,7 +88,7 @@ describe("send keys", () => {
 
 		await userEvent.type(field, "hello");
 		expect(send).toBeEnabled();
-		expect(send).toHaveClass("hover:bg-logo-accent-bright", "focus-visible:ring-logo-accent/45");
+		expect(send).toHaveClass("hover:bg-logo-accent-bright");
 	});
 
 	it("turns the empty send action into Stop while the agent is working", async () => {

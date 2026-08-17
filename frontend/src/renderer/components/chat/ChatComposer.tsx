@@ -645,7 +645,7 @@ export function ChatComposer({
 						onClick={canStopTurn ? onInterrupt : undefined}
 						aria-label={canStopTurn ? "Stop turn" : steering ? "Steer the running turn" : "Send message"}
 						title={canStopTurn ? "Stop turn" : undefined}
-						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright focus-visible:ring-logo-accent/45"
+						className="size-8 rounded-lg border-logo-accent bg-logo-accent text-logo-accent-foreground hover:bg-logo-accent-bright"
 					>
 						{canStopTurn ? (
 							<Square aria-hidden="true" className="size-2.5 fill-current" />
