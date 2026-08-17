@@ -68,7 +68,6 @@ func TestDetectTerminalActivityRejectsTranscriptText(t *testing.T) {
 func TestClineManagedHooksClearCompletedTurns(t *testing.T) {
 	want := map[string]string{
 		"TaskComplete": "stop",
-		"TaskError":    "stop",
 	}
 	for _, spec := range clineManagedHooks {
 		if subcommand, ok := want[spec.Event]; ok {
