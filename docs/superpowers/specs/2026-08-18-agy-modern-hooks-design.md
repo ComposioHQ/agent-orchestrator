@@ -47,6 +47,8 @@ Installation will replace only AO's named entry, making upgrades idempotent. Oth
 
 The `.agents/hooks.json` path will be added to the workspace-local `.agents/.gitignore` using the existing hook utility. The obsolete `.gemini/hooks.json` path will not be written.
 
+Every modern AGY handler requires a JSON object on stdout. The `ao hooks agy` command will therefore emit `{}` for `pre-invocation`, `post-tool-use`, and `stop`, including when the workspace is opened outside an AO-managed session. Activity delivery remains best-effort and only occurs when AO session metadata is present.
+
 ## Activity Mapping
 
 `DeriveActivityState` will accept only the normalized modern subcommands:
@@ -79,6 +81,7 @@ Regression tests will first demonstrate that the existing adapter writes the wro
 - Malformed JSON refusal.
 - Modern activity mappings and rejection of legacy event names.
 - Submit/blocked capability declarations.
+- Valid empty JSON responses from every modern AGY hook command.
 
 The focused AGY adapter suite will run first, followed by activity dispatch, session-manager safety, and full backend tests where practical.
 
