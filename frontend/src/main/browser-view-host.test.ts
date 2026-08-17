@@ -632,7 +632,7 @@ describe("agent browser runtime", () => {
 		expect(views).toHaveLength(2);
 		for (const view of views) {
 			expect(view.setBorderRadius).toHaveBeenCalled();
-			expect(view.setBorderRadius.mock.calls.every(([radius]) => radius === 8)).toBe(true);
+			expect(view.setBorderRadius.mock.calls.every(([radius]) => radius === 10)).toBe(true);
 		}
 	});
 
@@ -696,6 +696,25 @@ describe("agent browser runtime", () => {
 		expect(debuggerSendCommand).toHaveBeenCalledWith("Page.navigate", { url: "http://localhost:4173/" });
 	});
 
+	it("keeps UI-created tabs in the native registry after the daemon has connected", async () => {
+		const { host, invoke, runtime, views } = setupTabHost();
+		await host.execute("sess-1", "snapshot");
+		const state = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+
+		for (let index = 0; index < 6; index += 1) {
+			await invoke("browser:openTab", { viewId: state.viewId });
+		}
+
+		const nativeNewTabCalls = vi
+			.mocked(runtime.runAction)
+			.mock.calls.filter(([, action]) => action === "tab-new");
+		expect(nativeNewTabCalls).toHaveLength(6);
+		expect(views).toHaveLength(7);
+
+		await invoke("browser:closeTab", { viewId: state.viewId, tabId: "t7" });
+
+		expect(views[6].webContents.close).toHaveBeenCalledTimes(1);
+	});
 
 	it("keeps stable logical tab IDs, separate targets, and the selected tab active", async () => {
 		const { emit, host, invoke, views } = setupTabHost();
@@ -1015,7 +1034,7 @@ describe("browser:setBounds", () => {
 		});
 
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 25, width: 400, height: 300 });
-		expect(view.setBorderRadius).toHaveBeenLastCalledWith(8);
+		expect(view.setBorderRadius).toHaveBeenLastCalledWith(10);
 		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
 			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
 		);

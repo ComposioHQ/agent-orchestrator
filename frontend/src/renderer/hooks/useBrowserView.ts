@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
 	BrowserAgentActivityState,
 	BrowserDevToolsPlacement,
@@ -51,6 +51,8 @@ export type BrowserViewModel = {
 	tabNotice: string;
 	selectTab: (tabId: string) => Promise<void>;
 	closeTab: (tabId: string) => Promise<void>;
+	openTab: () => Promise<void>;
+	reorderTabs: (orderedIds: string[]) => void;
 	devtoolsState: BrowserDevToolsState;
 	openDevTools: () => Promise<void>;
 	closeDevTools: () => Promise<void>;
@@ -99,16 +101,15 @@ const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 
 // The native WebContentsView is a window-level overlay, so DOM `overflow:
 // hidden` never clips it — it paints wherever the slot's bounding box lands.
-// Inside the collapsible inspector the slot sits in a `min-w-[280px]` wrapper,
-// so on a narrow panel (small window, or mid-collapse) the slot's box spills
-// past its resizable-panel column. Intersect the slot box with that column so
-// the view can only ever paint inside it, never over the terminal/sidebar.
+// During inspector open/close the column slides on a transform (the slot box
+// moves without a ResizeObserver size change), so also clip to `.session-split`.
 function visibleSlotRect(node: HTMLElement): BrowserRect {
 	const rect = node.getBoundingClientRect();
 	let { left, top, right, bottom } = rect;
-	const column = node.closest<HTMLElement>("[data-panel]");
-	if (column) {
-		const bounds = column.getBoundingClientRect();
+	const clips = [node.closest<HTMLElement>("[data-panel]"), node.closest<HTMLElement>(".session-split")];
+	for (const clip of clips) {
+		if (!clip) continue;
+		const bounds = clip.getBoundingClientRect();
 		left = Math.max(left, bounds.left);
 		top = Math.max(top, bounds.top);
 		right = Math.min(right, bounds.right);
@@ -144,6 +145,10 @@ export function useBrowserView({
 	const [navState, setNavState] = useState<BrowserNavState>(EMPTY_NAV_STATE);
 	const [annotationMode, setAnnotationModeState] = useState(false);
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
+	// Display-only tab order (drag-to-reorder). Re-projected onto every incoming
+	// tabsState push below, since the main process's own tab order is not
+	// authoritative and browser:tabsState pushes on every nav/title event.
+	const [tabOrder, setTabOrder] = useState<string[]>([]);
 	const [devtoolsState, setDevtoolsState] = useState<BrowserDevToolsState>(EMPTY_DEVTOOLS_STATE);
 	const [tabNotice, setTabNotice] = useState("");
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
@@ -246,13 +251,14 @@ export function useBrowserView({
 			}
 			const observer = new ResizeObserver(scheduleMeasure);
 			observer.observe(node);
-			// Also track the resizable-panel column: while the inspector
-			// collapse/expand animates, the slot's own width stays pinned by
-			// `min-w-[280px]` (so a slot-only observer never fires), but the
-			// column's width changes every frame. Observing it re-measures
-			// through the whole animation so the view never lags behind.
+			// The inspector column keeps a stable width and slides on `x`; the
+			// layout gap's width is what actually changes every spring frame.
+			// Observing it re-measures through the whole animation so the native
+			// view tracks the sliding rail instead of lagging at the last size.
 			const column = node.closest("[data-panel]");
 			if (column) observer.observe(column);
+			const gap = node.closest(".session-split")?.querySelector("[data-slot='inspector-gap']");
+			if (gap) observer.observe(gap);
 			observerRef.current = observer;
 			scheduleMeasure();
 		},
@@ -269,6 +275,9 @@ export function useBrowserView({
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
+		// Tab ids (`t1`, `t2`, ...) restart per session, so a stale order from the
+		// previous session could otherwise silently reapply to the new one.
+		setTabOrder([]);
 		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
 		setTabNotice("");
 		setAgentBrowserActive(false);
@@ -345,6 +354,26 @@ export function useBrowserView({
 			}, 3_000);
 		});
 	}, []);
+
+	// Re-project the persisted display order onto every incoming tabsState push:
+	// browser:tabsState fires on every nav/title-update/loading-state change for
+	// any tab, so a one-shot local reorder would otherwise be clobbered by the
+	// very next push. New tabs (via "+", popups, agent tab-new) append at the end.
+	useEffect(() => {
+		const incomingIds = tabsState.tabs.map((tab) => tab.id);
+		setTabOrder((prev) => {
+			const kept = prev.filter((id) => incomingIds.includes(id));
+			const added = incomingIds.filter((id) => !kept.includes(id));
+			return kept.length === prev.length && added.length === 0 ? prev : [...kept, ...added];
+		});
+	}, [tabsState.tabs]);
+
+	const tabs = useMemo(() => {
+		const byId = new Map(tabsState.tabs.map((tab) => [tab.id, tab]));
+		return tabOrder.map((id) => byId.get(id)).filter((tab): tab is BrowserTabState => Boolean(tab));
+	}, [tabOrder, tabsState.tabs]);
+
+	const reorderTabs = useCallback((orderedIds: string[]) => setTabOrder(orderedIds), []);
 
 	useEffect(() => {
 		return window.ao?.browser.onDevToolsState((state) => {
@@ -486,6 +515,13 @@ export function useBrowserView({
 		[hasNativeBrowser],
 	);
 
+	const openTab = useCallback(async () => {
+		const viewId = viewIdRef.current;
+		if (!viewId || !hasNativeBrowser) return;
+		const state = await window.ao!.browser.openTab({ viewId });
+		if (viewIdRef.current === state.viewId) setTabsState(state);
+	}, [hasNativeBrowser]);
+
 	const runDevtools = useCallback(
 		async (operation: "open" | "close" | "setPlacement", placement?: BrowserDevToolsPlacement) => {
 			const id = viewIdRef.current;
@@ -608,11 +644,13 @@ export function useBrowserView({
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
-		tabs: stateBelongsToSession ? tabsState.tabs : [],
+		tabs: stateBelongsToSession ? tabs : [],
 		activeTabId: stateBelongsToSession ? tabsState.activeTabId : "",
 		tabNotice: stateBelongsToSession ? tabNotice : "",
 		selectTab,
 		closeTab,
+		openTab,
+		reorderTabs,
 		devtoolsState: stateBelongsToSession ? devtoolsState : EMPTY_DEVTOOLS_STATE,
 		openDevTools: () => runDevtools("open"),
 		closeDevTools: () => runDevtools("close"),

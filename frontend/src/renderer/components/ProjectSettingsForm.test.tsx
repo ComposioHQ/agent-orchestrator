@@ -4,11 +4,14 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getMock, putMock, postMock, navigateMock } = vi.hoisted(() => ({
+const { getMock, putMock, postMock, navigateMock, closeSettingsMock, setOrchestratorReplacementErrorMock, captureOrchestratorReplacementFailureMock } = vi.hoisted(() => ({
 	getMock: vi.fn(),
 	putMock: vi.fn(),
 	postMock: vi.fn(),
 	navigateMock: vi.fn(),
+	closeSettingsMock: vi.fn(),
+	setOrchestratorReplacementErrorMock: vi.fn(),
+	captureOrchestratorReplacementFailureMock: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -18,6 +21,18 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 		useNavigate: () => navigateMock,
 	};
 });
+
+vi.mock("../stores/ui-store", () => ({
+	useUiStore: (selector: (state: Record<string, unknown>) => unknown) =>
+		selector({
+			closeSettings: closeSettingsMock,
+			setOrchestratorReplacementError: setOrchestratorReplacementErrorMock,
+		}),
+}));
+
+vi.mock("../lib/orchestrator-replacement-telemetry", () => ({
+	captureOrchestratorReplacementFailure: captureOrchestratorReplacementFailureMock,
+}));
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
@@ -45,6 +60,11 @@ vi.mock("../lib/api-client", () => ({
 import { ProjectSettingsForm, type ProjectSettingsSaveState, type ProjectSettingsSection } from "./ProjectSettingsForm";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
+
+async function beginEdit(label: string) {
+	await userEvent.click(await screen.findByRole("button", { name: `Edit ${label}` }));
+	return screen.getByLabelText(label);
+}
 
 function TestProjectSettings({
 	projectId,
@@ -98,6 +118,16 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 
 function submitSettings() {
 	fireEvent.submit(document.getElementById("project-settings-form")!);
+}
+
+async function expectReplacementNavigation(sessionId = "proj-1-orch-2") {
+	await waitFor(() =>
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId },
+		}),
+	);
+	expect(closeSettingsMock).toHaveBeenCalledTimes(1);
 }
 
 const agentCatalogResponse = {
@@ -170,6 +200,9 @@ beforeEach(() => {
 	putMock.mockReset();
 	postMock.mockReset();
 	navigateMock.mockReset();
+	closeSettingsMock.mockReset();
+	setOrchestratorReplacementErrorMock.mockReset();
+	captureOrchestratorReplacementFailureMock.mockReset();
 	putMock.mockResolvedValue({ data: { project: {} }, error: undefined });
 	postMock.mockResolvedValue({
 		data: { orchestrator: { id: "proj-1-orch-2" } },
@@ -194,11 +227,39 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByLabelText("Project name");
+		await screen.findByRole("button", { name: "Edit Project name" });
 
 		// Close button is now in SettingsDialog, not in the form itself
 		expect(screen.queryByRole("button", { name: "Close settings" })).not.toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("shows the project name as text with a pencil until edit is clicked", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("button", { name: "Edit Project name" })).toHaveTextContent("Project One");
+		expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Edit Project name" }));
+		expect(screen.getByRole("textbox", { name: "Project name" })).toHaveValue("Project One");
+		expect(screen.queryByRole("button", { name: "Edit Project name" })).not.toBeInTheDocument();
+
+		await userEvent.keyboard("{Escape}");
+		expect(await screen.findByRole("button", { name: "Edit Project name" })).toBeInTheDocument();
+		expect(screen.queryByRole("textbox", { name: "Project name" })).not.toBeInTheDocument();
 	});
 
 	it("does not navigate on Escape (dialog handles closing)", async () => {
@@ -216,7 +277,7 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings();
-		await screen.findByLabelText("Project name");
+		await screen.findByRole("button", { name: "Edit Project name" });
 
 		await userEvent.keyboard("{Escape}");
 
@@ -240,7 +301,7 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("tg_content_factory_5863f66be3");
 
-		const projectName = await screen.findByLabelText("Project name");
+		const projectName = await beginEdit("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "TG Content Factory");
 		submitSettings();
@@ -391,10 +452,36 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("proj-1", undefined, "workflow");
 
-		expect(await screen.findByLabelText("Default branch")).toHaveValue("develop");
-		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
+		expect(await beginEdit("Default branch")).toHaveValue("develop");
+		await userEvent.keyboard("{Escape}");
+		expect(await beginEdit("Session prefix")).toHaveValue("po");
 		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
-		expect(reviewerAgent).toHaveTextContent("claude-code");
+		expect(reviewerAgent).toHaveTextContent("Claude Code");
+	});
+
+	it("keeps the automatic default branch unpinned when saving other settings", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "trunk",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		expect(await beginEdit("Default branch")).toHaveValue("auto");
+		await userEvent.keyboard("{Escape}");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const request = putMock.mock.calls[0]?.[1];
+		expect(request?.body.config.defaultBranch).toBeUndefined();
 	});
 
 	it("shows the full model catalog again after selecting a model", async () => {
@@ -577,7 +664,7 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const projectName = await screen.findByLabelText("Project name");
+		const projectName = await beginEdit("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "Updated Project");
 		submitSettings();
@@ -603,7 +690,7 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const projectName = await screen.findByLabelText("Project name");
+		const projectName = await beginEdit("Project name");
 		await userEvent.clear(projectName);
 		await userEvent.type(projectName, "   ");
 		submitSettings();
@@ -1125,6 +1212,7 @@ describe("ProjectSettingsForm", () => {
 					permissions: "auto",
 				},
 				reviewers: [{ harness: "codex" }],
+				autoReview: { enabled: true },
 				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 			},
 		});
@@ -1135,6 +1223,7 @@ describe("ProjectSettingsForm", () => {
 		expect(kindRow).toHaveTextContent("Scratch project");
 		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Session prefix")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Auto-review pull requests")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reviewers")).not.toBeInTheDocument();
 		expect(screen.queryByText("Tracker intake")).not.toBeInTheDocument();
 
@@ -1192,7 +1281,7 @@ describe("ProjectSettingsForm", () => {
 			"href",
 			"https://github.com/acme/project-one",
 		);
-		await userEvent.type(screen.getByLabelText("Assignee"), "octocat");
+		await userEvent.type(await beginEdit("Assignee"), "octocat");
 
 		submitSettings();
 
@@ -1288,6 +1377,32 @@ describe("ProjectSettingsForm", () => {
 		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators", {
 			body: { projectId: "proj-1", clean: true },
 		});
+		await expectReplacementNavigation();
+	});
+
+	it("navigates to the replacement orchestrator after changing the default agent", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const orchestratorAgent = await screen.findByRole("button", { name: "Default orchestrator agent" });
+		await chooseOption(orchestratorAgent, "Goose");
+		submitSettings();
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await expectReplacementNavigation();
+		expect(setOrchestratorReplacementErrorMock).not.toHaveBeenCalled();
 	});
 
 	it("keeps the config save successful when orchestrator replacement fails", async () => {
@@ -1311,7 +1426,11 @@ describe("ProjectSettingsForm", () => {
 		});
 		postMock.mockResolvedValue({
 			data: undefined,
-			error: { message: "missing goose binary" },
+			error: {
+				code: "ORCHESTRATOR_SPAWN_FAILED",
+				message: "missing goose binary",
+				requestId: "request-42",
+			},
 			response: { status: 500 },
 		});
 
@@ -1329,5 +1448,18 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
+		expect(closeSettingsMock).toHaveBeenCalledTimes(1);
+		expect(setOrchestratorReplacementErrorMock).toHaveBeenCalledWith("proj-1", {
+			message: "missing goose binary",
+			code: "ORCHESTRATOR_SPAWN_FAILED",
+			requestId: "request-42",
+		});
+		expect(captureOrchestratorReplacementFailureMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				code: "ORCHESTRATOR_SPAWN_FAILED",
+				requestId: "request-42",
+			}),
+			"proj-1",
+		);
 	});
 });

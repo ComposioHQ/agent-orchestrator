@@ -150,8 +150,9 @@ type SessionView struct {
 	// unchanged) so the desktop browser panel can re-navigate / refresh on a
 	// repeated preview of the same target. Pulled from the json:"-" domain
 	// Metadata.
-	PreviewRevision int64            `json:"previewRevision,omitempty"`
-	PRs             []SessionPRFacts `json:"prs"`
+	PreviewRevision   int64            `json:"previewRevision,omitempty"`
+	PRs               []SessionPRFacts `json:"prs"`
+	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
 }
 
 // ListSessionsResponse is the body of GET /api/v1/sessions.
@@ -161,11 +162,12 @@ type ListSessionsResponse struct {
 
 // SpawnSessionRequest is the body of POST /api/v1/sessions.
 type SpawnSessionRequest struct {
-	ProjectID domain.ProjectID    `json:"projectId"`
-	IssueID   domain.IssueID      `json:"issueId,omitempty"`
-	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand"`
-	Branch    string              `json:"branch,omitempty"`
+	ProjectID       domain.ProjectID       `json:"projectId"`
+	IssueID         domain.IssueID         `json:"issueId,omitempty"`
+	TrackerProvider domain.TrackerProvider `json:"trackerProvider,omitempty" enum:"github,gitlab"`
+	Kind            domain.SessionKind     `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Harness         domain.AgentHarness    `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,muse,kiro,kilocode,vibe,pi,kimchi,prime-agent,autohand"`
+	Branch          string                 `json:"branch,omitempty"`
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
 	// Omitted resolves to the daemon default (tui), which is why an upgrade
@@ -175,6 +177,7 @@ type SpawnSessionRequest struct {
 	// producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
+
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
@@ -213,7 +216,7 @@ type SpawnSessionResponse struct {
 // SwitchAgentRequest is the body of POST /api/v1/sessions/{sessionId}/switch-agent.
 type SwitchAgentRequest struct {
 	TargetHarness  domain.AgentHarness `json:"targetHarness" enum:"claude-code,codex" description:"Agent harness to continue the logical AO session with."`
-	Note           string              `json:"note,omitempty" maxLength:"4096" description:"Optional user guidance included in the bounded handoff context."`
+	Model          string              `json:"model,omitempty" maxLength:"256" description:"Optional model override for the target agent launch or resume."`
 	IdempotencyKey string              `json:"idempotencyKey,omitempty" maxLength:"128" description:"Optional retry key. Reusing it with a different request is rejected."`
 }
 
@@ -230,7 +233,7 @@ type AgentSwitchView struct {
 	AgentHandoffStatus      domain.AgentHandoffStatus                `json:"agentHandoffStatus" enum:"not_attempted,requested,received,unavailable,timed_out,failed,rejected"`
 	SemanticHandoffIncluded bool                                     `json:"semanticHandoffIncluded"`
 	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus `json:"sourceTranscriptStatus,omitempty" enum:"not_attempted,available,unavailable"`
-	ErrorCode               domain.AgentSwitchErrorCode              `json:"errorCode,omitempty" enum:"daemon_restart_pre_stop,daemon_restart_post_stop,daemon_restart_unrecoverable_target,daemon_restart_before_delivery,delivery_unconfirmed,source_session_terminated,source_stop_unconfirmed,target_binary_missing,target_agent_unauthorized,target_start_unconfirmed,request_cancelled,source_blocked,failed_pre_stop,failed_post_stop,target_ready_failed,delivery_failed,switch_failed"`
+	ErrorCode               domain.AgentSwitchErrorCode              `json:"errorCode,omitempty" enum:"daemon_restart_pre_stop,daemon_restart_post_stop,daemon_restart_unrecoverable_target,daemon_restart_before_delivery,delivery_unconfirmed,source_session_terminated,source_stop_unconfirmed,target_binary_missing,target_agent_unauthorized,target_start_unconfirmed,source_restore_unconfirmed,request_cancelled,source_blocked,failed_pre_stop,failed_post_stop,target_ready_failed,delivery_failed,switch_failed"`
 	RequestedAt             time.Time                                `json:"requestedAt"`
 	UpdatedAt               time.Time                                `json:"updatedAt"`
 }
@@ -335,6 +338,28 @@ type SetSessionReviewerRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
 
+// SetSessionAutoReviewRequest configures daemon-side review automation.
+type SetSessionAutoReviewRequest struct {
+	Enabled        bool `json:"enabled"`
+	enabledPresent bool
+}
+
+// UnmarshalJSON distinguishes an omitted required boolean from an explicit
+// false without making the generated API schema nullable.
+func (r *SetSessionAutoReviewRequest) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	r.enabledPresent = wire.Enabled != nil
+	if wire.Enabled != nil {
+		r.Enabled = *wire.Enabled
+	}
+	return nil
+}
+
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
 // session workspace; a non-empty url is used verbatim as the preview target.
@@ -431,6 +456,20 @@ type SetSessionAutoInjectReviewResponse struct {
 	SessionID        domain.SessionID `json:"sessionId"`
 	AutoInjectReview bool             `json:"autoInjectReview"`
 	Session          SessionView      `json:"session"`
+}
+
+// SetSessionAutoInjectCIRequest updates the default automatic CI delivery
+// policy captured by PRs created after the change.
+type SetSessionAutoInjectCIRequest struct {
+	AutoInjectCI bool `json:"autoInjectCI"`
+}
+
+// SetSessionAutoInjectCIResponse confirms the persisted session default.
+type SetSessionAutoInjectCIResponse struct {
+	OK           bool             `json:"ok"`
+	SessionID    domain.SessionID `json:"sessionId"`
+	AutoInjectCI bool             `json:"autoInjectCI"`
+	Session      SessionView      `json:"session"`
 }
 
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
@@ -590,7 +629,7 @@ type SessionPRSummary struct {
 	Number           int                          `json:"number"`
 	Title            string                       `json:"title"`
 	State            domain.PRState               `json:"state" enum:"draft,open,merged,closed"`
-	Provider         string                       `json:"provider" enum:"github"`
+	Provider         string                       `json:"provider" enum:"github,gitlab"`
 	Repo             string                       `json:"repo"`
 	Author           string                       `json:"author"`
 	SourceBranch     string                       `json:"sourceBranch"`
@@ -614,6 +653,7 @@ type SessionPRSummary struct {
 type SessionPRCISummary struct {
 	State         domain.CIState          `json:"state" enum:"unknown,pending,passing,failing"`
 	FailingChecks []SessionPRFailingCheck `json:"failingChecks"`
+	AutoInjectCI  bool                    `json:"autoInjectCI"`
 }
 
 // SessionPRFailingCheck is one failed or cancelled CI check for a PR.
@@ -658,6 +698,7 @@ type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
 	Line             int    `json:"line,omitempty"`
+	Body             string `json:"body,omitempty"`
 	AutoInjectReview bool   `json:"autoInjectReview"`
 }
 
@@ -722,7 +763,7 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 	for _, ch := range in.FailingChecks {
 		checks = append(checks, SessionPRFailingCheck{Name: ch.Name, Status: ch.Status, Conclusion: ch.Conclusion, URL: ch.URL})
 	}
-	return SessionPRCISummary{State: in.State, FailingChecks: checks}
+	return SessionPRCISummary{State: in.State, FailingChecks: checks, AutoInjectCI: in.AutoInjectCI}
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {
@@ -730,7 +771,7 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 	for _, reviewer := range in.UnresolvedBy {
 		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
 		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, AutoInjectReview: link.AutoInjectReview})
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
 		}
 		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
 	}
@@ -1123,11 +1164,45 @@ type ResolveCommentsResponse struct {
 // regenerate endpoints. Password is populated only transiently, on enable and
 // regenerate responses (empty otherwise) — it is never persisted in plaintext.
 type MobileStatusResponse struct {
-	Enabled  bool   `json:"enabled"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Password string `json:"password"`
-	Warning  string `json:"warning"`
+	Enabled bool   `json:"enabled"`
+	Host    string `json:"host"`
+	// TailscaleHost is this machine's 100.64.0.0/10 Tailscale address, or "" when
+	// Tailscale is not up. The renderer encodes it into the pairing QR when the
+	// user selects the Tailscale tab, and shows a hint instead when it is empty.
+	TailscaleHost string              `json:"tailscaleHost"`
+	Port          int                 `json:"port"`
+	Password      string              `json:"password"`
+	Warning       string              `json:"warning"`
+	SecurePairing SecurePairingStatus `json:"securePairing"`
+}
+
+// SecurePairingStatus describes the optional TLS-over-Tailscale pairing mode,
+// in which `tailscale serve` fronts the bridge with a real certificate so iOS
+// can pair by scanning (App Transport Security blocks cleartext to Tailscale's
+// 100.64.0.0/10 range).
+type SecurePairingStatus struct {
+	Enabled   bool   `json:"enabled"`   // the user turned the mode on
+	Available bool   `json:"available"` // CLI present, MagicDNS name known, certs enabled
+	Active    bool   `json:"active"`    // proxy verified pointing at the live bridge port
+	Host      string `json:"host"`      // MagicDNS name; "" when unknown
+	Port      int    `json:"port"`      // 443 when active, else 0
+	// Reason is a fixed enum the renderer maps to localized setup steps:
+	// no_cli, no_magicdns, no_certs, serve_failed, port_mismatch, clear_failed.
+	// Empty when Available. Never a raw error string — those are untranslated
+	// and can leak paths.
+	Reason string `json:"reason"`
+}
+
+// SetSecurePairingRequest is the body of POST /api/v1/mobile/secure-pairing.
+type SetSecurePairingRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+// PushPairingIDParam is the {id} path parameter for the unpair route. It accepts
+// either the phone's install ID or, from builds that predate install IDs, its
+// push token.
+type PushPairingIDParam struct {
+	ID string `path:"id" description:"The phone's install id, or its push token for older builds."`
 }
 
 // PushDeviceTokenParam is the {token} path parameter for push-device routes.
@@ -1137,16 +1212,26 @@ type PushDeviceTokenParam struct {
 
 // RegisterPushDeviceRequest is the body of POST /api/v1/push/devices. The phone
 // sends its Expo push token plus a bit of descriptive metadata; the daemon keys
-// the registry on the token and re-registering is an idempotent upsert.
+// the registry on the install ID (the token is an attribute and is now optional)
+// and re-registering is an idempotent upsert.
 type RegisterPushDeviceRequest struct {
-	Token      string `json:"token" description:"Expo push token, e.g. ExponentPushToken[...]."`
+	// Optional so the published contract matches what the daemon actually
+	// accepts: app builds predating install IDs send none, and the handler
+	// synthesizes a legacy one rather than rejecting them. Marking it required
+	// would generate clients unable to express a request the server handles.
+	InstallID string `json:"installId,omitempty" description:"Stable per-install device id, keying the registry so a rotated push token updates the same row. Optional: older app builds omit it and the daemon synthesizes one."`
+	// Optional: a row represents a paired phone, not a push registration. Omitted
+	// (or empty) when the phone is only announcing its identity — permission not
+	// yet granted, or a build that can't mint a token. When present it must still
+	// be a well-formed Expo push token.
+	Token      string `json:"token,omitempty" description:"Expo push token, e.g. ExponentPushToken[...]. Optional: omitted when the phone has no push token yet."`
 	Platform   string `json:"platform,omitempty" enum:"ios,android" description:"Device platform."`
 	DeviceName string `json:"deviceName,omitempty" description:"Human-friendly device label."`
 }
 
 // PushDeviceResponse is the stored view of a registered push device.
 type PushDeviceResponse struct {
-	Token      string    `json:"token"`
+	Token      string    `json:"token,omitempty"`
 	Platform   string    `json:"platform,omitempty"`
 	DeviceName string    `json:"deviceName,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
@@ -1203,6 +1288,38 @@ type SendConversationMessageResponse struct {
 	// Duplicate is true when this client message id was already delivered, so a
 	// retrying client can stop instead of assuming a new turn began.
 	Duplicate bool `json:"duplicate"`
+}
+
+// EditConversationMessageRequest changes the readable text of one durable human
+// prompt. Structured content is intentionally absent: the service reuses the
+// server-side blocks recorded with the original message.
+type EditConversationMessageRequest struct {
+	Text            string `json:"text"`
+	ClientMessageID string `json:"clientMessageId,omitempty"`
+}
+
+// ConversationContentSummaryResponse is a lightweight attachment/resource chip.
+// Image bytes and embedded resource text never leave the durable server record.
+type ConversationContentSummaryResponse struct {
+	Type     string `json:"type"`
+	MIMEType string `json:"mimeType,omitempty"`
+	URI      string `json:"uri,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
+// EditConversationMessageResponse identifies the newly selected branch and its
+// replacement turn.
+type EditConversationMessageResponse struct {
+	SourceBranchID string           `json:"sourceBranchId"`
+	ActiveBranchID string           `json:"activeBranchId"`
+	TurnID         string           `json:"turnId,omitempty"`
+	ProviderTurnID string           `json:"providerTurnId,omitempty"`
+	State          domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+}
+
+// ActivateConversationBranchResponse reports the durable head after switching.
+type ActivateConversationBranchResponse struct {
+	ActiveBranchID string `json:"activeBranchId"`
 }
 
 // ConversationModelsResponse is the provider's model catalog plus what is selected.
@@ -1401,14 +1518,16 @@ type ConversationDiffFileResponse struct {
 
 // ConversationMessageResponse is one readable block of text.
 type ConversationMessageResponse struct {
-	Kind     string `json:"kind" enum:"message"`
-	ID       string `json:"id"`
-	TurnID   string `json:"turnId,omitempty"`
-	Sequence int64  `json:"sequence"`
-	Revision int64  `json:"revision"`
-	Role     string `json:"role" enum:"user,assistant"`
-	Origin   string `json:"origin" enum:"human,automation,daemon,provider"`
-	Text     string `json:"text"`
+	Kind          string                               `json:"kind" enum:"message"`
+	ID            string                               `json:"id"`
+	TurnID        string                               `json:"turnId,omitempty"`
+	Sequence      int64                                `json:"sequence"`
+	Revision      int64                                `json:"revision"`
+	Role          string                               `json:"role" enum:"user,assistant"`
+	Origin        string                               `json:"origin" enum:"human,automation,daemon,provider"`
+	Text          string                               `json:"text"`
+	Content       []ConversationContentSummaryResponse `json:"content,omitempty"`
+	EditAvailable bool                                 `json:"editAvailable"`
 	// Streaming is true while more deltas are expected for this message.
 	Streaming bool   `json:"streaming"`
 	CreatedAt string `json:"createdAt"`
@@ -1461,19 +1580,22 @@ type ConversationActivityResponse struct {
 
 // ConversationSnapshotResponse is the durable read model a client bootstraps from.
 type ConversationSnapshotResponse struct {
-	ConversationID string `json:"conversationId"`
-	SessionID      string `json:"sessionId"`
-	Harness        string `json:"harness,omitempty"`
-	Mode           string `json:"mode" enum:"chat,tui"`
+	ConversationID             string `json:"conversationId"`
+	ActiveBranchID             string `json:"activeBranchId,omitempty"`
+	BranchedFromEarlierMessage bool   `json:"branchedFromEarlierMessage"`
+	SessionID                  string `json:"sessionId"`
+	Harness                    string `json:"harness,omitempty"`
+	Mode                       string `json:"mode" enum:"chat,tui"`
 	// Controller is reported separately from history so a client can tell "no
 	// messages yet" apart from "the agent is not running".
-	Controller     string                         `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
-	LatestSequence int64                          `json:"latestSequence"`
-	OldestSequence int64                          `json:"oldestSequence,omitempty"`
-	HasMoreBefore  bool                           `json:"hasMoreBefore"`
-	Turns          []ConversationTurnResponse     `json:"turns"`
-	Messages       []ConversationMessageResponse  `json:"messages"`
-	Activities     []ConversationActivityResponse `json:"activities"`
+	Controller     string                            `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	LatestSequence int64                             `json:"latestSequence"`
+	OldestSequence int64                             `json:"oldestSequence,omitempty"`
+	HasMoreBefore  bool                              `json:"hasMoreBefore"`
+	Turns          []ConversationTurnResponse        `json:"turns"`
+	Messages       []ConversationMessageResponse     `json:"messages"`
+	Activities     []ConversationActivityResponse    `json:"activities"`
+	BranchPoints   []ConversationBranchPointResponse `json:"branchPoints,omitempty"`
 	// Settings are the provider choices for the next turn. Carried on the snapshot
 	// the client already polls so the composer can label itself without a second
 	// request, and so a choice made on another client shows up here.
@@ -1518,6 +1640,15 @@ type ConversationSnapshotResponse struct {
 	// unstarted session's abilities are not yet known — and a client must treat
 	// absent as "do not offer yet" rather than as "cannot".
 	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// ConversationBranchPointResponse describes sibling continuations at one prompt.
+type ConversationBranchPointResponse struct {
+	TurnID           string `json:"turnId"`
+	Position         int    `json:"position"`
+	Total            int    `json:"total"`
+	PreviousBranchID string `json:"previousBranchId,omitempty"`
+	NextBranchID     string `json:"nextBranchId,omitempty"`
 }
 
 // ConversationModelReroutePayload is the provider answering with a model other than
@@ -1634,6 +1765,11 @@ type ConversationTurnIDParam struct {
 	TurnID string `path:"turnId" description:"AO conversation turn identifier, from the snapshot's turns array."`
 }
 
+// ConversationBranchIDParam names one durable provider-thread branch.
+type ConversationBranchIDParam struct {
+	BranchID string `path:"branchId" description:"Conversation branch identifier, from a snapshot branch navigation point."`
+}
+
 // RollbackConversationResponse reports what an undo discarded.
 type RollbackConversationResponse struct {
 	// TurnsDiscarded counts the turns the agent no longer remembers, including the
@@ -1701,4 +1837,56 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+}
+
+// ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.
+type ResolveReviewCommentRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	CommentURL     string `json:"commentUrl" description:"Provider URL of the unresolved review comment to resolve."`
+}
+
+// ResolveReviewCommentResponse is returned after AO resolves a provider review thread.
+type ResolveReviewCommentResponse struct {
+	OK bool `json:"ok"`
+}
+
+// RequestRereviewRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/rerequest.
+type RequestRereviewRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	ReviewerID     string `json:"reviewerId" description:"Provider login of the reviewer to ask for another review."`
+}
+
+// RequestRereviewResponse is returned after AO asks the SCM provider for another review.
+type RequestRereviewResponse struct {
+	OK bool `json:"ok"`
+}
+
+// MobileDeviceResponse is one row of the desktop's mobile-device roster: the
+// stored registration plus whether that phone is running the app right now.
+type MobileDeviceResponse struct {
+	InstallID            string    `json:"installId"`
+	Token                string    `json:"token,omitempty"`
+	Platform             string    `json:"platform,omitempty" enum:"ios,android"`
+	DeviceName           string    `json:"deviceName,omitempty"`
+	Muted                bool      `json:"muted"`
+	Live                 bool      `json:"live" description:"True when the phone's app is open and polling."`
+	NotificationsEnabled bool      `json:"notificationsEnabled" description:"True when this device has a push token registered."`
+	CreatedAt            time.Time `json:"createdAt"`
+	LastSeenAt           time.Time `json:"lastSeenAt"`
+}
+
+// MobileDevicesResponse is the { devices } envelope for the roster.
+type MobileDevicesResponse struct {
+	Devices []MobileDeviceResponse `json:"devices"`
+}
+
+// MuteDeviceRequest is the body of PATCH /api/v1/mobile/devices/{installId}.
+type MuteDeviceRequest struct {
+	Muted bool `json:"muted" description:"True to stop sending push notifications to this device."`
+}
+
+// InstallIDParam is the {installId} path parameter for mobile-device roster
+// routes.
+type InstallIDParam struct {
+	InstallID string `path:"installId" description:"The device's stable install id."`
 }
