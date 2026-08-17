@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -738,6 +739,31 @@ func TestUnknownProviderStateNeverBecomesRunning(t *testing.T) {
 
 	if got := store.lastObservation(t); got.state != domain.SandboxObservedProvisioning {
 		t.Errorf("observed state = %q, want provisioning for an unrecognized provider state", got.state)
+	}
+}
+
+func TestStuckProviderProvisioningFailsWithoutReplacingTheSandbox(t *testing.T) {
+	record := runningSandbox()
+	record.ProviderEnvironmentID = "env-1"
+	record.ObservedState = domain.SandboxObservedProvisioning
+	record.UpdatedAt = time.Now().Add(-time.Minute)
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := &recreatingProvider{newFakeProvider()}
+	provider.setState("env-1", sandbox.StateProvisioning)
+	reconciler := newReconciler(store, provider)
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.recreated) != 0 {
+		t.Fatalf("Recreate called %d times, want 0 so a stuck provider transition preserves the sandbox", len(provider.recreated))
+	}
+	got := store.lastObservation(t)
+	if got.state != domain.SandboxObservedFailed {
+		t.Fatalf("observed state = %q, want failed so the retry backs off", got.state)
+	}
+	if !strings.Contains(got.lastError, "provider did not finish provisioning") {
+		t.Fatalf("failure = %q, want provider provisioning timeout", got.lastError)
 	}
 }
 

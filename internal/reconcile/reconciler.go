@@ -499,6 +499,22 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedRestoring, "", 2*time.Second)
 	case sandbox.StateRunning:
 		return r.superviseRunning(ctx, record, environment, provider)
+	case sandbox.StateProvisioning:
+		// A provider can acknowledge a resume and then remain in its own
+		// transitional state forever. There is no safe in-place action AO can
+		// take while that happens: a recreate would discard the paused VM's
+		// filesystem. Bound the wait, preserve that VM, and retry with normal
+		// backoff until the provider reports it runnable again.
+		if record.ObservedState == domain.SandboxObservedFailed ||
+			(record.ObservedState == domain.SandboxObservedProvisioning &&
+				record.WorkerLastSeenAt == nil &&
+				time.Since(record.UpdatedAt) >= r.options.StartupTimeout) {
+			return r.fail(ctx, record, fmt.Errorf(
+				"provider did not finish provisioning within %s; preserving the existing sandbox for retry",
+				r.options.StartupTimeout,
+			))
+		}
+		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 5*time.Second)
 	default:
 		// Any state this control plane does not recognize is treated as
 		// not-yet-ready. Guessing "running" would suppress the startup
