@@ -43,7 +43,7 @@ AO will own one named hook entry inside `.agents/hooks.json`, using a stable nam
 }
 ```
 
-Installation will replace only AO's named entry, making upgrades idempotent. Other top-level named hooks and unknown fields will be preserved byte-semantically through JSON decoding and re-encoding. Uninstall will remove only AO's named entry and leave the rest of the file intact. If no entries remain, the file may remain as an empty JSON object to avoid deleting a path the user may manage externally.
+Installation will replace only AO's named entry, making upgrades idempotent. Other top-level named hooks and unknown fields will be preserved semantically as raw JSON values while the document itself is decoded and re-encoded. Uninstall will remove only AO's named entry and leave the rest of the file intact. If no entries remain, the file may remain as an empty JSON object to avoid deleting a path the user may manage externally.
 
 The `.agents/hooks.json` path will be added to the workspace-local `.agents/.gitignore` using the existing hook utility. The obsolete `.gemini/hooks.json` path will not be written.
 
