@@ -708,3 +708,179 @@ func TestShutdownViaCtxCancel(t *testing.T) {
 		t.Fatal("expected pty.Close() on ctx cancel")
 	}
 }
+
+// TestRestart: MsgRestartReq replaces the running PTY with a new one and
+// broadcasts status updates to clients.
+func TestRestart(t *testing.T) {
+	oldNewConPTY := newConPTYFunc
+	defer func() { newConPTYFunc = oldNewConPTY }()
+
+	newPTYInstance := newFakePTY(999)
+	newConPTYFunc = func(cwd, shellCmd string, shellArgs []string, env map[string]string) (ptyConn, error) {
+		if shellCmd != "new-cmd" {
+			t.Errorf("expected shellCmd 'new-cmd', got %q", shellCmd)
+		}
+		if len(shellArgs) != 1 || shellArgs[0] != "arg1" {
+			t.Errorf("expected shellArgs ['arg1'], got %v", shellArgs)
+		}
+		if env["FOO"] != "BAR" {
+			t.Errorf("expected env FOO=BAR, got %v", env)
+		}
+		return newPTYInstance, nil
+	}
+
+	f := startServe(t, 100)
+	defer f.cancel()
+
+	c := newTestClient(t, f.addr)
+	defer c.close()
+
+	// Send restart request.
+	payload := RestartPayload{
+		WorkspacePath: "/new/workspace",
+		Argv:          []string{"new-cmd", "arg1"},
+		Env:           map[string]string{"FOO": "BAR"},
+	}
+
+	pid, err := clientRestart(f.ln.Addr().String(), payload)
+	if err != nil {
+		t.Fatalf("clientRestart failed: %v", err)
+	}
+	if pid != 999 {
+		t.Fatalf("expected restarted PID 999, got %d", pid)
+	}
+
+	// Verify we received the status broadcast indicating the new process is alive.
+	typ, payloadBytes := c.readFrame(t)
+	if typ != MsgStatusRes {
+		t.Fatalf("expected MsgStatusRes, got 0x%02x", typ)
+	}
+	var sp StatusPayload
+	if err := json.Unmarshal(payloadBytes, &sp); err != nil {
+		t.Fatalf("unmarshal status broadcast: %v", err)
+	}
+	if !sp.Alive || sp.PID != 999 {
+		t.Fatalf("expected status broadcast alive=true, pid=999, got %+v", sp)
+	}
+
+	// Verify the old PTY was closed.
+	f.pty.closeMu.Lock()
+	oldClosed := f.pty.closed
+	f.pty.closeMu.Unlock()
+	if !oldClosed {
+		t.Fatal("expected old PTY to be closed on restart")
+	}
+
+	// Verify that MsgTerminalInput now targets the new PTY.
+	keystrokes := []byte("new input\n")
+	if err := c.send(MsgTerminalInput, keystrokes); err != nil {
+		t.Fatalf("send input: %v", err)
+	}
+
+	// Collect PTY input in background from the new PTY.
+	inputC := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := newPTYInstance.inR.Read(buf)
+		if n > 0 {
+			inputC <- buf[:n]
+		}
+	}()
+
+	select {
+	case got := <-inputC:
+		if string(got) != string(keystrokes) {
+			t.Fatalf("expected new PTY to receive %q, got %q", keystrokes, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for new PTY to receive input")
+	}
+}
+
+// TestConcurrentRestarts verifies that concurrent MsgRestartReq requests are rejected
+// with "restart already in progress" error response.
+func TestConcurrentRestarts(t *testing.T) {
+	oldNewConPTY := newConPTYFunc
+	defer func() { newConPTYFunc = oldNewConPTY }()
+
+	spawnBlocked := make(chan struct{})
+	newConPTYFunc = func(cwd, shellCmd string, shellArgs []string, env map[string]string) (ptyConn, error) {
+		// Block the first restart to allow a second one to execute concurrently.
+		<-spawnBlocked
+		return newFakePTY(999), nil
+	}
+
+	f := startServe(t, 202)
+	defer f.cancel()
+
+	// Dial first client and synchronise via a status round-trip (ring is empty,
+	// no scrollback frame is sent on connect).
+	c1 := newTestClient(t, f.addr)
+	defer c1.close()
+	_ = c1.send(MsgStatusReq, nil)
+	c1.readFrame(t) // discard MsgStatusRes
+
+	// Dial second client and synchronise the same way.
+	c2 := newTestClient(t, f.addr)
+	defer c2.close()
+	_ = c2.send(MsgStatusReq, nil)
+	c2.readFrame(t) // discard MsgStatusRes
+
+	payload := RestartPayload{
+		WorkspacePath: "/new/workspace",
+		Argv:          []string{"new-cmd", "arg1"},
+	}
+	payloadBytes, _ := json.Marshal(payload)
+
+	// Send first restart from c1; it will block inside newConPTYFunc.
+	if err := c1.send(MsgRestartReq, payloadBytes); err != nil {
+		t.Fatalf("c1.send: %v", err)
+	}
+
+	// Give a small delay so the host goroutine picks up c1's restart and sets restarting=true.
+	time.Sleep(50 * time.Millisecond)
+
+	// Send second restart from c2; it must be rejected immediately.
+	if err := c2.send(MsgRestartReq, payloadBytes); err != nil {
+		t.Fatalf("c2.send: %v", err)
+	}
+
+	// c2 must receive an immediate rejection. Drain non-MsgRestartRes frames
+	// (the old PTY close can emit a MsgStatusRes broadcast before the rejection arrives).
+	var resp2 RestartResponse
+	for {
+		typ, responseBytes := c2.readFrame(t)
+		if typ != MsgRestartRes {
+			continue // skip status broadcasts
+		}
+		if err := json.Unmarshal(responseBytes, &resp2); err != nil {
+			t.Fatalf("c2: unmarshal restart response: %v", err)
+		}
+		break
+	}
+	if resp2.Success {
+		t.Fatal("c2: expected second restart to be rejected, but it succeeded")
+	}
+	if !strings.Contains(resp2.Error, "restart already in progress") {
+		t.Fatalf("c2: expected error 'restart already in progress', got %q", resp2.Error)
+	}
+
+	// Unblock the first spawn so c1 can complete.
+	close(spawnBlocked)
+
+	// c1 must see a MsgRestartRes with success=true. Drain any broadcast frames first.
+	var resp1 RestartResponse
+	for {
+		typ, responseBytes := c1.readFrame(t)
+		if typ != MsgRestartRes {
+			continue // skip status broadcasts
+		}
+		if err := json.Unmarshal(responseBytes, &resp1); err != nil {
+			t.Fatalf("c1: unmarshal restart response: %v", err)
+		}
+		break
+	}
+	if !resp1.Success {
+		t.Fatalf("c1: expected first restart to succeed, but got error: %s", resp1.Error)
+	}
+}
