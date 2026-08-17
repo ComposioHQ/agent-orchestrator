@@ -284,6 +284,35 @@ func TestUpdateSandboxObservationRequiresTheLease(t *testing.T) {
 	}
 }
 
+func TestStartupDeadlinePersistsAcrossProviderTransitionFlaps(t *testing.T) {
+	fixture := newSandboxFixture(t, "startup-deadline")
+	ctx := context.Background()
+
+	fixture.claimOwn(t, "owner-a")
+	if err := fixture.store.UpdateSandboxObservation(
+		ctx, "owner-a", fixture.orgID, fixture.sessionID,
+		fixture.environmentID("1"), domain.SandboxObservedProvisioning, "", time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	record := fixture.claimOwn(t, "owner-b")
+	if record.StartupStartedAt == nil {
+		t.Fatal("provisioning observation did not start the startup deadline")
+	}
+	startedAt := *record.StartupStartedAt
+
+	if err := fixture.store.UpdateSandboxObservation(
+		ctx, "owner-b", fixture.orgID, fixture.sessionID,
+		fixture.environmentID("1"), domain.SandboxObservedRestoring, "", time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	record = fixture.claimOwn(t, "owner-c")
+	if record.StartupStartedAt == nil || !record.StartupStartedAt.Equal(startedAt) {
+		t.Fatalf("startup deadline = %v, want original %v across provider flap", record.StartupStartedAt, startedAt)
+	}
+}
+
 func TestExpiredLeaseCannotWriteAndLiveLeaseRenews(t *testing.T) {
 	fixture := newSandboxFixture(t, "fence")
 	ctx := context.Background()

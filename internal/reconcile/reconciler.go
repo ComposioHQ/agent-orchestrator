@@ -508,7 +508,7 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		if record.ObservedState == domain.SandboxObservedFailed ||
 			(record.ObservedState == domain.SandboxObservedProvisioning &&
 				record.WorkerLastSeenAt == nil &&
-				time.Since(record.UpdatedAt) >= r.options.StartupTimeout) {
+				r.startupDeadlineElapsed(record)) {
 			return r.fail(ctx, record, fmt.Errorf(
 				"provider did not finish provisioning within %s; preserving the existing sandbox for retry",
 				r.options.StartupTimeout,
@@ -605,7 +605,7 @@ func (r *Reconciler) superviseRunning(
 	startupExpired := (record.ObservedState == domain.SandboxObservedProvisioning ||
 		record.ObservedState == domain.SandboxObservedBootstrapping) &&
 		record.WorkerLastSeenAt == nil &&
-		time.Since(record.UpdatedAt) >= r.options.StartupTimeout
+		r.startupDeadlineElapsed(record)
 	heartbeatExpired := record.WorkerLastSeenAt != nil &&
 		time.Since(*record.WorkerLastSeenAt) >= r.options.HeartbeatTimeout
 
@@ -685,6 +685,14 @@ func (r *Reconciler) refreshRestoredWorker(
 	}
 	return r.observe(ctx, record, string(environment.ID),
 		domain.SandboxObservedBootstrapping, "", r.options.Interval)
+}
+
+func (r *Reconciler) startupDeadlineElapsed(record domain.Sandbox) bool {
+	startedAt := record.UpdatedAt
+	if record.StartupStartedAt != nil {
+		startedAt = *record.StartupStartedAt
+	}
+	return time.Since(startedAt) >= r.options.StartupTimeout
 }
 
 func repairReason(record domain.Sandbox, startupExpired, heartbeatExpired bool) string {

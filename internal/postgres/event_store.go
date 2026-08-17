@@ -93,7 +93,8 @@ func sendMessageTx(
 	if _, err := tx.Exec(
 		ctx,
 		`UPDATE ao_sandboxes
-		SET desired_state = 'running', reconcile_after = now(), updated_at = now()
+		SET desired_state = 'running', startup_started_at = now(),
+			reconcile_after = now(), updated_at = now()
 		WHERE session_id = $1 AND org_id = $2 AND desired_state = 'paused'`,
 		sessionID, orgID,
 	); err != nil {

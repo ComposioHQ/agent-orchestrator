@@ -746,7 +746,11 @@ func TestStuckProviderProvisioningFailsWithoutReplacingTheSandbox(t *testing.T) 
 	record := runningSandbox()
 	record.ProviderEnvironmentID = "env-1"
 	record.ObservedState = domain.SandboxObservedProvisioning
-	record.UpdatedAt = time.Now().Add(-time.Minute)
+	startedAt := time.Now().Add(-time.Minute)
+	record.StartupStartedAt = &startedAt
+	// A provider flap refreshes UpdatedAt. The deadline must still use the
+	// original wake rather than granting another full startup window.
+	record.UpdatedAt = time.Now()
 	store := &fakeStore{pending: []domain.Sandbox{record}}
 	provider := &recreatingProvider{newFakeProvider()}
 	provider.setState("env-1", sandbox.StateProvisioning)

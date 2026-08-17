@@ -173,6 +173,7 @@ func (s *Store) ArchiveProject(
 		if _, err := tx.Exec(ctx,
 			`UPDATE ao_sandboxes sandbox
 			SET desired_state = $3,
+				startup_started_at = NULL,
 				reconcile_after = now(),
 				updated_at = now()
 			FROM ao_sessions session

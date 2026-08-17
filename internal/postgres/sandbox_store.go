@@ -30,7 +30,7 @@ const sandboxColumns = `sandbox.session_id, sandbox.org_id, sandbox.provider,
 	COALESCE(sandbox.provider_connection_id::text, ''),
 	sandbox.desired_state, sandbox.observed_state,
 	sandbox.resource_profile, sandbox.bootstrap_context,
-	sandbox.worker_last_seen_at,
+	sandbox.worker_last_seen_at, sandbox.startup_started_at,
 	sandbox.last_error, sandbox.updated_at`
 
 // ClaimSandboxes leases up to limit due sandboxes for reconciliation. The
@@ -156,6 +156,12 @@ func (s *Store) UpdateSandboxObservation(
 						THEN NULL
 					ELSE worker_last_seen_at
 				END,
+				startup_started_at = CASE
+					WHEN desired_state <> 'running' OR $4 = 'running' THEN NULL
+					WHEN $4 IN ('provisioning', 'restoring', 'bootstrapping')
+						THEN COALESCE(startup_started_at, now())
+					ELSE startup_started_at
+				END,
 				updated_at = CASE
 					WHEN provider_environment_id IS DISTINCT FROM NULLIF($3, '')
 						OR observed_state IS DISTINCT FROM $4
@@ -276,7 +282,13 @@ func (s *Store) SetSandboxDesiredState(
 		tag, err := tx.Exec(
 			ctx,
 			`UPDATE ao_sandboxes
-			SET desired_state = $2, reconcile_after = now(), updated_at = now()
+			SET desired_state = $2,
+				startup_started_at = CASE
+					WHEN $2 = 'running' AND desired_state <> 'running' THEN now()
+					WHEN $2 <> 'running' THEN NULL
+					ELSE startup_started_at
+				END,
+				reconcile_after = now(), updated_at = now()
 			WHERE session_id = $1 AND org_id = $3`,
 			sessionID,
 			desiredState,
@@ -309,6 +321,7 @@ func (s *Store) WakePausedSessions(
 			`UPDATE ao_sandboxes sandbox
 			SET desired_state = 'running',
 				reconcile_after = now(),
+				startup_started_at = now(),
 				interactive_until = CASE
 					WHEN sandbox.interactive_until IS NULL
 						OR sandbox.interactive_until < now() + $3::interval
@@ -375,7 +388,8 @@ func (s *Store) PauseIfIdle(
 		tag, err := tx.Exec(
 			ctx,
 			`UPDATE ao_sandboxes
-			SET desired_state = 'paused', reconcile_after = now(), updated_at = now()
+			SET desired_state = 'paused', startup_started_at = NULL,
+				reconcile_after = now(), updated_at = now()
 			WHERE session_id = $1
 				AND org_id = $2
 				AND desired_state = 'running'
@@ -764,6 +778,7 @@ func (s *Store) MarkWorkerSeen(
 			ctx,
 			`UPDATE ao_sandboxes
 			SET worker_last_seen_at = now(),
+				startup_started_at = NULL,
 				observed_state = CASE
 					WHEN observed_state IN ('requested', 'provisioning', 'restoring', 'bootstrapping', 'disconnected')
 						THEN 'running'
@@ -966,6 +981,7 @@ func scanSandbox(row rowScanner) (domain.Sandbox, error) {
 		&resourceProfile,
 		&bootstrapContext,
 		&record.WorkerLastSeenAt,
+		&record.StartupStartedAt,
 		&record.LastError,
 		&record.UpdatedAt,
 	); err != nil {

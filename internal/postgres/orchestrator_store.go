@@ -140,7 +140,8 @@ func (s *Store) DeleteOrchestratorChild(
 		}
 		tag, err := tx.Exec(ctx,
 			`UPDATE ao_sandboxes AS sandbox
-			SET desired_state = $1, reconcile_after = now(), updated_at = now()
+			SET desired_state = $1, startup_started_at = NULL,
+				reconcile_after = now(), updated_at = now()
 			FROM ao_sessions AS session
 			WHERE sandbox.org_id = $2
 			  AND sandbox.session_id = $3

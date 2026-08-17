@@ -62,6 +62,10 @@ type Sandbox struct {
 	// which is what distinguishes "never started" from "went silent" and
 	// selects the startup deadline over the heartbeat deadline.
 	WorkerLastSeenAt *time.Time
+	// StartupStartedAt is the beginning of the current running-intent
+	// provisioning attempt. Unlike UpdatedAt it survives repeated provider
+	// observations such as paused -> resuming -> paused.
+	StartupStartedAt *time.Time
 	LastError        string
 	UpdatedAt        time.Time
 }

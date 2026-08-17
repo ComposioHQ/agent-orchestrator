@@ -338,6 +338,10 @@ func (s *Store) IssueTerminalTicket(
 			`UPDATE ao_sandboxes
 			SET desired_state = CASE WHEN desired_state = 'paused' THEN 'running' ELSE desired_state END,
 				reconcile_after = CASE WHEN desired_state = 'paused' THEN now() ELSE reconcile_after END,
+				startup_started_at = CASE
+					WHEN desired_state = 'paused' THEN now()
+					ELSE startup_started_at
+				END,
 				interactive_until = CASE
 					WHEN interactive_until IS NULL OR interactive_until < now() + $3::interval
 						THEN now() + $3::interval
