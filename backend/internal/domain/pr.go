@@ -30,7 +30,10 @@ type PRFacts struct {
 // persisted by the PR store. It is intentionally separate from the sqlc
 // generated sqlite row type so storage details do not leak outside sqlite.
 type PullRequest struct {
-	URL          string
+	URL string
+	// URLAlias is a transient provider-resolved URL that should point at URL.
+	// It is persisted in the alias table, not in the pr row itself.
+	URLAlias     string
 	SessionID    SessionID
 	Number       int
 	Draft        bool
@@ -48,6 +51,9 @@ type PullRequest struct {
 	Provider string
 	Host     string
 	Repo     string
+	// ProviderID is immutable within a provider and host and survives repository
+	// renames or transfers.
+	ProviderID string
 
 	SourceBranch   string
 	TargetBranch   string

@@ -1068,6 +1068,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 				Provider:     repo.Provider,
 				Host:         repo.Host,
 				Repo:         repoFullName(repo),
+				ProviderID:   pr.ProviderID,
 				UpdatedAt:    now,
 			}
 			// Persist the discovered PR as an open baseline row immediately, before
@@ -1758,6 +1759,7 @@ func domainFromObservation(sessionID domain.SessionID, sessionRecord domain.Sess
 	}
 	pr := domain.PullRequest{
 		URL:                      firstNonEmpty(obs.PR.URL, obs.PR.HTMLURL),
+		URLAlias:                 obs.PR.URLAlias,
 		SessionID:                sessionID,
 		Number:                   obs.PR.Number,
 		Draft:                    obs.PR.Draft,
@@ -1770,6 +1772,7 @@ func domainFromObservation(sessionID domain.SessionID, sessionRecord domain.Sess
 		Provider:                 obs.Provider,
 		Host:                     obs.Host,
 		Repo:                     obs.Repo,
+		ProviderID:               obs.PR.ProviderID,
 		SourceBranch:             obs.PR.SourceBranch,
 		TargetBranch:             obs.PR.TargetBranch,
 		HeadSHA:                  obs.PR.HeadSHA,

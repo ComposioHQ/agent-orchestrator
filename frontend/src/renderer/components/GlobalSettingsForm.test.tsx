@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
+import { useUiStore } from "../stores/ui-store";
 
 const {
 	getUpdate,
@@ -141,6 +142,7 @@ beforeEach(async () => {
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
+	useUiStore.setState({ developerMode: false });
 	document.documentElement.lang = "en";
 });
 
@@ -165,6 +167,30 @@ describe("GlobalSettingsForm", () => {
 		for (const row of [connectMobile, keyboardShortcuts]) {
 			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
 		}
+	});
+
+	it("persists Developer Mode and reveals Feature Releases", async () => {
+		const user = userEvent.setup();
+		renderForm();
+		const toggle = await screen.findByRole("switch", { name: "Developer Mode" });
+		expect(toggle).toHaveAttribute("aria-checked", "false");
+
+		await user.click(toggle);
+		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
+		await user.click(screen.getByLabelText("Updates channel"));
+		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
+	});
+
+	it("shows the available feature builds after choosing Feature Releases", async () => {
+		const user = userEvent.setup();
+		featListBuilds.mockResolvedValue([]);
+		useUiStore.getState().setDeveloperMode(true);
+		renderForm();
+
+		await user.click(await screen.findByLabelText("Updates channel"));
+		await user.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
+		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
+		expect(featListBuilds).toHaveBeenCalled();
 	});
 
 	it("switches General settings labels to Simplified Chinese and persists locale", async () => {

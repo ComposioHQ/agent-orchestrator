@@ -19,6 +19,7 @@ import (
 // focused follow-up PRs alongside the code that reads them.
 type ProjectConfig struct {
 	// DefaultBranch is the base branch new session worktrees are created from.
+	// Empty and DefaultBranchAuto both mean infer each repository's Git default.
 	DefaultBranch string `json:"defaultBranch,omitempty"`
 	// SessionPrefix overrides the displayed session-id prefix.
 	SessionPrefix string `json:"sessionPrefix,omitempty"`
@@ -112,15 +113,21 @@ type RoleOverride struct {
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
 }
 
-// DefaultBranchName is the base branch used when a project configures none.
-const DefaultBranchName = "main"
+const (
+	// DefaultBranchAuto tells callers to infer the Git default branch for each
+	// repository instead of naming one branch for the whole project.
+	DefaultBranchAuto = "auto"
+	// DefaultBranchName is the branch AO selects when it creates a repository.
+	// Automatic resolution never uses it as a guess for existing repositories.
+	DefaultBranchName = "main"
+)
 
 // DefaultProjectConfig returns the config a project has when it sets nothing:
-// branch "main". Every other field defaults to its zero value (no
-// env/symlinks/post-create, agent + role defaults).
+// automatic per-repository branch resolution. Every other field defaults to
+// its zero value (no env/symlinks/post-create, agent + role defaults).
 func DefaultProjectConfig() ProjectConfig {
 	return ProjectConfig{
-		DefaultBranch: DefaultBranchName,
+		DefaultBranch: DefaultBranchAuto,
 	}
 }
 
@@ -133,6 +140,17 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	}
 	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	return c
+}
+
+// WorktreeBaseBranch translates project configuration into the workspace
+// interface. An empty value tells the workspace adapter to resolve a remote
+// HEAD independently for the repository it is materializing.
+func (c ProjectConfig) WorktreeBaseBranch() string {
+	branch := c.WithDefaults().DefaultBranch
+	if branch == DefaultBranchAuto {
+		return ""
+	}
+	return branch
 }
 
 // IsZero reports whether the config carries no settings, so storage can persist

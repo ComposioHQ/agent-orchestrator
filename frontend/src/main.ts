@@ -173,11 +173,6 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
-// Height (px) of the custom Windows title bar. Must stay in sync with
-// --size-window-titlebar (tokens.css) and .window-titlebar, plus the Window
-// Controls Overlay height passed to BaseWindow, so the native min/max/close
-// buttons line up with the app's bar.
-const TITLEBAR_HEIGHT = 36;
 // Traffic lights stay fixed across sidebar expand/collapse. Y matches the
 // natural macOS titlebar band (TitlebarNav is h-traffic-light-clearance).
 const MAC_WINDOW_BUTTON_X = 14;
@@ -376,18 +371,15 @@ async function createWindowInternal(): Promise<void> {
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
 		backgroundColor: NATIVE_WINDOW_BACKGROUND_DARK,
-		// Windows goes frameless with a Window Controls Overlay: Electron still draws
-		// native min/max/close on the right, while the renderer paints its own
-		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
-		// inset traffic-light chrome. Overlay colours are re-synced to the active
-		// theme from the renderer via the window:setOverlay IPC.
+		// Windows goes frameless and the renderer paints the whole titlebar,
+		// including custom min/max/close controls. macOS/Linux keep the inset
+		// traffic-light chrome.
 		...(process.platform === "win32"
 			? {
 					titleBarStyle: "hidden" as const,
 					// Hide the native menu bar. A role-based menu is still installed (for
 					// accelerators) below; the visible menu is painted by WindowTitlebar.
 					autoHideMenuBar: true,
-					titleBarOverlay: { color: "#17181c", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
@@ -482,8 +474,14 @@ async function createWindowInternal(): Promise<void> {
 		if (!mainWindow) return;
 		getShellWebContents()?.send("window:fullscreen", mainWindow.isFullScreen());
 	};
+	const pushMaximized = () => {
+		if (!mainWindow) return;
+		getShellWebContents()?.send("window:maximized", mainWindow.isMaximized());
+	};
 	mainWindow.on("enter-full-screen", pushFullScreen);
 	mainWindow.on("leave-full-screen", pushFullScreen);
+	mainWindow.on("maximize", pushMaximized);
+	mainWindow.on("unmaximize", pushMaximized);
 	mainWindow.on("blur", () => {
 		keybindingRecordingActive = false;
 	});
@@ -600,7 +598,7 @@ const runLoginShell: ShellRunner = (shellPath, args) =>
 		};
 		let child: ReturnType<typeof spawn>;
 		try {
-			child = spawn(shellPath, args, { stdio: ["ignore", "pipe", "ignore"] });
+			child = spawn(shellPath, args, { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
 		} catch {
 			finish(null);
 			return;
@@ -936,6 +934,27 @@ function resolvedDaemonPort(): number {
 	return isDev && !process.env.AO_PORT ? DEV_DAEMON_PORT : expectedDaemonPort(process.env);
 }
 
+function daemonLaunchEnv(): NodeJS.ProcessEnv {
+	if (!isDev || process.platform !== "win32") {
+		return process.env;
+	}
+	try {
+		const daemonDir = path.resolve(app.getAppPath(), "daemon");
+		const manifestPath = path.join(daemonDir, "dev-daemon.json");
+		const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as { path?: unknown };
+		if (typeof parsed.path === "string") {
+			const daemonPath = path.resolve(parsed.path.trim());
+			const relativePath = path.relative(daemonDir, daemonPath);
+			if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+				return { ...process.env, AO_DEV_DAEMON_BINARY: daemonPath };
+			}
+		}
+	} catch {
+		// Fall back to the legacy fixed dev path; build-daemon writes the manifest.
+	}
+	return process.env;
+}
+
 async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (daemonProcess) {
 		return daemonStatus;
@@ -947,7 +966,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	await ensureShellEnv();
 
 	const launch = resolveDaemonLaunch(
-		process.env,
+		daemonLaunchEnv(),
 		app.isPackaged,
 		process.resourcesPath,
 		app.getAppPath(),
@@ -1476,19 +1495,8 @@ ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
 });
 
-// Re-tint the native window-button overlay (min/max/close) to match the active
-// theme; the renderer calls this on theme change. No-op unless the window was
-// created with a titleBarOverlay (Windows only).
-ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolColor: string }) => {
-	if (process.platform !== "win32" || !mainWindow) return;
-	try {
-		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
-	} catch {
-		// Window has no overlay on this platform; ignore.
-	}
-});
-
 ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false);
+ipcMain.handle("window:isMaximized", () => mainWindow?.isMaximized() ?? false);
 
 // Drive Electron's nativeTheme from the app's theme preference so embedded
 // preview WebContentsViews (which follow prefers-color-scheme) flip in step with
