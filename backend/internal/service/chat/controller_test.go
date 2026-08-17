@@ -437,7 +437,7 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 
 	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
-		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
 	})
 	if err != nil {
 		t.Fatalf("Start resume: %v", err)
@@ -471,10 +471,23 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 
 func TestInterfaceHandoffWaitsForNativeHistoryToSettleBeforeStartingChat(t *testing.T) {
 	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "Finish the work."
+	rec.Metadata.LatestAssistantUpdate = "Settled answer."
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed native replay checkpoint: %v", err)
+	}
 	conv := &convergingHistoryConversation{
 		fakeConversation: newFakeConversation(),
 		events: []ports.ChatEvent{
 			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "native-turn-1"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "native-user-1", Text: "Finish the work.",
+			},
 			{
 				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer",
 				ProviderTurnID: "native-turn-1", ProviderItemID: "native-answer-1", Text: "Settled answer.",
@@ -514,8 +527,9 @@ func TestInterfaceHandoffWaitsForNativeHistoryToSettleBeforeStartingChat(t *test
 	if err != nil {
 		t.Fatalf("LoadConversationSnapshot: %v", err)
 	}
-	if len(snapshot.Messages) != 1 || snapshot.Messages[0].Text != "Settled answer." {
-		t.Fatalf("messages = %#v, want settled native answer", snapshot.Messages)
+	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Text != "Finish the work." ||
+		snapshot.Messages[1].Text != "Settled answer." {
+		t.Fatalf("messages = %#v, want checkpoint prompt and settled native answer", snapshot.Messages)
 	}
 	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateCompleted {
 		t.Fatalf("turns = %#v, want one completed native turn", snapshot.Turns)
@@ -590,6 +604,45 @@ func TestInterfaceHandoffReportsUnsettledHistoryWhenContextEndsDuringConvergence
 	})
 	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
 		t.Fatalf("Start error = %v, want ErrChatHistoryUnsettled", err)
+	}
+}
+
+func TestInterfaceHandoffRejectsSettledReplayBeforeLatestSessionCheckpoint(t *testing.T) {
+	st := openStore(t)
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "Run the final verification."
+	rec.Metadata.LatestAssistantUpdate = "The final verification passed."
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed native replay checkpoint: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		// A provider may report a syntactically settled but stale prefix while its
+		// on-disk transcript is still being flushed. Empty is the strongest form of
+		// that failure: no replay event reaches the hook facts AO already observed.
+		events: nil,
+		onRead: cancel,
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("checkpoint-%d", time.Now().UnixNano()) },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	_, err = svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("Start error = %v, want ErrChatHistoryUnsettled for stale settled replay", err)
 	}
 }
 

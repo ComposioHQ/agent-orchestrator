@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -216,6 +217,22 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	}
 	defer gate.unlock()
 
+	replayCheckpoint := nativeHistoryCheckpoint{}
+	if cfg.RequireNativeHistory {
+		if s.sessions == nil {
+			return nil, errors.New("native history replay requires a session reader")
+		}
+		rec, found, err := s.sessions.GetSession(ctx, cfg.SessionID)
+		if err != nil {
+			return nil, fmt.Errorf("read native history checkpoint: %w", err)
+		}
+		if !found {
+			return nil, ports.ErrSessionNotFound
+		}
+		replayCheckpoint.latestUserPrompt = strings.TrimSpace(rec.Metadata.LatestUserPrompt)
+		replayCheckpoint.latestAssistantUpdate = strings.TrimSpace(rec.Metadata.LatestAssistantUpdate)
+	}
+
 	s.mu.RLock()
 	existing := s.controllers[cfg.SessionID]
 	s.mu.RUnlock()
@@ -356,8 +373,14 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 				return nil, fmt.Errorf("load conversation before native history import: %w", err)
 			}
 		}
+		if cfg.RequireNativeHistory {
+			replayCheckpoint.captureAOHighWater(
+				cfg.SessionID, existing.Turns, existing.Messages, existing.Activities,
+			)
+		}
 		if err := controller.importNativeHistory(
-			ctx, existing.Turns, existing.Messages, existing.Activities, cfg.RequireNativeHistory,
+			ctx, existing.Turns, existing.Messages, existing.Activities,
+			cfg.RequireNativeHistory, replayCheckpoint,
 		); err != nil {
 			_ = conv.Close()
 			return nil, err

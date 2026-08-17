@@ -147,4 +147,20 @@ describe("SessionInterfaceTransitionNotice", () => {
 		expect(screen.queryByRole("button", { name: "Stop now and switch" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Discard draft and switch" })).not.toBeInTheDocument();
 	});
+
+	it("does not offer a destructive retry when terminal quiescence is unverified", () => {
+		render(
+			<SessionInterfaceTransitionNotice
+				transition={{
+					...transition("failed"),
+					errorCode: "DRAIN_QUIESCENCE_UNVERIFIED",
+					errorDetail: "AO could not classify the current Terminal screen.",
+				}}
+				onDismiss={vi.fn()}
+				onSwitchWithInterrupt={vi.fn()}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Stop now and switch" })).not.toBeInTheDocument();
+	});
 });

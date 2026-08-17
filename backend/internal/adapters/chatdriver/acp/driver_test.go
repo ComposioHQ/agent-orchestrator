@@ -589,9 +589,6 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	agent := &fakeAgent{
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
-			SessionCapabilities: acpsdk.SessionCapabilities{
-				Resume: &acpsdk.SessionResumeCapabilities{},
-			},
 		},
 		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo},
 	}

@@ -473,12 +473,7 @@ func (m *Manager) nativeConversationID(
 	}
 	id = strings.TrimSpace(id)
 	if !ok || id == "" {
-		_, hasHistoryProbe := handoff.(ports.AgentInterfaceHandoffHistoryProbe)
-		if mode == domain.SessionModeTUI && hasHistoryProbe &&
-			rec.Metadata.LatestUserPrompt == "" &&
-			rec.Metadata.LatestAssistantUpdate == "" &&
-			rec.Metadata.NativeTranscriptPath == "" &&
-			m.terminalProvesNativeConversationNotStarted(ctx, rec, agent) {
+		if m.nativeConversationNotStarted(ctx, rec, agent) {
 			return "", handoff, nil
 		}
 		return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
@@ -496,6 +491,29 @@ func (m *Manager) nativeConversationID(
 		}
 	}
 	return id, handoff, nil
+}
+
+// nativeConversationNotStarted is the only evidence that may turn a missing
+// provider history into an intentional fresh handoff. A missing file or a
+// reserved native id is not enough: both are also observable when persistence
+// is lagging or broken after real work. The current rendered provider surface
+// must positively identify its untouched initial composer, and AO must have no
+// hook-derived conversation facts that contradict it.
+func (m *Manager) nativeConversationNotStarted(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	agent ports.Agent,
+) bool {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI ||
+		rec.Metadata.LatestUserPrompt != "" ||
+		rec.Metadata.LatestAssistantUpdate != "" ||
+		rec.Metadata.NativeTranscriptPath != "" {
+		return false
+	}
+	if _, ok := agent.(ports.AgentInterfaceHandoffHistoryProbe); !ok {
+		return false
+	}
+	return m.terminalProvesNativeConversationNotStarted(ctx, rec, agent)
 }
 
 func (m *Manager) terminalProvesNativeConversationNotStarted(
@@ -524,9 +542,9 @@ func (m *Manager) terminalProvesNativeConversationNotStarted(
 	return inspector.InspectTerminalSurface(output).NativeConversationNotStarted
 }
 
-// persistedNativeConversationID turns an adapter's reserved-but-empty native
-// id into the transition's explicit "start fresh" sentinel. Adapters that do
-// not expose the optional probe retain the conservative resume-only behavior.
+// persistedNativeConversationID verifies that a reserved native id has durable
+// provider history behind it. A failed lookup is not proof of freshness: only
+// positive untouched-composer evidence may produce the explicit fresh sentinel.
 func (m *Manager) persistedNativeConversationID(
 	ctx context.Context,
 	rec domain.SessionRecord,
@@ -556,7 +574,11 @@ func (m *Manager) persistedNativeConversationID(
 		return "", fmt.Errorf("inspect native conversation %s: %w", id, err)
 	}
 	if !exists {
-		return "", nil
+		agent, registered := m.agents.Agent(rec.Harness)
+		if registered && m.nativeConversationNotStarted(ctx, rec, agent) {
+			return "", nil
+		}
+		return "", fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
 	}
 	return id, nil
 }
@@ -709,6 +731,14 @@ func (m *Manager) prepareSourceHandoff(
 		}
 		if current.Activity.State == domain.ActivityExited {
 			return nil
+		}
+		switch current.Activity.State {
+		case domain.ActivityWaitingInput, domain.ActivityBlocked:
+			// This typed provider state outranks terminal-screen heuristics. The
+			// input gate is already closed, so continuing to wait would make the
+			// decision impossible to answer and deadlock the drain on runtimes
+			// without styled current-screen capture.
+			return errDrainDecisionPending
 		}
 		now := time.Now()
 		durableIdleProven := tuiIdleAfterInput(current, lastTerminalInputAt)
@@ -913,13 +943,13 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 		return err
 	}
 	ws := workspaceInfo(rec)
-	if requireNativeHistory {
-		_, err = m.relaunchSessionForInterfaceTransition(ctx, "switch interface", rec, project, ws, nil, fresh)
-	} else if fresh {
-		_, err = m.relaunchSessionFresh(ctx, "switch interface", rec, project, ws, nil)
-	} else {
-		_, err = m.relaunchSession(ctx, "switch interface", rec, project, ws, nil)
-	}
+	// A genuinely fresh target has nothing to replay. Every resumed TUI -> Chat
+	// handoff must import native history before activation; rollback and ordinary
+	// daemon restore deliberately use the normal context-resume policy.
+	_, err = m.relaunchSessionWithPolicy(
+		ctx, "switch interface", rec, project, ws, nil,
+		fresh, requireNativeHistory && !fresh,
+	)
 	return err
 }
 
@@ -1256,9 +1286,10 @@ func (m *Manager) hasActiveInterfaceTransition(ctx context.Context, id domain.Se
 }
 
 // recoverInterruptedInterfaceTransitions closes every durable handoff left
-// active by a daemon exit. The session row is the commit point, so normal
-// Reconcile can safely adopt or restore whichever mode that row names. Queued
-// coordination messages are returned for delivery after controller recovery.
+// active by a daemon exit. A TUI -> Chat transition whose mode commit landed is
+// rolled back first: ordinary Chat restore is context-only and cannot satisfy
+// the handoff's mandatory replay barrier. Reconcile can then restore the source
+// TUI, and a later retry performs native replay again idempotently.
 func (m *Manager) recoverInterruptedInterfaceTransitions(
 	ctx context.Context,
 ) ([]domain.SessionInterfaceTransition, error) {
@@ -1273,6 +1304,32 @@ func (m *Manager) recoverInterruptedInterfaceTransitions(
 	for i := range active {
 		transition := &active[i]
 		detail := "The daemon restarted during the interface switch; AO recovered the session from its last committed mode."
+		if transition.SourceMode == domain.SessionModeTUI && transition.TargetMode == domain.SessionModeChat {
+			rec, found, readErr := m.store.GetSession(ctx, transition.SessionID)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if found && !rec.IsTerminated && domain.NormalizeSessionMode(rec.Mode) == transition.TargetMode {
+				if m.lcm == nil {
+					return nil, fmt.Errorf("recover transition %s: lifecycle manager is unavailable", transition.ID)
+				}
+				changed, rollbackErr := m.lcm.CommitControllerEpoch(
+					ctx,
+					transition.SessionID,
+					transition.TargetMode,
+					transition.SourceMode,
+					transition.NativeConversationID,
+					transition.NativeConversationID == "",
+				)
+				if rollbackErr != nil {
+					return nil, fmt.Errorf("recover transition %s source mode: %w", transition.ID, rollbackErr)
+				}
+				if !changed {
+					return nil, fmt.Errorf("recover transition %s source mode: session changed", transition.ID)
+				}
+				detail = "The daemon restarted during the interface switch; AO restored Terminal so native history can be replayed safely on retry."
+			}
+		}
 		moved, err := store.AdvanceSessionInterfaceTransition(
 			ctx,
 			transition.ID,
