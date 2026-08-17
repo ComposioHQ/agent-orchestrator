@@ -509,10 +509,7 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 			(record.ObservedState == domain.SandboxObservedProvisioning &&
 				record.WorkerLastSeenAt == nil &&
 				r.startupDeadlineElapsed(record)) {
-			return r.fail(ctx, record, fmt.Errorf(
-				"provider did not finish provisioning within %s; preserving the existing sandbox for retry",
-				r.options.StartupTimeout,
-			))
+			return r.fail(ctx, record, r.providerStartupTimeoutError())
 		}
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedProvisioning, "", 5*time.Second)
 	default:
@@ -693,6 +690,13 @@ func (r *Reconciler) startupDeadlineElapsed(record domain.Sandbox) bool {
 		startedAt = *record.StartupStartedAt
 	}
 	return time.Since(startedAt) >= r.options.StartupTimeout
+}
+
+func (r *Reconciler) providerStartupTimeoutError() error {
+	return fmt.Errorf(
+		"The NodeOps VM did not become ready within %s. AO kept the existing VM and will retry.",
+		r.options.StartupTimeout,
+	)
 }
 
 func repairReason(record domain.Sandbox, startupExpired, heartbeatExpired bool) string {

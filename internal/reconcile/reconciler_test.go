@@ -766,7 +766,7 @@ func TestStuckProviderProvisioningFailsWithoutReplacingTheSandbox(t *testing.T) 
 	if got.state != domain.SandboxObservedFailed {
 		t.Fatalf("observed state = %q, want failed so the retry backs off", got.state)
 	}
-	if !strings.Contains(got.lastError, "provider did not finish provisioning") {
+	if !strings.Contains(got.lastError, "AO kept the existing VM and will retry") {
 		t.Fatalf("failure = %q, want provider provisioning timeout", got.lastError)
 	}
 }
