@@ -1,0 +1,36 @@
+time=2026-08-17T17:34:51.630+05:30 level=INFO msg="built per-session agent resolver" default=claude-code registered="[agy aider amp auggie autohand claude-code cline codex continue copilot crush cursor devin droid goose grok kilocode kimchi kimi kiro muse omp opencode pi prime-agent qwen vibe]"
+time=2026-08-17T17:34:51.630+05:30 level=WARN msg="tracker disabled: no usable token" provider=github err="github tracker: no token configured"
+time=2026-08-17T17:34:51.630+05:30 level=WARN msg="tracker disabled: no usable token" provider=gitlab err="gitlab scm: no token configured"
+time=2026-08-17T17:34:51.716+05:30 level=WARN msg="scm observer credentials check failed; will retry" err="exit status 1"
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:51.736+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:34:52.803+05:30 level=INFO msg="browser runtime: listening" addr=/tmp/ao-brd-29467-ed978329764aefc3/browser.sock
+time=2026-08-17T17:34:52.803+05:30 level=INFO msg="supervisor: listening" addr=/tmp/ao-4064-e2e.jZGO1T/supervise.sock
+time=2026-08-17T17:34:52.804+05:30 level=INFO msg="daemon listening" addr=127.0.0.1:60112 pid=29467
+time=2026-08-17T17:34:58.746+05:30 level=INFO msg="http request" id=Dhruvs-MacBook-Pro.local/F6ouL2qk6Y-000001 method=GET path=/readyz status=200 bytes=306 duration=175.458µs remote=127.0.0.1:60442
+time=2026-08-17T17:35:21.754+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:21.754+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:21.754+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:21.755+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:21.755+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:21.755+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:21.755+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:21.755+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:25.693+05:30 level=INFO msg="http request" id=Dhruvs-MacBook-Pro.local/F6ouL2qk6Y-000002 method=GET path=/api/v1/sessions status=200 bytes=4148 duration=855.167µs remote=127.0.0.1:60458
+time=2026-08-17T17:35:25.706+05:30 level=INFO msg="http request" id=Dhruvs-MacBook-Pro.local/F6ouL2qk6Y-000003 method=GET path=/api/v1/sessions status=200 bytes=4148 duration=845.25µs remote=127.0.0.1:60459
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+time=2026-08-17T17:35:51.753+05:30 level=DEBUG msg="scm observer: project has no supported SCM origins" project=startup-e2e
+^Ctime=2026-08-17T17:36:07.688+05:30 level=INFO msg="shutdown signal received, draining connections" timeout=10s
+time=2026-08-17T17:36:07.688+05:30 level=INFO msg="daemon stopped cleanly"
