@@ -143,6 +143,16 @@ func TestSessionInfo(t *testing.T) {
 	}
 }
 
+func TestActivitySignalCapabilities(t *testing.T) {
+	p := &Plugin{}
+	if !p.EmitsSubmitActivity() {
+		t.Fatal("EmitsSubmitActivity = false, want true")
+	}
+	if p.EmitsBlockedActivity() {
+		t.Fatal("EmitsBlockedActivity = true, want false")
+	}
+}
+
 func TestHooksLifecycle(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "agy-test-*")
 	if err != nil {
