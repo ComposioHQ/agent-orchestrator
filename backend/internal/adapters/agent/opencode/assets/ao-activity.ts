@@ -4,6 +4,8 @@
 // activity events:
 //   session.created                       -> `ao hooks opencode session-start`
 //   message.updated / message.part.updated -> `ao hooks opencode user-prompt-submit`
+//   message.updated (assistant in_progress) -> `ao hooks opencode active`
+//   tool.start / tool.end                  -> `ao hooks opencode active`
 //   session.status (status.type == idle)   -> `ao hooks opencode stop`
 //   client.permissionRequest               -> `ao hooks opencode permission-blocked`
 //
@@ -128,6 +130,13 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
               callHookSync("session-start", { session_id: msg.sessionID })
             }
             if (msg.role === "assistant" && msg.modelID) currentModel = msg.modelID
+            // Detect when assistant is actively working (not just idle)
+            if (msg.role === "assistant" && msg.status === "in_progress") {
+              const sessionID = msg.sessionID ?? currentSessionID
+              if (sessionID) {
+                callHookSync("active", { session_id: sessionID, model: currentModel ?? "" })
+              }
+            }
             // Fallback: some `opencode run` flows never deliver message.part.updated
             // for the prompt, so start the turn from the user message itself.
             if (msg.role === "user") {
@@ -172,6 +181,25 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             const sessionID = props?.sessionID ?? currentSessionID
             if (!sessionID) break
             callHookSync("permission-blocked", { session_id: sessionID, model: currentModel ?? "" })
+            break
+          }
+
+          case "tool.start": {
+            // Detect when opencode starts using a tool - indicates active work
+            const props = (event as any).properties
+            const sessionID = props?.sessionID ?? currentSessionID
+            if (!sessionID) break
+            callHookSync("active", { session_id: sessionID, model: currentModel ?? "" })
+            break
+          }
+
+          case "tool.end": {
+            // When tool completes, report activity but don't immediately go idle
+            // - let session.status idle handle that
+            const props = (event as any).properties
+            const sessionID = props?.sessionID ?? currentSessionID
+            if (!sessionID) break
+            callHookSync("active", { session_id: sessionID, model: currentModel ?? "" })
             break
           }
         }
