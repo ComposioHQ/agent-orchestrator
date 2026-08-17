@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { terminalWaitingLabel } from "./cloud-terminal-status";
 
 describe("terminalWaitingLabel", () => {
-  it("distinguishes a fresh VM from a resumed VM", () => {
+  it("does not mistake an in-place provider transition for a new VM", () => {
     expect(terminalWaitingLabel("waking", "agent", "provisioning")).toBe(
-      "Creating a new NodeOps VM…",
+      "Preparing the NodeOps VM…",
     );
     expect(terminalWaitingLabel("waking", "agent", "paused")).toBe(
       "Waking the existing NodeOps VM…",

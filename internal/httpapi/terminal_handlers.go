@@ -122,14 +122,12 @@ func (s *Server) connectTerminal(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	if terminal.Kind == "workspace" {
-		if err := s.store.RefreshTerminalInteraction(ctx, terminal, terminalInteractionTTL); err != nil {
-			if s.logger != nil {
-				s.logger.Debug("start terminal interaction lease", "error", err, "terminal_id", terminal.ID)
-			}
+	if err := s.store.RefreshTerminalInteraction(ctx, terminal, terminalInteractionTTL); err != nil {
+		if s.logger != nil {
+			s.logger.Debug("start terminal interaction lease", "error", err, "terminal_id", terminal.ID)
 		}
-		go s.refreshTerminalInteraction(ctx, terminal)
 	}
+	go s.refreshTerminalInteraction(ctx, terminal)
 	structured := r.URL.Query().Get("protocol") == "2"
 	if structured && terminal.Kind == "workspace" {
 		// Workspace reconnects create a fresh shell. Tell the client to discard

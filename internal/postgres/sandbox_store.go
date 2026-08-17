@@ -293,8 +293,10 @@ func (s *Store) SetSandboxDesiredState(
 }
 
 // WakePausedSessions records resume intent for sessions created by principal.
-// This is deliberately an intent-only operation: the reconciler owns provider
-// calls and the worker heartbeat remains the authoritative ready signal.
+// It also reserves a short interaction lease so the idle scanner cannot pause
+// the sandbox again while the worker and browser reconnect. The reconciler
+// owns provider calls and the worker heartbeat remains the authoritative ready
+// signal.
 func (s *Store) WakePausedSessions(
 	ctx context.Context,
 	principal domain.Principal,
@@ -305,7 +307,15 @@ func (s *Store) WakePausedSessions(
 		tag, err := tx.Exec(
 			ctx,
 			`UPDATE ao_sandboxes sandbox
-			SET desired_state = 'running', reconcile_after = now(), updated_at = now()
+			SET desired_state = 'running',
+				reconcile_after = now(),
+				interactive_until = CASE
+					WHEN sandbox.interactive_until IS NULL
+						OR sandbox.interactive_until < now() + $3::interval
+						THEN now() + $3::interval
+					ELSE sandbox.interactive_until
+				END,
+				updated_at = now()
 			FROM ao_sessions session
 			WHERE sandbox.org_id = $1
 				AND sandbox.org_id = session.org_id
@@ -315,6 +325,7 @@ func (s *Store) WakePausedSessions(
 				AND sandbox.desired_state = 'paused'`,
 			orgID,
 			principal.UserID,
+			intervalString(interactiveSessionLease),
 		)
 		if err != nil {
 			return fmt.Errorf("wake paused sessions: %w", err)

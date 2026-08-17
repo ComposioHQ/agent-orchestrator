@@ -374,6 +374,39 @@ func TestTerminalTicketWakesPausedSandboxAndWaitsForResumedWorker(t *testing.T) 
 	}
 }
 
+func TestAgentTerminalTicketReservesAnInteractionLease(t *testing.T) {
+	fixture := newSandboxFixture(t, "agent-terminal-interaction")
+	ctx := context.Background()
+	fixture.markRunning(t)
+	workerID, epoch := registerTestWorker(t, fixture)
+	if err := fixture.store.MarkWorkerSeen(
+		ctx, fixture.orgID, fixture.sessionID, workerID, "test", epoch,
+		[]string{"worker.turns", "worker.transport"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := fixture.store.IssueTerminalTicket(
+		ctx, fixture.principal, fixture.orgID, fixture.sessionID, "agent", time.Minute,
+	); err != nil {
+		t.Fatalf("agent terminal ticket: %v", err)
+	}
+
+	var interactive bool
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT interactive_until > now() FROM ao_sandboxes
+			WHERE org_id = $1 AND session_id = $2`,
+			fixture.orgID, fixture.sessionID,
+		).Scan(&interactive)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !interactive {
+		t.Fatal("agent terminal ticket did not reserve an interaction lease")
+	}
+}
+
 func TestTerminalOpenHasReservedCapacityAndPriority(t *testing.T) {
 	fixture := newSandboxFixture(t, "terminal-priority")
 	ctx := context.Background()

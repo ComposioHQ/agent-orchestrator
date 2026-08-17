@@ -620,7 +620,7 @@ function provisioningLabel(
 ): string {
   switch (runtimeState) {
     case "provisioning":
-      return "Creating a new NodeOps VM…";
+      return "Preparing the NodeOps VM…";
     case "restoring":
       return "Restoring the AO worker…";
     case "bootstrapping":

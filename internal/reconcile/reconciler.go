@@ -451,8 +451,13 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, record domain.Sandbox
 		return r.observe(ctx, record, string(environment.ID), domain.SandboxObservedDeleting, "", 2*time.Second)
 	case sandbox.StateStopped, sandbox.StatePaused:
 		if record.Provider == sandbox.ProviderDocker {
-			// Short-lived workers usually indicate a deterministic boot failure.
-			if time.Since(record.UpdatedAt) < dockerBootCrashWindow {
+			// A stopped sandbox already observed as stopped was intentionally
+			// paused. It must be recreated immediately on wake; otherwise a
+			// user who resumes within the boot-crash window is misclassified as
+			// a failed worker. A newly bootstrapping or previously running worker
+			// that stops inside the window is still a deterministic boot failure.
+			if (record.ObservedState != domain.SandboxObservedStopped || record.LastError != "") &&
+				time.Since(record.UpdatedAt) < dockerBootCrashWindow {
 				if err := r.store.DisconnectSessionWorkers(ctx, record.OrgID, record.SessionID); err != nil {
 					r.log.Warn("disconnect crashed worker", "session_id", record.SessionID, "err", err)
 				}

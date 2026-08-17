@@ -7,7 +7,9 @@ export function terminalWaitingLabel(
 ): string {
   switch (runtimeState) {
     case "provisioning":
-      return "Creating a new NodeOps VM…";
+      // Provisioning also covers provider transitions such as pausing and
+      // resuming, so it must not imply that the user's VM is being replaced.
+      return "Preparing the NodeOps VM…";
     case "paused":
     case "stopped":
       return "Waking the existing NodeOps VM…";

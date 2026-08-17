@@ -19,6 +19,9 @@ const (
 	maxOutstandingWorkerRequests    = 10
 	maxOutstandingWorkspaceRequests = 6
 	maxTerminalOutputBytes          = 4 << 20
+	// interactiveSessionLease prevents the idle scanner from pausing a sandbox
+	// while a user is connecting to either terminal surface.
+	interactiveSessionLease = 2 * time.Minute
 )
 
 func (s *Store) CreateWorkspaceRequest(
@@ -325,19 +328,24 @@ func (s *Store) IssueTerminalTicket(
 	ttl time.Duration,
 ) (string, []string, error) {
 	// Terminal access is an explicit proof of life. Wake an idle-paused sandbox
-	// in a committed transaction before checking worker readiness so a missing
-	// worker can return ErrWorkerUnavailable without rolling the wake intent
-	// back. The browser retries ticket creation while the reconciler resumes the
-	// provider and the worker heartbeats again.
+	// and reserve a short interaction lease in a committed transaction before
+	// checking worker readiness so the idle scanner cannot immediately undo the
+	// wake while the browser waits for the worker. The browser retries ticket
+	// creation while the reconciler resumes the provider and the worker
+	// heartbeats again.
 	if err := s.withSessionAccess(ctx, principal, orgID, sessionID, func(tx pgx.Tx, _ sessionAccess) error {
 		_, err := tx.Exec(ctx,
 			`UPDATE ao_sandboxes
 			SET desired_state = CASE WHEN desired_state = 'paused' THEN 'running' ELSE desired_state END,
 				reconcile_after = CASE WHEN desired_state = 'paused' THEN now() ELSE reconcile_after END,
-				interactive_until = CASE WHEN $3 = 'workspace' THEN now() + interval '2 minutes' ELSE interactive_until END,
+				interactive_until = CASE
+					WHEN interactive_until IS NULL OR interactive_until < now() + $3::interval
+						THEN now() + $3::interval
+					ELSE interactive_until
+				END,
 				updated_at = now()
 			WHERE org_id = $1 AND session_id = $2`,
-			orgID, sessionID, kind,
+			orgID, sessionID, intervalString(interactiveSessionLease),
 		)
 		return err
 	}); err != nil {

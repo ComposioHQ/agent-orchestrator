@@ -162,6 +162,49 @@ func TestPauseIfIdleRespectsInteractiveTerminalLease(t *testing.T) {
 	}
 }
 
+func TestWakePausedSessionsReservesAnInteractionLease(t *testing.T) {
+	fixture := newSandboxFixture(t, "idle-pause-wake")
+	ctx := context.Background()
+	fixture.markRunning(t)
+	fixture.backdateLastUserMessage(t, 20*time.Minute)
+
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes
+			SET desired_state = 'paused', observed_state = 'stopped', interactive_until = NULL
+			WHERE org_id = $1 AND session_id = $2`,
+			fixture.orgID, fixture.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	woken, err := fixture.store.WakePausedSessions(ctx, fixture.principal, fixture.orgID)
+	if err != nil || woken != 1 {
+		t.Fatalf("WakePausedSessions() = %d, %v, want 1, nil", woken, err)
+	}
+	fixture.markRunning(t)
+
+	if paused, err := fixture.store.PauseIfIdle(ctx, fixture.orgID, fixture.sessionID, 15*time.Minute); err != nil || paused {
+		t.Fatalf("paused = %v, err = %v, want false while the wake lease is active", paused, err)
+	}
+
+	if err := fixture.store.withOrg(ctx, fixture.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`UPDATE ao_sandboxes SET interactive_until = now() - interval '1 second'
+			WHERE org_id = $1 AND session_id = $2`,
+			fixture.orgID, fixture.sessionID,
+		)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if paused, err := fixture.store.PauseIfIdle(ctx, fixture.orgID, fixture.sessionID, 15*time.Minute); err != nil || !paused {
+		t.Fatalf("paused = %v, err = %v, want true after the wake lease expires", paused, err)
+	}
+}
+
 func TestRunningSandboxSessionsListsOnlyFullyRunningSandboxesAcrossOrgs(t *testing.T) {
 	running := newSandboxFixture(t, "idle-pause-running")
 	idle := newSandboxFixture(t, "idle-pause-not-running")

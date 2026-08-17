@@ -889,6 +889,28 @@ func TestStoppedDockerWorkerIsRecreatedWithFreshBootstrapTicket(t *testing.T) {
 	}
 }
 
+func TestIntentionallyPausedDockerWorkerRecreatesImmediatelyOnWake(t *testing.T) {
+	record := runningSandbox()
+	record.Provider = sandbox.ProviderDocker
+	record.ProviderEnvironmentID = "container-1"
+	record.ObservedState = domain.SandboxObservedStopped
+	record.UpdatedAt = time.Now()
+	store := &fakeStore{pending: []domain.Sandbox{record}}
+	provider := &recreatingProvider{newFakeProvider()}
+	provider.setState("container-1", sandbox.StateStopped)
+	reconciler := newReconciler(store, provider)
+
+	if err := reconciler.ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("ReconcileOnce() error = %v", err)
+	}
+	if len(provider.recreated) != 1 {
+		t.Fatalf("Recreate called %d times, want one immediate replacement after intentional pause", len(provider.recreated))
+	}
+	if got := store.lastObservation(t); got.state == domain.SandboxObservedFailed {
+		t.Fatalf("intentional pause was treated as a boot failure: %+v", got)
+	}
+}
+
 func TestDockerWorkerThatNeverBecomesReadyBacksOffInsteadOfLoopingForever(t *testing.T) {
 	record := runningSandbox()
 	record.Provider = sandbox.ProviderDocker

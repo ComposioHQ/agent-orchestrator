@@ -291,6 +291,27 @@ elif mode == "verify":
         token=token,
         expected=201,
     )
+elif mode == "wake":
+    state = json.loads(state_file.read_text())
+    token = state["token"]
+    org_id = state["orgId"]
+    session_id = state["sessionId"]
+    woken = request(
+        "POST",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/wake",
+        token=token,
+        expected=202,
+    ).get("woken", 0)
+    if woken < 1:
+        raise RuntimeError(f"wake did not resume the paused smoke session: {woken=}")
+    wait_for_running(org_id, session_id, token)
+    request(
+        "POST",
+        f"/api/cloud/v1/orgs/{org_id}/sessions/{session_id}/terminal-ticket",
+        body={"kind": "agent"},
+        token=token,
+        expected=201,
+    )
 else:
     raise RuntimeError(f"unknown smoke-test mode: {mode}")
 PY
@@ -337,6 +358,23 @@ wait_for_worker() {
 		sleep 1
 	done
 	echo "Worker container for session ${session} did not appear." >&2
+	compose logs control-plane >&2
+	return 1
+}
+
+wait_for_worker_stopped() {
+	local container_id="$1"
+	local attempts=90
+	local running
+	while ((attempts > 0)); do
+		running="$(docker inspect --format '{{.State.Running}}' "$container_id" 2>/dev/null || true)"
+		if [[ "$running" != true ]]; then
+			return 0
+		fi
+		attempts=$((attempts - 1))
+		sleep 1
+	done
+	echo "Worker container ${container_id} did not stop for the pause test." >&2
 	compose logs control-plane >&2
 	return 1
 }
@@ -428,6 +466,34 @@ fi
 docker exec "$first_worker" ao kill "$child_session" >/dev/null
 docker exec "$first_worker" bash -c \
 	'printf "%s\n" persistent-workspace > /workspace/repository/.ao-cloud-smoke'
+
+# Docker workers cannot be resumed with their one-time bootstrap ticket, so a
+# wake recreates the worker container while retaining its workspace volume. The
+# control-plane path is the same user-visible pause -> wake transition used by
+# the hosted provider, and must preserve both the workspace and the new agent
+# terminal interaction lease.
+compose exec -e "PGOPTIONS=-c ao.org_id=${org}" -T postgres \
+	psql -U ao_cloud_owner -d ao_cloud -v ON_ERROR_STOP=1 -c \
+	"UPDATE ao_sandboxes
+	 SET desired_state = 'paused', reconcile_after = now(), interactive_until = NULL, updated_at = now()
+	 WHERE org_id = '${org}' AND session_id = '${session}'" >/dev/null
+wait_for_worker_stopped "$first_worker"
+exercise_api wake
+resumed_worker="$(wait_for_worker "$session" "$first_worker")"
+assert_workspace_marker "$resumed_worker"
+interactive_after_wake="$(
+	compose exec -e "PGOPTIONS=-c ao.org_id=${org}" -T postgres \
+		psql -U ao_cloud_owner -d ao_cloud -Atc \
+		"SELECT interactive_until > now()
+		 FROM ao_sandboxes
+		 WHERE org_id = '${org}' AND session_id = '${session}'"
+)"
+if [[ "$interactive_after_wake" != t ]]; then
+	echo "Agent-terminal wake did not reserve an interactive lease." >&2
+	exit 1
+fi
+
+first_worker="$resumed_worker"
 docker rm --force "$first_worker" >/dev/null
 replacement_worker="$(wait_for_worker "$session" "$first_worker")"
 assert_workspace_marker "$replacement_worker"
