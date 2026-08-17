@@ -175,12 +175,21 @@ func hookConversationFacts(payload []byte) hookConversationSnapshot {
 		LastAssistantMessageCamel string `json:"lastAssistantMessage"`
 		AssistantMessage          string `json:"assistant_message"`
 		AssistantMessageCamel     string `json:"assistantMessage"`
+		PromptResponse            string `json:"prompt_response"`
+		PromptResponseCamel       string `json:"promptResponse"`
 		TranscriptPath            string `json:"transcript_path"`
 		TranscriptPathCamel       string `json:"transcriptPath"`
 	}
 	_ = json.Unmarshal(payload, &p)
 	userPrompt := firstHookValue(p.Prompt, p.UserPrompt, p.UserPromptCamel)
-	assistant := firstHookValue(p.LastAssistantMessage, p.LastAssistantMessageCamel, p.AssistantMessage, p.AssistantMessageCamel)
+	assistant := firstHookValue(
+		p.LastAssistantMessage,
+		p.LastAssistantMessageCamel,
+		p.AssistantMessage,
+		p.AssistantMessageCamel,
+		p.PromptResponse,
+		p.PromptResponseCamel,
+	)
 	// AO's own handoff request and continuation kickoff are coordination turns,
 	// not the latest real user instruction. They remain in provider history but
 	// must not overwrite deterministic user intent.
@@ -234,6 +243,18 @@ type sessionStartHookOutput struct {
 	} `json:"hookSpecificOutput"`
 }
 
+type agyPreInvocationHookOutput struct {
+	InjectSteps []agyInjectedStep `json:"injectSteps,omitempty"`
+}
+
+type agyInjectedStep struct {
+	EphemeralMessage string `json:"ephemeralMessage"`
+}
+
+type agyStopHookOutput struct {
+	Decision string `json:"decision"`
+}
+
 // newHooksCommand builds the hidden `ao hooks <agent> <event>` command that
 // agent CLIs invoke from their workspace-local hook config. It reads the native
 // hook payload from stdin and the AO session id from AO_SESSION_ID, derives an
@@ -276,6 +297,12 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// agent. The deriver tolerates an empty payload.
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read stdin: %w", err))
 	}
+	if domain.AgentHarness(agent) == domain.HarnessAgy {
+		// Antigravity consumes event-specific JSON from stdout. Defer the reply
+		// so activity/relay failures remain best-effort while the provider still
+		// receives a syntactically valid native hook response.
+		defer c.emitAgyNativeHookResponse(agent, event, sessionID, payload)
+	}
 	if shouldEmitSessionStartContext(agent, event) {
 		c.emitSessionStartContext(agent, event, sessionID)
 	}
@@ -295,7 +322,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	toolName, toolUseID := activityMeta(payload)
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
-	case domain.HarnessClaudeCode, domain.HarnessCodex:
+	case domain.HarnessClaudeCode, domain.HarnessCodex, domain.HarnessAgy:
 		conversation = hookConversationFacts(payload)
 	}
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
@@ -317,6 +344,13 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
+		return nil
+	}
+	if domain.AgentHarness(agent) == domain.HarnessAgy && event == "stop" {
+		outcome := parseAgyStopOutcome(payload)
+		if err := c.relayAgyStop(ctx, sessionID, conversation, outcome); err != nil {
+			c.reportHookFailure(agent, event, sessionID, fmt.Errorf("relay execution result: %w", err))
+		}
 	}
 	return nil
 }
@@ -390,6 +424,57 @@ func (c *commandContext) emitSessionStartContext(agent, event, sessionID string)
 	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write session-start context: %w", err))
 	}
+}
+
+// emitAgyNativeHookResponse satisfies Antigravity's current workspace-hook
+// stdout contract. PreInvocation injects AO's standing system prompt only on the
+// first model invocation; later invocations return an empty object so the large
+// prompt is not duplicated into provider context. Stop explicitly allows the
+// provider to terminate — AO observes the outcome but never forces a retry from
+// inside this hook. Legacy hook events return without writing so they cannot
+// append a second JSON document to older SessionStart-compatible responses.
+func (c *commandContext) emitAgyNativeHookResponse(agent, event, sessionID string, payload []byte) {
+	var out any
+	switch event {
+	case "pre-invocation":
+		response := agyPreInvocationHookOutput{}
+		var native struct {
+			InvocationNum      *int `json:"invocationNum"`
+			InvocationNumSnake *int `json:"invocation_num"`
+		}
+		_ = json.Unmarshal(payload, &native)
+		invocationNum := native.InvocationNum
+		if invocationNum == nil {
+			invocationNum = native.InvocationNumSnake
+		}
+		if invocationNum != nil && *invocationNum == 0 {
+			dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+			if dataDir != "" {
+				path := filepath.Join(dataDir, "prompts", sessionID, "system.md")
+				data, err := os.ReadFile(path) //nolint:gosec // sessionID is bounded by sessionIDPattern.
+				switch {
+				case err == nil && strings.TrimSpace(string(data)) != "":
+					response.InjectSteps = []agyInjectedStep{{EphemeralMessage: strings.TrimSpace(string(data))}}
+				case err != nil && !errorsIsNotExist(err):
+					c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read system prompt: %w", err))
+				}
+			}
+		}
+		out = response
+	case "stop":
+		out = agyStopHookOutput{Decision: "allow"}
+	case "post-tool-use":
+		out = struct{}{}
+	default:
+		return
+	}
+	if err := json.NewEncoder(c.deps.Out).Encode(out); err != nil {
+		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("write native hook response: %w", err))
+	}
+}
+
+func errorsIsNotExist(err error) bool {
+	return os.IsNotExist(err)
 }
 
 // reportHookFailure surfaces a hook delivery failure without breaking the

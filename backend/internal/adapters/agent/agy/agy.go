@@ -45,6 +45,15 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentExitDetector = (*Plugin)(nil)
+
+// ExitDetectionMode opts Agy TUI into AO's generic process supervisor. Current
+// Antigravity workspace hooks expose execution boundaries (Stop) but no
+// SessionEnd event, so process ownership is the authoritative way to detect the
+// CLI itself exiting while the terminal runtime remains alive.
+func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
