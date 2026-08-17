@@ -103,6 +103,18 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 						return unsubscribe();
 					},
 				},
+				// The fake bridge is always local; the remote namespace exists
+				// only to satisfy the AoBridge contract.
+				remote: {
+					getConfig: async () => ({ mode: "local" as const, url: undefined, hasPassword: false, passwordPersistent: false }),
+					testAndConnect: async () => ({
+						ok: false as const,
+						code: "remote_unreachable",
+						message: "Remote mode is unavailable in the e2e fake bridge.",
+					}),
+					disconnect: async () => ({ state: "stopped" as const }),
+					forget: async () => ({ state: "stopped" as const }),
+				},
 				telemetry: {
 					getBootstrap: async () => null,
 				},
@@ -532,6 +544,18 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 						listener(status);
 						return unsubscribe();
 					},
+				},
+				// The fake bridge is always local; the remote namespace exists
+				// only to satisfy the AoBridge contract.
+				remote: {
+					getConfig: async () => ({ mode: "local" as const, url: undefined, hasPassword: false, passwordPersistent: false }),
+					testAndConnect: async () => ({
+						ok: false as const,
+						code: "remote_unreachable",
+						message: "Remote mode is unavailable in the e2e fake bridge.",
+					}),
+					disconnect: async () => ({ state: "stopped" as const }),
+					forget: async () => ({ state: "stopped" as const }),
 				},
 				telemetry: { getBootstrap: async () => null },
 				browser: {
