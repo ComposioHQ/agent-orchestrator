@@ -1071,6 +1071,30 @@ func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
 			wantEditor: ports.TerminalComposerUnknown,
 		},
 		{
+			name: "permissions menu without a selected prompt marker",
+			output: "❯ /permissions\n" + rule + "\n" +
+				"  Permissions  Recently denied   Allow   Ask   Deny   Workspace\n\n" +
+				"  Claude Code won't ask before using allowed tools.\n" +
+				"  ╭───────────────────────────────────────────────╮\n" +
+				"  │ ⌕ Search…                                     │\n" +
+				"  ╰───────────────────────────────────────────────╯\n\n" +
+				"    1. Add a new rule…\n\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "completed permissions menu above current composer is not blocked",
+			output: "  ╭─── Search… ───╮\n" +
+				"  │ ⌕ Search… │\n" +
+				"  ╰────────────╯\n" +
+				"    1. Add a new rule…\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ auto mode on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
 			name: "completed permission menu above the current composer is not blocked",
 			output: "Claude wanted to run Bash\n" +
 				"❯ 1. Yes\n" +

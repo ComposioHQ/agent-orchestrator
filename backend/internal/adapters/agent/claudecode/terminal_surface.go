@@ -133,6 +133,10 @@ func claudeHorizontalRule(line string) bool {
 // current selection frame around the last prompt marker.
 func claudeConfirmationFrameVisible(output string) bool {
 	lines := terminalui.PlainTerminalLines(output)
+	if claudeNavigationMenuFrameVisible(lines) {
+		return true
+	}
+
 	selection := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
@@ -185,6 +189,50 @@ func claudeConfirmationFrameVisible(output string) bool {
 		}
 	}
 	return optionCount >= 2 && hasHint
+}
+
+// Some provider-owned menus, including Claude 2.1.233's /permissions screen,
+// keep the selection in a search control instead of prefixing an option with
+// the normal prompt marker. Treat the current boxed control + numbered option
+// + navigation footer as a pending decision. Requiring the footer to be the
+// last visible row keeps an older, completed menu above a composer from being
+// mistaken for live provider state.
+func claudeNavigationMenuFrameVisible(lines []string) bool {
+	hint := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			hint = i
+			break
+		}
+	}
+	if hint < 0 {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(lines[hint]))
+	if !strings.Contains(lower, "to select") ||
+		!strings.Contains(lower, "to switch") ||
+		!strings.Contains(lower, "esc to cancel") {
+		return false
+	}
+
+	option := -1
+	for i := hint - 1; i >= 0; i-- {
+		if claudeNumberedOption(strings.TrimSpace(lines[i])) {
+			option = i
+			break
+		}
+	}
+	if option < 0 {
+		return false
+	}
+
+	boxRows := 0
+	for i := option - 1; i >= 0; i-- {
+		if strings.ContainsAny(strings.TrimSpace(lines[i]), "╭╮╰╯│") {
+			boxRows++
+		}
+	}
+	return boxRows >= 2
 }
 
 func claudeNumberedOption(line string) bool {
