@@ -335,9 +335,14 @@ export function ChatComposer({
 			return;
 		}
 
+		// Paste/drop reads finish asynchronously. Settle them before deciding whether
+		// this submission has attachments, or immediate Enter can steer the text and
+		// leave the image behind when its FileReader completes.
+		const attachmentPayloads = await fileAttachments.toSettledPayload();
+		const hasAttachments = attachmentPayloads.length > 0;
 		let message = body;
 		let nativePayloads: FileAttachmentPayload[] = [];
-		if (staged) {
+		if (hasAttachments) {
 			if (!onStageAttachments) {
 				setSendError("The files could not be attached. Nothing was sent.");
 				return;
@@ -345,12 +350,12 @@ export function ChatComposer({
 			// Staged before the send so a failed write is reported instead of a
 			// message that claims attachments the agent cannot open.
 			let paths: string[];
-			const signature = fileAttachments.attachments.map((file) => file.id).join(":");
+			const signature = fileAttachments.attachmentSignature();
 			try {
 				if (stagedDelivery.current?.signature === signature) {
 					paths = stagedDelivery.current.paths;
 				} else {
-					paths = await onStageAttachments(fileAttachments.toPayload());
+					paths = await onStageAttachments(attachmentPayloads);
 					stagedDelivery.current = { signature, paths };
 				}
 			} catch {
@@ -358,8 +363,7 @@ export function ChatComposer({
 				return;
 			}
 			message = withAttachmentReferences(body, paths);
-			nativePayloads = fileAttachments
-				.toPayload()
+			nativePayloads = attachmentPayloads
 				.filter((attachment) => isSupportedImageAttachment(attachment.mimeType));
 		}
 
@@ -378,7 +382,7 @@ export function ChatComposer({
 				return;
 			}
 			stagedDelivery.current = null;
-			if (staged) fileAttachments.clear();
+			if (hasAttachments) fileAttachments.clear();
 			applyText("", 0);
 			setDismissedAt(null);
 			setHighlighted(0);
@@ -390,13 +394,13 @@ export function ChatComposer({
 			else await onSend(message);
 		} catch {
 			setSendError(
-				staged
+				hasAttachments
 					? "Message not sent. Your draft and attachments were kept so you can retry."
 					: "Message not sent. Your draft was kept so you can retry.",
 			);
 			return;
 		}
-		if (staged) {
+		if (hasAttachments) {
 			stagedDelivery.current = null;
 			fileAttachments.clear();
 		}

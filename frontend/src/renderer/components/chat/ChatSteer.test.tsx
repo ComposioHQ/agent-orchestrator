@@ -1,12 +1,14 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { chatFixture } from "../../lib/chat-fixture";
 
 const png = (name = "shot.png") =>
 	new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+
+afterEach(() => vi.unstubAllGlobals());
 
 // Steering sends guidance INTO the running turn instead of queueing behind it. The
 // thing these tests protect is that the choice is legible: Enter changing meaning
@@ -129,6 +131,54 @@ describe("ChatComposer steering", () => {
 		);
 		expect(onSend).not.toHaveBeenCalled();
 		await waitFor(() => expect(screen.queryAllByRole("listitem")).toHaveLength(0));
+	});
+
+	it("waits for a pasted image read before steering an existing text draft", async () => {
+		let finishRead!: () => void;
+		class SlowFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(file: File) {
+				finishRead = () => {
+					this.result = `data:${file.type};base64,iVBORw==`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", SlowFileReader);
+
+		let finishSteer!: () => void;
+		const onSteer = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					finishSteer = resolve;
+				}),
+		);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/slow.png"]);
+		composer({ onSteer, onStageAttachments: stage, nativeImages: true });
+
+		fireEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
+		const field = screen.getByRole("combobox");
+		fireEvent.change(field, { target: { value: "inspect this" } });
+		fireEvent.paste(field, { clipboardData: { files: [png("slow.png")], items: [] } });
+		fireEvent.keyDown(field, { key: "Enter" });
+
+		expect(stage).not.toHaveBeenCalled();
+		expect(onSteer).not.toHaveBeenCalled();
+		expect(field).toHaveValue("inspect this");
+
+		await act(async () => finishRead());
+		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
+		await waitFor(() =>
+			expect(onSteer).toHaveBeenCalledWith(
+				"inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/slow.png",
+				[{ mimeType: "image/png", data: "iVBORw==" }],
+			),
+		);
+		await act(async () => finishSteer());
 	});
 
 	it("reports the daemon's refusal without a second message of its own", () => {
