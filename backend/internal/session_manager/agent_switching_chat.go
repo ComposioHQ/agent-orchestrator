@@ -38,6 +38,9 @@ func (m *Manager) executeChatAgentSwitch(
 	m.augmentAgentRuntimeEnv(targetAgent, targetEnv)
 
 	defer func() {
+		if panicValue := recover(); panicValue != nil {
+			retErr = fmt.Errorf("switch Chat agent %s panicked: %v", id, panicValue)
+		}
 		if retErr != nil && !sourceStopped {
 			m.abortChatAgentSwitchHandoff(rec)
 		}

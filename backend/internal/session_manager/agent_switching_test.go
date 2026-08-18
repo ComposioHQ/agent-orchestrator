@@ -1040,6 +1040,54 @@ func TestSwitchAgentChatResolvesActivationErrorAfterCommit(t *testing.T) {
 	}
 }
 
+func TestSwitchAgentChatPanicAfterPreparingHandoffAbortsSource(t *testing.T) {
+	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	rec := store.sessions["proj-1"]
+	rec.Mode = domain.SessionModeChat
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = ""
+	rec.Metadata.ProviderConversationID = "source-chat-native"
+	rec.Metadata.ControllerGeneration = "source-chat-generation"
+	store.sessions[rec.ID] = rec
+	launcher := &switchAgentChatLauncher{
+		recordingLauncher: &recordingLauncher{},
+		store:             store,
+		live:              true,
+	}
+	manager.chat = launcher
+	manager.newLaunchID = func() string {
+		panic("injected panic after Chat handoff preparation")
+	}
+
+	sw, err := manager.SwitchAgent(context.Background(), rec.ID, SwitchAgentConfig{
+		TargetHarness:  domain.HarnessCodex,
+		IdempotencyKey: "chat-panic-after-prepare",
+	})
+	if err != nil {
+		t.Fatalf("SwitchAgent admission: %v", err)
+	}
+	waitForSwitchWorkers(t, manager)
+
+	if len(launcher.prepared) != 1 {
+		t.Fatalf("prepared Chat handoffs = %v, want one", launcher.prepared)
+	}
+	if len(launcher.aborted) != 1 || launcher.aborted[0] != rec.ID {
+		t.Fatalf("aborted Chat handoffs = %v, want source %q reopened after panic", launcher.aborted, rec.ID)
+	}
+	got, found, err := store.GetAgentSwitch(context.Background(), sw.ID)
+	if err != nil || !found {
+		t.Fatalf("reload panicked switch = (%+v, %v, %v)", got, found, err)
+	}
+	if got.State != domain.AgentSwitchFailed || got.ErrorCode != domain.AgentSwitchErrorFailedPreStop {
+		t.Fatalf("panicked switch = state %q code %q, want failed/failed_pre_stop", got.State, got.ErrorCode)
+	}
+	if manager.SessionMutationInProgress(rec.ID) {
+		t.Fatal("panicked pre-stop Chat switch left the mutation gate closed")
+	}
+}
+
 func TestSwitchAgentRequestCancellationDoesNotCancelWorker(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
