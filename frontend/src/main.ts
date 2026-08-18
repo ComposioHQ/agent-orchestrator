@@ -89,7 +89,7 @@ import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/bro
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
-import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
+import { dockBounceType, shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 
@@ -167,6 +167,9 @@ let terminalFocused = false;
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
 let isFlashing = false;
+// macOS: id of the in-flight dock bounce, cancelled once the window regains focus
+// so a "critical" bounce stops as soon as the user looks at the app.
+let pendingDockBounceId: number | null = null;
 
 const isDev = !app.isPackaged;
 
@@ -509,6 +512,10 @@ async function createWindowInternal(): Promise<void> {
 			composition.dispose();
 		});
 		mainWindow = null;
+		// Drop any pending dock bounce with the window it was attached to: its
+		// focus listener died with the window, so leaving the id set would make
+		// the next bounce skip attaching one to the replacement window.
+		cancelDockBounce();
 		trayLifecycle.clearPendingTarget();
 	});
 }
@@ -1703,6 +1710,13 @@ ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
 });
 
+function cancelDockBounce(): void {
+	if (pendingDockBounceId === null) return;
+	const id = pendingDockBounceId;
+	pendingDockBounceId = null;
+	app.dock?.cancelBounce(id);
+}
+
 ipcMain.handle(
 	"notifications:show",
 	(_event, notification: { id: string; title: string; body?: string; type?: string }) => {
@@ -1737,7 +1751,15 @@ ipcMain.handle(
 		// bounce the dock as insistently as an agent blocked waiting on the user.
 		if (shouldSignalAttention(notification.type)) {
 			if (process.platform === "darwin" && app.dock) {
-				app.dock.bounce("informational");
+				// A focus listener from an earlier un-cancelled bounce still works for
+				// the new id, so only attach one at a time.
+				const hadPendingBounce = pendingDockBounceId !== null;
+				cancelDockBounce();
+				const id = app.dock.bounce(dockBounceType(notification.type));
+				if (typeof id === "number" && id >= 0) {
+					pendingDockBounceId = id;
+					if (!hadPendingBounce) mainWindow.once("focus", cancelDockBounce);
+				}
 			} else if (process.platform === "win32" || process.platform === "linux") {
 				if (!isFlashing) {
 					isFlashing = true;

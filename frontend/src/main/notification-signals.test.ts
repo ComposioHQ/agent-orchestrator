@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { shouldSignalAttention, shouldToast, type NotificationType } from "./notification-signals";
+import {
+	dockBounceType,
+	shouldSignalAttention,
+	shouldToast,
+	type NotificationType,
+} from "./notification-signals";
 
 const ALL_TYPES: NotificationType[] = ["needs_input", "ready_to_merge", "pr_merged", "pr_closed_unmerged"];
 
@@ -32,5 +37,17 @@ describe("shouldSignalAttention", () => {
 	it("does not signal for unknown or missing types", () => {
 		expect(shouldSignalAttention("some_future_type")).toBe(false);
 		expect(shouldSignalAttention(undefined)).toBe(false);
+	});
+});
+
+describe("dockBounceType", () => {
+	it("bounces critically for a blocked agent waiting on the user", () => {
+		expect(dockBounceType("needs_input")).toBe("critical");
+	});
+
+	it("bounces informationally for everything else", () => {
+		expect(dockBounceType("ready_to_merge")).toBe("informational");
+		expect(dockBounceType("some_future_type")).toBe("informational");
+		expect(dockBounceType(undefined)).toBe("informational");
 	});
 });

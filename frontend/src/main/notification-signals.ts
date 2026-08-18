@@ -31,3 +31,13 @@ export function shouldSignalAttention(type: string | undefined): boolean {
 export function shouldToast(notification: { title?: string }, isSupported: boolean): boolean {
 	return Boolean(notification.title) && isSupported;
 }
+
+/**
+ * macOS dock bounce style. A blocked agent waiting on the user keeps bouncing
+ * until the app is activated ("critical"); anything else bounces once
+ * ("informational"). Callers should only use this when
+ * {@link shouldSignalAttention} is true.
+ */
+export function dockBounceType(type: string | undefined): "critical" | "informational" {
+	return type === "needs_input" ? "critical" : "informational";
+}
