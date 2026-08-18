@@ -1244,6 +1244,102 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
+  /api/v1/projects/{id}/control:
+    get:
+      operationId: getProjectControl
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectControl'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get the current root outcome control state
+      tags:
+      - projects
+  /api/v1/projects/{id}/outcome:
+    put:
+      operationId: setProjectOutcome
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetProjectOutcomeRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectControl'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Replace the root outcome and authoritative acceptance criteria
+      tags:
+      - projects
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -5088,6 +5184,37 @@ components:
       - code
       - message
       type: object
+    AcceptanceCriterion:
+      properties:
+        displayOrder:
+          type: integer
+        id:
+          type: string
+        statement:
+          type: string
+        verificationMethod:
+          type: string
+      required:
+      - id
+      - statement
+      - verificationMethod
+      - displayOrder
+      type: object
+    AcceptanceCriterionInput:
+      properties:
+        displayOrder:
+          type: integer
+        id:
+          type: string
+        statement:
+          type: string
+        verificationMethod:
+          type: string
+      required:
+      - statement
+      - verificationMethod
+      - displayOrder
+      type: object
     AcknowledgeSessionInterfaceTransitionNoticeResponse:
       properties:
         ok:
@@ -7077,6 +7204,33 @@ components:
         worker:
           $ref: '#/components/schemas/RoleOverride'
       type: object
+    ProjectControl:
+      properties:
+        confidence:
+          enum:
+          - unknown
+          type: string
+        configured:
+          type: boolean
+        health:
+          enum:
+          - unconfigured
+          - unknown
+          type: string
+        outcome:
+          $ref: '#/components/schemas/ProjectOutcome'
+        projectId:
+          type: string
+        revision:
+          format: int64
+          type: integer
+      required:
+      - projectId
+      - configured
+      - revision
+      - health
+      - confidence
+      type: object
     ProjectGetResponse:
       properties:
         project:
@@ -7094,6 +7248,26 @@ components:
       oneOf:
       - $ref: '#/components/schemas/Project'
       - $ref: '#/components/schemas/DegradedProject'
+      type: object
+    ProjectOutcome:
+      properties:
+        criteria:
+          items:
+            $ref: '#/components/schemas/AcceptanceCriterion'
+          type: array
+        id:
+          type: string
+        owner:
+          enum:
+          - role:project-owner
+          type: string
+        statement:
+          type: string
+      required:
+      - id
+      - statement
+      - owner
+      - criteria
       type: object
     ProjectResponse:
       properties:
@@ -7974,6 +8148,25 @@ components:
           $ref: '#/components/schemas/ProjectConfig'
       required:
       - config
+      type: object
+    SetProjectOutcomeRequest:
+      properties:
+        criteria:
+          items:
+            $ref: '#/components/schemas/AcceptanceCriterionInput'
+          type: array
+        expectedRevision:
+          format: int64
+          type: integer
+        idempotencyKey:
+          type: string
+        statement:
+          type: string
+      required:
+      - statement
+      - criteria
+      - expectedRevision
+      - idempotencyKey
       type: object
     SetReviewActivityRequest:
       properties:

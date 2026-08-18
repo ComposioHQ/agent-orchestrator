@@ -5,9 +5,95 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestProjectControlGet_UnconfiguredAndJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"projectId":"demo","configured":false,"revision":0,"health":"unconfigured","confidence":"unknown"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "project", "control", "get", "demo")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodGet || capture.path != "/api/v1/projects/demo/control" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	if !strings.Contains(out, "Project demo control: unconfigured (revision 0)") {
+		t.Fatalf("output = %q", out)
+	}
+
+	out, errOut, err = executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "project", "control", "get", "demo", "--json")
+	if err != nil {
+		t.Fatalf("json error: %v\nstderr=%s", err, errOut)
+	}
+	var got projectControl
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got.ProjectID != "demo" || got.Configured {
+		t.Fatalf("json output = %q, parsed=%#v err=%v", out, got, err)
+	}
+}
+
+func TestProjectOutcomeSet_InlineJSONPreservesCriterionContract(t *testing.T) {
+	cfg := setConfigEnv(t)
+	response := `{"projectId":"demo","configured":true,"revision":2,"health":"unknown","confidence":"unknown","outcome":{"id":"outcome-1","statement":"Ship safely","owner":"role:project-owner","criteria":[{"id":"criterion-stable","statement":"Tests pass","verificationMethod":"go test ./...","displayOrder":0}]}}`
+	srv, capture := projectServer(t, http.StatusOK, response)
+	writeRunFileFor(t, cfg, srv)
+	input := `{"statement":"Ship safely","criteria":[{"id":"criterion-stable","statement":"Tests pass","verificationMethod":"go test ./...","displayOrder":0}],"expectedRevision":1,"idempotencyKey":"retry-2"}`
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "project", "outcome", "set", "demo", "--input-json", input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPut || capture.path != "/api/v1/projects/demo/outcome" {
+		t.Fatalf("request = %s %s", capture.method, capture.path)
+	}
+	var sent setProjectOutcomeRequest
+	if err := json.Unmarshal(capture.body, &sent); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if sent.ExpectedRevision != 1 || sent.IdempotencyKey != "retry-2" || len(sent.Criteria) != 1 || sent.Criteria[0].ID != "criterion-stable" || sent.Criteria[0].VerificationMethod != "go test ./..." {
+		t.Fatalf("request = %#v", sent)
+	}
+	for _, want := range []string{"Project demo control (revision 2)", "Outcome: Ship safely", "Tests pass [go test ./...] (criterion-stable)"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestProjectOutcomeSet_FileAndValidation(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"projectId":"demo","configured":true,"revision":1,"health":"unknown","confidence":"unknown","outcome":{"id":"outcome-1","statement":"Ship","owner":"role:project-owner","criteria":[]}}`)
+	writeRunFileFor(t, cfg, srv)
+	path := filepath.Join(t.TempDir(), "outcome.json")
+	if err := os.WriteFile(path, []byte(`{"statement":"Ship","criteria":[],"expectedRevision":0,"idempotencyKey":"create-1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "project", "outcome", "set", "demo", "--file", path, "--json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(string(capture.body), `"idempotencyKey":"create-1"`) {
+		t.Fatalf("request body = %s", capture.body)
+	}
+
+	_, _, err = executeCLI(t, Deps{}, "project", "outcome", "set", "demo")
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "exactly one of --file or --input-json is required") {
+		t.Fatalf("missing input err = %v, exit=%d", err, ExitCode(err))
+	}
+	_, _, err = executeCLI(t, Deps{}, "project", "outcome", "set", "demo", "--input-json", `{}`, "--file", path)
+	if err == nil || ExitCode(err) != 2 {
+		t.Fatalf("mutually exclusive input err = %v", err)
+	}
+	_, _, err = executeCLI(t, Deps{}, "project", "outcome", "set", "demo", "--input-json", `{"statement":"Ship","criteria":[],"idempotencyKey":"missing-revision"}`)
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "requires expectedRevision") {
+		t.Fatalf("missing expectedRevision err = %v", err)
+	}
+}
 
 type projectCapture struct {
 	method string

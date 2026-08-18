@@ -15,6 +15,7 @@ import (
 	openapi "github.com/swaggest/openapi-go"
 	"github.com/swaggest/openapi-go/openapi31"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -195,9 +196,19 @@ var schemaNames = map[string]string{
 	"DomainContainerReapConfig":       "ContainerReapConfig",
 	"DomainAgentConfig":               "AgentConfig",
 	"DomainRoleOverride":              "RoleOverride",
+	"DomainProjectControl":            "ProjectControl",
+	"DomainProjectControlHealth":      "ProjectControlHealth",
+	"DomainProjectControlConfidence":  "ProjectControlConfidence",
+	"DomainOutcome":                   "ProjectOutcome",
+	"DomainOutcomeID":                 "ProjectOutcomeID",
+	"DomainProjectControlOwnerRole":   "ProjectControlOwnerRole",
+	"DomainAcceptanceCriterion":       "AcceptanceCriterion",
+	"DomainAcceptanceCriterionID":     "AcceptanceCriterionID",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":                     "ListProjectsResponse",
 	"ControllersProjectResponse":                          "ProjectResponse",
+	"ControllersSetProjectOutcomeRequest":                 "SetProjectOutcomeRequest",
+	"ControllersAcceptanceCriterionInputWire":             "AcceptanceCriterionInput",
 	"ControllersAgentIDParam":                             "AgentIDParam",
 	"ControllersGetProjectResponse":                       "ProjectGetResponse",
 	"ControllersProjectOrDegraded":                        "ProjectOrDegraded",
@@ -1287,6 +1298,31 @@ func projectOperations() []operation {
 				{http.StatusOK, controllers.GetProjectResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/control", id: "getProjectControl", tag: "projects",
+			summary:    "Get the current root outcome control state",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, domain.ProjectControl{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/projects/{id}/outcome", id: "setProjectOutcome", tag: "projects",
+			summary:    "Replace the root outcome and authoritative acceptance criteria",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			reqBody:    controllers.SetProjectOutcomeRequest{},
+			resps: []respUnit{
+				{http.StatusOK, domain.ProjectControl{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},
 		{

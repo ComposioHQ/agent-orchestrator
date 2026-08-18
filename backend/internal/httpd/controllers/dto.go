@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -28,6 +29,47 @@ import (
 // as the path parameter.
 type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
+}
+
+// SetProjectOutcomeRequest replaces the root outcome and authoritative criteria.
+type SetProjectOutcomeRequest struct {
+	Statement           string                         `json:"statement"`
+	Criteria            []AcceptanceCriterionInputWire `json:"criteria"`
+	ExpectedRevision    int64                          `json:"expectedRevision"`
+	IdempotencyKey      string                         `json:"idempotencyKey"`
+	expectedRevisionSet bool
+	criteriaSet         bool
+}
+
+// UnmarshalJSON preserves required-field presence while keeping the public
+// wire schema non-nullable. expectedRevision=0 and criteria=[] are both valid,
+// so zero values alone cannot distinguish them from omitted fields.
+func (r *SetProjectOutcomeRequest) UnmarshalJSON(data []byte) error {
+	type plain SetProjectOutcomeRequest
+	var decoded plain
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*r = SetProjectOutcomeRequest(decoded)
+	revision, present := fields["expectedRevision"]
+	r.expectedRevisionSet = present && !bytes.Equal(bytes.TrimSpace(revision), []byte("null"))
+	_, r.criteriaSet = fields["criteria"]
+	return nil
+}
+
+// AcceptanceCriterionInputWire creates a criterion when id is omitted and
+// updates the stable criterion when id is present.
+type AcceptanceCriterionInputWire struct {
+	ID                 string `json:"id,omitempty"`
+	Statement          string `json:"statement"`
+	VerificationMethod string `json:"verificationMethod"`
+	DisplayOrder       int    `json:"displayOrder"`
 }
 
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.

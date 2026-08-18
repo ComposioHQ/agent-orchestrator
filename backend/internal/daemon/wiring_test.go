@@ -21,9 +21,38 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	projectcontrolsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/projectcontrol"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
+
+func TestWiring_ProjectControlUsesSQLiteStore(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlitetest.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "demo", Path: "/repo/demo"}); err != nil {
+		t.Fatal(err)
+	}
+
+	service := projectcontrolsvc.New(store)
+	unconfigured, err := service.Get(ctx, "demo")
+	if err != nil || unconfigured.Configured || unconfigured.Revision != 0 {
+		t.Fatalf("unconfigured control = %#v, err=%v", unconfigured, err)
+	}
+	configured, err := service.SetOutcome(ctx, "demo", domain.SetOutcomeInput{
+		Statement: "Ship slice one", ExpectedRevision: 0, IdempotencyKey: "create-1",
+		Criteria: []domain.AcceptanceCriterionInput{{Statement: "Tests pass", VerificationMethod: "go test", DisplayOrder: 0}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !configured.Configured || configured.Revision != 1 || configured.Outcome == nil || len(configured.Outcome.Criteria) != 1 {
+		t.Fatalf("configured control = %#v", configured)
+	}
+}
 
 // TestWiring_WriteFlowsToBroadcaster exercises the real boot path end to end:
 // a lifecycle write -> sqlite -> DB trigger -> change_log -> CDC poller ->

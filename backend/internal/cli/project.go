@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -34,6 +36,44 @@ type projectGetOptions struct {
 type projectRemoveOptions struct {
 	json bool
 	yes  bool
+}
+
+type projectControlGetOptions struct{ json bool }
+
+type projectOutcomeSetOptions struct {
+	file      string
+	inputJSON string
+	json      bool
+}
+
+type acceptanceCriterion struct {
+	ID                 string `json:"id"`
+	Statement          string `json:"statement"`
+	VerificationMethod string `json:"verificationMethod"`
+	DisplayOrder       int    `json:"displayOrder"`
+}
+
+type projectOutcome struct {
+	ID        string                `json:"id"`
+	Statement string                `json:"statement"`
+	Owner     string                `json:"owner"`
+	Criteria  []acceptanceCriterion `json:"criteria"`
+}
+
+type projectControl struct {
+	ProjectID  string          `json:"projectId"`
+	Configured bool            `json:"configured"`
+	Revision   int64           `json:"revision"`
+	Health     string          `json:"health"`
+	Confidence string          `json:"confidence"`
+	Outcome    *projectOutcome `json:"outcome,omitempty"`
+}
+
+type setProjectOutcomeRequest struct {
+	Statement        string                `json:"statement"`
+	Criteria         []acceptanceCriterion `json:"criteria"`
+	ExpectedRevision int64                 `json:"expectedRevision"`
+	IdempotencyKey   string                `json:"idempotencyKey"`
 }
 
 // addProjectRequest mirrors the daemon's project AddInput body for
@@ -169,7 +209,144 @@ func newProjectCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newProjectAddCommand(ctx))
 	cmd.AddCommand(newProjectSetConfigCommand(ctx))
 	cmd.AddCommand(newProjectRemoveCommand(ctx))
+	cmd.AddCommand(newProjectControlCommand(ctx))
+	cmd.AddCommand(newProjectOutcomeCommand(ctx))
 	return cmd
+}
+
+func newProjectControlCommand(ctx *commandContext) *cobra.Command {
+	cmd := &cobra.Command{Use: "control", Short: "Inspect project control"}
+	cmd.AddCommand(newProjectControlGetCommand(ctx))
+	return cmd
+}
+
+func newProjectControlGetCommand(ctx *commandContext) *cobra.Command {
+	var opts projectControlGetOptions
+	cmd := &cobra.Command{
+		Use:   "get <project>",
+		Short: "Get the project's outcome control state",
+		Args:  requiredProjectArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			var result projectControl
+			if err := ctx.getJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/control", &result); err != nil {
+				return err
+			}
+			if opts.json {
+				return writeJSON(cmd.OutOrStdout(), result)
+			}
+			return writeProjectControl(cmd, result)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output project control as JSON")
+	return cmd
+}
+
+func newProjectOutcomeCommand(ctx *commandContext) *cobra.Command {
+	cmd := &cobra.Command{Use: "outcome", Short: "Manage the project outcome"}
+	cmd.AddCommand(newProjectOutcomeSetCommand(ctx))
+	return cmd
+}
+
+func newProjectOutcomeSetCommand(ctx *commandContext) *cobra.Command {
+	var opts projectOutcomeSetOptions
+	cmd := &cobra.Command{
+		Use:   "set <project>",
+		Short: "Set the project outcome and acceptance criteria",
+		Long: "Set the project outcome from an exact JSON object. Use --file for a reusable document " +
+			"or --input-json inline. Existing criterion ids are preserved when supplied.",
+		Args: requiredProjectArg,
+		PreRunE: func(*cobra.Command, []string) error {
+			if (opts.file == "") == (opts.inputJSON == "") {
+				return usageError{errors.New("exactly one of --file or --input-json is required")}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			payload, err := readProjectOutcomeInput(opts, cmd.InOrStdin())
+			if err != nil {
+				return usageError{err}
+			}
+			var request setProjectOutcomeRequest
+			dec := json.NewDecoder(strings.NewReader(string(payload)))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&request); err != nil {
+				return usageError{fmt.Errorf("decode project outcome input: %w", err)}
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(payload, &fields); err != nil {
+				return usageError{fmt.Errorf("decode project outcome input: %w", err)}
+			}
+			revision, ok := fields["expectedRevision"]
+			if !ok || strings.TrimSpace(string(revision)) == "null" {
+				return usageError{errors.New("project outcome input requires expectedRevision")}
+			}
+			if _, ok := fields["criteria"]; !ok || request.Criteria == nil {
+				return usageError{errors.New("project outcome input requires criteria as an array")}
+			}
+			id := strings.TrimSpace(args[0])
+			var result projectControl
+			if err := ctx.putJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/outcome", request, &result); err != nil {
+				return err
+			}
+			if opts.json {
+				return writeJSON(cmd.OutOrStdout(), result)
+			}
+			return writeProjectControl(cmd, result)
+		},
+	}
+	cmd.Flags().StringVar(&opts.file, "file", "", "Read outcome JSON from a file (use - for stdin)")
+	cmd.Flags().StringVar(&opts.inputJSON, "input-json", "", "Read outcome from an inline JSON object")
+	cmd.Flags().BoolVar(&opts.json, "json", false, "Output updated project control as JSON")
+	return cmd
+}
+
+func requiredProjectArg(cmd *cobra.Command, args []string) error {
+	if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+		return usageError{err}
+	}
+	if strings.TrimSpace(args[0]) == "" {
+		return usageError{errors.New("project id is required")}
+	}
+	return nil
+}
+
+func readProjectOutcomeInput(opts projectOutcomeSetOptions, stdin io.Reader) ([]byte, error) {
+	if opts.inputJSON != "" {
+		return []byte(opts.inputJSON), nil
+	}
+	if opts.file == "-" {
+		return io.ReadAll(stdin)
+	}
+	payload, err := os.ReadFile(opts.file)
+	if err != nil {
+		return nil, fmt.Errorf("read project outcome input: %w", err)
+	}
+	return payload, nil
+}
+
+func writeProjectControl(cmd *cobra.Command, control projectControl) error {
+	w := cmd.OutOrStdout()
+	if !control.Configured || control.Outcome == nil {
+		_, err := fmt.Fprintf(w, "Project %s control: unconfigured (revision %d)\n", control.ProjectID, control.Revision)
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "Project %s control (revision %d)\nOutcome: %s\nOwner: %s\nHealth: %s\nConfidence: %s\n", control.ProjectID, control.Revision, control.Outcome.Statement, control.Outcome.Owner, control.Health, control.Confidence); err != nil {
+		return err
+	}
+	if len(control.Outcome.Criteria) == 0 {
+		_, err := fmt.Fprintln(w, "Criteria: none")
+		return err
+	}
+	if _, err := fmt.Fprintln(w, "Criteria:"); err != nil {
+		return err
+	}
+	for _, criterion := range control.Outcome.Criteria {
+		if _, err := fmt.Fprintf(w, "  %d. %s [%s] (%s)\n", criterion.DisplayOrder, criterion.Statement, criterion.VerificationMethod, criterion.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newProjectListCommand(ctx *commandContext) *cobra.Command {

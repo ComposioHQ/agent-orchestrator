@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	projectcontrolsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/projectcontrol"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
 
@@ -24,6 +25,7 @@ import (
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	Projects           projectsvc.Manager
+	ProjectControl     projectcontrolsvc.Manager
 	Sessions           controllers.SessionService
 	Activity           controllers.ActivityRecorder
 	UsageHooks         controllers.UsageHookRecorder
@@ -88,23 +90,24 @@ func normalizeAPIDeps(deps APIDeps, log *slog.Logger) APIDeps {
 // API owns one controller per resource and is the single Register call the
 // router invokes to mount the /api/v1 surface.
 type API struct {
-	cfg           config.Config
-	deps          APIDeps
-	agents        *controllers.AgentsController
-	projects      *controllers.ProjectsController
-	sessions      *controllers.SessionsController
-	usage         *controllers.UsageController
-	prs           *controllers.PRsController
-	reviews       *controllers.ReviewsController
-	notifications *controllers.NotificationsController
-	push          *controllers.PushController
-	imports       *controllers.ImportController
-	shellTerms    *controllers.ShellTerminalsController
-	conversations *controllers.ConversationsController
-	settings      *controllers.SettingsController
-	dev           *controllers.DevController
-	browser       *controllers.BrowserController
-	events        *EventsController
+	cfg            config.Config
+	deps           APIDeps
+	agents         *controllers.AgentsController
+	projects       *controllers.ProjectsController
+	projectControl *controllers.ProjectControlController
+	sessions       *controllers.SessionsController
+	usage          *controllers.UsageController
+	prs            *controllers.PRsController
+	reviews        *controllers.ReviewsController
+	notifications  *controllers.NotificationsController
+	push           *controllers.PushController
+	imports        *controllers.ImportController
+	shellTerms     *controllers.ShellTerminalsController
+	conversations  *controllers.ConversationsController
+	settings       *controllers.SettingsController
+	dev            *controllers.DevController
+	browser        *controllers.BrowserController
+	events         *EventsController
 }
 
 // NewAPI constructs the API surface from its dependencies. cfg carries the
@@ -120,6 +123,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
 		},
+		projectControl: &controllers.ProjectControlController{Svc: deps.ProjectControl},
 		sessions: &controllers.SessionsController{
 			Svc:           deps.Sessions,
 			Activity:      deps.Activity,
@@ -159,6 +163,7 @@ func (a *API) Register(root chi.Router) {
 			r.Use(presenceMiddleware(a.deps.Presence))
 			a.agents.Register(r)
 			a.projects.Register(r)
+			a.projectControl.Register(r)
 			a.sessions.Register(r)
 			a.usage.Register(r)
 			a.prs.Register(r)

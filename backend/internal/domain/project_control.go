@@ -55,7 +55,7 @@ type AcceptanceCriterion struct {
 type Outcome struct {
 	ID        OutcomeID               `json:"id"`
 	Statement string                  `json:"statement"`
-	Owner     ProjectControlOwnerRole `json:"owner"`
+	Owner     ProjectControlOwnerRole `json:"owner" enum:"role:project-owner"`
 	Criteria  []AcceptanceCriterion   `json:"criteria"`
 }
 
@@ -64,8 +64,8 @@ type ProjectControl struct {
 	ProjectID  ProjectID                `json:"projectId"`
 	Configured bool                     `json:"configured"`
 	Revision   int64                    `json:"revision"`
-	Health     ProjectControlHealth     `json:"health"`
-	Confidence ProjectControlConfidence `json:"confidence"`
+	Health     ProjectControlHealth     `json:"health" enum:"unconfigured,unknown"`
+	Confidence ProjectControlConfidence `json:"confidence" enum:"unknown"`
 	Outcome    *Outcome                 `json:"outcome,omitempty"`
 }
 

@@ -9,12 +9,20 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+// Manager is the controller-facing slice-one project-control contract.
+type Manager interface {
+	Get(ctx context.Context, projectID domain.ProjectID) (domain.ProjectControl, error)
+	SetOutcome(ctx context.Context, projectID domain.ProjectID, input domain.SetOutcomeInput) (domain.ProjectControl, error)
+}
+
 // Service exposes only the slice-one Get and SetOutcome use cases.
 type Service struct {
 	store Store
 	newID func() string
 	clock func() time.Time
 }
+
+var _ Manager = (*Service)(nil)
 
 // Deps supplies durable storage and deterministic test seams.
 type Deps struct {
