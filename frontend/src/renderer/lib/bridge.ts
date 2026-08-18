@@ -142,6 +142,19 @@ export const aoBridge: AoBridge =
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
 		},
+		browserImport: {
+			detect: async () => ({ sources: [], supportedData: ["bookmarks"] as const }),
+			import: async () => ({
+				sourceBrowser: "chrome" as const,
+				sourceProfile: "Default profile",
+				importedBookmarks: 0,
+				skippedBookmarks: 0,
+				destination: "ao-persistent-browser" as const,
+				persistence: "ephemeral" as const,
+			}),
+			getStatus: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
+			useEphemeral: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
+		},
 		notifications: {
 			show: async () => undefined,
 			setBadge: async () => undefined,

@@ -29,6 +29,8 @@ import type {
 	BrowserAnnotationModeInput,
 	BrowserAnnotationSubmitPayload,
 } from "./shared/browser-annotations";
+import type { BrowserImportScan } from "./main/browser-import-engine";
+import type { BrowserImportResponse, BrowserImportStatus } from "./main/browser-import-ipc";
 
 if (typeof document !== "undefined") {
 	const markNativeBrowserComposition = () => {
@@ -289,6 +291,13 @@ const api = {
 				ipcRenderer.off("browser:annotation:canceled", wrapped);
 			};
 		},
+	},
+	browserImport: {
+		detect: () => ipcRenderer.invoke("browserImport:detect") as Promise<BrowserImportScan>,
+		import: (input: { sourceId: string; activate: boolean }) =>
+			ipcRenderer.invoke("browserImport:import", input) as Promise<BrowserImportResponse>,
+		getStatus: () => ipcRenderer.invoke("browserImport:getStatus") as Promise<BrowserImportStatus>,
+		useEphemeral: () => ipcRenderer.invoke("browserImport:useEphemeral") as Promise<BrowserImportStatus>,
 	},
 	notifications: {
 		show: (notification: { id: string; title: string; body?: string; type?: string }) =>

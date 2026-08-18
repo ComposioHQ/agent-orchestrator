@@ -10,6 +10,7 @@ import {
 	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
+	session,
 	shell,
 	WebContentsView,
 	webContents,
@@ -81,7 +82,13 @@ import {
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
-import { createBrowserProfileStorage } from "./main/browser-profile-storage";
+import { AO_BROWSER_PERSISTENT_PARTITION, createBrowserProfileStorage } from "./main/browser-profile-storage";
+import { createBrowserImportEngine } from "./main/browser-import-engine";
+import {
+	createBrowserImportController,
+	registerBrowserImportIPC,
+	type BrowserImportController,
+} from "./main/browser-import-ipc";
 import { createWindowComposition, type WindowComposition } from "./main/window-composition";
 import { AgentBrowserRuntime } from "./main/agent-browser-runtime";
 import { sameBrowserRuntimeIdentity, type BrowserRuntimeIdentity } from "./main/browser-runtime-identity";
@@ -155,6 +162,7 @@ let browserViewHost: BrowserViewHost | null = null;
 const browserProfileStorage = createBrowserProfileStorage({
 	stateDir: path.join(app.getPath("userData"), "browser"),
 });
+let browserImportController: BrowserImportController | null = null;
 let windowComposition: WindowComposition | null = null;
 const browserCleanupPromises = new Set<Promise<void>>();
 let browserQuitCleanupPromise: Promise<void> | null = null;
@@ -194,6 +202,35 @@ const NATIVE_WINDOW_BACKGROUND_LIGHT = "#fbfbfb";
 
 function getShellWebContents(): WebContents | null {
 	return windowComposition?.shellWebContents ?? null;
+}
+
+function getBrowserImportController(): BrowserImportController {
+	if (browserImportController) return browserImportController;
+	const persistentSession = session.fromPartition(AO_BROWSER_PERSISTENT_PARTITION);
+	const storagePath = persistentSession.getStoragePath();
+	const aoDataRoot = path.resolve(app.getPath("userData"));
+	if (!storagePath) throw new Error("AO persistent browser storage is unavailable");
+	const resolvedStoragePath = path.resolve(storagePath);
+	const relativeStoragePath = path.relative(aoDataRoot, resolvedStoragePath);
+	if (
+		relativeStoragePath === ".." ||
+		relativeStoragePath.startsWith(`..${path.sep}`) ||
+		path.isAbsolute(relativeStoragePath)
+	) {
+		throw new Error("AO persistent browser storage is outside ~/.ao");
+	}
+	const engine = createBrowserImportEngine({
+		homeDir: os.homedir(),
+		platform: process.platform,
+		aoDataRoot,
+		destinationBookmarksPath: path.join(resolvedStoragePath, "Bookmarks"),
+		isDestinationActive: () => browserProfileStorage.isPersistentDestinationActive(),
+	});
+	browserImportController = createBrowserImportController({
+		engine,
+		profileStorage: browserProfileStorage,
+	});
+	return browserImportController;
 }
 
 function syncNativeWindowBackground(): void {
@@ -1596,6 +1633,11 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 ipcMain.handle("telemetry:getBootstrap", () =>
 	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
 );
+registerBrowserImportIPC({
+	ipcMain,
+	getTrustedSender: getShellWebContents,
+	getController: getBrowserImportController,
+});
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
 		properties: ["openDirectory"],
