@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import type { ComponentType } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -25,11 +25,13 @@ vi.mock("../components/SessionsBoard", () => ({
 import { Route } from "../routes/_shell.projects.$projectId";
 
 describe("project board route", () => {
-	it("renders project control before the project-scoped board", () => {
+	it("renders project control before the project-scoped board", async () => {
 		const Board = (Route as unknown as { options: { component: ComponentType } }).options.component;
-		render(<Board />);
+		await act(async () => {
+			render(<Board />);
+		});
 
-		const cockpit = screen.getByTestId("project-control-cockpit");
+		const cockpit = await screen.findByTestId("project-control-cockpit");
 		const board = screen.getByTestId("sessions-board");
 		expect(cockpit).toHaveAttribute("data-project-id", "p1");
 		expect(board).toHaveAttribute("data-project-id", "p1");
