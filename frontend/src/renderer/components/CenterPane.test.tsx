@@ -462,7 +462,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 	});
 
-	it("keeps completion covered until target settlement without stealing terminal selection", () => {
+	it("settles a completed switch without reviving it after the target stops", () => {
 		vi.useFakeTimers();
 		const activeSwitch = switchRecord({ state: "delivering_context" });
 		const completedSwitch: AgentSwitch = { ...activeSwitch, state: "completed" };
@@ -497,6 +497,19 @@ describe("CenterPane toolbar session label", () => {
 		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
 		act(() => vi.advanceTimersByTime(3_100));
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+
+		view.rerender(
+			<TooltipProvider>
+				<CenterPane
+					daemonReady
+					onSelectSessionTerminal={onSelectSessionTerminal}
+					session={{ ...settledSession, terminalHandleId: undefined }}
+					theme="dark"
+				/>
+			</TooltipProvider>,
+		);
+		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
 		vi.useRealTimers();
 	});
 

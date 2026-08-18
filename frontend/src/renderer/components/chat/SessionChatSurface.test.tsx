@@ -268,7 +268,7 @@ describe("SessionChatSurface link routing", () => {
 		);
 	});
 
-	it("keeps an observed failure visible until a newer retry completes", async () => {
+	it("keeps failure visible until a retry settles, then ignores a later controller stop", async () => {
 		const user = userEvent.setup();
 		const activeSwitch = {
 			agentHandoffStatus: "not_attempted",
@@ -376,9 +376,20 @@ describe("SessionChatSurface link routing", () => {
 
 		act(() => vi.advanceTimersByTime(3_000));
 		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
+		expect(screen.getByRole("button", { name: "Switch agent" })).not.toHaveAttribute(
 			"data-outcome",
-			"success",
+		);
+
+		conversationState.snapshot = { capabilities: [], controller: { state: "stopped" } };
+		view.rerender(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={{ ...session, provider: "claude-code" }} />
+			</Wrapper>,
+		);
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
+		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
+		expect(screen.getByRole("button", { name: "Switch agent" })).not.toHaveAttribute(
+			"data-outcome",
 		);
 	});
 

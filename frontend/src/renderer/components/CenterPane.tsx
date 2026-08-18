@@ -18,10 +18,10 @@ import {
 import { useTranslation } from "react-i18next";
 import {
 	findActiveAgentSwitch,
-	isTerminalAgentSwitch,
 	selectDurableAgentSwitch,
 	useAgentSwitches,
 } from "../hooks/useAgentSwitches";
+import { useObservedAgentSwitchLifecycle } from "../hooks/useObservedAgentSwitchLifecycle";
 import { useSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
@@ -175,30 +175,17 @@ export function CenterPane({
 	const agentSwitchesQuery = useAgentSwitches(session?.id ?? "");
 	const agentSwitches = agentSwitchesQuery.data ?? [];
 	const switchMutation = useSwitchAgentState(session?.id ?? "");
-	const observedNonterminalSwitchIdsRef = useRef(new Set<string>());
 	const mountedSessionIdRef = useRef(session?.id);
 	const sourceFocusSwitchIdRef = useRef<string | undefined>(undefined);
 	const announcedAlertKeysRef = useRef(new Set<string>());
-	const [transientSuccessSwitchId, setTransientSuccessSwitchId] = useState<string>();
-	const [dismissedFailureSwitchId, setDismissedFailureSwitchId] = useState<string>();
 	const [alertAnnouncement, setAlertAnnouncement] = useState<{ key: string; text: string }>();
 	if (mountedSessionIdRef.current !== session?.id) {
 		mountedSessionIdRef.current = session?.id;
-		observedNonterminalSwitchIdsRef.current = new Set();
 		sourceFocusSwitchIdRef.current = undefined;
 		announcedAlertKeysRef.current = new Set();
 	}
 	const sessionAgentSwitch = session?.activeAgentSwitch;
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
-	const latestCompletedSwitch = agentSwitches[0]?.state === "completed" ? agentSwitches[0] : undefined;
-	if (sessionAgentSwitch && !isTerminalAgentSwitch(sessionAgentSwitch)) {
-		observedNonterminalSwitchIdsRef.current.add(sessionAgentSwitch.id);
-	}
-	if (activeHistorySwitch) observedNonterminalSwitchIdsRef.current.add(activeHistorySwitch.id);
-	const observedTerminalSwitch = agentSwitches.find(
-		(entry) =>
-			isTerminalAgentSwitch(entry) && observedNonterminalSwitchIdsRef.current.has(entry.id),
-	);
 	const currentAgentSwitch = selectDurableAgentSwitch(sessionAgentSwitch, agentSwitches);
 	const admissionAgentSwitch: AgentSwitchSummary | undefined =
 		!currentAgentSwitch && switchMutation.isPending && switchMutation.input
@@ -210,14 +197,34 @@ export function CenterPane({
 				targetHarness: switchMutation.input.targetHarness,
 			}
 			: undefined;
+	const {
+		dismissFailure: dismissAgentSwitchFailure,
+		dismissedFailureSwitchId,
+		isObserved: isAgentSwitchObserved,
+		isRetired: isAgentSwitchRetired,
+		markObserved: markAgentSwitchObserved,
+		observedTerminalSwitch,
+		settle: settleAgentSwitch,
+		transientSuccessSwitchId,
+	} = useObservedAgentSwitchLifecycle({
+		sessionId: session?.id,
+		agentSwitches,
+		nonterminalCandidates: [
+			sessionAgentSwitch,
+			activeHistorySwitch,
+			currentAgentSwitch,
+			admissionAgentSwitch,
+		],
+	});
+	const latestCompletedSwitch =
+		agentSwitches[0]?.state === "completed" && !isAgentSwitchRetired(agentSwitches[0].id)
+			? agentSwitches[0]
+			: undefined;
 	const agentSwitch =
 		currentAgentSwitch ??
 		admissionAgentSwitch ??
 		latestCompletedSwitch ??
 		observedTerminalSwitch;
-	if (agentSwitch && !isTerminalAgentSwitch(agentSwitch)) {
-		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
-	}
 	const presentation =
 		agentSwitch && session
 			? deriveAgentSwitchPresentation({
@@ -233,12 +240,12 @@ export function CenterPane({
 		presentation?.outcome === "in_progress" &&
 		presentation.stage === "confirming_takeover"
 	) {
-		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
+		markAgentSwitchObserved(agentSwitch.id);
 	}
 	const observedSettledSwitch = Boolean(
 		agentSwitch &&
 			presentation?.outcome === "success" &&
-			observedNonterminalSwitchIdsRef.current.has(agentSwitch.id),
+			isAgentSwitchObserved(agentSwitch.id),
 	);
 	const target = terminalTarget ?? { kind: "worker" };
 	const switchLocksWorkerInput = Boolean(
@@ -328,21 +335,13 @@ export function CenterPane({
 	}, [agentSwitchesQuery.refetch, currentAgentSwitch, switchMutation.isPending]);
 
 	useEffect(() => {
-		setTransientSuccessSwitchId(undefined);
-		setDismissedFailureSwitchId(undefined);
 		setAlertAnnouncement(undefined);
 	}, [session?.id]);
 
 	useEffect(() => {
 		if (!observedSettledSwitch || !agentSwitch) return;
-		setTransientSuccessSwitchId(agentSwitch.id);
-		const timer = window.setTimeout(() => {
-		setTransientSuccessSwitchId((current) =>
-			current === agentSwitch.id ? undefined : current,
-		);
-		}, 3_000);
-		return () => window.clearTimeout(timer);
-	}, [agentSwitch?.id, observedSettledSwitch]);
+		settleAgentSwitch(agentSwitch.id);
+	}, [agentSwitch?.id, observedSettledSwitch, settleAgentSwitch]);
 
 	useEffect(() => {
 		if (!agentSwitch || !presentation?.allowSourceInput) return;
@@ -652,7 +651,7 @@ export function CenterPane({
 						agentSwitch={agentSwitch}
 						onDismiss={
 							shownPresentation.outcome === "failure"
-								? () => setDismissedFailureSwitchId(agentSwitch.id)
+								? () => dismissAgentSwitchFailure(agentSwitch.id)
 								: undefined
 						}
 						presentation={shownPresentation}
