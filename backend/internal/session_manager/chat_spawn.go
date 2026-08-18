@@ -74,6 +74,10 @@ type ChatStart struct {
 	// ProviderConversationID resumes a stored conversation instead of opening a
 	// new one. Empty means start fresh.
 	ProviderConversationID string
+	// ControllerGeneration lets a durable coordinator reserve the generation
+	// before launch. Empty keeps the ordinary spawn/restore behavior where Chat
+	// Service allocates it.
+	ControllerGeneration string
 	// RequireNativeHistory is set only for a TUI -> Chat handoff. The target must
 	// replay the provider transcript before it can become the committed UI.
 	RequireNativeHistory bool

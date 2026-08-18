@@ -173,15 +173,13 @@ export function SessionChatSurface({
 			onCloseShellTerminal={onCloseShellTerminal}
 			onRenameShellTerminal={onRenameShellTerminal}
 			switchAgentControl={
-				session.terminalHandleId ? (
-					<TerminalSwitchAgentButton
-						container={switchSelectorContainer}
-						onOpenChange={setSwitchSelectorOpen}
-						open={switchSelectorOpen}
-						session={session}
-						switchError={switchMutation.error}
-					/>
-				) : undefined
+				<TerminalSwitchAgentButton
+					container={switchSelectorContainer}
+					onOpenChange={setSwitchSelectorOpen}
+					open={switchSelectorOpen}
+					session={session}
+					switchError={switchMutation.error}
+				/>
 			}
 			switchDialogContainer={setSwitchSelectorContainer}
 			daemonReady={daemonReady}

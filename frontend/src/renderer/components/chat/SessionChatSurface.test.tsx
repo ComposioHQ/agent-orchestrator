@@ -64,7 +64,6 @@ import { SessionChatSurface } from "./SessionChatSurface";
 
 const session = {
 	id: "sess-1",
-	terminalHandleId: "handle-1",
 	workspaceId: "proj-1",
 	workspaceName: "my-app",
 	title: "chat worker",
@@ -131,19 +130,6 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		expect(screen.getByRole("button", { name: "Switch agent" })).toBeInTheDocument();
-	});
-
-	it("does not offer in-place agent switching before the runtime handle exists", () => {
-		const queryClient = new QueryClient({
-			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-		});
-		render(
-			<Wrapper client={queryClient}>
-				<SessionChatSurface session={{ ...session, terminalHandleId: undefined }} />
-			</Wrapper>,
-		);
-
-		expect(screen.queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
 	});
 
 	it("keeps a selected shell renderable when the conversation is unavailable", () => {

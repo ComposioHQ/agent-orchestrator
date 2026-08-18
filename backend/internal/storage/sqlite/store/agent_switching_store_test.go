@@ -33,6 +33,84 @@ func advanceAgentSwitchFixtureWithMutation(ctx context.Context, t *testing.T, s 
 	}
 }
 
+func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "chat-switch")
+	rec := sampleRecord("chat-switch")
+	now := rec.CreatedAt
+	rec.Mode = domain.SessionModeChat
+	rec.Harness = domain.HarnessClaudeCode
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.ProviderConversationID = "source-chat-native"
+	rec.Metadata.ControllerGeneration = "source-chat-generation"
+	session, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create Chat session: %v", err)
+	}
+	sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
+		ID: "switch-chat", SessionID: session.ID, IdempotencyKey: "switch-chat",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+		AgentHandoffStatus: domain.AgentHandoffNotAttempted,
+		SourceGenerationID: "source-chat-generation", RequestedAt: now, UpdatedAt: now,
+	})
+	if err != nil || !created {
+		t.Fatalf("create Chat switch: created=%v err=%v", created, err)
+	}
+	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &sw, domain.AgentSwitchStoppingSource, now.Add(time.Second), func(next *domain.AgentSwitch) {
+		next.TargetStartMode = domain.AgentSwitchTargetStartFresh
+		next.TargetGenerationID = "target-chat-generation"
+	})
+	if ok, err := s.ConfirmAgentSwitchSourceStopped(ctx, domain.AgentSwitchSourceStopConfirmation{
+		SwitchID: sw.ID, SessionID: session.ID, SourceMode: domain.SessionModeChat,
+		SourceHarness: domain.HarnessClaudeCode, SourceGenerationID: "source-chat-generation",
+		ExpectedSourceControllerGeneration: "source-chat-generation",
+		TargetGenerationID:                 "target-chat-generation", StoppedAt: now.Add(2 * time.Second),
+	}); err != nil || !ok {
+		t.Fatalf("confirm Chat source stopped: ok=%v err=%v", ok, err)
+	}
+	target := domain.AgentNativeSession{
+		ID: "target-chat-native-ref", AOSessionID: session.ID, Harness: domain.HarnessCodex,
+		NativeSessionID: "target-chat-native", LastGenerationID: "target-chat-generation",
+		CreatedAt: now.Add(3 * time.Second), LastUsedAt: now.Add(3 * time.Second),
+	}
+	if _, created, err := s.CreateAgentNativeSession(ctx, target); err != nil || !created {
+		t.Fatalf("create target Chat native session: created=%v err=%v", created, err)
+	}
+	sw, _, _ = s.GetAgentSwitch(ctx, sw.ID)
+	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &sw, domain.AgentSwitchStartingTarget, now.Add(3*time.Second), func(next *domain.AgentSwitch) {
+		next.TargetNativeSessionRef = &target.ID
+	})
+	if err := s.ClaimChatControllerGeneration(ctx, session.ID, "target-chat-generation", now.Add(4*time.Second)); err != nil {
+		t.Fatalf("claim target Chat generation: %v", err)
+	}
+	activatedAt := now.Add(5 * time.Second)
+	if ok, err := s.ActivateChatAgentSwitchTarget(ctx, domain.AgentSwitchChatTargetActivation{
+		SwitchID: sw.ID, SessionID: session.ID,
+		SourceHarness: domain.HarnessClaudeCode, SourceGenerationID: "source-chat-generation",
+		TargetHarness: domain.HarnessCodex, TargetNativeSessionRef: target.ID,
+		TargetGenerationID:     "target-chat-generation",
+		ProviderConversationID: "target-chat-native", ControllerGeneration: "target-chat-generation",
+		ActivatedAt: activatedAt,
+	}); err != nil || !ok {
+		t.Fatalf("activate Chat target: ok=%v err=%v", ok, err)
+	}
+	got, ok, err := s.GetSession(ctx, session.ID)
+	if err != nil || !ok {
+		t.Fatalf("get activated Chat session: ok=%v err=%v", ok, err)
+	}
+	if got.Mode != domain.SessionModeChat || got.Harness != domain.HarnessCodex ||
+		got.Metadata.RuntimeHandleID != "" || got.Metadata.RuntimeLaunchID != "" ||
+		got.Metadata.ProviderConversationID != "target-chat-native" ||
+		got.Metadata.ControllerGeneration != "target-chat-generation" {
+		t.Fatalf("activated Chat session = %+v", got)
+	}
+}
+
 func TestListActiveAgentSwitchesExcludesTerminalRows(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -300,7 +300,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 			type Session = Record<string, unknown>;
 			const makeWorker = (w: (typeof workers)[number]): Session => ({
 				id: w.id,
-				terminalHandleId: `${w.id}/terminal_0`,
+				terminalHandleId: (w.mode ?? "tui") === "tui" ? `${w.id}/terminal_0` : undefined,
 				workspaceId: projectId,
 				workspaceName: projectName,
 				title: w.title,

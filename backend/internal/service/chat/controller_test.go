@@ -1337,12 +1337,12 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 
 	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
-		WorkspacePath: t.TempDir(),
+		WorkspacePath: t.TempDir(), ControllerGeneration: "reserved-generation",
 		ControllerReady: func(started chatsvc.StartResult) error {
 			if signals := activity.snapshot(); len(signals) != 0 {
 				t.Fatalf("provider events projected before controller-ready commit: %+v", signals)
 			}
-			if started.ProviderConversationID == "" || started.ControllerGeneration == "" {
+			if started.ProviderConversationID == "" || started.ControllerGeneration != "reserved-generation" {
 				t.Fatalf("controller-ready result = %+v", started)
 			}
 			ready = true
