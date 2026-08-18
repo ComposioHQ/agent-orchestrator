@@ -42,6 +42,7 @@ import {
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
 import {
+	interfaceTransitionHasUnacknowledgedNotice,
 	interfaceTransitionIsActive,
 	useSessionInterfaceTransition,
 } from "../hooks/useSessionInterfaceTransition";
@@ -263,7 +264,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [emulatorPoppedOut, setEmulatorPoppedOut] = useState(false);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
-	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
 	const stopTerminalLiveResize = useCallback(() => {
 		if (terminalLiveResizeTimerRef.current !== null) {
@@ -897,10 +897,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									topbarActions={sessionHeaderActions}
 								/>
 							)}
-							{interfaceSwitch.transition?.id !== dismissedTransitionID ? (
+							{interfaceTransitionHasUnacknowledgedNotice(interfaceSwitch.transition) ? (
 								<SessionInterfaceTransitionNotice
 									transition={interfaceSwitch.transition}
-									onDismiss={() => setDismissedTransitionID(interfaceSwitch.transition?.id ?? "")}
+									dismissing={interfaceSwitch.acknowledgingNotice}
+									dismissError={interfaceSwitch.acknowledgeNoticeError}
+									onDismiss={() => {
+										const transitionID = interfaceSwitch.transition?.id;
+										if (transitionID) void interfaceSwitch.acknowledgeNotice(transitionID).catch(() => {});
+									}}
+									onSwitchWithInterrupt={() => {
+										interfaceSwitch.resetStartError();
+										void beginInterfaceSwitch("interrupt");
+									}}
+									interrupting={interfaceSwitch.starting}
 								/>
 							) : null}
 						</div>

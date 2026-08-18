@@ -186,6 +186,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/interface-transition", c.interfaceTransitionStatus)
 	r.Post("/sessions/{sessionId}/interface-transition", c.startInterfaceTransition)
 	r.Delete("/sessions/{sessionId}/interface-transition", c.cancelInterfaceTransition)
+	r.Put("/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement", c.acknowledgeInterfaceTransitionNotice)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)

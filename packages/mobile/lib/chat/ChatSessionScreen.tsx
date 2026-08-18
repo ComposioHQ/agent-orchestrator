@@ -78,6 +78,23 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const [keyboardHeight, setKeyboardHeight] = useState(0);
 	const terminated = "projectName" in session ? Boolean(session.isTerminal) : Boolean(session.isTerminated);
 	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
+	const interfaceTransitionNotice =
+		!interfaceTransitionActive &&
+		!interfaceSwitch.transition?.noticeAcknowledgedAt &&
+		(interfaceSwitch.transition?.phase === "failed" ||
+			interfaceSwitch.transition?.phase === "recovery_required")
+			? interfaceSwitch.transition
+			: undefined;
+	const interfaceTransitionRecovered =
+		interfaceTransitionNotice?.phase === "recovery_required" &&
+		interfaceTransitionNotice.errorCode === "DAEMON_RESTARTED";
+	const interfaceTransitionNoticeText =
+		interfaceTransitionNotice?.errorDetail ||
+		(interfaceTransitionRecovered
+			? "AO restored the session in its last committed interface."
+			: interfaceTransitionNotice?.phase === "recovery_required"
+				? "The interface switch needs recovery before more work is sent."
+				: "The interface switch failed; the current interface remains available.");
 	const turnActive = Boolean(
 		conversation.snapshot?.turns.some((turn) => turn.state === "running" || turn.state === "queued"),
 	);
@@ -264,8 +281,25 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 					action={mobileInterfaceTransitionIsCancellable(interfaceSwitch.transition) ? (interfaceSwitch.cancelling ? "Cancelling…" : "Cancel") : undefined}
 					onPress={interfaceSwitch.cancelling ? undefined : () => void interfaceSwitch.cancel().catch(() => {})}
 				/>
-			) : interfaceSwitch.transition?.phase === "failed" || interfaceSwitch.transition?.phase === "recovery_required" ? (
-				<InlineBanner tone="danger" icon="alert-triangle" text={interfaceSwitch.transition.errorDetail || "The interface switch failed; the current interface remains available."} />
+			) : interfaceTransitionNotice ? (
+				<InlineBanner
+					tone={interfaceTransitionRecovered ? "warning" : "danger"}
+					icon={interfaceTransitionRecovered ? "check-circle" : "alert-triangle"}
+					text={`${interfaceTransitionNoticeText}${
+						interfaceSwitch.acknowledgeNoticeError
+							? ` Could not dismiss: ${interfaceSwitch.acknowledgeNoticeError}`
+							: ""
+					}`}
+					action={interfaceSwitch.acknowledgingNotice ? "Dismissing…" : "Dismiss"}
+					onPress={
+						interfaceSwitch.acknowledgingNotice
+							? undefined
+							: () =>
+									void interfaceSwitch
+										.acknowledgeNotice(interfaceTransitionNotice.id)
+										.catch(() => {})
+					}
+				/>
 			) : null}
 			<ConversationBanners
 				snapshot={snapshot}

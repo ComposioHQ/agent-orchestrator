@@ -246,6 +246,7 @@ var schemaNames = map[string]string{
 	"ControllersSessionInterfaceTransitionStatusResponse": "SessionInterfaceTransitionStatusResponse",
 	"ControllersStartSessionInterfaceTransitionResponse":  "StartSessionInterfaceTransitionResponse",
 	"ControllersCancelSessionInterfaceTransitionResponse": "CancelSessionInterfaceTransitionResponse",
+	"ControllersInterfaceTransitionNoticeAckResponse":     "AcknowledgeSessionInterfaceTransitionNoticeResponse",
 	"ControllersCleanupSessionsResponse":                  "CleanupSessionsResponse",
 	"ControllersCleanupSkippedSession":                    "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":                       "WorkspaceFileQuery",
@@ -1848,6 +1849,18 @@ func sessionOperations() []operation {
 			pathParams: []any{controllers.SessionIDParam{}},
 			resps: []respUnit{
 				{http.StatusAccepted, controllers.CancelSessionInterfaceTransitionResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/sessions/{sessionId}/interface-transition/{transitionId}/notice-acknowledgement", id: "acknowledgeSessionInterfaceTransitionNotice", tag: "sessions",
+			summary:    "Acknowledge a failed or recovered interface handoff notice",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.SessionInterfaceTransitionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.InterfaceTransitionNoticeAckResponse{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

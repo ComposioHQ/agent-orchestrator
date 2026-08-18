@@ -1075,7 +1075,8 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	}
 	if activated.Harness != domain.HarnessCodex || activated.Activity.State != domain.ActivityIdle ||
 		activated.Metadata.RuntimeHandleID != "target-handle" || activated.Metadata.RuntimeLaunchID != "target-generation" ||
-		activated.Metadata.AgentSessionID != target.NativeSessionID || activated.Metadata.NativeTranscriptPath != target.TranscriptPath {
+		activated.Metadata.AgentSessionID != target.NativeSessionID || activated.Metadata.AgentSessionIDLaunchID != "target-generation" ||
+		activated.Metadata.NativeTranscriptPath != target.TranscriptPath {
 		t.Fatalf("target owner projection = %+v", activated)
 	}
 	if !activated.FirstSignalAt.IsZero() {
