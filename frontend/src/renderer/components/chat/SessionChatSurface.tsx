@@ -141,12 +141,15 @@ export function SessionChatSurface({
 		observedNonterminalSwitchIdsRef.current.add(session.activeAgentSwitch.id);
 	}
 	if (activeHistorySwitch) observedNonterminalSwitchIdsRef.current.add(activeHistorySwitch.id);
-	const observedFailedSwitch = agentSwitches.find(
-		(entry) =>
-			entry.state === "failed" && observedNonterminalSwitchIdsRef.current.has(entry.id),
-	);
-	const latestCompletedSwitch =
-		agentSwitches[0]?.state === "completed" ? agentSwitches[0] : undefined;
+	// History is newest-first. A terminal row is presentation state only when this
+	// mounted Chat view observed that same switch in flight; otherwise it is past
+	// history and merely prevents an older observed outcome from resurfacing.
+	const latestTerminalSwitch = agentSwitches.find(isTerminalAgentSwitch);
+	const observedTerminalSwitch =
+		latestTerminalSwitch &&
+		observedNonterminalSwitchIdsRef.current.has(latestTerminalSwitch.id)
+			? latestTerminalSwitch
+			: undefined;
 	const durableAgentSwitch = selectDurableAgentSwitch(session.activeAgentSwitch, agentSwitches);
 	const admissionAgentSwitch: AgentSwitchSummary | undefined =
 		!durableAgentSwitch && switchMutation.isPending && switchMutation.input
@@ -158,8 +161,7 @@ export function SessionChatSurface({
 				targetHarness: switchMutation.input.targetHarness,
 			}
 			: undefined;
-	const agentSwitch =
-		durableAgentSwitch ?? admissionAgentSwitch ?? latestCompletedSwitch ?? observedFailedSwitch;
+	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
 	if (agentSwitch && !isTerminalAgentSwitch(agentSwitch)) {
 		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
 	}
