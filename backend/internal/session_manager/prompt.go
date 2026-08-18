@@ -192,7 +192,6 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 - `+"`--name`"+` is required: a deliberate sidebar label so the user can see what each worker is working on at a glance; labels must be 20 characters or fewer.
 - Before running `+"`ao spawn`"+`, count the `+"`--name`"+` label yourself. It must be 20 characters or fewer. If your first label is longer, shorten it before executing the command.
 - Add `+"`--agent <name>`"+` when a worker must use a specific agent.
-- Add `+"`--model <model-id>`"+` to override the agent model for this worker only (e.g., sonnet, gpt-5.6-sol), but only when the installed ao CLI supports it. Verify with `+"`ao spawn --help | grep -- --model`"+`; if the flag is not listed, omit it and spawn without a model override.
 - `+"`ao send --session <session-id> --message \"<message>\"`"+` - message a worker.
 - `+"`ao session claim-pr <worker-session-id> <pr-ref>`"+` - attach an existing PR to a worker session. Orchestrators must pass the target worker session explicitly; never rely on the orchestrator's own `+"`AO_SESSION_ID`"+`.
 - `+"`ao session kill <session-id>`"+` - terminate a session when appropriate.
