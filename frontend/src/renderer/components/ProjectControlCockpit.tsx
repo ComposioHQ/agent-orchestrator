@@ -42,6 +42,7 @@ export function ProjectControlCockpit({ projectId }: { projectId: string }) {
 	const formId = useId();
 	const nextCriterionKey = useRef(1);
 	const [editing, setEditing] = useState(false);
+	const [editBaseRevision, setEditBaseRevision] = useState<number>();
 	const [statement, setStatement] = useState("");
 	const [criteria, setCriteria] = useState<CriterionDraft[]>([]);
 	const [saving, setSaving] = useState(false);
@@ -54,6 +55,7 @@ export function ProjectControlCockpit({ projectId }: { projectId: string }) {
 
 	useEffect(() => {
 		setEditing(false);
+		setEditBaseRevision(undefined);
 		setError(undefined);
 	}, [projectId]);
 
@@ -61,6 +63,7 @@ export function ProjectControlCockpit({ projectId }: { projectId: string }) {
 		const outcome = query.data?.outcome;
 		setStatement(outcome?.statement ?? "");
 		setCriteria(outcome ? draftsFrom(outcome.criteria) : [emptyCriterion(`${formId}-criterion-0`)]);
+		setEditBaseRevision(query.data?.revision);
 		setError(undefined);
 		setEditing(true);
 	};
@@ -73,6 +76,7 @@ export function ProjectControlCockpit({ projectId }: { projectId: string }) {
 		});
 		setStatement(current.outcome?.statement ?? "");
 		setCriteria(current.outcome ? draftsFrom(current.outcome.criteria) : [emptyCriterion(`${formId}-criterion-0`)]);
+		setEditBaseRevision(current.revision);
 		setError(
 			t("projectControl.conflict", {
 				revision: conflict.currentRevision ?? current.revision,
@@ -82,13 +86,13 @@ export function ProjectControlCockpit({ projectId }: { projectId: string }) {
 
 	const submit = async (event: FormEvent) => {
 		event.preventDefault();
-		if (!query.data || saving) return;
+		if (editBaseRevision === undefined || saving) return;
 		setSaving(true);
 		setError(undefined);
 		try {
 			const saved = await setProjectOutcome(projectId, {
 				statement,
-				expectedRevision: query.data.revision,
+				expectedRevision: editBaseRevision,
 				idempotencyKey: newProjectControlIdempotencyKey(),
 				criteria: criteria.map((criterion, displayOrder) => ({
 					...(criterion.id ? { id: criterion.id } : {}),

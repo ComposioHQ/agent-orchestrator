@@ -11,6 +11,7 @@ vi.mock("../lib/api-client", async (importOriginal) => ({
 }));
 
 import { ProjectControlCockpit } from "./ProjectControlCockpit";
+import { projectControlQueryKey } from "../lib/project-control";
 
 const unconfigured = {
 	projectId: "ao",
@@ -39,11 +40,12 @@ const configured = {
 
 function renderCockpit() {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-	return render(
+	const rendered = render(
 		<QueryClientProvider client={queryClient}>
 			<ProjectControlCockpit projectId="ao" />
 		</QueryClientProvider>,
 	);
+	return { ...rendered, queryClient };
 }
 
 beforeEach(() => {
@@ -124,6 +126,29 @@ describe("ProjectControlCockpit", () => {
 		const second = putMock.mock.calls[1][1].body;
 		expect(second.expectedRevision).toBe(5);
 		expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+	});
+
+	it("preserves the edit-base revision when the query updates while the form is open", async () => {
+		getMock.mockResolvedValue({ data: configured });
+		putMock.mockResolvedValue({ data: { ...configured, revision: 6 } });
+		const { queryClient } = renderCockpit();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+		await userEvent.clear(screen.getByLabelText("Outcome statement"));
+		await userEvent.type(screen.getByLabelText("Outcome statement"), "Draft from revision four");
+
+		queryClient.setQueryData(projectControlQueryKey("ao"), {
+			...configured,
+			revision: 5,
+			outcome: { ...configured.outcome, statement: "Concurrent durable update" },
+		});
+		await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0][1].body).toMatchObject({
+			statement: "Draft from revision four",
+			expectedRevision: 4,
+		});
 	});
 
 	it("keeps a typed revision conflict visible and reloads current durable state", async () => {
