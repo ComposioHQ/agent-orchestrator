@@ -303,6 +303,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			DataDir:                cfg.DataDir,
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
+			Model:                  cfg.Model,
 			Permissions:            cfg.Permissions,
 			SystemPrompt:           cfg.SystemPrompt,
 			AdditionalDirectories:  cfg.AdditionalDirectories,

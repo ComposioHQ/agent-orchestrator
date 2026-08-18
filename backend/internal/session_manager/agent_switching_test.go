@@ -988,7 +988,8 @@ func TestSwitchAgentChatSwitchBackResumesVerifiedNativeConversation(t *testing.T
 	manager.chat = launcher
 
 	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
-		TargetHarness: domain.HarnessCodex, IdempotencyKey: "chat-switch-back-resume",
+		TargetHarness: domain.HarnessCodex, Model: "selected-target-model",
+		IdempotencyKey: "chat-switch-back-resume",
 	})
 	if err != nil {
 		t.Fatalf("SwitchAgent: %v", err)
@@ -1001,6 +1002,9 @@ func TestSwitchAgentChatSwitchBackResumesVerifiedNativeConversation(t *testing.T
 	}
 	if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != prior.NativeSessionID {
 		t.Fatalf("Chat starts = %+v, want resume of %q", launcher.started, prior.NativeSessionID)
+	}
+	if launcher.started[0].Model != "selected-target-model" {
+		t.Fatalf("resumed Chat target model = %q, want selected-target-model", launcher.started[0].Model)
 	}
 	if !launcher.started[0].SkipNativeHistoryImport {
 		t.Fatal("switch-back projected target-native history into the source provider branch before activation")

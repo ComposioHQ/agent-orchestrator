@@ -430,6 +430,7 @@ func TestResumeCanSkipNativeHistoryImportWithoutStartingFresh(t *testing.T) {
 	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
 		WorkspacePath:           t.TempDir(),
+		Model:                   "selected-target-model",
 		ProviderConversationID:  "target-native-thread",
 		SkipNativeHistoryImport: true,
 	})
@@ -438,6 +439,9 @@ func TestResumeCanSkipNativeHistoryImportWithoutStartingFresh(t *testing.T) {
 	}
 	if resumed.ProviderConversationID != "target-native-thread" {
 		t.Fatalf("resume config = %#v, want target native thread", resumed)
+	}
+	if resumed.Model != "selected-target-model" {
+		t.Fatalf("resume model = %q, want selected-target-model", resumed.Model)
 	}
 	if started.SessionID != "" {
 		t.Fatalf("fresh start was used instead of resume: %#v", started)

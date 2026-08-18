@@ -213,7 +213,7 @@ func (s *Service) EditMessage(
 			provider, err = driver.Resume(ctx, ports.ChatResumeConfig{
 				SessionID: cfg.SessionID, ProviderConversationID: providerConversationID,
 				DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
-				Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+				Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 				AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
 			})
 		}
@@ -330,7 +330,7 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 	provider, err := driver.Resume(ctx, ports.ChatResumeConfig{
 		SessionID: cfg.SessionID, ProviderConversationID: branch.ProviderConversationID,
 		DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath, Env: cfg.Env,
-		Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
+		Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
 		AdditionalDirectories: cfg.AdditionalDirectories, MCPServers: cfg.MCPServers,
 	})
 	if err != nil {

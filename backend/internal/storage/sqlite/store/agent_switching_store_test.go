@@ -34,7 +34,7 @@ func advanceAgentSwitchFixtureWithMutation(ctx context.Context, t *testing.T, s 
 	}
 }
 
-func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
+func TestActivateChatAgentSwitchTargetKeepsRuntimeEmptyAcrossNativeSwitchBack(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "chat-switch")
@@ -231,6 +231,92 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
 	}
 	if _, err := s.ConversationEditAnchor(ctx, conversation.ID, "source-turn"); !errors.Is(err, store.ErrConversationTurnNotFound) {
 		t.Fatalf("source-provider edit anchor error = %v, want ErrConversationTurnNotFound", err)
+	}
+
+	// Complete the first switch, then return to Claude's retained native
+	// conversation. The second activation must create a new provider ownership
+	// epoch even though that provider conversation id already exists earlier in
+	// the lineage.
+	sw, ok, err = s.GetAgentSwitch(ctx, sw.ID)
+	if err != nil || !ok {
+		t.Fatalf("reload first Chat switch: ok=%v err=%v", ok, err)
+	}
+	advanceAgentSwitchFixture(ctx, t, s, &sw, domain.AgentSwitchDelivering, now.Add(8*time.Second))
+	advanceAgentSwitchFixture(ctx, t, s, &sw, domain.AgentSwitchCompleted, now.Add(9*time.Second))
+
+	returnTarget := domain.AgentNativeSession{
+		ID: "source-chat-native-ref", AOSessionID: session.ID, Harness: domain.HarnessClaudeCode,
+		NativeSessionID: "source-chat-edited-native", LastGenerationID: "return-chat-generation",
+		CreatedAt: now.Add(10 * time.Second), LastUsedAt: now.Add(10 * time.Second),
+	}
+	if _, created, err := s.CreateAgentNativeSession(ctx, returnTarget); err != nil || !created {
+		t.Fatalf("create retained source Chat native session: created=%v err=%v", created, err)
+	}
+	returnSwitch, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
+		ID: "switch-chat-return", SessionID: session.ID, IdempotencyKey: "switch-chat-return",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessClaudeCode, ""),
+		FromHarness:        domain.HarnessCodex, TargetHarness: domain.HarnessClaudeCode,
+		State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+		AgentHandoffStatus: domain.AgentHandoffNotAttempted,
+		SourceGenerationID: "target-chat-generation", RequestedAt: now.Add(10 * time.Second), UpdatedAt: now.Add(10 * time.Second),
+	})
+	if err != nil || !created {
+		t.Fatalf("create return Chat switch: created=%v err=%v", created, err)
+	}
+	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &returnSwitch, domain.AgentSwitchStoppingSource, now.Add(11*time.Second), func(next *domain.AgentSwitch) {
+		next.TargetStartMode = domain.AgentSwitchTargetStartResumed
+		next.TargetGenerationID = "return-chat-generation"
+	})
+	if ok, err := s.ConfirmAgentSwitchSourceStopped(ctx, domain.AgentSwitchSourceStopConfirmation{
+		SwitchID: returnSwitch.ID, SessionID: session.ID, SourceMode: domain.SessionModeChat,
+		SourceHarness: domain.HarnessCodex, SourceGenerationID: "target-chat-generation",
+		ExpectedSourceControllerGeneration: "target-chat-generation",
+		TargetGenerationID:                 "return-chat-generation", StoppedAt: now.Add(12 * time.Second),
+	}); err != nil || !ok {
+		t.Fatalf("confirm return Chat source stopped: ok=%v err=%v", ok, err)
+	}
+	returnSwitch, ok, err = s.GetAgentSwitch(ctx, returnSwitch.ID)
+	if err != nil || !ok {
+		t.Fatalf("reload return Chat switch: ok=%v err=%v", ok, err)
+	}
+	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &returnSwitch, domain.AgentSwitchStartingTarget, now.Add(13*time.Second), func(next *domain.AgentSwitch) {
+		next.TargetNativeSessionRef = &returnTarget.ID
+	})
+	if err := s.ClaimChatControllerGeneration(ctx, session.ID, "return-chat-generation", now.Add(14*time.Second)); err != nil {
+		t.Fatalf("claim return Chat generation: %v", err)
+	}
+	if ok, err := s.ActivateChatAgentSwitchTarget(ctx, domain.AgentSwitchChatTargetActivation{
+		SwitchID: returnSwitch.ID, SessionID: session.ID,
+		SourceHarness: domain.HarnessCodex, SourceGenerationID: "target-chat-generation",
+		TargetHarness: domain.HarnessClaudeCode, TargetNativeSessionRef: returnTarget.ID,
+		TargetGenerationID:     "return-chat-generation",
+		ProviderConversationID: "source-chat-edited-native", ControllerGeneration: "return-chat-generation",
+		ActivatedAt: now.Add(15 * time.Second),
+	}); err != nil || !ok {
+		t.Fatalf("activate retained Chat target: ok=%v err=%v", ok, err)
+	}
+	conversation, err = s.ConversationForSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("reload returned conversation: %v", err)
+	}
+	branches, err = s.ConversationBranches(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("list returned conversation branches: %v", err)
+	}
+	if len(branches) != 4 {
+		t.Fatalf("returned conversation branches = %+v, want a distinct return ownership epoch", branches)
+	}
+	var returnBranch domain.ConversationBranch
+	for _, branch := range branches {
+		if branch.Active {
+			returnBranch = branch
+			break
+		}
+	}
+	if returnBranch.ID != "switch-chat-return:provider" ||
+		returnBranch.ProviderConversationID != "source-chat-edited-native" ||
+		returnBranch.ParentBranchID != targetBranch.ID || returnBranch.ReplacedTurnID != "" {
+		t.Fatalf("return provider ownership boundary = %+v, prior target = %+v", returnBranch, targetBranch)
 	}
 }
 
