@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentSwitchesQueryKey } from "../../hooks/useAgentSwitches";
 import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { useUiStore } from "../../stores/ui-store";
@@ -111,6 +111,10 @@ beforeEach(() => {
 	conversationState.loadOlder = vi.fn();
 	agentSwitchState.data = [];
 	useUiStore.setState({ inspectorSessions: {} });
+});
+
+afterEach(() => {
+	vi.useRealTimers();
 });
 
 describe("SessionChatSurface link routing", () => {
@@ -236,7 +240,7 @@ describe("SessionChatSurface link routing", () => {
 		expect(screen.queryByRole("list", { name: "Switching…" })).not.toBeInTheDocument();
 	});
 
-	it("keeps an observed terminal failure visible after the workspace summary clears", async () => {
+	it("keeps an observed failure visible until a newer retry completes", async () => {
 		const user = userEvent.setup();
 		const activeSwitch = {
 			agentHandoffStatus: "not_attempted",
@@ -294,6 +298,59 @@ describe("SessionChatSurface link routing", () => {
 		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
 			"data-outcome",
 			"failure",
+		);
+
+		const retrySwitch = {
+			agentHandoffStatus: "not_attempted",
+			fromHarness: "codex",
+			id: "switch-successful-retry",
+			state: "starting_target",
+			targetHarness: "claude-code",
+		} satisfies AgentSwitchSummary;
+		agentSwitchState.data = [retrySwitch, failedSwitch];
+		act(() => {
+			queryClient.setQueryData(agentSwitchesQueryKey(session.id), [retrySwitch, failedSwitch]);
+		});
+		view.rerender(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={{ ...session, activeAgentSwitch: retrySwitch }} />
+			</Wrapper>,
+		);
+		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
+			"data-outcome",
+			"in_progress",
+		);
+
+		const completedRetry = {
+			...retrySwitch,
+			state: "completed",
+		} satisfies AgentSwitchSummary;
+		vi.useFakeTimers();
+		conversationState.snapshot = { capabilities: [], controller: { state: "ready" } };
+		agentSwitchState.data = [completedRetry, failedSwitch];
+		act(() => {
+			queryClient.setQueryData(agentSwitchesQueryKey(session.id), [completedRetry, failedSwitch]);
+		});
+		view.rerender(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={{ ...session, provider: "claude-code" }} />
+			</Wrapper>,
+		);
+
+		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
+			"data-outcome",
+			"success",
+		);
+		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
+			"data-outcome",
+			"success",
+		);
+
+		act(() => vi.advanceTimersByTime(3_000));
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
+			"data-outcome",
+			"success",
 		);
 	});
 

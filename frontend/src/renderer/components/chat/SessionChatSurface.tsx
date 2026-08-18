@@ -124,12 +124,14 @@ export function SessionChatSurface({
 	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const observedNonterminalSwitchIdsRef = useRef(new Set<string>());
 	const mountedSessionIdRef = useRef(session.id);
+	const [transientSuccessSwitchId, setTransientSuccessSwitchId] = useState<string>();
 	const [dismissedFailureSwitchId, setDismissedFailureSwitchId] = useState<string>();
 	if (mountedSessionIdRef.current !== session.id) {
 		mountedSessionIdRef.current = session.id;
 		observedNonterminalSwitchIdsRef.current = new Set();
 	}
 	useEffect(() => {
+		setTransientSuccessSwitchId(undefined);
 		setDismissedFailureSwitchId(undefined);
 	}, [session.id]);
 	const switchMutation = useSwitchAgentState(session.id);
@@ -143,6 +145,8 @@ export function SessionChatSurface({
 		(entry) =>
 			entry.state === "failed" && observedNonterminalSwitchIdsRef.current.has(entry.id),
 	);
+	const latestCompletedSwitch =
+		agentSwitches[0]?.state === "completed" ? agentSwitches[0] : undefined;
 	const durableAgentSwitch = selectDurableAgentSwitch(session.activeAgentSwitch, agentSwitches);
 	const admissionAgentSwitch: AgentSwitchSummary | undefined =
 		!durableAgentSwitch && switchMutation.isPending && switchMutation.input
@@ -154,7 +158,8 @@ export function SessionChatSurface({
 				targetHarness: switchMutation.input.targetHarness,
 			}
 			: undefined;
-	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedFailedSwitch;
+	const agentSwitch =
+		durableAgentSwitch ?? admissionAgentSwitch ?? latestCompletedSwitch ?? observedFailedSwitch;
 	if (agentSwitch && !isTerminalAgentSwitch(agentSwitch)) {
 		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
 	}
@@ -172,10 +177,29 @@ export function SessionChatSurface({
 				terminalHandleId: targetChatControllerReady ? "chat-controller" : undefined,
 			})
 		: undefined;
+	const observedSettledSwitch = Boolean(
+		agentSwitch &&
+			switchPresentation?.outcome === "success" &&
+			observedNonterminalSwitchIdsRef.current.has(agentSwitch.id),
+	);
+	useEffect(() => {
+		if (!observedSettledSwitch || !agentSwitch) return;
+		setTransientSuccessSwitchId(agentSwitch.id);
+		const timer = window.setTimeout(() => {
+			setTransientSuccessSwitchId((current) =>
+				current === agentSwitch.id ? undefined : current,
+			);
+		}, 3_000);
+		return () => window.clearTimeout(timer);
+	}, [agentSwitch?.id, observedSettledSwitch]);
 	const shownSwitchPresentation =
 		switchPresentation?.outcome === "failure" && dismissedFailureSwitchId === agentSwitch?.id
 			? undefined
-			: switchPresentation;
+			: switchPresentation?.outcome === "success"
+				? transientSuccessSwitchId === agentSwitch?.id
+					? switchPresentation
+					: undefined
+				: switchPresentation;
 	const switchLocksChat = Boolean(
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
