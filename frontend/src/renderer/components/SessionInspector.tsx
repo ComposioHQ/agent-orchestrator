@@ -68,6 +68,8 @@ import { Switch } from "./ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
+import { EmulatorPanel } from "./EmulatorPanel";
+import { isMacPlatform } from "../lib/platform";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
 import {
 	openReviewStatesFor,
@@ -86,7 +88,7 @@ export type { InspectorView } from "@aoagents/product-ui";
 
 const VIEW_DEFS: {
 	id: InspectorView;
-	labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files";
+	labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files" | "inspector.emulator";
 	icon: ReactNode;
 }[] = [
 	{
@@ -123,6 +125,11 @@ const VIEW_DEFS: {
 		id: "files",
 		labelKey: "inspector.files",
 		icon: <FilesIcon aria-hidden="true" />,
+	},
+	{
+		id: "emulator",
+		labelKey: "inspector.emulator",
+		icon: <span aria-hidden="true">▣</span>,
 	},
 ];
 
@@ -165,6 +172,13 @@ export function SessionInspector({
 	const { t } = useTranslation();
 	const [internalView, setInternalView] = useState<InspectorView>("summary");
 	const requestedView = viewProp ?? internalView;
+	// The Emulator is opt-in: it only exists as a tab after the user switches
+	// "Mobile Emulator" on in Settings. Without the toggle the tab is absent.
+	const mobileEmulatorEnabled = useUiStore((state) => state.mobileEmulatorEnabled);
+	const emulatorAvailable = isMacPlatform() && mobileEmulatorEnabled;
+	// A session that was on the Emulator tab loses it when the toggle is off;
+	// clamp back to Summary instead of rendering an orphaned panel.
+	const view: InspectorView = requestedView === "emulator" && !emulatorAvailable ? "summary" : requestedView;
 	// Badge the Browser tab when a preview target arrived without us opening it.
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
@@ -175,8 +189,7 @@ export function SessionInspector({
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
-	const view: InspectorView = requestedView;
-	const tabs = VIEW_DEFS.map((entry) => {
+	const tabs = VIEW_DEFS.filter((entry) => entry.id !== "emulator" || emulatorAvailable).map((entry) => {
 		const label = t(entry.labelKey);
 		return {
 			...entry,
@@ -206,6 +219,7 @@ export function SessionInspector({
 				) : undefined
 			}
 			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
+			emulatorView={session && emulatorAvailable ? <EmulatorPanel active={isInspectorVisible} /> : undefined}
 			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
 			isVisible={isInspectorVisible}
 			loadingText={session ? undefined : t("inspector.loadingSession")}
