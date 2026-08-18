@@ -269,7 +269,10 @@ export function BrowserPanelView({
 		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
 	}, []);
 
-	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
+	// Docked DevTools belongs to the native page view, which is intentionally
+	// hidden while the active target is blank. Keep close available for any
+	// in-flight state update, but do not offer an open action with no page.
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId) && Boolean(navState.url || devtoolsState.open);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
