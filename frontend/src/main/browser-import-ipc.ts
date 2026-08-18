@@ -136,7 +136,8 @@ export function registerBrowserImportIPC({
   const requireTrustedSender = (
     event: IpcMainInvokeEvent,
   ): BrowserImportController => {
-    if (!getTrustedSender() || event.sender !== getTrustedSender()) {
+    const trustedSender = getTrustedSender();
+    if (!trustedSender || event.sender !== trustedSender) {
       throw new Error("Browser import is only available to the AO shell");
     }
     return getController();
