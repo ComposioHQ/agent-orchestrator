@@ -5,8 +5,9 @@ import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
+import { BrowserImportSection } from "./settings/BrowserImportSection";
 
-export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
+export type GlobalSettingsSection = "general" | "browser" | "updates" | "help" | "all";
 
 export function GlobalSettingsForm({
 	section = "all",
@@ -46,6 +47,7 @@ export function GlobalSettingsForm({
 					</>
 				)}
 				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
+				{(section === "all" || section === "browser") && <BrowserImportSection titleHidden={leadingTitleHidden} />}
 				{(section === "all" || section === "help") && (
 					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
 						<SettingsLinkRow label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />

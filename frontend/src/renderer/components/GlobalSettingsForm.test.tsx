@@ -28,6 +28,10 @@ const {
 	getKeybindings,
 	setKeybindings,
 	setKeybindingRecording,
+	browserImportDetect,
+	browserImportRun,
+	browserImportStatus,
+	browserImportUseEphemeral,
 } = vi.hoisted(() => ({
 	getUpdate: vi.fn(),
 	setUpdate: vi.fn(),
@@ -49,6 +53,10 @@ const {
 	getKeybindings: vi.fn(),
 	setKeybindings: vi.fn(),
 	setKeybindingRecording: vi.fn(),
+	browserImportDetect: vi.fn(),
+	browserImportRun: vi.fn(),
+	browserImportStatus: vi.fn(),
+	browserImportUseEphemeral: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => {
@@ -80,6 +88,12 @@ vi.mock("../lib/bridge", () => ({
 			onStatus: updOnStatus,
 		},
 		featureBuilds: { list: featListBuilds, getActive: featGetActive },
+		browserImport: {
+			detect: browserImportDetect,
+			import: browserImportRun,
+			getStatus: browserImportStatus,
+			useEphemeral: browserImportUseEphemeral,
+		},
 	},
 }));
 
@@ -115,6 +129,10 @@ beforeEach(async () => {
 		getKeybindings,
 		setKeybindings,
 		setKeybindingRecording,
+		browserImportDetect,
+		browserImportRun,
+		browserImportStatus,
+		browserImportUseEphemeral,
 	]) {
 		m.mockReset();
 	}
@@ -139,6 +157,17 @@ beforeEach(async () => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
+	browserImportDetect.mockResolvedValue({ sources: [], supportedData: ["bookmarks"] });
+	browserImportRun.mockResolvedValue({
+		sourceBrowser: "chrome",
+		sourceProfile: "Default profile",
+		importedBookmarks: 0,
+		skippedBookmarks: 0,
+		destination: "ao-persistent-browser",
+		persistence: "persistent",
+	});
+	browserImportStatus.mockResolvedValue({ persistence: "ephemeral", destinationActive: false, summary: null });
+	browserImportUseEphemeral.mockResolvedValue({ persistence: "ephemeral", destinationActive: false, summary: null });
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
