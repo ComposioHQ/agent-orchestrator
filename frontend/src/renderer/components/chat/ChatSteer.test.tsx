@@ -107,11 +107,11 @@ describe("ChatComposer steering", () => {
 		);
 	});
 
-	it("keeps attachment-only drafts out of steer and available to queue", async () => {
+	it("stages attachment-only drafts and includes them in steer", async () => {
 		const onSteer = vi.fn().mockResolvedValue(undefined);
 		const onSend = vi.fn();
 		const stage = vi.fn().mockResolvedValue([".ao/attachments/shot.png"]);
-		composer({ onSteer, onSend, onStageAttachments: stage });
+		composer({ onSteer, onSend, onStageAttachments: stage, nativeImages: true });
 
 		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
 
@@ -120,22 +120,14 @@ describe("ChatComposer steering", () => {
 		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
 		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
 
-		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeEnabled();
 		await userEvent.keyboard("{Enter}");
-		expect(onSteer).not.toHaveBeenCalled();
-		expect(onSend).not.toHaveBeenCalled();
-		expect(stage).not.toHaveBeenCalled();
-		expect(screen.getAllByRole("listitem")).toHaveLength(1);
-
-		await userEvent.click(screen.getByRole("button", { name: "Queue for next" }));
-		expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
-		await userEvent.click(field);
-		await userEvent.keyboard("{Enter}");
-
 		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
-		expect(onSend).toHaveBeenCalledWith(
+		expect(onSteer).toHaveBeenCalledWith(
 			"Attached files (read these files in the workspace):\n- .ao/attachments/shot.png",
+			[{ mimeType: "image/png", data: expect.any(String) }],
 		);
+		expect(onSend).not.toHaveBeenCalled();
 		await waitFor(() => expect(screen.queryAllByRole("listitem")).toHaveLength(0));
 	});
 

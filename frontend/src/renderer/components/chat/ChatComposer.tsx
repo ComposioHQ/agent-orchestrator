@@ -128,7 +128,7 @@ export function ChatComposer({
 	 * Deliver this text into the turn already running. Absent means the harness
 	 * cannot steer and the choice is never offered.
 	 */
-	onSteer?: (text: string) => Promise<unknown>;
+	onSteer?: (text: string, attachments?: FileAttachmentPayload[]) => Promise<unknown>;
 	/** Stop the turn already running when there is no draft to send. */
 	onInterrupt?: () => void;
 	/** A turn is actually running, so there is something to steer into. */
@@ -231,11 +231,7 @@ export function ChatComposer({
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	// Attachments cannot be steered: the steer branch delivers text only and refuses
-	// an empty body. A staged file must not light up the send button on its own while
-	// steering is armed, or Enter would silently do nothing.
-	const canSend =
-		(text.trim().length > 0 || (staged && !steering)) && !busy && !disabled && !steerPending;
+	const canSend = hasDraft && !busy && !disabled && !steerPending;
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
@@ -339,27 +335,13 @@ export function ChatComposer({
 			return;
 		}
 
-		// Steering keeps the text in the box until the provider has taken it. The turn
-		// is already running, so a refusal is a real possibility — and a refusal that
-		// had already cleared the composer would lose what the user typed.
-		if (steering && onSteer) {
-			if (body === "") return;
-			try {
-				await onSteer(body);
-			} catch {
-				// The refusal is the daemon's typed answer and the surface renders it from
-				// `steerRefusal`; keep the draft, but arm the reliable queue path for the
-				// next Enter in case the turn ended while the user was typing.
-				setDelivery("queue");
+		let message = body;
+		let nativePayloads: FileAttachmentPayload[] = [];
+		if (staged) {
+			if (!onStageAttachments) {
+				setSendError("The files could not be attached. Nothing was sent.");
 				return;
 			}
-			applyText("", 0);
-			setDismissedAt(null);
-			setHighlighted(0);
-			return;
-		}
-
-		if (staged && onStageAttachments) {
 			// Staged before the send so a failed write is reported instead of a
 			// message that claims attachments the agent cannot open.
 			let paths: string[];
@@ -375,26 +357,48 @@ export function ChatComposer({
 				setSendError("The files could not be attached. Nothing was sent.");
 				return;
 			}
+			message = withAttachmentReferences(body, paths);
+			nativePayloads = fileAttachments
+				.toPayload()
+				.filter((attachment) => isSupportedImageAttachment(attachment.mimeType));
+		}
+
+		// Steering keeps the draft and attachments in the box until the provider has
+		// taken them. The turn is already running, so a refusal is a real possibility —
+		// and clearing early would lose context the user intended to send.
+		if (steering && onSteer) {
 			try {
-				const message = withAttachmentReferences(body, paths);
-				const nativePayloads = fileAttachments
-					.toPayload()
-					.filter((attachment) => isSupportedImageAttachment(attachment.mimeType));
-				if (nativeImages && nativePayloads.length > 0) await onSend(message, nativePayloads);
-				else await onSend(message);
+				if (nativeImages && nativePayloads.length > 0) await onSteer(message, nativePayloads);
+				else await onSteer(message);
 			} catch {
-				setSendError("Message not sent. Your draft and attachments were kept so you can retry.");
+				// The refusal is the daemon's typed answer and the surface renders it from
+				// `steerRefusal`; keep the draft, but arm the reliable queue path for the
+				// next Enter in case the turn ended while the user was typing.
+				setDelivery("queue");
 				return;
 			}
 			stagedDelivery.current = null;
+			if (staged) fileAttachments.clear();
+			applyText("", 0);
+			setDismissedAt(null);
+			setHighlighted(0);
+			return;
+		}
+
+		try {
+			if (nativeImages && nativePayloads.length > 0) await onSend(message, nativePayloads);
+			else await onSend(message);
+		} catch {
+			setSendError(
+				staged
+					? "Message not sent. Your draft and attachments were kept so you can retry."
+					: "Message not sent. Your draft was kept so you can retry.",
+			);
+			return;
+		}
+		if (staged) {
+			stagedDelivery.current = null;
 			fileAttachments.clear();
-		} else {
-			try {
-				await onSend(body);
-			} catch {
-				setSendError("Message not sent. Your draft was kept so you can retry.");
-				return;
-			}
 		}
 
 		applyText("", 0);
