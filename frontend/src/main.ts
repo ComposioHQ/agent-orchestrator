@@ -1746,9 +1746,9 @@ ipcMain.handle(
 			toast.show();
 		}
 
-		// Dock (macOS) / taskbar (Windows/Linux) attention signal — only for the
-		// actionable types. A merged/closed PR still toasts above, but shouldn't
-		// bounce the dock as insistently as an agent blocked waiting on the user.
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal. Every
+		// notification signals — urgency is carried by the bounce type, so a
+		// merged PR bounces once while a blocked agent keeps bouncing.
 		if (shouldSignalAttention(notification.type)) {
 			if (process.platform === "darwin" && app.dock) {
 				// A focus listener from an earlier un-cancelled bounce still works for

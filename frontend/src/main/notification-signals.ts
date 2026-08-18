@@ -12,15 +12,17 @@
 export type NotificationType = "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
 
 /**
- * Types that warrant an *active* attention signal (macOS dock bounce / Windows &
- * Linux taskbar flash). A merged or closed PR is worth a toast, but should not
- * demand attention as insistently as an agent blocked waiting on the user.
+ * Whether to fire an *active* attention signal (macOS dock bounce / Windows &
+ * Linux taskbar flash). Every notification gets one: if it was worth telling the
+ * user about, it is worth pulling their eye to the app they are not looking at.
+ *
+ * Deliberately default-on rather than an allowlist, for the same reason as
+ * {@link shouldToast}: adding a type in `notification.go` can never silently
+ * lose its signal. Urgency is expressed by {@link dockBounceType}, not by
+ * withholding the signal.
  */
-const ATTENTION_TYPES: ReadonlySet<string> = new Set<NotificationType>(["needs_input", "ready_to_merge"]);
-
-/** Whether this notification type should bounce the dock / flash the taskbar. */
-export function shouldSignalAttention(type: string | undefined): boolean {
-	return type !== undefined && ATTENTION_TYPES.has(type);
+export function shouldSignalAttention(_type: string | undefined): boolean {
+	return true;
 }
 
 /**
@@ -35,8 +37,8 @@ export function shouldToast(notification: { title?: string }, isSupported: boole
 /**
  * macOS dock bounce style. A blocked agent waiting on the user keeps bouncing
  * until the app is activated ("critical"); anything else bounces once
- * ("informational"). Callers should only use this when
- * {@link shouldSignalAttention} is true.
+ * ("informational"). This is where urgency lives, so every notification can
+ * signal without a merged PR nagging as insistently as a blocked agent.
  */
 export function dockBounceType(type: string | undefined): "critical" | "informational" {
 	return type === "needs_input" ? "critical" : "informational";

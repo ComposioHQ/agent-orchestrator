@@ -24,19 +24,15 @@ describe("shouldToast", () => {
 });
 
 describe("shouldSignalAttention", () => {
-	it("signals for the actionable types", () => {
-		expect(shouldSignalAttention("needs_input")).toBe(true);
-		expect(shouldSignalAttention("ready_to_merge")).toBe(true);
+	it("signals for every backend notification type", () => {
+		for (const type of ALL_TYPES) {
+			expect(shouldSignalAttention(type)).toBe(true);
+		}
 	});
 
-	it("does not bounce/flash for informational PR outcomes", () => {
-		expect(shouldSignalAttention("pr_merged")).toBe(false);
-		expect(shouldSignalAttention("pr_closed_unmerged")).toBe(false);
-	});
-
-	it("does not signal for unknown or missing types", () => {
-		expect(shouldSignalAttention("some_future_type")).toBe(false);
-		expect(shouldSignalAttention(undefined)).toBe(false);
+	it("is default-on, so a new type cannot silently lose its signal", () => {
+		expect(shouldSignalAttention("some_future_type")).toBe(true);
+		expect(shouldSignalAttention(undefined)).toBe(true);
 	});
 });
 
@@ -45,8 +41,13 @@ describe("dockBounceType", () => {
 		expect(dockBounceType("needs_input")).toBe("critical");
 	});
 
-	it("bounces informationally for everything else", () => {
-		expect(dockBounceType("ready_to_merge")).toBe("informational");
+	it("bounces once for the other backend types", () => {
+		for (const type of ALL_TYPES.filter((t) => t !== "needs_input")) {
+			expect(dockBounceType(type)).toBe("informational");
+		}
+	});
+
+	it("bounces once for unknown or missing types", () => {
 		expect(dockBounceType("some_future_type")).toBe("informational");
 		expect(dockBounceType(undefined)).toBe("informational");
 	});
