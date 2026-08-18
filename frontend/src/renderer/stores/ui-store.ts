@@ -55,6 +55,8 @@ type UiState = {
 	themeStyle: ThemeStyle;
 	/** When true, the Emulator tab is available in the session inspector. Default off — the Android emulator is a heavy, opt-in feature (multi-GB SDK download, a full VM). */
 	emulatorEnabled: boolean;
+	/** When true, developer-only release controls are available. Default off. */
+	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -85,6 +87,7 @@ type UiState = {
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
+	setDeveloperMode: (enabled: boolean) => void;
 	openGlobalSettings: () => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
@@ -117,6 +120,7 @@ export type OrchestratorReplacementFailure = {
 
 const sidebarStorageKey = "ao.sidebar.open";
 const emulatorEnabledStorageKey = "ao.emulatorEnabled";
+const developerModeStorageKey = "ao.developerMode";
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -129,6 +133,10 @@ function initialSidebarOpen() {
 
 function initialEmulatorEnabled() {
 	return getLocalStorage()?.getItem(emulatorEnabledStorageKey) === "true";
+}
+
+function initialDeveloperMode() {
+	return getLocalStorage()?.getItem(developerModeStorageKey) === "true";
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
@@ -148,6 +156,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	resolvedTheme: resolveTheme(initialThemePreference),
 	themeStyle: initialThemeStyle,
 	emulatorEnabled: initialEmulatorEnabled(),
+	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -173,6 +182,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 			applyDocumentThemeStyle(themeStyle);
 			set({ themeStyle });
 		});
+	},
+	setDeveloperMode: (developerMode) => {
+		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
+		set({ developerMode });
 	},
 	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),

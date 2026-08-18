@@ -263,6 +263,10 @@ var (
 	// ErrWorkspaceBranchNotFetched reports the requested branch exists nowhere
 	// reachable (no local head, no remote-tracking branch, no tag).
 	ErrWorkspaceBranchNotFetched = errors.New("workspace: branch is not fetched")
+	// ErrWorkspaceDefaultBranchUnresolved reports that automatic branch
+	// selection found no authoritative repository default. Callers should ask
+	// the user to configure a branch instead of guessing from the checkout.
+	ErrWorkspaceDefaultBranchUnresolved = errors.New("workspace: default branch is unresolved")
 	// ErrWorkspaceBranchInvalid reports the requested branch name is not a valid
 	// git ref (rejected by `git check-ref-format`).
 	ErrWorkspaceBranchInvalid = errors.New("workspace: invalid branch name")
@@ -318,9 +322,15 @@ type WorkspaceConfig struct {
 	// orchestrator worktree. Defaults to a truncation of ProjectID when empty.
 	SessionPrefix string
 	Branch        string
-	// BaseBranch is the per-project default branch new session branches are
-	// created from. Empty falls back to the workspace adapter's own default.
+	// BaseBranch is the explicitly configured branch new session branches are
+	// created from. Empty asks the workspace adapter to resolve an authoritative
+	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
+	// BaseRef is the repository-default comparison ref recorded when this
+	// workspace was first created. Restore carries it forward without
+	// re-resolving repository defaults; Create ignores it and resolves the
+	// current base itself.
+	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
 	// Path optionally supplies an existing managed worktree path for restore.
@@ -329,8 +339,11 @@ type WorkspaceConfig struct {
 
 // WorkspaceInfo describes a created workspace — where it lives and its branch.
 type WorkspaceInfo struct {
-	Path      string
-	Branch    string
+	Path   string
+	Branch string
+	// BaseRef is the repository-default ref selected for session comparisons.
+	// It can differ from the remote session ref used to seed the worktree.
+	BaseRef   string
 	SessionID domain.SessionID
 	ProjectID domain.ProjectID
 	// RepoPath optionally overrides ProjectID-based repo resolution. It is used
@@ -348,8 +361,10 @@ type WorkspaceProjectConfig struct {
 	SessionPrefix string
 	Branch        string
 	RootRepoPath  string
-	BaseBranch    string
-	Repos         []WorkspaceProjectRepoConfig
+	// BaseBranch applies only to RootRepoPath. Empty asks the workspace adapter
+	// to resolve that repository's default independently from every child.
+	BaseBranch string
+	Repos      []WorkspaceProjectRepoConfig
 }
 
 // WorkspaceProjectRepoConfig describes one registered child repo in a
@@ -358,7 +373,9 @@ type WorkspaceProjectRepoConfig struct {
 	Name         string
 	RelativePath string
 	RepoPath     string
-	BaseBranch   string
+	// BaseBranch applies only to RepoPath. Empty asks the workspace adapter to
+	// resolve this repository's default independently from the workspace root.
+	BaseBranch string
 }
 
 // WorkspaceProjectInfo returns the root worktree plus every child worktree.
@@ -371,11 +388,15 @@ type WorkspaceProjectInfo struct {
 // WorkspaceRepoInfo describes one materialized repo worktree in a workspace
 // project session.
 type WorkspaceRepoInfo struct {
-	RepoName     string
-	RepoPath     string
-	Path         string
-	Branch       string
-	BaseSHA      string
+	RepoName string
+	RepoPath string
+	Path     string
+	Branch   string
+	BaseSHA  string
+	// BaseRef is the repository-default ref persisted with BaseSHA so comparisons
+	// can recompute a merge base after that default advances or the session is
+	// rebased. It can differ from the remote session ref used to seed the worktree.
+	BaseRef      string
 	SessionID    domain.SessionID
 	ProjectID    domain.ProjectID
 	RelativePath string
