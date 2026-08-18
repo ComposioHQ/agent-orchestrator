@@ -90,6 +90,7 @@ export function CreateProjectFlow({
 			setCloneDialogOpen(true);
 			return;
 		}
+		setCloneSelection(null);
 		// Keep the selector mounted behind the native picker. Closing it first
 		// exposes a blank compositor frame on Windows before Explorer takes focus.
 		void chooseDirectory(source === "workspace" ? "workspace" : "single_repo");

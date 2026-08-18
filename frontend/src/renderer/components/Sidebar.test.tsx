@@ -672,6 +672,58 @@ describe("Sidebar", () => {
 		);
 	});
 
+	it("creates the selected local repository after backing out of a clone", async () => {
+		const user = userEvent.setup();
+		const onCloneProject = vi.fn().mockResolvedValue(undefined) as CloneProjectHandler;
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		window.ao!.app.chooseDirectory = vi
+			.fn()
+			.mockResolvedValueOnce("/repo")
+			.mockResolvedValueOnce("/repo/local-project");
+		window.ao!.app.scanImportFolder = vi.fn().mockResolvedValue({
+			path: "/repo/local-project",
+			repos: [
+				{
+					name: "local-project",
+					path: "/repo/local-project",
+					relativePath: ".",
+					branch: "main",
+					remote: "origin",
+					hasRemote: true,
+					status: "ok",
+				},
+			],
+		});
+		renderSidebar({ onCloneProject, onCreateProject });
+
+		await user.click(screen.getByLabelText("New project"));
+		await user.click(screen.getByRole("button", { name: "Clone from Git" }));
+		await user.type(
+			await screen.findByRole("textbox", { name: "Repository URL" }),
+			"git@github.com:acme/web-app.git",
+		);
+		await user.click(screen.getByRole("button", { name: "Choose" }));
+		await user.click(await screen.findByRole("button", { name: "Continue" }));
+
+		await user.click(await screen.findByRole("button", { name: "Back to clone details" }));
+		await user.click(await screen.findByRole("button", { name: "Back to code source" }));
+		await user.click(await screen.findByRole("button", { name: /^Open local repository$/i }));
+
+		expect(await screen.findByText("/repo/local-project")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() =>
+			expect(onCreateProject).toHaveBeenCalledWith(
+				expect.objectContaining({
+					path: "/repo/local-project",
+					workerAgent: "claude-code",
+					orchestratorAgent: "claude-code",
+				}),
+			),
+		);
+		expect(onCloneProject).not.toHaveBeenCalled();
+	});
+
 	it("prioritizes authorized project agents by preferred agent order", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
