@@ -469,6 +469,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clone and register a project from a git repository URL */
+        post: operations["cloneProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/initialize": {
         parameters: {
             query?: never;
@@ -1809,6 +1826,13 @@ export interface components {
         CleanupSkippedSession: {
             reason: string;
             sessionId: string;
+        };
+        CloneProjectInput: {
+            config?: components["schemas"]["ProjectConfig"];
+            destinationParent: string;
+            name?: null | string;
+            projectId?: null | string;
+            remoteUrl: string;
         };
         CompactConversationResponse: {
             /** Format: int64 */
@@ -4655,6 +4679,57 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cloneProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloneProjectInput"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

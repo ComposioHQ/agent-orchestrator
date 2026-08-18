@@ -6,7 +6,7 @@ import {
 } from "@aoagents/product-ui";
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
-import { TriangleAlert, X, type LucideIcon } from "lucide-react";
+import { ChevronLeft, TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useState, type ReactNode } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -28,6 +28,7 @@ import type { ProjectKind } from "../types/workspace";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { appI18n } from "../i18n";
+import { Button } from "./ui/button";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
@@ -42,10 +43,12 @@ export type CreateProjectAgentSelection = {
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
+	action?: "create" | "clone";
 	isCreating: boolean;
 	isInitializing?: boolean;
 	kind: ProjectKind;
 	onOpenChange: (open: boolean) => void;
+	onBack?: () => void;
 	onSubmit: (selection: CreateProjectAgentSelection) => Promise<void>;
 	open: boolean;
 	path: string | null;
@@ -59,7 +62,7 @@ type SheetError = {
 	tone: "warning" | "error";
 };
 
-function projectSheetError(error: string): SheetError {
+function projectSheetError(error: string, action: "create" | "clone"): SheetError {
 	const setupMessage = error.replace(/^Setup failed:\s*/i, "").trim();
 	const codeMatch = setupMessage.match(/\(([A-Z0-9_]+)\)\s*$/);
 	const code = codeMatch?.[1];
@@ -88,7 +91,9 @@ function projectSheetError(error: string): SheetError {
 			return {
 				title: error.toLowerCase().startsWith("setup failed:")
 					? appI18n.t("createProject.error.setupFailedTitle")
-					: appI18n.t("createProject.error.createFailedTitle"),
+					: action === "clone"
+						? appI18n.t("createProject.cloneFailedTitle")
+						: appI18n.t("createProject.error.createFailedTitle"),
 				message: message || appI18n.t("createProject.error.tryAgain"),
 				tone: "error",
 			};
@@ -96,10 +101,12 @@ function projectSheetError(error: string): SheetError {
 }
 
 export function CreateProjectAgentSheet({
+	action = "create",
 	error,
 	isCreating,
 	isInitializing = false,
 	kind,
+	onBack,
 	onOpenChange,
 	onSubmit,
 	open,
@@ -149,7 +156,7 @@ export function CreateProjectAgentSheet({
 		!intakeIncomplete &&
 		!isBusy &&
 		!isLoadingAgents;
-	const sheetError = error ? projectSheetError(error) : null;
+	const sheetError = error ? projectSheetError(error, action) : null;
 
 	useEffect(() => {
 		if (!open) return;
@@ -180,6 +187,20 @@ export function CreateProjectAgentSheet({
 						closeIcon={<X className="size-icon-base" aria-hidden="true" />}
 						closeLabel={t("createProject.closeAgents")}
 						disabled={isBusy}
+						leadingAction={
+							onBack ? (
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									aria-label={t("createProject.cloneBackToDetails")}
+									disabled={isBusy}
+									onClick={onBack}
+								>
+									<ChevronLeft className="size-4" aria-hidden="true" />
+								</Button>
+							) : undefined
+						}
 						path={path ?? ""}
 						title={
 							kind === "workspace"
@@ -282,10 +303,14 @@ export function CreateProjectAgentSheet({
 							isInitializing
 								? t("createProject.settingUp")
 								: isCreating
-									? t("createProject.creating")
-									: kind === "workspace"
-										? t("createProject.createWorkspaceAndStart")
-										: t("createProject.createAndStart")
+									? action === "clone"
+										? t("createProject.cloning")
+										: t("createProject.creating")
+									: action === "clone"
+										? t("createProject.cloneAndStart")
+										: kind === "workspace"
+											? t("createProject.createWorkspaceAndStart")
+											: t("createProject.createAndStart")
 						}
 					/>
 				</Dialog.Content>
