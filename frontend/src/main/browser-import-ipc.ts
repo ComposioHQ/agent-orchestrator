@@ -5,6 +5,12 @@ import type {
   BrowserImportScan,
   createBrowserImportEngine,
 } from "./browser-import-engine";
+import {
+  browserBookmarkSummary,
+  browserBookmarkView,
+  type BrowserBookmarkStorage,
+  type BrowserBookmarkView,
+} from "./browser-bookmark-store";
 import type {
   BrowserImportSummary,
   BrowserProfilePersistence,
@@ -16,6 +22,7 @@ export const BROWSER_IMPORT_IMPORT_CHANNEL = "browserImport:import";
 export const BROWSER_IMPORT_STATUS_CHANNEL = "browserImport:getStatus";
 export const BROWSER_IMPORT_USE_EPHEMERAL_CHANNEL =
   "browserImport:useEphemeral";
+export const BROWSER_BOOKMARKS_GET_CHANNEL = "browserBookmarks:get";
 
 export type BrowserImportStatus = {
   persistence: BrowserProfilePersistence;
@@ -25,7 +32,7 @@ export type BrowserImportStatus = {
 
 export type BrowserImportActivationRequest = {
   sourceId: string;
-  activate: boolean;
+  activate: true;
 };
 
 export type BrowserImportResponse = BrowserImportResult & {
@@ -42,6 +49,7 @@ export type BrowserImportController = {
   importSource: (input: unknown) => Promise<BrowserImportResponse>;
   getStatus: () => Promise<BrowserImportStatus>;
   useEphemeral: () => Promise<BrowserImportStatus>;
+  getBookmarks: () => Promise<BrowserBookmarkView | null>;
 };
 
 function parseActivationRequest(
@@ -57,18 +65,20 @@ function parseActivationRequest(
   ) {
     throw new Error("Invalid browser import source");
   }
-  if (typeof request.activate !== "boolean")
-    throw new Error("Browser import activation must be explicit");
-  return { sourceId: request.sourceId, activate: request.activate };
+  if (request.activate !== true)
+    throw new Error("Browser import activation must be true");
+  return { sourceId: request.sourceId, activate: true };
 }
 
 export function createBrowserImportController({
   engine,
   profileStorage,
+  bookmarkStorage,
   now = () => new Date(),
 }: {
   engine: BrowserImportEngine;
   profileStorage: BrowserProfileStorage;
+  bookmarkStorage: BrowserBookmarkStorage;
   now?: () => Date;
 }): BrowserImportController {
   let operationQueue: Promise<unknown> = Promise.resolve();
@@ -84,7 +94,7 @@ export function createBrowserImportController({
   const getStatus = async (): Promise<BrowserImportStatus> => ({
     persistence: profileStorage.getPersistence(),
     destinationActive: profileStorage.isPersistentDestinationActive(),
-    summary: await profileStorage.readImportSummary(),
+    summary: browserBookmarkSummary(await bookmarkStorage.read()),
   });
 
   return {
@@ -93,33 +103,39 @@ export function createBrowserImportController({
       runOperation(async () => {
         const request = parseActivationRequest(input);
         const result = await engine.importSource(request.sourceId);
-        let activated = false;
+        const document = {
+          version: 1 as const,
+          source: {
+            browser: result.sourceBrowser,
+            profile: result.sourceProfile,
+            fingerprint: result.sourceFingerprint,
+          },
+          importedAt: now().toISOString(),
+          importedBookmarks: result.importedBookmarks,
+          skippedBookmarks: result.skippedBookmarks,
+          roots: result.bookmarks,
+        };
+        const committed = await bookmarkStorage.write(document);
         try {
-          if (request.activate) {
-            await profileStorage.selectPersistence("persistent");
-            activated = true;
-          }
-          await profileStorage.writeImportSummary({
-            sourceBrowser: result.sourceBrowser,
-            sourceProfile: result.sourceProfile,
-            importedBookmarks: result.importedBookmarks,
-            skippedBookmarks: result.skippedBookmarks,
-            importedAt: now().toISOString(),
-          });
+          await profileStorage.selectPersistence("persistent");
         } catch (error) {
-          if (activated)
-            await profileStorage
-              .selectPersistence("ephemeral")
-              .catch(() => undefined);
+          if (committed.created)
+            await bookmarkStorage.removeIfMatches(document).catch(() => undefined);
           throw error;
         }
-        return { ...result, persistence: profileStorage.getPersistence() };
+        const { bookmarks: _bookmarks, sourceFingerprint: _sourceFingerprint, ...response } = result;
+        return { ...response, persistence: profileStorage.getPersistence() };
       }),
     getStatus: () => runOperation(getStatus),
     useEphemeral: () =>
       runOperation(async () => {
         await profileStorage.selectPersistence("ephemeral");
         return getStatus();
+      }),
+    getBookmarks: () =>
+      runOperation(async () => {
+        const document = await bookmarkStorage.read();
+        return document ? browserBookmarkView(document) : null;
       }),
   };
 }
@@ -145,14 +161,19 @@ export function registerBrowserImportIPC({
   ipcMain.handle(BROWSER_IMPORT_DETECT_CHANNEL, (event) =>
     requireTrustedSender(event).detect(),
   );
-  ipcMain.handle(BROWSER_IMPORT_IMPORT_CHANNEL, (event, input: unknown) =>
-    requireTrustedSender(event).importSource(input),
-  );
+  ipcMain.handle(BROWSER_IMPORT_IMPORT_CHANNEL, (event, input: unknown) => {
+    const controller = requireTrustedSender(event);
+    parseActivationRequest(input);
+    return controller.importSource(input);
+  });
   ipcMain.handle(BROWSER_IMPORT_STATUS_CHANNEL, (event) =>
     requireTrustedSender(event).getStatus(),
   );
   ipcMain.handle(BROWSER_IMPORT_USE_EPHEMERAL_CHANNEL, (event) =>
     requireTrustedSender(event).useEphemeral(),
+  );
+  ipcMain.handle(BROWSER_BOOKMARKS_GET_CHANNEL, (event) =>
+    requireTrustedSender(event).getBookmarks(),
   );
 }
 

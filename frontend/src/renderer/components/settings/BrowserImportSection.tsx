@@ -33,6 +33,8 @@ function errorMessage(error: unknown, t: TFunction): string {
     return t("settings.browser.sourceUnavailable");
   if (/already active|close its workers/i.test(message))
     return t("settings.browser.destinationActive");
+  if (/already has imported bookmarks|another source|already contains/i.test(message))
+    return t("settings.browser.destinationNotEmpty");
   return t("settings.browser.failed");
 }
 

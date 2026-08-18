@@ -10,7 +10,6 @@ import {
 	nativeImage,
 	Notification as ElectronNotification,
 	protocol,
-	session,
 	shell,
 	WebContentsView,
 	webContents,
@@ -82,7 +81,8 @@ import {
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
-import { AO_BROWSER_PERSISTENT_PARTITION, createBrowserProfileStorage } from "./main/browser-profile-storage";
+import { createBrowserProfileStorage } from "./main/browser-profile-storage";
+import { createBrowserBookmarkStorage } from "./main/browser-bookmark-store";
 import { createBrowserImportEngine } from "./main/browser-import-engine";
 import {
 	createBrowserImportController,
@@ -159,9 +159,9 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
-const browserProfileStorage = createBrowserProfileStorage({
-	stateDir: path.join(app.getPath("userData"), "browser"),
-});
+const browserStateDir = path.join(app.getPath("userData"), "browser");
+const browserProfileStorage = createBrowserProfileStorage({ stateDir: browserStateDir });
+const browserBookmarkStorage = createBrowserBookmarkStorage({ stateDir: browserStateDir });
 let browserImportController: BrowserImportController | null = null;
 let windowComposition: WindowComposition | null = null;
 const browserCleanupPromises = new Set<Promise<void>>();
@@ -206,29 +206,15 @@ function getShellWebContents(): WebContents | null {
 
 function getBrowserImportController(): BrowserImportController {
 	if (browserImportController) return browserImportController;
-	const persistentSession = session.fromPartition(AO_BROWSER_PERSISTENT_PARTITION);
-	const storagePath = persistentSession.getStoragePath();
-	const aoDataRoot = path.resolve(app.getPath("userData"));
-	if (!storagePath) throw new Error("AO persistent browser storage is unavailable");
-	const resolvedStoragePath = path.resolve(storagePath);
-	const relativeStoragePath = path.relative(aoDataRoot, resolvedStoragePath);
-	if (
-		relativeStoragePath === ".." ||
-		relativeStoragePath.startsWith(`..${path.sep}`) ||
-		path.isAbsolute(relativeStoragePath)
-	) {
-		throw new Error("AO persistent browser storage is outside ~/.ao");
-	}
 	const engine = createBrowserImportEngine({
 		homeDir: os.homedir(),
 		platform: process.platform,
-		aoDataRoot,
-		destinationBookmarksPath: path.join(resolvedStoragePath, "Bookmarks"),
 		isDestinationActive: () => browserProfileStorage.isPersistentDestinationActive(),
 	});
 	browserImportController = createBrowserImportController({
 		engine,
 		profileStorage: browserProfileStorage,
+		bookmarkStorage: browserBookmarkStorage,
 	});
 	return browserImportController;
 }

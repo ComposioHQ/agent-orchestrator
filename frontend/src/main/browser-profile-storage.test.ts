@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
 	AO_BROWSER_PERSISTENT_PARTITION,
 	createBrowserProfileStorage,
-	type BrowserProfilePersistence,
 } from "./browser-profile-storage";
 
 describe("browser profile storage", () => {
@@ -23,15 +22,23 @@ describe("browser profile storage", () => {
 		expect(storage.partitionFor()).toBe("ao-browser-worker-a");
 		expect(storage.partitionFor()).toBe("ao-browser-worker-b");
 		expect(storage.partitionFor()).not.toMatch(/^persist:/);
+		expect(storage.isPersistentDestinationActive()).toBe(false);
 	});
 
-	it("returns one fixed AO-owned destination only for an explicit persistent choice", () => {
+	it("tracks live persistent workers and releases the destination on teardown", () => {
 		const storage = createBrowserProfileStorage(() => "must-not-be-used");
-		const persistence: BrowserProfilePersistence = "persistent";
+		const first = storage.partitionFor("persistent");
+		const second = storage.partitionFor("persistent");
 
-		expect(storage.partitionFor(persistence)).toBe(AO_BROWSER_PERSISTENT_PARTITION);
-		expect(storage.partitionFor(persistence)).toBe(AO_BROWSER_PERSISTENT_PARTITION);
+		expect(first).toBe(AO_BROWSER_PERSISTENT_PARTITION);
+		expect(second).toBe(AO_BROWSER_PERSISTENT_PARTITION);
 		expect(storage.isPersistentDestinationActive()).toBe(true);
+
+		storage.releasePartition(first);
+		expect(storage.isPersistentDestinationActive()).toBe(true);
+		storage.releasePartition(second);
+		storage.releasePartition(second);
+		expect(storage.isPersistentDestinationActive()).toBe(false);
 	});
 
 	it("keeps the persisted choice ephemeral until an explicit selection is saved", async () => {
@@ -54,24 +61,5 @@ describe("browser profile storage", () => {
 
 		const storage = createBrowserProfileStorage({ stateDir });
 		expect(await storage.load()).toBe("ephemeral");
-	});
-
-	it("round-trips the import summary atomically", async () => {
-		stateDir = await mkdtemp(path.join(os.tmpdir(), "ao-browser-profile-"));
-		const storage = createBrowserProfileStorage({ stateDir });
-		const summary = {
-			sourceBrowser: "chrome" as const,
-			sourceProfile: "Default profile",
-			importedBookmarks: 3,
-			skippedBookmarks: 1,
-			importedAt: "2026-08-18T00:00:00.000Z",
-		};
-
-		await storage.writeImportSummary(summary);
-		expect(await storage.readImportSummary()).toEqual(summary);
-		expect(await readdir(stateDir)).toEqual(["browser-import-summary.json"]);
-		expect(await readFile(path.join(stateDir, "browser-import-summary.json"), "utf8")).toContain(
-			"Default profile",
-		);
 	});
 });

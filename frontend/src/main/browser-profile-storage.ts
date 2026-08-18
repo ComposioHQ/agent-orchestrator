@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -9,7 +9,6 @@ import path from "node:path";
  */
 export const AO_BROWSER_PERSISTENT_PARTITION = "persist:ao-browser";
 export const BROWSER_PROFILE_SETTINGS_FILE_NAME = "browser-profile-settings.json";
-export const BROWSER_IMPORT_SUMMARY_FILE_NAME = "browser-import-summary.json";
 
 const EPHEMERAL_PARTITION_PREFIX = "ao-browser-";
 
@@ -37,11 +36,10 @@ export type BrowserProfileStorageOptions = {
  */
 export type BrowserProfileStorage = {
 	partitionFor: (persistence?: BrowserProfilePersistence) => string;
+	releasePartition: (partition: string) => void;
 	getPersistence: () => BrowserProfilePersistence;
 	load: () => Promise<BrowserProfilePersistence>;
 	selectPersistence: (persistence: BrowserProfilePersistence) => Promise<BrowserProfilePersistence>;
-	readImportSummary: () => Promise<BrowserImportSummary | null>;
-	writeImportSummary: (summary: BrowserImportSummary) => Promise<BrowserImportSummary>;
 	isPersistentDestinationActive: () => boolean;
 };
 
@@ -49,27 +47,6 @@ const DEFAULT_PERSISTENCE: BrowserProfilePersistence = "ephemeral";
 
 function coercePersistence(value: unknown): BrowserProfilePersistence {
 	return value === "persistent" ? "persistent" : DEFAULT_PERSISTENCE;
-}
-
-function coerceSummary(value: unknown): BrowserImportSummary | null {
-	if (typeof value !== "object" || value === null) return null;
-	const candidate = value as Partial<BrowserImportSummary>;
-	if (candidate.sourceBrowser !== "chrome" && candidate.sourceBrowser !== "edge" && candidate.sourceBrowser !== "brave") {
-		return null;
-	}
-	if (typeof candidate.sourceProfile !== "string" || candidate.sourceProfile.length === 0) return null;
-	const importedBookmarks = candidate.importedBookmarks;
-	const skippedBookmarks = candidate.skippedBookmarks;
-	if (typeof importedBookmarks !== "number" || !Number.isSafeInteger(importedBookmarks) || importedBookmarks < 0) return null;
-	if (typeof skippedBookmarks !== "number" || !Number.isSafeInteger(skippedBookmarks) || skippedBookmarks < 0) return null;
-	if (typeof candidate.importedAt !== "string" || Number.isNaN(Date.parse(candidate.importedAt))) return null;
-	return {
-		sourceBrowser: candidate.sourceBrowser,
-		sourceProfile: candidate.sourceProfile,
-		importedBookmarks,
-		skippedBookmarks,
-		importedAt: candidate.importedAt,
-	};
 }
 
 async function readJson(stateDir: string, fileName: string): Promise<unknown | null> {
@@ -84,8 +61,13 @@ async function writeJson(stateDir: string, fileName: string, value: unknown): Pr
 	await mkdir(stateDir, { recursive: true, mode: 0o700 });
 	const file = path.join(stateDir, fileName);
 	const tmp = path.join(stateDir, `.${fileName}-${process.pid}-${Date.now()}.tmp`);
-	await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-	await rename(tmp, file);
+	try {
+		await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+		await rename(tmp, file);
+	} catch (error) {
+		await rm(tmp, { force: true }).catch(() => undefined);
+		throw error;
+	}
 }
 
 export function createBrowserProfileStorage(
@@ -94,7 +76,7 @@ export function createBrowserProfileStorage(
 	const { stateDir, randomId = randomUUID } =
 		typeof options === "function" ? { randomId: options } : options;
 	let selectedPersistence: BrowserProfilePersistence = DEFAULT_PERSISTENCE;
-	let persistentDestinationActive = false;
+	let persistentDestinationReferences = 0;
 	let operationQueue: Promise<unknown> = Promise.resolve();
 
 	const runOperation = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -109,10 +91,14 @@ export function createBrowserProfileStorage(
 	return {
 		partitionFor: (persistence = DEFAULT_PERSISTENCE) => {
 			if (persistence === "persistent") {
-				persistentDestinationActive = true;
+				persistentDestinationReferences += 1;
 				return AO_BROWSER_PERSISTENT_PARTITION;
 			}
 			return `${EPHEMERAL_PARTITION_PREFIX}${randomId()}`;
+		},
+		releasePartition: (partition) => {
+			if (partition !== AO_BROWSER_PERSISTENT_PARTITION) return;
+			persistentDestinationReferences = Math.max(0, persistentDestinationReferences - 1);
 		},
 		getPersistence: () => selectedPersistence,
 		load: async () => {
@@ -138,19 +124,6 @@ export function createBrowserProfileStorage(
 				return selectedPersistence;
 			});
 		},
-		readImportSummary: async () => {
-			if (!stateDir) return null;
-			return runOperation(async () => coerceSummary(await readJson(stateDir, BROWSER_IMPORT_SUMMARY_FILE_NAME)));
-		},
-		writeImportSummary: async (summary) => {
-			const next = coerceSummary(summary);
-			if (!next) throw new Error("Invalid browser import summary");
-			if (!stateDir) return next;
-			return runOperation(async () => {
-				await writeJson(stateDir, BROWSER_IMPORT_SUMMARY_FILE_NAME, next);
-				return next;
-			});
-		},
-		isPersistentDestinationActive: () => persistentDestinationActive,
+		isPersistentDestinationActive: () => persistentDestinationReferences > 0,
 	};
 }

@@ -155,6 +155,9 @@ export const aoBridge: AoBridge =
 			getStatus: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
 			useEphemeral: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
 		},
+		browserBookmarks: {
+			get: async () => null,
+		},
 		notifications: {
 			show: async () => undefined,
 			setBadge: async () => undefined,

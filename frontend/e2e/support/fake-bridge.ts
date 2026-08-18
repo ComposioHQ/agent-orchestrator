@@ -163,6 +163,9 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getStatus: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
 					useEphemeral: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
 				},
+				browserBookmarks: {
+					get: async () => null,
+				},
 				notifications: {
 					show: async () => undefined,
 					setBadge: async (_count: number) => undefined,
@@ -604,6 +607,9 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					}),
 					getStatus: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
 					useEphemeral: async () => ({ persistence: "ephemeral" as const, destinationActive: false, summary: null }),
+				},
+				browserBookmarks: {
+					get: async () => null,
 				},
 				notifications: {
 					show: async () => undefined,
