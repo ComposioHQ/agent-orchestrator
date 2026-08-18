@@ -40,7 +40,10 @@ type ReviewRun struct {
 	// legacy/single-run delivery.
 	BatchID string          `json:"batchId"`
 	Harness ReviewerHarness `json:"harness"`
-	PRURL   string          `json:"prUrl"`
+	// TriggerSource records whether this pass was requested by a user or by the
+	// daemon auto-review coordinator.
+	TriggerSource ReviewTriggerSource `json:"triggerSource" enum:"manual,auto"`
+	PRURL         string              `json:"prUrl"`
 	// TargetSHA is the PR head commit this pass reviewed.
 	TargetSHA string          `json:"targetSha"`
 	Status    ReviewRunStatus `json:"status"`
@@ -60,6 +63,16 @@ type ReviewRun struct {
 	// recorded. Later toggle changes must not rewrite or deliver this run.
 	AutoInjectReview bool `json:"autoInjectReview"`
 }
+
+// ReviewTriggerSource identifies who initiated a review pass.
+type ReviewTriggerSource string
+
+const (
+	// ReviewTriggerManual marks a user-initiated review pass.
+	ReviewTriggerManual ReviewTriggerSource = "manual"
+	// ReviewTriggerAuto marks a daemon-initiated review pass.
+	ReviewTriggerAuto ReviewTriggerSource = "auto"
+)
 
 // ReviewRunStatus is the lifecycle state of a single review pass.
 type ReviewRunStatus = contract.AOReviewRunStatus

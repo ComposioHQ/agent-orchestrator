@@ -50,6 +50,7 @@ type fakeAgent struct {
 	setCalls            int
 	steering            bool
 	steerText           string
+	steerPrompt         []acpsdk.ContentBlock
 	steerMeta           map[string]any
 	steerOut            string
 }
@@ -102,6 +103,7 @@ func (a *fakeAgent) HandleExtensionMethod(_ context.Context, method string, raw 
 	}
 	a.mu.Lock()
 	a.steerText = text
+	a.steerPrompt = append([]acpsdk.ContentBlock(nil), params.Prompt...)
 	a.steerMeta = params.Meta
 	outcome := a.steerOut
 	a.mu.Unlock()
@@ -433,9 +435,12 @@ func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *test
 		},
 	}
 	driver := New(Config{
-		Harness:      domain.HarnessClaudeCode,
-		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
-		Probe:        func(context.Context) error { return nil },
+		Harness: domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true,
+			ports.ChatCapabilityImages:    true,
+		},
+		Probe: func(context.Context) error { return nil },
 		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
@@ -557,6 +562,12 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	if !ok || prompt["append"] != "Recomputed AO instructions" {
 		t.Fatalf("session/resume metadata = %#v, want recomputed system prompt", resumeMeta)
 	}
+	if conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("resume-only ACP conversation advertised replayable history")
+	}
+	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnavailable) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnavailable after session/resume", err)
+	}
 }
 
 func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
@@ -578,9 +589,6 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	agent := &fakeAgent{
 		capabilities: &acpsdk.AgentCapabilities{
 			LoadSession: true,
-			SessionCapabilities: acpsdk.SessionCapabilities{
-				Resume: &acpsdk.SessionResumeCapabilities{},
-			},
 		},
 		loadUpdates: []acpsdk.SessionUpdate{userOne, answerOneA, answerOneB, userTwo, answerTwo},
 	}
@@ -657,6 +665,9 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	if history[0].ProviderTurnID == history[6].ProviderTurnID {
 		t.Fatalf("both native turns share provider id %q", history[0].ProviderTurnID)
 	}
+	if !conv.Capabilities().Has(ports.ChatCapabilityHistory) {
+		t.Fatal("session/load conversation did not advertise replayable history")
+	}
 
 	ready := nextEvent(t, conv.Events())
 	if ready.Kind != ports.ChatEventControllerState || ready.ControllerState != ports.ChatControllerReady {
@@ -666,6 +677,41 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	case event := <-conv.Events():
 		t.Fatalf("history leaked onto the live event stream: %#v", event)
 	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestACPDriverRejectsTrailingUserOnlyHistoryAsUnsettled(t *testing.T) {
+	userID := "55555555-5555-4555-8555-555555555555"
+	user := acpsdk.UpdateUserMessageText("Work that has not produced a provider event yet")
+	user.UserMessageChunk.MessageId = &userID
+	agent := &fakeAgent{
+		capabilities: &acpsdk.AgentCapabilities{
+			LoadSession: true,
+			SessionCapabilities: acpsdk.SessionCapabilities{
+				Resume: &acpsdk.SessionResumeCapabilities{},
+			},
+		},
+		loadUpdates: []acpsdk.SessionUpdate{user},
+	}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
+		ProviderConversationID: "provider-session-1",
+		WorkspacePath:          t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conv.Close()
+
+	if _, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background()); !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+		t.Fatalf("ReadHistory error = %v, want ErrChatHistoryUnsettled", err)
 	}
 }
 
@@ -812,6 +858,93 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 	}
 	if detail["parentProviderItemId"] != "agent-tool" || detail["terminalId"] != "child-tool" || detail["output"] != "ok\n" {
 		t.Fatalf("tool detail = %#v", detail)
+	}
+}
+
+func TestACPDriverExtractsCommandFromExecuteToolInput(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+	conv := opened.(*conversation)
+	conv.mu.Lock()
+	conv.activeTurn = "turn-1"
+	conv.mu.Unlock()
+
+	// claude-code's Bash tool reports rawInput as {"command": "..."} — exactly
+	// the shape the neutral `detail.command` contract must be filled from.
+	rawInput := map[string]any{"command": "/bin/zsh -lc 'ao session ls'"}
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+			SessionUpdate: "tool_call", ToolCallId: "bash-1", Title: "List sessions",
+			Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusPending,
+			RawInput: rawInput,
+		}},
+	}); err != nil {
+		t.Fatalf("tool start: %v", err)
+	}
+	started := nextEvent(t, opened.Events())
+	if started.Kind != ports.ChatEventActivityStarted {
+		t.Fatalf("started event = %#v", started)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(started.Detail, &detail); err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if detail["command"] != "ao session ls" {
+		t.Fatalf("detail.command = %#v, want unwrapped %q", detail["command"], "ao session ls")
+	}
+	if detail["rawCommand"] != "/bin/zsh -lc 'ao session ls'" {
+		t.Fatalf("detail.rawCommand = %#v, want the verbatim provider command", detail["rawCommand"])
+	}
+	if detail["input"] == nil {
+		t.Fatalf("detail.input dropped: %#v", detail)
+	}
+}
+
+func TestRawCommandFromInput(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  any
+		want string
+	}{
+		{name: "nil", raw: nil, want: ""},
+		{name: "string passthrough is not an object", raw: "go test ./...", want: ""},
+		{
+			name: "claude-code bash",
+			raw:  map[string]any{"command": "rg -n pattern src/", "description": "search"},
+			want: "rg -n pattern src/",
+		},
+		{
+			name: "shell-wrapped command",
+			raw:  map[string]any{"command": "/bin/bash -c 'go build ./...'"},
+			want: "/bin/bash -c 'go build ./...'",
+		},
+		{name: "empty command", raw: map[string]any{"command": "  "}, want: ""},
+		{name: "cmd key", raw: map[string]any{"cmd": "ls"}, want: "ls"},
+		{
+			name: "edit tool input has no command",
+			raw:  map[string]any{"file_path": "/tmp/x", "old": "a", "new": "b"},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rawCommandFromInput(tt.raw); got != tt.want {
+				t.Fatalf("rawCommandFromInput(%v) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1058,7 +1191,15 @@ func awaitSkillCount(t *testing.T, lister ports.ChatSkillLister, want int) []por
 }
 
 func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
-	agent := &fakeAgent{steering: true}
+	agent := &fakeAgent{
+		steering: true,
+		capabilities: &acpsdk.AgentCapabilities{
+			PromptCapabilities: acpsdk.PromptCapabilities{Image: true},
+			SessionCapabilities: acpsdk.SessionCapabilities{
+				Resume: &acpsdk.SessionResumeCapabilities{},
+			},
+		},
+	}
 	driver := New(Config{
 		Harness:      domain.HarnessClaudeCode,
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
@@ -1082,7 +1223,12 @@ func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
 	conv.activeTurn = "turn-1"
 	conv.mu.Unlock()
 
-	ref, err := conv.Steer(context.Background(), "turn-1", ports.ChatUserMessage{Text: "focus on the API"})
+	ref, err := conv.Steer(context.Background(), "turn-1", ports.ChatUserMessage{
+		Text: "focus on the API",
+		Content: []ports.ChatContent{{
+			Type: "image", Data: "aGVsbG8=", MIMEType: "image/png",
+		}},
+	})
 	if err != nil {
 		t.Fatalf("Steer: %v", err)
 	}
@@ -1090,10 +1236,13 @@ func TestACPDriverMapsAdvertisedSteeringOntoAO(t *testing.T) {
 		t.Fatalf("steered turn = %q, want turn-1", ref.ProviderTurnID)
 	}
 	agent.mu.Lock()
-	text, meta := agent.steerText, agent.steerMeta
+	text, meta, prompt := agent.steerText, agent.steerMeta, agent.steerPrompt
 	agent.mu.Unlock()
 	if text != "focus on the API" {
 		t.Fatalf("steer text = %q", text)
+	}
+	if len(prompt) != 2 || prompt[1].Image == nil || prompt[1].Image.MimeType != "image/png" {
+		t.Fatalf("steer prompt = %#v, want text and image", prompt)
 	}
 	steering, _ := meta["steering"].(map[string]any)
 	if steering["idleBehavior"] != "promptRequired" {

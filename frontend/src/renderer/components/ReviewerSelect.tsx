@@ -1,4 +1,5 @@
 import type { components } from "../../api/schema";
+import { agentLabel } from "../lib/agent-options";
 import { buildRankedAgentOptions } from "../lib/agent-select-options";
 import { KNOWN_REVIEWER_HARNESS_IDS } from "../lib/reviewer-harnesses";
 import { AgentAvatar } from "./AgentAvatar";
@@ -12,6 +13,10 @@ const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 
 const HOST_TRUSTED_REVIEWERS = new Set(["agy", "continue", "devin", "droid", "goose", "kimchi", "kimi", "qwen", "vibe"]);
 const USER_APPROVED_REVIEWERS = new Set(["auggie", "autohand", "cline", "crush", "grok"]);
+
+function reviewerAgentLabel(id: string): string {
+	return id === "greptile" ? "Greptile CLI" : agentLabel(id);
+}
 
 export function reviewerTrustWarning(harness: string): string | null {
 	if (HOST_TRUSTED_REVIEWERS.has(harness)) {
@@ -35,28 +40,37 @@ export function ReviewerSelect({
 	defaultHarness,
 	defaultOptionLabel,
 	defaultTriggerLabel,
+	showDefaultOption = true,
+	contentAlign = "start",
 	disabled = false,
 	authorized,
 	installed,
 	reviewerInstalled,
 	supported,
+	excludedHarness,
 }: {
 	value: string;
 	onChange: (value: string) => void;
 	triggerClassName?: string;
 	ariaLabel?: string;
 	defaultHarness?: string;
-	defaultOptionLabel: string;
+	defaultOptionLabel?: string;
 	defaultTriggerLabel?: string;
+	showDefaultOption?: boolean;
+	contentAlign?: "start" | "end";
 	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
 	installed?: components["schemas"]["AgentInfo"][];
 	reviewerInstalled?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
+	excludedHarness?: string;
 }) {
+	// Until the daemon's catalog arrives these entries carry the whole menu, so
+	// label them the way the catalog would rather than printing bare ids: without
+	// this the same row reads "claude-code" now and "Claude Code" a moment later.
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
-		label: id === "greptile" ? "Greptile CLI" : id,
+		label: reviewerAgentLabel(id),
 	}));
 	const greptileFallback = fallbackAgents.find((agent) => agent.id === "greptile")!;
 	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
@@ -71,16 +85,14 @@ export function ReviewerSelect({
 		authorized,
 		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,
 		fallbackAgents,
-	}).map((agent) => (agent.id === "greptile" ? { ...agent, disabled: false } : agent));
+	});
+	const selectableOptions = options.filter((agent) => agent.id !== excludedHarness);
 
-	// The trigger shows the agent that will actually run, since "project default"
-	// names the setting rather than answering the question. The menu keeps the
-	// longer wording, where there is room for it.
 	const menuOptions = [
-		{ value: "__default__", label: defaultOptionLabel },
-		...options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
+		...(showDefaultOption && defaultOptionLabel ? [{ value: "__default__", label: defaultOptionLabel }] : []),
+		...selectableOptions.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
 	];
-	const selectedValue = value || "__default__";
+	const selectedValue = value && value !== excludedHarness ? value : "__default__";
 
 	return (
 		<SettingsOptionMenu
@@ -90,7 +102,7 @@ export function ReviewerSelect({
 			disabled={disabled}
 			menuClassName="reviews-agent-menu-surface"
 			menuItemClassName="reviews-agent-menu-item"
-			menuAlign="start"
+			menuAlign={contentAlign}
 			triggerClassName={triggerClassName}
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
 			renderTrigger={(selected) => (
@@ -100,8 +112,10 @@ export function ReviewerSelect({
 					) : defaultHarness ? (
 						<AgentAvatar provider={defaultHarness} className="size-icon-lg" />
 					) : null}
-					<span className="min-w-0 truncate">
-						{selected && selected.value !== "__default__" ? selected.label : (defaultTriggerLabel ?? defaultOptionLabel)}
+					<span className={contentAlign === "end" ? "min-w-0 truncate text-right" : "min-w-0 truncate"}>
+						{selected && selected.value !== "__default__"
+							? selected.label
+							: (defaultTriggerLabel ?? defaultOptionLabel ?? defaultHarness)}
 					</span>
 				</>
 			)}
@@ -109,7 +123,7 @@ export function ReviewerSelect({
 				if (option.value === "__default__") {
 					return <AgentSelectMenuItem label={option.label} selected={selected} />;
 				}
-				const agent = options.find((entry) => entry.id === option.value);
+				const agent = selectableOptions.find((entry) => entry.id === option.value);
 				if (!agent) return option.label;
 				return (
 					<AgentSelectMenuItem

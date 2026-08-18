@@ -187,6 +187,8 @@ type ConversationTurn struct {
 	RolledBackAt         sql.NullTime
 	PlanJson             string
 	BranchID             string
+	PromotionStartedAt   sql.NullTime
+	PromotedToTurnID     sql.NullString
 }
 
 type ModelUsageEvent struct {
@@ -258,6 +260,7 @@ type PR struct {
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
 	AutoInjectCI             bool
+	ProviderID               string
 }
 
 type PRCheck struct {
@@ -297,6 +300,7 @@ type PRReview struct {
 	SubmittedAt      time.Time
 	Body             string
 	AutoInjectReview bool
+	TargetSha        string
 }
 
 type PRReviewThread struct {
@@ -308,6 +312,11 @@ type PRReviewThread struct {
 	IsBot        int64
 	SemanticHash string
 	UpdatedAt    time.Time
+}
+
+type PRURLAlias struct {
+	AliasURL     string
+	CanonicalURL string
 }
 
 type Project struct {
@@ -348,6 +357,7 @@ type ReviewRun struct {
 	DeliveredAt      sql.NullTime
 	BatchID          string
 	AutoInjectReview bool
+	TriggerSource    domain.ReviewTriggerSource
 }
 
 type Session struct {
@@ -389,6 +399,8 @@ type Session struct {
 	LatestAssistantUpdate     string
 	NativeTranscriptPath      string
 	AutoInjectCI              bool
+	AutoReviewEnabled         bool
+	AgentSessionIDLaunchID    string
 }
 
 type SessionCleanupFact struct {
@@ -415,6 +427,7 @@ type SessionInterfaceTransition struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	CompletedAt          sql.NullTime
+	NoticeAcknowledgedAt sql.NullTime
 }
 
 type SessionInterfaceTransitionMessage struct {
@@ -434,6 +447,7 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+	BaseRef      string
 }
 
 type ShellTerminal struct {
@@ -513,4 +527,5 @@ type WorkspaceRepo struct {
 	RepoOriginURL string
 	RegisteredAt  time.Time
 	DefaultBranch string
+	GitStatus     string
 }

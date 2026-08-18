@@ -78,8 +78,8 @@ func TestDefaultProjectConfig(t *testing.T) {
 	def := DefaultProjectConfig()
 
 	// The one documented non-empty default.
-	if def.DefaultBranch != "main" {
-		t.Fatalf("default DefaultBranch = %q, want main", def.DefaultBranch)
+	if def.DefaultBranch != DefaultBranchAuto {
+		t.Fatalf("default DefaultBranch = %q, want %q", def.DefaultBranch, DefaultBranchAuto)
 	}
 
 	// Every other field defaults to its zero value: clearing the documented
@@ -93,8 +93,8 @@ func TestDefaultProjectConfig(t *testing.T) {
 func TestProjectConfigWithDefaults(t *testing.T) {
 	// An unset config gets the documented defaults.
 	got := (ProjectConfig{}).WithDefaults()
-	if got.DefaultBranch != DefaultBranchName {
-		t.Fatalf("WithDefaults = %#v, want branch=main", got)
+	if got.DefaultBranch != DefaultBranchAuto {
+		t.Fatalf("WithDefaults = %#v, want branch=%s", got, DefaultBranchAuto)
 	}
 
 	// Set fields are preserved, not overwritten.
@@ -107,6 +107,15 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 	if got.AgentConfig.Model != "m" {
 		t.Fatalf("WithDefaults dropped a set field: %#v", got.AgentConfig)
+	}
+	if got.WorktreeBaseBranch() != "develop" {
+		t.Fatalf("WorktreeBaseBranch = %q, want develop", got.WorktreeBaseBranch())
+	}
+	if got := (ProjectConfig{}).WorktreeBaseBranch(); got != "" {
+		t.Fatalf("automatic WorktreeBaseBranch = %q, want empty for adapter inference", got)
+	}
+	if got := (ProjectConfig{DefaultBranch: DefaultBranchAuto}).WorktreeBaseBranch(); got != "" {
+		t.Fatalf("explicit auto WorktreeBaseBranch = %q, want empty for adapter inference", got)
 	}
 
 	got = (ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: "alice"}}).WithDefaults()

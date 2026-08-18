@@ -73,6 +73,14 @@ export function BotIcon(props: IconProps) {
 	);
 }
 
+export function CheckIcon(props: IconProps) {
+	return (
+		<Icon name="check" {...props}>
+			<path d="M20 6 9 17l-5-5" />
+		</Icon>
+	);
+}
+
 export function FileCodeIcon(props: IconProps) {
 	return (
 		<Icon name="file-code-2" {...props}>

@@ -233,7 +233,8 @@ describe("ActivityRow command labels", () => {
 		expect(screen.queryByText(/sed -n/)).not.toBeInTheDocument();
 	});
 
-	it("describes execution as a command", () => {
+	it("describes execution compactly, then reveals the exact command", async () => {
+		const user = userEvent.setup();
 		render(
 			<ActivityRow
 				activity={commandActivity({ command: "go test ./...", output: "ok" }, "completed")}
@@ -241,6 +242,26 @@ describe("ActivityRow command labels", () => {
 		);
 		expect(screen.getByText("Ran command")).toBeInTheDocument();
 		expect(screen.queryByText("go test ./...")).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /Ran command/ }));
+		expect(screen.getByText("go test ./...")).toBeInTheDocument();
+		expect(screen.getByText("ok")).toBeInTheDocument();
+	});
+
+	it("keeps a command-only row expandable when the provider reports no output", async () => {
+		const user = userEvent.setup();
+		render(
+			<ActivityRow
+				activity={commandActivity({ command: `printf "%s" "hello world"` }, "completed")}
+			/>,
+		);
+
+		const row = screen.getByRole("button", { name: /Ran command/ });
+		expect(row).toBeEnabled();
+		expect(screen.queryByText(`printf "%s" "hello world"`)).not.toBeInTheDocument();
+
+		await user.click(row);
+		expect(screen.getByText(`printf "%s" "hello world"`)).toBeInTheDocument();
 	});
 
 	it("uses the same compact treatment as a grouped command summary", () => {
