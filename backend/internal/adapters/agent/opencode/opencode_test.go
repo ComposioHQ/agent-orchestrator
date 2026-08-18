@@ -330,6 +330,18 @@ func TestResolveOpenCodeBinaryFallbacks(t *testing.T) {
 				return writeOpenCodeExecutable(t, filepath.Join(home, ".nvm", "versions", "node", "v22.23.1", "bin", "opencode"))
 			},
 		},
+		{
+			name: "mise shim",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".local", "share", "mise", "shims", "opencode"))
+			},
+		},
+		{
+			name: "bun global",
+			seed: func(t *testing.T, home string) string {
+				return writeOpenCodeExecutable(t, filepath.Join(home, ".bun", "bin", "opencode"))
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
