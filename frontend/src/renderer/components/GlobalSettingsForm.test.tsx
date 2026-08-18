@@ -139,6 +139,7 @@ beforeEach(async () => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
+	useUiStore.getState().setEmulatorEnabled(false);
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
@@ -464,6 +465,16 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByRole("combobox", { name: "Report type" })).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Include safe diagnostics")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
+	});
+
+	it("persists the Android Emulator setting to localStorage and defaults off", async () => {
+		useUiStore.getState().setEmulatorEnabled(false);
+		renderForm();
+		const toggle = await screen.findByRole("switch", { name: "Android Emulator" });
+		expect(toggle).toHaveAttribute("aria-checked", "false");
+		await userEvent.click(toggle);
+		expect(useUiStore.getState().emulatorEnabled).toBe(true);
+		expect(window.localStorage.getItem("ao.emulatorEnabled")).toBe("true");
 	});
 
 	it("surfaces a Return action for a persisted feature pin", async () => {

@@ -27,7 +27,7 @@ export type SettingsModal =
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
-export type InspectorView = "summary" | "reviews" | "browser" | "files";
+export type InspectorView = "summary" | "reviews" | "browser" | "files" | "emulator";
 
 export type InspectorSessionState = {
 	isOpen: boolean;
@@ -53,6 +53,8 @@ type UiState = {
 	resolvedTheme: Theme;
 	/** Named color style theme (e.g. "catppuccin", "nord") — independent of light/dark mode. */
 	themeStyle: ThemeStyle;
+	/** When true, the Emulator tab is available in the session inspector. Default off — the Android emulator is a heavy, opt-in feature (multi-GB SDK download, a full VM). */
+	emulatorEnabled: boolean;
 	/** When true, developer-only release controls are available. Default off. */
 	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
@@ -89,6 +91,7 @@ type UiState = {
 	openGlobalSettings: () => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
+	setEmulatorEnabled: (enabled: boolean) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
@@ -116,7 +119,9 @@ export type OrchestratorReplacementFailure = {
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
+const emulatorEnabledStorageKey = "ao.emulatorEnabled";
 const developerModeStorageKey = "ao.developerMode";
+
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
 	return window.localStorage;
@@ -124,6 +129,10 @@ function getLocalStorage() {
 
 function initialSidebarOpen() {
 	return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
+}
+
+function initialEmulatorEnabled() {
+	return getLocalStorage()?.getItem(emulatorEnabledStorageKey) === "true";
 }
 
 function initialDeveloperMode() {
@@ -146,6 +155,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	themeStyle: initialThemeStyle,
+	emulatorEnabled: initialEmulatorEnabled(),
 	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
@@ -180,6 +190,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
+	setEmulatorEnabled: (emulatorEnabled) => {
+		getLocalStorage()?.setItem(emulatorEnabledStorageKey, String(emulatorEnabled));
+		set({ emulatorEnabled });
+	},
 	syncSystemTheme: () => {
 		const { themePreference, resolvedTheme } = get();
 		if (themePreference !== "system") return;

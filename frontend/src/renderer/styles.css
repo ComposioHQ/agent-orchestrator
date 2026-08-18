@@ -3551,7 +3551,8 @@ body.is-resizing-x [data-slot="inspector-container"] {
    while native fullscreen keeps a 0px top inset. Linux keeps its ShellTopbar
    offset below. */
 .browser-popout-overlay,
-.files-popout-overlay {
+.files-popout-overlay,
+.emulator-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
@@ -3562,9 +3563,13 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	-webkit-app-region: no-drag;
 }
 
-/* Keep native browser/files surfaces below the custom Windows titlebar. */
+/* BaseWindow's explicit shell WebContentsView does not always expose the
+   Window Controls Overlay safe-area env value. Keep maximized browser/files/
+   emulator surfaces below the Windows native min/max/close controls in that
+   mode. */
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
-html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay,
+html[data-native-browser-composition="true"][data-ao-platform="win32"] .emulator-popout-overlay {
 	top: var(--size-window-titlebar);
 }
 
@@ -3579,7 +3584,8 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 /* macOS keeps the native traffic lights visible while the window is not in
    native fullscreen. Reserve that band instead of rendering beneath them. */
 .browser-popout-overlay--mac-windowed,
-.files-popout-overlay--mac-windowed {
+.files-popout-overlay--mac-windowed,
+.emulator-popout-overlay--mac-windowed {
 	top: var(--size-traffic-light-clearance);
 }
 
@@ -3589,11 +3595,18 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 }
 
 .platform-linux .browser-popout-overlay,
-.platform-linux .files-popout-overlay {
+.platform-linux .files-popout-overlay,
+.platform-linux .emulator-popout-overlay {
 	top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+.emulator-popout-overlay .emulator-panel {
 	border: 0;
 	border-radius: 0;
 	box-shadow: none;
@@ -3613,6 +3626,28 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 	/* No right padding: the new-tab button's own column is flush against this
 	   edge so it lines up with the docked rail directly below it. */
 	padding: 3px 0 3px 4px;
+	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+	background:
+		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
+		var(--surface);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+		0 1px 0 color-mix(in srgb, black 22%, transparent);
+	backdrop-filter: blur(10px);
+}
+
+.emulator-panel__toolbar {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex-shrink: 0;
+	min-width: 0;
+	/* Mirrors .browser-panel__toolbar exactly (see its comment above): sized
+	   to the same 28px (--size-control-md) buttons + 3px top/bottom, so the
+	   two toolbars read as the same control regardless of which panel is
+	   active. */
+	min-height: 34px;
+	padding: 3px 4px;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
@@ -3733,6 +3768,36 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 }
 
 .browser-popout-overlay .browser-panel__viewport {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
+/* Mirrors .browser-panel__viewport: a "floating card" look while the panel
+   is showing an empty/setup/booting state. Once a live frame is actually
+   streaming (data-emulator-live="live" below), this is reset to edge-to-edge
+   -- matching how the browser panel drops its own card framing once it's
+   showing real page content instead of a placeholder. */
+.emulator-panel__viewport {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+	margin: 8px;
+	overflow: hidden;
+	border: 0;
+	border-radius: 8px;
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
+		var(--bg);
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, var(--color-border) 28%, transparent),
+		inset 0 1px 0 color-mix(in srgb, white 3%, transparent),
+		0 12px 26px color-mix(in srgb, black 14%, transparent);
+}
+
+.emulator-panel[data-emulator-live="live"] .emulator-panel__viewport,
+.emulator-popout-overlay .emulator-panel__viewport {
 	margin: 0;
 	border: 0;
 	border-radius: 0;

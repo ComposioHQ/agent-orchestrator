@@ -409,19 +409,22 @@ func TestStopRefusesUnverifiedLivePID(t *testing.T) {
 }
 
 type testConfig struct {
-	runFile string
-	dataDir string
+	runFile  string
+	dataDir  string
+	toolsDir string
 }
 
 func setConfigEnv(t *testing.T) testConfig {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := testConfig{
-		runFile: filepath.Join(dir, "running.json"),
-		dataDir: filepath.Join(dir, "data"),
+		runFile:  filepath.Join(dir, "running.json"),
+		dataDir:  filepath.Join(dir, "data"),
+		toolsDir: filepath.Join(dir, "tools"),
 	}
 	t.Setenv("AO_RUN_FILE", cfg.runFile)
 	t.Setenv("AO_DATA_DIR", cfg.dataDir)
+	t.Setenv("AO_TOOLS_DIR", cfg.toolsDir)
 	t.Setenv("AO_PORT", "3001")
 	t.Setenv("AO_REQUEST_TIMEOUT", "")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "")

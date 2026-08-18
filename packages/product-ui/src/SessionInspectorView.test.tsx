@@ -43,6 +43,7 @@ const tabs = [
     icon: <svg />,
     label: "Files",
   },
+  { id: "emulator" as const, icon: <svg />, label: "Emulator" },
 ];
 
 describe("SessionInspectorShellView", () => {
@@ -62,29 +63,28 @@ describe("SessionInspectorShellView", () => {
       />,
     );
 
-
-		expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
-		expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist");
-		expect(screen.getByRole("tablist").parentElement?.nextElementSibling).toHaveClass(
-			"board-scrollbar",
-			"overflow-x-hidden",
-		);
-		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
-		expect(screen.getByRole("tab", { name: "Summary" })).toHaveClass("shrink-0");
-		expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("flex-1");
-		expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("min-w-0");
-		expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("tabindex", "0");
-		expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("tabindex", "-1");
-		const filesLabel = within(screen.getByRole("tab", { name: "Files" })).getByText("2 Files");
-		expect(filesLabel).toHaveClass("session-inspector__responsive-label");
-		expect(filesLabel).not.toHaveClass("truncate", "min-w-0");
-		expect(filesLabel).not.toHaveClass("@max-[350px]/inspector:hidden");
-		expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
-		expect(onViewChange).toHaveBeenCalledWith("browser");
-		fireEvent.keyDown(screen.getByRole("tab", { name: "Summary" }), { key: "ArrowRight" });
-		expect(onViewChange).toHaveBeenLastCalledWith("reviews");
-		expect(screen.getByRole("tab", { name: "Reviews" })).toHaveFocus();
+    expect(screen.getByRole("complementary", { name: "Session inspector" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist")).toHaveClass("session-inspector__tablist");
+    expect(screen.getByRole("tablist").parentElement?.nextElementSibling).toHaveClass(
+      "board-scrollbar",
+      "overflow-x-hidden",
+    );
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveClass("shrink-0");
+    expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("flex-1");
+    expect(screen.getByRole("tab", { name: "Summary" })).not.toHaveClass("min-w-0");
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tab", { name: "Browser" })).toHaveAttribute("tabindex", "-1");
+    const filesLabel = within(screen.getByRole("tab", { name: "Files" })).getByText("2 Files");
+    expect(filesLabel).toHaveClass("session-inspector__responsive-label");
+    expect(filesLabel).not.toHaveClass("truncate", "min-w-0");
+    expect(filesLabel).not.toHaveClass("@max-[350px]/inspector:hidden");
+    expect(screen.getByTestId("browser-unseen-indicator")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Browser" }));
+    expect(onViewChange).toHaveBeenCalledWith("browser");
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Summary" }), { key: "ArrowRight" });
+    expect(onViewChange).toHaveBeenLastCalledWith("reviews");
+    expect(screen.getByRole("tab", { name: "Reviews" })).toHaveFocus();
 
     rerender(
       <SessionInspectorShellView
@@ -117,6 +117,27 @@ describe("SessionInspectorShellView", () => {
     );
     expect(body).not.toHaveClass("p-3");
     expect(screen.getByText("browser slot")).toBeInTheDocument();
+
+    rerender(
+      <SessionInspectorShellView
+        activeView="emulator"
+        ariaLabel="Session inspector"
+        browserPoppedOut={false}
+        emulatorPoppedOut={false}
+        emulatorView={<div role="tabpanel">emulator slot</div>}
+        onViewChange={onViewChange}
+        summaryView={<div role="tabpanel">summary slot</div>}
+        tabs={tabs}
+      />,
+    );
+    const emulatorBody = screen.getByRole("tablist").parentElement?.nextElementSibling;
+    expect(emulatorBody).toHaveClass(
+      "session-inspector__body--emulator",
+      "p-0",
+      "overflow-hidden",
+    );
+    expect(emulatorBody).not.toHaveClass("p-3");
+    expect(screen.getByText("emulator slot")).toBeInTheDocument();
   });
 
   it("renders the loading state without tab chrome", () => {

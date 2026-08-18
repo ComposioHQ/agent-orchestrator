@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +236,58 @@ func TestOpenShellTerminalStartsLoginShellInProjectRoot(t *testing.T) {
 	}
 	if len(st.records) != 1 || st.records[0].AppRunID != testAppRunID {
 		t.Fatalf("record not persisted against the current app run: %+v", st.records)
+	}
+}
+
+// TestOpenShellTerminalInjectsAndroidEnvWhenSDKAvailable covers Phase A6 for
+// standalone (⌘T) shells: when the daemon wires an AndroidEnv provider
+// (populated only once AO's managed Android SDK is actually installed), a
+// standalone shell terminal gets ANDROID_HOME/ANDROID_SDK_ROOT and
+// platform-tools/emulator prepended to PATH, matching session terminals.
+func TestOpenShellTerminalInjectsAndroidEnvWhenSDKAvailable(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	svc := NewService(rt, st, projects, &fakeSessionWorkspaceLocator{}, "/data/dir", testAppRunID, testLogger())
+	svc.newHandleID = func() (string, error) { return "shellterm-test1", nil }
+	svc.now = func() time.Time { return time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC) }
+	svc.SetAndroidEnv(func() (map[string]string, []string) {
+		return map[string]string{"ANDROID_HOME": "/opt/android-sdk", "ANDROID_SDK_ROOT": "/opt/android-sdk"},
+			[]string{"/opt/android-sdk/platform-tools", "/opt/android-sdk/emulator"}
+	})
+
+	if _, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio"}); err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if len(rt.created) != 1 {
+		t.Fatalf("runtime creates = %d, want 1", len(rt.created))
+	}
+	env := rt.created[0].Env
+	if env["ANDROID_HOME"] != "/opt/android-sdk" || env["ANDROID_SDK_ROOT"] != "/opt/android-sdk" {
+		t.Fatalf("ANDROID_HOME/ANDROID_SDK_ROOT not set: %+v", env)
+	}
+	wantPrefix := "/opt/android-sdk/platform-tools" + string(os.PathListSeparator) + "/opt/android-sdk/emulator" + string(os.PathListSeparator)
+	if !strings.HasPrefix(env["PATH"], wantPrefix) {
+		t.Fatalf("PATH = %q, want prefix %q", env["PATH"], wantPrefix)
+	}
+}
+
+// TestOpenShellTerminalNoAndroidEnvWhenNotWired covers the default/unwired
+// case: no Android env leaks into a standalone shell's Env map.
+func TestOpenShellTerminalNoAndroidEnvWhenNotWired(t *testing.T) {
+	rt := newFakeShellRuntime()
+	st := &fakeShellTerminalStore{}
+	projects := &fakeProjectRootLocator{roots: map[domain.ProjectID]string{"portfolio": "/repos/portfolio"}}
+	svc := newTestService(rt, st, projects)
+
+	if _, err := svc.OpenShellTerminal(context.Background(), OpenShellTerminalInput{ProjectID: "portfolio"}); err != nil {
+		t.Fatalf("OpenShellTerminal: %v", err)
+	}
+	if len(rt.created) != 1 {
+		t.Fatalf("runtime creates = %d, want 1", len(rt.created))
+	}
+	if _, ok := rt.created[0].Env["ANDROID_HOME"]; ok {
+		t.Fatalf("ANDROID_HOME should be unset when AndroidEnv is not wired, got %+v", rt.created[0].Env)
 	}
 }
 

@@ -56,6 +56,7 @@ import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
+import { EmulatorPanel } from "./EmulatorPanel";
 import type { BrowserViewModel } from "../hooks/useBrowserView";
 import { useUiStore } from "../stores/ui-store";
 import { Button } from "./ui/button";
@@ -86,7 +87,7 @@ export type { InspectorView } from "@aoagents/product-ui";
 
 const VIEW_DEFS: {
 	id: InspectorView;
-	labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files";
+	labelKey: "inspector.summary" | "inspector.reviewTab" | "inspector.browser" | "inspector.files" | "inspector.emulator";
 	icon: ReactNode;
 }[] = [
 	{
@@ -124,6 +125,16 @@ const VIEW_DEFS: {
 		labelKey: "inspector.files",
 		icon: <FilesIcon aria-hidden="true" />,
 	},
+	{
+		id: "emulator",
+		labelKey: "inspector.emulator",
+		icon: (
+			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+				<rect x="7" y="2.5" width="10" height="19" rx="2" />
+				<line x1="11" y1="18.5" x2="13" y2="18.5" />
+			</svg>
+		),
+	},
 ];
 
 const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
@@ -146,6 +157,8 @@ export function SessionInspector({
 	onOpenFiles,
 	filesView,
 	browserView,
+	emulatorPoppedOut = false,
+	onToggleEmulatorPopOut,
 	view: viewProp,
 	onViewChange,
 }: {
@@ -158,6 +171,8 @@ export function SessionInspector({
 	onOpenFiles?: () => void;
 	filesView?: ReactNode;
 	browserView?: BrowserViewModel;
+	emulatorPoppedOut?: boolean;
+	onToggleEmulatorPopOut?: (next: boolean) => void;
 	/** Controlled active tab. Omit to let the inspector own its own selection. */
 	view?: InspectorView;
 	onViewChange?: (view: InspectorView) => void;
@@ -169,6 +184,10 @@ export function SessionInspector({
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
+	// The Emulator tab is a heavy opt-in feature (settings.emulator): hidden
+	// entirely unless the user has switched it on, so it never takes up space
+	// or does any work (no SDK/emulator status polling) by default.
+	const emulatorEnabled = useUiStore((state) => state.emulatorEnabled);
 	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
@@ -176,7 +195,17 @@ export function SessionInspector({
 		if (next === "files") onOpenFiles?.();
 	};
 	const view: InspectorView = requestedView;
-	const tabs = VIEW_DEFS.map((entry) => {
+	// If the emulator setting is switched off while its tab is the active
+	// one, the tab itself disappears from `tabs` below, but nothing else
+	// would otherwise move `view` off of "emulator" -- leaving no tab shown
+	// as selected while the setting-gated body render above still resolves.
+	// Fall back to Summary for a coherent UI rather than a dead tab state.
+	useEffect(() => {
+		if (emulatorEnabled || view !== "emulator") return;
+		setInternalView("summary");
+		onViewChange?.("summary");
+	}, [emulatorEnabled, view, onViewChange]);
+	const tabs = VIEW_DEFS.filter((entry) => entry.id !== "emulator" || emulatorEnabled).map((entry) => {
 		const label = t(entry.labelKey);
 		return {
 			...entry,
@@ -202,6 +231,22 @@ export function SessionInspector({
 						isActive={isInspectorVisible && !browserPoppedOut}
 						onTogglePopOut={onToggleBrowserPopOut}
 						session={session}
+					/>
+				) : undefined
+			}
+			emulatorPoppedOut={emulatorPoppedOut}
+			emulatorView={
+				// Gated on emulatorEnabled (not just isActive below): once the
+				// setting is switched off, this must stop existing entirely --
+				// otherwise a stale view==="emulator" (this tab having just been
+				// hidden out of `tabs`) would keep EmulatorTabView mounted with
+				// its SDK/emulator polling hooks still running with no visible
+				// tab selected.
+				session && emulatorEnabled ? (
+					<EmulatorTabView
+						emulatorPoppedOut={emulatorPoppedOut}
+						isActive={isInspectorVisible && !emulatorPoppedOut}
+						onToggleEmulatorPopOut={onToggleEmulatorPopOut}
 					/>
 				) : undefined
 			}
@@ -2049,6 +2094,39 @@ function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFi
 					{t("inspector.openFiles")}
 				</Button>
 			</div>
+		</div>
+	);
+}
+
+function EmulatorTabView({
+	emulatorPoppedOut,
+	isActive,
+	onToggleEmulatorPopOut,
+}: {
+	emulatorPoppedOut: boolean;
+	isActive: boolean;
+	onToggleEmulatorPopOut?: (next: boolean) => void;
+}) {
+	// While popped out, the overlay (rendered by SessionView) owns the live
+	// view; the docked tab shows a lightweight placeholder rather than a
+	// second live WebSocket connection to the same shared device.
+	const { t } = useTranslation();
+	if (emulatorPoppedOut) {
+		return (
+			<div role="tabpanel">
+				<div className={cn(inspectorEmptyClass, "flex flex-col items-center gap-2 py-10 px-5 text-center")}>
+					<p className="text-md-sm text-muted-foreground">{t("inspector.emulatorInCenter")}</p>
+					<Button onClick={() => onToggleEmulatorPopOut?.(false)} size="sm" type="button" variant="outline">
+						{t("inspector.returnToPanel")}
+					</Button>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="h-full min-h-0" role="tabpanel">
+			<EmulatorPanel active={isActive} onTogglePopOut={(next) => onToggleEmulatorPopOut?.(next)} poppedOut={false} />
 		</div>
 	);
 }

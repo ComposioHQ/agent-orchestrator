@@ -18,6 +18,7 @@ import type { components } from "../../api/schema";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
+import { EmulatorPanel } from "./EmulatorPanel";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
@@ -260,6 +261,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [emulatorPoppedOut, setEmulatorPoppedOut] = useState(false);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const isNativeFullScreen = useWindowFullScreen();
@@ -646,7 +648,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
-			if (next) setBrowserPopOutState({ sessionId, poppedOut: false });
+			if (next) {
+				setBrowserPopOutState({ sessionId, poppedOut: false });
+				setEmulatorPoppedOut(false);
+			}
 			setFilesPoppedOut(next);
 			setInspectorViewForSession(sessionId, "files");
 			setInspectorOpenForSession(sessionId, true);
@@ -656,12 +661,33 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleToggleBrowserPopOut = useCallback(
 		(next: boolean) => {
-			if (next) setFilesPoppedOut(false);
+			if (next) {
+				setFilesPoppedOut(false);
+				setEmulatorPoppedOut(false);
+			}
 			setBrowserPopOutState({ sessionId, poppedOut: next });
 		},
 		[sessionId],
 	);
 
+	const handleToggleEmulatorPopOut = useCallback(
+		(next: boolean) => {
+			if (next) {
+				setFilesPoppedOut(false);
+				setBrowserPopOutState({ sessionId, poppedOut: false });
+				setInspectorViewForSession(sessionId, "emulator");
+				setInspectorOpenForSession(sessionId, true);
+			}
+			setEmulatorPoppedOut(next);
+		},
+		[sessionId, setInspectorOpenForSession, setInspectorViewForSession],
+	);
+
+	// Reveal the first real content in each non-empty browser lifecycle. Once the
+	// user leaves Browser, subsequent work respects that choice and uses the
+	// unseen indicator instead of repeatedly stealing the active inspector tab.
+	// previewRevision intentionally retriggers the empty branch so an explicit
+	// clear consumes unseen activity even when the browser was already empty.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const current = useUiStore.getState().inspectorSessions[sessionId];
@@ -901,6 +927,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						<SessionInspector
 							browserAnnotationQueue={browserAnnotationQueue}
 							browserPoppedOut={browserPoppedOut}
+							emulatorPoppedOut={emulatorPoppedOut}
+							onToggleEmulatorPopOut={handleToggleEmulatorPopOut}
 							filesView={
 								session ? (
 									<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
@@ -981,6 +1009,19 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								poppedOut
 								session={session}
 							/>
+						</div>,
+						document.body,
+					)
+				: null}
+			{emulatorPoppedOut && session
+				? createPortal(
+						<div
+							className={cn(
+								"emulator-popout-overlay",
+								shellTopbarHiddenByPlatform && !isNativeFullScreen && "emulator-popout-overlay--mac-windowed",
+							)}
+						>
+							<EmulatorPanel active onTogglePopOut={handleToggleEmulatorPopOut} poppedOut />
 						</div>,
 						document.body,
 					)

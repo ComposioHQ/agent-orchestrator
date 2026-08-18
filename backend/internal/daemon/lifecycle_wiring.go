@@ -16,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	workspacerouter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/router"
 	scratchworkspace "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidsdk"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
@@ -207,6 +208,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		RunFilePath:         cfg.RunFilePath,
 		BackgroundContext:   ctx,
 		Logger:              log,
+		AndroidEnv:          androidsdk.EnvProvider(cfg.ToolsDir),
 		ReconcileWorkers:    startupReconcileWorkers,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)

@@ -19,6 +19,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidemulator"
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidsdk"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -175,6 +177,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 		c.checkGit(ctx),
 		c.checkTerminalRuntime(ctx),
 		c.checkAOBinary(),
+		c.checkAndroidSDK(ctx, cfg),
 	)
 	for _, harness := range doctorHarnesses {
 		checks = append(checks, c.checkHarness(ctx, harness))
@@ -307,6 +310,34 @@ func (c *commandContext) checkTerminalRuntime(ctx context.Context) doctorCheck {
 		}
 	}
 	return c.checkTmux(ctx)
+}
+
+// checkAndroidSDK surfaces AO's optional, embedded Android emulator's setup
+// state: whether the SDK is installed, and once it is, whether hardware
+// virtualization is available (the real, authoritative check the emulator
+// itself uses before every boot — see androidemulator.CheckAcceleration).
+// This runs entirely offline (disk + a short local subprocess), independent
+// of the daemon, matching every other doctor check.
+func (c *commandContext) checkAndroidSDK(ctx context.Context, cfg config.Config) doctorCheck {
+	if _, err := androidsdk.HostPlatform(); err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "android-sdk",
+			Message: fmt.Sprintf("Android emulator not supported on this host (%v)", err)}
+	}
+	sdk, ok := androidsdk.Installed(cfg.ToolsDir)
+	if !ok {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "android-sdk",
+			Message: "not installed; run `ao android sdk setup --accept-licenses` to enable the emulator"}
+	}
+	emulatorPath := filepath.Join(androidsdk.EmulatorDirIn(sdk.Root), androidemulator.EmulatorBinaryName())
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	accel, _ := androidemulator.CheckAcceleration(reqCtx, emulatorPath)
+	if !accel.Available {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionTools, Name: "android-sdk",
+			Message: fmt.Sprintf("installed (%s) at %s, but hardware acceleration is unavailable: %s", sdk.Source, sdk.Root, accel.Detail)}
+	}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionTools, Name: "android-sdk",
+		Message: fmt.Sprintf("installed (%s) at %s; hardware acceleration available", sdk.Source, sdk.Root)}
 }
 
 func (c *commandContext) checkTmux(ctx context.Context) doctorCheck {

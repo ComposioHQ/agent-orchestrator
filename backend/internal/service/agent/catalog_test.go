@@ -855,15 +855,17 @@ func TestModelsFingerprintsTheSameInputsDiscoveryReads(t *testing.T) {
 	// The cache decision runs before discovery, so it must be able to see the
 	// configuration discovery would read. Fingerprinting a narrower input than
 	// Discover consumes is what let a settings edit go unnoticed.
-	fingerprinted := discoverer.lastFingerprintRequest.Load()
-	if fingerprinted == nil {
+	fingerprintedPtr := discoverer.lastFingerprintRequest.Load()
+	if fingerprintedPtr == nil {
 		t.Fatal("catalog fingerprint was never requested")
+		return
 	}
-	if !reflect.DeepEqual(*fingerprinted, discoverer.lastRequest) {
-		t.Fatalf("fingerprint request = %#v, want the discovery request %#v", *fingerprinted, discoverer.lastRequest)
+	fingerprinted := *fingerprintedPtr
+	if !reflect.DeepEqual(fingerprinted, discoverer.lastRequest) {
+		t.Fatalf("fingerprint request = %#v, want the discovery request %#v", fingerprinted, discoverer.lastRequest)
 	}
 	if fingerprinted.WorkingDir != "/work/project" || fingerprinted.Env["ANTHROPIC_MODEL"] != "opus" {
-		t.Fatalf("fingerprint request = %#v, want the project working dir and env", *fingerprinted)
+		t.Fatalf("fingerprint request = %#v, want the project working dir and env", fingerprinted)
 	}
 }
 

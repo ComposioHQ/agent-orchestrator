@@ -141,7 +141,7 @@ describe("WindowTitlebar", () => {
 
     expect(css).toContain(".platform-windows .window-titlebar__controls");
     expect(css).toMatch(
-      /html\[data-native-browser-composition="true"\]\[data-ao-platform="win32"\] \.browser-popout-overlay,\s*html\[data-native-browser-composition="true"\]\[data-ao-platform="win32"\] \.files-popout-overlay\s*{\s*top: var\(--size-window-titlebar\);/s,
+      /html\[data-native-browser-composition="true"\]\[data-ao-platform="win32"\] \.browser-popout-overlay,\s*html\[data-native-browser-composition="true"\]\[data-ao-platform="win32"\] \.files-popout-overlay,\s*html\[data-native-browser-composition="true"\]\[data-ao-platform="win32"\] \.emulator-popout-overlay\s*{\s*top: var\(--size-window-titlebar\);/s,
     );
     expect(css).toMatch(
       /body:has\(#root \.platform-windows\) > \.browser-popout-overlay,\s*body:has\(#root \.platform-windows\) > \.files-popout-overlay\s*{\s*top: var\(--size-window-titlebar\);/s,
@@ -150,7 +150,7 @@ describe("WindowTitlebar", () => {
       /\.platform-windows\s*{\s*--size-center-panel-inset: 8px;\s*--size-center-panel-inline-inset: 8px;\s*--size-center-panel-bottom-inset: 8px;/s,
     );
     expect(css).toMatch(
-      /\.platform-linux \.browser-popout-overlay,\s*\.platform-linux \.files-popout-overlay\s*{\s*top: var\(--size-shell-topbar\);/s,
+      /\.platform-linux \.browser-popout-overlay,\s*\.platform-linux \.files-popout-overlay,\s*\.platform-linux \.emulator-popout-overlay\s*{\s*top: var\(--size-shell-topbar\);/s,
     );
     expect(tokens).toMatch(
       /--size-center-panel-inset: 24px;\s*--size-center-panel-inline-inset: 16px;\s*--size-center-panel-bottom-inset: 14px;/s,

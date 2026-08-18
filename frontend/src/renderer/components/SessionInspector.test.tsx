@@ -241,6 +241,7 @@ const reviewState = (n: number, status: string, targetSha = `sha-${n}`) => ({
 });
 
 beforeEach(() => {
+  useUiStore.getState().setEmulatorEnabled(false);
   getMock.mockReset();
   navigateMock.mockReset();
   patchMock.mockReset();
@@ -425,6 +426,42 @@ describe("SessionInspector tabs", () => {
     expect(
       document.querySelector("[aria-hidden='true'][inert]"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("SessionInspector Emulator tab gating", () => {
+  it("hides the Emulator tab when the emulator setting is off (the default)", () => {
+    renderWithQuery(<SessionInspector session={session([])} />);
+
+    expect(screen.queryByRole("tab", { name: "Emulator" })).not.toBeInTheDocument();
+  });
+
+  it("shows the Emulator tab once the emulator setting is switched on", () => {
+    useUiStore.getState().setEmulatorEnabled(true);
+    renderWithQuery(<SessionInspector session={session([])} />);
+
+    expect(screen.getByRole("tab", { name: "Emulator" })).toBeInTheDocument();
+  });
+
+  it("opens the emulator panel when the Emulator tab is selected", async () => {
+    useUiStore.getState().setEmulatorEnabled(true);
+    renderWithQuery(<SessionInspector session={session([])} />);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Emulator" }));
+
+    expect(screen.getByTestId("emulator-panel")).toBeInTheDocument();
+  });
+
+  it("stops rendering the emulator panel (and its polling hooks) once the setting is switched off while its tab is active", async () => {
+    useUiStore.getState().setEmulatorEnabled(true);
+    renderWithQuery(<SessionInspector session={session([])} />);
+    await userEvent.click(screen.getByRole("tab", { name: "Emulator" }));
+    expect(screen.getByTestId("emulator-panel")).toBeInTheDocument();
+
+    act(() => useUiStore.getState().setEmulatorEnabled(false));
+
+    expect(screen.queryByTestId("emulator-panel")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Emulator" })).not.toBeInTheDocument();
   });
 });
 

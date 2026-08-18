@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,12 @@ type Service struct {
 	dataDir  string
 	appRunID string
 	log      *slog.Logger
+
+	// androidEnv, when set, supplies ANDROID_HOME/ANDROID_SDK_ROOT and extra
+	// PATH directories (platform-tools, emulator) for standalone shell
+	// terminals, mirroring session_manager.Deps.AndroidEnv. Nil means no
+	// Android env is injected — e.g. the SDK isn't installed.
+	androidEnv func() (vars map[string]string, extraPathDirs []string)
 
 	// now and newHandleID are injectable so tests can assert on exact ids and
 	// timestamps without a clock or entropy dependency.
@@ -164,6 +171,39 @@ func NewService(runtime ShellRuntime, store Store, projects ProjectRootLocator, 
 	}
 }
 
+// SetAndroidEnv wires the Android SDK env/PATH provider (Phase A6) for
+// standalone shell terminals. Nil (the default left by NewService) means no
+// Android env is injected — e.g. the SDK isn't installed.
+func (s *Service) SetAndroidEnv(fn func() (vars map[string]string, extraPathDirs []string)) {
+	s.androidEnv = fn
+}
+
+// androidShellEnv returns the RuntimeConfig.Env overlay for a standalone
+// shell: ANDROID_HOME/ANDROID_SDK_ROOT plus platform-tools/emulator prepended
+// to this process's own PATH (RuntimeConfig.Env overlays the runtime's
+// inherited environment rather than replacing it, so PATH must be built from
+// the same base the shell would otherwise inherit). Returns nil when no
+// AndroidEnv provider is wired, leaving Env unset exactly as before Phase A6.
+func (s *Service) androidShellEnv() map[string]string {
+	if s.androidEnv == nil {
+		return nil
+	}
+	vars, extraPathDirs := s.androidEnv()
+	env := make(map[string]string, len(vars)+1)
+	for k, v := range vars {
+		env[k] = v
+	}
+	if len(extraPathDirs) > 0 {
+		prefix := strings.Join(extraPathDirs, string(os.PathListSeparator))
+		if base := os.Getenv("PATH"); base != "" {
+			env["PATH"] = prefix + string(os.PathListSeparator) + base
+		} else {
+			env["PATH"] = prefix
+		}
+	}
+	return env
+}
+
 // sessionGateFor returns the gate for id, creating it on first use.
 func (s *Service) sessionGateFor(id domain.SessionID) *sessionGate {
 	s.gatesMu.Lock()
@@ -240,6 +280,7 @@ func (s *Service) OpenShellTerminal(ctx context.Context, in OpenShellTerminalInp
 		SessionID:     domain.SessionID(handleID),
 		WorkspacePath: workingDir,
 		Argv:          argv,
+		Env:           s.androidShellEnv(),
 	})
 	if err != nil {
 		return ShellTerminal{}, fmt.Errorf("open shell terminal %s: runtime: %w", handleID, err)

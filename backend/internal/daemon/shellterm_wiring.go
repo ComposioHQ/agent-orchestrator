@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/androidsdk"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -37,6 +38,7 @@ func startShellTerminals(
 		cfg.AppRunID,
 		log,
 	)
+	svc.SetAndroidEnv(androidsdk.EnvProvider(cfg.ToolsDir))
 	// Best-effort: a failed sweep must never block boot. The rows survive and
 	// the next boot retries.
 	if _, err := svc.ReapShellTerminalsFromPreviousAppRuns(ctx); err != nil {
