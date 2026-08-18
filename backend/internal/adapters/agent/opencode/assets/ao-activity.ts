@@ -6,7 +6,8 @@
 //   message.updated / message.part.updated -> `ao hooks opencode user-prompt-submit`
 //   tool.execute.before / tool.execute.after -> `ao hooks opencode active`
 //   session.status (status.type == idle)   -> `ao hooks opencode stop`
-//   permission.ask (status == ask)         -> `ao hooks opencode permission-blocked`
+//   permission.asked / question.asked      -> `ao hooks opencode permission-blocked`
+//   permission/question reply or rejection -> `ao hooks opencode active`
 //
 // The opencode-native session id (and prompt/model where known) is piped to the
 // hook command as JSON on stdin, run with cwd set to the worktree so AO can
@@ -166,16 +167,29 @@ export const aoActivity: Plugin = async ({ directory, client }) => {
             break
           }
 
+          case "permission.asked":
+          case "question.asked": {
+            const sessionID = (event as any).properties?.sessionID ?? currentSessionID
+            if (!sessionID) break
+            callHookSync("permission-blocked", { session_id: sessionID, model: currentModel ?? "" })
+            break
+          }
+
+          case "permission.replied":
+          case "question.replied":
+          case "question.rejected": {
+            const sessionID = (event as any).properties?.sessionID ?? currentSessionID
+            if (!sessionID) break
+            callHookSync("active", { session_id: sessionID, model: currentModel ?? "" })
+            break
+          }
+
         }
       } catch (err) {
         // A malformed/unexpected event payload must never crash opencode; log
         // it (tagged with the event type) for diagnosis and move on.
         logHookFailure(`event:${(event as any)?.type ?? "unknown"}`, err instanceof Error ? err.message : String(err))
       }
-    },
-    "permission.ask": async (input, output) => {
-      if (output.status !== "ask") return
-      callHookSync("permission-blocked", { session_id: input.sessionID, model: currentModel ?? "" })
     },
     "tool.execute.before": async (input) => {
       callHookSync("active", { session_id: input.sessionID, model: currentModel ?? "" })

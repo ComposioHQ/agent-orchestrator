@@ -560,14 +560,19 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 			t.Fatalf("installed plugin missing opencode event %q:\n%s", marker, body)
 		}
 	}
-	// Permissions and tool execution are exposed as named plugin hooks, not
-	// event-bus event types.
-	for _, hook := range []string{`"permission.ask":`, `"tool.execute.before":`, `"tool.execute.after":`} {
+	// Tool execution is exposed as named plugin hooks. Permission approvals and
+	// explicit questions are emitted through opencode's generic event callback.
+	for _, hook := range []string{`"tool.execute.before":`, `"tool.execute.after":`} {
 		if !strings.Contains(body, hook) {
 			t.Fatalf("installed plugin missing opencode hook %q:\n%s", hook, body)
 		}
 	}
-	for _, unsupported := range []string{`"client.permissionRequest"`, `"permission.asked"`, `"tool.start"`, `"tool.end"`} {
+	for _, eventCase := range []string{`case "permission.asked":`, `case "permission.replied":`, `case "question.asked":`, `case "question.replied":`, `case "question.rejected":`} {
+		if !strings.Contains(body, eventCase) {
+			t.Fatalf("installed plugin missing opencode event handler %q:\n%s", eventCase, body)
+		}
+	}
+	for _, unsupported := range []string{`"client.permissionRequest"`, `"permission.ask":`, `"tool.start"`, `"tool.end"`} {
 		if strings.Contains(body, unsupported) {
 			t.Fatalf("plugin subscribes to unsupported opencode event %q:\n%s", unsupported, body)
 		}
