@@ -1219,6 +1219,83 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 }
 
+// TestSpawnModelValidation asserts spawn rejects models a fixed-catalog harness
+// cannot honor, while harnesses that accept arbitrary model ids pass through.
+func TestSpawnModelValidation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessAmp},
+	}}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	// Amp has a fixed mode list; "high" is valid.
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "high"}}); err != nil {
+		t.Fatalf("amp spawn with model high failed: %v", err)
+	}
+
+	// Amp rejects a model outside its mode list.
+	before := len(st.sessions)
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "invalid-mode"}})
+	if err == nil {
+		t.Fatal("expected amp to reject invalid-mode")
+	}
+	if !errors.Is(err, ErrUnsupportedModel) {
+		t.Fatalf("err = %v, want ErrUnsupportedModel", err)
+	}
+	if len(st.sessions) != before {
+		t.Fatalf("invalid model left a session row behind: %d sessions, want %d", len(st.sessions), before)
+	}
+
+	// Codex accepts arbitrary custom model ids.
+	st.projects["codex-proj"] = domain.ProjectRecord{ID: "codex-proj", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "codex-proj", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "custom-snapshot-id"}}); err != nil {
+		t.Fatalf("codex spawn with custom model failed: %v", err)
+	}
+}
+
+// TestSpawnModelPersisted asserts the resolved model is stored on the session
+// metadata and survives a store round-trip.
+func TestSpawnModelPersisted(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "project-model"},
+		Worker:      domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "role-model"}},
+	}}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "spawn-model"}})
+	if err != nil {
+		t.Fatalf("spawn failed: %v", err)
+	}
+	if rec.Metadata.Model != "spawn-model" {
+		t.Fatalf("spawn metadata model = %q, want spawn-model", rec.Metadata.Model)
+	}
+	if agent.lastConfig.Model != "spawn-model" {
+		t.Fatalf("launch model = %q, want spawn-model", agent.lastConfig.Model)
+	}
+
+	stored, ok, err := st.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if !ok {
+		t.Fatalf("session %s not found", rec.ID)
+	}
+	if stored.Metadata.Model != "spawn-model" {
+		t.Fatalf("stored metadata model = %q, want spawn-model", stored.Metadata.Model)
+	}
+}
+
 func TestSpawnRecordsDiffBaseForSingleRepoSessions(t *testing.T) {
 	m, st, _, ws := newManager()
 	repo := newManagerGitRepo(t)

@@ -154,7 +154,10 @@ type SessionView struct {
 	// unchanged) so the desktop browser panel can re-navigate / refresh on a
 	// repeated preview of the same target. Pulled from the json:"-" domain
 	// Metadata.
-	PreviewRevision   int64            `json:"previewRevision,omitempty"`
+	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// Model is the agent model this session resolved to at spawn time. Empty
+	// means the agent's default model. Pulled from the json:"-" domain Metadata.
+	Model             string           `json:"model,omitempty"`
 	PRs               []SessionPRFacts `json:"prs"`
 	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
 }
@@ -181,6 +184,10 @@ type SpawnSessionRequest struct {
 	// producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
+	// Model is an optional agent model override scoped to this single spawn. Empty
+	// keeps the resolved project/role default. The daemon validates that the
+	// selected harness can honor the model before launching.
+	Model string `json:"model,omitempty" maxLength:"256"`
 
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
