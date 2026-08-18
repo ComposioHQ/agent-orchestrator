@@ -40,18 +40,23 @@ func runPrimeCommand(ctx context.Context, binary, workingDir string, env map[str
 	return cmd.CombinedOutput()
 }
 
-func (p *Plugin) executePrimeCommand(ctx context.Context, workingDir string, args ...string) ([]byte, error) {
+func (p *Plugin) executePrimeCommand(ctx context.Context, dataDir string, args ...string) ([]byte, error) {
 	binary, err := p.primeAgentBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
+	dir, err := primeDataDir(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	env := map[string]string{primeAgentCodingAgentDirEnv: dir}
 	runner := p.runCommand
 	if runner == nil {
 		runner = runPrimeCommand
 	}
 	runCtx, cancel := context.WithTimeout(ctx, primeCommandTimeout)
 	defer cancel()
-	return runner(runCtx, binary, workingDir, nil, args...)
+	return runner(runCtx, binary, dir, env, args...)
 }
 
 func activeSessionForTranscript(output []byte, nativeID string) (string, bool, error) {
@@ -91,11 +96,7 @@ func (p *Plugin) TerminateNativeSession(ctx context.Context, session ports.Sessi
 	if nativeID == "" {
 		return nil
 	}
-	workingDir := strings.TrimSpace(session.DataDir)
-	if workingDir == "" {
-		workingDir = "."
-	}
-	output, err := p.executePrimeCommand(ctx, workingDir, "list", "--json")
+	output, err := p.executePrimeCommand(ctx, session.DataDir, "list", "--json")
 	if err != nil {
 		return fmt.Errorf("prime-agent: list live sessions: %w: %s", err, boundedPrimeOutput(output))
 	}
@@ -103,7 +104,7 @@ func (p *Plugin) TerminateNativeSession(ctx context.Context, session ports.Sessi
 	if err != nil || !ok {
 		return err
 	}
-	output, err = p.executePrimeCommand(ctx, workingDir, "stop", activeID, "--json")
+	output, err = p.executePrimeCommand(ctx, session.DataDir, "stop", activeID, "--json")
 	if err != nil {
 		return fmt.Errorf("prime-agent: stop active session %q: %w: %s", activeID, err, boundedPrimeOutput(output))
 	}

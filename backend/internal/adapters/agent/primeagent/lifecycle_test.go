@@ -19,10 +19,11 @@ func TestTerminateNativeSessionStopsTheActiveOwnerOfTheTranscript(t *testing.T) 
 			if _, ok := ctx.Deadline(); !ok {
 				return nil, errors.New("command context has no deadline")
 			}
-			if binary != "prime-agent" || cwd != "/ao-data" {
+			wantPrimeDir := "/ao-data/agent-runtime/prime-agent"
+			if binary != "prime-agent" || cwd != wantPrimeDir {
 				return nil, fmt.Errorf("binary=%q cwd=%q", binary, cwd)
 			}
-			if _, ok := env["PRIME_AGENT_CODING_AGENT_DIR"]; ok {
+			if got := env["PRIME_AGENT_CODING_AGENT_DIR"]; got != wantPrimeDir {
 				return nil, fmt.Errorf("env=%v", env)
 			}
 			switch strings.Join(args, " ") {
@@ -51,11 +52,11 @@ func TestTerminateNativeSessionStopsTheActiveOwnerOfTheTranscript(t *testing.T) 
 	}
 }
 
-func TestAugmentRuntimeEnvPreservesPrimeUserConfigRoot(t *testing.T) {
+func TestAugmentRuntimeEnvUsesAOPrimeStateRoot(t *testing.T) {
 	env := map[string]string{}
 	New().AugmentRuntimeEnv(env, "/ao-data")
-	if _, ok := env["PRIME_AGENT_CODING_AGENT_DIR"]; ok {
-		t.Fatalf("PRIME_AGENT_CODING_AGENT_DIR was set: %v", env)
+	if got, want := env["PRIME_AGENT_CODING_AGENT_DIR"], "/ao-data/agent-runtime/prime-agent"; got != want {
+		t.Fatalf("PRIME_AGENT_CODING_AGENT_DIR = %q, want %q", got, want)
 	}
 }
 
@@ -99,6 +100,7 @@ func TestTerminateNativeSessionSafety(t *testing.T) {
 			}
 			err := p.TerminateNativeSession(context.Background(), ports.SessionRef{
 				WorkspacePath: "/work",
+				DataDir:       "/ao-data",
 				Metadata: map[string]string{
 					ports.MetadataKeyAgentSessionID: tc.nativeID,
 				},
