@@ -281,8 +281,19 @@ func newProjectOutcomeSetCommand(ctx *commandContext) *cobra.Command {
 			if !ok || strings.TrimSpace(string(revision)) == "null" {
 				return usageError{errors.New("project outcome input requires expectedRevision")}
 			}
-			if _, ok := fields["criteria"]; !ok || request.Criteria == nil {
+			criteria, ok := fields["criteria"]
+			if !ok || request.Criteria == nil {
 				return usageError{errors.New("project outcome input requires criteria as an array")}
+			}
+			var criterionFields []map[string]json.RawMessage
+			if err := json.Unmarshal(criteria, &criterionFields); err != nil {
+				return usageError{fmt.Errorf("decode project outcome criteria: %w", err)}
+			}
+			for i, criterion := range criterionFields {
+				displayOrder, present := criterion["displayOrder"]
+				if !present || strings.TrimSpace(string(displayOrder)) == "null" {
+					return usageError{fmt.Errorf("project outcome criterion %d requires displayOrder", i)}
+				}
 			}
 			id := strings.TrimSpace(args[0])
 			var result projectControl

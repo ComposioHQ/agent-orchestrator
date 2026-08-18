@@ -48,6 +48,10 @@ func (c *ProjectControlController) setOutcome(w http.ResponseWriter, r *http.Req
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PROJECT_OUTCOME", "expectedRevision and criteria are required; criteria must be an array", nil)
 		return
 	}
+	if !request.criterionDisplayOrdersSet {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PROJECT_OUTCOME", "Each acceptance criterion requires displayOrder", nil)
+		return
+	}
 	criteria := make([]domain.AcceptanceCriterionInput, 0, len(request.Criteria))
 	for _, criterion := range request.Criteria {
 		criteria = append(criteria, domain.AcceptanceCriterionInput{

@@ -93,6 +93,10 @@ func TestProjectOutcomeSet_FileAndValidation(t *testing.T) {
 	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "requires expectedRevision") {
 		t.Fatalf("missing expectedRevision err = %v", err)
 	}
+	_, _, err = executeCLI(t, Deps{}, "project", "outcome", "set", "demo", "--input-json", `{"statement":"Ship","criteria":[{"statement":"Tests pass","verificationMethod":"go test"}],"expectedRevision":0,"idempotencyKey":"missing-order"}`)
+	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "criterion 0 requires displayOrder") {
+		t.Fatalf("missing displayOrder err = %v", err)
+	}
 }
 
 type projectCapture struct {

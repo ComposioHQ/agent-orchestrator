@@ -120,6 +120,8 @@ func TestProjectControlAPI_ValidationAndWireCompatibility(t *testing.T) {
 		{"null expected revision", `{"statement":"ship","criteria":[],"expectedRevision":null,"idempotencyKey":"x"}`, "INVALID_PROJECT_OUTCOME"},
 		{"null criteria", `{"statement":"ship","criteria":null,"expectedRevision":0,"idempotencyKey":"x"}`, "INVALID_PROJECT_OUTCOME"},
 		{"missing verification method", `{"statement":"ship","criteria":[{"statement":"test","displayOrder":0}],"expectedRevision":0,"idempotencyKey":"x"}`, "INVALID_PROJECT_OUTCOME"},
+		{"missing display order", `{"statement":"ship","criteria":[{"statement":"test","verificationMethod":"go test"}],"expectedRevision":0,"idempotencyKey":"x"}`, "INVALID_PROJECT_OUTCOME"},
+		{"null display order", `{"statement":"ship","criteria":[{"statement":"test","verificationMethod":"go test","displayOrder":null}],"expectedRevision":0,"idempotencyKey":"x"}`, "INVALID_PROJECT_OUTCOME"},
 		{"duplicate order", `{"statement":"ship","criteria":[{"statement":"a","verificationMethod":"x","displayOrder":0},{"statement":"b","verificationMethod":"y","displayOrder":0}],"expectedRevision":0,"idempotencyKey":"x"}`, "DUPLICATE_ACCEPTANCE_CRITERION_DISPLAY_ORDER"},
 		{"unknown field", `{"statement":"ship","criteria":[],"expectedRevision":0,"idempotencyKey":"x","health":"green"}`, "INVALID_JSON"},
 	}

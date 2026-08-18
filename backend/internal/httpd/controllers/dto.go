@@ -33,12 +33,13 @@ type ProjectIDParam struct {
 
 // SetProjectOutcomeRequest replaces the root outcome and authoritative criteria.
 type SetProjectOutcomeRequest struct {
-	Statement           string                         `json:"statement"`
-	Criteria            []AcceptanceCriterionInputWire `json:"criteria"`
-	ExpectedRevision    int64                          `json:"expectedRevision"`
-	IdempotencyKey      string                         `json:"idempotencyKey"`
-	expectedRevisionSet bool
-	criteriaSet         bool
+	Statement                 string                         `json:"statement"`
+	Criteria                  []AcceptanceCriterionInputWire `json:"criteria"`
+	ExpectedRevision          int64                          `json:"expectedRevision"`
+	IdempotencyKey            string                         `json:"idempotencyKey"`
+	expectedRevisionSet       bool
+	criteriaSet               bool
+	criterionDisplayOrdersSet bool
 }
 
 // UnmarshalJSON preserves required-field presence while keeping the public
@@ -59,7 +60,22 @@ func (r *SetProjectOutcomeRequest) UnmarshalJSON(data []byte) error {
 	*r = SetProjectOutcomeRequest(decoded)
 	revision, present := fields["expectedRevision"]
 	r.expectedRevisionSet = present && !bytes.Equal(bytes.TrimSpace(revision), []byte("null"))
-	_, r.criteriaSet = fields["criteria"]
+	criteria, present := fields["criteria"]
+	r.criteriaSet = present
+	r.criterionDisplayOrdersSet = true
+	if present && !bytes.Equal(bytes.TrimSpace(criteria), []byte("null")) {
+		var criterionFields []map[string]json.RawMessage
+		if err := json.Unmarshal(criteria, &criterionFields); err != nil {
+			return err
+		}
+		for _, criterion := range criterionFields {
+			displayOrder, ok := criterion["displayOrder"]
+			if !ok || bytes.Equal(bytes.TrimSpace(displayOrder), []byte("null")) {
+				r.criterionDisplayOrdersSet = false
+				break
+			}
+		}
+	}
 	return nil
 }
 
