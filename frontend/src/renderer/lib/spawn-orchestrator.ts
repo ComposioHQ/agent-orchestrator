@@ -1,5 +1,6 @@
 import { apiClient, apiErrorCode, apiErrorMessage, apiErrorRequestId } from "./api-client";
 import type { OrchestratorSpawnSource } from "./orchestrator-spawn-sources";
+import { onSessionSpawned, onSpawnFailed } from "./survey";
 import { captureRendererEvent } from "./telemetry";
 import type { SessionMode } from "../types/conversation";
 
@@ -66,9 +67,11 @@ export async function spawnOrchestrator(
 		}
 
 		void captureRendererEvent("ao.renderer.orchestrator_spawn_succeeded", { project_id: projectId, source });
+		onSessionSpawned();
 		return data.orchestrator.id;
 	} catch (err) {
 		void captureRendererEvent("ao.renderer.orchestrator_spawn_failed", { project_id: projectId, source });
+		onSpawnFailed();
 		throw err;
 	}
 }

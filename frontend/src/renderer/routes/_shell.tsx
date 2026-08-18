@@ -27,6 +27,7 @@ import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../
 import { apiClient, apiErrorCode, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { refreshDaemonStatus } from "../lib/daemon-status";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { onProjectAdded } from "../lib/survey";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
@@ -302,6 +303,7 @@ function ShellLayout() {
 				sessions: [],
 			};
 			void captureRendererEvent("ao.renderer.project_add_succeeded", { project_id: workspace.id });
+			onProjectAdded();
 			updateWorkspaces((current) => [workspace, ...current.filter((item) => item.id !== workspace.id)]);
 			setOrchestratorStartupError(workspace.id, null);
 			try {
