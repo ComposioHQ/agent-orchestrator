@@ -137,7 +137,7 @@ export default function CloneRepositoryDialog({
 										autoComplete="off"
 										aria-describedby={urlError ? "cloneRepositoryUrlError" : "cloneRepositoryUrlHelp"}
 										aria-invalid={urlError ? true : undefined}
-										className="h-11 bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
+										className="bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
 										disabled={disabled}
 										placeholder={t("createProject.cloneRepositoryUrlPlaceholder")}
 										spellCheck={false}
@@ -169,7 +169,7 @@ export default function CloneRepositoryDialog({
 											id="cloneDestination"
 											aria-describedby={destinationError ? "cloneDestinationError" : undefined}
 											aria-invalid={destinationError ? true : undefined}
-											className="h-11 cursor-default bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
+											className="cursor-default bg-[var(--color-bg-import-card)] pl-10 font-mono text-[13px]"
 											placeholder={t("createProject.cloneDestinationPlaceholder")}
 											readOnly
 											value={value.destinationParent}
@@ -178,7 +178,7 @@ export default function CloneRepositoryDialog({
 									<Button
 										type="button"
 										variant="footer"
-										className="h-11 px-4"
+										className="h-control-form! px-4"
 										disabled={disabled || choosingDestination}
 										onClick={() => void chooseDestination()}
 									>
