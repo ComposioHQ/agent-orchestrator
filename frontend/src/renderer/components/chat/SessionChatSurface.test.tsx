@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { agentSwitchesQueryKey } from "../../hooks/useAgentSwitches";
 import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { useUiStore } from "../../stores/ui-store";
 import { workspaceQueryKey } from "../../hooks/useWorkspaceQuery";
@@ -66,7 +67,12 @@ vi.mock("./ChatWorkspace", () => ({
 
 vi.mock("../TerminalSwitchAgentButton", () => ({
 	TerminalSwitchAgentButton: ({ presentation }: { presentation?: { outcome: string } }) => (
-		<button aria-label="Switch agent" disabled={presentation?.outcome === "in_progress"} type="button" />
+		<button
+			aria-label="Switch agent"
+			data-outcome={presentation?.outcome}
+			disabled={presentation?.outcome === "in_progress"}
+			type="button"
+		/>
 	),
 }));
 
@@ -228,6 +234,67 @@ describe("SessionChatSurface link routing", () => {
 		});
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
 		expect(screen.queryByRole("list", { name: "Switching…" })).not.toBeInTheDocument();
+	});
+
+	it("keeps an observed terminal failure visible after the workspace summary clears", async () => {
+		const user = userEvent.setup();
+		const activeSwitch = {
+			agentHandoffStatus: "not_attempted",
+			fromHarness: "claude-code",
+			id: "switch-failed-after-admission",
+			state: "starting_target",
+			targetHarness: "codex",
+		} satisfies AgentSwitchSummary;
+		const failedSwitch = {
+			...activeSwitch,
+			errorCode: "target_binary_missing",
+			state: "failed",
+		} satisfies AgentSwitchSummary;
+		agentSwitchState.data = [activeSwitch];
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		const view = render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={{ ...session, activeAgentSwitch: activeSwitch }} />
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
+				"data-outcome",
+				"in_progress",
+			);
+		});
+
+		agentSwitchState.data = [failedSwitch];
+		act(() => {
+			queryClient.setQueryData(agentSwitchesQueryKey(session.id), [failedSwitch]);
+		});
+		view.rerender(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={session} />
+			</Wrapper>,
+		);
+
+		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
+			"data-outcome",
+			"failure",
+		);
+		expect(screen.getByTestId("chat-agent-switch-status")).toHaveTextContent(
+			"Target agent is not installed",
+		);
+		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
+			"data-outcome",
+			"failure",
+		);
+
+		await user.click(screen.getByRole("button", { name: "Close" }));
+		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
+			"data-outcome",
+			"failure",
+		);
 	});
 
 	it("keeps a selected shell renderable when the conversation is unavailable", () => {

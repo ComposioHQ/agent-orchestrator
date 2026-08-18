@@ -7,10 +7,12 @@
  * preview and live data here.
  */
 
-import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { AlertTriangle, CheckCircle2, Loader2, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	findActiveAgentSwitch,
+	isTerminalAgentSwitch,
 	selectDurableAgentSwitch,
 	useAgentSwitches,
 } from "../../hooks/useAgentSwitches";
@@ -120,8 +122,27 @@ export function SessionChatSurface({
 	// dialog anchors to (the workspace body, handed up by ChatWorkspace).
 	const [switchSelectorOpen, setSwitchSelectorOpen] = useState(false);
 	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
+	const observedNonterminalSwitchIdsRef = useRef(new Set<string>());
+	const mountedSessionIdRef = useRef(session.id);
+	const [dismissedFailureSwitchId, setDismissedFailureSwitchId] = useState<string>();
+	if (mountedSessionIdRef.current !== session.id) {
+		mountedSessionIdRef.current = session.id;
+		observedNonterminalSwitchIdsRef.current = new Set();
+	}
+	useEffect(() => {
+		setDismissedFailureSwitchId(undefined);
+	}, [session.id]);
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
+	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
+	if (session.activeAgentSwitch && !isTerminalAgentSwitch(session.activeAgentSwitch)) {
+		observedNonterminalSwitchIdsRef.current.add(session.activeAgentSwitch.id);
+	}
+	if (activeHistorySwitch) observedNonterminalSwitchIdsRef.current.add(activeHistorySwitch.id);
+	const observedFailedSwitch = agentSwitches.find(
+		(entry) =>
+			entry.state === "failed" && observedNonterminalSwitchIdsRef.current.has(entry.id),
+	);
 	const durableAgentSwitch = selectDurableAgentSwitch(session.activeAgentSwitch, agentSwitches);
 	const admissionAgentSwitch: AgentSwitchSummary | undefined =
 		!durableAgentSwitch && switchMutation.isPending && switchMutation.input
@@ -133,7 +154,10 @@ export function SessionChatSurface({
 				targetHarness: switchMutation.input.targetHarness,
 			}
 			: undefined;
-	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch;
+	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedFailedSwitch;
+	if (agentSwitch && !isTerminalAgentSwitch(agentSwitch)) {
+		observedNonterminalSwitchIdsRef.current.add(agentSwitch.id);
+	}
 	const targetChatControllerReady =
 		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
 	const switchPresentation = agentSwitch
@@ -148,6 +172,10 @@ export function SessionChatSurface({
 				terminalHandleId: targetChatControllerReady ? "chat-controller" : undefined,
 			})
 		: undefined;
+	const shownSwitchPresentation =
+		switchPresentation?.outcome === "failure" && dismissedFailureSwitchId === agentSwitch?.id
+			? undefined
+			: switchPresentation;
 	const switchLocksChat = Boolean(
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
@@ -294,10 +322,15 @@ export function SessionChatSurface({
 				reloadingMcpServers={commands.reloadingMcpServers}
 				mcpReloadError={commands.mcpReloadError}
 			/>
-			{switchPresentation ? (
+			{shownSwitchPresentation ? (
 				<ChatAgentSwitchStatus
 					auxiliaryActive={Boolean(reviewerTarget || shellTarget)}
-					presentation={switchPresentation}
+					onDismiss={
+						shownSwitchPresentation.outcome === "failure" && agentSwitch
+							? () => setDismissedFailureSwitchId(agentSwitch.id)
+							: undefined
+					}
+					presentation={shownSwitchPresentation}
 				/>
 			) : null}
 		</div>
@@ -306,9 +339,11 @@ export function SessionChatSurface({
 
 function ChatAgentSwitchStatus({
 	auxiliaryActive,
+	onDismiss,
 	presentation,
 }: {
 	auxiliaryActive: boolean;
+	onDismiss?: () => void;
 	presentation: AgentSwitchPresentation;
 }) {
 	const { t } = useTranslation();
@@ -332,7 +367,8 @@ function ChatAgentSwitchStatus({
 		>
 			<div
 				className={cn(
-					"flex w-full max-w-lg items-start gap-3 rounded-lg border bg-surface/95 px-4 py-3 text-left shadow-lg",
+					"pointer-events-auto relative flex w-full max-w-lg items-start gap-3 rounded-lg border bg-surface/95 px-4 py-3 text-left shadow-lg",
+					onDismiss && "pr-11",
 					success
 						? "border-success/40"
 						: warning
@@ -364,6 +400,16 @@ function ChatAgentSwitchStatus({
 					</p>
 					{inProgress ? <AgentSwitchProgressTrack stage={presentation.stage} /> : null}
 				</div>
+				{onDismiss ? (
+					<button
+						aria-label={t("common.close")}
+						className="absolute right-2 top-2 grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+						onClick={onDismiss}
+						type="button"
+					>
+						<X aria-hidden="true" className="size-icon-sm" />
+					</button>
+				) : null}
 			</div>
 		</div>
 	);
