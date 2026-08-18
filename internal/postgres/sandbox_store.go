@@ -399,8 +399,12 @@ func (s *Store) PauseIfIdle(
 					SELECT 1 FROM ao_sessions
 					WHERE ao_sessions.id = $1
 						AND ao_sessions.org_id = $2
-						AND ao_sessions.last_user_message_at IS NOT NULL
-						AND ao_sessions.last_user_message_at <= now() - $3::interval
+						-- A session that never received a user message
+						-- (last_user_message_at IS NULL) is idle from creation:
+						-- measuring from created_at pauses these abandoned
+						-- sandboxes too, instead of leaving them running forever
+						-- and billing compute for a session no one is using.
+						AND coalesce(ao_sessions.last_user_message_at, ao_sessions.created_at) <= now() - $3::interval
 				)
 				AND NOT EXISTS (
 					SELECT 1 FROM ao_turns

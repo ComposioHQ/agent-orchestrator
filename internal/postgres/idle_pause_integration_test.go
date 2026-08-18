@@ -46,6 +46,23 @@ func (f sandboxFixture) backdateLastUserMessage(t *testing.T, age time.Duration)
 	}
 }
 
+// backdateCreatedAt ages the session's created_at so a never-messaged session
+// looks idle since creation, without a test sleeping for it.
+func (f sandboxFixture) backdateCreatedAt(t *testing.T, age time.Duration) {
+	t.Helper()
+	if err := f.store.withOrg(context.Background(), f.orgID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(
+			context.Background(),
+			`UPDATE ao_sessions SET created_at = now() - $2::interval WHERE id = $1`,
+			f.sessionID,
+			fmt.Sprintf("%d seconds", int(age.Seconds())),
+		)
+		return err
+	}); err != nil {
+		t.Fatalf("backdate created_at: %v", err)
+	}
+}
+
 // finishOpenTurn claims and completes the fixture's one open turn, so it no
 // longer counts as active.
 func (f sandboxFixture) finishOpenTurn(t *testing.T) {
@@ -116,6 +133,30 @@ func TestPauseIfIdleRequiresSilenceAndNoActiveTurn(t *testing.T) {
 
 	if paused, err := fixture.store.PauseIfIdle(ctx, fixture.orgID, fixture.sessionID, threshold); err != nil || paused {
 		t.Fatalf("paused = %v, err = %v, want false: already paused, nothing left to converge", paused, err)
+	}
+}
+
+// A session created but never messaged (last_user_message_at IS NULL) used to
+// be excluded from auto-pause entirely, so an abandoned sandbox ran and billed
+// forever. It must now pause once idle since creation past the threshold.
+func TestPauseIfIdlePausesNeverMessagedAbandonedSession(t *testing.T) {
+	fixture := newSandboxFixture(t, "idle-pause-abandoned")
+	ctx := context.Background()
+	fixture.markRunning(t)
+	const threshold = 15 * time.Minute
+
+	if paused, err := fixture.store.PauseIfIdle(ctx, fixture.orgID, fixture.sessionID, threshold); err != nil || paused {
+		t.Fatalf("paused = %v, err = %v, want false: never messaged but created just now", paused, err)
+	}
+
+	fixture.backdateCreatedAt(t, 20*time.Minute)
+
+	paused, err := fixture.store.PauseIfIdle(ctx, fixture.orgID, fixture.sessionID, threshold)
+	if err != nil || !paused {
+		t.Fatalf("paused = %v, err = %v, want true: never-messaged session idle since creation must pause", paused, err)
+	}
+	if state := fixture.desiredState(t); state != domain.SandboxDesiredPaused {
+		t.Fatalf("desired_state = %q, want %q", state, domain.SandboxDesiredPaused)
 	}
 }
 
