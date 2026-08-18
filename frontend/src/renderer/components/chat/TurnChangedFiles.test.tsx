@@ -215,6 +215,45 @@ describe("ActivityRun with a streaming command", () => {
 		);
 		expect(container.querySelector("pre")).toBeNull();
 	});
+
+	it("summarizes grouped non-zero command exits without destructive styling", () => {
+		const secondCommand = commandActivity(
+			{ command: "npm run typecheck", exitCode: 2 },
+			"failed",
+		);
+		secondCommand.id = "act-2";
+		secondCommand.sequence = 2;
+
+		render(
+			<ActivityRun
+				activities={[
+					commandActivity({ command: "npm test", exitCode: 1 }, "failed"),
+					secondCommand,
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("2 exited")).toHaveClass("text-muted-foreground/70");
+		expect(screen.getByText("2 exited")).not.toHaveClass("text-destructive");
+		expect(screen.queryByText("2 failed")).not.toBeInTheDocument();
+	});
+
+	it("keeps real grouped failures destructive when mixed with a command exit", () => {
+		const failedPlan = plan("act-2");
+		failedPlan.status = "failed";
+
+		render(
+			<ActivityRun
+				activities={[
+					commandActivity({ command: "npm test", exitCode: 1 }, "failed"),
+					failedPlan,
+				]}
+			/>,
+		);
+
+		expect(screen.getByText("1 exited")).toHaveClass("text-muted-foreground/70");
+		expect(screen.getByText("1 failed")).toHaveClass("text-destructive");
+	});
 });
 
 describe("ActivityRow command labels", () => {
@@ -266,6 +305,17 @@ describe("ActivityRow command labels", () => {
 		expect(container.querySelector(".lucide-square-terminal")).toBeNull();
 		expect(row.querySelector(".flex-1")).toBeNull();
 		expect(row.textContent).toMatch(/^Checked repositoryexit 1/);
+	});
+
+	it("keeps command failures without exit metadata destructive", () => {
+		render(
+			<ActivityRow
+				activity={commandActivity({ command: "search the web", reason: "provider error" }, "failed")}
+			/>,
+		);
+
+		expect(screen.getByText("failed")).toHaveClass("text-destructive");
+		expect(screen.getByText("failed")).not.toHaveClass("text-muted-foreground/70");
 	});
 
 	it("shows an interrupted command as stopped instead of leaving a live spinner", () => {

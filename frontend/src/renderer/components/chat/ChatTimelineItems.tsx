@@ -59,6 +59,7 @@ import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
 	exploredFileCount,
+	isNonzeroCommandExit,
 } from "./activity-command";
 import { Button } from "../ui/button";
 import {
@@ -691,9 +692,7 @@ function ActivityState({
 			<span
 				className={cn(
 					"shrink-0 font-mono text-[10px] tabular-nums",
-					activity.activityKind === "command"
-						? "text-muted-foreground/70"
-						: "text-destructive",
+					isNonzeroCommandExit(activity) ? "text-muted-foreground/70" : "text-destructive",
 				)}
 			>
 				{detail?.exitCode !== undefined ? `exit ${detail.exitCode}` : "failed"}
