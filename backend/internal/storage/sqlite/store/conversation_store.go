@@ -2070,6 +2070,7 @@ func conversationBranchToDomain(row gen.SelectConversationBranchRow) domain.Conv
 		ConversationID:         row.ConversationID,
 		SessionID:              domain.SessionID(row.SessionID.String),
 		ProviderConversationID: row.ProviderConversationID,
+		ProviderScopeID:        row.ProviderScopeID,
 		ParentBranchID:         row.ParentBranchID.String,
 		ForkAfterTurnID:        row.ForkAfterTurnID.String,
 		ReplacedTurnID:         row.ReplacedTurnID.String,
@@ -2170,6 +2171,7 @@ func turnToDomain(row gen.ConversationTurn) domain.ConversationTurn {
 	turn := domain.ConversationTurn{
 		ID:                 row.ID,
 		ConversationID:     row.ConversationID,
+		BranchID:           row.BranchID,
 		HandledBySessionID: row.HandledBySessionID,
 		ProviderTurnID:     row.ProviderTurnID,
 		State:              row.State,

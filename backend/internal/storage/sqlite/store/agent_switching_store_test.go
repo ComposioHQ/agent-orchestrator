@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
 type agentSwitchFixtureUpdater interface {
@@ -49,6 +50,28 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
 	session, err := s.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create Chat session: %v", err)
+	}
+	conversation, err := s.CreateConversation(ctx, "chat-switch-conversation",
+		domain.ConversationScopeSession, "chat-switch", session.ID, now)
+	if err != nil {
+		t.Fatalf("create Chat conversation: %v", err)
+	}
+	if err := s.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+		Model: "source-provider-model", ReasoningEffort: "high",
+		ApprovalMode: domain.PermissionModeAcceptEdits,
+	}, now); err != nil {
+		t.Fatalf("seed source conversation settings: %v", err)
+	}
+	created, err := s.AppendUserMessage(ctx, conversation.ID, session.ID, "source-chat-generation",
+		domain.ConversationMessage{
+			ID: "source-message", Origin: domain.MessageOriginHuman, Text: "original source prompt",
+			ClientMessageID: "source-client-message",
+		}, "source-turn", now)
+	if err != nil || !created {
+		t.Fatalf("append source prompt: created=%v err=%v", created, err)
+	}
+	if err := s.BindTurnToProvider(ctx, "source-turn", "source-provider-turn", now); err != nil {
+		t.Fatalf("bind source prompt: %v", err)
 	}
 	sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
 		ID: "switch-chat", SessionID: session.ID, IdempotencyKey: "switch-chat",
@@ -108,6 +131,38 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
 		got.Metadata.ProviderConversationID != "target-chat-native" ||
 		got.Metadata.ControllerGeneration != "target-chat-generation" {
 		t.Fatalf("activated Chat session = %+v", got)
+	}
+	conversation, err = s.ConversationForSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("reload activated conversation: %v", err)
+	}
+	if conversation.Settings.Model != "" || conversation.Settings.ReasoningEffort != "" ||
+		conversation.Settings.ApprovalMode != domain.PermissionModeAcceptEdits {
+		t.Fatalf("activated conversation settings = %+v, want target defaults with preserved approval",
+			conversation.Settings)
+	}
+	branches, err := s.ConversationBranches(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("list activated conversation branches: %v", err)
+	}
+	if len(branches) != 2 {
+		t.Fatalf("activated conversation branches = %+v, want source root and target provider boundary", branches)
+	}
+	var targetBranch domain.ConversationBranch
+	for _, branch := range branches {
+		if branch.Active {
+			targetBranch = branch
+			break
+		}
+	}
+	if targetBranch.ProviderConversationID != "target-chat-native" ||
+		targetBranch.ParentBranchID != conversation.ID+":root" ||
+		targetBranch.ReplacedTurnID != "" ||
+		targetBranch.ForkAfterSequence != conversation.LatestSequence {
+		t.Fatalf("target provider boundary = %+v, conversation = %+v", targetBranch, conversation)
+	}
+	if _, err := s.ConversationEditAnchor(ctx, conversation.ID, "source-turn"); !errors.Is(err, store.ErrConversationTurnNotFound) {
+		t.Fatalf("source-provider edit anchor error = %v, want ErrConversationTurnNotFound", err)
 	}
 }
 

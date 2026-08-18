@@ -24,6 +24,8 @@ var ErrNoController = errors.New("no live chat controller for session")
 // fact later, but callers must route from the persisted mode they read now.
 var ErrNotChatMode = errors.New("session is not in chat mode")
 
+const controllerReadyStateSyncTimeout = 5 * time.Second
+
 // SessionReader is the session-fact surface the service needs. It reads the
 // persisted mode rather than trusting the caller, so a client cannot talk its way
 // into the wrong dispatch path.
@@ -394,6 +396,31 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	if err := notifyControllerReady(cfg, controller); err != nil {
 		_ = conv.Close()
 		return nil, err
+	}
+	if cfg.ControllerReady != nil {
+		// ControllerReady may atomically transfer ownership, reset provider-specific
+		// settings, and move the active provider branch. The controller was built
+		// from the pre-commit row, so refresh it before publishing or dispatching.
+		// Once the callback commits, caller cancellation must not strand a live
+		// controller with the source agent's cached state.
+		refreshCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx), controllerReadyStateSyncTimeout)
+		refreshed, refreshErr := s.store.ConversationForSession(refreshCtx, cfg.SessionID)
+		cancel()
+		if refreshErr != nil {
+			_ = conv.Close()
+			return nil, fmt.Errorf("refresh committed chat controller: %w", refreshErr)
+		}
+		if refreshed.ID != controller.conversation.ID {
+			_ = conv.Close()
+			return nil, fmt.Errorf(
+				"refresh committed chat controller: conversation changed from %s to %s",
+				controller.conversation.ID, refreshed.ID)
+		}
+		// The controller has not been published and its projector has not started,
+		// so this is the one safe point where both cached values can move together.
+		controller.conversation = refreshed
+		controller.settings = refreshed.Settings
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller

@@ -29,6 +29,7 @@ func (m *Manager) executeChatAgentSwitch(
 	project := admitted.project
 	targetAgent := admitted.targetAgent
 
+	sourceStopConclusive := false
 	sourceStopped := false
 	targetWorkspacePrepared := false
 	targetOwnerCommitted := false
@@ -41,8 +42,14 @@ func (m *Manager) executeChatAgentSwitch(
 		if panicValue := recover(); panicValue != nil {
 			retErr = fmt.Errorf("switch Chat agent %s panicked: %v", id, panicValue)
 		}
-		if retErr != nil && !sourceStopped {
+		if retErr != nil && !sourceStopped && !sourceStopConclusive {
 			m.abortChatAgentSwitchHandoff(rec)
+		}
+		if retErr != nil && sourceStopConclusive && !sourceStopped {
+			// The controller is already gone, but the durable confirmation did not
+			// finish. Keep the stopping_source row and mutation gate for restart
+			// reconciliation; treating this as pre-stop would reopen a dead source.
+			skipTerminalization = true
 		}
 		rollbackSafe := retErr != nil && sourceStopped && !targetOwnerCommitted && !targetOwnershipAmbiguous
 		if retErr != nil && targetWorkspacePrepared && !targetOwnerCommitted && !targetOwnershipAmbiguous {
@@ -181,6 +188,7 @@ func (m *Manager) executeChatAgentSwitch(
 		skipTerminalization = true
 		return result, fmt.Errorf("switch Chat agent %s: stop source controller: %w", id, err)
 	}
+	sourceStopConclusive = true
 	stoppedAt := m.clock()
 	boundaryCtx, cancelBoundary := switchDurableContext(workerCtx)
 	confirmed, err := m.lcm.ConfirmAgentSwitchSourceStopped(

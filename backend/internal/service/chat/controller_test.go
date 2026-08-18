@@ -1364,6 +1364,66 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 	t.Fatalf("stream closure was not projected after controller-ready: %+v", activity.snapshot())
 }
 
+func TestControllerReadyDurableSettingsRefreshBeforeFirstDispatch(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	conversation, err := st.CreateConversation(
+		ctx, "switch-settings-conversation", domain.ConversationScopeProject,
+		testProject, testSession, now,
+	)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+		Model: "source-provider-model", ReasoningEffort: "high",
+		ApprovalMode: domain.PermissionModeAcceptEdits,
+	}, now); err != nil {
+		t.Fatalf("seed source settings: %v", err)
+	}
+
+	conv := newFakeConversation()
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			nextID++
+			return fmt.Sprintf("switch-settings-%d", nextID)
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	controller, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ControllerGeneration: "target-generation",
+		ControllerReady: func(chatsvc.StartResult) error {
+			return st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+				ApprovalMode: domain.PermissionModeAcceptEdits,
+			}, now.Add(time.Second))
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := controller.Send(ctx, ports.ChatUserMessage{
+		Text: "continue the handoff", ClientMessageID: "activation-message",
+		Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatalf("Send activation: %v", err)
+	}
+
+	sent := conv.sentMessages()
+	if len(sent) != 1 {
+		t.Fatalf("sent messages = %d, want 1", len(sent))
+	}
+	if sent[0].Settings.Model != "" || sent[0].Settings.Effort != "" ||
+		sent[0].Settings.Approval != domain.PermissionModeAcceptEdits {
+		t.Fatalf("activation settings = %+v, want target defaults with preserved approval", sent[0].Settings)
+	}
+}
+
 // Dispatch reads the persisted mode. A TUI session must be refused even if a
 // controller somehow exists, because the mode is the authority.
 func TestSendRefusedForTUISession(t *testing.T) {

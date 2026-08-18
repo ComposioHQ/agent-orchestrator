@@ -1088,6 +1088,76 @@ func TestSwitchAgentChatPanicAfterPreparingHandoffAbortsSource(t *testing.T) {
 	}
 }
 
+func TestSwitchAgentChatPanicAfterSourceStopRetainsRecoveryBoundary(t *testing.T) {
+	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	rec := store.sessions["proj-1"]
+	rec.Mode = domain.SessionModeChat
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = ""
+	rec.Metadata.ProviderConversationID = "source-chat-native"
+	rec.Metadata.ControllerGeneration = "source-chat-generation"
+	store.sessions[rec.ID] = rec
+	launcher := &switchAgentChatLauncher{
+		recordingLauncher: &recordingLauncher{},
+		store:             store,
+		live:              true,
+	}
+	manager.chat = launcher
+	store.confirmHook = func(context.Context) {
+		panic("injected panic after Chat source stop")
+	}
+
+	sw, err := manager.SwitchAgent(context.Background(), rec.ID, SwitchAgentConfig{
+		TargetHarness:  domain.HarnessCodex,
+		IdempotencyKey: "chat-panic-after-source-stop",
+	})
+	if err != nil {
+		t.Fatalf("SwitchAgent admission: %v", err)
+	}
+	waitForSwitchWorkers(t, manager)
+
+	if len(launcher.stopped) != 1 || launcher.stopped[0] != rec.ID || launcher.live {
+		t.Fatalf("stopped Chat source = %v live=%v, want one conclusive stop", launcher.stopped, launcher.live)
+	}
+	if len(launcher.aborted) != 0 {
+		t.Fatalf("aborted Chat handoffs = %v, want dead source left fenced", launcher.aborted)
+	}
+	got, found, err := store.GetAgentSwitch(context.Background(), sw.ID)
+	if err != nil || !found {
+		t.Fatalf("reload panicked switch = (%+v, %v, %v)", got, found, err)
+	}
+	if got.State != domain.AgentSwitchStoppingSource ||
+		got.ErrorCode != domain.AgentSwitchErrorSourceStopUnconfirmed {
+		t.Fatalf("panicked switch = state %q code %q, want stopping_source/source_stop_unconfirmed",
+			got.State, got.ErrorCode)
+	}
+	if !manager.SessionMutationInProgress(rec.ID) {
+		t.Fatal("panicked post-stop Chat switch released the mutation gate before reconciliation")
+	}
+
+	store.confirmHook = nil
+	if err := manager.ReconcileAgentSwitches(context.Background()); err != nil {
+		t.Fatalf("reconcile panicked post-stop switch: %v", err)
+	}
+	got, found, err = store.GetAgentSwitch(context.Background(), sw.ID)
+	if err != nil || !found {
+		t.Fatalf("reload reconciled switch = (%+v, %v, %v)", got, found, err)
+	}
+	if got.State != domain.AgentSwitchFailed ||
+		got.ErrorCode != domain.AgentSwitchErrorDaemonRestartPostStop {
+		t.Fatalf("reconciled switch = state %q code %q, want failed/daemon_restart_post_stop",
+			got.State, got.ErrorCode)
+	}
+	if !launcher.live {
+		t.Fatal("post-stop reconciliation did not restore the source Chat controller")
+	}
+	if manager.SessionMutationInProgress(rec.ID) {
+		t.Fatal("completed post-stop reconciliation left the mutation gate closed")
+	}
+}
+
 func TestSwitchAgentRequestCancellationDoesNotCancelWorker(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)

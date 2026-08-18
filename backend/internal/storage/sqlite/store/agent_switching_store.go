@@ -643,6 +643,36 @@ func (s *Store) ActivateChatAgentSwitchTarget(ctx context.Context, activation do
 	if n != 1 {
 		return false, nil
 	}
+	conversationRow, err := q.SelectConversationBySession(ctx, &activation.SessionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("activate Chat agent switch target %s: conversation does not exist", activation.SwitchID)
+	}
+	if err != nil {
+		return false, fmt.Errorf("activate Chat agent switch target %s: read conversation: %w", activation.SwitchID, err)
+	}
+	providerBoundaryID := string(activation.SwitchID) + ":provider"
+	if err := insertConversationBranchTx(ctx, q, domain.ConversationBranch{
+		ID:                     providerBoundaryID,
+		ConversationID:         conversationRow.ID,
+		SessionID:              activation.SessionID,
+		ProviderConversationID: activation.ProviderConversationID,
+		ParentBranchID:         conversationRow.ActiveBranchID,
+		ForkAfterSequence:      conversationRow.LatestSequence,
+		CreatedAt:              activation.ActivatedAt,
+	}, activation.ActivatedAt); err != nil {
+		return false, fmt.Errorf("activate Chat agent switch target %s: create provider boundary: %w", activation.SwitchID, err)
+	}
+	conversationRows, err := q.ActivateConversationBranch(ctx, gen.ActivateConversationBranchParams{
+		ActiveBranchID: providerBoundaryID,
+		UpdatedAt:      activation.ActivatedAt,
+		ID:             conversationRow.ID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("activate Chat agent switch target %s: move provider boundary: %w", activation.SwitchID, err)
+	}
+	if conversationRows != 1 {
+		return false, fmt.Errorf("activate Chat agent switch target %s: conversation %s disappeared", activation.SwitchID, conversationRow.ID)
+	}
 	if err := q.ResetConversationAgentOverridesForSession(ctx, gen.ResetConversationAgentOverridesForSessionParams{
 		UpdatedAt: activation.ActivatedAt, CurrentSessionID: &activation.SessionID,
 	}); err != nil {

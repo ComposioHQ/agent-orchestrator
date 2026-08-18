@@ -41,6 +41,9 @@ var (
 	// no provider history to discard, so an undo would only hide AO's own rows and
 	// leave the agent remembering more than the timeline shows.
 	ErrTurnNotRollbackable = errors.New("turn was never dispatched to the provider")
+	// ErrTurnProviderMismatch reports a durable turn owned by an earlier agent
+	// provider. Its opaque provider turn id is invalid in the current controller.
+	ErrTurnProviderMismatch = errors.New("conversation turn belongs to a different agent provider")
 	// ErrTitleRequired refuses a blank thread title. The provider refuses one too,
 	// and reporting it here keeps the error about the caller's input.
 	ErrTitleRequired = errors.New("thread title is required")
@@ -51,6 +54,9 @@ var (
 	// ErrEditTurnInvalid reports a prompt that cannot be safely reconstructed from
 	// durable history, including malformed legacy structured content.
 	ErrEditTurnInvalid = errors.New("conversation turn cannot be edited")
+	// ErrBranchProviderMismatch refuses a historical branch whose opaque provider
+	// conversation id belongs to an earlier agent ownership epoch.
+	ErrBranchProviderMismatch = errors.New("conversation branch belongs to a different agent provider")
 )
 
 // providerRefusal is satisfied by driver errors that mean "the provider said no"
@@ -296,6 +302,14 @@ func (s *Service) ActivateBranch(ctx context.Context, id domain.SessionID, branc
 	branch, err := s.store.ConversationBranch(ctx, source.conversation.ID, branchID)
 	if err != nil {
 		return "", err
+	}
+	activeBranch, err := s.store.ConversationBranch(
+		ctx, source.conversation.ID, source.conversation.ActiveBranchID)
+	if err != nil {
+		return "", fmt.Errorf("load active conversation branch: %w", err)
+	}
+	if branch.ProviderScopeID != activeBranch.ProviderScopeID {
+		return "", ErrBranchProviderMismatch
 	}
 	if branch.Active {
 		return branch.ID, nil
