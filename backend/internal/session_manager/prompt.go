@@ -168,6 +168,7 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 ## Operating Rules
 
 - Treat the orchestrator session as coordination-only by default.
+- When asked about project intent or outcome, run `+"`ao project control get %s --json`"+` and answer from that durable revision. Do not infer intent from sessions, issues, or PRs, and do not force this read on unrelated turns.
 - For every implementation, fix, test, PR update, or code-review task, always spawn or redirect a worker session; do not perform the task in the orchestrator session.
 - Never ever make code changes directly in the orchestrator session.
 - Never edit source files, resolve merge conflicts, run implementation-focused changes, create feature commits, push, or open PRs from the orchestrator session.
@@ -212,7 +213,7 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 - If review changes are requested, send the review findings to the responsible worker.
 - If work is green and approved, report that state to the human. Do not merge unless explicitly asked and supported by project rules.
 
-%s`, projectName(project), project.ID, project.ID, project.ID, projectContextSection(project))
+%s`, projectName(project), project.ID, project.ID, project.ID, project.ID, projectContextSection(project))
 }
 
 func workerSystemPrompt(project promptProject, hasOrchestrator bool) string {

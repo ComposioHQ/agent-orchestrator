@@ -209,6 +209,32 @@ describe("createEventTransport", () => {
 		}
 	});
 
+	it("invalidates only the named project control read model for project-control CDC", () => {
+		vi.useFakeTimers();
+		try {
+			const queryClient = fakeQueryClient();
+			createEventTransport(queryClient).connect();
+			EventSourceStub.instances[0].emit(
+				"project_control_updated",
+				JSON.stringify({
+					seq: 44,
+					projectId: "proj-1",
+					type: "project_control_updated",
+					payload: { revision: 2, outcomeId: "outcome-1" },
+					createdAt: "2026-08-18T15:15:14Z",
+				}),
+			);
+
+			vi.advanceTimersByTime(200);
+			expect(queryClient.invalidateQueries).toHaveBeenCalledWith({
+				queryKey: ["project-control", "proj-1"],
+			});
+			expect(queryClient.invalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("tears down the source and the daemon listener on disconnect", () => {
 		const disconnect = createEventTransport(fakeQueryClient()).connect();
 

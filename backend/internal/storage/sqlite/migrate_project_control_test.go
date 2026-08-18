@@ -2,11 +2,13 @@ package sqlite
 
 import (
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/projectcontrol"
 )
@@ -69,6 +71,32 @@ VALUES ('ao', '/tmp/ao', '', 'AO', ?, NULL, 'single_repo')`, time.Now().UTC()); 
 	})
 	if err != nil || !reflect.DeepEqual(retried, committed) {
 		t.Fatalf("restart retry = %#v, %v; want %#v", retried, err, committed)
+	}
+	changes, err := reopened.EventsAfter(t.Context(), 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var controlChanges []cdc.Event
+	for _, event := range changes {
+		if event.Type == cdc.EventProjectControlUpdated {
+			controlChanges = append(controlChanges, event)
+		}
+	}
+	if len(controlChanges) != 1 {
+		t.Fatalf("project control CDC events = %d, want one per distinct command", len(controlChanges))
+	}
+	if controlChanges[0].ProjectID != "ao" || controlChanges[0].SessionID != "" {
+		t.Fatalf("project control CDC scope = %#v", controlChanges[0])
+	}
+	var payload struct {
+		Revision  int64  `json:"revision"`
+		OutcomeID string `json:"outcomeId"`
+	}
+	if err := json.Unmarshal(controlChanges[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Revision != committed.Revision || payload.OutcomeID != string(committed.Outcome.ID) {
+		t.Fatalf("project control CDC payload = %#v, want revision %d outcome %s", payload, committed.Revision, committed.Outcome.ID)
 	}
 	verifyDB, err := sql.Open("sqlite", "file:"+filepath.Join(dataDir, "ao.db")+"?mode=ro")
 	if err != nil {

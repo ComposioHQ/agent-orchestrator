@@ -83,6 +83,10 @@ func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndAOOnlyDelegation(t
 	})
 	for _, want := range []string{
 		"Never ever make code changes directly in the orchestrator session",
+		"ao project control get mer --json",
+		"answer from that durable revision",
+		"Do not infer intent from sessions, issues, or PRs",
+		"do not force this read on unrelated turns",
 		"ask for explicit confirmation before making any code changes",
 		"prefer spawning or redirecting a worker unless the human explicitly confirms",
 		"Do not use the agent runtime's built-in subagent or task-delegation tools for implementation work",
@@ -93,6 +97,18 @@ func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndAOOnlyDelegation(t
 		if !strings.Contains(got, want) {
 			t.Fatalf("orchestrator prompt missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestBuildSystemPrompt_ProjectIntentReadIsOrchestratorOnly(t *testing.T) {
+	project := promptProject{ID: "mer", Name: "Mercury"}
+	orchestrator := buildSystemPromptText(systemPromptConfig{Role: sessionPromptRoleOrchestrator, Project: project})
+	worker := buildSystemPromptText(systemPromptConfig{Role: sessionPromptRoleWorker, Project: project})
+	if !strings.Contains(orchestrator, "ao project control get mer --json") {
+		t.Fatalf("orchestrator prompt missing durable project-control read:\n%s", orchestrator)
+	}
+	if strings.Contains(worker, "ao project control get mer --json") {
+		t.Fatalf("worker prompt should not force project-control reads:\n%s", worker)
 	}
 }
 

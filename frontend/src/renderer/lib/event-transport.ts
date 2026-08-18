@@ -7,6 +7,7 @@ import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { conversationQueryKey } from "../hooks/useConversation";
 import { agentSwitchesQueryRoot } from "../hooks/useAgentSwitches";
 import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
+import { projectControlQueryKey } from "./project-control-query";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -34,6 +35,7 @@ const CDC_EVENT_TYPES = [
 	"pr_session_changed",
 	"pr_review_thread_added",
 	"pr_review_thread_resolved",
+	"project_control_updated",
 ] as const;
 
 /**
@@ -49,15 +51,18 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 			let debounce: ReturnType<typeof setTimeout> | undefined;
 			const pendingConversationSessions = new Set<string>();
 			const pendingInterfaceTransitionSessions = new Set<string>();
+			const pendingProjectControls = new Set<string>();
 			let workspaceInvalidationPending = false;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
 			const refreshWorkspaces = (event?: Event) => {
-				let conversationOnly = false;
+				let targetedOnly = false;
 				if (event && "data" in event) {
 					try {
 						const decoded = JSON.parse(String((event as MessageEvent).data)) as {
+							type?: unknown;
+							projectId?: unknown;
 							sessionId?: unknown;
 							payload?: unknown;
 						};
@@ -88,14 +93,22 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 							payload.conversationId
 						) {
 							pendingConversationSessions.add(decoded.sessionId);
-							conversationOnly = true;
+							targetedOnly = true;
+						}
+						if (
+							decoded.type === "project_control_updated" &&
+							typeof decoded.projectId === "string" &&
+							decoded.projectId
+						) {
+							pendingProjectControls.add(decoded.projectId);
+							targetedOnly = true;
 						}
 					} catch {
 						// A malformed CDC payload still invalidates workspaces; it simply
 						// cannot target a conversation cache precisely.
 					}
 				}
-				if (!conversationOnly) workspaceInvalidationPending = true;
+				if (!targetedOnly) workspaceInvalidationPending = true;
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
 					if (workspaceInvalidationPending) {
@@ -115,6 +128,10 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 						});
 					}
 					pendingInterfaceTransitionSessions.clear();
+					for (const projectId of pendingProjectControls) {
+						void queryClient.invalidateQueries({ queryKey: projectControlQueryKey(projectId) });
+					}
+					pendingProjectControls.clear();
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 
