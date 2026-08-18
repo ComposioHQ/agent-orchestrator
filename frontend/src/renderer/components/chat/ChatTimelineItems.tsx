@@ -211,7 +211,7 @@ export function HumanMessage({
 							: "border-border bg-raised text-foreground",
 					)}
 				>
-					{body ? <p className="whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
 					{attachments.length > 0 ? (
 						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
 							{attachments.map((path) => {
@@ -1397,7 +1397,7 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 	const text = activity.detail?.text ?? activity.summary;
 	return (
 		<div className="flex flex-col items-end gap-1">
-			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
+			<div className="w-fit max-w-[min(78%,560px)] break-words whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
 				{text ? <p>{text}</p> : null}
 				<ConversationContentItems
 					content={activity.detail?.content ?? []}
