@@ -24,6 +24,7 @@ import {
   Files,
   GitPullRequest,
   CircleAlert,
+  Globe2,
   Loader2,
   PanelRightClose,
   PanelRightOpen,
@@ -37,12 +38,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { browserCloudClient, subscribeBrowserSessionEvents } from "@/lib/cloud-client";
 import { scheduleCloudSessionOperation } from "@/lib/cloud-session-operations";
 import { CloudExternalLink } from "./CloudBoard";
+import { CloudBrowser } from "./CloudBrowser";
 import { CloudTerminal } from "./CloudTerminal";
 import { harnessLogoSource } from "./harness-logo";
 import { OrchestratorIcon } from "./OrchestratorIcon";
 import { pullRequestSummaryParts, toInspectorReviewGroups } from "./pr-display";
 
-type CloudInspectorTab = "summary" | "files" | "terminal";
+type CloudInspectorTab = "summary" | "browser" | "files" | "terminal";
 
 const reviewLabels = {
   aoSource: "AO",
@@ -439,6 +441,11 @@ export function CloudSessionWorkspace({
       icon: <Terminal aria-hidden="true" />,
     },
     {
+      id: "browser",
+      label: "Browser",
+      icon: <Globe2 aria-hidden="true" />,
+    },
+    {
       id: "files",
       label: "Files",
       icon: <Files aria-hidden="true" />,
@@ -546,6 +553,7 @@ export function CloudSessionWorkspace({
               <PullRequestsView isLoading={reviewsLoading} pullRequests={pullRequests} reviewGroups={reviewGroups} />
             </div>
           )}
+          browserView={<CloudBrowser organizationId={organizationId} sessionId={session.id} />}
           filesView={<FileBrowser
             busy={busy}
             content={fileContent}

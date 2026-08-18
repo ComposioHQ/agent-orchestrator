@@ -389,6 +389,77 @@ assert_workspace_marker() {
 	fi
 }
 
+exercise_browser_proxy() {
+	local container_id="$1"
+	docker exec -d "$container_id" node -e '
+const http = require("http");
+http.createServer((request, response) => {
+  if (request.url === "/assets/app.js") {
+    response.writeHead(200, {"Content-Type": "application/javascript"});
+    response.end("window.vmBrowserSmoke = true;");
+    return;
+  }
+  response.writeHead(200, {"Content-Type": "text/html; charset=utf-8"});
+  response.end("<!doctype html><html><head><title>VM browser smoke</title></head><body><script src=\"/assets/app.js\"></script><a href=\"docs/start\">Docs</a><p>vm-browser-smoke</p></body></html>");
+}).listen(3000, "127.0.0.1");
+'
+	python3 - "$AO_CLOUD_PORT" "$state_file" <<'PY'
+import base64
+import json
+import pathlib
+import sys
+import time
+import urllib.error
+import urllib.request
+
+port, state_path = sys.argv[1:]
+state = json.loads(pathlib.Path(state_path).read_text())
+origin = "http://localhost:3000"
+origin_token = base64.urlsafe_b64encode(origin.encode()).decode().rstrip("=")
+prefix = (
+    f"/api/cloud/v1/orgs/{state['orgId']}/sessions/{state['sessionId']}"
+    f"/browser/{origin_token}/"
+)
+base_url = f"http://127.0.0.1:{port}"
+
+
+def get(path):
+    request = urllib.request.Request(
+        base_url + path,
+        headers={"Authorization": f"Bearer {state['token']}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return response.headers, response.read().decode(errors="replace")
+
+
+deadline = time.monotonic() + 15
+while True:
+    try:
+        headers, document = get(prefix)
+        break
+    except urllib.error.URLError:
+        if time.monotonic() >= deadline:
+            raise
+        time.sleep(0.25)
+
+if not headers.get_content_type() == "text/html":
+    raise RuntimeError(f"browser proxy returned the wrong content type: {headers!r}")
+if "vm-browser-smoke" not in document:
+    raise RuntimeError(f"browser proxy did not reach the VM-local server: {document!r}")
+if f'<base href="{prefix}">' not in document:
+    raise RuntimeError(f"browser proxy did not anchor relative VM links: {document!r}")
+if f'src="{prefix}assets/app.js"' not in document:
+    raise RuntimeError(f"browser proxy did not rewrite VM asset URLs: {document!r}")
+
+asset_headers, asset = get(prefix + "assets/app.js")
+if asset_headers.get_content_type() != "application/javascript":
+    raise RuntimeError(f"browser asset returned the wrong content type: {asset_headers!r}")
+if asset != "window.vmBrowserSmoke = true;":
+    raise RuntimeError(f"browser proxy did not return the VM asset: {asset!r}")
+PY
+}
+
 compose --profile worker-image build worker-image
 docker build \
 	--build-arg "BASE_IMAGE=${AO_CLOUD_DOCKER_WORKER_IMAGE}" \
@@ -433,6 +504,7 @@ session="$(session_id)"
 org="$(org_id)"
 first_worker="$(wait_for_worker "$session")"
 docker exec "$first_worker" ao list >/dev/null
+exercise_browser_proxy "$first_worker"
 spawn_output="$(
 	docker exec "$first_worker" ao spawn \
 		--name "Delegated smoke" \

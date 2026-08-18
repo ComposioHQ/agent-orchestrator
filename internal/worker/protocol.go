@@ -212,6 +212,28 @@ type WorkspaceWriteRequest struct {
 	Content string `json:"content"`
 }
 
+// BrowserFetchRequest asks the session worker to fetch a browser resource from
+// inside its own VM. The Cloud UI never connects to the VM directly, so a URL
+// such as http://localhost:3000 resolves against the VM rather than the
+// viewer's computer.
+type BrowserFetchRequest struct {
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Body    []byte            `json:"body,omitempty"`
+}
+
+// BrowserFetchResponse is deliberately bounded by the worker transport result
+// limit. Larger page resources fail clearly instead of exhausting the durable
+// command queue shared by the VM browser and workspace operations.
+type BrowserFetchResponse struct {
+	URL          string `json:"url"`
+	Status       int    `json:"status"`
+	ContentType  string `json:"contentType,omitempty"`
+	CacheControl string `json:"cacheControl,omitempty"`
+	Body         []byte `json:"body,omitempty"`
+}
+
 type WorkspaceEntry struct {
 	Name    string    `json:"name"`
 	Path    string    `json:"path"`

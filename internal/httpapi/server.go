@@ -350,6 +350,10 @@ func New(options Options) *Server {
 			router.Get("/sessions/{sessionId}/chat-events", server.replayClientEvents)
 			router.Get("/sessions/{sessionId}/events", server.streamClientEvents)
 			router.Post("/sessions/{sessionId}/terminal-ticket", server.createTerminalTicket)
+			for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+				router.MethodFunc(method, "/sessions/{sessionId}/browser/{origin}", server.proxyBrowser)
+				router.MethodFunc(method, "/sessions/{sessionId}/browser/{origin}/*", server.proxyBrowser)
+			}
 			router.Get("/sessions/{sessionId}/workspace/files", server.listWorkspaceFiles)
 			router.Get("/sessions/{sessionId}/workspace/file", server.readWorkspaceFile)
 			router.Put("/sessions/{sessionId}/workspace/file", server.writeWorkspaceFile)

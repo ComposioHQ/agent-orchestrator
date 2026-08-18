@@ -36,13 +36,20 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   return forward(request, context);
 }
 
+export async function PATCH(request: NextRequest, context: RouteContext) {
+  return forward(request, context);
+}
+
 async function forward(request: NextRequest, context: RouteContext) {
   const origin = request.headers.get("origin");
+  const { path: segments } = await context.params;
+  const path = segments.join("/");
   if (
     request.method !== "GET" &&
     request.method !== "HEAD" &&
     origin &&
-    !isSameOrigin(request, origin)
+    !isSameOrigin(request, origin) &&
+    !(origin === "null" && isBrowserProxyPath(segments))
   ) {
     return NextResponse.json(
       { code: "INVALID_ORIGIN", message: "Cross-origin requests are rejected." },
@@ -50,8 +57,6 @@ async function forward(request: NextRequest, context: RouteContext) {
     );
   }
 
-  const { path: segments } = await context.params;
-  const path = segments.join("/");
   if (!path || segments.some((segment) => segment === "." || segment === "..")) {
     return NextResponse.json(
       { code: "INVALID_REQUEST", message: "Invalid Cloud API path." },
@@ -209,6 +214,7 @@ async function forward(request: NextRequest, context: RouteContext) {
   for (const name of [
     "cache-control",
     "content-type",
+    "access-control-allow-origin",
     "retry-after",
     "x-request-id",
     "x-accel-buffering",
@@ -224,6 +230,15 @@ async function forward(request: NextRequest, context: RouteContext) {
     response.cookies.delete(localAuthCookie);
   }
   return response;
+}
+
+function isBrowserProxyPath(segments: string[]): boolean {
+  return (
+    segments.length >= 6 &&
+    segments[0] === "orgs" &&
+    segments[2] === "sessions" &&
+    segments[4] === "browser"
+  );
 }
 
 // Preserve the browser-facing origin across the server-to-server proxy hop.

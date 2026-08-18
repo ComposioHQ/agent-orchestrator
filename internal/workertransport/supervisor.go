@@ -95,6 +95,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			}
 			s.Logger.Warn("claim worker transport request", "error", err)
 		} else if request != nil {
+			// A page usually loads several resources at once. Keep those fetches
+			// from blocking shell input while still relying on the durable command
+			// queue for the per-session concurrency ceiling.
+			if request.Kind == "browser.fetch" {
+				go s.handle(ctx, workspace, request)
+				continue
+			}
 			s.handle(ctx, workspace, request)
 			continue
 		}
@@ -170,6 +177,12 @@ func (s *Supervisor) handle(
 		}
 	case "workspace.diff":
 		response, err = workspace.Diff(ctx)
+	case "browser.fetch":
+		var input worker.BrowserFetchRequest
+		err = decodePayload(request.Payload, &input)
+		if err == nil {
+			response, err = fetchBrowser(ctx, input)
+		}
 	case "terminal.open":
 		var input worker.TerminalCommand
 		err = decodePayload(request.Payload, &input)

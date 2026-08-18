@@ -118,6 +118,7 @@ it("uses the interactive agent terminal as the primary session surface", async (
 
   fireEvent.click(screen.getByRole("tab", { name: "Files" }));
   expect(await screen.findByText("README.md")).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Browser" })).toBeVisible();
 });
 
 it("does not poll workspace diff or files while the inspector is open", async () => {
