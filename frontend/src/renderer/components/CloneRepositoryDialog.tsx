@@ -127,7 +127,9 @@ export default function CloneRepositoryDialog({
 									{t("createProject.cloneRepositoryUrl")}
 								</Label>
 								<div className="relative">
-									<Link2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+									<span className="pointer-events-none absolute inset-y-0 left-3 flex w-4 items-center justify-center text-[var(--color-text-import-muted)]">
+										<Link2 className="size-4" aria-hidden="true" />
+									</span>
 									<Input
 										id="cloneRepositoryUrl"
 										autoFocus
@@ -160,7 +162,9 @@ export default function CloneRepositoryDialog({
 								</Label>
 								<div className="flex gap-2">
 									<div className="relative min-w-0 flex-1">
-										<Folder className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[var(--color-text-import-muted)]" aria-hidden="true" />
+										<span className="pointer-events-none absolute inset-y-0 left-3 flex w-4 items-center justify-center text-[var(--color-text-import-muted)]">
+											<Folder className="size-4" aria-hidden="true" />
+										</span>
 										<Input
 											id="cloneDestination"
 											aria-describedby={destinationError ? "cloneDestinationError" : undefined}
@@ -189,8 +193,8 @@ export default function CloneRepositoryDialog({
 							</div>
 
 							{targetPath ? (
-								<div className="flex items-start gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3">
-									<span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-md bg-[var(--color-bg-import-chip)] text-[var(--color-text-import-muted)]">
+								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-3 py-3">
+									<span className="grid size-4 shrink-0 place-items-center text-[var(--color-text-import-muted)]">
 										<GitBranch className="size-4" aria-hidden="true" />
 									</span>
 									<div className="min-w-0">
