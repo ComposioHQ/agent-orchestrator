@@ -7,6 +7,9 @@ describe("clone repository input", () => {
 		["ssh://git@github.com/acme/web-app.git", "web-app"],
 		["git@github.com:acme/web-app.git", "web-app"],
 		["file:///tmp/web-app", "web-app"],
+		["file:///tmp/my%20repo.git", "my repo"],
+		["https://github.com/acme/nested%2Frepo.git", "repo"],
+		["file:///tmp/literal%252Frepo.git", "literal%2Frepo"],
 	])("derives the checkout name from %s", (remoteUrl, expected) => {
 		expect(repositoryNameFromGitUrl(remoteUrl)).toBe(expected);
 	});
@@ -18,6 +21,7 @@ describe("clone repository input", () => {
 		"https://example.com/acme/repo.git?access_token=secret",
 		"ssh://git:secret@example.com/acme/repo.git",
 		"https://github.com/acme/two words.git",
+		"file:///tmp/bad%ZZ.git",
 	])("rejects unsafe or incomplete URL %s", (remoteUrl) => {
 		expect(repositoryNameFromGitUrl(remoteUrl)).toBeNull();
 	});

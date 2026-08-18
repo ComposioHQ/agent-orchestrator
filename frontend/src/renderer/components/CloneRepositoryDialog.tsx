@@ -247,7 +247,10 @@ export function repositoryNameFromGitUrl(raw: string): string | null {
 			) {
 				return null;
 			}
-			remotePath = parsed.pathname;
+			// URL.pathname preserves percent escapes, while Go's net/url exposes a
+			// decoded URL.Path to the daemon. Decode once so this preview names the
+			// exact directory the daemon will create, including escaped separators.
+			remotePath = decodeURIComponent(parsed.pathname);
 		} catch {
 			return null;
 		}
