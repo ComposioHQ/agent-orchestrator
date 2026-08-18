@@ -1,10 +1,29 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { installFakeAgent } from "./support/fake-bridge";
 
 const sessionId = "chat-message-overflow";
 const now = "2026-08-18T08:05:58Z";
 const longMessage =
 	'LABEL OCR OUTPUT:\n{"time":"2026-08-18T13:35:58.376284251+05:30","level":"INFO","msg":"request","method":"GET","path":"/v1/foods/barcode/890619087014","request_id":"a6ff589fb4fc214a","duration":154957090}';
+
+async function expectBubbleToStayInsideViewport(bubble: Locator) {
+	await expect(bubble).toBeVisible();
+	const layout = await bubble.evaluate((node) => {
+		const bubbleRect = node.getBoundingClientRect();
+		const viewport = node.closest(".chat-scroll-viewport");
+		if (!viewport) throw new Error("chat scroll viewport not found");
+		const viewportRect = viewport.getBoundingClientRect();
+		return {
+			bubbleRight: bubbleRect.right,
+			viewportRight: viewportRect.right,
+			bubbleScrollWidth: node.scrollWidth,
+			bubbleClientWidth: node.clientWidth,
+		};
+	});
+
+	expect(layout.bubbleRight).toBeLessThanOrEqual(layout.viewportRight);
+	expect(layout.bubbleScrollWidth).toBeLessThanOrEqual(layout.bubbleClientWidth);
+}
 
 test("long unbroken user messages stay inside their chat bubble", async ({ page }) => {
 	await installFakeAgent(page, {
@@ -21,7 +40,7 @@ test("long unbroken user messages stay inside their chat bubble", async ({ page 
 					harness: "codex",
 					mode: "chat",
 					controller: "ready",
-					latestSequence: 1,
+					latestSequence: 2,
 					oldestSequence: 1,
 					hasMoreBefore: false,
 					turns: [
@@ -47,7 +66,20 @@ test("long unbroken user messages stay inside their chat bubble", async ({ page 
 							createdAt: now,
 						},
 					],
-					activities: [],
+					activities: [
+						{
+							kind: "activity",
+							id: "steer-1",
+							turnId: "turn-1",
+							sequence: 2,
+							revision: 0,
+							activityKind: "system",
+							status: "completed",
+							summary: longMessage,
+							detail: { event: "steer", text: longMessage, origin: "human" },
+							createdAt: now,
+						},
+					],
 					settings: {},
 				},
 			});
@@ -76,21 +108,15 @@ test("long unbroken user messages stay inside their chat bubble", async ({ page 
 	});
 
 	await page.goto(`/#/projects/fake-proj/sessions/${sessionId}`);
-	const bubble = page.locator(".cursor-chat-human-message").filter({ hasText: "LABEL OCR OUTPUT" });
-	await expect(bubble).toBeVisible();
-	const layout = await bubble.evaluate((node) => {
-		const bubbleRect = node.getBoundingClientRect();
-		const viewport = node.closest(".chat-scroll-viewport");
-		if (!viewport) throw new Error("chat scroll viewport not found");
-		const viewportRect = viewport.getBoundingClientRect();
-		return {
-			bubbleRight: bubbleRect.right,
-			viewportRight: viewportRect.right,
-			bubbleScrollWidth: node.scrollWidth,
-			bubbleClientWidth: node.clientWidth,
-		};
-	});
+	const humanBubble = page
+		.locator(".cursor-chat-human-message")
+		.filter({ hasText: "LABEL OCR OUTPUT" });
+	const steerBubble = page
+		.getByText("Steered into the running turn", { exact: true })
+		.locator("..")
+		.locator(":scope > div")
+		.first();
 
-	expect(layout.bubbleRight).toBeLessThanOrEqual(layout.viewportRight);
-	expect(layout.bubbleScrollWidth).toBeLessThanOrEqual(layout.bubbleClientWidth);
+	await expectBubbleToStayInsideViewport(humanBubble);
+	await expectBubbleToStayInsideViewport(steerBubble);
 });
