@@ -3006,3 +3006,115 @@ func TestPoll_RepoRefreshMonotonicity_ListingFailsButPRSucceeds(t *testing.T) {
 		t.Fatalf("sync cursor advanced when listing failed: got %v, want %v (unchanged)", got, cursorBefore)
 	}
 }
+
+// After a repository rename or org transfer, the provider serves fetches for
+// the old owner/name through a redirect: the tracked subject still carries the
+// stale repo recorded on the stored PR row, while the fetched observation
+// canonicalizes to the new owner/name. These tests pin that such observations
+// are dispatched under the tracked subject's key (and persisted with the
+// canonical repo so the identities converge) instead of being dropped, which
+// left CI/mergeability permanently "unknown" while review stayed fresh.
+
+func renamedRepoFixture() (*fakeStore, *fakeProvider, ports.SCMRepo) {
+	oldRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/old/r.git"}},
+		prs: map[domain.SessionID][]domain.PullRequest{"p-1": {{
+			URL: "https://github.com/new/r/pull/1", SessionID: "p-1", Number: 1,
+			Provider: "github", Host: "github.com", Repo: "old/r", SourceBranch: "feat",
+		}}},
+		checks: map[string][]domain.PullRequestCheck{},
+	}
+	canonical := ports.SCMObservation{
+		Fetched: true, Provider: "github", Host: "github.com", Repo: "new/r",
+		PR:           ports.SCMPRObservation{URL: "https://github.com/new/r/pull/1", Number: 1, State: "open", SourceBranch: "feat", TargetBranch: "main", HeadSHA: "sha1", Title: "PR"},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: "sha1"},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewRequired)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeBlocked), Blockers: []string{"review_required"}},
+	}
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(oldRepo, 0): {ETag: "v1"}},
+		openPRs:      map[string][]ports.SCMPRObservation{},
+		observations: map[string]ports.SCMObservation{prKey(oldRepo, 1): canonical},
+	}
+	return store, provider, oldRepo
+}
+
+func TestPoll_RenamedRepoObservationPersistsUnderTrackedRef(t *testing.T) {
+	store, provider, _ := renamedRepoFixture()
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.fetchBatches) != 1 {
+		t.Fatalf("fetch batches = %d, want 1", len(provider.fetchBatches))
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("renamed-repo observation was dropped: no writes")
+	}
+	final := store.writes[len(store.writes)-1].pr
+	if final.Repo != "new/r" || final.Title != "PR" || final.CI != domain.CIPassing || final.Mergeability != domain.MergeBlocked {
+		t.Fatalf("persisted PR = repo %q title %q ci %q mergeability %q; want canonical new/r metadata", final.Repo, final.Title, final.CI, final.Mergeability)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle notifications = %d, want 1", len(lc.observed))
+	}
+}
+
+func TestPoll_RenamedRepoReconciliationPersistsUnderTrackedRef(t *testing.T) {
+	store, provider, oldRepo := renamedRepoFixture()
+	// A fully-observed local row keeps the PR out of the normal refresh
+	// candidate set; the empty incremental listing then routes it through
+	// terminal reconciliation, which must survive the rename the same way.
+	local := &store.prs["p-1"][0]
+	local.MetadataHash = "stale-meta"
+	local.CIHash = "stale-ci"
+	local.ReviewHash = "stale-review"
+	local.Review = domain.ReviewRequired
+	local.ReviewObservedAt = time.Unix(60, 0).UTC()
+	local.HeadSHA = "sha0"
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(100, 0).UTC())
+	obs.Cache.LastSyncCursor[prKey(oldRepo, 0)] = time.Unix(50, 0).UTC()
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("renamed-repo reconciliation observation was dropped: no writes")
+	}
+	final := store.writes[len(store.writes)-1].pr
+	if final.Repo != "new/r" || final.CI != domain.CIPassing {
+		t.Fatalf("persisted PR = repo %q ci %q; want canonical new/r with passing CI", final.Repo, final.CI)
+	}
+}
+
+func TestObservationKeyForRefs(t *testing.T) {
+	newObs := func(url, alias string) ports.SCMObservation {
+		return ports.SCMObservation{
+			Fetched: true, Provider: "github", Host: "github.com", Repo: "new/r",
+			PR: ports.SCMPRObservation{URL: url, URLAlias: alias, Number: 1},
+		}
+	}
+	oldRef := ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}, Number: 1, URL: "https://github.com/new/r/pull/1"}
+	newRef := ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "new", Name: "r", Repo: "new/r"}, Number: 1, URL: "https://github.com/new/r/pull/1"}
+	tests := []struct {
+		name string
+		obs  ports.SCMObservation
+		refs []ports.SCMPRRef
+		want string
+	}{
+		{name: "canonical ref wins", obs: newObs("https://github.com/new/r/pull/1", ""), refs: []ports.SCMPRRef{oldRef, newRef}, want: prKey(newRef.Repo, 1)},
+		{name: "renamed repo falls back to requesting ref by URL", obs: newObs("https://github.com/new/r/pull/1", ""), refs: []ports.SCMPRRef{oldRef}, want: prKey(oldRef.Repo, 1)},
+		{name: "renamed repo falls back via URL alias", obs: newObs("https://github.com/new/r/pull/1", "https://github.com/old/r/pull/1"), refs: []ports.SCMPRRef{{Repo: oldRef.Repo, Number: 1, URL: "https://github.com/old/r/pull/1"}}, want: prKey(oldRef.Repo, 1)},
+		{name: "no matching ref keeps canonical key", obs: newObs("https://github.com/new/r/pull/1", ""), refs: []ports.SCMPRRef{{Repo: oldRef.Repo, Number: 2, URL: "https://github.com/new/r/pull/2"}}, want: "github:github.com:new/r#1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := observationKeyForRefs(tt.obs, tt.refs); got != tt.want {
+				t.Fatalf("observationKeyForRefs = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

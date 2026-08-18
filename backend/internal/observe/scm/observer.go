@@ -484,7 +484,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		chunkSeen := map[string]bool{}
 		for _, obs := range batch {
 			obs.ObservedAt = now
-			key := prKeyFromObs(obs)
+			key := observationKeyForRefs(obs, active)
 			if key == "" {
 				continue
 			}
@@ -1425,7 +1425,7 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 		reconcileSeen := map[string]bool{}
 		for _, obs := range batch {
 			obs.ObservedAt = now
-			key := prKeyFromObs(obs)
+			key := observationKeyForRefs(obs, active)
 			if key == "" {
 				continue
 			}
@@ -2036,6 +2036,44 @@ func prKeyFromObs(obs ports.SCMObservation) string {
 		return ""
 	}
 	return obs.Provider + ":" + obs.Host + ":" + obs.Repo + "#" + fmt.Sprint(obs.PR.Number)
+}
+
+// observationKeyForRefs resolves the key a fetched observation should be
+// dispatched under. Normally that is prKeyFromObs: the observation's canonical
+// repo matches the ref that requested it. After a repository rename or org
+// transfer, the provider serves the fetch through a redirect and the
+// observation canonicalizes to the new owner/name while the tracked subject
+// (whose repo comes from the stored PR row) still carries the old one. The two
+// keys then never match, so the observation would be dropped on every poll —
+// CI and mergeability stay "unknown" forever while the separate per-ref review
+// refresh keeps working. Falling back to matching the requesting ref by PR URL
+// delivers the observation under the subject's key; persistence then records
+// the canonical repo on the row, so the identities converge on the next poll.
+func observationKeyForRefs(obs ports.SCMObservation, refs []ports.SCMPRRef) string {
+	key := prKeyFromObs(obs)
+	if key == "" {
+		return ""
+	}
+	for _, ref := range refs {
+		if prKey(ref.Repo, ref.Number) == key {
+			return key
+		}
+	}
+	obsURL := strings.TrimSpace(obs.PR.URL)
+	obsAlias := strings.TrimSpace(obs.PR.URLAlias)
+	for _, ref := range refs {
+		if ref.Number != obs.PR.Number {
+			continue
+		}
+		refURL := strings.TrimSpace(ref.URL)
+		if refURL == "" {
+			continue
+		}
+		if refURL == obsURL || (obsAlias != "" && refURL == obsAlias) {
+			return prKey(ref.Repo, ref.Number)
+		}
+	}
+	return key
 }
 
 func prKey(repo ports.SCMRepo, number int) string {
