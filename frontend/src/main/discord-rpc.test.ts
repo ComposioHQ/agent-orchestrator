@@ -11,37 +11,34 @@ vi.mock("@xhayper/discord-rpc", () => {
 });
 
 describe("buildActivityPayload", () => {
-	it("returns idle with 0 agents when no sessions", () => {
+	it("keeps the AO presence visible when no sessions are active", () => {
 		const result = buildActivityPayload([]);
 		expect(result).not.toBeNull();
-		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.details).toBe("");
 		expect(result!.state).toBe("Idle");
 	});
 
-	it("returns idle with 0 agents when all sessions are terminated", () => {
+	it("keeps the AO presence visible when all sessions are terminated", () => {
 		const result = buildActivityPayload(
 			[{ status: "terminated", isTerminated: true, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result).not.toBeNull();
-		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.details).toBe("");
 		expect(result!.state).toBe("Idle");
 	});
 
-	it("returns idle with 0 agents when all sessions are exited", () => {
+	it("keeps the AO presence visible when all sessions are exited", () => {
 		const result = buildActivityPayload(
 			[{ status: "exited", isTerminated: true, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result).not.toBeNull();
-		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.details).toBe("");
 		expect(result!.state).toBe("Idle");
 	});
 
-	it("returns idle with 0 agents when all sessions are merged", () => {
+	it("keeps the AO presence visible when all sessions are merged", () => {
 		const result = buildActivityPayload(
 			[{ status: "merged", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result).not.toBeNull();
-		expect(result!.details).toBe("Orchestrating 0 agents");
+		expect(result!.details).toBe("");
 		expect(result!.state).toBe("Idle");
 	});
 
@@ -129,17 +126,19 @@ describe("buildActivityPayload", () => {
 		expect(result!.state).toBe("Drafting PR");
 	});
 
-	it("maps idle to 'Idle'", () => {
+	it("shows AO idle for idle sessions", () => {
 		const result = buildActivityPayload(
 			[{ status: "idle", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
+		expect(result!.details).toBe("");
 		expect(result!.state).toBe("Idle");
 	});
 
-	it("maps no_signal to 'Idle'", () => {
+	it("shows AO idle for no-signal sessions", () => {
 		const result = buildActivityPayload(
 			[{ status: "no_signal", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
+		expect(result!.details).toBe("");
 		expect(result!.state).toBe("Idle");
 	});
 
@@ -169,7 +168,7 @@ describe("buildActivityPayload", () => {
 	it("start timestamp stays constant regardless of session createdAt", () => {
 		const startTime = Date.parse("2026-01-01T00:00:00Z");
 		const result = buildActivityPayload(
-			[{ status: "idle", isTerminated: false, createdAt: "2026-01-02T00:00:00Z" }],
+			[{ status: "working", isTerminated: false, createdAt: "2026-01-02T00:00:00Z" }],
 			startTime,
 		);
 		expect(result!.startTimestamp).toBe(startTime);
@@ -201,7 +200,16 @@ describe("pickRepresentativeStatus", () => {
 			{ status: "pr_open", isTerminated: false },
 		]);
 		expect(result!.label).toBe("Waiting on you");
-		expect(result!.count).toBe(4);
+		expect(result!.count).toBe(3);
+	});
+
+	it("does not count idle or no-signal sessions as active agents", () => {
+		const result = pickRepresentativeStatus([
+			{ status: "working", isTerminated: false },
+			{ status: "idle", isTerminated: false },
+			{ status: "no_signal", isTerminated: false },
+		]);
+		expect(result).toEqual({ label: "Working", count: 1 });
 	});
 });
 

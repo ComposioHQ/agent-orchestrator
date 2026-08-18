@@ -43,6 +43,7 @@ const STATUS_PRIORITY: { status: SessionStatus; label: string }[] = [
 ];
 
 const EXCLUDED_STATUSES: SessionStatus[] = ["exited", "terminated", "merged"];
+const INACTIVE_STATUSES: SessionStatus[] = ["idle", "no_signal"];
 
 interface ActivityPayload {
 	details: string;
@@ -60,6 +61,7 @@ let statusListeners: ((status: RpcStatus) => void)[] = [];
 let rpcStartTimestamp: number | null = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
+let settingsOperation: Promise<void> = Promise.resolve();
 
 function makeApiClient(port: number): ReturnType<typeof createClient<paths>> {
 	return createClient<paths>({ baseUrl: `http://127.0.0.1:${port}` });
@@ -98,7 +100,8 @@ export async function startDiscordRpc(): Promise<void> {
 	try {
 		await client.login();
 		connectionState = "connected";
-	} catch {
+	} catch (err) {
+		console.error("[discord-rpc] login failed:", err);
 		connectionState = "disconnected";
 		try {
 			await client.destroy();
@@ -106,10 +109,12 @@ export async function startDiscordRpc(): Promise<void> {
 		}
 		client = null;
 	}
+	console.log("[discord-rpc] state after login attempt:", connectionState, "XDG_RUNTIME_DIR=", process.env.XDG_RUNTIME_DIR);
 	broadcastStatus();
 	refreshTimer = setInterval(() => {
 		void refreshPresence();
 	}, RPC_PRESENCE_REFRESH_INTERVAL_MS);
+	void refreshPresence();
 }
 
 async function reconnect(): Promise<void> {
@@ -135,15 +140,24 @@ async function reconnect(): Promise<void> {
 }
 
 export async function setRpcSettings(settings: RpcSettings): Promise<void> {
-	if (settings.enabled) {
-		await startDiscordRpc();
-	} else {
-		await disposeDiscordRpc();
-	}
+	const operation = settingsOperation.then(async () => {
+		if (settings.enabled) {
+			await startDiscordRpc();
+		} else {
+			await disposeDiscordRpc();
+		}
+	});
+	settingsOperation = operation.catch(() => undefined);
+	await operation;
 }
 
 export function pickRepresentativeStatus(sessions: { status: string; isTerminated: boolean }[]): { label: string; count: number } | null {
-	const active = sessions.filter((s) => !s.isTerminated && !EXCLUDED_STATUSES.includes(s.status as SessionStatus));
+	const active = sessions.filter(
+		(s) =>
+			!s.isTerminated &&
+			!EXCLUDED_STATUSES.includes(s.status as SessionStatus) &&
+			!INACTIVE_STATUSES.includes(s.status as SessionStatus),
+	);
 	if (active.length === 0) return { label: "Idle", count: 0 };
 	for (const entry of STATUS_PRIORITY) {
 		const matching = active.filter((s) => s.status === entry.status);
@@ -160,6 +174,15 @@ export function buildActivityPayload(
 ): ActivityPayload | null {
 	const rep = pickRepresentativeStatus(sessions);
 	if (!rep) return null;
+	if (rep.count === 0) {
+		return {
+			details: "",
+			state: "Idle",
+			startTimestamp: startTime,
+			largeImageKey: RPC_LARGE_IMAGE_KEY,
+			largeImageText: RPC_LARGE_IMAGE_TEXT,
+		};
+	}
 	return {
 		details: `Orchestrating ${rep.count} ${rep.count === 1 ? "agent" : "agents"}`,
 		state: rep.label,
@@ -190,7 +213,7 @@ async function refreshPresence(): Promise<void> {
 		await client.request("SET_ACTIVITY", {
 			pid: process.pid,
 			activity: {
-				details: payload.details,
+				...(payload.details ? { details: payload.details } : {}),
 				state: payload.state,
 				timestamps: { start: payload.startTimestamp },
 				assets: {
