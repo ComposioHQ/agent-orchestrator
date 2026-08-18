@@ -8,10 +8,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/greptile"
 )
 
-// newReviewTerminalCommand is the hidden, display-only runner used by the
-// Greptile reviewer terminal. It deliberately has no submit/chat flags: the
-// daemon owns persistence and GitHub publication after this command writes its
-// structured sidecar.
+// newReviewTerminalCommand is the hidden runner used by the Greptile reviewer
+// terminal. It deliberately has no submit/chat flags: the daemon owns
+// persistence and GitHub publication after this command writes its structured
+// sidecar. Once complete, the terminal becomes a normal user shell.
 func newReviewTerminalCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:                "review-terminal <request-file>",
@@ -25,7 +25,10 @@ func newReviewTerminalCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return greptile.RunTerminal(cmd.Context(), args[0], cmd.OutOrStdout())
+			if err := greptile.RunTerminal(cmd.Context(), args[0], cmd.OutOrStdout()); err != nil {
+				return err
+			}
+			return greptile.RunTerminalShell(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 }

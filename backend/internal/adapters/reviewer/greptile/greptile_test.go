@@ -394,3 +394,9 @@ func TestParseTerminalResultPreservesInlineComments(t *testing.T) {
 		t.Fatalf("comment = %+v", comment)
 	}
 }
+
+func TestCompletedTerminalHasReusableShell(t *testing.T) {
+	if argv := terminalShell(); len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+		t.Fatalf("terminalShell() = %#v, want an executable", argv)
+	}
+}

@@ -1,4 +1,4 @@
-package review
+package github
 
 import (
 	"bytes"
@@ -13,31 +13,30 @@ import (
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
-// GitHubReviewPublisher posts a completed Greptile review as one GitHub review
-// so each finding can appear as an inline comment on the changed lines.
-type GitHubReviewPublisher interface {
+// ReviewPublisher posts an AO review to a GitHub pull request.
+type ReviewPublisher interface {
 	Publish(ctx context.Context, prURL, commitSHA, body string, comments []ports.ReviewComment) (string, error)
 }
 
-type githubReviewPublisher struct {
+type reviewPublisher struct {
 	execute func(context.Context, []string, []byte) ([]byte, error)
 }
 
-// NewGitHubReviewPublisher builds the production gh-backed publisher. A
-// missing gh binary or authentication is reported per review, not at daemon
-// startup, so AO can still record the review result locally.
-func NewGitHubReviewPublisher() GitHubReviewPublisher {
-	return &githubReviewPublisher{execute: executeGitHubReview}
+// NewReviewPublisher builds the production gh-backed publisher. A missing gh
+// binary or authentication is reported per review so AO can still record and
+// deliver the result locally.
+func NewReviewPublisher() ReviewPublisher {
+	return &reviewPublisher{execute: executeReview}
 }
 
-type githubReviewPayload struct {
-	CommitID string                `json:"commit_id,omitempty"`
-	Body     string                `json:"body"`
-	Event    string                `json:"event"`
-	Comments []githubInlineComment `json:"comments,omitempty"`
+type reviewPayload struct {
+	CommitID string          `json:"commit_id,omitempty"`
+	Body     string          `json:"body"`
+	Event    string          `json:"event"`
+	Comments []inlineComment `json:"comments,omitempty"`
 }
 
-type githubInlineComment struct {
+type inlineComment struct {
 	Path      string `json:"path"`
 	Line      int    `json:"line"`
 	Side      string `json:"side"`
@@ -46,28 +45,39 @@ type githubInlineComment struct {
 	Body      string `json:"body"`
 }
 
-func (p *githubReviewPublisher) Publish(ctx context.Context, prURL, commitSHA, body string, comments []ports.ReviewComment) (string, error) {
-	owner, repo, number, err := githubPRRef(prURL)
+func (p *reviewPublisher) Publish(ctx context.Context, prURL, commitSHA, body string, comments []ports.ReviewComment) (string, error) {
+	owner, repo, number, err := pullRequestRef(prURL)
 	if err != nil {
 		return "", err
 	}
-	payload := githubReviewPayload{
+	payload := reviewPayload{
 		CommitID: strings.TrimSpace(commitSHA),
 		Body:     strings.TrimSpace(body),
 		Event:    "COMMENT",
 		Comments: inlineComments(comments),
 	}
 	if payload.Body == "" {
-		payload.Body = "Greptile reported findings on this pull request."
+		payload.Body = "AO reported a completed review on this pull request."
 	}
-	if len(payload.Comments) == 0 && payload.Body == "" {
-		return "", fmt.Errorf("github review has no body or inline comments")
+	endpoint := "repos/" + owner + "/" + repo + "/pulls/" + strconv.Itoa(number) + "/reviews"
+	id, err := p.publish(ctx, endpoint, payload)
+	if err == nil || len(payload.Comments) == 0 || !inlineValidationFailure(err) {
+		return id, err
 	}
+
+	// GitHub rejects an entire review when any inline location is no longer on
+	// the diff. The full normalized findings are already present in Body, so a
+	// summary-only retry keeps the review visible without losing information.
+	payload.Comments = nil
+	payload.Body += "\n\n> Some findings could not be attached inline because GitHub no longer accepted their diff locations. All findings are included in this review summary."
+	return p.publish(ctx, endpoint, payload)
+}
+
+func (p *reviewPublisher) publish(ctx context.Context, endpoint string, payload reviewPayload) (string, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("encode GitHub review: %w", err)
 	}
-	endpoint := "repos/" + owner + "/" + repo + "/pulls/" + strconv.Itoa(number) + "/reviews"
 	response, err := p.execute(ctx, []string{"gh", "api", "--method", "POST", "--input", "-", endpoint}, raw)
 	if err != nil {
 		return "", err
@@ -85,7 +95,7 @@ func (p *githubReviewPublisher) Publish(ctx context.Context, prURL, commitSHA, b
 	return id, nil
 }
 
-func githubPRRef(raw string) (owner, repo string, number int, err error) {
+func pullRequestRef(raw string) (owner, repo string, number int, err error) {
 	u, parseErr := url.Parse(strings.TrimSpace(raw))
 	if parseErr != nil || u.Hostname() != "github.com" {
 		return "", "", 0, fmt.Errorf("GitHub inline review requires a github.com pull request URL")
@@ -101,8 +111,8 @@ func githubPRRef(raw string) (owner, repo string, number int, err error) {
 	return parts[0], parts[1], n, nil
 }
 
-func inlineComments(comments []ports.ReviewComment) []githubInlineComment {
-	out := make([]githubInlineComment, 0, len(comments))
+func inlineComments(comments []ports.ReviewComment) []inlineComment {
+	out := make([]inlineComment, 0, len(comments))
 	for _, comment := range comments {
 		path := strings.ReplaceAll(strings.TrimSpace(comment.Path), "\\", "/")
 		body := strings.TrimSpace(comment.Body)
@@ -120,7 +130,7 @@ func inlineComments(comments []ports.ReviewComment) []githubInlineComment {
 		if suggestion := strings.TrimSpace(comment.Suggestion); suggestion != "" {
 			body += "\n\nSuggested fix:\n" + suggestion
 		}
-		item := githubInlineComment{Path: path, Line: line, Side: side, Body: body}
+		item := inlineComment{Path: path, Line: line, Side: side, Body: body}
 		if comment.StartLine > 0 && comment.StartLine < line {
 			item.StartLine = comment.StartLine
 			item.StartSide = side
@@ -130,7 +140,15 @@ func inlineComments(comments []ports.ReviewComment) []githubInlineComment {
 	return out
 }
 
-func executeGitHubReview(ctx context.Context, argv []string, input []byte) ([]byte, error) {
+func inlineValidationFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	detail := strings.ToLower(err.Error())
+	return strings.Contains(detail, "http 422") || strings.Contains(detail, "validation failed")
+}
+
+func executeReview(ctx context.Context, argv []string, input []byte) ([]byte, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("GitHub review command is empty")
 	}
@@ -142,9 +160,9 @@ func executeGitHubReview(ctx context.Context, argv []string, input []byte) ([]by
 	if err := cmd.Run(); err != nil {
 		detail := strings.TrimSpace(stderr.String())
 		if detail != "" {
-			return nil, fmt.Errorf("post GitHub inline review: %w: %s", err, detail)
+			return nil, fmt.Errorf("post GitHub review: %w: %s", err, detail)
 		}
-		return nil, fmt.Errorf("post GitHub inline review: %w", err)
+		return nil, fmt.Errorf("post GitHub review: %w", err)
 	}
 	return stdout.Bytes(), nil
 }

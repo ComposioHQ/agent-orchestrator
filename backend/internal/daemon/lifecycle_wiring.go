@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/container/dockerreap"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	workspacerouter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/router"
 	scratchworkspace "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
@@ -229,7 +230,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
-	githubReviewPublisher := reviewcore.NewGitHubReviewPublisher()
+	githubReviewPublisher := scmgithub.NewReviewPublisher()
 	var reviewSvc *reviewsvc.Service
 	completionHandler := func(resultCtx context.Context, workerID domain.SessionID, completions []reviewcore.ReviewCompletion) {
 		submitted := make([]reviewsvc.SubmittedReview, 0, len(completions))
@@ -250,14 +251,12 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			}
 			body := completion.Body
 			githubReviewID := ""
-			if len(completion.Comments) > 0 {
-				publishedID, publishErr := githubReviewPublisher.Publish(resultCtx, completion.PRURL, completion.TargetSHA, body, completion.Comments)
-				if publishErr != nil {
-					log.Error("publish Greptile GitHub inline review", "worker", workerID, "run", completion.RunID, "error", publishErr)
-					body = strings.TrimSpace(body) + "\n\n> GitHub inline comments could not be posted: " + publishErr.Error()
-				} else {
-					githubReviewID = publishedID
-				}
+			publishedID, publishErr := githubReviewPublisher.Publish(resultCtx, completion.PRURL, completion.TargetSHA, body, completion.Comments)
+			if publishErr != nil {
+				log.Error("publish Greptile GitHub review", "worker", workerID, "run", completion.RunID, "error", publishErr)
+				body = strings.TrimSpace(body) + "\n\n> GitHub review could not be posted: " + publishErr.Error()
+			} else {
+				githubReviewID = publishedID
 			}
 			submitted = append(submitted, reviewsvc.SubmittedReview{
 				RunID: completion.RunID, Verdict: completion.Verdict, Body: body, GithubReviewID: githubReviewID,

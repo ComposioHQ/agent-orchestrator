@@ -1761,7 +1761,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(await screen.findByText("Greptile CLI")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "View output" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Open terminal" })).toBeInTheDocument();
 	});
 	it("shows failed latest runs as failed and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [

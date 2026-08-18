@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -438,6 +439,50 @@ func RunTerminal(ctx context.Context, requestPath string, out io.Writer) error {
 		return err
 	}
 	_, _ = fmt.Fprintln(out, "\n"+terminalSummary(succeeded, failed, len(request.Tasks)))
+	return nil
+}
+
+// RunTerminalShell hands a completed one-shot review terminal to the user's
+// normal shell. Greptile itself remains non-interactive; the shell starts only
+// after RunTerminal has published the complete structured result for AO.
+func RunTerminalShell(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer) error {
+	argv := terminalShell()
+	if len(argv) == 0 {
+		return fmt.Errorf("could not determine a shell for the completed Greptile terminal")
+	}
+	cmd := aoprocess.AttachedCommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("run completed Greptile terminal shell: %w", err)
+	}
+	return nil
+}
+
+func terminalShell() []string {
+	if runtime.GOOS == "windows" {
+		for _, candidate := range []string{"pwsh.exe", "powershell.exe"} {
+			if path, err := exec.LookPath(candidate); err == nil {
+				return []string{path, "-NoLogo"}
+			}
+		}
+		if shell := strings.TrimSpace(os.Getenv("ComSpec")); shell != "" {
+			return []string{shell}
+		}
+		return []string{"cmd.exe"}
+	}
+	if shell := strings.TrimSpace(os.Getenv("SHELL")); shell != "" {
+		return []string{shell, "-i"}
+	}
+	for _, candidate := range []string{"zsh", "bash", "sh"} {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return []string{path, "-i"}
+		}
+	}
 	return nil
 }
 

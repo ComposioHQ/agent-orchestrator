@@ -1359,7 +1359,7 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const openTerminalLabel = harness === "greptile" ? t("inspector.viewOutput") : t("inspector.openTerminal");
+	const openTerminalLabel = t("inspector.openTerminal");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
