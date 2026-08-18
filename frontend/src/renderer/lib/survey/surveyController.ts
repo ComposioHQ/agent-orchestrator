@@ -103,12 +103,18 @@ export class SurveyController {
 		return eligible;
 	}
 
-	/** Record the user's tap: persist it, and emit the event the analysis reads. */
-	answer(surveyId: string, choice: string): void {
+	/** Record the user's answer (a single choice, a multi-select list, or free
+	 * text): persist it and emit the event the analysis reads. */
+	answer(surveyId: string, value: string | string[]): void {
+		const choice = Array.isArray(value) ? value.join(", ") : value;
 		const s = this.load();
 		s.answers[surveyId] = choice;
 		this.save(s);
-		this.capture("ao.renderer.survey_answered", { survey: surveyId, choice });
+		this.capture("ao.renderer.survey_answered", {
+			survey: surveyId,
+			choice,
+			...(Array.isArray(value) ? { choices: value } : {}),
+		});
 		// Session-scoped convenience so same-session events can be sliced by the
 		// answer; the canonical record for cross-tabs is the event above, since
 		// renderer persistence is memory-only.

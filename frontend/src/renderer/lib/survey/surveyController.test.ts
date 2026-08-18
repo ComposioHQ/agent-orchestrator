@@ -16,80 +16,97 @@ describe("SurveyController.pick", () => {
 	function make() {
 		return new SurveyController({ storage, now: () => t, capture, register: vi.fn() });
 	}
+	// Answer a survey and let the weekly cooldown elapse, so the next pick is eligible.
+	function answerAndWait(c: SurveyController, id: string, value: string | string[] = "x") {
+		c.answer(id, value);
+		t += WEEK + 1;
+	}
 	beforeEach(() => {
 		storage = memoryStorage();
 		capture = vi.fn();
 		t = 1_000_000_000_000;
 	});
 
-	it("shows a project survey on project_added and records survey_shown", () => {
+	it("shows the profile question on app_start", () => {
+		expect(make().pick("app_start")?.id).toBe("profile");
+	});
+
+	it("shows repo-who then repo-purpose on successive project adds", () => {
 		const c = make();
 		expect(c.pick("project_added")?.id).toBe("repo-who");
-		expect(capture).toHaveBeenCalledWith("ao.renderer.survey_shown", { survey: "repo-who" });
+		answerAndWait(c, "repo-who", "My team");
+		expect(c.pick("project_added")?.id).toBe("repo-purpose");
+	});
+
+	it("shows the blocker survey on a failed spawn", () => {
+		expect(make().pick("spawn_failed")?.id).toBe("blocker");
 	});
 
 	it("enforces one survey per week across triggers", () => {
 		const c = make();
-		expect(c.pick("project_added")).not.toBeNull();
+		expect(c.pick("app_start")).not.toBeNull();
 		t += WEEK - 1;
-		expect(c.pick("spawn_failed")).toBeNull(); // still inside cooldown
+		expect(c.pick("project_added")).toBeNull();
 		t += 2;
-		expect(c.pick("spawn_failed")?.id).toBe("what-broke"); // cooldown elapsed
+		expect(c.pick("project_added")).not.toBeNull();
 	});
 
-	it("never re-asks an answered survey; advances to the next project survey", () => {
+	it("shows an ungated workflow survey first on a session, gating pmf behind 3 spawns", () => {
 		const c = make();
-		expect(c.pick("project_added")?.id).toBe("repo-who");
-		c.answer("repo-who", "My team");
-		t += WEEK + 1;
-		expect(c.pick("project_added")?.id).toBe("repo-purpose");
-	});
-
-	it("gates pmf behind 3 successful spawns", () => {
-		const c = make();
-		expect(c.pick("session_spawned")).toBeNull();
+		c.noteSpawn(); // 1
+		expect(c.pick("session_spawned")?.id).toBe("task-type"); // no gate
+		answerAndWait(c, "task-type", ["Bug fix", "Tests"]);
+		expect(c.pick("session_spawned")?.id).toBe("autonomy"); // still ungated
+		answerAndWait(c, "autonomy", "Let it run");
+		expect(c.pick("session_spawned")).toBeNull(); // pmf needs 3, only 1 spawn
 		c.noteSpawn();
-		c.noteSpawn();
-		expect(c.pick("session_spawned")).toBeNull(); // only 2
-		c.noteSpawn();
+		c.noteSpawn(); // 3
 		expect(c.pick("session_spawned")?.id).toBe("pmf");
 	});
 
-	it("only offers would-pay to work + team users past 5 spawns", () => {
-		const c = make();
-		c.answer("repo-who", "My team");
-		c.answer("repo-purpose", "Work");
-		c.answer("pmf", "I'd be lost"); // clear the earlier session_spawned survey
-		for (let i = 0; i < 5; i++) c.noteSpawn();
-		t += WEEK + 1;
-		expect(c.pick("session_spawned")?.id).toBe("would-pay");
-	});
-
-	it("does not offer would-pay to a learning solo user", () => {
-		const c = make();
-		c.answer("repo-who", "Just me");
-		c.answer("repo-purpose", "Learning");
-		c.answer("pmf", "No big deal");
-		for (let i = 0; i < 9; i++) c.noteSpawn();
-		t += WEEK + 1;
-		expect(c.pick("session_spawned")).toBeNull();
+	it("offers would-pay only to work + team users, otherwise never", () => {
+		const setup = (who: string, purpose: string) => {
+			const c = make();
+			c.answer("repo-who", who);
+			c.answer("repo-purpose", purpose);
+			c.answer("task-type", "Bug fix");
+			c.answer("autonomy", "Let it run");
+			c.answer("pmf", "I'd be lost");
+			c.answer("wish", "auto PR");
+			for (let i = 0; i < 8; i++) c.noteSpawn();
+			t += WEEK + 1;
+			return c;
+		};
+		expect(setup("My team", "Work").pick("session_spawned")?.id).toBe("would-pay");
+		// solo / learning user: would-pay is skipped, the next eligible is feedback
+		expect(setup("Just me", "Learning").pick("session_spawned")?.id).toBe("feedback");
 	});
 
 	it("does not re-show a dismissed survey", () => {
 		const c = make();
-		c.pick("project_added");
-		c.dismiss("repo-who");
+		c.pick("app_start");
+		c.dismiss("profile");
 		t += WEEK + 1;
-		expect(c.pick("project_added")?.id).toBe("repo-purpose"); // skips the dismissed one
+		expect(c.pick("app_start")).toBeNull();
 	});
 });
 
 describe("SurveyController.answer", () => {
-	it("emits the analysis event and registers a super-property", () => {
+	it("emits the analysis event for a single choice and registers a super-property", () => {
 		const capture = vi.fn();
 		const register = vi.fn();
-		new SurveyController({ storage: memoryStorage(), capture, register }).answer("repo-who", "My team");
-		expect(capture).toHaveBeenCalledWith("ao.renderer.survey_answered", { survey: "repo-who", choice: "My team" });
-		expect(register).toHaveBeenCalledWith({ survey_repo_who: "My team" });
+		new SurveyController({ storage: memoryStorage(), capture, register }).answer("profile", "Developer");
+		expect(capture).toHaveBeenCalledWith("ao.renderer.survey_answered", { survey: "profile", choice: "Developer" });
+		expect(register).toHaveBeenCalledWith({ survey_profile: "Developer" });
+	});
+
+	it("joins a multi-select answer and includes the raw list", () => {
+		const capture = vi.fn();
+		new SurveyController({ storage: memoryStorage(), capture }).answer("task-type", ["Bug fix", "Tests"]);
+		expect(capture).toHaveBeenCalledWith("ao.renderer.survey_answered", {
+			survey: "task-type",
+			choice: "Bug fix, Tests",
+			choices: ["Bug fix", "Tests"],
+		});
 	});
 });

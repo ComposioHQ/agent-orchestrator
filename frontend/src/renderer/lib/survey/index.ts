@@ -50,6 +50,11 @@ function offer(trigger: SurveyTrigger): void {
 	}
 }
 
+/** Call once when the app opens: offers the early profile question. */
+export function onAppStart(): void {
+	offer("app_start");
+}
+
 /** Call when a project/repo is added. */
 export function onProjectAdded(): void {
 	offer("project_added");
@@ -63,17 +68,13 @@ export function onSpawnFailed(): void {
 /** Call on every successful spawn: counts activation and offers the eligible survey. */
 export function onSessionSpawned(): void {
 	controller.noteSpawn();
-	if (controller.spawnCount() === 2) {
-		offer("second_session"); // one-time early "what do you use it for" nudge
-	} else {
-		offer("session_spawned"); // pmf (>=3) / would-pay (>=5, gated)
-	}
+	offer("session_spawned"); // pmf (>=3), task type, autonomy, wish (>=5), pay (>=5)
 }
 
-/** The prompt component calls these on tap / close. */
-export function answerCurrentSurvey(choice: string): void {
+/** The prompt component calls this on submit; value is a choice, a multi list, or text. */
+export function answerCurrentSurvey(value: string | string[]): void {
 	if (!current) return;
-	controller.answer(current.id, choice);
+	controller.answer(current.id, value);
 	current = null;
 	emit();
 }
