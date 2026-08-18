@@ -592,7 +592,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
-			createTab(session, true);
+			try {
+				createTab(session, true);
+			} catch (error) {
+				entries.delete(viewId);
+				viewIdsBySessionId.delete(sessionId);
+				browserProfileStorage.releasePartition(session.profilePartition);
+				throw error;
+			}
 			// A fresh native session starts on the provider's first target. Recording
 			// that invariant avoids an unnecessary tab command before the first action;
 			// later human selections and popups explicitly invalidate it.
@@ -1000,27 +1007,31 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
-		if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
-		else destroyDevTools(session);
-		void options.agentBrowserRuntime?.closeSession(session.sessionId);
 		entries.delete(viewId);
 		viewIdsBySessionId.delete(session.sessionId);
 		rendererOwnersByViewId.delete(viewId);
 		forgetIfFocused(viewId);
-		// When the window is already gone (dispose fired from mainWindow "closed"),
-		// Electron has torn down contentView and the child WebContentsViews. Touching
-		// them throws "Object has been destroyed", so just drop our reference.
-		if (options.mainWindow.isDestroyed?.()) {
+		try {
+			if (options.mainWindow.isDestroyed?.()) session.devtools = undefined;
+			else destroyDevTools(session);
+			void options.agentBrowserRuntime?.closeSession(session.sessionId);
+			// When the window is already gone (dispose fired from mainWindow "closed"),
+			// Electron has torn down contentView and the child WebContentsViews. Touching
+			// them throws "Object has been destroyed", so just drop our reference.
+			if (options.mainWindow.isDestroyed?.()) {
+				for (const entry of session.tabs.values()) {
+					tabsByWebContentsId.delete(entry.view.webContents.id);
+					disposeNetworkCapture(entry, "session-closed");
+				}
+				return;
+			}
 			for (const entry of session.tabs.values()) {
 				tabsByWebContentsId.delete(entry.view.webContents.id);
 				disposeNetworkCapture(entry, "session-closed");
+				destroyTabView(entry);
 			}
-			return;
-		}
-		for (const entry of session.tabs.values()) {
-			tabsByWebContentsId.delete(entry.view.webContents.id);
-			disposeNetworkCapture(entry, "session-closed");
-			destroyTabView(entry);
+		} finally {
+			browserProfileStorage.releasePartition(session.profilePartition);
 		}
 	};
 
@@ -1392,9 +1403,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			if (disposePromise) return disposePromise;
 			disposePromise = (async () => {
 				ipcDisposers.splice(0).forEach((dispose) => dispose());
-				await options.agentBrowserRuntime?.dispose();
-				for (const viewId of [...entries.keys()]) {
-					destroy(viewId);
+				try {
+					await options.agentBrowserRuntime?.dispose();
+				} finally {
+					for (const viewId of [...entries.keys()]) {
+						destroy(viewId);
+					}
 				}
 			})();
 			return disposePromise;

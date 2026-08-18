@@ -7,7 +7,12 @@ import {
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
-import { AO_BROWSER_PERSISTENT_PARTITION, type BrowserProfilePersistence } from "./browser-profile-storage";
+import {
+	AO_BROWSER_PERSISTENT_PARTITION,
+	createBrowserProfileStorage,
+	type BrowserProfilePersistence,
+	type BrowserProfileStorage,
+} from "./browser-profile-storage";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
@@ -206,7 +211,10 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 }
 
 function setupTabHost(
-	options: { browserProfilePersistence?: BrowserProfilePersistence | (() => BrowserProfilePersistence) } = {},
+	options: {
+		browserProfilePersistence?: BrowserProfilePersistence | (() => BrowserProfilePersistence);
+		browserProfileStorage?: BrowserProfileStorage;
+	} = {},
 ) {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
@@ -847,6 +855,24 @@ describe("agent browser runtime", () => {
 		await host.execute("sess-1", "tabs");
 
 		expect(constructorOptions[0].webPreferences.partition).toBe(AO_BROWSER_PERSISTENT_PARTITION);
+	});
+
+	it("releases persistent destination references on destroy, destroyAll, and dispose", async () => {
+		const browserProfileStorage = createBrowserProfileStorage(() => "unused");
+		const { host } = setupTabHost({ browserProfilePersistence: "persistent", browserProfileStorage });
+
+		await host.execute("sess-1", "tabs");
+		expect(browserProfileStorage.isPersistentDestinationActive()).toBe(true);
+		host.destroy("0:sess-1");
+		expect(browserProfileStorage.isPersistentDestinationActive()).toBe(false);
+
+		await host.execute("sess-2", "tabs");
+		host.destroyAll();
+		expect(browserProfileStorage.isPersistentDestinationActive()).toBe(false);
+
+		await host.execute("sess-3", "tabs");
+		await host.dispose();
+		expect(browserProfileStorage.isPersistentDestinationActive()).toBe(false);
 	});
 
 	it("resolves the persistence choice when a new worker starts", async () => {
