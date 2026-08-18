@@ -361,7 +361,9 @@ describe("SessionChatSurface link routing", () => {
 		});
 		view.rerender(
 			<Wrapper client={queryClient}>
-				<SessionChatSurface session={{ ...session, provider: "claude-code" }} />
+				<SessionChatSurface
+					session={{ ...session, activeAgentSwitch: completedRetry, provider: "claude-code" }}
+				/>
 			</Wrapper>,
 		);
 
@@ -374,18 +376,25 @@ describe("SessionChatSurface link routing", () => {
 			"success",
 		);
 
-		act(() => vi.advanceTimersByTime(3_000));
-		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Switch agent" })).not.toHaveAttribute(
-			"data-outcome",
-		);
-
 		conversationState.snapshot = { capabilities: [], controller: { state: "stopped" } };
 		view.rerender(
 			<Wrapper client={queryClient}>
-				<SessionChatSurface session={{ ...session, provider: "claude-code" }} />
+				<SessionChatSurface
+					session={{ ...session, activeAgentSwitch: completedRetry, provider: "claude-code" }}
+				/>
 			</Wrapper>,
 		);
+		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
+			"data-outcome",
+			"success",
+		);
+		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
+		expect(screen.getByRole("button", { name: "Switch agent" })).toHaveAttribute(
+			"data-outcome",
+			"success",
+		);
+
+		act(() => vi.advanceTimersByTime(3_000));
 		expect(screen.queryByTestId("chat-agent-switch-status")).not.toBeInTheDocument();
 		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
 		expect(screen.getByRole("button", { name: "Switch agent" })).not.toHaveAttribute(

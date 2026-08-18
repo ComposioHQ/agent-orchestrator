@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { deriveAgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import type { AgentSwitch } from "./useAgentSwitches";
 import { useObservedAgentSwitchLifecycle } from "./useObservedAgentSwitchLifecycle";
 
@@ -12,6 +13,15 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 		targetHarness: "codex",
 		...overrides,
 	};
+}
+
+function successPresentation(agentSwitch: AgentSwitch) {
+	return deriveAgentSwitchPresentation({
+		agentSwitch,
+		currentHarness: agentSwitch.targetHarness,
+		isTerminated: false,
+		terminalHandleId: "target-controller",
+	});
 }
 
 describe("useObservedAgentSwitchLifecycle", () => {
@@ -39,14 +49,59 @@ describe("useObservedAgentSwitchLifecycle", () => {
 		rerender({ agentSwitches: [completedSwitch], candidates: [] });
 		expect(result.current.observedTerminalSwitch).toBe(completedSwitch);
 
-		act(() => result.current.settle(completedSwitch.id));
+		act(() => result.current.settle(completedSwitch, successPresentation(completedSwitch)));
 		expect(result.current.transientSuccessSwitchId).toBe(completedSwitch.id);
+		rerender({ agentSwitches: [completedSwitch], candidates: [] });
+		expect(result.current.observedTerminalSwitch).toBeUndefined();
+		expect(result.current.isObserved(completedSwitch.id)).toBe(false);
+		expect(result.current.isRetired(completedSwitch.id)).toBe(true);
+
 		act(() => vi.advanceTimersByTime(3_000));
 		rerender({ agentSwitches: [completedSwitch], candidates: [] });
 
 		expect(result.current.observedTerminalSwitch).toBeUndefined();
 		expect(result.current.isObserved(completedSwitch.id)).toBe(false);
 		expect(result.current.isRetired(completedSwitch.id)).toBe(true);
+	});
+
+	it("does not replay a success notice after navigating away and back", () => {
+		vi.useFakeTimers();
+		const activeSwitch = switchRecord();
+		const completedSwitch = switchRecord({ state: "completed" });
+		const { result, rerender } = renderHook(
+			({ sessionId, agentSwitches, candidates }) =>
+				useObservedAgentSwitchLifecycle({
+					sessionId,
+					agentSwitches,
+					nonterminalCandidates: candidates,
+				}),
+			{
+				initialProps: {
+					sessionId: "session-a",
+					agentSwitches: [activeSwitch],
+					candidates: [activeSwitch],
+				},
+			},
+		);
+
+		rerender({
+			sessionId: "session-a",
+			agentSwitches: [completedSwitch],
+			candidates: [],
+		});
+		act(() => result.current.settle(completedSwitch, successPresentation(completedSwitch)));
+		expect(result.current.transientSuccessSwitchId).toBe(completedSwitch.id);
+
+		rerender({ sessionId: "session-b", agentSwitches: [], candidates: [] });
+		expect(result.current.transientSuccessSwitchId).toBeUndefined();
+		rerender({
+			sessionId: "session-a",
+			agentSwitches: [completedSwitch],
+			candidates: [],
+		});
+
+		expect(result.current.transientSuccessSwitchId).toBeUndefined();
+		expect(result.current.observedTerminalSwitch).toBeUndefined();
 	});
 
 	it("starts fresh when the mounted session changes", () => {

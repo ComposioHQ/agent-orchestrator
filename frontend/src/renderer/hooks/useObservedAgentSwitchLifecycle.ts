@@ -1,22 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { AgentSwitchPresentation } from "../lib/agent-switch-presentation";
 import type { AgentSwitchSummary } from "../types/workspace";
 import { isTerminalAgentSwitch, type AgentSwitch } from "./useAgentSwitches";
 
 type LifecycleState = {
 	sessionId: string | undefined;
+	visit: number;
 	observedSwitchIds: Set<string>;
 	retiredSwitchIds: Set<string>;
 };
 
 type SessionSwitchSelection = {
 	sessionId: string | undefined;
+	visit: number;
 	switchId: string;
 };
+
+export type AgentSwitchSuccessNotice = {
+	agentSwitch: AgentSwitch;
+	presentation: AgentSwitchPresentation;
+	switchId: string;
+};
+
+type SessionSuccessNotice = AgentSwitchSuccessNotice & SessionSwitchSelection;
 
 /**
  * Owns the outcome lifecycle shared by the TUI and Chat session surfaces.
  * Terminal history is presentable only after this mount observed that switch
- * running, and a presented success is retired once its transient notice ends.
+ * running. Settlement retires interaction ownership immediately while an
+ * immutable success snapshot remains visible for its independent notice window.
  */
 export function useObservedAgentSwitchLifecycle({
 	sessionId,
@@ -27,16 +39,18 @@ export function useObservedAgentSwitchLifecycle({
 	agentSwitches: AgentSwitch[];
 	nonterminalCandidates: Array<AgentSwitchSummary | undefined>;
 }) {
-	const [transientSuccess, setTransientSuccess] = useState<SessionSwitchSelection>();
+	const [transientSuccess, setTransientSuccess] = useState<SessionSuccessNotice>();
 	const [dismissedFailure, setDismissedFailure] = useState<SessionSwitchSelection>();
 	const stateRef = useRef<LifecycleState>({
 		sessionId,
+		visit: 0,
 		observedSwitchIds: new Set(),
 		retiredSwitchIds: new Set(),
 	});
 	if (stateRef.current.sessionId !== sessionId) {
 		stateRef.current = {
 			sessionId,
+			visit: stateRef.current.visit + 1,
 			observedSwitchIds: new Set(),
 			retiredSwitchIds: new Set(),
 		};
@@ -71,40 +85,58 @@ export function useObservedAgentSwitchLifecycle({
 		[],
 	);
 	const settle = useCallback(
-		(switchId: string) => {
-			if (!stateRef.current.observedSwitchIds.has(switchId)) return;
-			setTransientSuccess({ sessionId, switchId });
+		(agentSwitch: AgentSwitch, presentation: AgentSwitchPresentation) => {
+			if (
+				presentation.outcome !== "success" ||
+				!stateRef.current.observedSwitchIds.has(agentSwitch.id)
+			) {
+				return;
+			}
+			// Logical ownership ends as soon as takeover is proven. The success
+			// notice below is only a visual snapshot and cannot reacquire the lock.
+			retire(agentSwitch.id);
+			setTransientSuccess({
+				agentSwitch: { ...agentSwitch },
+				presentation: { ...presentation, values: { ...presentation.values } },
+				sessionId: stateRef.current.sessionId,
+				switchId: agentSwitch.id,
+				visit: stateRef.current.visit,
+			});
 		},
-		[sessionId],
+		[retire],
 	);
-	const dismissFailure = useCallback(
-		(switchId: string) => setDismissedFailure({ sessionId, switchId }),
-		[sessionId],
-	);
-	const transientSuccessSwitchId =
-		transientSuccess && transientSuccess.sessionId === sessionId
-			? transientSuccess.switchId
+	const dismissFailure = useCallback((switchId: string) => {
+		setDismissedFailure({
+			sessionId: stateRef.current.sessionId,
+			switchId,
+			visit: stateRef.current.visit,
+		});
+	}, []);
+	const visibleTransientSuccess =
+		transientSuccess &&
+		transientSuccess.sessionId === sessionId &&
+		transientSuccess.visit === stateRef.current.visit
+			? transientSuccess
 			: undefined;
+	const transientSuccessNotice: AgentSwitchSuccessNotice | undefined = visibleTransientSuccess;
+	const transientSuccessSwitchId = transientSuccessNotice?.switchId;
 	const dismissedFailureSwitchId =
-		dismissedFailure && dismissedFailure.sessionId === sessionId
+		dismissedFailure &&
+		dismissedFailure.sessionId === sessionId &&
+		dismissedFailure.visit === stateRef.current.visit
 			? dismissedFailure.switchId
 			: undefined;
-	// Retirement is what prevents a later, unrelated controller outage from
-	// reinterpreting this completed history row as a takeover still in progress.
+	// Notice expiry is deliberately independent from logical retirement: routing
+	// away may cancel this timer, but it cannot make the completed switch live.
 	useEffect(() => {
-		if (!transientSuccessSwitchId) return;
+		if (!visibleTransientSuccess) return;
 		const timer = window.setTimeout(() => {
-			retire(transientSuccessSwitchId);
 			setTransientSuccess((current) =>
-				current &&
-				current.sessionId === sessionId &&
-				current.switchId === transientSuccessSwitchId
-					? undefined
-					: current,
+				current === visibleTransientSuccess ? undefined : current,
 			);
 		}, 3_000);
 		return () => window.clearTimeout(timer);
-	}, [retire, sessionId, transientSuccessSwitchId]);
+	}, [visibleTransientSuccess]);
 
 	// History is newest-first. Only its newest terminal row can close the live
 	// lifecycle; an unobserved newer outcome suppresses older observed outcomes.
@@ -123,6 +155,7 @@ export function useObservedAgentSwitchLifecycle({
 		observedTerminalSwitch,
 		retire,
 		settle,
+		transientSuccessNotice,
 		transientSuccessSwitchId,
 	};
 }

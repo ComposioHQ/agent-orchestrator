@@ -186,7 +186,33 @@ export function CenterPane({
 	}
 	const sessionAgentSwitch = session?.activeAgentSwitch;
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
-	const currentAgentSwitch = selectDurableAgentSwitch(sessionAgentSwitch, agentSwitches);
+	const selectedCurrentAgentSwitch = selectDurableAgentSwitch(
+		sessionAgentSwitch,
+		agentSwitches,
+	);
+	const {
+		dismissFailure: dismissAgentSwitchFailure,
+		dismissedFailureSwitchId,
+		isObserved: isAgentSwitchObserved,
+		isRetired: isAgentSwitchRetired,
+		markObserved: markAgentSwitchObserved,
+		observedTerminalSwitch,
+		settle: settleAgentSwitch,
+		transientSuccessNotice,
+		transientSuccessSwitchId,
+	} = useObservedAgentSwitchLifecycle({
+		sessionId: session?.id,
+		agentSwitches,
+		nonterminalCandidates: [
+			sessionAgentSwitch,
+			activeHistorySwitch,
+			selectedCurrentAgentSwitch,
+		],
+	});
+	const currentAgentSwitch =
+		selectedCurrentAgentSwitch && !isAgentSwitchRetired(selectedCurrentAgentSwitch.id)
+			? selectedCurrentAgentSwitch
+			: undefined;
 	const admissionAgentSwitch: AgentSwitchSummary | undefined =
 		!currentAgentSwitch && switchMutation.isPending && switchMutation.input
 			? {
@@ -197,25 +223,6 @@ export function CenterPane({
 				targetHarness: switchMutation.input.targetHarness,
 			}
 			: undefined;
-	const {
-		dismissFailure: dismissAgentSwitchFailure,
-		dismissedFailureSwitchId,
-		isObserved: isAgentSwitchObserved,
-		isRetired: isAgentSwitchRetired,
-		markObserved: markAgentSwitchObserved,
-		observedTerminalSwitch,
-		settle: settleAgentSwitch,
-		transientSuccessSwitchId,
-	} = useObservedAgentSwitchLifecycle({
-		sessionId: session?.id,
-		agentSwitches,
-		nonterminalCandidates: [
-			sessionAgentSwitch,
-			activeHistorySwitch,
-			currentAgentSwitch,
-			admissionAgentSwitch,
-		],
-	});
 	const latestCompletedSwitch =
 		agentSwitches[0]?.state === "completed" && !isAgentSwitchRetired(agentSwitches[0].id)
 			? agentSwitches[0]
@@ -247,6 +254,7 @@ export function CenterPane({
 			presentation?.outcome === "success" &&
 			isAgentSwitchObserved(agentSwitch.id),
 	);
+	const displayedSuccessNotice = presentation ? undefined : transientSuccessNotice;
 	const target = terminalTarget ?? { kind: "worker" };
 	const switchLocksWorkerInput = Boolean(
 		presentation?.lockAgentTerminal && !presentation.allowSourceInput,
@@ -258,9 +266,12 @@ export function CenterPane({
 			? undefined
 			: presentation?.outcome === "success"
 			? transientSuccessSwitchId === agentSwitch?.id
-				? presentation
+				? transientSuccessNotice?.presentation
 				: undefined
-			: presentation;
+			: presentation ?? displayedSuccessNotice?.presentation;
+	const shownAgentSwitch = agentSwitch ?? displayedSuccessNotice?.agentSwitch;
+	const switchControlPresentation =
+		presentation ?? displayedSuccessNotice?.presentation;
 	const sessionTabLabel = session
 		? isOrchestratorSession(session)
 			? t("shell.orchestrator")
@@ -339,9 +350,9 @@ export function CenterPane({
 	}, [session?.id]);
 
 	useEffect(() => {
-		if (!observedSettledSwitch || !agentSwitch) return;
-		settleAgentSwitch(agentSwitch.id);
-	}, [agentSwitch?.id, observedSettledSwitch, settleAgentSwitch]);
+		if (!observedSettledSwitch || !agentSwitch || !presentation) return;
+		settleAgentSwitch(agentSwitch, presentation);
+	}, [agentSwitch, observedSettledSwitch, presentation, settleAgentSwitch]);
 
 	useEffect(() => {
 		if (!agentSwitch || !presentation?.allowSourceInput) return;
@@ -600,7 +611,7 @@ export function CenterPane({
 					container={switchSelectorContainer}
 					onOpenChange={setSwitchSelectorOpen}
 					open={switchSelectorOpen}
-					presentation={presentation}
+					presentation={switchControlPresentation}
 					session={session}
 					switchError={switchMutation.error}
 				/>
@@ -635,7 +646,7 @@ export function CenterPane({
 						fontSize={fontSize}
 						focusRequested={
 							target.kind === "worker" &&
-							(Boolean(presentation?.allowSourceInput) || transientSuccessSwitchId === agentSwitch?.id)
+							(Boolean(presentation?.allowSourceInput) || Boolean(displayedSuccessNotice))
 						}
 						isFullscreen={isFullscreen}
 						inputDisabled={workerInputDisabled}
@@ -646,17 +657,17 @@ export function CenterPane({
 						theme={theme}
 					/>
 				</div>
-				{switchSelectorOpen ? null : shownPresentation && agentSwitch && target.kind === "worker" ? (
+				{switchSelectorOpen ? null : shownPresentation && shownAgentSwitch && target.kind === "worker" ? (
 					<AgentSwitchTerminalOverlay
-						agentSwitch={agentSwitch}
+						agentSwitch={shownAgentSwitch}
 						onDismiss={
 							shownPresentation.outcome === "failure"
-								? () => dismissAgentSwitchFailure(agentSwitch.id)
+								? () => dismissAgentSwitchFailure(shownAgentSwitch.id)
 								: undefined
 						}
 						presentation={shownPresentation}
 					/>
-				) : shownPresentation && agentSwitch ? (
+				) : shownPresentation && shownAgentSwitch ? (
 					<AgentSwitchTerminalStrip
 						onSelectSessionTerminal={onSelectSessionTerminal}
 						presentation={shownPresentation}

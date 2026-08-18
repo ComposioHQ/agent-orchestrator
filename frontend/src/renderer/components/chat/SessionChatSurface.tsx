@@ -125,7 +125,32 @@ export function SessionChatSurface({
 	const switchMutation = useSwitchAgentState(session.id);
 	const agentSwitches = useAgentSwitches(session.id).data ?? [];
 	const activeHistorySwitch = findActiveAgentSwitch(agentSwitches);
-	const durableAgentSwitch = selectDurableAgentSwitch(session.activeAgentSwitch, agentSwitches);
+	const selectedDurableAgentSwitch = selectDurableAgentSwitch(
+		session.activeAgentSwitch,
+		agentSwitches,
+	);
+	const {
+		dismissFailure: dismissAgentSwitchFailure,
+		dismissedFailureSwitchId,
+		isObserved: isAgentSwitchObserved,
+		isRetired: isAgentSwitchRetired,
+		observedTerminalSwitch,
+		settle: settleAgentSwitch,
+		transientSuccessNotice,
+		transientSuccessSwitchId,
+	} = useObservedAgentSwitchLifecycle({
+		sessionId: session.id,
+		agentSwitches,
+		nonterminalCandidates: [
+			session.activeAgentSwitch,
+			activeHistorySwitch,
+			selectedDurableAgentSwitch,
+		],
+	});
+	const durableAgentSwitch =
+		selectedDurableAgentSwitch && !isAgentSwitchRetired(selectedDurableAgentSwitch.id)
+			? selectedDurableAgentSwitch
+			: undefined;
 	const admissionAgentSwitch: AgentSwitchSummary | undefined =
 		!durableAgentSwitch && switchMutation.isPending && switchMutation.input
 			? {
@@ -136,23 +161,6 @@ export function SessionChatSurface({
 				targetHarness: switchMutation.input.targetHarness,
 			}
 			: undefined;
-	const {
-		dismissFailure: dismissAgentSwitchFailure,
-		dismissedFailureSwitchId,
-		isObserved: isAgentSwitchObserved,
-		observedTerminalSwitch,
-		settle: settleAgentSwitch,
-		transientSuccessSwitchId,
-	} = useObservedAgentSwitchLifecycle({
-		sessionId: session.id,
-		agentSwitches,
-		nonterminalCandidates: [
-			session.activeAgentSwitch,
-			activeHistorySwitch,
-			durableAgentSwitch,
-			admissionAgentSwitch,
-		],
-	});
 	const agentSwitch = durableAgentSwitch ?? admissionAgentSwitch ?? observedTerminalSwitch;
 	const targetChatControllerReady =
 		snapshot?.controller?.state === "ready" || snapshot?.controller?.state === "busy";
@@ -174,17 +182,19 @@ export function SessionChatSurface({
 			isAgentSwitchObserved(agentSwitch.id),
 	);
 	useEffect(() => {
-		if (!observedSettledSwitch || !agentSwitch) return;
-		settleAgentSwitch(agentSwitch.id);
-	}, [agentSwitch?.id, observedSettledSwitch, settleAgentSwitch]);
+		if (!observedSettledSwitch || !agentSwitch || !switchPresentation) return;
+		settleAgentSwitch(agentSwitch, switchPresentation);
+	}, [agentSwitch, observedSettledSwitch, settleAgentSwitch, switchPresentation]);
 	const shownSwitchPresentation =
 		switchPresentation?.outcome === "failure" && dismissedFailureSwitchId === agentSwitch?.id
 			? undefined
 			: switchPresentation?.outcome === "success"
 				? transientSuccessSwitchId === agentSwitch?.id
-					? switchPresentation
+					? transientSuccessNotice?.presentation
 					: undefined
-				: switchPresentation;
+				: switchPresentation ?? transientSuccessNotice?.presentation;
+	const switchControlPresentation =
+		switchPresentation ?? transientSuccessNotice?.presentation;
 	const switchLocksChat = Boolean(
 		switchPresentation?.lockAgentTerminal && !switchPresentation.allowSourceInput,
 	);
@@ -257,7 +267,7 @@ export function SessionChatSurface({
 						container={switchSelectorContainer}
 						onOpenChange={setSwitchSelectorOpen}
 						open={switchSelectorOpen}
-						presentation={switchPresentation}
+						presentation={switchControlPresentation}
 						session={session}
 						switchError={switchMutation.error}
 					/>

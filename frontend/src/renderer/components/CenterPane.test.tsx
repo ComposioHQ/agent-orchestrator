@@ -491,15 +491,6 @@ describe("CenterPane toolbar session label", () => {
 
 		view.rerender(
 			<TooltipProvider>
-				<CenterPane daemonReady onSelectSessionTerminal={onSelectSessionTerminal} session={settledSession} theme="dark" />
-			</TooltipProvider>,
-		);
-		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
-		act(() => vi.advanceTimersByTime(3_100));
-		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
-
-		view.rerender(
-			<TooltipProvider>
 				<CenterPane
 					daemonReady
 					onSelectSessionTerminal={onSelectSessionTerminal}
@@ -508,6 +499,11 @@ describe("CenterPane toolbar session label", () => {
 				/>
 			</TooltipProvider>,
 		);
+		expect(onSelectSessionTerminal).not.toHaveBeenCalled();
+		expect(screen.getByRole("status")).toHaveTextContent("Completed");
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
+
+		act(() => vi.advanceTimersByTime(3_100));
 		expect(screen.queryByTestId("agent-switch-terminal-overlay")).not.toBeInTheDocument();
 		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
 		vi.useRealTimers();
