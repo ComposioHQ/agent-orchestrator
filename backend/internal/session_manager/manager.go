@@ -1777,7 +1777,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		} else if strings.TrimSpace(rec.Metadata.ProviderConversationID) == "" {
 			return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, ErrIncompleteHandle)
 		}
-		return m.resumeChatController(ctx, operation, rec, project, ws, requireNativeHistory)
+		return m.resumeChatController(ctx, operation, rec, project, ws, requireNativeHistory, "")
 	}
 
 	agent, ok := m.agents.Agent(rec.Harness)

@@ -282,6 +282,7 @@ func (m *Manager) resumeChatController(
 	project domain.ProjectRecord,
 	ws ports.WorkspaceInfo,
 	requireNativeHistory bool,
+	controllerGeneration string,
 ) (RestoreResult, error) {
 	if m.chat == nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w: chat mode is not available in this build",
@@ -293,6 +294,10 @@ func (m *Manager) resumeChatController(
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
+	}
+	systemPrompt, err = m.systemPromptForNativeRestore(ctx, rec, systemPrompt)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: switched continuation: %w", operation, rec.ID, err)
 	}
 
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
@@ -315,7 +320,11 @@ func (m *Manager) resumeChatController(
 		AdditionalDirectories: additionalDirectories,
 		// The handle that makes this a resume rather than a new conversation.
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
-		RequireNativeHistory:   requireNativeHistory,
+		// Ordinary resumes allocate a fresh generation. Switch recovery reuses
+		// the saga's reserved generation until delivery is durably settled so a
+		// second restart can still prove exact target ownership.
+		ControllerGeneration: controllerGeneration,
+		RequireNativeHistory: requireNativeHistory,
 		ControllerReady: func(started ChatStarted) error {
 			metadata := rec.Metadata
 			metadata.WorkspacePath = ws.Path

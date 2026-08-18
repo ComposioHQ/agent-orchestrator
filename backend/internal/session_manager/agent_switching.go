@@ -1250,8 +1250,10 @@ func appendAgentContinuationProtocol(systemPrompt string) string {
 }
 
 // systemPromptForNativeRestore reapplies the latest finalized inbound handoff
-// for exactly the native conversation being resumed. Older switches without a
-// finalized artifact used a visible provider turn and need no hidden replay.
+// for exactly the native conversation being resumed. Target-owned in-flight or
+// failed switches need it too: ownership can outlive a restart even when the
+// delivery acknowledgement did not. Older switches without a finalized
+// artifact used a visible provider turn and need no hidden replay.
 func (m *Manager) systemPromptForNativeRestore(ctx context.Context, rec domain.SessionRecord, base string) (string, error) {
 	if rec.Kind != domain.KindWorker || !switchHarnessSupported(rec.Harness) {
 		return base, nil
@@ -1269,7 +1271,9 @@ func (m *Manager) systemPromptForNativeRestore(ctx context.Context, rec domain.S
 		return "", fmt.Errorf("restore agent switch context: %w", err)
 	}
 	for _, sw := range switches {
-		if sw.State != domain.AgentSwitchCompleted || sw.TargetHarness != rec.Harness || sw.TargetNativeSessionRef == nil {
+		targetMayOwnSession := sw.State == domain.AgentSwitchTargetReady ||
+			sw.State == domain.AgentSwitchDelivering || sw.State.Terminal()
+		if !targetMayOwnSession || sw.TargetHarness != rec.Harness || sw.TargetNativeSessionRef == nil {
 			continue
 		}
 		native, found, getErr := store.GetAgentNativeSession(ctx, *sw.TargetNativeSessionRef)

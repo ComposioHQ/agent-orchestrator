@@ -429,7 +429,7 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 	}
 	_, err = m.resumeChatController(
 		ctx, "restore failed agent switch", current, project,
-		workspaceInfo(current), false,
+		workspaceInfo(current), false, "",
 	)
 	return err
 }
@@ -437,8 +437,8 @@ func (m *Manager) rollbackStoppedChatAgentSwitchSource(
 // reconcileChatAgentSwitch settles a switch interrupted with its structured
 // controller in memory. No Chat controller survives a daemon restart, so the
 // durable controller generation replaces runtime liveness as the ownership
-// proof: a source-owned row is resumed, while an activated target stays the
-// owner and is resumed by the normal live-session reconciliation pass.
+// proof: a source-owned row is resumed, while an activated target is restored
+// with its finalized continuation before the switch gate is released.
 func (m *Manager) reconcileChatAgentSwitch(
 	ctx context.Context,
 	store ports.AgentSwitchStore,
@@ -498,22 +498,85 @@ func (m *Manager) reconcileChatAgentSwitch(
 		if !recoverable {
 			return false, fmt.Errorf("reconcile Chat agent switch %s: activated target identity is not durable", sw.ID)
 		}
-		if sw.State == domain.AgentSwitchTargetReady {
-			return fail(domain.AgentSwitchErrorDaemonRestartBeforeDelivery)
-		}
-		if sw.TargetAcknowledgedAt != nil {
-			if _, err := m.completeAcknowledgedAgentSwitch(ctx, store, sw); err != nil {
-				return false, err
-			}
-			return true, nil
-		}
-		return fail(domain.AgentSwitchErrorDeliveryUnconfirmed)
+		return m.recoverActivatedChatAgentSwitch(ctx, store, rec, sw)
 	default:
 		if sw.State.Terminal() {
 			return true, nil
 		}
 		return false, fmt.Errorf("reconcile Chat agent switch %s: unknown state %q", sw.ID, sw.State)
 	}
+}
+
+// recoverActivatedChatAgentSwitch reopens the exact provider conversation with
+// its verified finalized continuation before the switch gate can be released.
+// target_ready is safe to deliver because no turn was attempted yet. A
+// delivering row is ambiguous, so it is never replayed; restoring its hidden
+// context is enough to leave the durable target usable before terminalization.
+func (m *Manager) recoverActivatedChatAgentSwitch(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	rec domain.SessionRecord,
+	sw domain.AgentSwitch,
+) (bool, error) {
+	if m.chat == nil {
+		return false, fmt.Errorf("reconcile Chat agent switch %s: %w", sw.ID, ports.ErrChatUnsupported)
+	}
+	if _, valid := m.readVerifiedFinalizedHandoff(ctx, sw); !valid {
+		return false, fmt.Errorf("reconcile Chat agent switch %s: finalized handoff failed verification", sw.ID)
+	}
+	if !m.chat.HasLiveChatController(rec.ID) {
+		project, err := m.loadProject(ctx, rec.ProjectID)
+		if err != nil {
+			return false, fmt.Errorf("reconcile Chat agent switch %s: target project: %w", sw.ID, err)
+		}
+		if _, err := m.resumeChatController(
+			ctx, "recover Chat agent switch", rec, project, workspaceInfo(rec), false,
+			string(sw.TargetGenerationID),
+		); err != nil {
+			return false, err
+		}
+	}
+
+	current, err := requireAgentSwitch(ctx, store, sw.ID)
+	if err != nil {
+		return false, err
+	}
+	if current.State == domain.AgentSwitchDelivering {
+		if current.TargetAcknowledgedAt != nil {
+			if _, err := m.completeAcknowledgedAgentSwitch(ctx, store, current); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		_, err := m.failAgentSwitch(ctx, store, current, domain.AgentSwitchErrorDeliveryUnconfirmed)
+		return err == nil, err
+	}
+	if current.State != domain.AgentSwitchTargetReady {
+		return false, fmt.Errorf("reconcile Chat agent switch %s: target state changed to %q", sw.ID, current.State)
+	}
+	if err := m.advanceAgentSwitch(ctx, store, &current, domain.AgentSwitchDelivering, nil); err != nil {
+		return false, err
+	}
+	if _, err := m.chat.StartChatTurn(ctx, rec.ID, aoTargetActivationPrompt); err != nil {
+		_, failErr := m.failAgentSwitch(ctx, store, current, domain.AgentSwitchErrorDeliveryUnconfirmed)
+		return failErr == nil, failErr
+	}
+	acknowledged, err := store.AcknowledgeAgentSwitchTarget(
+		ctx, current.ID, rec.ID, current.TargetGenerationID, m.clock())
+	if err != nil {
+		return false, err
+	}
+	if !acknowledged {
+		return false, fmt.Errorf("reconcile Chat agent switch %s: continuation acknowledgement changed concurrently", sw.ID)
+	}
+	current, err = requireAgentSwitch(ctx, store, current.ID)
+	if err != nil {
+		return false, err
+	}
+	if _, err := m.completeAcknowledgedAgentSwitch(ctx, store, current); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (m *Manager) chatTargetNativeIdentityRecoverable(

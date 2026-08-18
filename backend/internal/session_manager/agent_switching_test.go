@@ -3510,15 +3510,16 @@ func TestReconcileChatAgentSwitchesUsesControllerBoundaries(t *testing.T) {
 		wantState     domain.AgentSwitchState
 		wantHarness   domain.AgentHarness
 		wantErrorCode domain.AgentSwitchErrorCode
-		wantResumed   bool
+		wantProvider  string
+		wantTurns     int
 	}{
 		{name: "pre-stop keeps source", state: domain.AgentSwitchPreparingHandoff, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorDaemonRestartPreStop},
-		{name: "stopping source is confirmed and restored", state: domain.AgentSwitchStoppingSource, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorDaemonRestartPostStop, wantResumed: true},
-		{name: "stopped source is restored", state: domain.AgentSwitchSourceStopped, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorDaemonRestartPostStop, wantResumed: true},
-		{name: "uncommitted target is discarded and source restored", state: domain.AgentSwitchStartingTarget, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorDaemonRestartPostStop, wantResumed: true},
-		{name: "ready target stays owner without assuming delivery", state: domain.AgentSwitchTargetReady, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantErrorCode: domain.AgentSwitchErrorDaemonRestartBeforeDelivery},
-		{name: "unacknowledged target stays owner without replay", state: domain.AgentSwitchDelivering, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantErrorCode: domain.AgentSwitchErrorDeliveryUnconfirmed},
-		{name: "acknowledged target completes", state: domain.AgentSwitchDelivering, acknowledged: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},
+		{name: "stopping source is confirmed and restored", state: domain.AgentSwitchStoppingSource, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorDaemonRestartPostStop, wantProvider: "source-chat-native"},
+		{name: "stopped source is restored", state: domain.AgentSwitchSourceStopped, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorDaemonRestartPostStop, wantProvider: "source-chat-native"},
+		{name: "uncommitted target is discarded and source restored", state: domain.AgentSwitchStartingTarget, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorDaemonRestartPostStop, wantProvider: "source-chat-native"},
+		{name: "ready target restores context and delivers", state: domain.AgentSwitchTargetReady, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex, wantProvider: "target-chat-native", wantTurns: 1},
+		{name: "unacknowledged target restores context without replay", state: domain.AgentSwitchDelivering, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantErrorCode: domain.AgentSwitchErrorDeliveryUnconfirmed, wantProvider: "target-chat-native"},
+		{name: "acknowledged target restores context and completes", state: domain.AgentSwitchDelivering, acknowledged: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex, wantProvider: "target-chat-native"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3545,6 +3546,19 @@ func TestReconcileChatAgentSwitchesUsesControllerBoundaries(t *testing.T) {
 			if tt.acknowledged {
 				acknowledgedAt := now
 				sw.TargetAcknowledgedAt = &acknowledgedAt
+			}
+			if tt.state == domain.AgentSwitchTargetReady || tt.state == domain.AgentSwitchDelivering {
+				if _, _, err := manager.prepareAgentHandoffPaths(ctx, sw.SessionID, string(sw.ID)); err != nil {
+					t.Fatal(err)
+				}
+				written, err := manager.writeFinalizedHandoffFile(
+					ctx, sw, `<ao-continuation>recovered target context</ao-continuation>`,
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				sw.FinalHandoffPath = written.Path
+				sw.FinalHandoffHash = written.Hash
 			}
 			store.switches[sw.ID] = sw
 			rec := store.sessions["proj-1"]
@@ -3585,12 +3599,21 @@ func TestReconcileChatAgentSwitchesUsesControllerBoundaries(t *testing.T) {
 			if got.Metadata.RuntimeHandleID != "" || got.Metadata.RuntimeLaunchID != "" {
 				t.Fatalf("reconciled Chat session acquired runtime metadata: %+v", got.Metadata)
 			}
-			if tt.wantResumed {
-				if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != "source-chat-native" {
-					t.Fatalf("source resume starts = %+v", launcher.started)
+			if tt.wantProvider != "" {
+				if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != tt.wantProvider {
+					t.Fatalf("resume starts = %+v, want provider %q", launcher.started, tt.wantProvider)
+				}
+				if tt.wantProvider == "target-chat-native" && !strings.Contains(launcher.started[0].SystemPrompt, "recovered target context") {
+					t.Fatalf("target resume omitted finalized continuation:\n%s", launcher.started[0].SystemPrompt)
 				}
 			} else if len(launcher.started) != 0 {
 				t.Fatalf("recovery unexpectedly started a controller: %+v", launcher.started)
+			}
+			if len(launcher.turns) != tt.wantTurns {
+				t.Fatalf("recovery activation turns = %v, want %d", launcher.turns, tt.wantTurns)
+			}
+			if tt.wantTurns == 1 && launcher.turns[0] != aoTargetActivationPrompt {
+				t.Fatalf("recovery activation turn = %q, want %q", launcher.turns[0], aoTargetActivationPrompt)
 			}
 			if len(messenger.msgs) != 0 {
 				t.Fatalf("recovery replayed an unconfirmed continuation: %#v", messenger.msgs)
@@ -3599,6 +3622,77 @@ func TestReconcileChatAgentSwitchesUsesControllerBoundaries(t *testing.T) {
 				t.Fatal("resolved Chat recovery left input gated")
 			}
 		})
+	}
+}
+
+func TestReconcileChatAgentSwitchTargetReadyRestoresFinalizedContinuationBeforeRelease(t *testing.T) {
+	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	launcher := &switchAgentChatLauncher{recordingLauncher: &recordingLauncher{}, store: store}
+	manager.chat = launcher
+	now := time.Now().UTC()
+	targetNative := domain.AgentNativeSession{
+		ID: "native-chat-target-ready", AOSessionID: "proj-1", Harness: domain.HarnessCodex,
+		NativeSessionID: "target-chat-native", LastGenerationID: "target-chat-generation",
+		CreatedAt: now, LastUsedAt: now,
+	}
+	store.native[targetNative.ID] = targetNative
+	targetRef := targetNative.ID
+	sw := domain.AgentSwitch{
+		ID: "switch-chat-target-ready", SessionID: "proj-1", IdempotencyKey: "chat-target-ready",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		TargetNativeSessionRef: &targetRef, TargetStartMode: domain.AgentSwitchTargetStartFresh,
+		State: domain.AgentSwitchTargetReady, AgentHandoffStatus: domain.AgentHandoffUnavailable,
+		SourceTranscriptStatus: domain.AgentSwitchSourceTranscriptUnavailable,
+		SourceGenerationID:     "source-chat-generation", TargetGenerationID: "target-chat-generation",
+		RequestedAt: now, UpdatedAt: now,
+	}
+	if _, _, err := manager.prepareAgentHandoffPaths(ctx, sw.SessionID, string(sw.ID)); err != nil {
+		t.Fatal(err)
+	}
+	written, err := manager.writeFinalizedHandoffFile(
+		ctx, sw, `<ao-continuation>restart-safe hidden continuation</ao-continuation>`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw.FinalHandoffPath = written.Path
+	sw.FinalHandoffHash = written.Hash
+	store.switches[sw.ID] = sw
+	rec := store.sessions["proj-1"]
+	rec.Mode = domain.SessionModeChat
+	rec.Harness = domain.HarnessCodex
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = targetNative.NativeSessionID
+	rec.Metadata.ProviderConversationID = targetNative.NativeSessionID
+	rec.Metadata.ControllerGeneration = string(sw.TargetGenerationID)
+	store.sessions[rec.ID] = rec
+
+	if err := manager.ReconcileAgentSwitches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("recovered target starts = %d, want 1 before releasing the switch gate", len(launcher.started))
+	}
+	if got := launcher.started[0].ControllerGeneration; got != string(sw.TargetGenerationID) {
+		t.Fatalf("recovered target generation = %q, want reserved generation %q", got, sw.TargetGenerationID)
+	}
+	for _, want := range []string{aoAgentContinuationProtocol, "restart-safe hidden continuation"} {
+		if !strings.Contains(launcher.started[0].SystemPrompt, want) {
+			t.Fatalf("recovered target system prompt omitted %q:\n%s", want, launcher.started[0].SystemPrompt)
+		}
+	}
+	if len(launcher.turns) != 1 || launcher.turns[0] != aoTargetActivationPrompt {
+		t.Fatalf("recovered target activation turns = %v, want one continuation activation", launcher.turns)
+	}
+	got := store.switches[sw.ID]
+	if got.State != domain.AgentSwitchCompleted || got.TargetAcknowledgedAt == nil {
+		t.Fatalf("recovered switch = state %q acknowledged=%v, want completed/true", got.State, got.TargetAcknowledgedAt != nil)
+	}
+	if manager.SessionMutationInProgress(rec.ID) {
+		t.Fatal("recovered target-ready Chat switch left the mutation gate closed")
 	}
 }
 
