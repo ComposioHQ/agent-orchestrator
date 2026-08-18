@@ -44,6 +44,7 @@ const STATUS_PRIORITY: { status: SessionStatus; label: string }[] = [
 
 const EXCLUDED_STATUSES: SessionStatus[] = ["exited", "terminated", "merged"];
 const INACTIVE_STATUSES: SessionStatus[] = ["idle", "no_signal"];
+const ACTIVE_AGENT_STATUSES: SessionStatus[] = ["working", "needs_input"];
 
 interface ActivityPayload {
 	details: string;
@@ -100,8 +101,7 @@ export async function startDiscordRpc(): Promise<void> {
 	try {
 		await client.login();
 		connectionState = "connected";
-	} catch (err) {
-		console.error("[discord-rpc] login failed:", err);
+	} catch {
 		connectionState = "disconnected";
 		try {
 			await client.destroy();
@@ -109,7 +109,6 @@ export async function startDiscordRpc(): Promise<void> {
 		}
 		client = null;
 	}
-	console.log("[discord-rpc] state after login attempt:", connectionState, "XDG_RUNTIME_DIR=", process.env.XDG_RUNTIME_DIR);
 	broadcastStatus();
 	refreshTimer = setInterval(() => {
 		void refreshPresence();
@@ -158,14 +157,15 @@ export function pickRepresentativeStatus(sessions: { status: string; isTerminate
 			!EXCLUDED_STATUSES.includes(s.status as SessionStatus) &&
 			!INACTIVE_STATUSES.includes(s.status as SessionStatus),
 	);
+	const activeAgentCount = active.filter((s) => ACTIVE_AGENT_STATUSES.includes(s.status as SessionStatus)).length;
 	if (active.length === 0) return { label: "Idle", count: 0 };
 	for (const entry of STATUS_PRIORITY) {
 		const matching = active.filter((s) => s.status === entry.status);
 		if (matching.length > 0) {
-			return { label: entry.label, count: active.length };
+			return { label: entry.label, count: activeAgentCount };
 		}
 	}
-	return { label: "Idle", count: active.length };
+	return { label: "Idle", count: activeAgentCount };
 }
 
 export function buildActivityPayload(

@@ -88,42 +88,42 @@ describe("buildActivityPayload", () => {
 				{ status: "changes_requested", isTerminated: false, createdAt: "2026-01-01T00:00:01Z" },
 			],
 		);
-		expect(result!.state).toBe("Addressing review");
+		expect(result!.state).toBe("Idle");
 	});
 
 	it("maps review_pending to 'In review'", () => {
 		const result = buildActivityPayload(
 			[{ status: "review_pending", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("In review");
+		expect(result!.state).toBe("Idle");
 	});
 
 	it("maps pr_open to 'In review'", () => {
 		const result = buildActivityPayload(
 			[{ status: "pr_open", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("In review");
+		expect(result!.state).toBe("Idle");
 	});
 
 	it("maps mergeable to 'Ready to merge'", () => {
 		const result = buildActivityPayload(
 			[{ status: "mergeable", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Ready to merge");
+		expect(result!.state).toBe("Idle");
 	});
 
 	it("maps approved to 'Ready to merge'", () => {
 		const result = buildActivityPayload(
 			[{ status: "approved", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Ready to merge");
+		expect(result!.state).toBe("Idle");
 	});
 
 	it("maps draft to 'Drafting PR'", () => {
 		const result = buildActivityPayload(
 			[{ status: "draft", isTerminated: false, createdAt: "2026-01-01T00:00:00Z" }],
 		);
-		expect(result!.state).toBe("Drafting PR");
+		expect(result!.state).toBe("Idle");
 	});
 
 	it("shows AO idle for idle sessions", () => {
@@ -200,7 +200,7 @@ describe("pickRepresentativeStatus", () => {
 			{ status: "pr_open", isTerminated: false },
 		]);
 		expect(result!.label).toBe("Waiting on you");
-		expect(result!.count).toBe(3);
+		expect(result!.count).toBe(2);
 	});
 
 	it("does not count idle or no-signal sessions as active agents", () => {
@@ -210,6 +210,15 @@ describe("pickRepresentativeStatus", () => {
 			{ status: "no_signal", isTerminated: false },
 		]);
 		expect(result).toEqual({ label: "Working", count: 1 });
+	});
+
+	it("does not count review-only sessions as active agents", () => {
+		const result = pickRepresentativeStatus([
+			{ status: "working", isTerminated: false },
+			{ status: "pr_open", isTerminated: false },
+			{ status: "approved", isTerminated: false },
+		]);
+		expect(result!.count).toBe(1);
 	});
 });
 
