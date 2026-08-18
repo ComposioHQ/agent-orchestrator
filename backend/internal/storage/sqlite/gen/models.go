@@ -330,6 +330,45 @@ type Project struct {
 	Kind          string
 }
 
+type ProjectControlAcceptanceCriterium struct {
+	ID                 string
+	OutcomeID          string
+	Statement          string
+	VerificationMethod string
+	DisplayOrder       int64
+}
+
+type ProjectControlEvent struct {
+	Seq       int64
+	ProjectID string
+	OutcomeID string
+	Revision  int64
+	EventType string
+	Payload   string
+	CreatedAt time.Time
+}
+
+type ProjectControlHead struct {
+	ProjectID     string
+	RootOutcomeID string
+	Revision      int64
+	OwnerRole     string
+}
+
+type ProjectControlOutcome struct {
+	ID        string
+	ProjectID string
+	Statement string
+}
+
+type ProjectControlSetResult struct {
+	ProjectID          string
+	IdempotencyKey     string
+	RequestFingerprint string
+	Revision           int64
+	ResultJson         string
+}
+
 type Review struct {
 	ID               string
 	SessionID        domain.SessionID
