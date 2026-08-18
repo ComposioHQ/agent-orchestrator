@@ -568,10 +568,6 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
  * the viewport of someone reading back through a build log is worse than making
  * them scroll down once.
  *
- * The caveat below it is not boilerplate. The provider drops output, and it does
- * so differently per source, so the note says which source this is and why it may
- * be incomplete rather than hedging the same way about both.
- *
  * The text is what a terminal would have shown, not the bytes: output arrives with
  * its escape sequences intact — nothing in the stack strips them — so a colourized
  * test run rendered here verbatim is a wall of `[0m`, and a progress bar is a
@@ -613,13 +609,6 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
 				<p className="text-[10px] leading-relaxed text-warning">
 					This command printed more than AO stores, so the output above stops early. Open a shell in
 					the worktree to see the rest.
-				</p>
-			) : detail?.outputMayBePartial ? (
-				<p className="text-[10px] leading-relaxed text-muted-foreground/70">
-					{detail.outputSource === "stream"
-						? "Streamed live as the command runs. The provider drops the first chunk, so the beginning may be missing."
-						: "Rolled up by the provider after the command finished, and observed to drop the beginning."}{" "}
-					Open a shell in the worktree for the full run.
 				</p>
 			) : null}
 		</>
@@ -699,7 +688,14 @@ function ActivityState({
 	}
 	if (status === "failed") {
 		return (
-			<span className="shrink-0 font-mono text-[10px] tabular-nums text-destructive">
+			<span
+				className={cn(
+					"shrink-0 font-mono text-[10px] tabular-nums",
+					activity.activityKind === "command"
+						? "text-muted-foreground/70"
+						: "text-destructive",
+				)}
+			>
 				{detail?.exitCode !== undefined ? `exit ${detail.exitCode}` : "failed"}
 			</span>
 		);

@@ -5,9 +5,9 @@ import { ActivityRow, TurnChangedFiles } from "./ChatTimelineItems";
 import { ActivityRun } from "./ActivityRun";
 import type { ConversationActivity, TurnDiff } from "../../types/conversation";
 
-// These cover the two honesty rules this surface exists to keep: a changed-file
-// list never claims to be complete when it was cut, and command output always says
-// which channel it came from and why it may be missing its beginning.
+// These cover the two signal rules this surface exists to keep: a changed-file
+// list never claims to be complete when it was cut, and command output only adds
+// a warning when AO actually stopped storing it.
 
 function diff(overrides: Partial<TurnDiff> = {}): TurnDiff {
 	return {
@@ -108,7 +108,7 @@ describe("ActivityRow command output", () => {
 		expect(pre?.textContent).toBe("ok  pkg/a\n");
 	});
 
-	it("explains a streamed partial as a dropped beginning, not a generic caveat", () => {
+	it("does not add provider provenance below streamed output", () => {
 		render(
 			<ActivityRow
 				activity={commandActivity(
@@ -117,10 +117,11 @@ describe("ActivityRow command output", () => {
 				)}
 			/>,
 		);
-		expect(screen.getByText(/Streamed live as the command runs/i)).toBeInTheDocument();
+		expect(screen.getByText("tick-2")).toBeInTheDocument();
+		expect(screen.queryByText(/Streamed live as the command runs/i)).not.toBeInTheDocument();
 	});
 
-	it("names the aggregate as the provider's post-hoc roll-up", async () => {
+	it("does not add provider provenance below aggregate output", async () => {
 		render(
 			<ActivityRow
 				activity={commandActivity({
@@ -131,7 +132,8 @@ describe("ActivityRow command output", () => {
 			/>,
 		);
 		await userEvent.click(screen.getByRole("button"));
-		expect(screen.getByText(/Rolled up by the provider after the command finished/i)).toBeInTheDocument();
+		expect(screen.getByText("done")).toBeInTheDocument();
+		expect(screen.queryByText(/Rolled up by the provider after the command finished/i)).not.toBeInTheDocument();
 	});
 
 	it("warns when output hit the storage cap", async () => {
@@ -259,7 +261,8 @@ describe("ActivityRow command labels", () => {
 			"font-normal",
 			"text-muted-foreground",
 		);
-		expect(screen.getByText("exit 1")).toHaveClass("text-destructive");
+		expect(screen.getByText("exit 1")).toHaveClass("text-muted-foreground/70");
+		expect(screen.getByText("exit 1")).not.toHaveClass("text-destructive");
 		expect(container.querySelector(".lucide-square-terminal")).toBeNull();
 		expect(row.querySelector(".flex-1")).toBeNull();
 		expect(row.textContent).toMatch(/^Checked repositoryexit 1/);
