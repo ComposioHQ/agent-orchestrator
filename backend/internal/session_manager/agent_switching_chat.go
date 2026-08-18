@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -154,6 +155,17 @@ func (m *Manager) executeChatAgentSwitch(
 	if err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: target config: %w", id, err)
 	}
+	resumeCandidate, resumable, err := m.findTargetResumeCandidate(
+		ctx, store, rec, cfg.TargetHarness, targetAgent, targetConfigDir)
+	if err != nil {
+		return result, fmt.Errorf("switch Chat agent %s: target resume candidate: %w", id, err)
+	}
+	targetStartMode := domain.AgentSwitchTargetStartFresh
+	providerConversationID := ""
+	if resumable {
+		targetStartMode = domain.AgentSwitchTargetStartResumed
+		providerConversationID = resumeCandidate.NativeSessionID
+	}
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(
 		ctx, rec, project, rec.Metadata.WorkspacePath)
 	if err != nil {
@@ -178,7 +190,7 @@ func (m *Manager) executeChatAgentSwitch(
 		return result, fmt.Errorf("switch Chat agent %s: target controller generation is empty", id)
 	}
 	if err := m.advanceAgentSwitch(ctx, store, &result, domain.AgentSwitchStoppingSource, func(next *domain.AgentSwitch) {
-		next.TargetStartMode = domain.AgentSwitchTargetStartFresh
+		next.TargetStartMode = targetStartMode
 		next.TargetGenerationID = targetGeneration
 	}); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: stop source: %w", id, err)
@@ -277,38 +289,62 @@ func (m *Manager) executeChatAgentSwitch(
 	}
 
 	_, err = m.chat.StartChat(ctx, ChatStart{
-		SessionID:             id,
-		ProjectID:             rec.ProjectID,
-		Kind:                  rec.Kind,
-		Harness:               cfg.TargetHarness,
-		DataDir:               m.dataDir,
-		WorkspacePath:         rec.Metadata.WorkspacePath,
-		Env:                   targetEnv,
-		Model:                 agentConfig.Model,
-		Permissions:           agentConfig.Permissions,
-		SystemPrompt:          finalSystemPrompt,
-		AdditionalDirectories: additionalDirectories,
-		ControllerGeneration:  string(targetGeneration),
-		ControllerReady: func(started ChatStarted) error {
+		SessionID:               id,
+		ProjectID:               rec.ProjectID,
+		Kind:                    rec.Kind,
+		Harness:                 cfg.TargetHarness,
+		DataDir:                 m.dataDir,
+		WorkspacePath:           rec.Metadata.WorkspacePath,
+		Env:                     targetEnv,
+		Model:                   agentConfig.Model,
+		Permissions:             agentConfig.Permissions,
+		SystemPrompt:            finalSystemPrompt,
+		AdditionalDirectories:   additionalDirectories,
+		ProviderConversationID:  providerConversationID,
+		ControllerGeneration:    string(targetGeneration),
+		SkipNativeHistoryImport: resumable,
+		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
+			emptyCommit := ChatControllerCommit{}
 			if strings.TrimSpace(started.ProviderConversationID) == "" ||
 				started.ControllerGeneration != string(targetGeneration) {
-				return errors.New("target Chat controller returned incomplete or mismatched identity")
+				return emptyCommit, errors.New("target Chat controller returned incomplete or mismatched identity")
 			}
-			native := domain.AgentNativeSession{
-				ID:          domain.AgentNativeSessionID("native-" + uuid.NewString()),
-				AOSessionID: id, Harness: cfg.TargetHarness, ConfigDir: targetConfigDir,
-				NativeSessionID:  started.ProviderConversationID,
-				LastGenerationID: targetGeneration, CreatedAt: m.clock(), LastUsedAt: m.clock(),
-			}
-			stored, _, createErr := store.CreateAgentNativeSession(ctx, native)
-			if createErr != nil {
-				return fmt.Errorf("persist target Chat native session: %w", createErr)
+			var stored domain.AgentNativeSession
+			if resumable {
+				if started.ProviderConversationID != resumeCandidate.NativeSessionID {
+					return emptyCommit, errors.New("resumed target Chat controller changed provider conversation identity")
+				}
+				expectedGeneration := resumeCandidate.LastGenerationID
+				stored = resumeCandidate
+				stored.LastGenerationID = targetGeneration
+				stored.LastUsedAt = m.clock()
+				changed, updateErr := store.UpdateAgentNativeSession(ctx, stored, expectedGeneration)
+				if updateErr != nil {
+					return emptyCommit, fmt.Errorf("advance resumed target Chat native session: %w", updateErr)
+				}
+				if !changed {
+					return emptyCommit, errors.New("resumed target Chat native session changed concurrently")
+				}
+			} else {
+				now := m.clock()
+				native := domain.AgentNativeSession{
+					ID:          domain.AgentNativeSessionID("native-" + uuid.NewString()),
+					AOSessionID: id, Harness: cfg.TargetHarness, ConfigDir: targetConfigDir,
+					NativeSessionID: started.ProviderConversationID, LastGenerationID: targetGeneration,
+					CreatedAt: now, LastUsedAt: now,
+				}
+				var createErr error
+				stored, _, createErr = store.CreateAgentNativeSession(ctx, native)
+				if createErr != nil {
+					return emptyCommit, fmt.Errorf("persist target Chat native session: %w", createErr)
+				}
 			}
 			if err := m.advanceAgentSwitch(ctx, store, &result, domain.AgentSwitchStartingTarget, func(next *domain.AgentSwitch) {
 				next.TargetNativeSessionRef = nativeSessionIDPtr(stored.ID)
 			}); err != nil {
-				return fmt.Errorf("record target Chat native session: %w", err)
+				return emptyCommit, fmt.Errorf("record target Chat native session: %w", err)
 			}
+			activatedAt := m.clock()
 			activation := domain.AgentSwitchChatTargetActivation{
 				SwitchID: result.ID, SessionID: id,
 				SourceHarness: rec.Harness, SourceGenerationID: result.SourceGenerationID,
@@ -316,7 +352,7 @@ func (m *Manager) executeChatAgentSwitch(
 				TargetGenerationID:     targetGeneration,
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
-				ActivatedAt:            m.clock(),
+				ActivatedAt:            activatedAt,
 			}
 			activated, activationErr := m.lcm.ActivateChatAgentSwitchTarget(
 				ctx,
@@ -330,7 +366,8 @@ func (m *Manager) executeChatAgentSwitch(
 				if committed {
 					result = current
 					targetOwnerCommitted = true
-					return nil
+					return ChatControllerCommit{Conversation: committedChatSwitchConversation(
+						started.Conversation, result.ID, activatedAt)}, nil
 				}
 				if !sourceStillOwns || resolutionErr != nil {
 					targetOwnershipAmbiguous = true
@@ -339,18 +376,24 @@ func (m *Manager) executeChatAgentSwitch(
 					if cause == nil {
 						cause = errors.New("activation CAS returned false")
 					}
-					return fmt.Errorf("target Chat controller activation outcome is ambiguous: %w", errors.Join(cause, resolutionErr))
+					return emptyCommit, fmt.Errorf("target Chat controller activation outcome is ambiguous: %w", errors.Join(cause, resolutionErr))
 				}
 				if activationErr != nil {
-					return activationErr
+					return emptyCommit, activationErr
 				}
-				return errors.New("target Chat controller ownership changed concurrently")
+				return emptyCommit, errors.New("target Chat controller ownership changed concurrently")
 			}
 			targetOwnerCommitted = true
-			return nil
+			result.State = domain.AgentSwitchTargetReady
+			result.UpdatedAt = activatedAt
+			return ChatControllerCommit{Conversation: committedChatSwitchConversation(
+				started.Conversation, result.ID, activatedAt)}, nil
 		},
 	})
 	if err != nil {
+		if targetOwnerCommitted {
+			skipTerminalization = true
+		}
 		return result, fmt.Errorf("switch Chat agent %s: start target controller: %w", id, err)
 	}
 	if !targetOwnerCommitted {
@@ -364,7 +407,8 @@ func (m *Manager) executeChatAgentSwitch(
 	if err := m.advanceAgentSwitch(ctx, store, &result, domain.AgentSwitchDelivering, nil); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: begin continuation delivery: %w", id, err)
 	}
-	if _, err := m.chat.StartChatTurn(ctx, id, aoTargetActivationPrompt); err != nil {
+	if _, err := m.chat.RelayChatTurnWithID(
+		ctx, id, aoTargetActivationPrompt, chatSwitchActivationMessageID(result.ID)); err != nil {
 		return result, fmt.Errorf("switch Chat agent %s: deliver continuation: %w", id, err)
 	}
 	acknowledgedAt := m.clock()
@@ -387,6 +431,25 @@ func (m *Manager) executeChatAgentSwitch(
 		return result, fmt.Errorf("switch Chat agent %s: complete: %w", id, err)
 	}
 	return result, nil
+}
+
+func committedChatSwitchConversation(
+	conversation domain.ConversationRecord,
+	switchID domain.AgentSwitchID,
+	activatedAt time.Time,
+) domain.ConversationRecord {
+	if conversation.ID == "" {
+		return domain.ConversationRecord{}
+	}
+	conversation.ActiveBranchID = string(switchID) + ":provider"
+	conversation.Settings.Model = ""
+	conversation.Settings.ReasoningEffort = ""
+	conversation.UpdatedAt = activatedAt
+	return conversation
+}
+
+func chatSwitchActivationMessageID(switchID domain.AgentSwitchID) string {
+	return "agent-switch:" + string(switchID) + ":activation"
 }
 
 func (m *Manager) abortChatAgentSwitchHandoff(rec domain.SessionRecord) {
@@ -565,7 +628,8 @@ func (m *Manager) recoverActivatedChatAgentSwitch(
 	if err := m.advanceAgentSwitch(ctx, store, &current, domain.AgentSwitchDelivering, nil); err != nil {
 		return false, err
 	}
-	if _, err := m.chat.StartChatTurn(ctx, rec.ID, aoTargetActivationPrompt); err != nil {
+	if _, err := m.chat.RelayChatTurnWithID(
+		ctx, rec.ID, aoTargetActivationPrompt, chatSwitchActivationMessageID(current.ID)); err != nil {
 		_, failErr := m.failAgentSwitch(ctx, store, current, domain.AgentSwitchErrorDeliveryUnconfirmed)
 		return failErr == nil, failErr
 	}

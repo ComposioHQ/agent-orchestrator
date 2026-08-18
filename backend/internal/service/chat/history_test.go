@@ -908,13 +908,19 @@ func TestProviderBoundaryRejectsSourceProviderBranchAndEdit(t *testing.T) {
 		SessionID: testSession, ProjectID: testProject, Kind: domain.KindOrchestrator,
 		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
 		ControllerGeneration: "target-generation",
-		ControllerReady: func(started chatsvc.StartResult) error {
-			return st.CreateAndActivateConversationBranch(ctx, testSession, domain.ConversationBranch{
+		ControllerReady: func(started chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
+			if err := st.CreateAndActivateConversationBranch(ctx, testSession, domain.ConversationBranch{
 				ID: "target-provider-boundary", ConversationID: conversation.ID, SessionID: testSession,
 				ProviderConversationID: started.ProviderConversationID,
 				ParentBranchID:         conversation.ActiveBranchID, ForkAfterSequence: conversation.LatestSequence,
 				CreatedAt: now.Add(time.Minute),
-			}, started.ControllerGeneration, now.Add(time.Minute))
+			}, started.ControllerGeneration, now.Add(time.Minute)); err != nil {
+				return chatsvc.ControllerCommit{}, err
+			}
+			committed := started.Conversation
+			committed.ActiveBranchID = "target-provider-boundary"
+			committed.UpdatedAt = now.Add(time.Minute)
+			return chatsvc.ControllerCommit{Conversation: committed}, nil
 		},
 	})
 	if err != nil {

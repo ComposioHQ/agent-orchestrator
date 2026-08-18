@@ -404,6 +404,52 @@ func TestServicePassesRecomputedSystemPromptToResume(t *testing.T) {
 	}
 }
 
+func TestResumeCanSkipNativeHistoryImportWithoutStartingFresh(t *testing.T) {
+	st := openStore(t)
+	historyReads := 0
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{{
+			Kind: ports.ChatEventTurnStarted, ProviderTurnID: "old-target-turn",
+		}},
+		onRead: func() { historyReads++ },
+	}
+	conv.providerConversationID = "target-native-thread"
+	var started ports.ChatStartConfig
+	var resumed ports.ChatResumeConfig
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{
+			conv: conv, startCfg: &started, resumeCfg: &resumed,
+		}},
+		Log:   slog.New(slog.DiscardHandler),
+		NewID: func() string { return "skip-native-history-import" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath:           t.TempDir(),
+		ProviderConversationID:  "target-native-thread",
+		SkipNativeHistoryImport: true,
+	})
+	if err != nil {
+		t.Fatalf("Start resume without history import: %v", err)
+	}
+	if resumed.ProviderConversationID != "target-native-thread" {
+		t.Fatalf("resume config = %#v, want target native thread", resumed)
+	}
+	if started.SessionID != "" {
+		t.Fatalf("fresh start was used instead of resume: %#v", started)
+	}
+	if historyReads != 0 {
+		t.Fatalf("native history reads = %d, want none before provider boundary commit", historyReads)
+	}
+	if got := controller.ProviderConversationID(); got != "target-native-thread" {
+		t.Fatalf("controller provider conversation = %q, want resumed target", got)
+	}
+}
+
 func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	st := openStore(t)
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
@@ -1338,7 +1384,7 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
 		WorkspacePath: t.TempDir(), ControllerGeneration: "reserved-generation",
-		ControllerReady: func(started chatsvc.StartResult) error {
+		ControllerReady: func(started chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
 			if signals := activity.snapshot(); len(signals) != 0 {
 				t.Fatalf("provider events projected before controller-ready commit: %+v", signals)
 			}
@@ -1346,7 +1392,7 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 				t.Fatalf("controller-ready result = %+v", started)
 			}
 			ready = true
-			return nil
+			return chatsvc.ControllerCommit{Conversation: started.Conversation}, nil
 		},
 	})
 	if err != nil {
@@ -1398,10 +1444,16 @@ func TestControllerReadyDurableSettingsRefreshBeforeFirstDispatch(t *testing.T) 
 	controller, err := svc.Start(ctx, chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
 		WorkspacePath: t.TempDir(), ControllerGeneration: "target-generation",
-		ControllerReady: func(chatsvc.StartResult) error {
-			return st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+		ControllerReady: func(started chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
+			if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
 				ApprovalMode: domain.PermissionModeAcceptEdits,
-			}, now.Add(time.Second))
+			}, now.Add(time.Second)); err != nil {
+				return chatsvc.ControllerCommit{}, err
+			}
+			committed := started.Conversation
+			committed.Settings = domain.ConversationSettings{ApprovalMode: domain.PermissionModeAcceptEdits}
+			committed.UpdatedAt = now.Add(time.Second)
+			return chatsvc.ControllerCommit{Conversation: committed}, nil
 		},
 	})
 	if err != nil {
@@ -1421,6 +1473,80 @@ func TestControllerReadyDurableSettingsRefreshBeforeFirstDispatch(t *testing.T) 
 	if sent[0].Settings.Model != "" || sent[0].Settings.Effort != "" ||
 		sent[0].Settings.Approval != domain.PermissionModeAcceptEdits {
 		t.Fatalf("activation settings = %+v, want target defaults with preserved approval", sent[0].Settings)
+	}
+}
+
+type failConversationReadStore struct {
+	*sqlite.Store
+	reads int
+}
+
+func (s *failConversationReadStore) ConversationForSession(
+	ctx context.Context,
+	session domain.SessionID,
+) (domain.ConversationRecord, error) {
+	s.reads++
+	return domain.ConversationRecord{}, errors.New("injected post-commit conversation read failure")
+}
+
+func TestControllerReadyDoesNotDependOnAFalliblePostCommitRead(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)
+	conversation, err := st.CreateConversation(
+		ctx, "switch-commit-conversation", domain.ConversationScopeProject,
+		testProject, testSession, now,
+	)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+		Model: "source-provider-model", ReasoningEffort: "high",
+		ApprovalMode: domain.PermissionModeAcceptEdits,
+	}, now); err != nil {
+		t.Fatalf("seed source settings: %v", err)
+	}
+
+	guardedStore := &failConversationReadStore{Store: st}
+	conv := newFakeConversation()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: guardedStore, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "post-commit-read-id" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	controller, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ControllerGeneration: "target-generation",
+		ControllerReady: func(started chatsvc.StartResult) (chatsvc.ControllerCommit, error) {
+			if err := st.SetConversationSettings(ctx, conversation.ID, domain.ConversationSettings{
+				ApprovalMode: domain.PermissionModeAcceptEdits,
+			}, now.Add(time.Second)); err != nil {
+				return chatsvc.ControllerCommit{}, err
+			}
+			committed := started.Conversation
+			committed.Settings = domain.ConversationSettings{ApprovalMode: domain.PermissionModeAcceptEdits}
+			committed.UpdatedAt = now.Add(time.Second)
+			return chatsvc.ControllerCommit{Conversation: committed}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start after durable controller commit: %v", err)
+	}
+	if _, err := controller.Send(ctx, ports.ChatUserMessage{
+		Text: "continue the handoff", ClientMessageID: "post-commit-activation",
+		Origin: domain.MessageOriginAutomation,
+	}); err != nil {
+		t.Fatalf("Send activation: %v", err)
+	}
+	if guardedStore.reads != 0 {
+		t.Fatalf("post-commit conversation reads = %d, want none", guardedStore.reads)
+	}
+	sent := conv.sentMessages()
+	if len(sent) != 1 || sent[0].Settings.Model != "" || sent[0].Settings.Effort != "" {
+		t.Fatalf("activation retained source settings: %+v", sent)
 	}
 }
 

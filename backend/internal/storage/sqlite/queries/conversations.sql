@@ -65,10 +65,29 @@ WHERE b.conversation_id = sqlc.arg(conversation_id)
 LIMIT 1;
 
 -- name: SelectConversationBranches :many
-SELECT b.*, b.id = c.active_branch_id AS active
+WITH RECURSIVE lineages(branch_id, id, parent_branch_id, replaced_turn_id, depth) AS (
+    SELECT branch.id, branch.id, branch.parent_branch_id, branch.replaced_turn_id, 0
+    FROM conversation_branches AS branch
+    WHERE branch.conversation_id = sqlc.arg(conversation_id)
+    UNION ALL
+    SELECT lineage.branch_id, parent.id, parent.parent_branch_id,
+           parent.replaced_turn_id, lineage.depth + 1
+    FROM lineages AS lineage
+    JOIN conversation_branches AS parent ON parent.id = lineage.parent_branch_id
+    WHERE parent.conversation_id = sqlc.arg(conversation_id)
+)
+SELECT b.*, b.id = c.active_branch_id AS active,
+       CAST(COALESCE((
+           SELECT lineage.id
+           FROM lineages AS lineage
+           WHERE lineage.branch_id = b.id
+             AND (lineage.parent_branch_id IS NULL OR lineage.replaced_turn_id IS NULL)
+           ORDER BY lineage.depth
+           LIMIT 1
+       ), '') AS TEXT) AS provider_scope_id
 FROM conversation_branches AS b
 JOIN conversations AS c ON c.id = b.conversation_id
-WHERE b.conversation_id = ?
+WHERE b.conversation_id = sqlc.arg(conversation_id)
 ORDER BY b.created_at, b.id;
 
 -- The selected human prompt must belong to the active lineage. Its immutable

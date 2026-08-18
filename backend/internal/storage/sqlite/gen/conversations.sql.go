@@ -1276,10 +1276,29 @@ func (q *Queries) SelectConversationBranch(ctx context.Context, arg SelectConver
 }
 
 const selectConversationBranches = `-- name: SelectConversationBranches :many
-SELECT b.id, b.conversation_id, b.session_id, b.provider_conversation_id, b.parent_branch_id, b.fork_after_turn_id, b.replaced_turn_id, b.replacement_turn_id, b.fork_after_sequence, b.created_at, b.id = c.active_branch_id AS active
+WITH RECURSIVE lineages(branch_id, id, parent_branch_id, replaced_turn_id, depth) AS (
+    SELECT branch.id, branch.id, branch.parent_branch_id, branch.replaced_turn_id, 0
+    FROM conversation_branches AS branch
+    WHERE branch.conversation_id = ?1
+    UNION ALL
+    SELECT lineage.branch_id, parent.id, parent.parent_branch_id,
+           parent.replaced_turn_id, lineage.depth + 1
+    FROM lineages AS lineage
+    JOIN conversation_branches AS parent ON parent.id = lineage.parent_branch_id
+    WHERE parent.conversation_id = ?1
+)
+SELECT b.id, b.conversation_id, b.session_id, b.provider_conversation_id, b.parent_branch_id, b.fork_after_turn_id, b.replaced_turn_id, b.replacement_turn_id, b.fork_after_sequence, b.created_at, b.id = c.active_branch_id AS active,
+       CAST(COALESCE((
+           SELECT lineage.id
+           FROM lineages AS lineage
+           WHERE lineage.branch_id = b.id
+             AND (lineage.parent_branch_id IS NULL OR lineage.replaced_turn_id IS NULL)
+           ORDER BY lineage.depth
+           LIMIT 1
+       ), '') AS TEXT) AS provider_scope_id
 FROM conversation_branches AS b
 JOIN conversations AS c ON c.id = b.conversation_id
-WHERE b.conversation_id = ?
+WHERE b.conversation_id = ?1
 ORDER BY b.created_at, b.id
 `
 
@@ -1295,6 +1314,7 @@ type SelectConversationBranchesRow struct {
 	ForkAfterSequence      int64
 	CreatedAt              time.Time
 	Active                 bool
+	ProviderScopeID        string
 }
 
 func (q *Queries) SelectConversationBranches(ctx context.Context, conversationID string) ([]SelectConversationBranchesRow, error) {
@@ -1318,6 +1338,7 @@ func (q *Queries) SelectConversationBranches(ctx context.Context, conversationID
 			&i.ForkAfterSequence,
 			&i.CreatedAt,
 			&i.Active,
+			&i.ProviderScopeID,
 		); err != nil {
 			return nil, err
 		}

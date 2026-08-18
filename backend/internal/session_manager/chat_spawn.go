@@ -81,16 +81,27 @@ type ChatStart struct {
 	// RequireNativeHistory is set only for a TUI -> Chat handoff. The target must
 	// replay the provider transcript before it can become the committed UI.
 	RequireNativeHistory bool
+	// SkipNativeHistoryImport is set by agent switching: the target's provider
+	// boundary is committed inside ControllerReady, so old provider events must
+	// not be projected into the source branch before that atomic write.
+	SkipNativeHistoryImport bool
 	// ControllerReady commits the durable controller facts before the provider
 	// event stream is consumed. This prevents an immediate exit from racing a
 	// later MarkSpawned write back to idle.
-	ControllerReady func(ChatStarted) error
+	ControllerReady func(ChatStarted) (ChatControllerCommit, error)
 }
 
 // ChatStarted is the durable result of a launch.
 type ChatStarted struct {
 	ProviderConversationID string
 	ControllerGeneration   string
+	Conversation           domain.ConversationRecord
+}
+
+// ChatControllerCommit carries the post-commit conversation state back to Chat
+// Service without making it read again after durable ownership has changed.
+type ChatControllerCommit struct {
+	Conversation domain.ConversationRecord
 }
 
 // chatSpawn bundles the shared state the chat launch needs from Spawn, so the
@@ -145,7 +156,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          in.systemPrompt,
 		AdditionalDirectories: workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
-		ControllerReady: func(started ChatStarted) error {
+		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
 			metadata := domain.SessionMetadata{
 				Branch:            in.workspace.Branch,
 				WorkspacePath:     in.workspace.Path,
@@ -161,7 +172,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 			}
 			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
 			controllerCommitted = completionErr == nil
-			return completionErr
+			return ChatControllerCommit{Conversation: started.Conversation}, completionErr
 		},
 	})
 	if err != nil {
@@ -325,7 +336,7 @@ func (m *Manager) resumeChatController(
 		// second restart can still prove exact target ownership.
 		ControllerGeneration: controllerGeneration,
 		RequireNativeHistory: requireNativeHistory,
-		ControllerReady: func(started ChatStarted) error {
+		ControllerReady: func(started ChatStarted) (ChatControllerCommit, error) {
 			metadata := rec.Metadata
 			metadata.WorkspacePath = ws.Path
 			metadata.WorkspaceRepoPath = ws.RepoPath
@@ -338,7 +349,7 @@ func (m *Manager) resumeChatController(
 			metadata.ControllerGeneration = started.ControllerGeneration
 
 			completionErr = m.lcm.MarkSpawned(ctx, rec.ID, metadata)
-			return completionErr
+			return ChatControllerCommit{Conversation: started.Conversation}, completionErr
 		},
 	})
 	if err != nil {

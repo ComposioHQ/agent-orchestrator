@@ -73,6 +73,31 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
 	if err := s.BindTurnToProvider(ctx, "source-turn", "source-provider-turn", now); err != nil {
 		t.Fatalf("bind source prompt: %v", err)
 	}
+	sourceEditBranch := domain.ConversationBranch{
+		ID: "source-edit-branch", ConversationID: conversation.ID, SessionID: session.ID,
+		ProviderConversationID: "source-chat-edited-native",
+		ParentBranchID:         conversation.ActiveBranchID, ReplacedTurnID: "source-turn",
+		ForkAfterSequence: 0, CreatedAt: now.Add(500 * time.Millisecond),
+	}
+	if err := s.CreateAndActivateConversationBranch(
+		ctx, session.ID, sourceEditBranch, "source-chat-generation", sourceEditBranch.CreatedAt,
+	); err != nil {
+		t.Fatalf("create source edit branch: %v", err)
+	}
+	created, err = s.AppendUserMessage(ctx, conversation.ID, session.ID, "source-chat-generation",
+		domain.ConversationMessage{
+			ID: "source-edit-message", Origin: domain.MessageOriginHuman, Text: "edited source prompt",
+			ClientMessageID: "source-edit-client-message",
+		}, "source-edit-turn", now.Add(600*time.Millisecond))
+	if err != nil || !created {
+		t.Fatalf("append source edit prompt: created=%v err=%v", created, err)
+	}
+	if err := s.BindTurnToProvider(ctx, "source-edit-turn", "source-edit-provider-turn", now.Add(700*time.Millisecond)); err != nil {
+		t.Fatalf("bind source edit prompt: %v", err)
+	}
+	if err := s.UpdateConversationBranchReplacement(ctx, sourceEditBranch.ID, "source-edit-turn"); err != nil {
+		t.Fatalf("record source branch replacement: %v", err)
+	}
 	sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
 		ID: "switch-chat", SessionID: session.ID, IdempotencyKey: "switch-chat",
 		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
@@ -145,8 +170,8 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list activated conversation branches: %v", err)
 	}
-	if len(branches) != 2 {
-		t.Fatalf("activated conversation branches = %+v, want source root and target provider boundary", branches)
+	if len(branches) != 3 {
+		t.Fatalf("activated conversation branches = %+v, want source edit lineage and target provider boundary", branches)
 	}
 	var targetBranch domain.ConversationBranch
 	for _, branch := range branches {
@@ -156,10 +181,53 @@ func TestActivateChatAgentSwitchTargetKeepsRuntimeEmpty(t *testing.T) {
 		}
 	}
 	if targetBranch.ProviderConversationID != "target-chat-native" ||
-		targetBranch.ParentBranchID != conversation.ID+":root" ||
+		targetBranch.ParentBranchID != sourceEditBranch.ID ||
 		targetBranch.ReplacedTurnID != "" ||
 		targetBranch.ForkAfterSequence != conversation.LatestSequence {
 		t.Fatalf("target provider boundary = %+v, conversation = %+v", targetBranch, conversation)
+	}
+	created, err = s.AppendUserMessage(ctx, conversation.ID, session.ID, "target-chat-generation",
+		domain.ConversationMessage{
+			ID: "target-message", Origin: domain.MessageOriginAutomation, Text: "continue target",
+			ClientMessageID: "target-client-message",
+		}, "target-turn", now.Add(6*time.Second))
+	if err != nil || !created {
+		t.Fatalf("append target prompt: created=%v err=%v", created, err)
+	}
+	if err := s.BindTurnToProvider(ctx, "target-turn", "target-provider-turn", now.Add(7*time.Second)); err != nil {
+		t.Fatalf("bind target prompt: %v", err)
+	}
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation.ID)
+	if err != nil {
+		t.Fatalf("load provider-boundary snapshot: %v", err)
+	}
+	page, err := s.LoadConversationSnapshotPage(ctx, conversation.ID, 0, 200)
+	if err != nil {
+		t.Fatalf("load provider-boundary snapshot page: %v", err)
+	}
+	for _, projection := range []struct {
+		name     string
+		snapshot store.ConversationSnapshot
+	}{
+		{name: "full", snapshot: snapshot},
+		{name: "page", snapshot: page},
+	} {
+		if projection.snapshot.BranchedFromEarlierMessage {
+			t.Fatalf("%s provider ownership boundary was exposed as an edited conversation branch", projection.name)
+		}
+		if len(projection.snapshot.BranchPoints) != 0 {
+			t.Fatalf("%s source-provider branch navigation leaked across boundary: %+v",
+				projection.name, projection.snapshot.BranchPoints)
+		}
+		for _, turn := range projection.snapshot.Turns {
+			if turn.ID == "target-turn" && turn.ProviderTurnID != "target-provider-turn" {
+				t.Fatalf("%s active target turn lost its history affordance: %+v", projection.name, turn)
+			}
+			if turn.ID != "target-turn" && turn.ProviderTurnID != "" {
+				t.Fatalf("%s source-provider turn %q retained a live history affordance via %q",
+					projection.name, turn.ID, turn.ProviderTurnID)
+			}
+		}
 	}
 	if _, err := s.ConversationEditAnchor(ctx, conversation.ID, "source-turn"); !errors.Is(err, store.ErrConversationTurnNotFound) {
 		t.Fatalf("source-provider edit anchor error = %v, want ErrConversationTurnNotFound", err)

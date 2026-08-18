@@ -24,8 +24,6 @@ var ErrNoController = errors.New("no live chat controller for session")
 // fact later, but callers must route from the persisted mode they read now.
 var ErrNotChatMode = errors.New("session is not in chat mode")
 
-const controllerReadyStateSyncTimeout = 5 * time.Second
-
 // SessionReader is the session-fact surface the service needs. It reads the
 // persisted mode rather than trusting the caller, so a client cannot talk its way
 // into the wrong dispatch path.
@@ -146,28 +144,42 @@ type StartConfig struct {
 	// handoff sets it because provider context without a visible transcript would
 	// make completed Terminal work disappear from Chat.
 	RequireNativeHistory bool
+	// SkipNativeHistoryImport resumes provider context without projecting its old
+	// events before ControllerReady. Agent switching uses this because its atomic
+	// provider boundary does not exist until ControllerReady commits; AO already
+	// retains the unified timeline and the finalized continuation separately.
+	SkipNativeHistoryImport bool
 	// ControllerReady commits the controller's durable generation before event
 	// consumption starts. A controller that exits immediately must report after
 	// the launch has been marked live, so its exited signal cannot be overwritten
 	// by a later launch-completion write.
-	ControllerReady func(StartResult) error
+	ControllerReady func(StartResult) (ControllerCommit, error)
+}
+
+// ControllerCommit is the conversation state committed by ControllerReady.
+// Carrying it back across the callback avoids a fallible database read after an
+// irreversible ownership transfer.
+type ControllerCommit struct {
+	Conversation domain.ConversationRecord
 }
 
 func controllerStartResult(controller *Controller) StartResult {
 	return StartResult{
 		ProviderConversationID: controller.ProviderConversationID(),
 		ControllerGeneration:   controller.Generation(),
+		Conversation:           controller.conversation,
 	}
 }
 
-func notifyControllerReady(cfg StartConfig, controller *Controller) error {
+func notifyControllerReady(cfg StartConfig, controller *Controller) (ControllerCommit, error) {
 	if cfg.ControllerReady == nil {
-		return nil
+		return ControllerCommit{}, nil
 	}
-	if err := cfg.ControllerReady(controllerStartResult(controller)); err != nil {
-		return fmt.Errorf("commit chat controller: %w", err)
+	commit, err := cfg.ControllerReady(controllerStartResult(controller))
+	if err != nil {
+		return ControllerCommit{}, fmt.Errorf("commit chat controller: %w", err)
 	}
-	return nil
+	return commit, nil
 }
 
 func cloneStartConfig(cfg StartConfig) StartConfig {
@@ -362,7 +374,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
-	if cfg.ProviderConversationID != "" {
+	if cfg.ProviderConversationID != "" && !cfg.SkipNativeHistoryImport {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
 		// cannot appear ahead of the older prompt, tool work, and answer it follows.
@@ -393,34 +405,21 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			return nil, err
 		}
 	}
-	if err := notifyControllerReady(cfg, controller); err != nil {
+	commit, err := notifyControllerReady(cfg, controller)
+	if err != nil {
 		_ = conv.Close()
 		return nil, err
 	}
-	if cfg.ControllerReady != nil {
-		// ControllerReady may atomically transfer ownership, reset provider-specific
-		// settings, and move the active provider branch. The controller was built
-		// from the pre-commit row, so refresh it before publishing or dispatching.
-		// Once the callback commits, caller cancellation must not strand a live
-		// controller with the source agent's cached state.
-		refreshCtx, cancel := context.WithTimeout(
-			context.WithoutCancel(ctx), controllerReadyStateSyncTimeout)
-		refreshed, refreshErr := s.store.ConversationForSession(refreshCtx, cfg.SessionID)
-		cancel()
-		if refreshErr != nil {
-			_ = conv.Close()
-			return nil, fmt.Errorf("refresh committed chat controller: %w", refreshErr)
-		}
-		if refreshed.ID != controller.conversation.ID {
-			_ = conv.Close()
-			return nil, fmt.Errorf(
-				"refresh committed chat controller: conversation changed from %s to %s",
-				controller.conversation.ID, refreshed.ID)
-		}
+	if commit.Conversation.ID != "" {
 		// The controller has not been published and its projector has not started,
-		// so this is the one safe point where both cached values can move together.
-		controller.conversation = refreshed
-		controller.settings = refreshed.Settings
+		// so this is the one safe point where the activation-mutated cache fields
+		// move together. Preserve immutable identity from the controller itself:
+		// after ControllerReady commits ownership, synchronization must be an
+		// infallible assignment rather than another operation that can strand it.
+		controller.conversation.ActiveBranchID = commit.Conversation.ActiveBranchID
+		controller.conversation.Settings = commit.Conversation.Settings
+		controller.conversation.UpdatedAt = commit.Conversation.UpdatedAt
+		controller.settings = commit.Conversation.Settings
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
@@ -911,18 +910,20 @@ type StartRequest struct {
 	AdditionalDirectories []string
 	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
-	ProviderConversationID string
-	ControllerGeneration   string
-	RequireNativeHistory   bool
+	ProviderConversationID  string
+	ControllerGeneration    string
+	RequireNativeHistory    bool
+	SkipNativeHistoryImport bool
 	// ControllerReady runs after the provider and generation exist but before
 	// live event projection starts.
-	ControllerReady func(StartResult) error
+	ControllerReady func(StartResult) (ControllerCommit, error)
 }
 
 // StartResult is the durable outcome of a launch.
 type StartResult struct {
 	ProviderConversationID string
 	ControllerGeneration   string
+	Conversation           domain.ConversationRecord
 }
 
 // StartChatTurn delivers the initial prompt as a normal turn.

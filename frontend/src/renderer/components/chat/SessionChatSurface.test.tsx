@@ -3,16 +3,20 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSession } from "../../types/workspace";
+import type { AgentSwitchSummary, WorkspaceSession } from "../../types/workspace";
 import { useUiStore } from "../../stores/ui-store";
 import { workspaceQueryKey } from "../../hooks/useWorkspaceQuery";
 
 const LINK = "http://localhost:5173";
 
-const { postMock, conversationState } = vi.hoisted(() => ({
+const { getMock, postMock, conversationState, agentSwitchState } = vi.hoisted(() => ({
+	getMock: vi.fn(),
 	postMock: vi.fn(),
+	agentSwitchState: { data: [] as AgentSwitchSummary[] },
 	conversationState: {
-		snapshot: { capabilities: [] } as { capabilities: string[] } | undefined,
+		snapshot: { capabilities: [] } as
+			| { capabilities: string[]; controller?: { state: string } }
+			| undefined,
 		isLoading: false,
 		unavailable: undefined as { message: string } | undefined,
 		error: undefined as string | undefined,
@@ -23,7 +27,8 @@ const { postMock, conversationState } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/api-client", () => ({
-	apiClient: { POST: postMock },
+	apiClient: { GET: getMock, POST: postMock },
+	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
 vi.mock("../../hooks/useConversation", () => ({
@@ -38,15 +43,18 @@ vi.mock("../../hooks/useConversation", () => ({
 
 vi.mock("./ChatWorkspace", () => ({
 	ChatWorkspace: ({
+		agentInputDisabled,
 		onLinkOpen,
 		switchAgentControl,
 		shellTarget,
 	}: {
+		agentInputDisabled?: boolean;
 		onLinkOpen?: (url: string) => void;
 		switchAgentControl?: ReactNode;
 		shellTarget?: { handleId: string };
 	}) => (
 		<div>
+			<div data-testid="chat-agent-input" data-disabled={agentInputDisabled ? "true" : "false"} />
 			<button type="button" onClick={() => onLinkOpen?.(LINK)}>
 				Open chat link
 			</button>
@@ -57,7 +65,9 @@ vi.mock("./ChatWorkspace", () => ({
 }));
 
 vi.mock("../TerminalSwitchAgentButton", () => ({
-	TerminalSwitchAgentButton: () => <button aria-label="Switch agent" type="button" />,
+	TerminalSwitchAgentButton: ({ presentation }: { presentation?: { outcome: string } }) => (
+		<button aria-label="Switch agent" disabled={presentation?.outcome === "in_progress"} type="button" />
+	),
 }));
 
 import { SessionChatSurface } from "./SessionChatSurface";
@@ -80,6 +90,11 @@ function Wrapper({ client, children }: { client: QueryClient; children: ReactNod
 }
 
 beforeEach(() => {
+	getMock.mockReset().mockImplementation(async () => ({
+		data: { switches: agentSwitchState.data },
+		error: undefined,
+		response: { status: 200 },
+	}));
 	postMock.mockReset().mockResolvedValue({ data: {}, error: undefined });
 	conversationState.snapshot = { capabilities: [] };
 	conversationState.isLoading = false;
@@ -88,6 +103,7 @@ beforeEach(() => {
 	conversationState.hasOlder = false;
 	conversationState.isLoadingOlder = false;
 	conversationState.loadOlder = vi.fn();
+	agentSwitchState.data = [];
 	useUiStore.setState({ inspectorSessions: {} });
 });
 
@@ -130,6 +146,88 @@ describe("SessionChatSurface link routing", () => {
 		);
 
 		expect(screen.getByRole("button", { name: "Switch agent" })).toBeInTheDocument();
+	});
+
+	it.each([
+		[
+			"nonterminal progress",
+			{ id: "switch-progress", state: "starting_target" },
+			"in_progress",
+			true,
+		],
+		[
+			"restart recovery",
+			{ id: "switch-recovery", state: "starting_target", errorCode: "target_start_unconfirmed" },
+			"recovery",
+			false,
+		],
+	] as const)("restores durable %s presentation and locks Chat input after reload", async (_name, overrides, outcome, buttonDisabled) => {
+		agentSwitchState.data = [
+			{
+				agentHandoffStatus: "not_attempted",
+				fromHarness: "claude-code",
+				targetHarness: "codex",
+				...overrides,
+			},
+		];
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={session} />
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute("data-outcome", outcome);
+		});
+		const button = screen.getByRole("button", { name: "Switch agent" });
+		if (buttonDisabled) expect(button).toBeDisabled();
+		else expect(button).toBeEnabled();
+		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "true");
+		expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute("data-outcome", outcome);
+		if (outcome === "in_progress") {
+			const progress = screen.getByRole("list", { name: "Switching…" });
+			expect(progress.querySelector('[aria-current="step"]')).toHaveTextContent("Starting target agent");
+		} else {
+			expect(screen.queryByRole("list", { name: "Switching…" })).not.toBeInTheDocument();
+		}
+	});
+
+	it("uses a ready Chat controller as the completed takeover proof", async () => {
+		const completedSwitch = {
+			agentHandoffStatus: "not_attempted",
+			fromHarness: "claude-code",
+			id: "switch-completed",
+			state: "completed",
+			targetHarness: "codex",
+		} satisfies AgentSwitchSummary;
+		agentSwitchState.data = [completedSwitch];
+		conversationState.snapshot = { capabilities: [], controller: { state: "ready" } };
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface
+					session={{
+						...session,
+						activeAgentSwitch: { ...completedSwitch, state: "target_ready" },
+					}}
+				/>
+			</Wrapper>,
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId("chat-agent-switch-status")).toHaveAttribute(
+				"data-outcome",
+				"success",
+			);
+		});
+		expect(screen.getByTestId("chat-agent-input")).toHaveAttribute("data-disabled", "false");
+		expect(screen.queryByRole("list", { name: "Switching…" })).not.toBeInTheDocument();
 	});
 
 	it("keeps a selected shell renderable when the conversation is unavailable", () => {

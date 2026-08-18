@@ -49,6 +49,7 @@ type recordingLauncher struct {
 	// relayed is what arrived through Manager.Send rather than as an initial
 	// prompt, kept separate so a test can tell the two apart.
 	relayed  []string
+	relayIDs []string
 	stopped  []domain.SessionID
 	armed    []domain.SessionID
 	prepared []domain.SessionID
@@ -75,7 +76,7 @@ func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatSta
 		started.ControllerGeneration = cfg.ControllerGeneration
 	}
 	if cfg.ControllerReady != nil {
-		if err := cfg.ControllerReady(started); err != nil {
+		if _, err := cfg.ControllerReady(started); err != nil {
 			return ChatStarted{}, err
 		}
 	}
@@ -92,11 +93,13 @@ func (l *recordingLauncher) StartChatTurn(_ context.Context, _ domain.SessionID,
 
 func (l *recordingLauncher) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
 	l.relayed = append(l.relayed, text)
+	l.relayIDs = append(l.relayIDs, "")
 	return "turn-relay", l.turnErr
 }
 
-func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, _ string) (string, error) {
+func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (string, error) {
 	l.relayed = append(l.relayed, text)
+	l.relayIDs = append(l.relayIDs, clientMessageID)
 	return "turn-relay", l.turnErr
 }
 

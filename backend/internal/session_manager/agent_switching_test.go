@@ -504,7 +504,7 @@ func (l *switchAgentChatLauncher) StartChat(_ context.Context, cfg ChatStart) (C
 	l.store.sessions[cfg.SessionID] = rec
 	l.store.mu.Unlock()
 	if cfg.ControllerReady != nil {
-		if err := cfg.ControllerReady(started); err != nil {
+		if _, err := cfg.ControllerReady(started); err != nil {
 			return ChatStarted{}, err
 		}
 	}
@@ -952,8 +952,61 @@ func TestSwitchAgentChatSessionKeepsChatModeAndNeedsNoRuntime(t *testing.T) {
 		t.Fatalf("Chat ownership boundaries: armed=%v prepared=%v stopped=%v",
 			launcher.armed, launcher.prepared, launcher.stopped)
 	}
-	if len(launcher.turns) != 1 || launcher.turns[0] != aoTargetActivationPrompt {
-		t.Fatalf("target activation turns = %v", launcher.turns)
+	if len(launcher.turns) != 0 || len(launcher.relayed) != 1 || launcher.relayed[0] != aoTargetActivationPrompt {
+		t.Fatalf("target activation human=%v automation=%v, want one automation turn", launcher.turns, launcher.relayed)
+	}
+	if len(launcher.relayIDs) != 1 || launcher.relayIDs[0] != chatSwitchActivationMessageID(sw.ID) {
+		t.Fatalf("target activation delivery IDs = %v, want stable switch ID", launcher.relayIDs)
+	}
+}
+
+func TestSwitchAgentChatSwitchBackResumesVerifiedNativeConversation(t *testing.T) {
+	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	rec := store.sessions["proj-1"]
+	rec.Mode = domain.SessionModeChat
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = ""
+	rec.Metadata.ProviderConversationID = "source-chat-native"
+	rec.Metadata.ControllerGeneration = "source-chat-generation"
+	store.sessions[rec.ID] = rec
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+	target.available["codex-prior-chat"] = ports.NativeSessionAvailabilityAvailable
+	prior := domain.AgentNativeSession{
+		ID: "native-prior-chat", AOSessionID: rec.ID, Harness: domain.HarnessCodex,
+		ConfigDir: target.configDir, NativeSessionID: "codex-prior-chat",
+		LastGenerationID: "old-codex-generation",
+		CreatedAt:        time.Now().UTC().Add(-time.Hour), LastUsedAt: time.Now().UTC().Add(-time.Hour),
+	}
+	store.native[prior.ID] = prior
+	launcher := &switchAgentChatLauncher{
+		recordingLauncher: &recordingLauncher{},
+		store:             store,
+		live:              true,
+	}
+	manager.chat = launcher
+
+	sw, err := switchAgentSynchronously(context.Background(), manager, rec.ID, SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "chat-switch-back-resume",
+	})
+	if err != nil {
+		t.Fatalf("SwitchAgent: %v", err)
+	}
+	if sw.TargetStartMode != domain.AgentSwitchTargetStartResumed {
+		t.Fatalf("target start mode = %q, want resumed", sw.TargetStartMode)
+	}
+	if sw.TargetNativeSessionRef == nil || *sw.TargetNativeSessionRef != prior.ID {
+		t.Fatalf("target native ref = %v, want reused %q", sw.TargetNativeSessionRef, prior.ID)
+	}
+	if len(launcher.started) != 1 || launcher.started[0].ProviderConversationID != prior.NativeSessionID {
+		t.Fatalf("Chat starts = %+v, want resume of %q", launcher.started, prior.NativeSessionID)
+	}
+	if !launcher.started[0].SkipNativeHistoryImport {
+		t.Fatal("switch-back projected target-native history into the source provider branch before activation")
+	}
+	if got := store.native[prior.ID]; got.LastGenerationID != sw.TargetGenerationID {
+		t.Fatalf("reused native generation = %q, want %q", got.LastGenerationID, sw.TargetGenerationID)
 	}
 }
 
@@ -3679,11 +3732,11 @@ func TestReconcileChatAgentSwitchesUsesControllerBoundaries(t *testing.T) {
 			} else if len(launcher.started) != 0 {
 				t.Fatalf("recovery unexpectedly started a controller: %+v", launcher.started)
 			}
-			if len(launcher.turns) != tt.wantTurns {
-				t.Fatalf("recovery activation turns = %v, want %d", launcher.turns, tt.wantTurns)
+			if len(launcher.turns) != 0 || len(launcher.relayed) != tt.wantTurns {
+				t.Fatalf("recovery activation human=%v automation=%v, want %d automation turns", launcher.turns, launcher.relayed, tt.wantTurns)
 			}
-			if tt.wantTurns == 1 && launcher.turns[0] != aoTargetActivationPrompt {
-				t.Fatalf("recovery activation turn = %q, want %q", launcher.turns[0], aoTargetActivationPrompt)
+			if tt.wantTurns == 1 && launcher.relayed[0] != aoTargetActivationPrompt {
+				t.Fatalf("recovery activation turn = %q, want %q", launcher.relayed[0], aoTargetActivationPrompt)
 			}
 			if len(messenger.msgs) != 0 {
 				t.Fatalf("recovery replayed an unconfirmed continuation: %#v", messenger.msgs)
@@ -3754,8 +3807,11 @@ func TestReconcileChatAgentSwitchTargetReadyRestoresFinalizedContinuationBeforeR
 			t.Fatalf("recovered target system prompt omitted %q:\n%s", want, launcher.started[0].SystemPrompt)
 		}
 	}
-	if len(launcher.turns) != 1 || launcher.turns[0] != aoTargetActivationPrompt {
-		t.Fatalf("recovered target activation turns = %v, want one continuation activation", launcher.turns)
+	if len(launcher.turns) != 0 || len(launcher.relayed) != 1 || launcher.relayed[0] != aoTargetActivationPrompt {
+		t.Fatalf("recovered target activation human=%v automation=%v, want one automation continuation", launcher.turns, launcher.relayed)
+	}
+	if len(launcher.relayIDs) != 1 || launcher.relayIDs[0] != chatSwitchActivationMessageID(sw.ID) {
+		t.Fatalf("recovered activation delivery IDs = %v, want stable switch ID", launcher.relayIDs)
 	}
 	got := store.switches[sw.ID]
 	if got.State != domain.AgentSwitchCompleted || got.TargetAcknowledgedAt == nil {
