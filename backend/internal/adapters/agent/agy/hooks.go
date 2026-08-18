@@ -119,7 +119,7 @@ func (p *Plugin) AreHooksInstalled(ctx context.Context, workspacePath string) (b
 	}
 	var installed agyNamedHook
 	if err := json.Unmarshal(raw, &installed); err != nil {
-		return false, nil
+		return false, fmt.Errorf("agy.AreHooksInstalled: unmarshal hook: %w", err)
 	}
 	return reflect.DeepEqual(installed, managedAgyHook()), nil
 }
