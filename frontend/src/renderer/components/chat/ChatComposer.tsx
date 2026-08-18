@@ -161,6 +161,7 @@ export function ChatComposer({
 	const [highlighted, setHighlighted] = useState(0);
 	const [dragging, setDragging] = useState(false);
 	const [sendError, setSendError] = useState<string | null>(null);
+	const [submitting, setSubmitting] = useState(false);
 	/**
 	 * What Enter does while the agent is working.
 	 *
@@ -175,6 +176,9 @@ export function ChatComposer({
 	/** Where the caret should land once React has committed the new text. */
 	const pendingCaret = useRef<number | null>(null);
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
+	// State disables the controls after React renders; the ref closes the smaller
+	// synchronous gap where key repeat can call submit again in the same render.
+	const submissionInFlight = useRef(false);
 	const menuId = useId();
 	/** Match the field to its content until CSS's seven-line cap takes over. */
 	const resizeTextarea = useCallback(() => {
@@ -231,8 +235,9 @@ export function ChatComposer({
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	const canSend = hasDraft && !busy && !disabled && !steerPending;
-	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
+	const controlsDisabled = Boolean(disabled || submitting);
+	const canSend = hasDraft && !busy && !controlsDisabled && !steerPending;
+	const canStopTurn = Boolean(willQueue && onInterrupt && !controlsDisabled && !hasDraft);
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
 
@@ -305,7 +310,18 @@ export function ChatComposer({
 
 	async function submit(event?: FormEvent) {
 		event?.preventDefault();
-		if (!canSend) return;
+		if (!canSend || submissionInFlight.current) return;
+		submissionInFlight.current = true;
+		setSubmitting(true);
+		try {
+			await deliverSubmission();
+		} finally {
+			submissionInFlight.current = false;
+			setSubmitting(false);
+		}
+	}
+
+	async function deliverSubmission() {
 		setSendError(null);
 
 		const body = text.trim();
@@ -477,7 +493,7 @@ export function ChatComposer({
 	}
 
 	function onPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
-		if (!canAttach) return;
+		if (!canAttach || submissionInFlight.current) return;
 		const clipboard = event.clipboardData;
 		const files = Array.from(clipboard?.files ?? []);
 		if (files.length === 0) return;
@@ -491,7 +507,7 @@ export function ChatComposer({
 
 	function onDrop(event: DragEvent<HTMLFormElement>) {
 		setDragging(false);
-		if (!canAttach) return;
+		if (!canAttach || submissionInFlight.current) return;
 		const files = Array.from(event.dataTransfer?.files ?? []);
 		if (files.length === 0) return;
 		event.preventDefault();
@@ -504,7 +520,7 @@ export function ChatComposer({
 		<form
 			onSubmit={(event) => void submit(event)}
 			onDragOver={(event) => {
-				if (!canAttach) return;
+				if (!canAttach || submissionInFlight.current) return;
 				event.preventDefault();
 				setDragging(true);
 			}}
@@ -552,6 +568,7 @@ export function ChatComposer({
 							<button
 								type="button"
 								onClick={() => fileAttachments.remove(file.id)}
+								disabled={controlsDisabled}
 								aria-label={`Remove ${file.name}`}
 								className="text-muted-foreground hover:text-foreground"
 							>
@@ -571,7 +588,7 @@ export function ChatComposer({
 				onClick={onSelectionChange}
 				onPaste={onPaste}
 				rows={1}
-				disabled={disabled}
+				disabled={controlsDisabled}
 				aria-label="Message the agent"
 				role="combobox"
 				aria-expanded={menuOpen}
@@ -606,7 +623,11 @@ export function ChatComposer({
 			) : null}
 
 			{canSteer && onSteer ? (
-				<DeliveryChoice value={delivery} onChange={setDelivery} disabled={steerPending} />
+				<DeliveryChoice
+					value={delivery}
+					onChange={setDelivery}
+					disabled={steerPending || controlsDisabled}
+				/>
 			) : null}
 
 			<div className="flex min-h-8 items-end justify-between gap-3">
@@ -622,6 +643,7 @@ export function ChatComposer({
 								type="file"
 								multiple
 								hidden
+								disabled={controlsDisabled}
 								onChange={(event) => {
 									void fileAttachments.addFiles(Array.from(event.target.files ?? []));
 									// Cleared so picking the same file twice still fires a change.
@@ -632,7 +654,7 @@ export function ChatComposer({
 								type="button"
 								variant="ghost"
 								size="sm"
-								disabled={disabled}
+								disabled={controlsDisabled}
 								onClick={() => filePicker.current?.click()}
 								aria-label="Attach a file"
 								title="Attach a file"
@@ -672,7 +694,7 @@ export function ChatComposer({
 					>
 						{canStopTurn ? (
 							<Square aria-hidden="true" className="size-2.5 fill-current" />
-						) : steerPending ? (
+						) : steerPending || submitting ? (
 							<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 						) : steering ? (
 							<CornerDownRight aria-hidden="true" className="size-3.5" />

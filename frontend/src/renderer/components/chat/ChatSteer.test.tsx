@@ -133,7 +133,7 @@ describe("ChatComposer steering", () => {
 		await waitFor(() => expect(screen.queryAllByRole("listitem")).toHaveLength(0));
 	});
 
-	it("waits for a pasted image read before steering an existing text draft", async () => {
+	it("waits for a pasted image read and ignores repeated Enter while steering", async () => {
 		let finishRead!: () => void;
 		class SlowFileReader {
 			error: Error | null = null;
@@ -151,12 +151,10 @@ describe("ChatComposer steering", () => {
 		vi.stubGlobal("FileReader", SlowFileReader);
 
 		let finishSteer!: () => void;
-		const onSteer = vi.fn(
-			() =>
-				new Promise<void>((resolve) => {
-					finishSteer = resolve;
-				}),
-		);
+		const steerPromise = new Promise<void>((resolve) => {
+			finishSteer = resolve;
+		});
+		const onSteer = vi.fn(() => steerPromise);
 		const stage = vi.fn().mockResolvedValue([".ao/attachments/slow.png"]);
 		composer({ onSteer, onStageAttachments: stage, nativeImages: true });
 
@@ -164,11 +162,19 @@ describe("ChatComposer steering", () => {
 		const field = screen.getByRole("combobox");
 		fireEvent.change(field, { target: { value: "inspect this" } });
 		fireEvent.paste(field, { clipboardData: { files: [png("slow.png")], items: [] } });
-		fireEvent.keyDown(field, { key: "Enter" });
+		act(() => {
+			fireEvent.keyDown(field, { key: "Enter" });
+			fireEvent.keyDown(field, { key: "Enter", repeat: true });
+		});
 
 		expect(stage).not.toHaveBeenCalled();
 		expect(onSteer).not.toHaveBeenCalled();
 		expect(field).toHaveValue("inspect this");
+		expect(field).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Steer the running turn" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Steer this turn" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Queue for next" })).toBeDisabled();
+		expect(screen.getByRole("button", { name: "Attach a file" })).toBeDisabled();
 
 		await act(async () => finishRead());
 		await waitFor(() => expect(stage).toHaveBeenCalledOnce());
@@ -178,6 +184,7 @@ describe("ChatComposer steering", () => {
 				[{ mimeType: "image/png", data: "iVBORw==" }],
 			),
 		);
+		expect(onSteer).toHaveBeenCalledOnce();
 		await act(async () => finishSteer());
 	});
 
