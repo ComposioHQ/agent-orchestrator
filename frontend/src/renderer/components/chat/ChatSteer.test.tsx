@@ -401,7 +401,14 @@ describe("ChatWorkspace steering", () => {
 		};
 		render(<ChatWorkspace snapshot={snapshot} />);
 
-		expect(screen.getByRole("img", { name: "attachment-steer123.png" })).toBeInTheDocument();
+		const image = screen.getByRole("img", { name: "attachment-steer123.png" });
+		expect(image).toBeInTheDocument();
+		expect(image).toHaveAttribute(
+			"src",
+			expect.stringContaining(
+				"/api/v1/sessions/ao-14/preview/files/.ao/attachments/attachment-steer123.png",
+			),
+		);
 		expect(screen.getByText("inspect this")).toBeInTheDocument();
 		expect(screen.queryByText(/Attached files \(read these files/)).not.toBeInTheDocument();
 	});
