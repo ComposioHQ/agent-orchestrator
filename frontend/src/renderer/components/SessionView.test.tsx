@@ -1362,6 +1362,25 @@ describe("SessionView", () => {
 		expect(browserUnseen("sess-2")).toBe(false);
 	});
 
+	// Regression: the session-entry effect that defaults a brand-new session to
+	// Summary tracked only the single most-recently-initialized session ID, so
+	// re-entering ANY session that was not the immediately preceding one looked
+	// identical to a first-ever visit and forced it back to Summary — silently
+	// discarding whatever tab (Files, Browser) the user had left it on.
+	it("remembers the tab a session was left on when returning to it after visiting another session", () => {
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
+
+		rerender(<SessionView sessionId="sess-2" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+
+		rerender(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
+	});
+
 	it("keeps Summary selected when preview content arrives with the async workspace response", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";

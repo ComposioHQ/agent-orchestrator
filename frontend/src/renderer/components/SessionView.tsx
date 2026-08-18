@@ -254,7 +254,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const previewBaselineRef = useRef<{ sessionId: string; key: string } | null>(null);
 	const sessionSplitRef = useRef<HTMLDivElement | null>(null);
 	const terminalLiveResizeTimerRef = useRef<number | null>(null);
-	const initializedInspectorSessionIdRef = useRef<string | null>(null);
+	const initializedInspectorSessionIdsRef = useRef<Set<string>>(new Set());
 	const [inspectorSettledClosed, setInspectorSettledClosed] = useState(!isInspectorOpen);
 	const inspectorPanelVisible = isInspectorOpen || !inspectorSettledClosed;
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
@@ -587,12 +587,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// preview auto-opens Browser onto a view the hook has already torn down.
 	const hasBrowserContent = !terminated && Boolean(previewUrl || browserUrl);
 
-	// Entering a session always starts on Summary. Treat browser content that
-	// already existed when the route resolved as the baseline for that visit;
-	// only preview work arriving afterward may reveal Browser automatically.
+	// Entering a session for the first time ever always starts on Summary.
+	// Tracking only the single most-recently-initialized session id here would
+	// make re-entering any OTHER previously-visited session look identical to a
+	// first-ever visit, forcing it back to Summary and discarding whatever tab
+	// the user had left it on — track every session id this view has ever
+	// initialized instead. Treat browser content that already existed when the
+	// route resolved as the baseline for that visit; only preview work arriving
+	// afterward may reveal Browser automatically.
 	useLayoutEffect(() => {
-		if (!session || initializedInspectorSessionIdRef.current === sessionId) return;
-		initializedInspectorSessionIdRef.current = sessionId;
+		if (!session || initializedInspectorSessionIdsRef.current.has(sessionId)) return;
+		initializedInspectorSessionIdsRef.current.add(sessionId);
 		if (!hasInspector) return;
 		const current = useUiStore.getState().inspectorSessions[sessionId];
 		setInspectorViewForSession(sessionId, "summary");
