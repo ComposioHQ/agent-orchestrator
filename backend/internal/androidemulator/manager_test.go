@@ -103,8 +103,8 @@ func TestManagerUnexpectedExitTriggersAutoRestart(t *testing.T) {
 func TestManagerDetectsFastCrashInsteadOfWaitingFullTimeout(t *testing.T) {
 	cfg := fastBootConfig("print-fatal-and-exit")
 	cfg.ReadyCheck = func(context.Context) (bool, error) { return false, nil } // never ready
-	cfg.ReadyTimeout = 10 * time.Second                                       // must NOT be waited out
-	cfg.RestartBackoff = nil                                                  // stay Crashed, no auto-restart noise
+	cfg.ReadyTimeout = 10 * time.Second                                        // must NOT be waited out
+	cfg.RestartBackoff = nil                                                   // stay Crashed, no auto-restart noise
 
 	m := NewManager()
 	start := time.Now()
