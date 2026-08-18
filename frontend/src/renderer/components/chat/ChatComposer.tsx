@@ -231,7 +231,11 @@ export function ChatComposer({
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	const canSend = hasDraft && !busy && !disabled && !steerPending;
+	// Attachments cannot be steered: the steer branch delivers text only and refuses
+	// an empty body. A staged file must not light up the send button on its own while
+	// steering is armed, or Enter would silently do nothing.
+	const canSend =
+		(text.trim().length > 0 || (staged && !steering)) && !busy && !disabled && !steerPending;
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
