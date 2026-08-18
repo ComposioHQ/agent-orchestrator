@@ -608,7 +608,7 @@ describe("SessionInspector PR section", () => {
     expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
   });
 
-  it("keeps PR and session policies in Summary while review policies live in Reviews", async () => {
+  it("keeps durable session policies in Summary and operational review controls in Reviews", async () => {
     renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
     expect(screen.getByText("Session controls")).toBeInTheDocument();
@@ -618,6 +618,7 @@ describe("SessionInspector PR section", () => {
         .getByRole("switch", { name })
         .closest("[data-slot='inspector-policy-row']") as HTMLElement;
     const ciRow = policyRow("Automatically send CI failures");
+    const reviewRow = policyRow("Automatically send reviews");
     const terminateRow = policyRow(
       "Terminate session when pull requests merge",
     );
@@ -632,16 +633,15 @@ describe("SessionInspector PR section", () => {
 
     expect(appearsBefore(prCard, ciRow)).toBe(true);
     expect(ciRow.className).toBe(terminateRow.className);
+    expect(reviewRow.className).toBe(terminateRow.className);
     expect(ciRow.parentElement).not.toHaveClass(
       "rounded-lg",
       "border",
       "bg-surface",
     );
-    expect(
-      screen.queryByRole("switch", { name: "Automatically send reviews" }),
-    ).not.toBeInTheDocument();
     for (const name of [
       "Automatically send CI failures",
+      "Automatically send reviews",
       "Terminate session when pull requests merge",
     ]) {
       const toggle = screen.getByRole("switch", { name });
@@ -667,8 +667,9 @@ describe("SessionInspector PR section", () => {
       await screen.findByRole("button", { name: "Run review" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: "Automatically send reviews" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("switch", { name: "Automatically send reviews" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Auto review" })).toBeInTheDocument();
   });
 
   it("persists the CI injection default before a PR exists", async () => {
@@ -2461,7 +2462,6 @@ describe("SessionInspector summary reviews", () => {
 
   it("persists the automatic review injection toggle", async () => {
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-    await openReviewsSection();
 
     const toggle = screen.getByRole("switch", {
       name: "Automatically send reviews",
@@ -2879,15 +2879,39 @@ describe("SessionInspector summary reviews", () => {
     );
   });
 
-  it("keeps the Reviews tab available when the session has no PRs", async () => {
+  it("hides Reviews when the session has no PR while keeping its durable preference in Summary", async () => {
     mockCommonGets();
     renderWithQuery(<SessionInspector session={session([])} />);
 
     await screen.findByRole("tab", { name: /Summary/ });
-    await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+    expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent?.trim())).toEqual([
+      "Summary",
+      "Browser",
+      "Files",
+    ]);
     expect(
       screen.getByRole("switch", { name: "Automatically send reviews" }),
     ).toBeInTheDocument();
     expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
+  });
+
+  it("falls back to Summary when a controlled Reviews selection has no PR", async () => {
+    const onViewChange = vi.fn();
+    renderWithQuery(
+      <SessionInspector
+        onViewChange={onViewChange}
+        session={session([])}
+        view="reviews"
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByRole("tab", { name: "Reviews" })).not.toBeInTheDocument();
+    expect(screen.getByText("Session controls")).toBeInTheDocument();
+    await waitFor(() => expect(onViewChange).toHaveBeenCalledWith("summary"));
   });
 });
