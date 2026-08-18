@@ -266,6 +266,36 @@ export function getSessionDotView(session: Pick<WorkspaceSession, "activity" | "
 	};
 }
 
+export type SessionStatusPillView = {
+	label: string;
+	tone: string;
+	breathe: boolean;
+};
+
+// The topbar status pill merges live agent activity with an authoritative SCM
+// state the same way the sidebar dot does (getSessionDotView). While the agent
+// is not active we surface the raw activity state; once active, an open/draft
+// PR or other SCM outcome takes precedence so an in-review session is never
+// shown as a breathing "Working". This keeps the topbar consistent with the
+// board's attention zones and the sidebar dot.
+export function getSessionStatusPillView(
+	session: Pick<WorkspaceSession, "activity" | "scmStatus" | "prs">,
+): SessionStatusPillView {
+	const activity = getAgentActivityView(session.activity);
+	if (activity.state !== "active") {
+		return { label: activity.label, tone: activity.tone, breathe: activity.breathe };
+	}
+
+	const contextStatus = session.scmStatus ?? fallbackSCMStatus(session.prs) ?? "working";
+	const zone = attentionZone(contextStatus);
+	const zoneView = attentionZoneViews[zone];
+	return {
+		label: zoneView.label,
+		tone: zoneView.dot,
+		breathe: zone === "working",
+	};
+}
+
 export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;
 
 export type SessionTimelinePillView = {

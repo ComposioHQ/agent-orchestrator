@@ -22,7 +22,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { useUiStore } from "../stores/ui-store";
 import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
-import { getAgentActivityView } from "../lib/session-presentation";
+import { getAgentActivityView, getSessionStatusPillView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
@@ -365,7 +365,7 @@ function ProjectTerminationFeedback({ projectId }: { projectId: string | undefin
 	);
 }
 function SessionStatusPill({ session }: { session: WorkspaceSession }) {
-	const { label, tone, breathe } = getAgentActivityView(session.activity);
+	const { label, tone, breathe } = getSessionStatusPillView(session);
 	return (
 		<StatusPill label={label} tone={tone} breathe={breathe} leading="none" className="px-3.5 py-2 text-sm" />
 	);

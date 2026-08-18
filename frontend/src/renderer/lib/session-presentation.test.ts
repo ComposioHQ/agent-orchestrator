@@ -4,6 +4,7 @@ import {
 	getAgentActivityView,
 	getAttentionZoneView,
 	getSessionDotView,
+	getSessionStatusPillView,
 	getSessionStatusView,
 	getSessionTimelinePillView,
 	isAgentActivityWorking,
@@ -197,6 +198,48 @@ describe("session presentation", () => {
 			dot: "var(--color-status-in-review)",
 			titleClassName: "text-status-in-review",
 			dotClassName: "bg-status-in-review",
+		});
+	});
+
+	describe("getSessionStatusPillView", () => {
+		it("surfaces raw activity while the agent is not active, ignoring SCM state", () => {
+			expect(
+				getSessionStatusPillView(
+					sessionWith({ activity: { state: "idle", lastActivityAt: "" }, scmStatus: "pr_open" }),
+				),
+			).toMatchObject({ label: "Idle", breathe: false });
+			expect(
+				getSessionStatusPillView(sessionWith({ activity: { state: "waiting_input", lastActivityAt: "" } })),
+			).toMatchObject({ label: "Input Needed", breathe: false });
+		});
+
+		it.each([["pr_open"], ["draft"], ["review_pending"]] as const)(
+			"shows %s as In review instead of a breathing Working",
+			(scmStatus) => {
+				const view = getSessionStatusPillView(
+					sessionWith({ activity: { state: "active", lastActivityAt: "" }, scmStatus }),
+				);
+				expect(view).toMatchObject({ label: "In review", breathe: false });
+			},
+		);
+
+		it("shows Ready to merge for a mergeable active session", () => {
+			const view = getSessionStatusPillView(
+				sessionWith({ activity: { state: "active", lastActivityAt: "" }, scmStatus: "mergeable" }),
+			);
+			expect(view).toMatchObject({ label: "Ready to merge", breathe: false });
+		});
+
+		it("keeps a breathing Working pill for an active session with no SCM state", () => {
+			const view = getSessionStatusPillView(sessionWith({ activity: { state: "active", lastActivityAt: "" } }));
+			expect(view).toMatchObject({ label: "Working", breathe: true });
+		});
+
+		it("derives In review from the compatibility fallback when an older daemon omits scmStatus", () => {
+			const view = getSessionStatusPillView(
+				sessionWith({ activity: { state: "active", lastActivityAt: "" }, prs: [openPr] }),
+			);
+			expect(view).toMatchObject({ label: "In review", breathe: false });
 		});
 	});
 
