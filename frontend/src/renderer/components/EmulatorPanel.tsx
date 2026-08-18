@@ -111,10 +111,10 @@ export function EmulatorPanel({ active, poppedOut, onTogglePopOut }: EmulatorPan
 			>
 				{emulatorState === "running" ? (
 					<>
-						<Button aria-label={t("emulator.home")} onClick={() => sendKey("Home")} size="icon-sm" type="button" variant="ghost">
+						<Button aria-label={t("emulator.home")} onClick={() => sendKey("GoHome")} size="icon-sm" type="button" variant="ghost">
 							<Home aria-hidden="true" className="size-icon-base" />
 						</Button>
-						<Button aria-label={t("emulator.back")} onClick={() => sendKey("Back")} size="icon-sm" type="button" variant="ghost">
+						<Button aria-label={t("emulator.back")} onClick={() => sendKey("GoBack")} size="icon-sm" type="button" variant="ghost">
 							<ChevronLeft aria-hidden="true" className="size-icon-base" />
 						</Button>
 						<Button

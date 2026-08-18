@@ -95,7 +95,11 @@ func (c *EmulatorClient) MouseEvent(ctx context.Context, x, y int32, buttonDown 
 	return nil
 }
 
-// PressKey sends a single key press (e.g. "Home", "Back").
+// PressKey sends a single key press. Ordinary keys use their W3C
+// KeyboardEvent.key value (e.g. "Enter", "a"); the emulator also recognizes
+// a handful of Android-specific phone keys that don't correspond to any
+// physical keyboard key: "GoHome" (Home button), "GoBack" (Back button),
+// "AppSwitch" (Overview/recent-apps), and "Power".
 func (c *EmulatorClient) PressKey(ctx context.Context, key string) error {
 	_, err := c.client.SendKey(ctx, &pb.KeyboardEvent{
 		EventType: pb.KeyboardEvent_keypress,

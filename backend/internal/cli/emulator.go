@@ -195,7 +195,7 @@ func newEmulatorCommand(ctx *commandContext) *cobra.Command {
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "press-key <key>",
-		Short: "Press a named key (e.g. Home, Back)",
+		Short: "Press a named key (e.g. GoHome, GoBack, AppSwitch, or a KeyboardEvent.key value like Enter)",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ctx.emulatorInput(cmd.Context(), androidInputActionDTO{Type: "key", Key: args[0]})

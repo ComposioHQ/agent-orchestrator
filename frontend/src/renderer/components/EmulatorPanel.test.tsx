@@ -133,7 +133,7 @@ describe("EmulatorPanel", () => {
 		expect(screen.getByRole("button", { name: "Recent apps" })).toBeInTheDocument();
 	});
 
-	it("sends a Home key action when the Home button is clicked", async () => {
+	it("sends the emulator's GoHome key action when the Home button is clicked", async () => {
 		hookState.sdk = { data: { state: "installed" }, isLoading: false };
 		hookState.emulator = { data: { state: "running", accelAvailable: true } };
 		hookState.frameUrl = "blob:fake-frame";
@@ -141,7 +141,18 @@ describe("EmulatorPanel", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Home" }));
 
-		expect(hookState.sendInputMutate).toHaveBeenCalledWith({ type: "key", key: "Home" });
+		expect(hookState.sendInputMutate).toHaveBeenCalledWith({ type: "key", key: "GoHome" });
+	});
+
+	it("sends the emulator's GoBack key action when the Back button is clicked", async () => {
+		hookState.sdk = { data: { state: "installed" }, isLoading: false };
+		hookState.emulator = { data: { state: "running", accelAvailable: true } };
+		hookState.frameUrl = "blob:fake-frame";
+		render(<EmulatorPanel active poppedOut={false} onTogglePopOut={noop} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Back" }));
+
+		expect(hookState.sendInputMutate).toHaveBeenCalledWith({ type: "key", key: "GoBack" });
 	});
 
 	it("shows a warning banner when hardware acceleration is unavailable", () => {

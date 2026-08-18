@@ -14,7 +14,9 @@ type InputAction struct {
 	// X2, Y2 are the swipe end point.
 	X2 int32 `json:"x2,omitempty"`
 	Y2 int32 `json:"y2,omitempty"`
-	// Key is a named key (e.g. "Home", "Back") for Type == "key".
+	// Key is a named key for Type == "key" -- either a W3C KeyboardEvent.key
+	// value or one of the emulator's Android-specific phone keys ("GoHome",
+	// "GoBack", "AppSwitch", "Power"). See EmulatorClient.PressKey.
 	Key string `json:"key,omitempty"`
 	// Text is arbitrary text for Type == "text", sent one character at a time.
 	Text string `json:"text,omitempty"`
@@ -74,7 +76,7 @@ func (p *InputProxy) swipe(ctx context.Context, x1, y1, x2, y2 int32) error {
 
 // typeText sends one key press per character. NOTE: this assumes the
 // emulator's SendKey accepts a single Unicode character as a "key" value for
-// ordinary text characters (distinct from named keys like "Home"/"Back") --
+// ordinary text characters (distinct from named keys like "GoHome"/"GoBack") --
 // verified empirically against a real booted emulator, not just asserted.
 func (p *InputProxy) typeText(ctx context.Context, text string) error {
 	for _, r := range text {
