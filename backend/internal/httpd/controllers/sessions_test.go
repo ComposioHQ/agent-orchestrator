@@ -62,6 +62,46 @@ type fakeSessionService struct {
 	autoInjectCIEnabled bool
 }
 
+type fakeInterfaceTransitionSessionService struct {
+	*fakeSessionService
+	transition             domain.SessionInterfaceTransition
+	acknowledgedSessionID  domain.SessionID
+	acknowledgedTransition string
+}
+
+func (f *fakeInterfaceTransitionSessionService) InterfaceTransitionStatus(
+	context.Context,
+	domain.SessionID,
+) (sessionsvc.InterfaceTransitionStatus, error) {
+	return sessionsvc.InterfaceTransitionStatus{Supported: true, Transition: &f.transition}, nil
+}
+
+func (f *fakeInterfaceTransitionSessionService) StartInterfaceTransition(
+	context.Context,
+	domain.SessionID,
+	domain.SessionMode,
+	domain.SessionInterfaceTransitionPolicy,
+) (domain.SessionInterfaceTransition, error) {
+	return f.transition, nil
+}
+
+func (f *fakeInterfaceTransitionSessionService) CancelInterfaceTransition(
+	context.Context,
+	domain.SessionID,
+) error {
+	return nil
+}
+
+func (f *fakeInterfaceTransitionSessionService) AcknowledgeInterfaceTransitionNotice(
+	_ context.Context,
+	sessionID domain.SessionID,
+	transitionID string,
+) (domain.SessionInterfaceTransition, error) {
+	f.acknowledgedSessionID = sessionID
+	f.acknowledgedTransition = transitionID
+	return f.transition, nil
+}
+
 type fakeManagedPreviewServer struct {
 	status         previewserver.Status
 	startErr       error
@@ -784,6 +824,41 @@ func TestSessionsRoutes_DefaultToStubsWithoutService(t *testing.T) {
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusNotImplemented, "NOT_IMPLEMENTED")
+}
+
+func TestSessionsAPI_AcknowledgeInterfaceTransitionNotice(t *testing.T) {
+	acknowledgedAt := time.Date(2026, 8, 13, 8, 0, 0, 0, time.UTC)
+	svc := &fakeInterfaceTransitionSessionService{
+		fakeSessionService: newFakeSessionService(),
+		transition: domain.SessionInterfaceTransition{
+			ID: "transition-1", SessionID: "ao-1",
+			SourceMode: domain.SessionModeChat, TargetMode: domain.SessionModeTUI,
+			Policy:    domain.SessionInterfaceTransitionDrain,
+			Phase:     domain.SessionInterfaceTransitionRecovery,
+			CreatedAt: acknowledgedAt.Add(-time.Hour), UpdatedAt: acknowledgedAt.Add(-time.Minute),
+			CompletedAt: acknowledgedAt.Add(-time.Minute), NoticeAcknowledgedAt: acknowledgedAt,
+		},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodPut,
+		"/api/v1/sessions/ao-1/interface-transition/transition-1/notice-acknowledgement", "")
+	if status != http.StatusOK {
+		t.Fatalf("acknowledge notice = %d, want 200; body=%s", status, body)
+	}
+	if svc.acknowledgedSessionID != "ao-1" || svc.acknowledgedTransition != "transition-1" {
+		t.Fatalf("acknowledgement target = %s/%s", svc.acknowledgedSessionID, svc.acknowledgedTransition)
+	}
+	var response controllers.InterfaceTransitionNoticeAckResponse
+	mustJSON(t, body, &response)
+	if !response.OK || response.Transition.NoticeAcknowledgedAt == nil ||
+		!response.Transition.NoticeAcknowledgedAt.Equal(acknowledgedAt) {
+		t.Fatalf("acknowledgement response = %+v", response)
+	}
 }
 
 func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {

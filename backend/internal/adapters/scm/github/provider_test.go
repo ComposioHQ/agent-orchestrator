@@ -1260,6 +1260,42 @@ func TestSCMObservationUsesRollupStateWhenContextsPaginated(t *testing.T) {
 	}
 }
 
+func TestSCMBatchQueryRequestsStablePullRequestID(t *testing.T) {
+	query, _ := buildSCMBatchQuery([]ports.SCMPRRef{{
+		Repo:   ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "octocat", Name: "hello"},
+		Number: 42,
+	}})
+	if !strings.Contains(query, "number id url") {
+		t.Fatalf("batch query does not request the stable pull request id:\n%s", query)
+	}
+}
+
+func TestSCMObservationCarriesStableIDAndRequestedURLAlias(t *testing.T) {
+	fx := basePRFixture()
+	var pr map[string]any
+	fx.prData(func(m map[string]any) {
+		pr = m
+		m["id"] = "PR_kwDOStable"
+		m["url"] = "https://github.com/new-owner/hello/pull/42"
+	})
+	ref := ports.SCMPRRef{
+		Repo:   ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old-owner", Name: "hello", Repo: "old-owner/hello"},
+		Number: 42,
+		URL:    "https://github.com/old-owner/hello/pull/42",
+	}
+
+	obs := scmObservationFromGraphQL(ref, pr)
+	if obs.PR.ProviderID != "PR_kwDOStable" {
+		t.Fatalf("ProviderID = %q, want PR_kwDOStable", obs.PR.ProviderID)
+	}
+	if obs.PR.URLAlias != ref.URL {
+		t.Fatalf("URLAlias = %q, want %s", obs.PR.URLAlias, ref.URL)
+	}
+	if obs.Repo != "new-owner/hello" {
+		t.Fatalf("Repo = %q, want canonical new-owner/hello", obs.Repo)
+	}
+}
+
 func TestSCMMergeabilityBlocksReviewRequiredAndDraft(t *testing.T) {
 	cases := []struct {
 		name        string

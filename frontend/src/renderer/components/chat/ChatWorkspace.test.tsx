@@ -20,6 +20,8 @@ const writeText = vi.fn(async (_text: string) => undefined);
 const menuAction = vi.fn(async (_action: string) => undefined);
 const previousTabListeners = new Set<() => void>();
 const nextTabListeners = new Set<() => void>();
+const closeShellTerminalListeners = new Set<() => void>();
+const closeShellTerminalShortcutStates: boolean[] = [];
 type TerminalPaneTestProps = {
 	fontSize?: number;
 	isFullscreen?: boolean;
@@ -41,6 +43,13 @@ vi.mock("../../lib/bridge", () => ({
 				nextTabListeners.add(listener);
 				return () => nextTabListeners.delete(listener);
 			},
+			onCloseShellTerminalShortcut: (listener: () => void) => {
+				closeShellTerminalListeners.add(listener);
+				return () => closeShellTerminalListeners.delete(listener);
+			},
+			setCloseShellTerminalShortcutEnabled: (enabled: boolean) => {
+				closeShellTerminalShortcutStates.push(enabled);
+			},
 		},
 		clipboard: { writeText: (text: string) => writeText(text) },
 		menu: { action: (action: string) => menuAction(action) },
@@ -57,6 +66,7 @@ vi.mock("../TerminalPane", () => ({
 vi.mock("../../lib/platform", () => ({
 	isMacPlatform: () => true,
 	isLinuxPlatform: () => false,
+	isWindowsPlatform: () => false,
 }));
 
 /** A refetch: identical content, all-new objects, which is what JSON parsing gives. */
@@ -92,6 +102,8 @@ beforeEach(() => {
 	menuAction.mockClear();
 	previousTabListeners.clear();
 	nextTabListeners.clear();
+	closeShellTerminalListeners.clear();
+	closeShellTerminalShortcutStates.length = 0;
 	terminalPaneState.props = undefined;
 	window.localStorage.clear();
 	setApiBaseUrl("http://127.0.0.1:3001");
@@ -914,5 +926,198 @@ describe("ChatWorkspace reviewer tabs", () => {
 		expect(previousTabListeners.size).toBe(1);
 		act(() => [...previousTabListeners][0]?.());
 		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+});
+
+describe("ChatWorkspace shell tabs", () => {
+	const shells = [
+		{
+			handleId: "shell-1",
+			sessionId: chatFixture.sessionId,
+			title: "chat worktree shell",
+			workingDir: "/p",
+			createdAt: "2026-08-04T00:00:00Z",
+		},
+		{
+			handleId: "shell-2",
+			sessionId: chatFixture.sessionId,
+			title: "second shell",
+			workingDir: "/p",
+			createdAt: "2026-08-04T00:10:00Z",
+		},
+	];
+	const shellTarget = (handleId: string) => {
+		const shell = shells.find((candidate) => candidate.handleId === handleId)!;
+		return {
+			kind: "shell" as const,
+			generation: shell.createdAt,
+			handleId,
+			sessionId: chatFixture.sessionId,
+			title: shell.title,
+		};
+	};
+
+	// Shells are tabs inside the chat surface (#4033): opening one must not cost
+	// the conversation — the conversation panel hides instead of unmounting,
+	// exactly like the reviewer pane.
+	it("renders a selected shell as the tab body and hides, not unmounts, the conversation", () => {
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				shellTarget={shellTarget("shell-1")}
+				onSelectChat={vi.fn()}
+			/>,
+		);
+		expect(screen.getByTestId("chat-shell-terminal")).toBeInTheDocument();
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("hidden");
+		expect(screen.getByTestId("chat-conversation-panel")).toHaveAttribute("inert");
+
+		expect(screen.getByRole("tab", { name: "chat worktree shell" })).toHaveAttribute(
+			"aria-selected",
+			"true",
+		);
+		expect(screen.getByRole("tab", { name: "second shell" })).toHaveAttribute(
+			"aria-selected",
+			"false",
+		);
+	});
+
+	it("passes the routed shell target straight to the terminal pane", () => {
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				shellTarget={shellTarget("shell-2")}
+			/>,
+		);
+		expect(terminalPaneState.props).toMatchObject({ terminalTarget: shellTarget("shell-2") });
+	});
+
+	it("cycles chat → reviewer → shells → chat on the desktop next-tab shortcut", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		const onSelectShellTerminal = vi.fn();
+		const onSelectChat = vi.fn();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			shellTerminals: shells,
+			onSelectShellTerminal,
+			onSelectChat,
+		};
+		const view = render(
+			<ChatWorkspace
+				{...common}
+				reviewerTerminal={{ handleId: "review-1", harness: "codex" }}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+			/>,
+		);
+
+		// From chat: the reviewer comes first.
+		act(() => [...nextTabListeners][0]?.());
+		expect(onOpenReviewerTerminal).toHaveBeenCalledOnce();
+
+		// From the reviewer: the first shell.
+		view.rerender(
+			<ChatWorkspace
+				{...common}
+				reviewerTerminal={{ handleId: "review-1", harness: "codex" }}
+				onOpenReviewerTerminal={onOpenReviewerTerminal}
+				reviewerTarget={{
+					kind: "reviewer",
+					handleId: "review-1",
+					harness: "codex",
+					sessionId: chatFixture.sessionId,
+				}}
+			/>,
+		);
+		act(() => [...nextTabListeners][0]?.());
+		expect(onSelectShellTerminal).toHaveBeenCalledWith("shell-1");
+
+		// From the last shell: wraps to chat.
+		view.rerender(<ChatWorkspace {...common} shellTarget={shellTarget("shell-2")} />);
+		act(() => [...nextTabListeners][0]?.());
+		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+
+	it("cycles from the focused worker tab on Ctrl+Tab", () => {
+		const onSelectShellTerminal = vi.fn();
+		render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				onSelectShellTerminal={onSelectShellTerminal}
+				onSelectChat={vi.fn()}
+			/>,
+		);
+
+		const workerTab = screen.getByRole("tab", { name: "ao-14" });
+		workerTab.focus();
+		fireEvent.keyDown(workerTab, { key: "Tab", ctrlKey: true });
+
+		expect(onSelectShellTerminal).toHaveBeenCalledWith("shell-1");
+	});
+
+	it("cycles shell → reviewer → chat on the desktop previous-tab shortcut", () => {
+		const onOpenReviewerTerminal = vi.fn();
+		const onSelectShellTerminal = vi.fn();
+		const onSelectChat = vi.fn();
+		const common = {
+			snapshot: idleSnapshot(),
+			session: chatSession,
+			reviewerTerminal: { handleId: "review-1", harness: "codex" },
+			onOpenReviewerTerminal,
+			shellTerminals: shells,
+			onSelectShellTerminal,
+			onSelectChat,
+		};
+		const view = render(<ChatWorkspace {...common} shellTarget={shellTarget("shell-1")} />);
+
+		act(() => [...previousTabListeners][0]?.());
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-1", harness: "codex" });
+
+		view.rerender(
+			<ChatWorkspace
+				{...common}
+				reviewerTarget={{
+					kind: "reviewer",
+					handleId: "review-1",
+					harness: "codex",
+					sessionId: chatFixture.sessionId,
+				}}
+			/>,
+		);
+		act(() => [...previousTabListeners][0]?.());
+		expect(onSelectChat).toHaveBeenCalledOnce();
+	});
+
+	it("enables the close-shell shortcut and closes the active shell tab", () => {
+		const onCloseShellTerminal = vi.fn();
+		const view = render(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				shellTarget={shellTarget("shell-2")}
+				onCloseShellTerminal={onCloseShellTerminal}
+			/>,
+		);
+
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(true);
+		act(() => [...closeShellTerminalListeners][0]?.());
+		expect(onCloseShellTerminal).toHaveBeenCalledWith("shell-2");
+
+		view.rerender(
+			<ChatWorkspace
+				snapshot={idleSnapshot()}
+				session={chatSession}
+				shellTerminals={shells}
+				onCloseShellTerminal={onCloseShellTerminal}
+			/>,
+		);
+		expect(closeShellTerminalShortcutStates.at(-1)).toBe(false);
 	});
 });
