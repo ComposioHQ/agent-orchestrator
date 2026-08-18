@@ -130,6 +130,25 @@ func hookAgentSessionID(payload []byte) string {
 	return id
 }
 
+// hookLaunchID extracts the runtime launch id a plugin embeds in its payload.
+// It is a fallback for AO_RUNTIME_LAUNCH_ID when child-process env inheritance
+// is trimmed by the agent runtime.
+func hookLaunchID(payload []byte) string {
+	var p struct {
+		LaunchID      string `json:"launch_id"`
+		LaunchIDCamel string `json:"launchId"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	id := strings.TrimSpace(p.LaunchID)
+	if id == "" {
+		id = strings.TrimSpace(p.LaunchIDCamel)
+	}
+	if len(id) > maxActivityMetaLen {
+		return ""
+	}
+	return id
+}
+
 // hookUsageMetadata extracts provider-native usage metadata. It deliberately
 // decodes separately from conversation facts because hook producers may emit
 // a malformed field in one projection while the other remains useful.
@@ -292,6 +311,11 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		return nil
 	}
 
+	launchID := validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID"))
+	if launchID == "" {
+		launchID = validLaunchID(hookLaunchID(payload))
+	}
+
 	toolName, toolUseID := activityMeta(payload)
 	conversation := hookConversationSnapshot{}
 	switch domain.AgentHarness(agent) {
@@ -307,7 +331,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		LatestUserPrompt:      conversation.LatestUserPrompt,
 		LatestAssistantUpdate: conversation.LatestAssistantUpdate,
 		TranscriptPath:        conversation.TranscriptPath,
-		LaunchID:              validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+		LaunchID:              launchID,
 		Usage:                 usage,
 	}
 	if hasActivity {
@@ -334,11 +358,15 @@ func (c *commandContext) runReviewHook(ctx context.Context, agent, event, review
 	if !hasActivity && agentSessionID == "" {
 		return nil
 	}
+	launchID := validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID"))
+	if launchID == "" {
+		launchID = validLaunchID(hookLaunchID(payload))
+	}
 	path := "reviews/" + url.PathEscape(reviewSessionID) + "/activity"
 	req := setReviewActivityAPIRequest{
 		Event:          event,
 		AgentSessionID: agentSessionID,
-		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+		LaunchID:       launchID,
 	}
 	if hasActivity {
 		req.State = string(state)

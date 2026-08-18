@@ -276,6 +276,31 @@ func TestHooks_ThreadsRuntimeLaunchID(t *testing.T) {
 	}
 }
 
+func TestHooks_PayloadLaunchIDFallbackWhenEnvUnset(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"launch_id":"launch-from-payload"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "opencode", "permission-blocked")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LaunchID != "launch-from-payload" {
+		t.Fatalf("launch id = %q, want launch-from-payload", req.LaunchID)
+	}
+	if got := capturedState(t, capture); got != "blocked" {
+		t.Errorf("state = %q, want blocked", got)
+	}
+}
+
 func TestHooks_StopReportsIdle(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)

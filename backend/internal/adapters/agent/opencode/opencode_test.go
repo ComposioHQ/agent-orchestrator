@@ -577,6 +577,14 @@ func TestGetAgentHooksInstallsPlugin(t *testing.T) {
 			t.Fatalf("plugin subscribes to unsupported opencode event %q:\n%s", unsupported, body)
 		}
 	}
+	// The plugin must carry the runtime launch id in hook payloads so the CLI
+	// can fence signals even when child-process env inheritance is trimmed.
+	if !strings.Contains(body, "launch_id:") {
+		t.Fatalf("installed plugin missing launch_id in hook payload:\n%s", body)
+	}
+	if !strings.Contains(body, "AO_RUNTIME_LAUNCH_ID") {
+		t.Fatalf("installed plugin missing AO_RUNTIME_LAUNCH_ID reference:\n%s", body)
+	}
 	// Guard against regressing back to subscribing to the deprecated/unreliable
 	// session.idle event (the quoted event string is how a `case` would name it;
 	// the explanatory comment mentions it unquoted, which is fine).
