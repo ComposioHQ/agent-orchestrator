@@ -35,6 +35,7 @@ type fakeStore struct {
 	pr                  map[domain.SessionID]domain.PRFacts
 	prs                 map[domain.SessionID][]domain.PullRequest
 	projects            map[string]domain.ProjectRecord
+	workspaceRepos      map[string][]domain.WorkspaceRepoRecord
 	worktrees           map[domain.SessionID][]domain.SessionWorktreeRecord
 	checks              map[string][]domain.PullRequestCheck
 	reviews             map[string][]domain.PullRequestReview
@@ -50,6 +51,7 @@ func newFakeStore() *fakeStore {
 		pr:             map[domain.SessionID]domain.PRFacts{},
 		prs:            map[domain.SessionID][]domain.PullRequest{},
 		projects:       map[string]domain.ProjectRecord{},
+		workspaceRepos: map[string][]domain.WorkspaceRepoRecord{},
 		worktrees:      map[domain.SessionID][]domain.SessionWorktreeRecord{},
 		checks:         map[string][]domain.PullRequestCheck{},
 		reviews:        map[string][]domain.PullRequestReview{},
@@ -292,6 +294,10 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 
 func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
 	return append([]domain.SessionWorktreeRecord(nil), f.worktrees[id]...), nil
+}
+
+func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
+	return append([]domain.WorkspaceRepoRecord(nil), f.workspaceRepos[projectID]...), nil
 }
 
 func TestSessionListAppliesActivityBeforePRFacts(t *testing.T) {
@@ -1022,6 +1028,128 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	}
 	if detail.CompareBaseRef != "" {
 		t.Fatalf("child detail compare ref = %q, want empty when only the recorded SHA is authoritative", detail.CompareBaseRef)
+	}
+}
+
+func TestWorkspaceFilesGroupsChildReposWithAndWithoutPR(t *testing.T) {
+	root := newWorkspaceRepo(t)
+	rootBase := strings.TrimSpace(runGit(t, root, "rev-parse", "HEAD"))
+
+	initChild := func(name string) (dir, base string) {
+		dir = filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, dir, "init")
+		runGit(t, dir, "config", "user.email", "ao@example.com")
+		runGit(t, dir, "config", "user.name", "AO Tests")
+		writeWorkspaceFile(t, dir, "service.go", "package "+name+"\n")
+		runGit(t, dir, "add", ".")
+		runGit(t, dir, "commit", "-m", "initial "+name)
+		base = strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
+		runGit(t, dir, "switch", "-c", "ao/work")
+		writeWorkspaceFile(t, dir, "service.go", "package "+name+"\n\nfunc Added() {}\n")
+		runGit(t, dir, "add", "service.go")
+		runGit(t, dir, "commit", "-m", name+" change")
+		return dir, base
+	}
+	apiDir, apiBase := initChild("api")
+	webDir, webBase := initChild("web")
+
+	st := newFakeStore()
+	st.projects["ws"] = domain.ProjectRecord{ID: "ws", Kind: domain.ProjectKindWorkspace, RepoOriginURL: "git@github.com:acme/root.git"}
+	st.workspaceRepos["ws"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "ws", Name: "api", RepoOriginURL: "git@github.com:acme/api.git"},
+		{ProjectID: "ws", Name: "web", RepoOriginURL: "git@github.com:acme/web.git"},
+	}
+	st.sessions["ws-1"] = domain.SessionRecord{
+		ID:        "ws-1",
+		ProjectID: "ws",
+		Metadata:  domain.SessionMetadata{WorkspacePath: root},
+	}
+	st.worktrees["ws-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "ws-1", RepoName: domain.RootWorkspaceRepoName, WorktreePath: root, BaseSHA: rootBase},
+		{SessionID: "ws-1", RepoName: "api", WorktreePath: apiDir, BaseSHA: apiBase},
+		{SessionID: "ws-1", RepoName: "web", WorktreePath: webDir, BaseSHA: webBase},
+	}
+	st.prs["ws-1"] = []domain.PullRequest{
+		{URL: "https://github.com/acme/api/pull/42", Repo: "acme/api", Number: 42},
+	}
+
+	svc := &Service{store: st, scm: fakeSCM{}}
+	files, err := svc.ListWorkspaceFiles(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groups := map[string]WorkspaceFileGroupSummary{}
+	for _, g := range files.Groups {
+		groups[g.RepoName] = g
+	}
+	if len(groups) != 3 {
+		t.Fatalf("groups = %#v, want 3 entries (root, api, web)", files.Groups)
+	}
+	if got := groups[""].PRUrl; got != "" {
+		t.Fatalf("root group PR = %q, want empty (no PR)", got)
+	}
+	if got := groups["api"].PRUrl; got != "https://github.com/acme/api/pull/42" {
+		t.Fatalf("api group PR = %q, want matched PR url", got)
+	}
+	if got := groups["web"].PRUrl; got != "" {
+		t.Fatalf("web group PR = %q, want empty (no PR yet)", got)
+	}
+
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got := byPath["api/service.go"].RepoName; got != "api" {
+		t.Fatalf("api file repoName = %q, want api", got)
+	}
+	if got := byPath["web/service.go"].RepoName; got != "web" {
+		t.Fatalf("web file repoName = %q, want web", got)
+	}
+	if got := byPath["README.md"].RepoName; got != "" {
+		t.Fatalf("root file repoName = %q, want empty", got)
+	}
+}
+
+func TestListWorkspaceFilesSingleRepoLeavesGroupsNil(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: repo},
+	}
+
+	got, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Groups != nil {
+		t.Fatalf("groups = %#v, want nil for a single-repo session", got.Groups)
+	}
+}
+
+func TestWorkspaceGroupPRUrlDegradesWithoutSCM(t *testing.T) {
+	svc := &Service{}
+	prs := []domain.PullRequest{{URL: "https://github.com/acme/api/pull/1", Repo: "acme/api"}}
+	if got := svc.workspaceGroupPRUrl("git@github.com:acme/api.git", prs); got != "" {
+		t.Fatalf("PR url = %q, want empty when no SCM provider is configured", got)
+	}
+}
+
+func TestWorkspaceGroupPRUrlPrefersOpenThenMostRecent(t *testing.T) {
+	svc := &Service{scm: fakeSCM{}}
+	older := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	prs := []domain.PullRequest{
+		{URL: "merged", Repo: "acme/api", Merged: true, UpdatedAt: newer},
+		{URL: "open-old", Repo: "acme/api", UpdatedAt: older},
+		{URL: "open-new", Repo: "acme/api", UpdatedAt: newer},
+	}
+	if got := svc.workspaceGroupPRUrl("git@github.com:acme/api.git", prs); got != "open-new" {
+		t.Fatalf("PR url = %q, want open-new (open beats merged, most recent wins among open)", got)
 	}
 }
 

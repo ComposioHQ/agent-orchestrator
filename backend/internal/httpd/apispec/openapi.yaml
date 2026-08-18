@@ -6683,6 +6683,10 @@ components:
           items:
             $ref: '#/components/schemas/WorkspaceFileSummary'
           type: array
+        groups:
+          items:
+            $ref: '#/components/schemas/WorkspaceFileGroupSummary'
+          type: array
         sessionId:
           type: string
         truncated:
@@ -8584,6 +8588,15 @@ components:
       - outputTokens
       - reasoningTokens
       type: object
+    WorkspaceFileGroupSummary:
+      properties:
+        prUrl:
+          type: string
+        repoName:
+          type: string
+      required:
+      - repoName
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -8653,6 +8666,8 @@ components:
         path:
           type: string
         previousPath:
+          type: string
+        repoName:
           type: string
         size:
           format: int64

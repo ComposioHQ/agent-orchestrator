@@ -2064,6 +2064,11 @@ func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
 		Files: []sessionsvc.WorkspaceFileSummary{
 			{Path: "README.md", Status: sessionsvc.WorkspaceFileModified, Additions: 2, Deletions: 1, Size: 48},
 			{Path: "notes.txt", PreviousPath: "old-notes.txt", Status: sessionsvc.WorkspaceFileRenamed, Additions: 1, Size: 11},
+			{Path: "api/service.go", Status: sessionsvc.WorkspaceFileAdded, Additions: 5, Size: 60, RepoName: "api"},
+		},
+		Groups: []sessionsvc.WorkspaceFileGroupSummary{
+			{RepoName: ""},
+			{RepoName: "api", PRUrl: "https://github.com/acme/api/pull/42"},
 		},
 	}
 	srv := newSessionTestServer(t, svc)
@@ -2085,10 +2090,15 @@ func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
 			Additions    int    `json:"additions"`
 			Deletions    int    `json:"deletions"`
 			Size         int64  `json:"size"`
+			RepoName     string `json:"repoName"`
 		} `json:"files"`
+		Groups []struct {
+			RepoName string `json:"repoName"`
+			PRUrl    string `json:"prUrl"`
+		} `json:"groups"`
 	}
 	mustJSON(t, body, &got)
-	if got.SessionID != "ao-1" || len(got.Files) != 2 {
+	if got.SessionID != "ao-1" || len(got.Files) != 3 {
 		t.Fatalf("response = %#v", got)
 	}
 	if got.CompareMode != "base" || got.CompareBaseSHA != "base-sha" || got.CompareBaseRef != "main" {
@@ -2099,6 +2109,15 @@ func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
 	}
 	if got.Files[1].Path != "notes.txt" || got.Files[1].PreviousPath != "old-notes.txt" || got.Files[1].Status != "renamed" {
 		t.Fatalf("second file = %#v", got.Files[1])
+	}
+	if got.Files[2].Path != "api/service.go" || got.Files[2].RepoName != "api" {
+		t.Fatalf("third file = %#v", got.Files[2])
+	}
+	if len(got.Groups) != 2 || got.Groups[0].RepoName != "" || got.Groups[0].PRUrl != "" {
+		t.Fatalf("root group = %#v", got.Groups)
+	}
+	if got.Groups[1].RepoName != "api" || got.Groups[1].PRUrl != "https://github.com/acme/api/pull/42" {
+		t.Fatalf("api group = %#v", got.Groups[1])
 	}
 }
 

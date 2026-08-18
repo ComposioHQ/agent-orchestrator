@@ -58,6 +58,10 @@ type WorkspaceFiles struct {
 	CompareMode    WorkspaceCompareMode
 	Files          []WorkspaceFileSummary
 	Truncated      bool
+	// Groups is one entry per repo (root plus each child) contributing files
+	// to a workspace-kind session, so the file browser can section the flat
+	// Files list by repo/PR. Nil for single_repo and scratch sessions.
+	Groups []WorkspaceFileGroupSummary
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
@@ -69,6 +73,20 @@ type WorkspaceFileSummary struct {
 	Deletions    int
 	Size         int64
 	Binary       bool
+	// RepoName is the owning child repo's registered name for workspace-kind
+	// sessions ("" for the root repo's own files), matching a WorkspaceFiles
+	// Groups entry. Empty for single_repo and scratch sessions.
+	RepoName string
+}
+
+// WorkspaceFileGroupSummary describes one repo (root or child) contributing
+// files to a workspace-kind session's file browser, and the PR AO currently
+// tracks for it, if any.
+type WorkspaceFileGroupSummary struct {
+	// RepoName is the child repo's registered name, or "" for the root repo.
+	RepoName string
+	// PRUrl is the tracked PR's URL for this repo, or "" when none is open yet.
+	PRUrl string
 }
 
 // WorkspaceFileDetail is the selected file's current content and diff.
@@ -477,9 +495,22 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 	prefixes := workspaceProjectPrefixes(rec.Metadata.WorkspacePath, rows)
 	childPrefixes := nonEmptyWorkspacePrefixes(prefixes)
 	defaultBranch := defaultBranchForProject(project, true)
+	childRepos, err := s.store.ListWorkspaceRepos(ctx, project.ID)
+	if err != nil {
+		return WorkspaceFiles{}, fmt.Errorf("list workspace repos for %s: %w", project.ID, err)
+	}
+	childReposByName := make(map[string]domain.WorkspaceRepoRecord, len(childRepos))
+	for _, repo := range childRepos {
+		childReposByName[repo.Name] = repo
+	}
+	prs, err := s.workspaceComparePRs(ctx, rec.ID)
+	if err != nil {
+		return WorkspaceFiles{}, err
+	}
 	var files []WorkspaceFileSummary
 	truncated := false
 	compares := make([]workspaceCompareTarget, 0, len(rows))
+	groups := make([]WorkspaceFileGroupSummary, 0, len(rows))
 	for _, row := range rows {
 		if strings.TrimSpace(row.WorktreePath) == "" {
 			continue
@@ -505,6 +536,18 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		if err != nil {
 			return WorkspaceFiles{}, err
 		}
+		repoName := row.RepoName
+		if repoName == domain.RootWorkspaceRepoName {
+			repoName = ""
+		}
+		originURL := project.RepoOriginURL
+		if repoName != "" {
+			originURL = childReposByName[repoName].RepoOriginURL
+		}
+		for i := range repoFiles {
+			repoFiles[i].RepoName = repoName
+		}
+		groups = append(groups, WorkspaceFileGroupSummary{RepoName: repoName, PRUrl: s.workspaceGroupPRUrl(originURL, prs)})
 		compares = append(compares, compare)
 		files, truncated = appendWorkspaceFilesWithCap(files, repoFiles, truncated)
 		truncated = truncated || repoTruncated
@@ -518,7 +561,46 @@ func (s *Service) listWorkspaceProjectFiles(ctx context.Context, rec domain.Sess
 		CompareMode:    compare.Mode,
 		Files:          files,
 		Truncated:      truncated,
+		Groups:         groups,
 	}, nil
+}
+
+// workspaceGroupPRUrl resolves the tracked PR (if any) for a repo's origin
+// URL, so the file browser can label a workspace-kind session's per-repo
+// groups with the right PR. Returns "" when no SCM provider is configured,
+// the origin URL doesn't parse, or no PR in prs targets that repo. When a
+// repo has more than one tracked PR (a stack), prefers an open one, then the
+// most recently updated.
+func (s *Service) workspaceGroupPRUrl(originURL string, prs []domain.PullRequest) string {
+	if s.scm == nil || strings.TrimSpace(originURL) == "" {
+		return ""
+	}
+	repo, ok := s.scm.ParseRepository(originURL)
+	if !ok || repo.Repo == "" {
+		return ""
+	}
+	var best domain.PullRequest
+	found := false
+	for _, pr := range prs {
+		if pr.Repo == "" || !strings.EqualFold(pr.Repo, repo.Repo) {
+			continue
+		}
+		if !found {
+			best, found = pr, true
+			continue
+		}
+		bestOpen := !best.Merged && !best.Closed
+		prOpen := !pr.Merged && !pr.Closed
+		if prOpen && !bestOpen {
+			best = pr
+		} else if prOpen == bestOpen && pr.UpdatedAt.After(best.UpdatedAt) {
+			best = pr
+		}
+	}
+	if !found {
+		return ""
+	}
+	return best.URL
 }
 
 func (s *Service) getWorkspaceProjectFile(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, rel string) (WorkspaceFileDetail, error) {

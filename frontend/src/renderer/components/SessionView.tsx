@@ -903,7 +903,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							browserPoppedOut={browserPoppedOut}
 							filesView={
 								session ? (
-									<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
+									<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} prs={session.prs} sessionId={session.id} />
 								) : null
 							}
 							isInspectorVisible={inspectorPanelVisible}
@@ -954,6 +954,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							<SessionFilesView
 								isMaximized
 								onToggleMaximized={handleToggleFilesPopOut}
+								prs={session.prs}
 								sessionId={session.id}
 							/>
 						</div>,

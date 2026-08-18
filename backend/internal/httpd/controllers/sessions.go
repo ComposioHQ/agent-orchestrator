@@ -1804,7 +1804,15 @@ func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesR
 			Deletions:    file.Deletions,
 			Size:         file.Size,
 			Binary:       file.Binary,
+			RepoName:     file.RepoName,
 		})
+	}
+	var groups []WorkspaceFileGroupSummary
+	if files.Groups != nil {
+		groups = make([]WorkspaceFileGroupSummary, 0, len(files.Groups))
+		for _, group := range files.Groups {
+			groups = append(groups, WorkspaceFileGroupSummary{RepoName: group.RepoName, PRUrl: group.PRUrl})
+		}
 	}
 	return ListWorkspaceFilesResponse{
 		SessionID:      files.SessionID,
@@ -1813,6 +1821,7 @@ func workspaceFilesResponse(files sessionsvc.WorkspaceFiles) ListWorkspaceFilesR
 		CompareMode:    files.CompareMode,
 		Files:          out,
 		Truncated:      files.Truncated,
+		Groups:         groups,
 	}
 }
 

@@ -291,6 +291,10 @@ type ListWorkspaceFilesResponse struct {
 	CompareMode    sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 	Files          []WorkspaceFileSummary          `json:"files"`
 	Truncated      bool                            `json:"truncated"`
+	// Groups sections Files by repo for workspace-kind (multi-repo) sessions,
+	// one entry per repo (root plus each child) with the PR AO currently
+	// tracks for it, if any. Omitted for single_repo and scratch sessions.
+	Groups []WorkspaceFileGroupSummary `json:"groups,omitempty"`
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
@@ -302,6 +306,20 @@ type WorkspaceFileSummary struct {
 	Deletions    int                            `json:"deletions"`
 	Size         int64                          `json:"size"`
 	Binary       bool                           `json:"binary"`
+	// RepoName is the owning child repo's registered name for workspace-kind
+	// sessions ("" for the root repo's own files), matching a Groups entry.
+	// Omitted for single_repo and scratch sessions.
+	RepoName string `json:"repoName,omitempty"`
+}
+
+// WorkspaceFileGroupSummary describes one repo (root or child) contributing
+// files to a workspace-kind session's file browser, and the PR AO currently
+// tracks for it, if any.
+type WorkspaceFileGroupSummary struct {
+	// RepoName is the child repo's registered name, or "" for the root repo.
+	RepoName string `json:"repoName"`
+	// PRUrl is the tracked PR's URL for this repo, or "" when none is open yet.
+	PRUrl string `json:"prUrl,omitempty"`
 }
 
 // WorkspaceFileResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/file.

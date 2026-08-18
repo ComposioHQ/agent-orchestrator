@@ -8,6 +8,7 @@ export type WorkspaceCompareMode = "base" | "head_fallback";
 export type WorkspaceFileSummary = components["schemas"]["WorkspaceFileSummary"] & {
 	previousPath?: string;
 };
+export type WorkspaceFileGroup = components["schemas"]["WorkspaceFileGroupSummary"];
 export type WorkspaceFilesResponse = components["schemas"]["ListWorkspaceFilesResponse"] & {
 	compareMode?: WorkspaceCompareMode;
 };
