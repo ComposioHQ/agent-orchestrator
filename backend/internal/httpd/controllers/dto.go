@@ -34,17 +34,24 @@ type FetchRuntimeResponse struct {
 
 // SimulatorStatusResponse reports the managed simulator state.
 type SimulatorStatusResponse struct {
-	Available bool   `json:"available"`
-	DeviceID  string `json:"deviceId,omitempty"`
-	Name      string `json:"name,omitempty"`
-	State     string `json:"state"`
-	Error     string `json:"error,omitempty"`
+	Available    bool   `json:"available"`
+	DeviceID     string `json:"deviceId,omitempty"`
+	Name         string `json:"name,omitempty"`
+	State        string `json:"state"`
+	Error        string `json:"error,omitempty"`
+	ScreenWidth  int    `json:"screenWidth,omitempty"`
+	ScreenHeight int    `json:"screenHeight,omitempty"`
 }
 
 // SimulatorScreenshotResponse contains an encoded simulator screenshot.
+// Width/Height are the framebuffer pixel dimensions — the coordinate space the
+// input endpoints expect — so the panel can map pointer events exactly without
+// guessing at Retina scale.
 type SimulatorScreenshotResponse struct {
 	Data     string `json:"data"`
 	MimeType string `json:"mimeType"`
+	Width    int    `json:"width,omitempty"`
+	Height   int    `json:"height,omitempty"`
 }
 
 // SimulatorInputRequest describes input sent to the simulator.

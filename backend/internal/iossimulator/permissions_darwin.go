@@ -34,6 +34,14 @@ static int ao_key(int code) {
     if (!down || !up) { if (down) CFRelease(down); if (up) CFRelease(up); return 0; }
     CGEventPost(kCGHIDEventTap, down); CGEventPost(kCGHIDEventTap, up); CFRelease(down); CFRelease(up); return 1;
 }
+static int ao_key_with_flags(int64_t flags, int code) {
+    CGEventRef down = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)code, true);
+    CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)code, false);
+    if (!down || !up) { if (down) CFRelease(down); if (up) CFRelease(up); return 0; }
+    CGEventSetFlags(down, flags); CGEventSetFlags(up, flags);
+    CGEventPost(kCGHIDEventTap, down); usleep(12000); CGEventPost(kCGHIDEventTap, up);
+    CFRelease(down); CFRelease(up); return 1;
+}
 static int ao_text(const char *value, int length) {
     CGEventRef event = CGEventCreateKeyboardEvent(NULL, 0, true);
     if (!event) return 0;
@@ -46,6 +54,8 @@ import "C" //nolint:gocritic // cgo requires the C pseudo-package and unsafe imp
 
 import (
 	"fmt"
+	"time"
+
 	//nolint:gocritic // cgo requires unsafe for passing text buffers.
 	"unsafe"
 )
@@ -88,4 +98,45 @@ func text(value string) error {
 		return fmt.Errorf("unable to create text event")
 	}
 	return nil
+}
+
+// CG event flag masks (CoreGraphics) and macOS virtual key codes used by the
+// Simulator device-shortcut actions. Simulator maps Cmd+Shift+H to Home and
+// Cmd+Left/Right to rotate.
+const (
+	commandFlag = 1 << 20 // kCGEventFlagMaskCommand
+	shiftFlag   = 1 << 17 // kCGEventFlagMaskShift
+
+	keyH          = 4
+	keyLeftArrow  = 123
+	keyRightArrow = 124
+)
+
+// postSimulatorShortcut brings Simulator.app to the front (its device
+// shortcuts are delivered to the active application) and posts the shortcut.
+// The activation is momentary: capture never depends on the window being
+// visible, only these button shortcuts need Simulator active.
+func postSimulatorShortcut(flags int64, code int) error {
+	if err := focusSimulator(); err != nil {
+		return err
+	}
+	// Simulator needs a moment to become the active application; without the
+	// pause the shortcut lands on whoever was frontmost before we activated it.
+	time.Sleep(150 * time.Millisecond)
+	if C.ao_key_with_flags(C.int64_t(flags), C.int(code)) == 0 {
+		return fmt.Errorf("unable to create keyboard event")
+	}
+	return nil
+}
+
+func home() error {
+	return postSimulatorShortcut(commandFlag|shiftFlag, keyH)
+}
+
+func rotateLeft() error {
+	return postSimulatorShortcut(commandFlag, keyLeftArrow)
+}
+
+func rotateRight() error {
+	return postSimulatorShortcut(commandFlag, keyRightArrow)
 }

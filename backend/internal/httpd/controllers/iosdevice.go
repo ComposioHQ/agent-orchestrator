@@ -89,7 +89,8 @@ func (c *IOSDeviceController) Screenshot(w http.ResponseWriter, r *http.Request)
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "IOS_SIMULATOR_SCREENSHOT", err.Error(), nil)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png"})
+	width, height := c.Simulator.Frames().Size()
+	envelope.WriteJSON(w, http.StatusOK, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png", Width: width, Height: height})
 }
 
 // Permissions reports macOS permissions relevant to simulator control.
@@ -117,7 +118,12 @@ func (c *IOSDeviceController) Input(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, SimulatorInputResponse{Accepted: true})
 }
 
-// Stream sends periodic simulator screenshots over WebSocket.
+// Stream streams live simulator frames over WebSocket. The backend runs one
+// shared ScreenCaptureKit process (see iossimulator.FrameSource); this handler
+// only fans frames out to the connected client. It is registered outside the
+// REST timeout group so the socket can stay open indefinitely. Frames carry
+// their framebuffer pixel size; error frames keep the panel's connection state
+// distinguishable from a dead socket while the capture helper restarts.
 func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 	if c.Simulator == nil {
 		http.Error(w, "iOS Simulator is not wired", http.StatusNotImplemented)
@@ -128,24 +134,34 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "stream ended") }()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+
+	frames, unsubscribe := c.Simulator.Frames().Subscribe()
+	defer unsubscribe()
+
+	stall := time.NewTicker(2 * time.Second)
+	defer stall.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-ticker.C:
-			data, captureErr := c.Simulator.NativeScreenshot()
-			if captureErr != nil {
-				data, captureErr = c.Simulator.Screenshot()
-			}
-			if captureErr != nil {
-				_ = wsjson.Write(context.Background(), conn, map[string]string{"error": captureErr.Error()})
-				continue
-			}
-			if err := wsjson.Write(context.Background(), conn, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(data), MimeType: "image/png"}); err != nil {
+		case frame, ok := <-frames:
+			if !ok {
+				_ = wsjson.Write(context.Background(), conn, map[string]string{"error": "capture stopped"})
 				return
 			}
+			if err := wsjson.Write(context.Background(), conn, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(frame.Data), MimeType: "image/png", Width: frame.Width, Height: frame.Height}); err != nil {
+				return
+			}
+		case <-stall.C:
+			// No frame for a while: the helper is restarting, the device is
+			// off, or the window is gone. Keep the socket alive and surface
+			// the reason so the panel can show a disconnected state instead of
+			// a frozen frame.
+			reason := "capture stalled"
+			if lastErr := c.Simulator.Frames().LastError(); lastErr != nil {
+				reason = lastErr.Error()
+			}
+			_ = wsjson.Write(context.Background(), conn, map[string]string{"error": reason})
 		}
 	}
 }
@@ -222,7 +238,7 @@ func (c *IOSDeviceController) BuildApp(w http.ResponseWriter, r *http.Request) {
 }
 
 func simulatorStatusResponse(status iossimulator.Status) SimulatorStatusResponse {
-	return SimulatorStatusResponse{Available: status.Available, DeviceID: status.DeviceID, Name: status.Name, State: status.State, Error: status.Error}
+	return SimulatorStatusResponse{Available: status.Available, DeviceID: status.DeviceID, Name: status.Name, State: status.State, Error: status.Error, ScreenWidth: status.ScreenWidth, ScreenHeight: status.ScreenHeight}
 }
 
 func iosStatusResponse(status iossdk.ToolchainStatus) StatusResponse {
@@ -235,7 +251,9 @@ func iosStatusResponse(status iossdk.ToolchainStatus) StatusResponse {
 	return res
 }
 
-// Register mounts the iOS Simulator routes on a Chi router.
+// Register mounts the iOS Simulator routes on a Chi router. Long-lived
+// surfaces such as the frame stream stay out of this REST group (see
+// RegisterStream) so the REST timeout middleware cannot kill them.
 func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Get("/ios-device/toolchain/status", c.Status)
 	r.Post("/ios-device/toolchain/recheck", c.Recheck)
@@ -246,9 +264,15 @@ func (c *IOSDeviceController) Register(r chi.Router) {
 	r.Get("/ios-device/screenshot", c.Screenshot)
 	r.Get("/ios-device/permissions", c.Permissions)
 	r.Post("/ios-device/input", c.Input)
-	r.Get("/ios-device/stream", c.Stream)
 	r.Post("/ios-device/app/install", c.InstallApp)
 	r.Post("/ios-device/app/launch", c.LaunchApp)
 	r.Post("/ios-device/app/terminate", c.TerminateApp)
 	r.Post("/ios-device/app/build", c.BuildApp)
+}
+
+// RegisterStream mounts the long-lived simulator frame stream directly on the
+// root router, mirroring the other stream surfaces that bypass the REST
+// timeout middleware.
+func (c *IOSDeviceController) RegisterStream(r chi.Router) {
+	r.Get("/ios-device/stream", c.Stream)
 }

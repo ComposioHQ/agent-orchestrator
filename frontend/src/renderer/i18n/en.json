@@ -1166,5 +1166,14 @@
 	"emulator.startPrompt": "Start the simulator to see its screen.",
 	"emulator.toolchainMissing": "Xcode is required to run the iOS Simulator.",
 	"emulator.installXcode": "Install Xcode",
-	"emulator.recheck": "Recheck"
+	"emulator.recheck": "Recheck",
+	"emulator.noDevice": "No device started",
+	"emulator.deviceLabel": "iPhone",
+	"emulator.booting": "Booting simulator…",
+	"emulator.connecting": "Connecting to simulator…",
+	"emulator.disconnected": "Simulator screen unavailable.",
+	"emulator.home": "Home",
+	"emulator.rotateLeft": "Rotate Left",
+	"emulator.rotateRight": "Rotate Right",
+	"emulator.backspace": "Backspace"
 }

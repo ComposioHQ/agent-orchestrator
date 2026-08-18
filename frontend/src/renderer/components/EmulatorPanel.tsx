@@ -1,8 +1,9 @@
-import { Play, Square } from "lucide-react";
+import { Home, Loader2, Play, RotateCcw, RotateCw, Smartphone, Square } from "lucide-react";
 import type { MouseEvent } from "react";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useIOSSimulator } from "../hooks/useIOSSimulator";
+import { pointerToFrame, type FramePoint } from "../lib/device-viewport";
 import { isMacPlatform } from "../lib/platform";
 import { Button } from "./ui/button";
 
@@ -11,41 +12,64 @@ import { Button } from "./ui/button";
  * the inspector's tab body, is operated from there, and has no detach/pop-out
  * affordance. It only appears once "Mobile Emulator" is switched on in
  * Settings — the tab is absent otherwise.
+ *
+ * The device frame is rendered contain-fit inside a stage that fills the tab
+ * body; pointer events are mapped through the rendered frame's rect into
+ * device framebuffer pixels (see lib/device-viewport), so taps stay accurate
+ * at any panel size, letterboxing, and orientation. Input coordinates on the
+ * wire are device framebuffer pixels; the backend owns the Simulator window
+ * mapping.
  */
 export function EmulatorPanel({ active }: { active: boolean }) {
 	const { t } = useTranslation();
 	const [text, setText] = useState("");
-	const pointerStart = useRef<{ x: number; y: number } | null>(null);
+	const pointerStart = useRef<FramePoint | null>(null);
 	const ios = useIOSSimulator(active && isMacPlatform());
 	if (!active || !isMacPlatform()) return null;
 	const status = ios.status.data;
-	const image = ios.screenshot.data;
-	const streamImage = ios.streamFrame ?? image;
+	const booted = status?.state === "Booted";
+	const screenshot = ios.screenshot.data;
+	const frame = ios.streamFrame ?? (screenshot ? { data: screenshot.data, mimeType: screenshot.mimeType, width: screenshot.width, height: screenshot.height } : null);
+	const frameWidth = frame?.width ?? status?.screenWidth ?? 0;
+	const frameHeight = frame?.height ?? status?.screenHeight ?? 0;
 	const permissions = ios.permissions.data;
 	const toolchain = ios.toolchain.data;
-	const sendTap = (event: MouseEvent<HTMLImageElement>) => {
+
+	const pointerPoint = (event: MouseEvent<HTMLImageElement>): FramePoint | null => {
 		const bounds = event.currentTarget.getBoundingClientRect();
-		ios.input.mutate({ action: "tap", x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+		return pointerToFrame(event.clientX, event.clientY, bounds, frameWidth, frameHeight);
+	};
+	const startPointer = (event: MouseEvent<HTMLImageElement>) => {
+		pointerStart.current = pointerPoint(event);
 	};
 	const sendPointer = (event: MouseEvent<HTMLImageElement>) => {
 		const start = pointerStart.current;
 		pointerStart.current = null;
-		if (!start) return sendTap(event);
-		const bounds = event.currentTarget.getBoundingClientRect();
-		const end = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-		if (Math.hypot(end.x - start.x, end.y - start.y) < 8) return ios.input.mutate({ action: "tap", x: end.x, y: end.y });
-		ios.input.mutate({ action: "swipe", x: start.x, y: start.y, x2: end.x, y2: end.y });
+		if (!start) return; // the gesture began outside the device frame
+		const end = pointerPoint(event);
+		if (!end) return; // released outside the device frame — drop the gesture
+		if (Math.hypot(end.x - start.x, end.y - start.y) < 8) {
+			ios.input.mutate({ action: "tap", x: end.x, y: end.y });
+		} else {
+			ios.input.mutate({ action: "swipe", x: start.x, y: start.y, x2: end.x, y2: end.y });
+		}
 	};
+
 	return (
-		// The inspector body already carries the p-3 padding; no extra panel padding here.
-		<div className="flex flex-col gap-2" role="tabpanel" aria-label={t("emulator.title")}>
+		<div className="flex h-full min-h-0 flex-col gap-2 p-3 @max-[300px]/inspector:px-2.5" role="tabpanel" aria-label={t("emulator.title")}>
 			<div className="flex items-center justify-between gap-2">
-				<strong className="text-sm-md">{t("emulator.title")}</strong>
-				<div className="flex gap-1.5">
-					<Button size="sm" type="button" onClick={() => ios.start.mutate()} disabled={ios.start.isPending || status?.state === "Booted"}>
+				<div className="flex min-w-0 flex-col">
+					<strong className="text-sm-md">{t("emulator.title")}</strong>
+					<span className="truncate text-2xs text-passive">
+						<Smartphone aria-hidden="true" className="mr-1 inline size-3 align-[-1px]" />
+						{status?.name ?? (booted ? t("emulator.deviceLabel") : t("emulator.noDevice"))}
+					</span>
+				</div>
+				<div className="flex shrink-0 gap-1.5">
+					<Button size="sm" type="button" onClick={() => ios.start.mutate()} disabled={ios.start.isPending || booted} aria-label={t("emulator.start")} title={t("emulator.start")}>
 						<Play aria-hidden="true" />{t("emulator.start")}
 					</Button>
-					<Button size="sm" type="button" variant="outline" onClick={() => ios.stop.mutate()} disabled={ios.stop.isPending || status?.state !== "Booted"}>
+					<Button size="sm" type="button" variant="outline" onClick={() => ios.stop.mutate()} disabled={ios.stop.isPending || !booted} aria-label={t("emulator.stop")} title={t("emulator.stop")}>
 						<Square aria-hidden="true" />{t("emulator.stop")}
 					</Button>
 				</div>
@@ -68,9 +92,50 @@ export function EmulatorPanel({ active }: { active: boolean }) {
 					{!permissions.accessibility ? <Button size="sm" type="button" variant="outline" onClick={() => window.open("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility", "_blank")}>{t("emulator.accessibility")}</Button> : null}
 				</div>
 			</div> : null}
-			{status?.state === "Booted" ? <form className="flex gap-1.5" onSubmit={(event) => { event.preventDefault(); if (text) { ios.input.mutate({ action: "text", text }); setText(""); } }}><input aria-label={t("emulator.textInput")} className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm" value={text} onChange={(event) => setText(event.target.value)} placeholder={t("emulator.textPlaceholder")} /><Button size="sm" type="submit" disabled={!text || ios.input.isPending}>{t("emulator.send")}</Button></form> : null}
-			{status?.state === "Booted" ? <div className="flex gap-1.5"><Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "key", keyCode: 36 })}>{t("emulator.enter")}</Button><Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "key", keyCode: 51 })}>⌫</Button></div> : null}
-			{status?.state === "Booted" && streamImage ? <img alt={t("emulator.title")} className="w-full touch-none rounded border border-border" onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); pointerStart.current = { x: event.clientX - bounds.left, y: event.clientY - bounds.top }; }} onMouseUp={sendPointer} src={`data:${streamImage.mimeType};base64,${streamImage.data}`} /> : <p className="text-caption text-passive">{status?.error ?? t("emulator.startPrompt")}</p>}
+			{/* Device stage: the frame fills the flexible area at its native
+			    aspect ratio, letterboxed by the stage. Clicks in the letterbox
+			    never reach the simulator (pointerToFrame returns null). */}
+			<div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border border-border bg-background/40" data-testid="emulator-stage">
+				{booted && frame ? (
+					<img
+						alt={t("emulator.title")}
+						data-testid="emulator-frame"
+						draggable={false}
+						className="max-h-full max-w-full touch-none rounded-sm select-none object-contain"
+						style={frameWidth > 0 && frameHeight > 0 ? { aspectRatio: `${frameWidth} / ${frameHeight}` } : undefined}
+						src={`data:${frame.mimeType};base64,${frame.data}`}
+						onMouseDown={startPointer}
+						onMouseUp={sendPointer}
+						onMouseLeave={() => { pointerStart.current = null; }}
+					/>
+				) : booted ? (
+					<p className="flex items-center gap-1.5 text-caption text-passive">
+						{ios.streamState === "connecting" || ios.streamState === "idle" ? (
+							<><Loader2 className="size-3.5 animate-spin" aria-hidden="true" />{t("emulator.connecting")}</>
+						) : (
+							<span className="text-error">{ios.streamError ?? t("emulator.disconnected")}</span>
+						)}
+					</p>
+				) : (
+					<p className="text-caption text-passive">{ios.start.isPending ? t("emulator.booting") : (status?.error ?? t("emulator.startPrompt"))}</p>
+				)}
+			</div>
+			{booted ? (
+				<div className="flex flex-wrap items-center gap-1.5">
+					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "home" })} aria-label={t("emulator.home")} title={t("emulator.home")}>
+						<Home aria-hidden="true" />
+					</Button>
+					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "rotateLeft" })} aria-label={t("emulator.rotateLeft")} title={t("emulator.rotateLeft")}>
+						<RotateCcw aria-hidden="true" />
+					</Button>
+					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "rotateRight" })} aria-label={t("emulator.rotateRight")} title={t("emulator.rotateRight")}>
+						<RotateCw aria-hidden="true" />
+					</Button>
+					<form className="flex min-w-0 flex-1 gap-1.5" onSubmit={(event) => { event.preventDefault(); if (text) { ios.input.mutate({ action: "text", text }); setText(""); } }}><input aria-label={t("emulator.textInput")} className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm" value={text} onChange={(event) => setText(event.target.value)} placeholder={t("emulator.textPlaceholder")} /><Button size="sm" type="submit" disabled={!text || ios.input.isPending}>{t("emulator.send")}</Button></form>
+					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "key", keyCode: 36 })} aria-label={t("emulator.enter")}>{t("emulator.enter")}</Button>
+					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "key", keyCode: 51 })} aria-label={t("emulator.backspace")}>⌫</Button>
+				</div>
+			) : null}
 		</div>
 	);
 }

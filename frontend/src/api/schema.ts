@@ -3102,13 +3102,17 @@ export interface components {
         };
         SimulatorScreenshotResponse: {
             data: string;
+            height?: number;
             mimeType: string;
+            width?: number;
         };
         SimulatorStatusResponse: {
             available: boolean;
             deviceId?: string;
             error?: string;
             name?: string;
+            screenHeight?: number;
+            screenWidth?: number;
             state: string;
         };
         SpawnOrchestratorRequest: {

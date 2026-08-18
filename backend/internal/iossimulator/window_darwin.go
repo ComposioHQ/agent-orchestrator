@@ -11,6 +11,19 @@ import (
 
 type windowBounds struct{ X, Y, Width, Height float64 }
 
+// focusSimulator makes Simulator.app the active application so its device
+// shortcuts (Home, rotate) land on it. The app is already running at this
+// point; `open -a` activates the existing instance without launching a second
+// one. Capture deliberately does not depend on this — only the shortcut
+// actions call it.
+func focusSimulator() error {
+	out, err := exec.Command("open", "-a", "Simulator").Output()
+	if err != nil {
+		return fmt.Errorf("activate Simulator.app: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func simulatorWindowBounds() (windowBounds, error) {
 	script := `tell application "System Events" to tell process "Simulator" to set r to {position of window 1, size of window 1} as text`
 	out, err := exec.Command("osascript", "-e", script).Output()

@@ -148,11 +148,12 @@ export function SessionInspectorShellView({
 				className={cn(
 					inspectorBodyBaseClass,
 					!isVisible && "invisible pointer-events-none",
-					activeView !== "browser" && activeView !== "files" && inspectorScrollableBodyClass,
+					activeView !== "browser" && activeView !== "files" && activeView !== "emulator" && inspectorScrollableBodyClass,
 					activeView === "browser" &&
 						!browserPoppedOut &&
 						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					activeView === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
+					activeView === "emulator" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full [&>[role=tabpanel]]:overflow-hidden",
 				)}
 				inert={!isVisible}
 			>

@@ -8497,8 +8497,12 @@ components:
       properties:
         data:
           type: string
+        height:
+          type: integer
         mimeType:
           type: string
+        width:
+          type: integer
       required:
       - data
       - mimeType
@@ -8513,6 +8517,10 @@ components:
           type: string
         name:
           type: string
+        screenHeight:
+          type: integer
+        screenWidth:
+          type: integer
         state:
           type: string
       required:

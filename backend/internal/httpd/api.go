@@ -186,6 +186,11 @@ func (a *API) Register(root chi.Router) {
 		a.notifications.RegisterStream(r)
 		a.sessions.RegisterStreams(r)
 		a.events.Register(r)
+		if a.iosDevice != nil {
+			// The simulator frame stream stays open for the lifetime of the
+			// viewer socket; the REST timeout group would cut it.
+			a.iosDevice.RegisterStream(r)
+		}
 	})
 }
 
