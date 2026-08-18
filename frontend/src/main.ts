@@ -152,7 +152,9 @@ let daemonStartEpoch = 0;
 let daemonStatus: DaemonStatus = { state: "stopped" };
 let daemonOutput = "";
 let browserViewHost: BrowserViewHost | null = null;
-const browserProfileStorage = createBrowserProfileStorage();
+const browserProfileStorage = createBrowserProfileStorage({
+	stateDir: path.join(app.getPath("userData"), "browser"),
+});
 let windowComposition: WindowComposition | null = null;
 const browserCleanupPromises = new Set<Promise<void>>();
 let browserQuitCleanupPromise: Promise<void> | null = null;
@@ -467,7 +469,7 @@ async function createWindowInternal(): Promise<void> {
 		browserProfileStorage,
 		// Keep current workers explicitly memory-only until a future trusted
 		// main-process flow opts into AO's single persistent destination.
-		browserProfilePersistence: "ephemeral",
+		browserProfilePersistence: () => browserProfileStorage.getPersistence(),
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -1980,6 +1982,7 @@ app.whenReady().then(async () => {
 	}
 
 	const keybindingRunFile = runFilePath();
+	await browserProfileStorage.load();
 	if (keybindingRunFile) {
 		keybindingOverrides = await readKeybindingOverrides(path.dirname(keybindingRunFile));
 	}

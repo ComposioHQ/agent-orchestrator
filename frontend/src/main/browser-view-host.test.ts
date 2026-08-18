@@ -205,7 +205,9 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	};
 }
 
-function setupTabHost(options: { browserProfilePersistence?: BrowserProfilePersistence } = {}) {
+function setupTabHost(
+	options: { browserProfilePersistence?: BrowserProfilePersistence | (() => BrowserProfilePersistence) } = {},
+) {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
 	const eventHandlers = new Map<string, EventHandler>();
@@ -845,6 +847,21 @@ describe("agent browser runtime", () => {
 		await host.execute("sess-1", "tabs");
 
 		expect(constructorOptions[0].webPreferences.partition).toBe(AO_BROWSER_PERSISTENT_PARTITION);
+	});
+
+	it("resolves the persistence choice when a new worker starts", async () => {
+		let persistence: BrowserProfilePersistence = "ephemeral";
+		const { constructorOptions, host } = setupTabHost({
+			browserProfilePersistence: () => persistence,
+		});
+
+		await host.execute("worker-ephemeral", "tabs");
+		persistence = "persistent";
+		await host.execute("worker-persistent", "tabs");
+
+		expect(constructorOptions[0].webPreferences.partition).toMatch(/^ao-browser-/);
+		expect(constructorOptions.at(-1)?.webPreferences.partition).toBe(AO_BROWSER_PERSISTENT_PARTITION);
+		await host.dispose();
 	});
 
 	it("captures allowed popups as new tabs and protects the final tab", async () => {

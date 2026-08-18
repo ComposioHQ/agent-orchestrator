@@ -212,7 +212,7 @@ export type BrowserViewHostOptions = {
 	agentBrowserRuntime?: AgentBrowserRuntime;
 	isCloseShellTerminalShortcutEnabled?: () => boolean;
 	/** Main-process-only choice; omitted callers retain memory-only workers. */
-	browserProfilePersistence?: BrowserProfilePersistence;
+	browserProfilePersistence?: BrowserProfilePersistence | (() => BrowserProfilePersistence);
 	browserProfileStorage?: BrowserProfileStorage;
 };
 
@@ -411,6 +411,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	const entries = new Map<string, BrowserSessionEntry>();
 	const browserProfileStorage = options.browserProfileStorage ?? createBrowserProfileStorage();
 	const browserProfilePersistence = options.browserProfilePersistence ?? "ephemeral";
+	const selectedBrowserProfilePersistence = (): BrowserProfilePersistence =>
+		typeof browserProfilePersistence === "function" ? browserProfilePersistence() : browserProfilePersistence;
 	const shellWebContents = options.shellWebContents ?? options.mainWindow.webContents;
 	if (!shellWebContents) throw new Error("Browser view host requires shell WebContents");
 	const viewIdsBySessionId = new Map<string, string>();
@@ -576,7 +578,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				// worker shares it, while a fresh worker runtime receives a different
 				// partition even if a session ID is ever reused. A persistent partition
 				// is reachable only through the explicit main-process choice above.
-				profilePartition: browserProfileStorage.partitionFor(browserProfilePersistence),
+				profilePartition: browserProfileStorage.partitionFor(selectedBrowserProfilePersistence()),
 				tabs: new Map(),
 				activeTabId: "",
 				nextTabNumber: 1,
