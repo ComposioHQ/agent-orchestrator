@@ -6,13 +6,17 @@ import { AgentAvatar } from "./AgentAvatar";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 
-const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "muse", "aider"] as const;
+const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "greptile", "muse", "aider"] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );
 
 const HOST_TRUSTED_REVIEWERS = new Set(["agy", "continue", "devin", "droid", "goose", "kimchi", "kimi", "qwen", "vibe"]);
 const USER_APPROVED_REVIEWERS = new Set(["auggie", "autohand", "cline", "crush", "grok"]);
+
+function reviewerAgentLabel(id: string): string {
+	return id === "greptile" ? "Greptile CLI" : agentLabel(id);
+}
 
 export function reviewerTrustWarning(harness: string): string | null {
 	if (HOST_TRUSTED_REVIEWERS.has(harness)) {
@@ -41,6 +45,7 @@ export function ReviewerSelect({
 	disabled = false,
 	authorized,
 	installed,
+	reviewerInstalled,
 	supported,
 	excludedHarness,
 }: {
@@ -56,6 +61,7 @@ export function ReviewerSelect({
 	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
 	installed?: components["schemas"]["AgentInfo"][];
+	reviewerInstalled?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
 	excludedHarness?: string;
 }) {
@@ -64,13 +70,18 @@ export function ReviewerSelect({
 	// this the same row reads "claude-code" now and "Claude Code" a moment later.
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
-		label: agentLabel(id),
+		label: reviewerAgentLabel(id),
 	}));
+	const greptileFallback = fallbackAgents.find((agent) => agent.id === "greptile")!;
 	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
-	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
+	const supportedAgents = filteredSupported.length > 0
+		? filteredSupported.some((agent) => agent.id === "greptile")
+			? filteredSupported
+			: [...filteredSupported, greptileFallback]
+		: fallbackAgents;
 	const options = buildRankedAgentOptions({
 		supported: supportedAgents,
-		installed,
+		installed: [...(installed ?? []), ...(reviewerInstalled ?? [])],
 		authorized,
 		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,
 		fallbackAgents,

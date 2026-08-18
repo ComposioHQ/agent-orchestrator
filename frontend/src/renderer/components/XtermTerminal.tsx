@@ -33,6 +33,7 @@ import type {
 	AttachableTerminal,
 	TerminalUserInputSource,
 } from "../hooks/useTerminalSession";
+import type { ReviewerTerminalInteraction } from "../types/terminal";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
@@ -52,6 +53,7 @@ export type XtermTerminalProps = {
 	ariaLabel?: string;
 	className?: string;
 	fontSize?: number;
+	inputPolicy?: ReviewerTerminalInteraction;
 	isFullscreen?: boolean;
 	theme: Theme;
 	/** Resize this terminal without changing application zoom. */
@@ -332,6 +334,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	}, [props.fontSize]);
 
 	useEffect(() => {
+		const term = termRef.current;
+		if (!term) return;
+		term.options.cursorBlink = props.inputPolicy !== "output-only";
+	}, [props.inputPolicy]);
+
+	useEffect(() => {
 		const host = hostRef.current;
 		if (!host) return undefined;
 		let reportedFocused = false;
@@ -381,7 +389,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			term = new Terminal({
 				// Required for the Unicode 11 width addon below.
 				allowProposedApi: true,
-				cursorBlink: true,
+				cursorBlink: props.inputPolicy !== "output-only",
 				// Resolve the Nerd Font stack from --font-mono (styles.css) at
 				// construction so terminal glyphs follow the app's font tokens. The
 				// box-drawing grid is rasterized by the WebGL/canvas renderer itself,
@@ -468,6 +476,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const userInputListeners = new Set<(data: string, source: TerminalUserInputSource) => void>();
 		const emitUserInput = (data: string, source: TerminalUserInputSource) => {
 			if (data.length === 0) return;
+			if (callbacksRef.current.inputPolicy === "output-only") return;
 			userInputListeners.forEach((listener) => listener(data, source));
 		};
 		const pasteText = (text: string) => {
@@ -774,6 +783,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				wheelAccumPx -= lines * rowHeight;
 			}
 			if (lines === 0) return false;
+			if (callbacksRef.current.inputPolicy === "output-only") {
+				term.scrollLines(lines);
+				return false;
+			}
 			// A full-screen TUI that keeps its own transcript and scrolls it only by
 			// keyboard (opencode) ignores wheel/mouse reports on every platform; route
 			// its wheel to page keys. Kept first so opencode is unaffected by the

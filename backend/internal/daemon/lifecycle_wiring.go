@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -13,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/container/dockerreap"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	workspacerouter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/router"
 	scratchworkspace "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
@@ -232,20 +234,83 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 	})
 	// Triggering a review spawns a reviewer over the worker's worktree, resolved
 	// from the reviewer registry (distinct from the worker agent set). The
-	// reviewer posts its review to the PR itself, so the service needs no SCM
-	// writer.
+	// Interactive reviewers submit through `ao review submit`; one-shot
+	// reviewers return structured results through the completion handler.
 	reviewers, err := reviewer.NewResolver()
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
+	githubReviewPublisher := scmgithub.NewReviewPublisher()
+	var reviewSvc *reviewsvc.Service
+	completionHandler := func(resultCtx context.Context, workerID domain.SessionID, completions []reviewcore.ReviewCompletion) {
+		submitted := make([]reviewsvc.SubmittedReview, 0, len(completions))
+		for _, completion := range completions {
+			run, found, lookupErr := store.GetReviewRun(resultCtx, completion.RunID)
+			if lookupErr != nil {
+				log.Error("look up one-shot reviewer run", "worker", workerID, "run", completion.RunID, "error", lookupErr)
+				continue
+			}
+			if !found || run.SessionID != workerID || run.Status != domain.ReviewRunRunning {
+				continue
+			}
+			if completion.Err != nil {
+				if _, updateErr := store.UpdateReviewRunResult(resultCtx, completion.RunID, domain.ReviewRunFailed, domain.VerdictNone, completion.Err.Error(), "", run.AutoInjectReview); updateErr != nil {
+					log.Error("record one-shot reviewer failure", "worker", workerID, "run", completion.RunID, "error", updateErr)
+				}
+				continue
+			}
+			body := completion.Body
+			githubReviewID := ""
+			publishedID, publishErr := githubReviewPublisher.Publish(resultCtx, completion.PRURL, completion.TargetSHA, body, completion.Comments)
+			if publishErr != nil {
+				log.Error("publish Greptile GitHub review", "worker", workerID, "run", completion.RunID, "error", publishErr)
+				body = strings.TrimSpace(body) + "\n\n> GitHub review could not be posted: " + publishErr.Error()
+			} else {
+				githubReviewID = publishedID
+			}
+			submitted = append(submitted, reviewsvc.SubmittedReview{
+				RunID: completion.RunID, Verdict: completion.Verdict, Body: body, GithubReviewID: githubReviewID,
+			})
+		}
+		if len(submitted) == 0 || reviewSvc == nil {
+			return
+		}
+		if _, submitErr := reviewSvc.SubmitMany(resultCtx, workerID, submitted); submitErr != nil {
+			log.Error("record one-shot reviewer results", "worker", workerID, "error", submitErr)
+		}
+	}
+	launcher := reviewcore.NewLauncher(
+		reviewers,
+		runtime,
+		cfg.DataDir,
+		reviewcore.WithRunFilePath(cfg.RunFilePath),
+		reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents}),
+		reviewcore.WithLauncherContext(ctx),
+		reviewcore.WithCompletionHandler(completionHandler),
+		reviewcore.WithTerminalReviewConsumed(func(checkCtx context.Context, workerID domain.SessionID, runIDs []string) bool {
+			for _, runID := range runIDs {
+				run, found, lookupErr := store.GetReviewRun(checkCtx, runID)
+				if lookupErr != nil || !found || run.SessionID != workerID || run.Status == domain.ReviewRunRunning {
+					return false
+				}
+			}
+			return len(runIDs) > 0
+		}),
+		reviewcore.WithTerminalReviewActive(func(checkCtx context.Context, workerID domain.SessionID, runIDs []string) (bool, error) {
+			for _, runID := range runIDs {
+				run, found, lookupErr := store.GetReviewRun(checkCtx, runID)
+				if lookupErr != nil {
+					return false, lookupErr
+				}
+				if found && run.SessionID == workerID && run.Status == domain.ReviewRunRunning {
+					return true, nil
+				}
+			}
+			return false, nil
+		}),
+	)
 	reviewEngine := reviewcore.New(reviewcore.Deps{
-		Store:    store,
-		Sessions: store,
-		PRs:      store,
-		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir,
-			reviewcore.WithRunFilePath(cfg.RunFilePath),
-			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
+		Store: store, Sessions: store, PRs: store, Projects: store, Workspaces: store, Launcher: launcher,
 	})
 	reviewOpts := []reviewsvc.Option{
 		reviewsvc.WithLifecycleReducer(lcm),
@@ -257,7 +322,12 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 			reviewsvc.WithReviewResolver(scmProvider),
 		)
 	}
-	reviewSvc := reviewsvc.New(reviewEngine, store, reviewOpts...)
+	reviewSvc = reviewsvc.New(reviewEngine, store, reviewOpts...)
+	if recoverer, ok := launcher.(reviewcore.TerminalReviewRecoverer); ok {
+		if recoverErr := recoverer.RecoverTerminalReviews(ctx); recoverErr != nil {
+			log.Warn("recover Greptile reviewer terminals", "error", recoverErr)
+		}
+	}
 	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }

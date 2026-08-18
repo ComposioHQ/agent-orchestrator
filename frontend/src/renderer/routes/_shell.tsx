@@ -18,7 +18,7 @@ import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { TerminalCacheProvider } from "../components/TerminalPane";
-import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { agentsQueryKey, refreshAgents } from "../hooks/useAgentsQuery";
 import { agentModelsQueryOptions } from "../hooks/useAgentModelsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
@@ -533,8 +533,9 @@ function ShellLayout() {
 		if (agentCatalogPortRef.current === daemonStatus.port) return;
 
 		agentCatalogPortRef.current = daemonStatus.port;
-		void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
-		void queryClient.fetchQuery({ ...agentsQueryOptions, queryFn: refreshAgents });
+		void refreshAgents()
+			.then((inventory) => queryClient.setQueryData(agentsQueryKey, inventory))
+			.catch(() => undefined);
 	}, [daemonStatus.port, daemonStatus.state, queryClient]);
 
 	// Follow OS appearance while the user keeps Theme on System — updates

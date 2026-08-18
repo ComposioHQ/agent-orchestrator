@@ -164,6 +164,7 @@ const agentCatalogResponse = {
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 			{ id: "pi", label: "Pi", authStatus: "authorized" },
 		],
+		reviewerInstalled: [{ id: "greptile", label: "Greptile CLI", authStatus: "authorized" }],
 	},
 	error: undefined,
 };
@@ -674,6 +675,48 @@ describe("ProjectSettingsForm", () => {
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
+	it("offers the reviewer-only Greptile CLI even though it is not a worker agent", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+		renderSettings("proj-1", undefined, "workflow");
+
+		const reviewerAgent = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewerAgent);
+		const greptileOption = await screen.findByRole("menuitem", { name: /Greptile CLI/i });
+		expect(greptileOption).not.toHaveAttribute("aria-disabled", "true");
+		expect(greptileOption).not.toHaveTextContent("Auth unknown");
+		await userEvent.click(greptileOption);
+		expect(reviewerAgent).toHaveTextContent("Greptile CLI");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" } },
+			body: {
+				displayName: "Project One",
+				config: {
+					defaultBranch: undefined,
+					sessionPrefix: undefined,
+					worker: { agent: "codex", agentConfig: undefined },
+					orchestrator: { agent: "claude-code", agentConfig: undefined },
+					agentConfig: undefined,
+					reviewers: [{ harness: "greptile" }],
+					trackerIntake: undefined,
+				},
+			},
+		});
+	});
+
 	it("rejects a blank project name before sending the settings update", async () => {
 		mockProject({
 			id: "proj-1",
@@ -879,6 +922,7 @@ describe("ProjectSettingsForm", () => {
 			"Codex",
 			"Cursor",
 			"OpenCode",
+			"Greptile CLI",
 			"GitHub Copilot",
 			"Goose",
 			"Kilo Code",

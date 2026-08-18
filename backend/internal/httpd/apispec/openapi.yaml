@@ -6574,6 +6574,12 @@ components:
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array
+        reviewerInstalled:
+          description: Reviewer-only CLIs whose binary resolved during the latest
+            best-effort local catalog probe.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
         supported:
           description: Agents supported by this daemon build.
           items:
@@ -6583,6 +6589,7 @@ components:
       - supported
       - installed
       - authorized
+      - reviewerInstalled
       type: object
     ListCompactSessionUsageResponse:
       properties:
@@ -8108,6 +8115,7 @@ components:
           - amp
           - aider
           - grok
+          - greptile
           - crush
           - auggie
           - cline
@@ -8439,6 +8447,7 @@ components:
           - amp
           - aider
           - grok
+          - greptile
           - crush
           - auggie
           - cline

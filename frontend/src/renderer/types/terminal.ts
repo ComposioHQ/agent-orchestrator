@@ -1,9 +1,19 @@
+export type ReviewerTerminalInteraction = "interactive" | "output-only";
+
+export function reviewerTerminalInteraction(_harness: string): ReviewerTerminalInteraction {
+	// Greptile itself never reads from the PTY, but its completed review pane is
+	// handed off to the user's shell. Keep the pane interactive so that shell is
+	// usable without closing and reopening the terminal.
+	return "interactive";
+}
+
 export type TerminalTarget =
 	| { kind: "worker" }
 	| {
 			kind: "reviewer";
 			handleId: string;
 			harness: string;
+			interaction?: ReviewerTerminalInteraction;
 			sessionId: string;
 	  }
 	// A standalone shell the user opened by hand — no agent session behind it,

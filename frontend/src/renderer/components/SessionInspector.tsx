@@ -30,6 +30,7 @@ import {
 	GitMerge,
 	Info,
 	Play,
+	Terminal,
 	Trash2,
 	Loader2,
 	MessageSquare,
@@ -1171,7 +1172,12 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 /** Reviewer harness the daemon accepts, typed from the generated schema. */
 type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]["harness"]>;
 type AgentInfo = components["schemas"]["AgentInfo"];
-type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
+type AgentCatalog = {
+	supported?: AgentInfo[];
+	installed?: AgentInfo[];
+	authorized?: AgentInfo[];
+	reviewerInstalled?: AgentInfo[];
+};
 
 const WORKER_DEFAULT_REVIEWERS: Partial<Record<WorkspaceSession["provider"], ReviewerHarness>> = {
 	"claude-code": "claude-code",
@@ -1286,6 +1292,11 @@ function ReviewsSection({
 				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
+		onError: () => {
+			// Trigger persists failed preflight runs before returning an API error.
+			// Refresh so the row reflects that durable failure immediately.
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
+		},
 	});
 	const cancelReview = useMutation({
 		mutationFn: async () => {
@@ -1352,6 +1363,7 @@ function ReviewsSection({
 				isKilling={killReview.isPending}
 				isSwitchingReviewer={saveReviewer.isPending}
 				isTriggering={triggerReview.isPending}
+				onOpenTerminal={onOpenReviewerTerminal}
 				onCancel={() => cancelReview.mutate()}
 				onAutoReviewChange={(enabled) => saveAutoReview.mutate(enabled)}
 				onKill={() => killReview.mutate()}
@@ -1672,6 +1684,7 @@ function ReviewPanel({
 	agentCatalog,
 	reviewerOverride,
 	onReviewerOverrideChange,
+	onOpenTerminal,
 	onTrigger,
 	onCancel,
 	onAutoReviewChange,
@@ -1692,6 +1705,7 @@ function ReviewPanel({
 	agentCatalog?: AgentCatalog;
 	reviewerOverride: ReviewerHarness | "";
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
+	onOpenTerminal?: OpenReviewerTerminal;
 	onTrigger: () => void;
 	onCancel: () => void;
 	onAutoReviewChange: (enabled: boolean) => void;
@@ -1740,8 +1754,13 @@ function ReviewPanel({
 	const activeReviewerHarness = latest?.harness || effectiveReviewerHarness;
 	const autoReviewFailure =
 		latestAutoFailure && latestAutoFailure.id !== dismissedAutoFailureId ? latestAutoFailure.body.trim() : null;
+	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
+	const openTerminalLabel = t("inspector.openTerminal");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = reviewIsRunning(openReviewStates);
+	const displayedReviewerHarness = reviewRunning ? activeReviewerHarness : effectiveReviewerHarness;
+	const selectorDefaultHarness = reviewRunning ? activeReviewerHarness : resolvedDefaultHarness;
+	const selectorDefaultLabel = selectorDefaultHarness === "greptile" ? "Greptile CLI" : agentLabel(selectorDefaultHarness);
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const runDisabled = isKilling || isSwitchingReviewer || reviewRunDisabled(openReviewStates, isTriggering);
@@ -1751,6 +1770,10 @@ function ReviewPanel({
 			: t("inspector.review.cancel")
 		: runAction;
 	const killDisabled = autoReviewEnabled || isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
+	const openReviewerTerminal = () => {
+		if (!terminalEnabled) return;
+		onOpenTerminal?.({ handleId: reviewerHandleId, harness: activeReviewerHarness });
+	};
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1805,10 +1828,11 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							contentAlign="end"
-							defaultHarness={resolvedDefaultHarness}
-							defaultOptionLabel={agentLabel(resolvedDefaultHarness)}
+							defaultHarness={selectorDefaultHarness}
+							defaultOptionLabel={selectorDefaultLabel}
 							disabled={reviewRunning || autoReviewEnabled || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
+							reviewerInstalled={agentCatalog?.reviewerInstalled}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select ml-auto h-control-md w-auto min-w-0 max-w-[11rem] shrink-0 justify-end px-2 text-right text-xs"
@@ -1816,6 +1840,11 @@ function ReviewPanel({
 							excludedHarness={resolvedDefaultHarness}
 							showDefaultOption
 						/>
+						{displayedReviewerHarness === "greptile" ? (
+							<span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-settings-muted">
+								{t("inspector.review.nonInteractiveOneShot")}
+							</span>
+						) : null}
 					</div>
 					<InspectorPolicyRow
 						checked={autoReviewEnabled}
@@ -1855,6 +1884,23 @@ function ReviewPanel({
 							>
 								<Trash2 aria-hidden="true" />
 							</Button>
+							) : null}
+							{!reviewRunning && reviewHasRun && activeReviewerHarness === "greptile" ? (
+								<Button
+									aria-label={openTerminalLabel}
+									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
+									disabled={!terminalEnabled}
+									onClick={openReviewerTerminal}
+									size="sm"
+									title={openTerminalLabel}
+									type="button"
+									variant="ghost"
+								>
+									<Terminal aria-hidden="true" />
+									<span className="review-run-action-label">
+										{openTerminalLabel}
+									</span>
+								</Button>
 							) : null}
 						</div>
 					</div>

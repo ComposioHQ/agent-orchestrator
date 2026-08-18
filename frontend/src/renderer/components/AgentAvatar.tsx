@@ -3,6 +3,7 @@ import {
 	type AgentAvatarProps,
 	type AgentLogoSources,
 } from "@aoagents/product-ui";
+import { cn } from "../lib/utils";
 import agyLogo from "../assets/agents/agy.png";
 import aiderLogo from "../assets/agents/aider.png";
 import ampLogo from "../assets/agents/amp.svg";
@@ -19,6 +20,8 @@ import cursorLogo from "../assets/agents/cursor.svg";
 import devinLogo from "../assets/agents/devin.png";
 import droidLogo from "../assets/agents/droid.png";
 import gooseLogo from "../assets/agents/goose.svg";
+import greptileBlackLogo from "../assets/agents/greptile-black.svg";
+import greptileGreenLogo from "../assets/agents/greptile-green.svg";
 import grokLogo from "../assets/agents/grok.png";
 import kilocodeLogo from "../assets/agents/kilocode.svg";
 import kimiLogo from "../assets/agents/kimi.png";
@@ -76,6 +79,28 @@ const LOGOS: AgentLogoSources = {
  * e.g. the archive cards — still name the agent for screen readers.
  */
 export function AgentAvatar({ provider, className, decorative = false }: AgentAvatarProps) {
+	if (provider === "greptile") {
+		const sharedProps = {
+			alt: decorative ? "" : provider,
+			"aria-hidden": decorative || undefined,
+			draggable: false,
+			title: decorative ? undefined : provider,
+		};
+		return (
+			<>
+				<img
+					{...sharedProps}
+					src={greptileBlackLogo}
+					className={cn("size-icon-xl shrink-0 object-contain dark:hidden", className)}
+				/>
+				<img
+					{...sharedProps}
+					src={greptileGreenLogo}
+					className={cn("hidden size-icon-xl shrink-0 object-contain dark:block", className)}
+				/>
+			</>
+		);
+	}
 	return <ProductAgentAvatar className={className} decorative={decorative} logoSources={LOGOS} provider={provider} />;
 }
 

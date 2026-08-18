@@ -2879,6 +2879,58 @@ describe("SessionInspector summary reviews", () => {
     );
   });
 
+  it("identifies a running Greptile review as non-interactive without an open-terminal control", async () => {
+    mockCommonGets([], "reviewer-pane", [
+      {
+        ...reviewState(3, "running"),
+        latestRun: {
+          ...approvedReview,
+          harness: "greptile",
+          status: "running",
+          verdict: "",
+          body: "",
+        },
+      },
+    ]);
+
+    renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+    await openReviewsSection();
+
+    expect(
+      await screen.findByRole("button", { name: /Select reviewer agent/ }),
+    ).toHaveTextContent("Greptile CLI");
+    expect(screen.getByText("Non-interactive")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open terminal" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the reusable Greptile terminal after the review completes", async () => {
+    mockCommonGets([], "reviewer-pane", [
+      {
+        ...reviewState(3, "up_to_date"),
+        latestRun: { ...approvedReview, harness: "greptile" },
+      },
+    ]);
+    const onOpenReviewerTerminal = vi.fn();
+
+    renderWithQuery(
+      <SessionInspector
+        onOpenReviewerTerminal={onOpenReviewerTerminal}
+        session={session([pr(3, "open")])}
+      />,
+    );
+    await openReviewsSection();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open terminal" }),
+    );
+    expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+      handleId: "reviewer-pane",
+      harness: "greptile",
+    });
+  });
+
   it("keeps the Reviews tab available when the session has no PRs", async () => {
     mockCommonGets();
     renderWithQuery(<SessionInspector session={session([])} />);
