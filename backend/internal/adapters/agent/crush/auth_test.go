@@ -20,15 +20,15 @@ func TestCrushProvidersAuthStatusAuthorizedWithAPIKey(t *testing.T) {
 	}
 }
 
-func TestCrushProvidersAuthStatusUnauthorizedWithEmptyAPIKeys(t *testing.T) {
+func TestCrushProvidersAuthStatusUnknownWithEmptyAPIKeys(t *testing.T) {
 	path := writeCrushProviders(t, `[{"id":"anthropic","api_key":""}]`)
 
 	status, ok, err := crushProvidersAuthStatus(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 

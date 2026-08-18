@@ -38,15 +38,15 @@ func TestGrokLocalAuthStatusAuthorizedWithAuthFile(t *testing.T) {
 	}
 }
 
-func TestGrokLocalAuthStatusUnauthorizedWithEmptyAuthFile(t *testing.T) {
+func TestGrokLocalAuthStatusUnknownWithEmptyAuthFile(t *testing.T) {
 	writeGrokAuthFile(t, `{}`)
 
 	status, ok, err := grokLocalAuthStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 

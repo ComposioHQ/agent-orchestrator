@@ -55,7 +55,7 @@ func TestDroidFactoryAuthStatusAuthorizedFromCustomModelAPIKey(t *testing.T) {
 	}
 }
 
-func TestDroidFactoryAuthStatusUnauthorizedFromCustomModelWithoutAPIKey(t *testing.T) {
+func TestDroidFactoryAuthStatusUnknownFromCustomModelWithoutAPIKey(t *testing.T) {
 	dir := t.TempDir()
 	settings := `{"customModels":[{"model":"claude-sonnet-4-5-20250929","baseUrl":"https://api.anthropic.com","apiKey":""}]}`
 	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(settings), 0o600); err != nil {
@@ -66,7 +66,7 @@ func TestDroidFactoryAuthStatusUnauthorizedFromCustomModelWithoutAPIKey(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }

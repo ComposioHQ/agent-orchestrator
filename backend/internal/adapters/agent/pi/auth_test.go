@@ -20,15 +20,15 @@ func TestPiAuthJSONStatusAuthorizedWithProviderKey(t *testing.T) {
 	}
 }
 
-func TestPiAuthJSONStatusUnauthorizedWhenEmpty(t *testing.T) {
+func TestPiAuthJSONStatusUnknownWhenEmpty(t *testing.T) {
 	path := writePiAuthJSON(t, `{}`)
 
 	status, ok, err := piAuthJSONStatus(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 

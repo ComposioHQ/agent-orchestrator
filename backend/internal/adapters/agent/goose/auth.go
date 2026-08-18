@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
 	yaml "gopkg.in/yaml.v3"
@@ -16,7 +15,7 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
+	_, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -25,7 +24,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 var gooseAPIKeyEnvVars = []string{
@@ -98,7 +97,7 @@ func gooseAuthStatusFromConfig(path string) (ports.AgentAuthStatus, bool, error)
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 
 	var root yaml.Node

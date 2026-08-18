@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -15,16 +14,12 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, err
-	}
 	if status, ok, err := piLocalAuthStatus(ctx); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 func piLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
@@ -71,7 +66,7 @@ func piAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(entries) == 0 {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	for provider, entry := range entries {
 		if strings.TrimSpace(provider) == "" {
@@ -81,5 +76,5 @@ func piAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, false, nil
 }

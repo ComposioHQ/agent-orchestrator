@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -16,7 +15,7 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
+	_, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -25,7 +24,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 type clineProvidersFile struct {
@@ -70,7 +69,7 @@ func clineProviderAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, 
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if strings.TrimSpace(string(data)) == "" {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 
 	var file clineProvidersFile
@@ -78,14 +77,14 @@ func clineProviderAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, 
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(file.Providers) == 0 {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 
 	if provider, ok := configuredClineProvider(file); ok {
 		if providerAuthorized(provider.Settings) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }

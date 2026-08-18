@@ -10,7 +10,6 @@ import (
 
 	_ "modernc.org/sqlite" // register sqlite driver for OMP auth database probes
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -20,7 +19,7 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 // auth store, then falls back to cheap CLI status probes when the file is
 // absent or inconclusive.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
+	_, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -29,7 +28,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 func ompLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
@@ -81,7 +80,7 @@ func ompAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 	if len(entries) == 0 {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	for provider, entry := range entries {
 		if strings.TrimSpace(provider) == "" {
@@ -91,7 +90,7 @@ func ompAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, false, nil
 }
 
 func ompAgentDBAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
@@ -127,7 +126,7 @@ func ompAgentDBAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
 	if total > 0 {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }

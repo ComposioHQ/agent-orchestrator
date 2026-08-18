@@ -191,6 +191,9 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 
 	out, err := aoprocess.CommandContext(probeCtx, binary, "auth", "list").CombinedOutput()
 	if probeCtx.Err() != nil {
+		if probeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			return ports.AgentAuthStatusUnknown, nil
+		}
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
 	text := strings.ToLower(string(out))

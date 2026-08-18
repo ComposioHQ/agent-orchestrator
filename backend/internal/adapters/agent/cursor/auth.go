@@ -29,7 +29,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 func cursorCLIAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStatus, error) {

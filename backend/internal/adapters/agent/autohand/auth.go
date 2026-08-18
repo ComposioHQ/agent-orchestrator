@@ -42,7 +42,7 @@ func autohandConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusAuthorized, nil
 	}
 	if authKnown {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnknown, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
 }

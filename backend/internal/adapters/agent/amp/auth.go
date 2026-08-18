@@ -71,12 +71,15 @@ func ampSettingsAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 			if strings.TrimSpace(stringValue(value)) != "" {
 				return ports.AgentAuthStatusAuthorized, true, nil
 			}
-			return ports.AgentAuthStatusUnauthorized, true, nil
+			return ports.AgentAuthStatusUnknown, false, nil
 		}
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }
 
+// ampUsageAuthStatus recognizes Amp's own signed-in account output. It is
+// deliberately authorization-only: a failed or unfamiliar usage command does
+// not prove that an interactive launch cannot authenticate.
 func ampUsageAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStatus, error) {
 	if binary == "" {
 		return ports.AgentAuthStatusUnknown, nil
@@ -86,12 +89,12 @@ func ampUsageAuthStatus(ctx context.Context, binary string) (ports.AgentAuthStat
 
 	out, err := authprobe.CmdRunner(probeCtx, binary, "usage", "--no-color")
 	if probeCtx.Err() != nil {
+		if probeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+			return ports.AgentAuthStatusUnknown, nil
+		}
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
-	if status := authprobe.StatusFromText(string(out)); status != ports.AgentAuthStatusUnknown {
-		return status, nil
-	}
-	if err == nil {
+	if err == nil && strings.Contains(strings.ToLower(string(out)), "signed in as") {
 		return ports.AgentAuthStatusAuthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil

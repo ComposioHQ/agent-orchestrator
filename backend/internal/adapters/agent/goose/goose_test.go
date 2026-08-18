@@ -264,7 +264,7 @@ func TestAuthStatusAuthorizedFromGooseConfig(t *testing.T) {
 	}
 }
 
-func TestAuthStatusUnauthorizedFromEmptyGooseConfig(t *testing.T) {
+func TestAuthStatusUnknownFromEmptyGooseConfig(t *testing.T) {
 	clearGooseAuthEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -283,8 +283,8 @@ func TestAuthStatusUnauthorizedFromEmptyGooseConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 

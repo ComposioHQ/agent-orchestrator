@@ -24,7 +24,7 @@ func TestAutohandConfigAuthStatusAuthorized(t *testing.T) {
 	}
 }
 
-func TestAutohandConfigAuthStatusUnauthorizedWithMissingCloudToken(t *testing.T) {
+func TestAutohandConfigAuthStatusUnknownWithMissingCloudToken(t *testing.T) {
 	path := writeAutohandAuthConfig(t, `{
   "auth": {"token": ""},
   "provider": "zai",
@@ -35,8 +35,8 @@ func TestAutohandConfigAuthStatusUnauthorizedWithMissingCloudToken(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 

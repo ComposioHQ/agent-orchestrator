@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -75,4 +77,29 @@ func TestQwenAuthStatusFromSettingsUnknownWhenMissing(t *testing.T) {
 	if ok || status != ports.AgentAuthStatusUnknown {
 		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
+}
+
+func TestAuthStatusUsesQwenDoctor(t *testing.T) {
+	restore := mockQwenAuthProbeRunner(t, func(_ context.Context, name string, arg ...string) ([]byte, error) {
+		if name != "qwen" || !reflect.DeepEqual(arg, []string{"doctor"}) {
+			t.Fatalf("command = %s %#v, want qwen doctor", name, arg)
+		}
+		return []byte("Authentication: authenticated"), nil
+	})
+	defer restore()
+
+	status, err := (&Plugin{resolvedBinary: "qwen"}).AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusAuthorized)
+	}
+}
+
+func mockQwenAuthProbeRunner(t *testing.T, runner func(context.Context, string, ...string) ([]byte, error)) func() {
+	t.Helper()
+	previous := authprobe.CmdRunner
+	authprobe.CmdRunner = runner
+	return func() { authprobe.CmdRunner = previous }
 }

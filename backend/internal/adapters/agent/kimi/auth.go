@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -16,7 +15,7 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
+	_, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -25,7 +24,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 var kimiAPIKeyEnvVars = []string{
@@ -96,7 +95,7 @@ func kimiConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 			}
 		}
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, false, nil
 }
 
 func kimiCredentialsAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
@@ -122,5 +121,5 @@ func kimiCredentialsAuthStatus(path string) (ports.AgentAuthStatus, bool, error)
 		strings.TrimSpace(credentials.RefreshToken) != "" {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
-	return ports.AgentAuthStatusUnauthorized, true, nil
+	return ports.AgentAuthStatusUnknown, false, nil
 }

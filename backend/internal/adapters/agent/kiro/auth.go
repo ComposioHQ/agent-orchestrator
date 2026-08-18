@@ -22,15 +22,7 @@ func kiroWhoamiAuthStatus(ctx context.Context, binary string) (ports.AgentAuthSt
 	if binary == "" {
 		return ports.AgentAuthStatusUnknown, nil
 	}
-	out, err := authprobe.CmdRunner(ctx, binary, "whoami")
-	if ctx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, ctx.Err()
-	}
-	if status := authprobe.StatusFromText(string(out)); status != ports.AgentAuthStatusUnknown {
-		return status, nil
-	}
-	if err == nil {
-		return ports.AgentAuthStatusAuthorized, nil
-	}
-	return ports.AgentAuthStatusUnknown, nil
+	// Kiro documents `whoami` as its authentication-status command. Keep the
+	// probe bounded so catalog refresh cannot hang on a broken CLI install.
+	return authprobe.CLIStatus(ctx, binary, [][]string{{"whoami", "--format", "json"}})
 }

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
@@ -17,7 +16,7 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
+	_, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -26,7 +25,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 const (
@@ -116,7 +115,7 @@ func vibeEnvFileAuthStatus(path, envVar string) (ports.AgentAuthStatus, bool, er
 		if strings.Trim(strings.TrimSpace(value), `"'`) != "" {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }

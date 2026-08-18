@@ -24,7 +24,9 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	// Qwen Code removed the standalone `qwen auth` command. Its documentation
+	// names `qwen doctor` as the non-interactive way to inspect auth state.
+	return authprobe.CLIStatus(ctx, binary, [][]string{{"doctor"}})
 }
 
 var qwenAPIKeyEnvVars = []string{

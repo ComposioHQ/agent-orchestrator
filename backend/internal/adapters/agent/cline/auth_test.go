@@ -61,7 +61,7 @@ func TestClineProviderAuthStatusAuthorizedWithAPIKey(t *testing.T) {
 	}
 }
 
-func TestClineProviderAuthStatusUnauthorizedWithExpiredOAuth(t *testing.T) {
+func TestClineProviderAuthStatusUnknownWithExpiredOAuth(t *testing.T) {
 	writeClineProvidersFile(t, `{
 		"version": 1,
 		"lastUsedProvider": "cline",
@@ -82,8 +82,8 @@ func TestClineProviderAuthStatusUnauthorizedWithExpiredOAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 

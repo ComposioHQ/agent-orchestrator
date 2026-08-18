@@ -5,18 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
+	_, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -25,7 +23,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 var copilotTokenEnvVars = []string{
@@ -77,7 +75,7 @@ func copilotConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	}
 	text := strings.TrimSpace(string(data))
 	if text == "" {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	if textContainsTokenAssignment(text) {
 		return ports.AgentAuthStatusAuthorized, true, nil
@@ -118,20 +116,15 @@ func copilotEventsShowModelUse(text string) bool {
 }
 
 func copilotGHAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	out, err := aoprocess.CommandContext(probeCtx, "gh", "auth", "token").CombinedOutput()
-	if probeCtx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, false, probeCtx.Err()
+	status, err := authprobe.CLIStatus(ctx, "gh", [][]string{{"auth", "status"}})
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
 	}
-	text := strings.TrimSpace(string(out))
-	if err == nil && text != "" {
+	if status == ports.AgentAuthStatusAuthorized {
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
-	if strings.Contains(strings.ToLower(text), "no oauth token") || strings.Contains(strings.ToLower(text), "not logged") {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
+	// GitHub CLI state is only one Copilot credential source. A negative result
+	// cannot rule out Copilot's own stored OAuth or token credentials.
 	return ports.AgentAuthStatusUnknown, false, nil
 }
 

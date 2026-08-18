@@ -437,7 +437,7 @@ func TestCopilotConfigAuthStatusAuthorizedWithPlainTextToken(t *testing.T) {
 	}
 }
 
-func TestCopilotConfigAuthStatusUnauthorizedWithEmptyConfig(t *testing.T) {
+func TestCopilotConfigAuthStatusUnknownWithEmptyConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(configPath, []byte(" \n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -447,8 +447,8 @@ func TestCopilotConfigAuthStatusUnauthorizedWithEmptyConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 

@@ -22,7 +22,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if err != nil || ok {
 		return status, err
 	}
-	return ports.AgentAuthStatusUnauthorized, nil
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 func droidLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
@@ -78,7 +78,7 @@ func droidSettingsAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		}
 	}
 	if len(settings.CustomModels) > 0 {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }

@@ -108,7 +108,7 @@ api_key = "secret"
 	}
 }
 
-func TestKimiConfigAuthStatusUnauthorizedWithEmptyAPIKey(t *testing.T) {
+func TestKimiConfigAuthStatusUnknownWithEmptyAPIKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	if err := os.WriteFile(path, []byte(`
 [providers.zai-coding-plan]
@@ -121,8 +121,8 @@ api_key = ""
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 
@@ -141,7 +141,7 @@ func TestKimiCredentialsAuthStatusAuthorizedWithRefreshToken(t *testing.T) {
 	}
 }
 
-func TestKimiCredentialsAuthStatusUnauthorizedWithEmptyTokens(t *testing.T) {
+func TestKimiCredentialsAuthStatusUnknownWithEmptyTokens(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kimi-code.json")
 	if err := os.WriteFile(path, []byte(`{"access_token":"","refresh_token":"","token_type":"bearer"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -151,7 +151,7 @@ func TestKimiCredentialsAuthStatusUnauthorizedWithEmptyTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }

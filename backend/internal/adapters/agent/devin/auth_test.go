@@ -45,7 +45,7 @@ func TestDevinCredentialsAuthStatusAuthorized(t *testing.T) {
 	}
 }
 
-func TestDevinCredentialsAuthStatusUnauthorizedWithEmptyFile(t *testing.T) {
+func TestDevinCredentialsAuthStatusUnknownWithEmptyFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.toml")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestDevinCredentialsAuthStatusUnauthorizedWithEmptyFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || status != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }

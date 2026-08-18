@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -14,7 +13,7 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
+	_, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -23,7 +22,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, [][]string{{"auth", "status"}})
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 func devinLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
@@ -50,7 +49,7 @@ func devinCredentialsAuthStatus(path string) (ports.AgentAuthStatus, bool, error
 	}
 	text := strings.TrimSpace(string(data))
 	if text == "" {
-		return ports.AgentAuthStatusUnauthorized, true, nil
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	lower := strings.ToLower(text)
 	if strings.Contains(lower, "windsurf_api_key") ||
