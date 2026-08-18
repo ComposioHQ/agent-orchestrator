@@ -1912,7 +1912,7 @@ function TimelineItem({
 	// because that is AO's only durable write that can attach to a turn in flight,
 	// but it is the user speaking and the timeline shows it that way.
 	if (isSteer(item)) {
-		return <SteerMessage activity={item} />;
+		return <SteerMessage activity={item} sessionId={sessionId} apiBaseUrl={apiBaseUrl} />;
 	}
 	// A plan whose turn AO never correlated — one from before this controller
 	// started. The turn-level checklist cannot show it, so the row carries it.

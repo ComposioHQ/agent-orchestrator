@@ -383,6 +383,51 @@ describe("ChatWorkspace steering", () => {
 		expect(screen.getByText(/Steered into the running turn/)).toBeInTheDocument();
 	});
 
+	it("renders a staged image reference on a landed steer in chat history", () => {
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.map((item) =>
+				item.kind === "activity" && item.id === "a-steer-1"
+					? {
+							...item,
+							detail: {
+								...item.detail,
+								text: "inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-steer123.png",
+								content: undefined,
+							},
+						}
+					: item,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getByRole("img", { name: "attachment-steer123.png" })).toBeInTheDocument();
+		expect(screen.getByText("inspect this")).toBeInTheDocument();
+		expect(screen.queryByText(/Attached files \(read these files/)).not.toBeInTheDocument();
+	});
+
+	it("does not duplicate a staged steer image that also has native content", () => {
+		const snapshot = {
+			...chatFixture,
+			items: chatFixture.items.map((item) =>
+				item.kind === "activity" && item.id === "a-steer-1"
+					? {
+							...item,
+							detail: {
+								...item.detail,
+								text: "inspect this\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-steer123.png",
+								content: [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }],
+							},
+						}
+					: item,
+			),
+		};
+		render(<ChatWorkspace snapshot={snapshot} />);
+
+		expect(screen.getAllByRole("img", { name: "attachment-steer123.png" })).toHaveLength(1);
+		expect(screen.queryByRole("img", { name: "Steered attachment 1" })).not.toBeInTheDocument();
+	});
+
 	it("renders every promoted steer content block on the running turn", () => {
 		const snapshot = {
 			...chatFixture,
