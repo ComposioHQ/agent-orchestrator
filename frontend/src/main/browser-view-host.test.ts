@@ -7,6 +7,7 @@ import {
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
+import { AO_BROWSER_PERSISTENT_PARTITION, type BrowserProfilePersistence } from "./browser-profile-storage";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
@@ -204,7 +205,7 @@ function setupHost(agentBrowserRuntime?: import("./agent-browser-runtime").Agent
 	};
 }
 
-function setupTabHost() {
+function setupTabHost(options: { browserProfilePersistence?: BrowserProfilePersistence } = {}) {
 	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
 	const handlers = new Map<string, InvokeHandler>();
 	const eventHandlers = new Map<string, EventHandler>();
@@ -348,6 +349,7 @@ function setupTabHost() {
 		annotatePreloadPath: "/preload.js",
 		rendererOrigin: "http://localhost:5173",
 		agentBrowserRuntime: runtime,
+		...options,
 	});
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
@@ -836,6 +838,13 @@ describe("agent browser runtime", () => {
 		host.destroy("0:sess-1");
 		await host.execute("sess-1", "tabs");
 		expect(constructorOptions[3].webPreferences.partition).not.toBe(firstPartition);
+	});
+
+	it("uses the single AO persistent destination only when explicitly selected", async () => {
+		const { constructorOptions, host } = setupTabHost({ browserProfilePersistence: "persistent" });
+		await host.execute("sess-1", "tabs");
+
+		expect(constructorOptions[0].webPreferences.partition).toBe(AO_BROWSER_PERSISTENT_PARTITION);
 	});
 
 	it("captures allowed popups as new tabs and protects the final tab", async () => {

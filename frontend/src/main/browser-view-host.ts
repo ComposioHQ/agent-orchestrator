@@ -25,6 +25,11 @@ import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
+import {
+	createBrowserProfileStorage,
+	type BrowserProfilePersistence,
+	type BrowserProfileStorage,
+} from "./browser-profile-storage";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
 	if (typeof value !== "object" || value === null) return false;
@@ -206,6 +211,9 @@ export type BrowserViewHostOptions = {
 	isKeybindingRecording?: () => boolean;
 	agentBrowserRuntime?: AgentBrowserRuntime;
 	isCloseShellTerminalShortcutEnabled?: () => boolean;
+	/** Main-process-only choice; omitted callers retain memory-only workers. */
+	browserProfilePersistence?: BrowserProfilePersistence;
+	browserProfileStorage?: BrowserProfileStorage;
 };
 
 export type BrowserViewHost = {
@@ -401,6 +409,8 @@ export function scaleBoundsForZoom(rect: BrowserRect, zoomFactor: number): Brows
 
 export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserViewHost {
 	const entries = new Map<string, BrowserSessionEntry>();
+	const browserProfileStorage = options.browserProfileStorage ?? createBrowserProfileStorage();
+	const browserProfilePersistence = options.browserProfilePersistence ?? "ephemeral";
 	const shellWebContents = options.shellWebContents ?? options.mainWindow.webContents;
 	if (!shellWebContents) throw new Error("Browser view host requires shell WebContents");
 	const viewIdsBySessionId = new Map<string, string>();
@@ -562,10 +572,11 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			session = {
 				sessionId,
 				viewId,
-				// A non-persist: Electron partition is memory-only. Every tab in
-				// this worker shares it, while a fresh worker runtime receives a
-				// different partition even if a session ID is ever reused.
-				profilePartition: `ao-browser-${randomUUID()}`,
+				// The default non-persist partition is memory-only. Every tab in this
+				// worker shares it, while a fresh worker runtime receives a different
+				// partition even if a session ID is ever reused. A persistent partition
+				// is reachable only through the explicit main-process choice above.
+				profilePartition: browserProfileStorage.partitionFor(browserProfilePersistence),
 				tabs: new Map(),
 				activeTabId: "",
 				nextTabNumber: 1,
