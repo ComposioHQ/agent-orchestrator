@@ -179,6 +179,9 @@ export function ChatComposer({
 	// State disables the controls after React renders; the ref closes the smaller
 	// synchronous gap where key repeat can call submit again in the same render.
 	const submissionInFlight = useRef(false);
+	// Disabling the active textarea makes Chromium move focus to the document body.
+	// Remember keyboard-origin submissions so focus can return once it is enabled.
+	const restoreFocusAfterSubmission = useRef(false);
 	const menuId = useId();
 	/** Match the field to its content until CSS's seven-line cap takes over. */
 	const resizeTextarea = useCallback(() => {
@@ -297,6 +300,17 @@ export function ChatComposer({
 		node.focus();
 	}, [text]);
 
+	useLayoutEffect(() => {
+		if (submitting || !restoreFocusAfterSubmission.current) return;
+		restoreFocusAfterSubmission.current = false;
+		const node = textarea.current;
+		if (!node || node.disabled) return;
+		const active = node.ownerDocument.activeElement;
+		// Restore focus only when disabling the field caused the blur. Do not steal
+		// focus if the user deliberately moved to another control while awaiting.
+		if (active === node || active === node.ownerDocument.body || active === null) node.focus();
+	}, [submitting]);
+
 	const pick = useCallback(
 		(value: string) => {
 			if (!trigger) return;
@@ -311,6 +325,8 @@ export function ChatComposer({
 	async function submit(event?: FormEvent) {
 		event?.preventDefault();
 		if (!canSend || submissionInFlight.current) return;
+		restoreFocusAfterSubmission.current =
+			textarea.current?.ownerDocument.activeElement === textarea.current;
 		submissionInFlight.current = true;
 		setSubmitting(true);
 		try {

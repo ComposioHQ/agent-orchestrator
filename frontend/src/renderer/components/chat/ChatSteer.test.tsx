@@ -96,17 +96,42 @@ describe("ChatComposer steering", () => {
 		settle();
 	});
 
-	it("keeps the text when the steer is refused", async () => {
-		const onSteer = vi.fn().mockRejectedValue(new Error("not steerable"));
-		composer({ onSteer });
+	it("keeps focus on a refused steer so Enter can retry the retained draft", async () => {
+		let rejectSteer!: (reason?: unknown) => void;
+		const onSteer = vi.fn(
+			() =>
+				new Promise<void>((_resolve, reject) => {
+					rejectSteer = reject;
+				}),
+		);
+		const onSend = vi.fn().mockResolvedValue(undefined);
+		composer({ onSteer, onSend });
 		const field = screen.getByRole("combobox");
 		await userEvent.click(screen.getByRole("button", { name: "Steer this turn" }));
-		await userEvent.type(field, "actually, skip it{Enter}");
-		expect(field).toHaveValue("actually, skip it");
-		expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
-			"aria-pressed",
-			"true",
-		);
+		await userEvent.type(field, "actually, skip it");
+		fireEvent.keyDown(field, { key: "Enter" });
+		await waitFor(() => expect(field).toBeDisabled());
+		// Chromium blurs a focused textarea when it becomes disabled. Model that
+		// browser behavior explicitly because jsdom leaves focus in place.
+		const previousTabIndex = document.body.getAttribute("tabindex");
+		try {
+			document.body.tabIndex = -1;
+			document.body.focus();
+			expect(field).not.toHaveFocus();
+			await act(async () => rejectSteer(new Error("not steerable")));
+			await waitFor(() => expect(field).toBeEnabled());
+			expect(field).toHaveValue("actually, skip it");
+			expect(screen.getByRole("button", { name: "Queue for next" })).toHaveAttribute(
+				"aria-pressed",
+				"true",
+			);
+			expect(field).toHaveFocus();
+			await userEvent.keyboard("{Enter}");
+			await waitFor(() => expect(onSend).toHaveBeenCalledWith("actually, skip it"));
+		} finally {
+			if (previousTabIndex === null) document.body.removeAttribute("tabindex");
+			else document.body.setAttribute("tabindex", previousTabIndex);
+		}
 	});
 
 	it("stages attachment-only drafts and includes them in steer", async () => {
