@@ -1221,5 +1221,11 @@
 	"survey.back": "Zurück",
 	"survey.skip": "Überspringen",
 	"survey.continue": "Weiter",
-	"survey.finish": "Fertigstellen"
+	"survey.finish": "Fertigstellen",
+	"survey.inviteTitle": "Gestalte AO mit",
+	"survey.inviteSubtitle": "Ein paar kurze Fragen",
+	"survey.inviteCta": "Umfrage starten",
+	"survey.inviteDismiss": "Umfrage-Einladung ausblenden",
+	"survey.remindLater": "Später erinnern",
+	"survey.dontShowAgain": "Nicht mehr anzeigen"
 }

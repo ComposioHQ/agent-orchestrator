@@ -1203,5 +1203,11 @@
 	"survey.back": "Back",
 	"survey.skip": "Skip",
 	"survey.continue": "Continue",
-	"survey.finish": "Finish"
+	"survey.finish": "Finish",
+	"survey.inviteTitle": "Help shape AO",
+	"survey.inviteSubtitle": "A few quick questions",
+	"survey.inviteCta": "Take survey",
+	"survey.inviteDismiss": "Dismiss survey invite",
+	"survey.remindLater": "Remind me later",
+	"survey.dontShowAgain": "Don't show again"
 }

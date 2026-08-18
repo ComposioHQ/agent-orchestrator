@@ -1203,5 +1203,11 @@
 	"survey.back": "返回",
 	"survey.skip": "跳过",
 	"survey.continue": "继续",
-	"survey.finish": "完成"
+	"survey.finish": "完成",
+	"survey.inviteTitle": "参与塑造 AO",
+	"survey.inviteSubtitle": "几个简短的问题",
+	"survey.inviteCta": "参与调查",
+	"survey.inviteDismiss": "关闭调查邀请",
+	"survey.remindLater": "稍后提醒",
+	"survey.dontShowAgain": "不再显示"
 }
