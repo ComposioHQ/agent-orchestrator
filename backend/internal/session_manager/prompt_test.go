@@ -91,6 +91,8 @@ func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndAOOnlyDelegation(t
 		"must pass the target worker session explicitly",
 		"--model <model-id>",
 		"override the agent model for this worker only",
+		"ao spawn --help | grep -- --model",
+		"if the flag is not listed, omit it",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("orchestrator prompt missing %q:\n%s", want, got)
