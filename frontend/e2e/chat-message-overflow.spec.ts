@@ -25,7 +25,7 @@ async function expectBubbleToStayInsideViewport(bubble: Locator) {
 	expect(layout.bubbleScrollWidth).toBeLessThanOrEqual(layout.bubbleClientWidth);
 }
 
-test("long unbroken user messages stay inside their chat bubble", async ({ page }) => {
+test("long unbroken user messages stay inside their chat bubble @T0", async ({ page }) => {
 	await installFakeAgent(page, {
 		workers: [{ id: sessionId, title: "Debug chat input", mode: "chat" }],
 	});
