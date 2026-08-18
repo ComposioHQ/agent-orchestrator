@@ -16,7 +16,8 @@ PostHog.
 
 The survey opens only when the user clicks the sidebar invite (opt-in, never an
 auto-pop). It runs one question at a time in a centered modal with a progress
-bar. Crossing the invite (✕) hushes it for 48 hours; finishing marks it complete
+bar. The invite's ✕ offers two ways out: remind me later (hushed 48 hours) or
+don't show again (retired for good). Finishing the survey also marks it complete
 so it never returns.
 
 ## The five questions (`definitions.ts`)
@@ -38,7 +39,8 @@ Every answer is captured (properties registered in
 |---|---|---|
 | `ao.renderer.survey_answered` | per question | `survey`, `choice`, `choices[]` (multi) |
 | `ao.renderer.survey_completed` | on finish | `answer_profile`, `answer_task_type`, `answer_pmf`, `answer_blocker`, `answer_wish` |
-| `ao.renderer.survey_invite_dismissed` | invite crossed | — |
+| `ao.renderer.survey_invite_dismissed` | invite crossed, remind me later | (none) |
+| `ao.renderer.survey_invite_opted_out` | invite crossed, don't show again | (none) |
 
 `survey_completed` carries the whole response as one row, so metrics need no
 joins: break it down by `answer_profile` for the persona mix, `answer_pmf` for

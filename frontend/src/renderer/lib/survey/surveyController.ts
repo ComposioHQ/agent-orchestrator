@@ -13,9 +13,10 @@ type State = {
 	answers: Record<string, string>; // questionId -> answer (multi joined with ", ")
 	completed: boolean; // finished once -> never invite again
 	inviteDismissedAt: number; // ms epoch the invite was crossed -> 48h quiet
+	optedOut: boolean; // chose "don't show again" -> never invite again
 };
 
-const EMPTY: State = { answers: {}, completed: false, inviteDismissedAt: 0 };
+const EMPTY: State = { answers: {}, completed: false, inviteDismissedAt: 0, optedOut: false };
 
 export type Storage = Pick<globalThis.Storage, "getItem" | "setItem">;
 export type Capture = (event: string, properties?: Record<string, unknown>) => void;
@@ -84,11 +85,12 @@ export class SurveyController {
 		this.capture("ao.renderer.survey_completed", props);
 	}
 
-	/** The sidebar invite is eligible when the user has not completed the survey
-	 * and is not within the 48h quiet window after crossing it. */
+	/** The sidebar invite is eligible when the user has not completed the survey,
+	 * has not opted out for good, and is not within the 48h quiet window after
+	 * crossing it. */
 	inviteEligible(): boolean {
 		const s = this.load();
-		if (s.completed) return false;
+		if (s.completed || s.optedOut) return false;
 		return this.now() - s.inviteDismissedAt >= INVITE_SNOOZE_MS;
 	}
 
@@ -98,5 +100,13 @@ export class SurveyController {
 		s.inviteDismissedAt = this.now();
 		this.save(s);
 		this.capture("ao.renderer.survey_invite_dismissed", {});
+	}
+
+	/** User chose "don't show again": retire the invite for good. */
+	optOut(): void {
+		const s = this.load();
+		s.optedOut = true;
+		this.save(s);
+		this.capture("ao.renderer.survey_invite_opted_out", {});
 	}
 }

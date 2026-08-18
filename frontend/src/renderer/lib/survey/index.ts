@@ -48,6 +48,12 @@ export function dismissInvite(): void {
 	emit();
 }
 
+/** User chose "don't show again": retire the invite for good. */
+export function optOutOfInvite(): void {
+	controller.optOut();
+	emit();
+}
+
 /** User opened the survey from the sidebar invite. */
 export function openSurvey(): void {
 	if (open) return;

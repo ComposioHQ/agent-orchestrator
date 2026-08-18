@@ -568,6 +568,7 @@ export async function sanitizeRendererProperties(
 			}
 			break;
 		case "ao.renderer.survey_invite_dismissed":
+		case "ao.renderer.survey_invite_opted_out":
 			break;
 		case "ao.renderer.support_submitted":
 			// The report's summary, details, and diagnostics block are the user's own

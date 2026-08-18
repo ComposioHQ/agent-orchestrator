@@ -100,7 +100,7 @@ export function SurveyPrompt() {
 				<div className="aoq-modal">
 					<div className="aoq-done">
 						<div className="aoq-ring">✓</div>
-						<h3>Thanks — that really helps.</h3>
+						<h3>Thanks, that really helps.</h3>
 						<p>We read every answer. Back to work.</p>
 					</div>
 					<div className="aoq-foot">

@@ -72,4 +72,12 @@ describe("SurveyController.invite eligibility", () => {
 		t += 2;
 		expect(c.inviteEligible()).toBe(true);
 	});
+
+	it("never returns after the user opts out", () => {
+		const c = make();
+		c.optOut();
+		expect(capture).toHaveBeenCalledWith("ao.renderer.survey_invite_opted_out", {});
+		t += 10 * INVITE_SNOOZE_MS;
+		expect(c.inviteEligible()).toBe(false);
+	});
 });
