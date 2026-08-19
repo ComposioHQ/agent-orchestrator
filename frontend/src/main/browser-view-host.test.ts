@@ -930,6 +930,13 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
 		const { viewId } = ensured;
 
+		// Counts closes that were made to hit closeTab's "wasActive"
+		// reactivation branch (browser-view-host.ts:696 -- the path that calls
+		// activateTab/applySessionBounds/pushNavState/pushDevToolsState/
+		// retargetDevTools) so the final assertion has real evidence that path
+		// actually ran, not just that the loop reached the code.
+		let reactivatingCloses = 0;
+
 		for (let cycle = 0; cycle < 20; cycle += 1) {
 			for (let i = 0; i < MAX_BROWSER_TABS - 1; i += 1) {
 				await invoke("browser:openTab", { viewId });
@@ -944,26 +951,54 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 			await invoke("browser:annotation:setMode", { viewId, enabled: true });
 			await invoke("browser:annotation:setMode", { viewId, enabled: false });
 
+			// Re-fetch (rather than reusing the pre-interleave `tabs` snapshot)
+			// so any corruption introduced by the DevTools/annotation-mode calls
+			// above surfaces here directly, instead of only indirectly on the
+			// next close below.
+			tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+
+			let closeCount = 0;
 			while (tabs.tabs.length > 1) {
-				// Switch to a tab other than the one about to close before every
-				// other close, so closeTab's "wasActive" reactivation path and the
-				// plain non-active-tab deletion path both get exercised.
-				if (tabs.tabs.length % 2 === 0) {
-					await invoke("browser:selectTab", { viewId, tabId: tabs.tabs[0].id });
-				}
-				const closingId = tabs.tabs[tabs.tabs.length - 1].id;
 				const before = tabs.tabs.length;
+				// Alternate which tab gets closed: on even iterations, select the
+				// head tab and then close that same tab, forcing closeTab's
+				// "wasActive" reactivation branch to run; on odd iterations, close
+				// the tail (a background tab) without touching selection, so the
+				// plain non-active-tab deletion path runs too. Tail-closing alone
+				// (the old behavior) never made the closed tab coincide with the
+				// active one, so the reactivation branch was never exercised.
+				const closingActiveTab = closeCount % 2 === 0;
+				let closingId: string;
+				if (closingActiveTab) {
+					closingId = tabs.tabs[0].id;
+					await invoke("browser:selectTab", { viewId, tabId: closingId });
+				} else {
+					closingId = tabs.tabs[tabs.tabs.length - 1].id;
+				}
 
 				const result = (await invoke("browser:closeTab", { viewId, tabId: closingId })) as BrowserTabsState;
 
 				expect(result.tabs.some((tab) => tab.id === closingId)).toBe(false);
 				expect(result.tabs).toHaveLength(before - 1);
+				// The reported active tab must always be one that's still present
+				// -- a broken reactivation would otherwise pass silently, as it
+				// did before this assertion existed.
+				expect(result.tabs.some((tab) => tab.id === result.activeTabId)).toBe(true);
+				if (closingActiveTab) reactivatingCloses += 1;
+
 				tabs = result;
+				closeCount += 1;
 			}
 
 			expect(tabs.tabs).toHaveLength(1);
 			expect((await invoke("browser:getTabs", viewId)) as BrowserTabsState).toMatchObject({ tabs: [{ id: tabs.tabs[0].id }] });
 		}
+
+		// 20 cycles x 8 reactivating closes/cycle (closeCount 0,2,4,...,14 out
+		// of 15 closes per cycle) -- confirms the alternation above genuinely
+		// exercised closeTab's wasActive branch, not merely that the loop ran.
+		expect(reactivatingCloses).toBe(160);
 
 		const final = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
 		expect(final.tabs).toHaveLength(1);
