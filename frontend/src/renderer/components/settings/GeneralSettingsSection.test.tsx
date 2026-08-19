@@ -11,6 +11,7 @@ function shellValue(connection: "local" | "remote"): ShellContextValue {
 	return {
 		daemonStatus,
 		workspaceStartupState: "ready",
+		cloneProject: vi.fn(),
 		createProject: vi.fn(),
 		initializeProjectRepository: vi.fn(),
 	};

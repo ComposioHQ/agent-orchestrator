@@ -30,6 +30,7 @@ function shellValue(daemonStatus: DaemonStatus): ShellContextValue {
 	return {
 		daemonStatus,
 		workspaceStartupState: "ready",
+		cloneProject: vi.fn(),
 		createProject: vi.fn(),
 		initializeProjectRepository: vi.fn(),
 	};

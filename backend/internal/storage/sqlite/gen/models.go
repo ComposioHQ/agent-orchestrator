@@ -401,6 +401,7 @@ type Session struct {
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
 	AgentSessionIDLaunchID    string
+	Model                     string
 }
 
 type SessionCleanupFact struct {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -267,6 +268,39 @@ func TestCreate_RegistersSession(t *testing.T) {
 	}
 
 	hosts["sess-abc"].cleanup(t)
+}
+
+// TestCreate_RunFilePathScopesRegistryToInstanceDir verifies Create honors
+// Options.RunFilePath, registering into that instance's own registry file
+// instead of the ~/.ao default. This is the fix for two AO daemon instances
+// on one machine (e.g. a headless dev daemon and the desktop app) silently
+// sharing one pty-host registry and cross-wiring same-named sessions.
+func TestCreate_RunFilePathScopesRegistryToInstanceDir(t *testing.T) {
+	isolateRegistry(t)
+	instanceDir := t.TempDir()
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{
+		Spawner:     fakeSpawnerFor(t, hosts, livePID()),
+		RunFilePath: filepath.Join(instanceDir, "running.json"),
+	})
+
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     domain.SessionID("sess-scoped"),
+		WorkspacePath: "/tmp/workspace",
+		Argv:          []string{"claude-code"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if handle.ID != "sess-scoped" {
+		t.Fatalf("handle.ID = %q, want %q", handle.ID, "sess-scoped")
+	}
+	defer hosts["sess-scoped"].cleanup(t)
+
+	wantPath := filepath.Join(instanceDir, "windows-pty-hosts.json")
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatalf("expected registry at instance dir %s: %v", wantPath, err)
+	}
 }
 
 // TestCreate_DuplicateErrors verifies a second Create for the same session id fails.

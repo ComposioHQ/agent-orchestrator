@@ -63,6 +63,8 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear", Assignee: "alice"}}, true},
 		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Assignee: "alice"}}, true},
 		{"tracker intake assignee with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: " alice"}}, true},
+		{"auto review enabled", ProjectConfig{AutoReview: true}, false},
+		{"auto review disabled", ProjectConfig{AutoReview: false}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,5 +181,8 @@ func TestProjectConfigIsZero(t *testing.T) {
 	}
 	if (ProjectConfig{Env: map[string]string{"A": "b"}}).IsZero() {
 		t.Fatal("config with env should not be zero")
+	}
+	if (ProjectConfig{AutoReview: true}).IsZero() {
+		t.Fatal("config with autoReview enabled should not be zero")
 	}
 }

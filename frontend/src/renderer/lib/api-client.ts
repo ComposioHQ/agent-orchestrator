@@ -73,6 +73,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/orchestrators",
 	"/api/v1/orchestrators/{id}",
 	"/api/v1/projects",
+	"/api/v1/projects/clone",
+	"/api/v1/projects/initialize",
 	"/api/v1/projects/{id}",
 	"/api/v1/projects/{id}/config",
 	"/api/v1/prs/{id}/merge",

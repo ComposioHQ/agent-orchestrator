@@ -215,6 +215,23 @@ type Workspace interface {
 	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
 }
 
+// WorkspaceDefaultBranchRefresher is an optional capability for Git-backed
+// workspaces. Resolution is local-only so callers can retain the canonical ref
+// even when the subsequent best-effort network refresh fails.
+type WorkspaceDefaultBranchRefresher interface {
+	ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (WorkspaceDefaultBranch, error)
+	FetchDefaultBranch(ctx context.Context, repoPath string, target WorkspaceDefaultBranch) error
+}
+
+// WorkspaceDefaultBranch is a locally resolved default-branch target. BaseRef
+// is canonical (for example refs/remotes/upstream/main), so materialization
+// never has to reconstruct the remote decision from an ambiguous slash.
+type WorkspaceDefaultBranch struct {
+	Remote  string
+	Branch  string
+	BaseRef string
+}
+
 // WorkspaceObserver is an optional read-only capability implemented by
 // workspace adapters that can describe the durable state an agent handoff
 // must treat as authoritative. The session manager consumes it before and
@@ -335,10 +352,8 @@ type WorkspaceConfig struct {
 	// created from. Empty asks the workspace adapter to resolve an authoritative
 	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
-	// BaseRef is the repository-default comparison ref recorded when this
-	// workspace was first created. Restore carries it forward without
-	// re-resolving repository defaults; Create ignores it and resolves the
-	// current base itself.
+	// BaseRef is the exact canonical ref selected before any best-effort fetch.
+	// Restore carries it forward without re-resolving repository defaults.
 	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
@@ -373,6 +388,7 @@ type WorkspaceProjectConfig struct {
 	// BaseBranch applies only to RootRepoPath. Empty asks the workspace adapter
 	// to resolve that repository's default independently from every child.
 	BaseBranch string
+	BaseRef    string
 	Repos      []WorkspaceProjectRepoConfig
 }
 
@@ -385,6 +401,7 @@ type WorkspaceProjectRepoConfig struct {
 	// BaseBranch applies only to RepoPath. Empty asks the workspace adapter to
 	// resolve this repository's default independently from the workspace root.
 	BaseBranch string
+	BaseRef    string
 }
 
 // WorkspaceProjectInfo returns the root worktree plus every child worktree.

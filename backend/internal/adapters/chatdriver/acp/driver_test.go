@@ -861,6 +861,93 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 	}
 }
 
+func TestACPDriverExtractsCommandFromExecuteToolInput(t *testing.T) {
+	agent := &fakeAgent{}
+	driver := New(Config{
+		Harness:      domain.HarnessClaudeCode,
+		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
+		Probe:        func(context.Context) error { return nil },
+		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+	opened, err := driver.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer opened.Close()
+	_ = nextEvent(t, opened.Events())
+	conv := opened.(*conversation)
+	conv.mu.Lock()
+	conv.activeTurn = "turn-1"
+	conv.mu.Unlock()
+
+	// claude-code's Bash tool reports rawInput as {"command": "..."} — exactly
+	// the shape the neutral `detail.command` contract must be filled from.
+	rawInput := map[string]any{"command": "/bin/zsh -lc 'ao session ls'"}
+	if err := agent.conn.SessionUpdate(context.Background(), acpsdk.SessionNotification{
+		SessionId: acpsdk.SessionId(opened.ProviderConversationID()),
+		Update: acpsdk.SessionUpdate{ToolCall: &acpsdk.SessionUpdateToolCall{
+			SessionUpdate: "tool_call", ToolCallId: "bash-1", Title: "List sessions",
+			Kind: acpsdk.ToolKindExecute, Status: acpsdk.ToolCallStatusPending,
+			RawInput: rawInput,
+		}},
+	}); err != nil {
+		t.Fatalf("tool start: %v", err)
+	}
+	started := nextEvent(t, opened.Events())
+	if started.Kind != ports.ChatEventActivityStarted {
+		t.Fatalf("started event = %#v", started)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(started.Detail, &detail); err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if detail["command"] != "ao session ls" {
+		t.Fatalf("detail.command = %#v, want unwrapped %q", detail["command"], "ao session ls")
+	}
+	if detail["rawCommand"] != "/bin/zsh -lc 'ao session ls'" {
+		t.Fatalf("detail.rawCommand = %#v, want the verbatim provider command", detail["rawCommand"])
+	}
+	if detail["input"] == nil {
+		t.Fatalf("detail.input dropped: %#v", detail)
+	}
+}
+
+func TestRawCommandFromInput(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  any
+		want string
+	}{
+		{name: "nil", raw: nil, want: ""},
+		{name: "string passthrough is not an object", raw: "go test ./...", want: ""},
+		{
+			name: "claude-code bash",
+			raw:  map[string]any{"command": "rg -n pattern src/", "description": "search"},
+			want: "rg -n pattern src/",
+		},
+		{
+			name: "shell-wrapped command",
+			raw:  map[string]any{"command": "/bin/bash -c 'go build ./...'"},
+			want: "/bin/bash -c 'go build ./...'",
+		},
+		{name: "empty command", raw: map[string]any{"command": "  "}, want: ""},
+		{name: "cmd key", raw: map[string]any{"cmd": "ls"}, want: "ls"},
+		{
+			name: "edit tool input has no command",
+			raw:  map[string]any{"file_path": "/tmp/x", "old": "a", "new": "b"},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := rawCommandFromInput(tt.raw); got != tt.want {
+				t.Fatalf("rawCommandFromInput(%v) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestToolOutputTextNormalizesProviderDefinedRawOutput(t *testing.T) {
 	tests := []struct {
 		name string

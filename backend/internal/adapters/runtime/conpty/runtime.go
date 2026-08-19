@@ -39,6 +39,13 @@ type Options struct {
 	// Spawner overrides the default OS-level process spawner. If nil,
 	// defaultSpawnHost is used (Windows-only; returns an error on other OSes).
 	Spawner hostSpawner
+
+	// RunFilePath is this daemon instance's running.json path (config.Config.
+	// RunFilePath). It scopes the B2 pty-host registry to the same directory,
+	// so two AO instances on one machine with different AO_RUN_FILE/
+	// AO_DATA_DIR overrides never share one registry -- see
+	// ptyregistry.SetRunFilePath. Empty uses the ~/.ao default.
+	RunFilePath string
 }
 
 // Runtime is the conpty runtime adapter.
@@ -56,6 +63,7 @@ type Runtime struct {
 
 // New creates a Runtime with the given options.
 func New(opts Options) *Runtime {
+	ptyregistry.SetRunFilePath(opts.RunFilePath)
 	sp := opts.Spawner
 	if sp == nil {
 		sp = defaultSpawnHost

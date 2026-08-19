@@ -347,6 +347,7 @@ var schemaNames = map[string]string{
 	"ProjectSummary":                    "ProjectSummary",
 	"ProjectDegraded":                   "DegradedProject",
 	"ProjectAddInput":                   "AddProjectInput",
+	"ProjectCloneInput":                 "CloneProjectInput",
 	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",
@@ -1262,6 +1263,17 @@ func projectOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/projects", id: "addProject", tag: "projects",
 			summary: "Register a new project from a git repository path",
 			reqBody: projectsvc.AddInput{},
+			resps: []respUnit{
+				{http.StatusCreated, controllers.ProjectResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/clone", id: "cloneProject", tag: "projects",
+			summary: "Clone and register a project from a git repository URL",
+			reqBody: projectsvc.CloneInput{},
 			resps: []respUnit{
 				{http.StatusCreated, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},

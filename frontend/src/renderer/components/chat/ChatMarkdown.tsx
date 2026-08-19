@@ -36,8 +36,15 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { aoBridge } from "../../lib/bridge";
 import { canonicalLanguage } from "../../lib/code-highlight";
 import { isWebLink, openLinkInSystemBrowser } from "../../lib/external-link-policy";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuTrigger,
+} from "../ui/context-menu";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import "./code-theme.css";
@@ -210,7 +217,7 @@ function compactEmoji(children: ReactNode): ReactNode {
 
 function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
 	const onLinkOpen = useContext(OpenChatLink);
-	return (
+	const anchor = (
 		<a
 			href={href}
 			target="_blank"
@@ -218,7 +225,10 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
 			onClick={(event) => {
 				if (!href) return;
 				event.preventDefault();
-				if (!event.altKey && onLinkOpen && isWebLink(href)) {
+				// Cmd/Ctrl-click (the VS Code/Slack convention) and Option/Alt-click
+				// escape the in-app panel and go straight to the system browser.
+				const toSystemBrowser = event.metaKey || event.ctrlKey || event.altKey;
+				if (!toSystemBrowser && onLinkOpen && isWebLink(href)) {
 					onLinkOpen(href);
 					return;
 				}
@@ -228,6 +238,24 @@ function MarkdownLink({ href, children }: { href?: string; children?: ReactNode 
 		>
 			{children}
 		</a>
+	);
+	if (!href) return anchor;
+	return (
+		<ContextMenu>
+			<ContextMenuTrigger asChild>{anchor}</ContextMenuTrigger>
+			<ContextMenuContent className="min-w-44">
+				{/* Only http(s) may reach shell.openExternal from here; other schemes
+				    still get their address copied. */}
+				{isWebLink(href) ? (
+					<ContextMenuItem onSelect={() => void openLinkInSystemBrowser(href)}>
+						Open in system browser
+					</ContextMenuItem>
+				) : null}
+				<ContextMenuItem onSelect={() => void aoBridge.clipboard.writeText(href)}>
+					Copy link address
+				</ContextMenuItem>
+			</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
@@ -322,7 +350,8 @@ const COMPONENTS: Components = {
 	del: ({ children }) => <del className="text-muted-foreground">{children}</del>,
 
 	// Match terminal links: a plain HTTP(S) click uses the session's AO Browser;
-	// Option/Alt-click and non-web schemes use the system browser.
+	// Cmd/Ctrl- or Option/Alt-click and non-web schemes use the system browser,
+	// and right-click offers the system browser and copying the address.
 	a: MarkdownLink,
 
 	img: ({ src, alt }) => (

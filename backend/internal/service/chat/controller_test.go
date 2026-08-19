@@ -712,6 +712,158 @@ func TestInterfaceHandoffRejectsSettledReplayBeforeLatestSessionCheckpoint(t *te
 	}
 }
 
+func TestInterfaceHandoffDoesNotAnchorReplayCheckpointOnFailedTurn(t *testing.T) {
+	st := openStore(t)
+	now := time.Date(2026, 8, 19, 3, 0, 0, 0, time.UTC)
+	existing, err := st.CreateConversation(context.Background(), "failed-anchor-conversation",
+		domain.ConversationScopeSession, testProject, testSession, now)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.ClaimChatControllerGeneration(context.Background(), testSession, "old-generation", now); err != nil {
+		t.Fatalf("ClaimChatControllerGeneration: %v", err)
+	}
+	// An older completed Chat round trip that the provider will replay.
+	created, err := st.AppendUserMessage(context.Background(), existing.ID, testSession, "old-generation",
+		domain.ConversationMessage{
+			ID: "settled-user", Text: "What changed?", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "settled-client-id",
+		}, "settled-turn", now)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage settled: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(context.Background(), "settled-turn", "native-turn-1", now); err != nil {
+		t.Fatalf("BindTurnToProvider settled: %v", err)
+	}
+	if err := st.SettleAssistantMessage(context.Background(), existing.ID,
+		"native-answer-1", "native-turn-1", "Nothing is dirty.", "settled-answer", now); err != nil {
+		t.Fatalf("SettleAssistantMessage settled: %v", err)
+	}
+	if err := st.SettleTurn(context.Background(), existing.ID, "native-turn-1",
+		domain.TurnStateCompleted, "", now); err != nil {
+		t.Fatalf("SettleTurn settled: %v", err)
+	}
+	// A newer failed Chat turn. Its synthetic auth-error answer lives on a dead
+	// transcript branch: the provider forked the next TUI prompt from the entry
+	// before this turn, so session/load never replays these items.
+	later := now.Add(time.Minute)
+	created, err = st.AppendUserMessage(context.Background(), existing.ID, testSession, "old-generation",
+		domain.ConversationMessage{
+			ID: "failed-user", Text: "Spawn a worker to fix the link behavior.", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "failed-client-id",
+		}, "failed-turn", later)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage failed turn: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(context.Background(), "failed-turn", "native-turn-2", later); err != nil {
+		t.Fatalf("BindTurnToProvider failed turn: %v", err)
+	}
+	if err := st.SettleAssistantMessage(context.Background(), existing.ID,
+		"native-error-1", "native-turn-2",
+		"Failed to authenticate: OAuth session expired and could not be refreshed", "failed-answer", later); err != nil {
+		t.Fatalf("SettleAssistantMessage failed turn: %v", err)
+	}
+	if err := st.SettleTurn(context.Background(), existing.ID, "native-turn-2",
+		domain.TurnStateFailed, "authentication_failed", later); err != nil {
+		t.Fatalf("SettleTurn failed turn: %v", err)
+	}
+
+	// The user re-ran the request in the terminal after fixing auth; hooks
+	// captured that newest round trip, and the provider replays it.
+	rec, found, err := st.GetSession(context.Background(), testSession)
+	if err != nil || !found {
+		t.Fatalf("load session: found=%v err=%v", found, err)
+	}
+	rec.Metadata.LatestUserPrompt = "Spawn a worker to fix the link behavior in the terminal."
+	rec.Metadata.LatestAssistantUpdate = "Worker spawned."
+	if err := st.UpdateSession(context.Background(), rec); err != nil {
+		t.Fatalf("seed native replay checkpoint: %v", err)
+	}
+
+	conv := &nativeHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start-1", ProviderTurnID: "native-turn-1"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user-1",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "history-item-1", Text: "What changed?",
+			},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer-1",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "history-item-2", Text: "Nothing is dirty.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-complete-1",
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateCompleted,
+			},
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start-2", ProviderTurnID: "native-turn-tui"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user-2",
+				ProviderTurnID: "native-turn-tui", ProviderItemID: "history-item-3",
+				Text: "Spawn a worker to fix the link behavior in the terminal.",
+			},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer-2",
+				ProviderTurnID: "native-turn-tui", ProviderItemID: "history-item-4", Text: "Worker spawned.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-complete-2",
+				ProviderTurnID: "native-turn-tui", TurnState: domain.TurnStateCompleted,
+			},
+		},
+	}
+	var idMu sync.Mutex
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			idMu.Lock()
+			defer idMu.Unlock()
+			nextID++
+			return fmt.Sprintf("failed-anchor-%d", nextID)
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1", RequireNativeHistory: true,
+	})
+	if err != nil {
+		t.Fatalf("Start resume = %v, want success: a failed turn's never-replayed items must not gate the handoff", err)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	// The failed turn stays durable in AO's projection even though the provider
+	// never replays it.
+	var failedState domain.TurnState
+	for _, turn := range snapshot.Turns {
+		if turn.ProviderTurnID == "native-turn-2" {
+			failedState = turn.State
+		}
+	}
+	if failedState != domain.TurnStateFailed {
+		t.Fatalf("failed turn state = %q, want preserved %q (turns = %#v)",
+			failedState, domain.TurnStateFailed, snapshot.Turns)
+	}
+}
+
 func TestSlowNativeHistoryDoesNotBlockOtherControllerLookups(t *testing.T) {
 	st := openStore(t)
 	conv := &blockingHistoryConversation{

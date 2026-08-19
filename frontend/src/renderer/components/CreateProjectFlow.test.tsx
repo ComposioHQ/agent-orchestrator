@@ -15,6 +15,7 @@ function shellValue(connection: "local" | "remote"): ShellContextValue {
 	return {
 		daemonStatus,
 		workspaceStartupState: "ready",
+		cloneProject: vi.fn(),
 		createProject: vi.fn(),
 		initializeProjectRepository: vi.fn(),
 	};
@@ -23,9 +24,11 @@ function shellValue(connection: "local" | "remote"): ShellContextValue {
 function renderFlow(connection?: "local" | "remote") {
 	const onCreateProject = vi.fn().mockResolvedValue(undefined);
 	const onInitializeProject = vi.fn().mockResolvedValue(undefined);
+	const onCloneProject = vi.fn().mockResolvedValue(undefined);
 	const flow = (
 		<CreateProjectFlow
 			mode="single_repo"
+			onCloneProject={onCloneProject}
 			onCreateProject={onCreateProject}
 			onInitializeProject={onInitializeProject}
 		>
