@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, CircleDashed, Download, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
+import { cn } from "../../lib/utils";
 import { useUiStore } from "../../stores/ui-store";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
@@ -289,91 +290,141 @@ function FeatureBuildsSelect({
 }
 
 function UpdateActions({ status, suppressTopBorder = false }: { status: UpdateStatus; suppressTopBorder?: boolean }) {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
+	const [manualCheckPending, setManualCheckPending] = useState(false);
 
-	const checking = status.state === "checking";
+	const checking = status.state === "checking" || manualCheckPending;
 	const downloading = status.state === "downloading";
 	const busy = checking || downloading;
-	const showStatus =
-		status.state === "checking" ||
-		status.state === "available" ||
-		status.state === "downloading" ||
-		status.state === "downloaded" ||
-		status.state === "not-available" ||
-		status.state === "unsupported" ||
-		status.state === "error";
+	const displayStatus: UpdateStatus = manualCheckPending && status.state !== "checking" ? { ...status, state: "checking" } : status;
+	const checkedAt = status.checkedAt
+		? new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language, {
+				dateStyle: "medium",
+				timeStyle: "short",
+			}).format(status.checkedAt)
+		: null;
+
+	const checkNow = async () => {
+		setManualCheckPending(true);
+		try {
+			await aoBridge.updates.check();
+		} catch {
+			// The main process publishes the actionable updater error state.
+		} finally {
+			setManualCheckPending(false);
+		}
+	};
 
 	return (
 		<>
 			<SettingsRow label={t("settings.updates.checksForUpdates")} className={suppressTopBorder ? "!border-t-0" : undefined}>
-				<div className="flex items-center gap-2">
-					<span className="text-control text-settings-muted" data-testid="app-version">
-						{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
-					</span>
-					<button
+				<div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
+					<div className="flex min-w-0 flex-col items-end gap-0.5">
+						<span className="truncate text-control text-settings-muted" data-testid="app-version">
+							{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}
+						</span>
+						{checkedAt ? (
+							<span className="truncate text-xs text-settings-muted tabular-nums" data-testid="update-checked-at">
+								{t("settings.updates.lastChecked", { time: checkedAt })}
+							</span>
+						) : null}
+					</div>
+					<Button
 						type="button"
-						aria-label={t("settings.updates.check")}
-						className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-settings-muted transition-colors hover:text-settings-label disabled:cursor-not-allowed disabled:opacity-50"
-						onClick={() => void aoBridge.updates.check()}
+						aria-label={checking ? t("settings.updates.checking") : t("settings.updates.check")}
+						aria-describedby="update-status-line"
+						variant="outline"
+						size="sm"
+						className="min-w-40"
+						onClick={() => void checkNow()}
 						disabled={busy}
 					>
 						{checking ? (
-							<Loader2 className="size-icon-base animate-spin" aria-hidden="true" />
+							<Loader2 className="size-icon-sm animate-spin motion-reduce:animate-none" aria-hidden="true" />
 						) : (
-							<RefreshCw className="size-icon-base" aria-hidden="true" />
+							<RefreshCw className="size-icon-sm" aria-hidden="true" />
 						)}
-					</button>
+						{checking ? t("settings.updates.checking") : t("settings.updates.check")}
+					</Button>
 				</div>
 			</SettingsRow>
 
-			{showStatus && (
-				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
-					{status.state === "available" && (
+			<div
+				id="update-status-line"
+				role="status"
+				aria-live="polite"
+				aria-atomic="true"
+				aria-busy={checking}
+				className="settings-row-bar h-auto min-h-0 flex-wrap gap-3 py-3"
+			>
+				<UpdateStatusLine status={displayStatus} />
+				<div className="ml-auto flex shrink-0 items-center gap-2">
+					{!checking && status.state === "available" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
 							{status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
 						</Button>
 					)}
-					{status.state === "downloaded" && (
+					{!checking && status.state === "downloaded" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.install()}>
 							{t("settings.updates.restartInstall")}
 						</Button>
 					)}
-					<UpdateStatusLine status={status} />
 				</div>
-			)}
+			</div>
 		</>
 	);
 }
 
 function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 	const { t } = useTranslation();
+	let icon = <CircleDashed className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />;
+	let className = "text-settings-muted";
+	let label: string;
+
 	switch (status.state) {
 		case "checking":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.checking")}</span>;
+			icon = <RefreshCw className="size-icon-base shrink-0 text-primary" aria-hidden="true" />;
+			label = t("settings.updates.checking");
+			break;
 		case "available":
-			return (
-				<span className="text-xs text-settings-muted">
-					{t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" })}
-				</span>
-			);
+			icon = <Download className="size-icon-base shrink-0 text-primary" aria-hidden="true" />;
+			className = "text-settings-label";
+			label = t("settings.updates.available", { version: status.version ? ` (v${status.version})` : "" });
+			break;
 		case "downloading":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.downloading", { percent: status.percent ?? 0 })}</span>;
+			icon = <Download className="size-icon-base shrink-0 text-primary" aria-hidden="true" />;
+			className = "text-settings-label tabular-nums";
+			label = t("settings.updates.downloading", { percent: status.percent ?? 0 });
+			break;
 		case "downloaded":
-			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
+			icon = <CheckCircle2 className="size-icon-base shrink-0 text-success" aria-hidden="true" />;
+			className = "text-success";
+			label = t("settings.updates.downloaded");
+			break;
 		case "not-available":
-			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
+			icon = <CheckCircle2 className="size-icon-base shrink-0 text-success" aria-hidden="true" />;
+			className = "text-success";
+			label = t("settings.updates.latest");
+			break;
 		case "unsupported":
-			return <span className="text-xs text-settings-muted">{status.message ?? t("settings.updates.needInstalledApp")}</span>;
+			label = status.message ?? t("settings.updates.needInstalledApp");
+			break;
 		case "error":
-			return (
-				<span className="text-xs text-error">
-				{status.netError
-					? t("settings.updates.netErrorRestartGuidance")
-					: status.message ?? t("settings.updates.updateFailed")}
-				</span>
-			);
+			icon = <AlertCircle className="size-icon-base shrink-0 text-error" aria-hidden="true" />;
+			className = "text-error";
+			label = status.netError
+				? t("settings.updates.netErrorRestartGuidance")
+				: status.message ?? t("settings.updates.updateFailed");
+			break;
 		default:
-			return null;
+			label = t("settings.updates.notChecked");
 	}
+
+	return (
+		<div className="flex min-w-0 items-center gap-2">
+			{icon}
+			<span className={cn("text-pretty text-sm leading-5", className)}>{label}</span>
+		</div>
+	);
 }
