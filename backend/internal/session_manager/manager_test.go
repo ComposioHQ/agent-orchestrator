@@ -477,6 +477,25 @@ func (fakeAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionIn
 	return ports.SessionInfo{}, false, nil
 }
 
+type nativeTerminatingAgent struct {
+	fakeAgent
+	wantID    string
+	err       error
+	calls     int
+	sharedLog *[]string
+}
+
+func (a *nativeTerminatingAgent) TerminateNativeSession(_ context.Context, session ports.SessionRef) error {
+	a.calls++
+	if a.sharedLog != nil {
+		*a.sharedLog = append(*a.sharedLog, "TerminateNativeSession")
+	}
+	if got := session.Metadata[ports.MetadataKeyAgentSessionID]; got != a.wantID {
+		return fmt.Errorf("native id = %q, want %q", got, a.wantID)
+	}
+	return a.err
+}
+
 type launchArgvAgent struct {
 	fakeAgent
 	argv []string
@@ -730,6 +749,7 @@ type fakeWorkspace struct {
 	forceDestroyErr error
 	// stashCalls counts StashUncommitted invocations.
 	stashCalls int
+	stashHook  func()
 	// excludePatterns records patterns passed to AddExclude; addExcludeErr, when
 	// set, is returned so best-effort handling can be exercised.
 	excludePatterns []string
@@ -886,6 +906,9 @@ func (w *fakeWorkspace) ForceDestroy(_ context.Context, info ports.WorkspaceInfo
 	return w.forceDestroyErr
 }
 func (w *fakeWorkspace) StashUncommitted(_ context.Context, info ports.WorkspaceInfo) (string, error) {
+	if w.stashHook != nil {
+		w.stashHook()
+	}
 	w.stashCalls++
 	entry := "StashUncommitted:" + string(info.SessionID)
 	if info.RepoPath != "" {
@@ -2313,6 +2336,66 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	requireNoPromptDir(t, dataDir, "mer-1")
 }
 
+func TestKill_NativeTerminationFailurePreservesRuntimeAndWorkspace(t *testing.T) {
+	m, st, rt, ws := newManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
+	m.agents = singleAgent{agent: agent}
+	rec := mkLive("mer-1")
+	rec.Metadata.AgentSessionID = "native-7"
+	st.sessions[rec.ID] = rec
+
+	freed, err := m.Kill(ctx, rec.ID)
+	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
+		t.Fatalf("freed=%v err=%v, want native termination error", freed, err)
+	}
+	if freed || rt.destroyed != 0 || ws.destroyed != 0 {
+		t.Fatalf("freed=%v runtime=%d workspace=%d, want no destructive teardown", freed, rt.destroyed, ws.destroyed)
+	}
+	if st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session must remain active when native termination fails")
+	}
+}
+
+func TestKill_TerminatesNativeSessionBeforeRuntime(t *testing.T) {
+	m, st, rt, ws := newManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7"}
+	m.agents = singleAgent{agent: agent}
+	rec := mkLive("mer-1")
+	rec.Metadata.AgentSessionID = "native-7"
+	st.sessions[rec.ID] = rec
+
+	freed, err := m.Kill(ctx, rec.ID)
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v", freed, err)
+	}
+	if agent.calls != 1 || rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("native=%d runtime=%d workspace=%d, want one each", agent.calls, rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session must be terminated after successful native and AO teardown")
+	}
+}
+
+func TestKill_UnknownHarnessSkipsNativeTerminationAndTearsDown(t *testing.T) {
+	m, st, rt, ws := newManager()
+	m.agents = missingAgents{}
+	rec := mkLive("mer-1")
+	rec.Harness = "retired-agent"
+	rec.Metadata.AgentSessionID = "native-7"
+	st.sessions[rec.ID] = rec
+
+	freed, err := m.Kill(ctx, rec.ID)
+	if err != nil || !freed {
+		t.Fatalf("freed=%v err=%v, want successful teardown", freed, err)
+	}
+	if rt.destroyed != 1 || ws.destroyed != 1 {
+		t.Fatalf("runtime=%d workspace=%d, want one each", rt.destroyed, ws.destroyed)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session must be terminated when only native adapter lookup is missing")
+	}
+}
+
 func TestKill_ReviewerTeardownFailureLeavesSessionActive(t *testing.T) {
 	m, st, rt, ws := newManager()
 	m.SetReviewerTerminator(&fakeReviewerTerminator{err: errors.New("reviewer still alive")})
@@ -3190,11 +3273,14 @@ func TestSpawn_FetchesWorkspaceChildDefaultBranchesBeforeCreatingProject(t *test
 		t.Fatal(err)
 	}
 	want := []fetchDefaultBranchCall{
-		{repoPath: "/repo/mer", remote: "origin", branch: "auto", baseRef: "refs/remotes/origin/auto"},
+		{repoPath: "/repo/mer", remote: "origin", branch: "main", baseRef: "refs/remotes/origin/main"},
 		{repoPath: filepath.Join("/repo/mer", "api"), remote: "origin", branch: "release/2026", baseRef: "refs/remotes/origin/release/2026"},
 	}
 	if !reflect.DeepEqual(ws.fetches, want) {
 		t.Fatalf("fetches = %#v, want %#v", ws.fetches, want)
+	}
+	if got, want := ws.resolves[0], (resolveDefaultBranchCall{repoPath: "/repo/mer", configuredBranch: ""}); got != want {
+		t.Fatalf("root resolution = %#v, want %#v", got, want)
 	}
 	if got, want := ws.lastProjectCfg.Repos[0].BaseRef, "refs/remotes/origin/release/2026"; got != want {
 		t.Fatalf("child create base ref = %q, want %q", got, want)
@@ -5124,6 +5210,27 @@ func newLifecycleManager() (*Manager, *fakeStore, *fakeRuntime, *fakeWorkspace) 
 	return m, st, rt, ws
 }
 
+func seedNativeWorkspaceProject(st *fakeStore, id domain.SessionID, kind domain.SessionKind) domain.SessionRecord {
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID: "mer", Name: "api", RelativePath: "api",
+	}}
+	rec := domain.SessionRecord{
+		ID: id, ProjectID: "mer", Kind: kind,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/" + string(id), Branch: "ao/" + string(id),
+			RuntimeHandleID: "runtime-" + string(id), AgentSessionID: "native-7",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions[id] = rec
+	st.worktrees[id] = []domain.SessionWorktreeRecord{
+		{SessionID: id, RepoName: domain.RootWorkspaceRepoName, Branch: rec.Metadata.Branch, WorktreePath: rec.Metadata.WorkspacePath, State: "active"},
+		{SessionID: id, RepoName: "api", Branch: rec.Metadata.Branch, WorktreePath: rec.Metadata.WorkspacePath + "/api", State: "active"},
+	}
+	return rec
+}
+
 // TestSaveAndTeardownAll_CaptureOrderAndMarker verifies (a): for a live session
 // with a workspace, SaveAndTeardownAll must call StashUncommitted BEFORE
 // UpsertSessionWorktree (writing preserved_ref) BEFORE ForceDestroy.
@@ -5206,6 +5313,102 @@ func TestSaveAndTeardownAll_CaptureOrderAndMarker(t *testing.T) {
 	}
 }
 
+func TestSaveAndTeardownOne_NativeTerminationFailurePreservesWorkspace(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
+	m.agents = singleAgent{agent: agent}
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root",
+			RuntimeHandleID: "h1", AgentSessionID: "native-7",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.saveAndTeardownOne(ctx, rec, true)
+	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
+		t.Fatalf("err=%v, want native termination error", err)
+	}
+	if rt.destroyed != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("runtime=%d terminated=%v", rt.destroyed, st.sessions[rec.ID].IsTerminated)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("worktree must remain after native termination failure: calls=%v", ws.calls)
+		}
+	}
+}
+
+func TestSaveAndTeardownOne_UnknownHarnessSkipsNativeTerminationAndTearsDown(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	m.agents = missingAgents{}
+	rec := domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: "retired-agent",
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root",
+			RuntimeHandleID: "h1", AgentSessionID: "native-7",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+		t.Fatalf("saveAndTeardownOne err = %v", err)
+	}
+	if rt.destroyed != 1 || !st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("runtime=%d terminated=%v, want successful teardown", rt.destroyed, st.sessions[rec.ID].IsTerminated)
+	}
+	foundForceDestroy := false
+	for _, call := range ws.calls {
+		if call == "ForceDestroy:mer-1" {
+			foundForceDestroy = true
+		}
+	}
+	if !foundForceDestroy {
+		t.Fatalf("worktree must be force-destroyed when only native adapter lookup is missing: calls=%v", ws.calls)
+	}
+}
+
+func TestSaveAndTeardownOne_WorkspaceProjectNativeTerminationFailurePreservesRepos(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
+	m.agents = singleAgent{agent: agent}
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
+
+	err := m.saveAndTeardownOne(ctx, rec, true)
+	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
+		t.Fatalf("err=%v, want native termination error", err)
+	}
+	if rt.destroyed != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("runtime=%d terminated=%v", rt.destroyed, st.sessions[rec.ID].IsTerminated)
+	}
+	if rows := st.worktrees[rec.ID]; len(rows) != 2 {
+		t.Fatalf("workspace repo inventory = %#v, want both rows retained", rows)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("worktrees must remain after native termination failure: calls=%v", ws.calls)
+		}
+	}
+}
+
+func TestSaveAndTeardownOne_WorkspaceProjectTerminatesNativeSessionOnce(t *testing.T) {
+	m, st, _, _ := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7"}
+	m.agents = singleAgent{agent: agent}
+	rec := seedNativeWorkspaceProject(st, "mer-1", domain.KindWorker)
+
+	if err := m.saveAndTeardownOne(ctx, rec, true); err != nil {
+		t.Fatalf("saveAndTeardownOne err = %v", err)
+	}
+	if agent.calls != 1 {
+		t.Fatalf("native termination calls = %d, want 1", agent.calls)
+	}
+}
+
 // TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy covers
 // the last coverage gap the second review round flagged: the shutdown
 // save-and-teardown path (also reached by reconcileLive on boot, via the same
@@ -5253,6 +5456,27 @@ func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *test
 	}
 	if beginIdx >= forceIdx || forceIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
+	}
+}
+
+func TestSaveAndTeardownAll_QuiescesNativeAgentBeforeCapturingWork(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	ws.sharedLog = &sharedLog
+	native := &nativeTerminatingAgent{wantID: "native-7", sharedLog: &sharedLog}
+	m.agents = singleAgent{agent: native}
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	lateWriteObservedAtCapture := false
+	ws.stashHook = func() { lateWriteObservedAtCapture = native.calls == 1 }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "native-7"},
+	}
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if native.calls != 1 || !lateWriteObservedAtCapture || len(sharedLog) < 2 || sharedLog[0] != "TerminateNativeSession" || sharedLog[1] != "StashUncommitted:mer-1" {
+		t.Fatalf("native calls=%d shared log=%v; native termination must complete before capture", native.calls, sharedLog)
 	}
 }
 
@@ -5534,6 +5758,73 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 	if len(browser.destroyed) != 1 || browser.destroyed[0] != "mer-orch" {
 		t.Fatalf("browser targets destroyed = %v, want mer-orch", browser.destroyed)
+	}
+}
+
+func TestRetireForReplacement_NativeTerminationFailurePreservesRuntimeAndWorkspace(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
+	m.agents = singleAgent{agent: agent}
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	rec := domain.SessionRecord{
+		ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator",
+			RuntimeHandleID: "orch-handle", AgentSessionID: "native-7",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions[rec.ID] = rec
+
+	err := m.RetireForReplacement(ctx, rec.ID)
+	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
+		t.Fatalf("err=%v, want native termination error", err)
+	}
+	if rt.destroyed != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("runtime=%d terminated=%v", rt.destroyed, st.sessions[rec.ID].IsTerminated)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("worktree must remain after native termination failure: calls=%v", ws.calls)
+		}
+	}
+}
+
+func TestRetireForReplacement_WorkspaceProjectNativeTerminationFailurePreservesRepos(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7", err: errors.New("prime stop failed")}
+	m.agents = singleAgent{agent: agent}
+	ws.stashRef = "refs/ao/preserved/mer-orch"
+	rec := seedNativeWorkspaceProject(st, "mer-orch", domain.KindOrchestrator)
+
+	err := m.RetireForReplacement(ctx, rec.ID)
+	if err == nil || !strings.Contains(err.Error(), "prime stop failed") {
+		t.Fatalf("err=%v, want native termination error", err)
+	}
+	if rt.destroyed != 0 || st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("runtime=%d terminated=%v", rt.destroyed, st.sessions[rec.ID].IsTerminated)
+	}
+	if rows := st.worktrees[rec.ID]; len(rows) != 2 {
+		t.Fatalf("workspace repo inventory = %#v, want both rows retained", rows)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("worktrees must remain after native termination failure: calls=%v", ws.calls)
+		}
+	}
+}
+
+func TestRetireForReplacement_WorkspaceProjectTerminatesNativeSessionOnce(t *testing.T) {
+	m, st, _, _ := newLifecycleManager()
+	agent := &nativeTerminatingAgent{wantID: "native-7"}
+	m.agents = singleAgent{agent: agent}
+	rec := seedNativeWorkspaceProject(st, "mer-orch", domain.KindOrchestrator)
+
+	if err := m.RetireForReplacement(ctx, rec.ID); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+	if agent.calls != 1 {
+		t.Fatalf("native termination calls = %d, want 1", agent.calls)
 	}
 }
 

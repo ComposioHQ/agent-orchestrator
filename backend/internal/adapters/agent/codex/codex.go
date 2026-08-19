@@ -345,6 +345,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 		if home, err := os.UserHomeDir(); err == nil {
 			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "codex.exe"))
 		}
+		candidates = append(candidates, binaryutil.WindowsPackageManagerBinCandidates("codex")...)
 		for _, candidate := range candidates {
 			if fileExists(candidate) {
 				return resolveNativeWindowsCodex(candidate), nil
@@ -385,6 +386,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 			filepath.Join(home, ".local", "bin", "codex"),
 			filepath.Join(home, ".cargo", "bin", "codex"),
 		)
+		candidates = append(candidates, binaryutil.UnixPackageManagerBinCandidates(home, "codex")...)
 		nodeManagerCandidates, err := binaryutil.UnixNodeManagerBinCandidates(ctx, home, "codex")
 		if err != nil {
 			return "", err

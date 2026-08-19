@@ -965,8 +965,11 @@ func (m *Manager) refreshDefaultBranchesBestEffort(ctx context.Context, project 
 	}
 	baseRefs := make(map[string]string)
 	targets := []defaultBranchRefreshTarget{{
-		repoPath:         project.Path,
-		configuredBranch: project.Config.WithDefaults().DefaultBranch,
+		repoPath: project.Path,
+		// Translate the automatic-default sentinel before handing it to the
+		// adapter. An empty branch tells the resolver to inspect this
+		// repository's own remote HEAD; "auto" is not a Git branch name.
+		configuredBranch: project.Config.WorktreeBaseBranch(),
 	}}
 	if project.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, project.ID)
@@ -1391,6 +1394,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		workspaceProjectRows = rows
 		workspaceProject = true
 	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return false, fmt.Errorf("kill %s: native session: %w", id, err)
+	}
 	// Attachments are deliberately ignored by git, so stash cannot preserve
 	// legacy worktree-only files. Import them before any controller or worktree
 	// teardown; a failed import leaves the live session intact.
@@ -1517,6 +1523,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 		}
 		handle := runtimeHandle(rec.Metadata)
+		if err := m.terminateNativeSession(ctx, rec); err != nil {
+			return fmt.Errorf("retire replacement %s: native session: %w", id, err)
+		}
 		if handle.ID != "" {
 			if err := m.runtime.Destroy(ctx, handle); err != nil {
 				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
@@ -1539,6 +1548,9 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	}
 	if release != nil {
 		defer release()
+	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("retire replacement %s: native session: %w", id, err)
 	}
 	if err := m.importAttachments(ctx, rec); err != nil {
 		return fmt.Errorf("retire replacement %s: preserve attachments: %w", id, err)
@@ -1588,6 +1600,31 @@ func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID
 	if err := m.preview.StopSession(ctx, id); err != nil {
 		m.logger.Warn("session preview cleanup failed", "sessionID", id, "error", err)
 	}
+}
+
+func (m *Manager) terminateNativeSession(ctx context.Context, rec domain.SessionRecord) error {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI || strings.TrimSpace(rec.Metadata.AgentSessionID) == "" {
+		return nil
+	}
+	if m.agents == nil {
+		return fmt.Errorf("%w: %s", ErrUnknownHarness, rec.Harness)
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return nil
+	}
+	terminator, ok := agent.(ports.AgentNativeSessionTerminator)
+	if !ok {
+		return nil
+	}
+	return terminator.TerminateNativeSession(ctx, ports.SessionRef{
+		ID:            string(rec.ID),
+		WorkspacePath: rec.Metadata.WorkspacePath,
+		DataDir:       m.dataDir,
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: rec.Metadata.AgentSessionID,
+		},
+	})
 }
 
 func (m *Manager) destroyBrowserBestEffort(ctx context.Context, id domain.SessionID) {
@@ -1988,6 +2025,9 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	}
 	if release != nil {
 		defer release()
+	}
+	if err := m.terminateNativeSession(ctx, rec); err != nil {
+		return fmt.Errorf("save %s: native session: %w", rec.ID, err)
 	}
 	if err := m.importAttachments(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: preserve attachments: %w", rec.ID, err)

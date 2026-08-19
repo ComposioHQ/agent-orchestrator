@@ -274,6 +274,7 @@ describe("portable inspector presentations", () => {
     expect(githubSummary).toBeInTheDocument();
     expect(githubSummary).toHaveClass("select-text");
     expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "View on PR" })).not.toBeInTheDocument();
     expect(renderAvatar).toHaveBeenCalledWith("codex");
     expect(renderMarkdown).toHaveBeenCalledTimes(2);
   });
@@ -392,6 +393,47 @@ describe("portable inspector presentations", () => {
         screen.queryByRole("button", { name: "Request to re-review PR" }),
       ).not.toBeInTheDocument();
     });
+  });
+
+  it("does not offer re-review for an approved external review", () => {
+    render(
+      <InspectorReviewsView
+        externalLink={ExternalLink}
+        groups={[
+          {
+            github: {
+              entries: [
+                {
+                  body: "Looks good.",
+                  id: "github-review-approved",
+                  reviewerId: "maya",
+                  reviewUrl: "https://example.com/review",
+                  submittedAt: "2026-08-09T10:00:00Z",
+                  submittedAtLabel: "1h ago",
+                  verdict: { label: "Approved", tone: "success" },
+                },
+              ],
+              unresolved: 0,
+              unresolvedBy: [],
+            },
+            meta: "#12",
+            number: 12,
+            title: "Portable inspector",
+          },
+        ]}
+        isLoading={false}
+        labels={reviewLabels}
+        onRequestRereview={vi.fn()}
+        renderAvatar={() => null}
+        renderMarkdown={(body) => <p>{body}</p>}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /maya.*Approved/ }));
+
+    expect(
+      screen.queryByRole("button", { name: "Request to re-review PR" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the re-review action available and shows an error when the callback fails", async () => {
