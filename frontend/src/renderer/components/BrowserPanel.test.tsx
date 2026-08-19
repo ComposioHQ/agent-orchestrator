@@ -925,4 +925,27 @@ describe("BrowserPanel", () => {
 
 		expect(screen.queryByText("Pick element")).not.toBeInTheDocument();
 	});
+
+	it("keeps the browser viewport transparent once a native page is loaded, so overlays don't blank it", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-viewport")).not.toHaveClass("bg-background");
+	});
+
+	it("keeps an opaque background behind the empty-URL placeholder", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByTestId("browser-viewport")).toHaveClass("bg-background");
+	});
+
+	it("keeps an opaque background for the static preview fallback when there is no native browser bridge", () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		const ao = window.ao;
+		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
+		try {
+			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+			expect(screen.getByTestId("browser-viewport")).toHaveClass("bg-background");
+		} finally {
+			Object.defineProperty(window, "ao", { configurable: true, value: ao });
+		}
+	});
 });
