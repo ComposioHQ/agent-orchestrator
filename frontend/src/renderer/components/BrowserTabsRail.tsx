@@ -73,8 +73,8 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 	// Popped-out/fullscreen (which has room to spare) is permanently expanded.
 	// Docked defaults to collapsed (0px, no reserved column) with tab access via
 	// the toolbar's hover trigger; `pinned` restores an always-visible icon rail
-	// for users who want one. Docked sits on the right of the viewport (out of
-	// the way of the address bar); popped-out stays on the left.
+	// for users who want one. Both modes keep tabs on the right of the viewport
+	// so expanding the browser doesn't reverse their position.
 	const expanded = poppedOut;
 	const collapsed = !expanded && !pinned;
 
@@ -84,10 +84,10 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		defaultWidth: RAIL_DEFAULT_WIDTH,
 		min: RAIL_MIN_WIDTH,
 		max: RAIL_MAX_WIDTH,
-		// The resize handle only ever renders in popped-out mode, which keeps
-		// the rail on the left with the handle on its own right edge — grows
-		// when dragged rightward, away from the viewport.
-		edge: "right",
+		// The resize handle only ever renders in popped-out mode. The rail stays
+		// on the right, so its handle sits on the left edge and grows toward the
+		// viewport when dragged leftward.
+		edge: "left",
 	});
 
 	const clearOpenTimer = useCallback(() => {
@@ -212,7 +212,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		<div
 			className={cn(
 				"browser-tabs-rail relative flex h-full shrink-0 flex-col border-border bg-surface",
-				expanded ? "border-r" : pinned ? "border-l" : "",
+				expanded || pinned ? "border-l" : "",
 				expanded ? "w-(--ao-browser-tabs-w)" : pinned ? "w-8" : "w-0",
 			)}
 			data-testid="browser-tabs-rail"
@@ -296,7 +296,8 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 			</nav>
 			{expanded ? (
 				<div
-					className="absolute inset-y-0 right-0 w-1.5 cursor-col-resize touch-none"
+					className="absolute inset-y-0 left-0 w-1.5 cursor-col-resize touch-none"
+					data-testid="browser-tabs-resize-handle"
 					onDoubleClick={onResizeDoubleClick}
 					onPointerDown={onResizePointerDown}
 				/>

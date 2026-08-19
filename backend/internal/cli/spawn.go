@@ -29,6 +29,7 @@ type spawnOptions struct {
 	prompt          string
 	issue           string
 	name            string
+	model           string
 	claimPR         string
 	noTakeover      bool
 	skipAgentCheck  bool
@@ -46,6 +47,7 @@ type spawnRequest struct {
 	Harness         string `json:"harness,omitempty"`
 	Branch          string `json:"branch,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
+	Model           string `json:"model,omitempty"`
 	DisplayName     string `json:"displayName"`
 }
 
@@ -145,6 +147,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				Mode:            opts.mode,
 				Branch:          opts.branch,
 				Prompt:          opts.prompt,
+				Model:           strings.TrimSpace(opts.model),
 				DisplayName:     name,
 			}
 			var res spawnResult
@@ -192,6 +195,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.mode, "mode", "", "Initial session interface: chat (structured agent connection) or tui (the agent's native terminal). Omitted uses the daemon default; compatible sessions can switch later.")
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<session-id>/root; unsupported for Scratch)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
+	f.StringVar(&opts.model, "model", "", "Agent model override for this session only (e.g. sonnet, gpt-5.6-sol); overrides project/role config without changing it")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.trackerProvider, "tracker-provider", "github", "Issue tracker provider: github or gitlab (default: github)")
 	f.StringVar(&opts.name, "name", "", "Display name shown in the sidebar (required, max 20 characters)")

@@ -762,6 +762,321 @@ func TestWorkspaceFilesExcludeMainChangesMergedInAfterStaleOriginRef(t *testing.
 	}
 }
 
+// newDivergentForcePushRepo builds a repo shaped like a target-branch
+// force-push: the session's stale tracking ref (B) and the PR's
+// provider-observed replacement base (X) descend from a common ancestor but
+// neither is an ancestor of the other, while the session branch HEAD has
+// incorporated both — B through its own fork point, X through a later merge.
+func newDivergentForcePushRepo(t *testing.T) (repo, head, staleRef, replacementBase string) {
+	t.Helper()
+	repo = newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	// B: main's tip before the force-push. The session's tracking ref is
+	// fetched here and never refreshed.
+	writeWorkspaceFile(t, repo, "old-main.go", "package main\n")
+	runGit(t, repo, "add", "old-main.go")
+	runGit(t, repo, "commit", "-m", "old main line")
+	b := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", b)
+
+	// The session forks from B and makes its own change.
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	// X: main is force-pushed to a replacement line rooted at the same
+	// initial commit as B, not descended from B.
+	runGit(t, repo, "switch", "main")
+	initial := strings.TrimSpace(runGit(t, repo, "rev-list", "--max-parents=0", "HEAD"))
+	runGit(t, repo, "reset", "--hard", initial)
+	writeWorkspaceFile(t, repo, "new-main.go", "package main\n")
+	runGit(t, repo, "add", "new-main.go")
+	runGit(t, repo, "commit", "-m", "replacement main line (force-pushed)")
+	x := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// The session merges the force-pushed main in, so HEAD now retains B
+	// (through its own fork point) and X (through this merge) without B and
+	// X being ancestors of each other.
+	runGit(t, repo, "switch", "ao/work")
+	runGit(t, repo, "merge", "main", "-m", "merge force-pushed main")
+	h := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	return repo, h, b, x
+}
+
+func TestWorkspaceFilesCompareForcePushDivergentHistoryPrefersPRWhenHeadMatches(t *testing.T) {
+	repo, head, _, replacementBase := newDivergentForcePushRepo(t)
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The PR sync has observed the exact commit the Files tab is displaying.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: replacementBase, HeadSHA: head},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != replacementBase {
+		t.Fatalf("compare base = %q, want the PR's replacement base %q when pr.HeadSHA matches local HEAD", files.CompareBaseSHA, replacementBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	if got, ok := byPath["new-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("new-main.go leaked into the diff: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareForcePushDivergentHistoryKeepsLocalWhenPRHeadStale(t *testing.T) {
+	repo, _, staleRef, replacementBase := newDivergentForcePushRepo(t)
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The persisted PR snapshot is stale: it still names an earlier local
+	// commit, not the branch's current HEAD (which has since merged the
+	// force-pushed main).
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: replacementBase, HeadSHA: "0000000000000000000000000000000000dead"},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != staleRef {
+		t.Fatalf("compare base = %q, want the local ref candidate %q when the PR snapshot's head doesn't match local HEAD", files.CompareBaseSHA, staleRef)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	// old-main.go predates the stale local candidate itself, so it must not
+	// show up as changed against it.
+	if got, ok := byPath["old-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("old-main.go = %#v, want unmodified against the stale local candidate", got)
+	}
+	// new-main.go legitimately postdates the stale local candidate, so
+	// falling back to it (rather than trusting the unmatched PR snapshot)
+	// correctly reports it as added — this is the expected cost of rejecting
+	// a PR snapshot that doesn't describe local HEAD, not a leak.
+	if byPath["new-main.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("new-main.go = %#v, want added against the stale local candidate", byPath["new-main.go"])
+	}
+}
+
+func TestWorkspaceFilesCompareKeepsNewerRefCandidateOverOlderPR(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	older := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	writeWorkspaceFile(t, repo, "newer-main.go", "package main\n")
+	runGit(t, repo, "add", "newer-main.go")
+	runGit(t, repo, "commit", "-m", "main advanced further than the PR snapshot knows")
+	newer := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "update-ref", "refs/remotes/origin/main", newer)
+
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseRef: "origin/main"},
+	}
+	// The PR sync hasn't caught up to main's latest commit yet.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: older},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != newer {
+		t.Fatalf("compare base = %q, want the newer ref-based candidate %q regardless of candidate order", files.CompareBaseSHA, newer)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["newer-main.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("newer-main.go leaked into the diff via a stale PR base: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareMissingRefKeepsRecordedSHAOverOlderPR(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	writeWorkspaceFile(t, repo, "older.go", "package main\n")
+	runGit(t, repo, "add", "older.go")
+	runGit(t, repo, "commit", "-m", "older main point")
+	older := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	writeWorkspaceFile(t, repo, "newer.go", "package main\n")
+	runGit(t, repo, "add", "newer.go")
+	runGit(t, repo, "commit", "-m", "newer recorded point")
+	recorded := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	// No DiffBaseRef recorded — only the spawn-time recorded SHA.
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: recorded},
+	}
+	// A stale PR snapshot whose base predates the session's recorded base.
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: older},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != recorded {
+		t.Fatalf("compare base = %q, want recordedSHA %q (newer than the stale PR base) even with no recorded ref", files.CompareBaseSHA, recorded)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["newer.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("newer.go leaked into the diff via a stale PR base: %#v", got)
+	}
+}
+
+func TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestor(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	// An orphan commit sharing no history with main: it exists locally (as if
+	// fetched for some unrelated reason) but has no common ancestor with HEAD.
+	runGit(t, repo, "checkout", "--orphan", "unrelated-history")
+	runGit(t, repo, "rm", "-rf", ".")
+	writeWorkspaceFile(t, repo, "unrelated-root.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-root.go")
+	runGit(t, repo, "commit", "-m", "unrelated root commit")
+	unrelated := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "checkout", "main")
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo, DiffBaseSHA: base, DiffBaseRef: "main"},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: unrelated},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA == unrelated {
+		t.Fatalf("compare base resolved to the unrelated PR SHA %q, which shares no history with HEAD", unrelated)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["pr-file.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("pr-file.go status = %q, want added", byPath["pr-file.go"].Status)
+	}
+	// A raw two-tree diff against the unrelated commit would make the
+	// orphan's file appear "added" in the session's diff.
+	if got, ok := byPath["unrelated-root.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-root.go leaked into the diff via the rejected PR base: %#v", got)
+	}
+}
+
+// TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestorAndNoLocalCandidate
+// is the sharpest form of the no-common-ancestor problem: with no recorded
+// ref or recorded SHA to fall back on, a PR base whose merge-base derivation
+// fails must not be returned as a raw, unrelated SHA.
+func TestWorkspaceFilesCompareRejectsPRBaseWithNoCommonAncestorAndNoLocalCandidate(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+
+	runGit(t, repo, "checkout", "--orphan", "unrelated-history")
+	runGit(t, repo, "rm", "-rf", ".")
+	writeWorkspaceFile(t, repo, "unrelated-root.go", "package main\n")
+	runGit(t, repo, "add", "unrelated-root.go")
+	runGit(t, repo, "commit", "-m", "unrelated root commit")
+	unrelated := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "checkout", "main")
+	writeWorkspaceFile(t, repo, "pr-file.go", "package main\n")
+	runGit(t, repo, "add", "pr-file.go")
+	runGit(t, repo, "commit", "-m", "pr change")
+
+	st := newFakeStore()
+	st.projects["proj"] = domain.ProjectRecord{ID: "proj", Config: domain.ProjectConfig{DefaultBranch: "does-not-exist"}}
+	// No recorded ref, no recorded SHA: the PR base is the only candidate.
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "proj",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "does-not-exist", BaseSHA: unrelated},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA == unrelated {
+		t.Fatalf("compare base resolved to the unrelated, raw PR SHA %q with no local candidate to fall back on", files.CompareBaseSHA)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if got, ok := byPath["unrelated-root.go"]; ok && got.Status != WorkspaceFileUnmodified {
+		t.Fatalf("unrelated-root.go leaked into the diff via the rejected raw PR base: %#v", got)
+	}
+}
+
 func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	runGit(t, repo, "branch", "-M", "main")
@@ -2112,6 +2427,9 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"chat driver unavailable", fmt.Errorf("spawn: %w", ports.ErrChatDriverUnavailable), apierr.KindConflict, "CHAT_DRIVER_UNAVAILABLE"},
 		{"chat driver incompatible", fmt.Errorf("spawn: %w", ports.ErrChatDriverIncompatible), apierr.KindConflict, "CHAT_DRIVER_INCOMPATIBLE"},
 		{"chat auth required", fmt.Errorf("spawn: %w", ports.ErrChatAuthRequired), apierr.KindConflict, "CHAT_AUTH_REQUIRED"},
+		{"interface notice not acknowledgeable", fmt.Errorf("acknowledge interface notice: %w", sessionmanager.ErrInterfaceTransitionNoticeNotAcknowledgeable), apierr.KindConflict, "INTERFACE_TRANSITION_NOTICE_NOT_ACKNOWLEDGEABLE"},
+		{"native conversation missing", fmt.Errorf("switch interface: %w", sessionmanager.ErrNativeConversationMissing), apierr.KindConflict, "NATIVE_SESSION_MISSING"},
+		{"native conversation unverified", fmt.Errorf("switch interface: %w", sessionmanager.ErrNativeConversationUnverified), apierr.KindConflict, "NATIVE_SESSION_UNVERIFIED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2911,6 +3229,7 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
+		{Author: "reviewer-a", File: "main.go", Line: 14, Body: "resolved body", URL: "https://github.com/acme/repo/pull/7#discussion_r4", Resolved: true},
 		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3", AutoInjectReview: true},
 	}
 
@@ -2939,6 +3258,9 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
 	} else if reviewer.Links[0].Body != "raw body must stay private" || reviewer.Links[1].Body != "another raw body" {
 		t.Fatalf("comment bodies = %+v", reviewer.Links)
+	}
+	if len(pr.Review.ResolvedBy) != 1 || pr.Review.ResolvedBy[0].Count != 1 || pr.Review.ResolvedBy[0].Links[0].Body != "resolved body" {
+		t.Fatalf("resolved comments = %+v", pr.Review.ResolvedBy)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)

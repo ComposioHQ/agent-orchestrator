@@ -29,6 +29,7 @@ type fakeStore struct {
 	agentSessionUpdate int
 	markCalls          int
 	markedIDs          []string
+	resolvedCommentIDs []string
 }
 
 func (f *fakeStore) GetReviewByID(_ context.Context, id string) (domain.Review, bool, error) {
@@ -137,6 +138,19 @@ func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.Pu
 	return out, nil
 }
 
+func (f *fakeStore) MarkPRCommentResolved(_ context.Context, prURL, commentID string) (bool, error) {
+	f.resolvedCommentIDs = append(f.resolvedCommentIDs, commentID)
+	comments := f.prComments[prURL]
+	for i := range comments {
+		if comments[i].ID == commentID {
+			comments[i].Resolved = true
+			f.prComments[prURL] = comments
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 type fakeReviewResolver struct {
 	request ports.SCMReviewResolveRequest
 	err     error
@@ -163,7 +177,7 @@ func TestResolveReviewCommentResolvesTrackedThread(t *testing.T) {
 	store := &fakeStore{
 		prs: []domain.PullRequest{{URL: prURL, Number: 7, Provider: "github", Repo: "acme/widget"}},
 		prComments: map[string][]domain.PullRequestComment{
-			prURL: {{ThreadID: "thread-1", URL: commentURL}},
+			prURL: {{ThreadID: "thread-1", ID: "comment-1", URL: commentURL}},
 		},
 	}
 	resolver := &fakeReviewResolver{}
@@ -174,6 +188,35 @@ func TestResolveReviewCommentResolvesTrackedThread(t *testing.T) {
 	}
 	if resolver.request.ThreadID != "thread-1" || resolver.request.PR.Number != 7 {
 		t.Fatalf("request = %#v", resolver.request)
+	}
+	if got := store.resolvedCommentIDs; len(got) != 1 || got[0] != "comment-1" {
+		t.Fatalf("resolved comment ids = %#v", got)
+	}
+	if !store.prComments[prURL][0].Resolved {
+		t.Fatalf("comment was not marked resolved: %#v", store.prComments[prURL][0])
+	}
+}
+
+func TestResolveReviewCommentDoesNotPersistWhenProviderFails(t *testing.T) {
+	prURL := "https://github.com/acme/widget/pull/7"
+	commentURL := "https://github.com/acme/widget/pull/7#discussion_r1"
+	store := &fakeStore{
+		prs: []domain.PullRequest{{URL: prURL, Number: 7, Provider: "github", Repo: "acme/widget"}},
+		prComments: map[string][]domain.PullRequestComment{
+			prURL: {{ThreadID: "thread-1", ID: "comment-1", URL: commentURL}},
+		},
+	}
+	resolver := &fakeReviewResolver{err: errors.New("provider down")}
+	svc := New(nil, store, WithReviewResolver(resolver))
+
+	if err := svc.ResolveReviewComment(context.Background(), "mer-1", prURL, commentURL); err == nil {
+		t.Fatal("ResolveReviewComment error = nil, want provider failure")
+	}
+	if len(store.resolvedCommentIDs) != 0 {
+		t.Fatalf("resolved comment ids = %#v, want none", store.resolvedCommentIDs)
+	}
+	if store.prComments[prURL][0].Resolved {
+		t.Fatalf("comment was marked resolved after provider failure")
 	}
 }
 

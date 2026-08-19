@@ -33,7 +33,12 @@ type SessionMetadata struct {
 	RuntimeHandleID   string `json:"runtimeHandleId,omitempty"`
 	RuntimeLaunchID   string `json:"runtimeLaunchId,omitempty"`
 	AgentSessionID    string `json:"agentSessionId,omitempty"`
-	Prompt            string `json:"prompt,omitempty"`
+	// AgentSessionIDLaunchID identifies the terminal runtime generation proven to
+	// own AgentSessionID. Usually that proof comes from a provider hook. A
+	// coordinated Chat-to-TUI handoff may also establish it by launching the
+	// target with the exact structured provider id transferred from Chat.
+	AgentSessionIDLaunchID string `json:"-"`
+	Prompt                 string `json:"prompt,omitempty"`
 	// LatestUserPrompt is the latest real user-authored task direction observed
 	// for this AO session. Internal AO coordination messages (for example an
 	// agent-switch handoff request) must not replace it.
@@ -65,6 +70,9 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// Model is the agent model this session resolved to at spawn time, including
+	// any per-spawn --model override. Empty means the agent's default model.
+	Model string `json:"model,omitempty"`
 	// BrowserCapabilityVerifier is a one-way verifier for the random browser
 	// capability held by this session's worker process. The bearer token itself
 	// is never persisted, so reading the database cannot grant access to another
