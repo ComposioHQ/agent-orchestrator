@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 
 import { SURVEY_FORM } from "../lib/survey/definitions";
 import { closeSurvey, completeSurvey, isSurveyOpen, recordAnswer, subscribeSurvey } from "../lib/survey";
@@ -61,6 +62,7 @@ function ensureStyles() {
  * Continue. Guarded to appear rarely by the controller's weekly cap.
  */
 export function SurveyPrompt() {
+	const { t } = useTranslation();
 	const active = useSyncExternalStore(subscribeSurvey, isSurveyOpen, isSurveyOpen);
 	const [step, setStep] = useState(0);
 	const [multi, setMulti] = useState<string[]>([]);
@@ -150,13 +152,13 @@ export function SurveyPrompt() {
 				<div className="aoq-modal">
 					<div className="aoq-done">
 						<div className="aoq-ring">✓</div>
-						<h3>Thanks, that really helps.</h3>
-						<p>We read every answer. Back to work.</p>
+						<h3>{t("survey.thanksTitle")}</h3>
+						<p>{t("survey.thanksBody")}</p>
 					</div>
 					<div className="aoq-foot">
 						<span className="aoq-spacer" />
 						<button type="button" className="aoq-cta" onClick={complete}>
-							Done
+							{t("survey.done")}
 						</button>
 					</div>
 				</div>
@@ -172,15 +174,13 @@ export function SurveyPrompt() {
 		setMulti((p) => (p.includes(choice) ? p.filter((c) => c !== choice) : [...p, choice]));
 
 	return (
-		<div className="aoq-scrim" role="dialog" aria-label="AO survey">
+		<div className="aoq-scrim" role="dialog" aria-label={t("survey.dialogAria")}>
 			<div className="aoq-modal">
 				<div className="aoq-head">
 					<div className="aoq-top">
-						<span className="aoq-eye">Help improve AO</span>
-						<span className="aoq-count">
-							{step + 1} of {total}
-						</span>
-						<button type="button" className="aoq-x" aria-label="Close" onClick={close}>
+						<span className="aoq-eye">{t("survey.eyebrow")}</span>
+						<span className="aoq-count">{t("survey.progress", { current: step + 1, total })}</span>
+						<button type="button" className="aoq-x" aria-label={t("common.close")} onClick={close}>
 							×
 						</button>
 					</div>
@@ -227,13 +227,13 @@ export function SurveyPrompt() {
 				<div className="aoq-foot">
 					{step > 0 ? (
 						<button type="button" className="aoq-ghost" onClick={() => setStep((s) => s - 1)}>
-							Back
+							{t("survey.back")}
 						</button>
 					) : null}
 					<span className="aoq-spacer" />
 					{isText ? (
 						<button type="button" className="aoq-ghost" onClick={advance}>
-							Skip
+							{t("survey.skip")}
 						</button>
 					) : null}
 					{isMulti || isText ? (
@@ -246,7 +246,7 @@ export function SurveyPrompt() {
 								advance();
 							}}
 						>
-							{step === total - 1 ? "Finish" : "Continue"}
+							{step === total - 1 ? t("survey.finish") : t("survey.continue")}
 						</button>
 					) : null}
 				</div>
