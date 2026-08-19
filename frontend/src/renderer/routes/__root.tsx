@@ -1,5 +1,7 @@
 import { createRootRouteWithContext, Outlet, useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
+import { SurveyPrompt } from "../components/SurveyPrompt";
+import { onAppStart } from "../lib/survey";
 import { TooltipProvider } from "../components/ui/tooltip";
 import type { QueryClient } from "@tanstack/react-query";
 import { captureRendererEvent, routeSurface } from "../lib/telemetry";
@@ -25,9 +27,15 @@ function RootComponent() {
 		void loadKeybindings();
 	}, [loadKeybindings]);
 
+	// Offer the early profile question once when the app opens.
+	useEffect(() => {
+		onAppStart();
+	}, []);
+
 	return (
 		<TooltipProvider>
 			<Outlet />
+			<SurveyPrompt />
 		</TooltipProvider>
 	);
 }
