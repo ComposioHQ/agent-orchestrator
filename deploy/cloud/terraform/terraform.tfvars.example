@@ -19,11 +19,7 @@ environment_control_token = "replace-with-at-least-32-random-characters"
 # github_app_slug       = "ao-cloud"
 # github_client_id      = "Iv1.example"
 # github_client_secret  = "replace"
-# github_private_key    = <<-PEM
-# -----BEGIN RSA PRIVATE KEY-----
-# ...
-# -----END RSA PRIVATE KEY-----
-# PEM
+# github_private_key    = "replace-with-GitHub-App-private-key-PEM"
 # github_webhook_secret = "replace"
 
 # Set true only after deploy/cloud/scripts/deploy-staging.sh succeeds once.

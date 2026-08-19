@@ -175,6 +175,9 @@ title = "gitleaks config"
     # Ignore false positives on the public company URL (rule matches brand name + nearby alnum).
     regexes = [
         '''(?i)linkedin\.com/company/agent-orchestrator''',
+        # Historical, commented placeholder from the Cloud Terraform example.
+        # This exact line never contained key material; real PEM blocks remain detected.
+        '''^# -----BEGIN RSA PRIVATE KEY-----$''',
     ]
     # Historical false positives from the ReverbCode rewrite graft (#2166).
     # All offenders are example secret-patterns in security docs and
