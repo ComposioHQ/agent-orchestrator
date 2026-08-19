@@ -43,4 +43,35 @@ describe("parseOpenFolderPathArg", () => {
 		const dir = await tempDir();
 		expect(parseOpenFolderPathArg(["electron.exe", __filename, dir])).toBe(path.resolve(dir));
 	});
+
+	// Regression: `electron-forge start` (dev) spawns Electron with its own app
+	// path in argv[1] (e.g. "." resolved to the frontend build dir), a REAL
+	// directory. Without excluding it, every dev cold start and second-instance
+	// relaunch would misread AO's own source tree as a dropped project folder.
+	describe("when running unpackaged (process.defaultApp)", () => {
+		const originalDefaultApp = process.defaultApp;
+
+		function setDefaultApp(value: boolean | undefined) {
+			Object.defineProperty(process, "defaultApp", { configurable: true, value });
+		}
+
+		beforeEach(() => {
+			setDefaultApp(true);
+		});
+
+		afterEach(() => {
+			setDefaultApp(originalDefaultApp);
+		});
+
+		it("does not treat Electron's own bootstrap app path as a dropped folder", async () => {
+			const appDir = await tempDir();
+			expect(parseOpenFolderPathArg(["electron.exe", appDir])).toBeUndefined();
+		});
+
+		it("still finds a genuinely dropped folder listed after the bootstrap app path", async () => {
+			const appDir = await tempDir();
+			const dropped = await tempDir();
+			expect(parseOpenFolderPathArg(["electron.exe", appDir, dropped])).toBe(path.resolve(dropped));
+		});
+	});
 });

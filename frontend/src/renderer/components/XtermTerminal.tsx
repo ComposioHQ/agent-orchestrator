@@ -829,7 +829,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			event.preventDefault();
 			if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
 		};
+		// A dropped folder is the app-wide "open as project" gesture (see
+		// _shell.tsx's window-level drop handler), not a file to attach. Let it
+		// bubble untouched — swallowing it here (preventDefault/stopPropagation)
+		// would silently absorb the drop into this file-attach flow instead.
+		const isDirectoryDrag = (event: DragEvent) =>
+			event.dataTransfer?.items?.[0]?.webkitGetAsEntry?.()?.isDirectory ?? false;
 		const dropInput = (event: DragEvent) => {
+			if (isDirectoryDrag(event)) return;
 			const files = Array.from(event.dataTransfer?.files ?? []);
 			if (files.length === 0) return;
 			event.preventDefault();
