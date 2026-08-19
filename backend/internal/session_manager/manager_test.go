@@ -3264,11 +3264,14 @@ func TestSpawn_FetchesWorkspaceChildDefaultBranchesBeforeCreatingProject(t *test
 		t.Fatal(err)
 	}
 	want := []fetchDefaultBranchCall{
-		{repoPath: "/repo/mer", remote: "origin", branch: "auto", baseRef: "refs/remotes/origin/auto"},
+		{repoPath: "/repo/mer", remote: "origin", branch: "main", baseRef: "refs/remotes/origin/main"},
 		{repoPath: filepath.Join("/repo/mer", "api"), remote: "origin", branch: "release/2026", baseRef: "refs/remotes/origin/release/2026"},
 	}
 	if !reflect.DeepEqual(ws.fetches, want) {
 		t.Fatalf("fetches = %#v, want %#v", ws.fetches, want)
+	}
+	if got, want := ws.resolves[0], (resolveDefaultBranchCall{repoPath: "/repo/mer", configuredBranch: ""}); got != want {
+		t.Fatalf("root resolution = %#v, want %#v", got, want)
 	}
 	if got, want := ws.lastProjectCfg.Repos[0].BaseRef, "refs/remotes/origin/release/2026"; got != want {
 		t.Fatalf("child create base ref = %q, want %q", got, want)
