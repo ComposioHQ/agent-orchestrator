@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { INVITE_SNOOZE_MS, SurveyController, type Storage } from "./surveyController";
+import { type Capture, INVITE_SNOOZE_MS, SurveyController, type Storage } from "./surveyController";
 
 function memoryStorage(): Storage {
 	const map = new Map<string, string>();
@@ -41,14 +41,48 @@ describe("SurveyController.markCompleted", () => {
 	});
 });
 
+describe("SurveyController robustness", () => {
+	it("still emits a whole-response completed event when storage writes are blocked", () => {
+		const capture = vi.fn();
+		const blocked: Storage = {
+			getItem: () => null,
+			setItem: () => {
+				throw new Error("blocked");
+			},
+		};
+		const c = new SurveyController({ storage: blocked, capture });
+		c.answer("profile", "Founder");
+		c.answer("wish", "auto-open a PR");
+		c.markCompleted();
+		expect(capture).toHaveBeenLastCalledWith("ao.renderer.survey_completed", {
+			answer_profile: "Founder",
+			answer_wish: "auto-open a PR",
+		});
+	});
+
+	it("does not share answers between instances when stored state omits the answers key", () => {
+		// A blob with no `answers` field must not alias a shared object; one
+		// instance's answer must never leak into another's completed event.
+		const keyless = JSON.stringify({ completed: false });
+		const freshStorage = (): Storage => {
+			const m = new Map<string, string>([["ao.survey.state.v1", keyless]]);
+			return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => void m.set(k, v) };
+		};
+		new SurveyController({ storage: freshStorage(), capture: vi.fn() }).answer("profile", "Developer");
+		const capture = vi.fn();
+		new SurveyController({ storage: freshStorage(), capture }).markCompleted();
+		expect(capture).toHaveBeenLastCalledWith("ao.renderer.survey_completed", {});
+	});
+});
+
 describe("SurveyController.invite eligibility", () => {
 	let storage: Storage;
-	let capture: ReturnType<typeof vi.fn>;
+	let capture: ReturnType<typeof vi.fn<Capture>>;
 	let t: number;
 	const make = () => new SurveyController({ storage, now: () => t, capture });
 	beforeEach(() => {
 		storage = memoryStorage();
-		capture = vi.fn();
+		capture = vi.fn<Capture>();
 		t = 1_000_000_000_000;
 	});
 

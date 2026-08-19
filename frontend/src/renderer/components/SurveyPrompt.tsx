@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { SURVEY_FORM } from "../lib/survey/definitions";
 import { closeSurvey, completeSurvey, isSurveyOpen, recordAnswer, subscribeSurvey } from "../lib/survey";
@@ -65,6 +65,46 @@ export function SurveyPrompt() {
 	const [step, setStep] = useState(0);
 	const [multi, setMulti] = useState<string[]>([]);
 	const [text, setText] = useState("");
+	// Answers captured so far this session, so navigating Back restores what the
+	// user picked instead of re-showing the question blank.
+	const responses = useRef<Record<string, string[] | string>>({});
+	// Pending single-select auto-advance, held so we can cancel it on close and
+	// ignore a second click before it fires.
+	const advanceTimer = useRef<number | null>(null);
+
+	const clearAdvance = () => {
+		if (advanceTimer.current !== null) {
+			window.clearTimeout(advanceTimer.current);
+			advanceTimer.current = null;
+		}
+	};
+
+	// Fresh start every time the survey opens, so a prior session's step or a
+	// stray timer can never carry over.
+	useEffect(() => {
+		if (!active) return;
+		responses.current = {};
+		setStep(0);
+		setMulti([]);
+		setText("");
+	}, [active]);
+
+	// Restore the stored answer for whichever question is now showing (Back/next).
+	useEffect(() => {
+		const q = SURVEY_FORM[step];
+		if (!q) return;
+		const prev = responses.current[q.id];
+		if (q.input === "multi") setMulti(Array.isArray(prev) ? prev : []);
+		else if (q.input === "text") setText(typeof prev === "string" ? prev : "");
+	}, [step]);
+
+	// Cancel any pending auto-advance if the modal unmounts.
+	useEffect(
+		() => () => {
+			if (advanceTimer.current !== null) window.clearTimeout(advanceTimer.current);
+		},
+		[],
+	);
 
 	ensureStyles();
 	if (!active) return null;
@@ -73,24 +113,34 @@ export function SurveyPrompt() {
 	const finished = step >= total;
 	const survey = SURVEY_FORM[step];
 
-	const reset = () => {
-		setMulti([]);
-		setText("");
+	const record = (id: string, value: string | string[]) => {
+		responses.current[id] = value;
+		recordAnswer(id, value);
 	};
 	const advance = () => {
-		reset();
+		clearAdvance();
 		setStep((s) => s + 1);
+	};
+	// Single-select auto-advances after a short beat; guard against a double click
+	// firing two advances and skipping the next question.
+	const selectSingle = (id: string, choice: string) => {
+		if (advanceTimer.current !== null) return;
+		record(id, choice);
+		advanceTimer.current = window.setTimeout(() => {
+			advanceTimer.current = null;
+			setStep((s) => s + 1);
+		}, 220);
 	};
 	// Closing mid-survey (the ×) just dismisses; finishing marks it complete so
 	// the invite never returns.
 	const close = () => {
+		clearAdvance();
 		setStep(0);
-		reset();
 		closeSurvey();
 	};
 	const complete = () => {
+		clearAdvance();
 		setStep(0);
-		reset();
 		completeSurvey();
 	};
 
@@ -161,8 +211,7 @@ export function SurveyPrompt() {
 											if (isMulti) {
 												toggle(choice);
 											} else {
-												recordAnswer(survey.id, choice);
-												window.setTimeout(advance, 220);
+												selectSingle(survey.id, choice);
 											}
 										}}
 									>
@@ -193,7 +242,7 @@ export function SurveyPrompt() {
 							className="aoq-cta"
 							disabled={!canContinue}
 							onClick={() => {
-								recordAnswer(survey.id, isText ? text.trim() || "(empty)" : multi);
+								record(survey.id, isText ? text.trim() || "(empty)" : multi);
 								advance();
 							}}
 						>

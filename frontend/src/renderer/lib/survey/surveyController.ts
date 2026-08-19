@@ -4,6 +4,10 @@
 // are unit-testable without a browser or PostHog. It does NOT use PostHog's
 // native survey feature: the renderer disables /surveys and /flags polling to
 // avoid per-request billing, so answers are captured as ordinary events.
+//
+// State is held in memory and persisted best-effort. If storage is blocked
+// (private mode, quota), the survey still works for the session and a completed
+// response still emits every answer; only cross-session memory is lost.
 
 const STATE_KEY = "ao.survey.state.v1";
 /** How long the sidebar invite stays hidden after the user crosses it. */
@@ -16,7 +20,11 @@ type State = {
 	optedOut: boolean; // chose "don't show again" -> never invite again
 };
 
-const EMPTY: State = { answers: {}, completed: false, inviteDismissedAt: 0, optedOut: false };
+// A fresh, unshared state every time — never hand out a reference to a module
+// constant, or a later answers[id] = ... would mutate it for everyone.
+function emptyState(): State {
+	return { answers: {}, completed: false, inviteDismissedAt: 0, optedOut: false };
+}
 
 export type Storage = Pick<globalThis.Storage, "getItem" | "setItem">;
 export type Capture = (event: string, properties?: Record<string, unknown>) => void;
@@ -31,29 +39,35 @@ export class SurveyController {
 	private storage?: Storage;
 	private now: () => number;
 	private capture: Capture;
+	private state: State;
 
 	constructor(deps: SurveyDeps = {}) {
 		this.storage = deps.storage;
 		this.now = deps.now ?? (() => Date.now());
 		this.capture = deps.capture ?? (() => {});
+		this.state = this.load();
 	}
 
 	private load(): State {
-		if (!this.storage) return { ...EMPTY, answers: {} };
+		const base = emptyState();
+		if (!this.storage) return base;
 		try {
 			const raw = this.storage.getItem(STATE_KEY);
-			if (!raw) return { ...EMPTY, answers: {} };
-			return { ...EMPTY, ...(JSON.parse(raw) as Partial<State>) };
+			if (!raw) return base;
+			const parsed = JSON.parse(raw) as Partial<State>;
+			// Merge onto a fresh base; force a fresh answers object so we never
+			// alias a shared reference when the stored blob omits the key.
+			return { ...base, ...parsed, answers: { ...(parsed.answers ?? {}) } };
 		} catch {
-			return { ...EMPTY, answers: {} };
+			return base;
 		}
 	}
 
-	private save(s: State): void {
+	private persist(): void {
 		try {
-			this.storage?.setItem(STATE_KEY, JSON.stringify(s));
+			this.storage?.setItem(STATE_KEY, JSON.stringify(this.state));
 		} catch {
-			// Storage blocked (private mode): state simply won't persist.
+			// Storage blocked (private mode): state stays in memory for the session.
 		}
 	}
 
@@ -61,9 +75,8 @@ export class SurveyController {
 	 * and emit the per-question event for step-level analysis. */
 	answer(id: string, value: string | string[]): void {
 		const choice = Array.isArray(value) ? value.join(", ") : value;
-		const s = this.load();
-		s.answers[id] = choice;
-		this.save(s);
+		this.state.answers[id] = choice;
+		this.persist();
 		this.capture("ao.renderer.survey_answered", {
 			survey: id,
 			choice,
@@ -73,13 +86,13 @@ export class SurveyController {
 
 	/** User finished the survey: record completion (never invite again) and emit
 	 * one event carrying every answer as answer_<id>, so a whole response reads
-	 * as a single row for metrics without joining per-question events. */
+	 * as a single row for metrics without joining per-question events. Reads from
+	 * in-memory state, so the row is complete even when storage never persisted. */
 	markCompleted(): void {
-		const s = this.load();
-		s.completed = true;
-		this.save(s);
+		this.state.completed = true;
+		this.persist();
 		const props: Record<string, unknown> = {};
-		for (const [id, value] of Object.entries(s.answers)) {
+		for (const [id, value] of Object.entries(this.state.answers)) {
 			props[`answer_${id.replace(/-/g, "_")}`] = value;
 		}
 		this.capture("ao.renderer.survey_completed", props);
@@ -89,24 +102,21 @@ export class SurveyController {
 	 * has not opted out for good, and is not within the 48h quiet window after
 	 * crossing it. */
 	inviteEligible(): boolean {
-		const s = this.load();
-		if (s.completed || s.optedOut) return false;
-		return this.now() - s.inviteDismissedAt >= INVITE_SNOOZE_MS;
+		if (this.state.completed || this.state.optedOut) return false;
+		return this.now() - this.state.inviteDismissedAt >= INVITE_SNOOZE_MS;
 	}
 
 	/** User crossed the invite: hush it for 48 hours. */
 	dismissInvite(): void {
-		const s = this.load();
-		s.inviteDismissedAt = this.now();
-		this.save(s);
+		this.state.inviteDismissedAt = this.now();
+		this.persist();
 		this.capture("ao.renderer.survey_invite_dismissed", {});
 	}
 
 	/** User chose "don't show again": retire the invite for good. */
 	optOut(): void {
-		const s = this.load();
-		s.optedOut = true;
-		this.save(s);
+		this.state.optedOut = true;
+		this.persist();
 		this.capture("ao.renderer.survey_invite_opted_out", {});
 	}
 }
