@@ -276,6 +276,16 @@ export function BrowserPanelView({
 
 	useEffect(() => {
 		setUrlInput(navState.url);
+		// A prior submit (typed, or pasted, then Enter) leaves the caret at the
+		// end of the old value; the browser keeps that same horizontal scroll
+		// position for the new value, scrolling the scheme/host off the left
+		// edge (e.g. showing "://example.com" instead of "https://example.com").
+		// Reset it once the DOM has the new value committed, so the address is
+		// readable from the start like a real address bar after navigating.
+		const frame = window.requestAnimationFrame(() => {
+			if (urlInputRef.current) urlInputRef.current.scrollLeft = 0;
+		});
+		return () => window.cancelAnimationFrame(frame);
 	}, [navState.url]);
 
 	useEffect(() => {
