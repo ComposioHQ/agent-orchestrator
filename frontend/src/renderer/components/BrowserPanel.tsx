@@ -435,18 +435,30 @@ export function BrowserPanelView({
 					<MousePointer2 aria-hidden="true" className="h-4 w-4" />
 				</Button>
 				{annotationStatusLabel ? (
+					// Status is available on hover/focus (native title tooltip) rather than
+					// as permanently-visible on-screen text — see the design note this
+					// mirrors on annotate-preload.ts's on-page hint banner.
 					<span
-						className={
-							status === "error"
-								? "browser-panel__annotation-status browser-panel__annotation-status--error"
-								: "browser-panel__annotation-status"
-						}
+						className="browser-panel__annotation-status flex size-4 shrink-0 items-center justify-center"
+						title={annotationStatusLabel}
 					>
-						{annotationStatusLabel}
+						<span
+							aria-hidden="true"
+							className={cn("size-1.5 rounded-full", status === "error" ? "bg-destructive" : "bg-accent")}
+						/>
+						<span className="sr-only" role="status">
+							{annotationStatusLabel}
+						</span>
 					</span>
 				) : agentStatusLabel ? (
-					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
-						{agentStatusLabel}
+					<span
+						className="browser-panel__annotation-status flex size-4 shrink-0 items-center justify-center"
+						title={agentStatusLabel}
+					>
+						<span aria-hidden="true" className="size-1.5 rounded-full bg-accent" />
+						<span aria-live="polite" className="sr-only" role="status">
+							{agentStatusLabel}
+						</span>
 					</span>
 				) : null}
 					<div className="browser-panel__url-wrap relative min-w-0 flex-1">

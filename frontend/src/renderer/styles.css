@@ -3656,25 +3656,6 @@ body:has(#root .platform-windows) > .files-popout-overlay {
 	color: var(--fg);
 }
 
-.browser-panel__annotation-status {
-	max-width: 96px;
-	overflow: hidden;
-	color: var(--fg-muted);
-	font-size: 11px;
-	font-weight: 650;
-	line-height: 1;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	transition:
-		color var(--duration-fast) ease,
-		opacity var(--duration-fast) ease;
-}
-
-.browser-panel__annotation-status--error {
-	max-width: 160px;
-	color: var(--red);
-}
-
 .browser-panel__url-icon {
 	position: absolute;
 	left: 10px;
@@ -3870,7 +3851,6 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 	}
 
 	.browser-panel,
-	.browser-panel__annotation-status,
 	.browser-panel__toolbar button {
 		transition: none;
 	}
