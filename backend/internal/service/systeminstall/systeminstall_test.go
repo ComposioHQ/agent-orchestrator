@@ -343,3 +343,76 @@ func waitForStatus(t *testing.T, s *Service, target Target, want Status) {
 	}
 	t.Fatalf("timed out waiting for %s to reach status %q", target, want)
 }
+
+// A Linux package-manager plan must now carry the resolved argv even though it
+// stays Unsupported. That pairing is the whole point of the split: the daemon
+// refuses to elevate, while the CLI (which has a terminal and can prompt for a
+// sudo password) runs the very same command. Before this, the argv existed only
+// inside the Reason string, so the CLI had to re-derive it and the two surfaces
+// could drift.
+func TestLinuxPlanExposesArgvWhileStayingUnsupported(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		found       string
+		wantCommand string
+		wantManager string
+	}{
+		{"apt-get", "apt-get", "apt-get install -y tmux", "apt-get"},
+		{"dnf", "dnf", "dnf install -y tmux", "dnf"},
+		{"pacman", "pacman", "pacman -S --noconfirm tmux", "pacman"},
+		{"zypper", "zypper", "zypper install -y tmux", "zypper"},
+		{"apk", "apk", "apk add tmux", "apk"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := newTestService("linux", tt.found).planFor(TargetTmux)
+			if got := strings.Join(plan.Command, " "); got != tt.wantCommand {
+				t.Fatalf("Command = %q, want %q", got, tt.wantCommand)
+			}
+			if plan.Manager != tt.wantManager {
+				t.Fatalf("Manager = %q, want %q", plan.Manager, tt.wantManager)
+			}
+			if !plan.NeedsRoot {
+				t.Fatal("NeedsRoot = false, want true: every Linux package manager needs root")
+			}
+			// The security invariant. Exposing the argv must not have made the
+			// daemon willing to run it.
+			if !plan.Unsupported {
+				t.Fatal("Unsupported = false, want true: the daemon must never run a root install itself")
+			}
+		})
+	}
+}
+
+// The daemon must still refuse to execute a Linux plan, argv or not. This is
+// the behavioural half of the invariant asserted above.
+func TestStartRefusesLinuxRootInstall(t *testing.T) {
+	s := newTestService("linux", "apt-get")
+	s.commandFunc = func(context.Context, []string) *exec.Cmd {
+		t.Fatal("the daemon must not execute a root install")
+		return nil
+	}
+	job, err := s.Start(context.Background(), TargetTmux)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if job.Status != StatusUnsupported {
+		t.Fatalf("Status = %q, want %q", job.Status, StatusUnsupported)
+	}
+}
+
+// Resolve is the seam the CLI consumes; it must agree with the Service's own
+// planner rather than being a second implementation of the same table.
+func TestResolveMatchesServicePlan(t *testing.T) {
+	lookPath := lookPathFound("brew")
+	got := Resolve("darwin", lookPath, TargetTmux)
+	want := (&Service{goos: "darwin", lookPath: lookPath}).planFor(TargetTmux)
+	if strings.Join(got.Command, " ") != strings.Join(want.Command, " ") {
+		t.Fatalf("Resolve Command = %v, want %v", got.Command, want.Command)
+	}
+	if got.Unsupported != want.Unsupported {
+		t.Fatalf("Resolve Unsupported = %v, want %v", got.Unsupported, want.Unsupported)
+	}
+	if unknown := Resolve("linux", lookPath, Target("nope")); !unknown.Unsupported {
+		t.Fatal("Resolve of an unknown target must be Unsupported")
+	}
+}

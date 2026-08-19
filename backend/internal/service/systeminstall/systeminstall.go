@@ -46,10 +46,43 @@ func Valid(target Target) bool {
 	return knownTargets[target]
 }
 
+// Resolve reports how target would be installed on goos, without running
+// anything and without constructing a Service.
+//
+// This is the package's answer to "how is this installed here?", split out from
+// the daemon's answer to "may I install it?" so both the daemon and the CLI
+// resolve the argv through the same table. The CLI needs exactly this and none
+// of the Job machinery: it has a real terminal, so it can supply the privilege
+// the daemon cannot and run a Plan the daemon must refuse. Keeping one resolver
+// is what stops the two surfaces from drifting into different ideas of how to
+// install tmux. lookPath is injected so callers and tests can substitute a PATH;
+// nil means the real exec.LookPath.
+func Resolve(goos string, lookPath func(string) (string, error), target Target) Plan {
+	if !Valid(target) {
+		return Plan{Target: target, Unsupported: true, Reason: "unknown install target"}
+	}
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	return (&Service{goos: goos, lookPath: lookPath}).planFor(target)
+}
+
 // Plan is the resolved install command for a Target on the current platform.
+//
+// Command is populated whenever an install command could be resolved at all,
+// including when Unsupported is true. Those two are independent on purpose:
+// "we know exactly how to install this" and "this daemon is allowed to run it"
+// are different questions. On Linux every package manager needs root, so the
+// daemon refuses (Unsupported) while still reporting the argv, which is what
+// lets the CLI — which has a real terminal and can prompt for a sudo password —
+// run the very same command successfully. Callers that intend to execute a
+// Plan must branch on Unsupported; callers that only need to know whether a
+// route exists should test len(Command).
 type Plan struct {
 	Target      Target
 	Command     []string // argv, e.g. ["brew", "install", "tmux"]
+	Manager     string   // resolving package manager ("brew", "apt-get", ...), empty when none applies
+	NeedsRoot   bool     // Command must run as root; the caller supplies the privilege
 	Unsupported bool
 	Reason      string // set when Unsupported, or as extra context otherwise
 }
@@ -352,7 +385,7 @@ func (s *Service) planWinget(target Target, id string) Plan {
 
 // linuxPackageManagers is probed in this fixed order; the first one found on
 // PATH is used.
-var linuxPackageManagers = []string{"apt-get", "dnf", "pacman", "zypper"}
+var linuxPackageManagers = []string{"apt-get", "dnf", "pacman", "zypper", "apk"}
 
 // planLinuxPackage resolves a Linux install command for target via the first
 // available package manager. pkgFor lets a target use a different package
@@ -371,7 +404,7 @@ func (s *Service) planLinuxPackage(target Target, pkgFor func(mgr string) string
 		}
 		argv := linuxInstallArgv(mgr, pkgFor(mgr))
 		return Plan{
-			Target: target, Unsupported: true,
+			Target: target, Command: argv, Manager: mgr, NeedsRoot: true, Unsupported: true,
 			Reason: fmt.Sprintf(
 				"AO does not run installers as root. Run this yourself in a terminal: sudo %s",
 				strings.Join(argv, " "),
@@ -380,7 +413,10 @@ func (s *Service) planLinuxPackage(target Target, pkgFor func(mgr string) string
 	}
 	return Plan{
 		Target: target, Unsupported: true,
-		Reason: "No supported Linux package manager (apt, dnf, pacman, zypper) was found.",
+		Reason: fmt.Sprintf(
+			"No supported Linux package manager (%s) was found.",
+			strings.Join(linuxPackageManagers, ", "),
+		),
 	}
 }
 
@@ -394,6 +430,8 @@ func linuxInstallArgv(mgr, pkg string) []string {
 		return []string{"pacman", "-S", "--noconfirm", pkg}
 	case "zypper":
 		return []string{"zypper", "install", "-y", pkg}
+	case "apk":
+		return []string{"apk", "add", pkg}
 	default:
 		return nil
 	}
