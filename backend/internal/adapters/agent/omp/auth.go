@@ -10,6 +10,7 @@ import (
 
 	_ "modernc.org/sqlite" // register sqlite driver for OMP auth database probes
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -19,7 +20,7 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 // auth store, then falls back to cheap CLI status probes when the file is
 // absent or inconclusive.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	_, err := p.ResolveBinary(ctx)
+	binary, err := p.ResolveBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
@@ -28,7 +29,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return ports.AgentAuthStatusUnknown, nil
+	return authprobe.CLIStatus(ctx, binary, [][]string{{"auth", "status"}})
 }
 
 func ompLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
