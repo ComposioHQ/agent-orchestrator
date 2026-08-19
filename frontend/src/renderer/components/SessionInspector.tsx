@@ -199,12 +199,19 @@ export function SessionInspector({
 		},
 	);
 	return (
-		<SessionInspectorShellView
-			activeView={view}
-			ariaLabel={t("inspector.aria")}
-			browserPoppedOut={browserPoppedOut}
-			browserView={
-				session ? (
+		// SessionInspectorShellView (packages/product-ui) doesn't accept a
+		// className, but styles.css's native-composition transparency cascade
+		// targets a `.session-inspector` ancestor around it (to punch a
+		// see-through hole for the live browser page when the compositor's
+		// shell is raised for an overlay). `contents` keeps this wrapper out of
+		// layout/flex entirely — it exists purely as a CSS selector anchor.
+		<div className="session-inspector contents">
+			<SessionInspectorShellView
+				activeView={view}
+				ariaLabel={t("inspector.aria")}
+				browserPoppedOut={browserPoppedOut}
+				browserView={
+					session ? (
 					<BrowserView
 						browserPoppedOut={browserPoppedOut}
 						browserAnnotationQueue={browserAnnotationQueue}
@@ -214,20 +221,21 @@ export function SessionInspector({
 						session={session}
 					/>
 				) : undefined
-			}
-			filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
-			headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
-			isVisible={isInspectorVisible}
-			loadingText={session ? undefined : t("inspector.loadingSession")}
-			onViewChange={setView}
-			reviewsView={
-				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
-			}
-			summaryView={
-				session ? <SummaryView onOpenReviews={() => setView("reviews")} session={session} /> : undefined
-			}
-			tabs={tabs}
-		/>
+					}
+				filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
+				headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
+				isVisible={isInspectorVisible}
+				loadingText={session ? undefined : t("inspector.loadingSession")}
+				onViewChange={setView}
+				reviewsView={
+					session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+				}
+				summaryView={
+					session ? <SummaryView onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+				}
+				tabs={tabs}
+			/>
+		</div>
 	);
 }
 
