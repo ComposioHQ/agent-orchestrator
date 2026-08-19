@@ -203,7 +203,7 @@ Four issues in six weeks, all facets of the same distributed invariant:
 | [#2509](https://github.com/Untrivial-ai/agent-orchestrator/issues/2509) | observer reloaded tracked repos without owner/name → check-run 404s | 1 ↔ 2 |
 | [#3922](https://github.com/Untrivial-ai/agent-orchestrator/issues/3922) / PR [#3923](https://github.com/Untrivial-ai/agent-orchestrator/pull/3923) | duplicate rows for one transferred PR → stale row's `conflicting` shown | 1 ↔ 4 (two scan identities each created a row) |
 | [#3252](https://github.com/Untrivial-ai/agent-orchestrator/issues/3252) | new PRs not attributable after transfer; stale project origin | 4 ↔ provider reality |
-| [#4089](https://github.com/Untrivial-ai/agent-orchestrator/issues/4089) | CI/mergeability permanently `unknown` ("Checking merge readiness" forever) | 2 ↔ 3 — **regression introduced by #3923** |
+| [#4089](https://github.com/Untrivial-ai/agent-orchestrator/issues/4089) | CI/mergeability `unknown` most of the time, flapping ("Checking merge readiness") | 2 ↔ 3 — **regression introduced by #3923** — composed with the discovery clobber below |
 
 The #3923 → #4089 sequence is the cautionary tale: #3923 fixed identity at the
 store layer (aliases + `provider_id`) and changed it at the provider layer
@@ -214,6 +214,38 @@ repo. PR [#4090](https://github.com/Untrivial-ai/agent-orchestrator/pull/4090)
 patches that seam (URL-match fallback re-keys observations to the requesting
 ref), which restores behavior but adds a *sixth* reconciliation point. That is
 the signal to stop patching pairwise and give identity one owner.
+
+### The discovery clobber (why the state flaps rather than sticking)
+
+#4089 presents as *flapping*, not a permanent freeze, because two mechanisms
+compose. A live DB watch on an affected machine caught the cycle:
+
+```
+15:47:56  Untrivial-ai/…  passing/blocked  title + hashes set     (heal)
+15:48:27  AgentWrapper/…  unknown/unknown  title gone, hashes WIPED (clobber)
+15:50:23  Untrivial-ai/…  passing/blocked  title + hashes set     (heal)
+```
+
+The clobber writer is `discoverNewPRs`: a stale remote (`upstream` →
+`AgentWrapper/…`) keeps a second scan identity for the same repository in the
+scan set (derivation 4). Whichever identity the row does *not* currently carry
+finds the PR "not in subjects" and persists a baseline row — and `UpsertPR`
+overwrites `ci_state`, `mergeability`, `repo`, `title`, and the semantic
+hashes unconditionally. Healing requires a detail fetch whose observation key
+matches a live subject:
+
+- **Pre-#3923** the heal worked under either identity (`obs.Repo` echoed the
+  requesting ref), so the unknown window was sub-poll and invisible; the
+  clobber's visible artifact was #3922's duplicate rows instead.
+- **Post-#3923** the stale-identity heal path is dead (the dispatch drop), so
+  an old-name clobber leaves the row `unknown` until the canonical listing
+  happens to re-discover it — the "stuck most of the time" experience.
+
+#4090's seam fix shrinks the visible window to at most one poll but does not
+stop the churn (hash wipes force refetches and lifecycle redelivery every
+cycle). Change 2 of the target design removes the clobber at the source:
+discovery dedupes listing entries against tracked subjects by provider
+identity, so a second scan name can never re-baseline a tracked row.
 
 ## Target Design: ProviderID-Primary Identity
 
@@ -278,8 +310,9 @@ transfer end-to-end:
 2. Detail fetch for a stale-named subject → facts persist, row heals
    (regression test for #4089; exists in #4090).
 3. Terminal reconciliation for a stale-named subject → same (exists in #4090).
-4. Discovery sees the same PR via two scan names → one subject, one row
-   (regression test for #3922 at the observer layer).
+4. Discovery sees the same PR via two scan names → one subject, one row, and
+   — critically — **no baseline write over the tracked row's facts**
+   (regression test for #3922 and the #4089 flap at the observer layer).
 5. Legacy row without `provider_id` → URL fallback delivers the first fetch,
    which stamps the ID; second poll dispatches by identity.
 6. Review refresh keyed by identity → review + metadata land on the same row.
