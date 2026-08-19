@@ -999,6 +999,149 @@ func TestComposerIsEmptyUsesClaudePromptMarker(t *testing.T) {
 	}
 }
 
+func TestInspectTerminalSurfaceSeparatesClaudeWorkFromComposer(t *testing.T) {
+	plugin := &Plugin{}
+	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
+	tests := []struct {
+		name       string
+		output     string
+		wantWork   ports.TerminalSurfaceWorkState
+		wantEditor ports.TerminalComposerState
+	}{
+		{
+			name:       "idle empty composer",
+			output:     rule + "\n\x1b[39m❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "idle draft",
+			output:     rule + "\n❯ keep this draft\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active wording inside draft is not current chrome",
+			output:     rule + "\n❯ quote ✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerDraft,
+		},
+		{
+			name:       "active with empty composer",
+			output:     "✶ Generating… (esc to interrupt · 2s)\n" + rule + "\n❯\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "active with interrupt hint in footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkActive,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "spinner transcript above idle composer without active footer",
+			output: "✻ Computing… (24s · ↓ 114 tokens)\n" + rule + "\n❯\n" + rule +
+				"\n⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name:       "permission dialog",
+			output:     "Do you want to proceed?\n❯ 1. Yes\n  2. No\nPress enter to confirm",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permission dialog with provider-specific question and modern footer",
+			output: "Claude wants to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permission dialog with a non-first selected option",
+			output: "Claude wants to run Bash\n" +
+				"  1. Yes\n" +
+				"❯ 2. No\n" +
+				"Esc to cancel · Tab to amend",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "permissions menu without a selected prompt marker",
+			output: "❯ /permissions\n" + rule + "\n" +
+				"  Permissions  Recently denied   Allow   Ask   Deny   Workspace\n\n" +
+				"  Claude Code won't ask before using allowed tools.\n" +
+				"  ╭───────────────────────────────────────────────╮\n" +
+				"  │ ⌕ Search…                                     │\n" +
+				"  ╰───────────────────────────────────────────────╯\n\n" +
+				"    1. Add a new rule…\n\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel",
+			wantWork:   ports.TerminalSurfaceWorkBlocked,
+			wantEditor: ports.TerminalComposerUnknown,
+		},
+		{
+			name: "completed permissions menu above current composer is not blocked",
+			output: "  ╭─── Search… ───╮\n" +
+				"  │ ⌕ Search… │\n" +
+				"  ╰────────────╯\n" +
+				"    1. Add a new rule…\n" +
+				"  ←/→ to switch · ↓ to select · Esc to cancel\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ auto mode on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "completed permission menu above the current composer is not blocked",
+			output: "Claude wanted to run Bash\n" +
+				"❯ 1. Yes\n" +
+				"  2. No\n" +
+				"Esc to cancel · Tab to amend\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule,
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "permission wording in completed response is not current chrome",
+			output: "The command asked: Do you want to proceed?\n" +
+				"It then said: Press enter to confirm.\n" + rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "interrupt wording in completed response is not active chrome",
+			output: "The status previously read esc to interrupt while the command ran.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "old active row separated from composer is not current chrome",
+			output: "✶ Generating… (esc to interrupt · 2s)\nThe work finished.\n" +
+				rule + "\n❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n⏵⏵ bypass permissions on",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+		{
+			name: "transcript marker is outside current surface",
+			output: "Earlier output mentioned esc to interrupt\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n" +
+				"❯\u00a0",
+			wantWork:   ports.TerminalSurfaceWorkIdle,
+			wantEditor: ports.TerminalComposerEmpty,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := plugin.InspectTerminalSurface(tt.output)
+			if got.Work != tt.wantWork || got.Composer != tt.wantEditor {
+				t.Fatalf("InspectTerminalSurface() = %+v, want work=%v composer=%v", got, tt.wantWork, tt.wantEditor)
+			}
+		})
+	}
+}
+
 func contains(values []string, needle string) bool {
 	for _, v := range values {
 		if v == needle {

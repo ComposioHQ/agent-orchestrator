@@ -33,7 +33,12 @@ type SessionMetadata struct {
 	RuntimeHandleID   string `json:"runtimeHandleId,omitempty"`
 	RuntimeLaunchID   string `json:"runtimeLaunchId,omitempty"`
 	AgentSessionID    string `json:"agentSessionId,omitempty"`
-	Prompt            string `json:"prompt,omitempty"`
+	// AgentSessionIDLaunchID identifies the terminal runtime generation proven to
+	// own AgentSessionID. Usually that proof comes from a provider hook. A
+	// coordinated Chat-to-TUI handoff may also establish it by launching the
+	// target with the exact structured provider id transferred from Chat.
+	AgentSessionIDLaunchID string `json:"-"`
+	Prompt                 string `json:"prompt,omitempty"`
 	// LatestUserPrompt is the latest real user-authored task direction observed
 	// for this AO session. Internal AO coordination messages (for example an
 	// agent-switch handoff request) must not replace it.

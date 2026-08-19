@@ -68,6 +68,7 @@ SET session_mode = ?,
     runtime_handle_id = '',
     runtime_launch_id = '',
     agent_session_id = ?,
+    agent_session_id_launch_id = '',
     provider_conversation_id = ?,
     controller_generation = '',
     activity_state = 'idle',
@@ -109,7 +110,7 @@ func (q *Queries) CommitSessionControllerEpoch(ctx context.Context, arg CommitSe
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt,
+    runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
@@ -134,6 +135,7 @@ type GetSessionRow struct {
 	WorkspacePath             string
 	RuntimeHandleID           string
 	AgentSessionID            string
+	AgentSessionIDLaunchID    string
 	Prompt                    string
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
@@ -180,6 +182,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessi
 		&i.WorkspacePath,
 		&i.RuntimeHandleID,
 		&i.AgentSessionID,
+		&i.AgentSessionIDLaunchID,
 		&i.Prompt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -216,7 +219,7 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, reviewer_harness, auto_review_enabled, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
-    runtime_launch_id, agent_session_id, prompt,
+    runtime_launch_id, agent_session_id, agent_session_id_launch_id, prompt,
     latest_user_prompt, latest_assistant_update, native_transcript_path,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation,
@@ -225,7 +228,7 @@ INSERT INTO sessions (
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 `
 
@@ -251,6 +254,7 @@ type InsertSessionParams struct {
 	RuntimeHandleID           string
 	RuntimeLaunchID           string
 	AgentSessionID            string
+	AgentSessionIDLaunchID    string
 	Prompt                    string
 	LatestUserPrompt          string
 	LatestAssistantUpdate     string
@@ -295,6 +299,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.RuntimeHandleID,
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
+		arg.AgentSessionIDLaunchID,
 		arg.Prompt,
 		arg.LatestUserPrompt,
 		arg.LatestAssistantUpdate,
@@ -321,7 +326,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt,
+    runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
@@ -346,6 +351,7 @@ type ListAllSessionsRow struct {
 	WorkspacePath             string
 	RuntimeHandleID           string
 	AgentSessionID            string
+	AgentSessionIDLaunchID    string
 	Prompt                    string
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
@@ -398,6 +404,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
 			&i.AgentSessionID,
+			&i.AgentSessionIDLaunchID,
 			&i.Prompt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -442,7 +449,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, er
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt,
+    runtime_handle_id, agent_session_id, agent_session_id_launch_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
@@ -467,6 +474,7 @@ type ListSessionsByProjectRow struct {
 	WorkspacePath             string
 	RuntimeHandleID           string
 	AgentSessionID            string
+	AgentSessionIDLaunchID    string
 	Prompt                    string
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
@@ -519,6 +527,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.WorkspacePath,
 			&i.RuntimeHandleID,
 			&i.AgentSessionID,
+			&i.AgentSessionIDLaunchID,
 			&i.Prompt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -779,7 +788,7 @@ UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, auto_review_enabled = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
-    runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
+    runtime_launch_id = ?, agent_session_id = ?, agent_session_id_launch_id = ?, prompt = ?,
     latest_user_prompt = ?, latest_assistant_update = ?, native_transcript_path = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, browser_capability_verifier = ?,
@@ -807,6 +816,7 @@ type UpdateSessionParams struct {
 	RuntimeHandleID           string
 	RuntimeLaunchID           string
 	AgentSessionID            string
+	AgentSessionIDLaunchID    string
 	Prompt                    string
 	LatestUserPrompt          string
 	LatestAssistantUpdate     string
@@ -847,6 +857,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.RuntimeHandleID,
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
+		arg.AgentSessionIDLaunchID,
 		arg.Prompt,
 		arg.LatestUserPrompt,
 		arg.LatestAssistantUpdate,

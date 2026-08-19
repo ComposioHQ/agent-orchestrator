@@ -15,16 +15,23 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+const (
+	nativeHistorySettlePoll  = 100 * time.Millisecond
+	nativeHistorySettleLimit = 45 * time.Second
 )
 
 // Store is the durable conversation surface the controller needs. Implemented by
@@ -264,6 +271,175 @@ func (c *Controller) start() {
 	go c.readRateLimits()
 }
 
+type nativeHistoryHighWater struct {
+	sequence       int64
+	providerTurnID string
+	providerItemID string
+	kind           ports.ChatEventKind
+	text           string
+	activityKind   domain.ActivityKind
+	activityStatus domain.ActivityStatus
+	summary        string
+	detail         []byte
+}
+
+// nativeHistoryCheckpoint combines the newest source-TUI facts with AO's last
+// settled projection of this same provider thread. The hook facts cover work
+// completed while Chat was not attached; the AO high-water mark covers an
+// immediate round trip before a resumed TUI has emitted another hook.
+type nativeHistoryCheckpoint struct {
+	latestUserPrompt      string
+	latestAssistantUpdate string
+	aoHighWater           nativeHistoryHighWater
+}
+
+func (p *nativeHistoryCheckpoint) captureAOHighWater(
+	sessionID domain.SessionID,
+	turns []domain.ConversationTurn,
+	messages []domain.ConversationMessage,
+	activities []domain.ConversationActivity,
+) {
+	var latest *domain.ConversationTurn
+	for i := range turns {
+		turn := &turns[i]
+		if turn.HandledBySessionID != sessionID || !turn.State.Terminal() || turn.ProviderTurnID == "" {
+			continue
+		}
+		if latest == nil || turn.RequestedAt.After(latest.RequestedAt) {
+			latest = turn
+		}
+	}
+	if latest == nil {
+		return
+	}
+	p.aoHighWater.providerTurnID = latest.ProviderTurnID
+	for _, message := range messages {
+		if message.TurnID != latest.ID || message.Streaming || message.Sequence <= p.aoHighWater.sequence {
+			continue
+		}
+		kind := ports.ChatEventKind("")
+		switch message.Role {
+		case domain.MessageRoleUser:
+			kind = ports.ChatEventUserMessageCompleted
+		case domain.MessageRoleAssistant:
+			kind = ports.ChatEventMessageCompleted
+		}
+		if kind == "" {
+			continue
+		}
+		p.aoHighWater = nativeHistoryHighWater{
+			sequence: message.Sequence, providerTurnID: latest.ProviderTurnID,
+			providerItemID: message.ProviderItemID, kind: kind, text: message.Text,
+		}
+	}
+	for _, activity := range activities {
+		if activity.TurnID != latest.ID || activity.ProviderItemID == "" ||
+			activity.Sequence <= p.aoHighWater.sequence {
+			continue
+		}
+		switch activity.Kind {
+		case domain.ActivityKindCommand, domain.ActivityKindFileChange,
+			domain.ActivityKindReasoning, domain.ActivityKindMCPTool:
+		default:
+			// Approval/input/system rows are AO control-plane facts, not items
+			// the provider promises to reproduce during native history load.
+			continue
+		}
+		switch activity.Status {
+		case domain.ActivityStatusCompleted, domain.ActivityStatusFailed:
+			p.aoHighWater = nativeHistoryHighWater{
+				sequence: activity.Sequence, providerTurnID: latest.ProviderTurnID,
+				providerItemID: activity.ProviderItemID, activityKind: activity.Kind,
+				activityStatus: activity.Status, summary: activity.Summary,
+				detail: append([]byte(nil), activity.Detail...),
+			}
+		}
+	}
+}
+
+func (p nativeHistoryCheckpoint) reached(events []ports.ChatEvent) bool {
+	completedTurns := make(map[string]bool)
+	coordinationTurns := make(map[string]bool)
+	for _, event := range events {
+		if event.Kind == ports.ChatEventTurnCompleted && event.ProviderTurnID != "" {
+			completedTurns[event.ProviderTurnID] = true
+		}
+		if event.Kind == ports.ChatEventUserMessageCompleted && nativeHistoryCoordinationMessage(event.Text) {
+			coordinationTurns[event.ProviderTurnID] = true
+		}
+	}
+
+	var latestUser, latestAssistant ports.ChatEvent
+	for _, event := range events {
+		if coordinationTurns[event.ProviderTurnID] || !completedTurns[event.ProviderTurnID] {
+			continue
+		}
+		switch event.Kind {
+		case ports.ChatEventUserMessageCompleted:
+			latestUser = event
+		case ports.ChatEventMessageCompleted:
+			latestAssistant = event
+		}
+	}
+	if p.latestUserPrompt != "" &&
+		!nativeHistoryTextMatches(p.latestUserPrompt, latestUser.Text) {
+		return false
+	}
+	if p.latestAssistantUpdate != "" &&
+		!nativeHistoryTextMatches(p.latestAssistantUpdate, latestAssistant.Text) {
+		return false
+	}
+
+	highWater := p.aoHighWater
+	if highWater.providerTurnID == "" {
+		return true
+	}
+	if highWater.providerItemID == "" && highWater.kind == "" {
+		return completedTurns[highWater.providerTurnID]
+	}
+	for _, event := range events {
+		if !completedTurns[event.ProviderTurnID] {
+			continue
+		}
+		if event.ProviderItemID == highWater.providerItemID {
+			return true
+		}
+		// ACP identifiers are opaque and can be reassigned by a conforming
+		// provider during load. Exact settled content is the fallback identity
+		// used by reconciliation for that same reason.
+		if highWater.kind != "" && event.Kind == highWater.kind &&
+			nativeHistoryTextMatches(highWater.text, event.Text) {
+			return true
+		}
+		if highWater.kind == "" &&
+			event.ActivityKind == highWater.activityKind &&
+			event.ActivityStatus == highWater.activityStatus &&
+			event.Summary == highWater.summary && bytes.Equal(event.Detail, highWater.detail) {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeHistoryCoordinationMessage(text string) bool {
+	text = strings.TrimSpace(text)
+	return strings.HasPrefix(text, "<ao-handoff-request") ||
+		strings.HasPrefix(text, "AO transferred the previous agent's context in hidden system instructions.")
+}
+
+func nativeHistoryTextMatches(checkpoint, replayed string) bool {
+	checkpoint = strings.TrimSpace(checkpoint)
+	replayed = strings.TrimSpace(replayed)
+	if checkpoint == replayed {
+		return true
+	}
+	// Hook payloads are bounded before persistence. Preserve their head+tail
+	// evidence without requiring a provider replay to reproduce AO's marker.
+	const marker = "\n[... truncated by AO ...]\n"
+	parts := strings.Split(checkpoint, marker)
+	return len(parts) == 2 && strings.HasPrefix(replayed, parts[0]) && strings.HasSuffix(replayed, parts[1])
+}
+
 // importNativeHistory projects the settled provider thread before live event
 // consumption starts. Re-running it is safe because history events carry stable
 // identities and ProjectProviderEvent deduplicates archive+projection together.
@@ -272,14 +448,50 @@ func (c *Controller) importNativeHistory(
 	existingTurns []domain.ConversationTurn,
 	existingMessages []domain.ConversationMessage,
 	existingActivities []domain.ConversationActivity,
+	required bool,
+	checkpoint nativeHistoryCheckpoint,
 ) error {
 	reader, ok := c.conv.(ports.ChatHistoryReader)
 	if !ok {
+		if required {
+			return fmt.Errorf("%w: provider does not implement typed history replay",
+				ports.ErrChatHistoryUnavailable)
+		}
 		return nil
 	}
-	events, err := reader.ReadHistory(ctx)
-	if err != nil {
-		return fmt.Errorf("read native conversation history: %w", err)
+	historyCtx, cancel := context.WithTimeout(ctx, nativeHistorySettleLimit)
+	defer cancel()
+	var events []ports.ChatEvent
+	sawUnsettled := false
+	for {
+		var err error
+		events, err = reader.ReadHistory(historyCtx)
+		if err == nil && (!required || checkpoint.reached(events)) {
+			break
+		}
+		if err == nil {
+			err = ports.ErrChatHistoryUnsettled
+		}
+		if errors.Is(err, ports.ErrChatHistoryUnavailable) && !required {
+			return nil
+		}
+		if sawUnsettled && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+				ports.ErrChatHistoryUnsettled, err)
+		}
+		if !errors.Is(err, ports.ErrChatHistoryUnsettled) {
+			return fmt.Errorf("read native conversation history: %w", err)
+		}
+		sawUnsettled = true
+
+		timer := time.NewTimer(nativeHistorySettlePoll)
+		select {
+		case <-historyCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("wait for settled native conversation history: %w: %w",
+				ports.ErrChatHistoryUnsettled, historyCtx.Err())
+		case <-timer.C:
+		}
 	}
 	events = reconcileNativeHistory(
 		events, existingTurns, existingMessages, existingActivities,

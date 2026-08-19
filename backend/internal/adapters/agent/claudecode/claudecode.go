@@ -34,7 +34,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -78,14 +77,14 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.EmptyComposerDetector = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
+var _ ports.TerminalSurfaceInspector = (*Plugin)(nil)
 
 // ComposerIsEmpty recognizes Claude Code's blank composer or its dim
 // placeholder. Claude renders normal, non-dim status chrome below a bordered
 // composer, so inspect that bounded region before using the footer-free fallback.
 // A permission-menu selection and normal typed text are rejected.
 func (p *Plugin) ComposerIsEmpty(output string) bool {
-	return terminalui.LastBorderedPromptIsEmptyOrDimPlaceholder(output, "❯") ||
-		terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "❯")
+	return p.InspectTerminalSurface(output).Composer == ports.TerminalComposerEmpty
 }
 
 // Manifest returns the adapter's static self-description.

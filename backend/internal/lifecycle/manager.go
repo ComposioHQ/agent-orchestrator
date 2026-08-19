@@ -532,6 +532,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
 	metadataChanged := (s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID) ||
+		(s.AgentSessionID != "" && rec.Metadata.AgentSessionIDLaunchID != s.LaunchID) ||
 		(s.LatestUserPrompt != "" && rec.Metadata.LatestUserPrompt != s.LatestUserPrompt) ||
 		(s.LatestAssistantUpdate != "" && rec.Metadata.LatestAssistantUpdate != s.LatestAssistantUpdate) ||
 		(s.TranscriptPath != "" && rec.Metadata.NativeTranscriptPath != s.TranscriptPath)
@@ -1066,6 +1067,7 @@ func (m *Manager) CommitControllerEpoch(
 	next.Metadata.RuntimeHandleID = ""
 	next.Metadata.RuntimeLaunchID = ""
 	next.Metadata.AgentSessionID = nativeConversationID
+	next.Metadata.AgentSessionIDLaunchID = ""
 	next.Metadata.ProviderConversationID = nativeConversationID
 	next.Metadata.ControllerGeneration = ""
 	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
@@ -1276,6 +1278,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
+	set(&base.AgentSessionIDLaunchID, in.AgentSessionIDLaunchID)
 	set(&base.Prompt, in.Prompt)
 	set(&base.LatestUserPrompt, in.LatestUserPrompt)
 	set(&base.LatestAssistantUpdate, in.LatestAssistantUpdate)
@@ -1295,6 +1298,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 func applyActivityMetadata(meta *domain.SessionMetadata, signal ports.ActivitySignal) {
 	if signal.AgentSessionID != "" {
 		meta.AgentSessionID = signal.AgentSessionID
+		meta.AgentSessionIDLaunchID = signal.LaunchID
 	}
 	if signal.LatestUserPrompt != "" {
 		meta.LatestUserPrompt = signal.LatestUserPrompt
