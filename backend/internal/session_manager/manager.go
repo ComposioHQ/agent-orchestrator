@@ -726,10 +726,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %s", ErrUnsupportedModel, err.Error())
 	}
 	// Adapters whose model picker is an agent-owned mode list (e.g. Amp) keep
-	// their selectable values in AgentConfig.Mode. Route any effective Model
-	// value into Mode so `ao spawn --agent amp --model high` launches Amp with
-	// `--mode high` instead of silently using the default.
-	agentConfig = normalizeAgentConfigForHarness(cfg.Harness, agentConfig)
+	// their selectable values in AgentConfig.Mode. Normalize a copy for the
+	// adapter so `ao spawn --agent amp --model high` launches Amp with `--mode
+	// high`, while metadata keeps the original resolved Model for the API view.
+	adapterConfig := normalizeAgentConfigForHarness(cfg.Harness, agentConfig)
 
 	// Resolve the controller mode here, before anything durable is created, for
 	// the same reason an unknown harness is rejected above: a chat request AO
@@ -849,7 +849,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: persist browser capability: %w", id, err)
 	}
 	m.augmentAgentRuntimeEnv(agent, env)
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, adapterConfig, env); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
@@ -862,8 +862,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		SystemPrompt:     systemPrompt,
 		SystemPromptFile: systemPromptFile,
 		IssueID:          string(cfg.IssueID),
-		Config:           agentConfig,
-		Permissions:      agentConfig.Permissions,
+		Config:           adapterConfig,
+		Permissions:      adapterConfig.Permissions,
 	}
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
@@ -917,7 +917,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Prompt:                    prompt,
 		LatestUserPrompt:          prompt,
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
-		Model:                     agentConfig.Model,
+		// agentConfig still holds the user-visible resolved Model; adapterConfig
+		// may have moved it into Mode for mode-list harnesses like Amp.
+		Model: agentConfig.Model,
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
@@ -1272,11 +1274,13 @@ func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 	return base
 }
 
-// normalizeAgentConfigForHarness moves an effective Model override into Mode
-// for adapters that expose selectable values as agent-owned modes rather than
-// raw model ids. This keeps the spawn API's single `model` field usable while
-// ensuring the adapter's launch command receives the value in the field it
-// actually reads (e.g. Amp's `--mode` flag reads Config.Mode).
+// normalizeAgentConfigForHarness returns a copy of cfg with any effective
+// Model value moved into Mode for adapters that expose selectable values as
+// agent-owned modes rather than raw model ids. This keeps the spawn API's
+// single `model` field usable while ensuring the adapter's launch command
+// receives the value in the field it actually reads (e.g. Amp's `--mode` flag
+// reads Config.Mode). The original cfg is left unchanged so callers can still
+// persist the resolved Model separately.
 func normalizeAgentConfigForHarness(harness domain.AgentHarness, cfg ports.AgentConfig) ports.AgentConfig {
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" {
@@ -1286,9 +1290,10 @@ func normalizeAgentConfigForHarness(harness domain.AgentHarness, cfg ports.Agent
 	if catalog.SelectionMode != ports.ModelSelectionModeList {
 		return cfg
 	}
-	cfg.Mode = model
-	cfg.Model = ""
-	return cfg
+	out := cfg
+	out.Mode = model
+	out.Model = ""
+	return out
 }
 
 // validateSpawnModel rejects a model when the selected harness has a fixed

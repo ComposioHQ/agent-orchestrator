@@ -1300,6 +1300,19 @@ func TestSpawnAmpModelOverrideLaunchArgv(t *testing.T) {
 	if !reflect.DeepEqual(rt.lastCfg.Argv, want) {
 		t.Fatalf("launch argv = %#v, want %#v", rt.lastCfg.Argv, want)
 	}
+
+	// The user-visible resolved model is still persisted, not cleared by the
+	// adapter-facing normalization that moved it into Mode.
+	if len(st.sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(st.sessions))
+	}
+	var rec domain.SessionRecord
+	for _, r := range st.sessions {
+		rec = r
+	}
+	if rec.Metadata.Model != "high" {
+		t.Fatalf("persisted metadata model = %q, want high", rec.Metadata.Model)
+	}
 }
 
 // TestSpawnModelPersisted asserts the resolved model is stored on the session
