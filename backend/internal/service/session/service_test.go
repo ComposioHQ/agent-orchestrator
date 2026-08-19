@@ -3229,6 +3229,7 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 	stList.comments[prURL] = []domain.PullRequestComment{
 		{Author: "reviewer-a", File: "main.go", Line: 12, Body: "raw body must stay private", URL: "https://github.com/acme/repo/pull/7#discussion_r1", AutoInjectReview: false},
 		{Author: "ci-bot", File: "main.go", Line: 13, Body: "bot body", URL: "https://github.com/acme/repo/pull/7#discussion_r2", IsBot: true},
+		{Author: "reviewer-a", File: "main.go", Line: 14, Body: "resolved body", URL: "https://github.com/acme/repo/pull/7#discussion_r4", Resolved: true},
 		{Author: "reviewer-a", File: "test.go", Line: 22, Body: "another raw body", URL: "https://github.com/acme/repo/pull/7#discussion_r3", AutoInjectReview: true},
 	}
 
@@ -3257,6 +3258,9 @@ func TestListPRSummariesExposesReviewSummariesButKeepsRawLogsAndCommentBodiesPri
 		t.Fatalf("comment injection decisions = %+v, want false then true", reviewer.Links)
 	} else if reviewer.Links[0].Body != "raw body must stay private" || reviewer.Links[1].Body != "another raw body" {
 		t.Fatalf("comment bodies = %+v", reviewer.Links)
+	}
+	if len(pr.Review.ResolvedBy) != 1 || pr.Review.ResolvedBy[0].Count != 1 || pr.Review.ResolvedBy[0].Links[0].Body != "resolved body" {
+		t.Fatalf("resolved comments = %+v", pr.Review.ResolvedBy)
 	}
 	if pr.Mergeability.State != domain.MergeConflicting || len(pr.Mergeability.ConflictFiles) != 0 || !containsString(pr.Mergeability.Reasons, "conflicts") {
 		t.Fatalf("mergeability = %+v", pr.Mergeability)

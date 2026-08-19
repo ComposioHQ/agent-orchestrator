@@ -302,7 +302,13 @@ func (p *nativeHistoryCheckpoint) captureAOHighWater(
 	var latest *domain.ConversationTurn
 	for i := range turns {
 		turn := &turns[i]
-		if turn.HandledBySessionID != sessionID || !turn.State.Terminal() || turn.ProviderTurnID == "" {
+		// Only completed turns anchor the high-water mark. A provider promises to
+		// reproduce settled work during history load, but a failed or interrupted
+		// turn's items carry no such promise: Claude forks its next prompt from the
+		// pre-failure transcript entry, leaving the failed turn (e.g. a synthetic
+		// auth-error message) on a dead branch that session/load never replays.
+		// Requiring one of those items would make every future switch time out.
+		if turn.HandledBySessionID != sessionID || turn.State != domain.TurnStateCompleted || turn.ProviderTurnID == "" {
 			continue
 		}
 		if latest == nil || turn.RequestedAt.After(latest.RequestedAt) {

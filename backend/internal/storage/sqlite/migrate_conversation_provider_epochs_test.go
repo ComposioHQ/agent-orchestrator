@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestMigration0100AllowsRepeatedProviderOwnershipEpochs(t *testing.T) {
+func TestMigration0101AllowsRepeatedProviderOwnershipEpochs(t *testing.T) {
 	db := openTestDB(t)
 	upTo(t, db, 99)
 
@@ -33,7 +33,7 @@ INSERT INTO conversation_branches (
     'conversation-1:root', 'conversation-1', 'provider-epochs-1', '', 0, ?
 );`, now, now, now, now, now, now)
 
-	upTo(t, db, 100)
+	upTo(t, db, 101)
 
 	// The session-owned trigger from 0087 must survive the table rebuild.
 	mustExec(t, db, `

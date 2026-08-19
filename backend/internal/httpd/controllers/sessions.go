@@ -270,7 +270,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, TrackerProvider: in.TrackerProvider, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, TrackerProvider: in.TrackerProvider, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments, AgentConfig: ports.AgentConfig{Model: in.Model}})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -1597,8 +1597,9 @@ func discoverPreviewEntry(workspacePath string) (string, bool) {
 // "./dist/index.html") to its preview/files proxy URL when the path resolves to
 // a regular file inside the session workspace. It returns ok=false for anything
 // that already looks like a URL (an http(s)/file scheme, or a host:port dev
-// server) and for paths that escape the workspace or do not point at a file, so
-// the caller keeps those targets verbatim.
+// server) and for paths that do not point at a workspace file, so the caller
+// keeps those targets verbatim. Explicit parent traversal is rejected by
+// resolvePreviewTarget before this function is called.
 func resolveLocalPreview(r *http.Request, id domain.SessionID, workspacePath, raw string) (string, bool, error) {
 	if raw == "" || hasURLScheme(raw) {
 		return "", false, nil
@@ -1622,10 +1623,23 @@ func resolvePreviewTarget(r *http.Request, id domain.SessionID, workspacePath, r
 	if isAbsolutePreviewPath(raw) {
 		return workspaceAbsolutePreviewURL(r, id, workspacePath, raw)
 	}
+	if !hasURLScheme(raw) && containsParentPathSegment(raw) {
+		return "", errPreviewFileOutsideWorkspace
+	}
 	if resolved, ok, err := resolveLocalPreview(r, id, workspacePath, raw); ok || err != nil {
 		return resolved, err
 	}
 	return raw, nil
+}
+
+func containsParentPathSegment(raw string) bool {
+	raw = strings.ReplaceAll(raw, `\`, "/")
+	for _, segment := range strings.Split(raw, "/") {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func isAbsolutePreviewPath(raw string) bool {
@@ -1735,6 +1749,7 @@ func sessionView(s domain.Session) SessionView {
 		Branch:          s.Metadata.Branch,
 		PreviewURL:      s.Metadata.PreviewURL,
 		PreviewRevision: s.Metadata.PreviewRevision,
+		Model:           s.Metadata.Model,
 		PRs:             sessionPRFacts(s.PRs),
 	}
 	if s.ActiveAgentSwitch != nil {

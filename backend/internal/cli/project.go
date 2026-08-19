@@ -110,6 +110,7 @@ type projectConfig struct {
 	Worker            roleOverride        `json:"worker,omitempty"`
 	Orchestrator      roleOverride        `json:"orchestrator,omitempty"`
 	TrackerIntake     trackerIntakeConfig `json:"trackerIntake,omitempty"`
+	AutoReview        bool                `json:"autoReview,omitempty"`
 }
 
 // setConfigRequest mirrors the daemon's SetConfigInput body for
