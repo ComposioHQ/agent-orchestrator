@@ -22,6 +22,14 @@ export type ClosedBrowserTab = {
 
 const MAX_CLOSED_TABS = 5;
 
+// Mirrors the main process's isBlankBrowserEntry (browser-view-host.ts):
+// a freshly-opened tab reports its URL as the literal string "about:blank"
+// once its initial load settles, not an empty string — a plain truthiness
+// check on `url` treats that as "real" content worth remembering.
+function isBlankTabUrl(url: string): boolean {
+	return !url || url === "about:blank";
+}
+
 type UseBrowserViewOptions = {
 	sessionId: string;
 	active: boolean;
@@ -527,7 +535,7 @@ export function useBrowserView({
 			// the agent to reopen it. Only real, distinguishable tabs are worth
 			// keeping — a blank tab has nothing to reopen.
 			const closing = tabsState.tabs.find((tab) => tab.id === tabId);
-			if (closing?.url) {
+			if (closing && !isBlankTabUrl(closing.url)) {
 				const { id, title, url, favicon } = closing;
 				setClosedTabs((current) => [{ id, title, url, favicon }, ...current.filter((t) => t.id !== id)].slice(0, MAX_CLOSED_TABS));
 			}

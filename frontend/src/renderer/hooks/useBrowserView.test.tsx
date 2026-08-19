@@ -268,6 +268,32 @@ describe("useBrowserView", () => {
 		expect(result.current.closedTabs).toEqual([]);
 	});
 
+	// Regression: the main process reports a freshly-opened tab as the literal
+	// string "about:blank" once its initial load settles (see
+	// isBlankBrowserEntry in browser-view-host.ts), not an empty string. A
+	// plain truthiness check on the url treated that as "real" content, so
+	// closing a tab nobody had navigated in showed up in Recently Closed.
+	it("does not remember a closed about:blank tab, since there is nothing to reopen", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "about:blank", title: "", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+
+		await act(() => result.current.closeTab("t1"));
+		expect(result.current.closedTabs).toEqual([]);
+	});
+
 	it("remeasures the live native view while moving between panel and maximized browser slots", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();
