@@ -404,7 +404,7 @@ func TestProjectConversationPageStartsAtCurrentContextReset(t *testing.T) {
 	if got := texts(page.Messages); !reflect.DeepEqual(got, []string{"fresh orchestrator work"}) {
 		t.Fatalf("page messages = %v", got)
 	}
-	if got := activitySummaries(page.Activities); !reflect.DeepEqual(got, []string{"Started a fresh agent context."}) {
+	if got := activitySummaries(page.Activities); len(got) != 0 {
 		t.Fatalf("page activities = %v", got)
 	}
 	if page.HasMoreBefore {

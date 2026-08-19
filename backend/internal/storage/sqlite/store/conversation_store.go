@@ -1862,12 +1862,12 @@ func (s *Store) LoadConversationSnapshotPage(
 
 	sequences := make([]int64, 0, len(messageRows)+len(activityRows))
 	for _, row := range messageRows {
-		if row.Sequence >= visibleAfterSequence {
+		if row.Sequence > visibleAfterSequence {
 			sequences = append(sequences, row.Sequence)
 		}
 	}
 	for _, row := range activityRows {
-		if row.Sequence >= visibleAfterSequence {
+		if row.Sequence > visibleAfterSequence {
 			sequences = append(sequences, row.Sequence)
 		}
 	}
@@ -1880,7 +1880,7 @@ func (s *Store) LoadConversationSnapshotPage(
 	if len(sequences) > 0 {
 		oldest = sequences[len(sequences)-1]
 	}
-	if oldest < visibleAfterSequence {
+	if len(sequences) == 0 || oldest < visibleAfterSequence {
 		oldest = visibleAfterSequence
 	}
 	if oldest <= visibleAfterSequence {
@@ -1909,12 +1909,12 @@ func (s *Store) LoadConversationSnapshotPage(
 	// SQL returns newest-first so LIMIT is useful; the API contract remains
 	// oldest-first inside each page.
 	for i := len(messageRows) - 1; i >= 0; i-- {
-		if messageRows[i].Sequence >= oldest && messageRows[i].Sequence >= visibleAfterSequence {
+		if messageRows[i].Sequence >= oldest && messageRows[i].Sequence > visibleAfterSequence {
 			snapshot.Messages = append(snapshot.Messages, messageToDomain(messageRows[i]))
 		}
 	}
 	for i := len(activityRows) - 1; i >= 0; i-- {
-		if activityRows[i].Sequence >= oldest && activityRows[i].Sequence >= visibleAfterSequence {
+		if activityRows[i].Sequence >= oldest && activityRows[i].Sequence > visibleAfterSequence {
 			snapshot.Activities = append(snapshot.Activities, activityToDomain(activityRows[i]))
 		}
 	}
