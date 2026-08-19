@@ -1610,6 +1610,7 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		sendToWorkerAgent: t("inspector.sendToWorkerAgent"),
 		sentToWorkerAgent: t("inspector.sentToWorkerAgent"),
 		sendToWorkerAgentError: t("inspector.sendToWorkerAgentError"),
+		workerAgentWorkingOnFeedback: t("inspector.workerAgentWorkingOnFeedback"),
 		showLatestReviewOnly: t("inspector.showLatestReviewOnly"),
 		showLess: t("inspector.showLess"),
 		showMore: t("inspector.showMore"),

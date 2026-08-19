@@ -275,6 +275,7 @@
 	"inspector.sendToWorkerAgent": "Worker エージェントに送信",
 	"inspector.sentToWorkerAgent": "Worker エージェントに送信済み",
 	"inspector.sendToWorkerAgentError": "送信できませんでした。再試行してください。",
+	"inspector.workerAgentWorkingOnFeedback": "Worker エージェントがこのフィードバックに対応中です",
 	"inspector.viewInFile": "ファイルで表示",
 	"inspector.commentNumber": "コメント #{{number}}",
 	"inspector.loadMoreReviews": "さらに読み込む · 過去 {{count}} 件",

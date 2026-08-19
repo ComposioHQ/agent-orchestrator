@@ -477,6 +477,7 @@ export type InspectorReviewLabels = {
 	sendToWorkerAgent: string;
 	sentToWorkerAgent: string;
 	sendToWorkerAgentError: string;
+	workerAgentWorkingOnFeedback: string;
 	showLatestReviewOnly: string;
 	showLess: string;
 	showMore: string;
@@ -863,7 +864,7 @@ function GithubReviewHistory({
 function ExternalReviewCard({
 	defaultOpen,
 	entry,
-	externalLink,
+	externalLink: ExternalLink,
 	labels,
 	onRequestRereview,
 	onResolveInlineComment,
@@ -884,6 +885,10 @@ function ExternalReviewCard({
 	const [rereviewError, setRereviewError] = useState(false);
 	const body = entry.body?.trim();
 	const inlineComments = entry.inlineComments ?? [];
+	const repeatedInlineBody = Boolean(
+		body && inlineComments.some((comment) => normalizedReviewText(comment.body) === normalizedReviewText(body)),
+	);
+	const reviewUrl = entry.reviewUrl || entry.pullRequestUrl;
 	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
 	const showRereviewAction = Boolean(onRequestRereview && (entry.canRequestRereview ?? entry.verdict.tone !== "success"));
 	return (
@@ -897,42 +902,51 @@ function ExternalReviewCard({
 			testId="github-review-card"
 			verdict={entry.verdict}
 		>
-			{showRereviewAction ? (
+			{showRereviewAction || reviewUrl ? (
 				<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
 					{openInlineCount > 0 ? (
 						<span className="font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
 					) : <span aria-hidden="true" />}
-					{rereviewRequested ? (
-						<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
-							<CheckIcon className="size-icon-xs shrink-0" />
-							{labels.rereviewRequested}
-						</span>
-					) : (
-						<button
-							className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
-							onClick={async () => {
-								setRereviewError(false);
-								try {
-									await onRequestRereview?.(entry);
-									setRereviewRequested(true);
-								} catch {
-									setRereviewError(true);
-								}
-							}}
-							type="button"
-						>
-							{labels.requestRereviewPR}
-						</button>
-					)}
+					<div className="flex min-w-0 flex-wrap items-center justify-end gap-2 @max-[300px]/inspector:w-full">
+						{reviewUrl ? (
+							<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={reviewUrl}>
+								{labels.viewOnPR}
+							</ExternalLink>
+						) : null}
+						{showRereviewAction ? (
+							rereviewRequested ? (
+								<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
+									<CheckIcon className="size-icon-xs shrink-0" />
+									{labels.rereviewRequested}
+								</span>
+							) : (
+								<button
+									className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
+									onClick={async () => {
+										setRereviewError(false);
+										try {
+											await onRequestRereview?.(entry);
+											setRereviewRequested(true);
+										} catch {
+											setRereviewError(true);
+										}
+									}}
+									type="button"
+								>
+									{labels.requestRereviewPR}
+								</button>
+							)
+						) : null}
+					</div>
 				</div>
 			) : null}
 			{rereviewError ? <p className="m-0 text-2xs font-medium text-error">{labels.rereviewRequestFailed}</p> : null}
-			{body ? (
+			{body && !repeatedInlineBody ? (
 				<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
 			) : null}
 			{openInlineCount > 0 ? (
 				<GithubInlineComments
-					externalLink={externalLink}
+					externalLink={ExternalLink}
 					labels={labels}
 					onSendInlineComment={onSendInlineComment}
 					onResolveInlineComment={onResolveInlineComment}
@@ -950,6 +964,10 @@ function ExternalReviewCard({
 			) : null}
 		</ReviewEntryDisclosure>
 	);
+}
+
+function normalizedReviewText(value: string | undefined): string {
+	return value?.trim().replace(/\s+/g, " ") ?? "";
 }
 
 function ReviewEntryDisclosure({
@@ -1165,7 +1183,7 @@ function InlineCommentRow({
 			{body ? <p className="m-0 max-w-prose whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{body}</p> : null}
 			<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
 				{sent ? (
-					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs">
+					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs" title={labels.workerAgentWorkingOnFeedback}>
 						<CheckIcon className="shrink-0 text-success" />
 						{labels.sentToWorkerAgent}
 					</span>
@@ -1196,7 +1214,7 @@ function InlineCommentRow({
 				)}
 				{comment.url ? (
 					<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={comment.url}>
-						{labels.viewOnPR}
+						{labels.viewInFile}
 					</ExternalLink>
 				) : null}
 			</div>
@@ -1282,7 +1300,7 @@ function ReviewSummaryCard({
 				<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
 					{body && onSend ? (
 						sent ? (
-							<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs">
+							<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs" title={labels.workerAgentWorkingOnFeedback}>
 								<CheckIcon className="shrink-0 text-success" />
 								{labels.sentToWorkerAgent}
 							</span>

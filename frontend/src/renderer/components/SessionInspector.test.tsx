@@ -2211,8 +2211,11 @@ describe("SessionInspector summary reviews", () => {
       within(externalReview).getByText("Reviewed 3d ago"),
     ).toBeInTheDocument();
     expect(
-      within(externalReview).queryByRole("link", { name: "View on PR" }),
-    ).not.toBeInTheDocument();
+      within(externalReview).getByRole("link", { name: "View on PR" }),
+    ).toHaveAttribute(
+      "href",
+      "https://example.com/pr/3#pullrequestreview-456",
+    );
     expect(
       within(externalReview).queryByRole("button", { name: "Request to re-review PR" }),
     ).not.toBeInTheDocument();
@@ -2457,6 +2460,10 @@ describe("SessionInspector summary reviews", () => {
       screen.getByRole("button", { name: /maya.*Changes requested/i }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(screen.getByRole("link", { name: "View in file" })).toHaveAttribute(
+      "href",
+      "https://example.com/comment-9",
+    );
     const sendButton = screen.getByRole("button", {
       name: "Send to worker agent",
     });
@@ -2505,6 +2512,10 @@ describe("SessionInspector summary reviews", () => {
       ),
     );
     expect(screen.getAllByText("Sent to worker agent")).toHaveLength(2);
+    expect(screen.getAllByText("Sent to worker agent")[0]).toHaveAttribute(
+      "title",
+      "Worker agent is working on this feedback",
+    );
   });
 
   it("marks an AO review using its stored injection decision", async () => {

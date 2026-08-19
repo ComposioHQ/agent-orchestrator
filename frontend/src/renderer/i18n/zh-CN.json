@@ -274,6 +274,7 @@
 	"inspector.sendToWorkerAgent": "发送给 Worker 代理",
 	"inspector.sentToWorkerAgent": "已发送给 Worker 代理",
 	"inspector.sendToWorkerAgentError": "无法发送。请重试。",
+	"inspector.workerAgentWorkingOnFeedback": "Worker 代理正在处理此反馈",
 	"inspector.viewInFile": "在文件中查看",
 	"inspector.commentNumber": "评论 #{{number}}",
 	"inspector.loadMoreReviews": "加载更多 · 之前 {{count}} 条",

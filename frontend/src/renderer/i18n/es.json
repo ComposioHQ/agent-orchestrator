@@ -277,6 +277,7 @@
 	"inspector.sendToWorkerAgent": "Enviar al agente worker",
 	"inspector.sentToWorkerAgent": "Enviado al agente worker",
 	"inspector.sendToWorkerAgentError": "No se pudo enviar. Inténtalo de nuevo.",
+	"inspector.workerAgentWorkingOnFeedback": "El agente worker está trabajando en estos comentarios",
 	"inspector.viewInFile": "Ver en archivo",
 	"inspector.commentNumber": "Comentario n.º {{number}}",
 	"inspector.loadMoreReviews": "Cargar más · {{count}} anteriores",

@@ -613,7 +613,7 @@ describe("portable inspector presentations", () => {
             github: {
               entries: [
                 {
-                  body: "Please address the inline notes before merge.",
+                  body: "This branch leaks the resize listener on unmount.",
                   id: "github-review-1",
                   reviewerId: "maya",
                   reviewUrl: "https://example.com/review",
@@ -687,6 +687,13 @@ describe("portable inspector presentations", () => {
     expect(
       screen.getByText("This branch leaks the resize listener on unmount."),
     ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("This branch leaks the resize listener on unmount."),
+    ).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "View on PR" })).toHaveAttribute(
+      "href",
+      "https://example.com/review",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Send to worker agent" }),
@@ -708,8 +715,12 @@ describe("portable inspector presentations", () => {
         "text-success",
       );
     });
-    expect(screen.getAllByRole("link", { name: "View on PR" })).toHaveLength(
+    expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(
       2,
+    );
+    expect(screen.getAllByText("Sent to worker agent")[0]).toHaveAttribute(
+      "title",
+      "Worker agent is working on this feedback",
     );
   });
 
@@ -964,6 +975,7 @@ const reviewLabels: InspectorReviewLabels = {
   sendToWorkerAgent: "Send to worker agent",
   sentToWorkerAgent: "Sent to worker agent",
   sendToWorkerAgentError: "Unable to send. Retry.",
+  workerAgentWorkingOnFeedback: "Worker agent is working on this feedback",
   showLatestReviewOnly: "Show latest only",
   showLess: "Show less",
   showMore: "Show more",
