@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
 	type BrowserNavState,
+	type BrowserTabsState,
 	clampBoundsToWindow,
 	createBrowserViewHost,
 	isAllowedBrowserURL,
 	normalizeBrowserURL,
 	scaleBoundsForZoom,
 } from "./browser-view-host";
+import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import { NEW_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 
 type InvokeHandler = (event: unknown, ...args: unknown[]) => unknown;
@@ -254,6 +256,7 @@ function setupTabHost() {
 					return {};
 				},
 			},
+			focus: vi.fn(),
 			getTitle: () => (currentURL ? `Title ${currentURL}` : ""),
 			getURL: () => currentURL,
 			goBack: () => undefined,
@@ -911,6 +914,65 @@ describe("agent browser runtime", () => {
 			expect.anything(),
 		);
 		expect(views[1].webContents.close).toHaveBeenCalled();
+	});
+});
+
+describe("browser tab lifecycle stress (tabs stop closing regression guard)", () => {
+	// Re-verifies the historically reported "tabs stop closing" bug against the
+	// REAL closeTab/destroyTabView code paths (not a mock of them), by driving
+	// the IPC handlers exactly as the renderer rail does: open to the tab cap,
+	// close back down to one, repeatedly, interleaving tab selection plus a
+	// DevTools open/close and an annotation-mode toggle each cycle -- the two
+	// failure modes ("wrong tab content after switching", "stale overlay
+	// captures") called out by the stabilization commits already on main.
+	it("opens to the tab cap and closes back to one tab across many churn cycles without a stuck or leaked tab", async () => {
+		const { invoke, views } = setupTabHost();
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		const { viewId } = ensured;
+
+		for (let cycle = 0; cycle < 20; cycle += 1) {
+			for (let i = 0; i < MAX_BROWSER_TABS - 1; i += 1) {
+				await invoke("browser:openTab", { viewId });
+			}
+			let tabs = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
+			expect(tabs.tabs).toHaveLength(MAX_BROWSER_TABS);
+
+			// Interleave the two related failure modes named in the brief: a
+			// DevTools open/close cycle and an annotation-mode toggle.
+			await invoke("browser:devtools", { viewId, operation: "open" });
+			await invoke("browser:devtools", { viewId, operation: "close" });
+			await invoke("browser:annotation:setMode", { viewId, enabled: true });
+			await invoke("browser:annotation:setMode", { viewId, enabled: false });
+
+			while (tabs.tabs.length > 1) {
+				// Switch to a tab other than the one about to close before every
+				// other close, so closeTab's "wasActive" reactivation path and the
+				// plain non-active-tab deletion path both get exercised.
+				if (tabs.tabs.length % 2 === 0) {
+					await invoke("browser:selectTab", { viewId, tabId: tabs.tabs[0].id });
+				}
+				const closingId = tabs.tabs[tabs.tabs.length - 1].id;
+				const before = tabs.tabs.length;
+
+				const result = (await invoke("browser:closeTab", { viewId, tabId: closingId })) as BrowserTabsState;
+
+				expect(result.tabs.some((tab) => tab.id === closingId)).toBe(false);
+				expect(result.tabs).toHaveLength(before - 1);
+				tabs = result;
+			}
+
+			expect(tabs.tabs).toHaveLength(1);
+			expect((await invoke("browser:getTabs", viewId)) as BrowserTabsState).toMatchObject({ tabs: [{ id: tabs.tabs[0].id }] });
+		}
+
+		const final = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
+		expect(final.tabs).toHaveLength(1);
+		// Every WebContentsView ever created (16 tabs x 20 cycles, plus the
+		// original) must have had its underlying webContents closed except the
+		// one tab still alive at the end -- otherwise a leaked view is exactly
+		// what "tabs stop closing" would look like under the hood.
+		const stillOpen = views.filter((view) => view.webContents.close.mock.calls.length === 0);
+		expect(stillOpen).toHaveLength(1);
 	});
 });
 
