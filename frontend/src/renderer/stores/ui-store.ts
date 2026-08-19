@@ -19,11 +19,13 @@ export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
 export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
 
 export type SettingsModal =
-	| { scope: "global" }
+	| { scope: "global"; section?: GlobalSettingsSectionId }
 	| {
 			scope: "project";
 			projectId: string;
-	  };
+	};
+
+export type GlobalSettingsSectionId = "general" | "browserProfiles" | "updates" | "help";
 
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
@@ -86,7 +88,7 @@ type UiState = {
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
 	setDeveloperMode: (enabled: boolean) => void;
-	openGlobalSettings: () => void;
+	openGlobalSettings: (section?: GlobalSettingsSectionId) => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
@@ -177,7 +179,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
-	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
+	openGlobalSettings: (section = "general") => set({ settingsModal: { scope: "global", section } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
