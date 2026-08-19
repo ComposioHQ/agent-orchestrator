@@ -540,22 +540,6 @@ export function BrowserPanelView({
 				) : null}
 			</form>
 			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
-				{/* Docked keeps the rail on the right (out of the way of the toolbar/
-				    address bar); popped-out keeps it on the left. */}
-				{poppedOut ? (
-					<BrowserTabsRail
-						activeTabId={activeTabId}
-						onCloseTab={closeTab}
-						onOpenTab={handleOpenTab}
-						onPinnedChange={handlePinnedChange}
-						onReorderTabs={reorderTabs}
-						onSelectTab={handleSelectTab}
-						pinned={pinned}
-						poppedOut={poppedOut}
-						ref={railRef}
-						tabs={tabs}
-					/>
-				) : null}
 				<div
 					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
 					data-testid="browser-viewport"
@@ -579,20 +563,20 @@ export function BrowserPanelView({
 						</p>
 					) : null}
 				</div>
-				{!poppedOut ? (
-					<BrowserTabsRail
-						activeTabId={activeTabId}
-						onCloseTab={closeTab}
-						onOpenTab={handleOpenTab}
-						onPinnedChange={handlePinnedChange}
-						onReorderTabs={reorderTabs}
-						onSelectTab={handleSelectTab}
-						pinned={pinned}
-						poppedOut={poppedOut}
-						ref={railRef}
-						tabs={tabs}
-					/>
-				) : null}
+				{/* Both docked and popped-out keep the rail on the right of the
+				    viewport (out of the way of the toolbar/address bar). */}
+				<BrowserTabsRail
+					activeTabId={activeTabId}
+					onCloseTab={closeTab}
+					onOpenTab={handleOpenTab}
+					onPinnedChange={handlePinnedChange}
+					onReorderTabs={reorderTabs}
+					onSelectTab={handleSelectTab}
+					pinned={pinned}
+					poppedOut={poppedOut}
+					ref={railRef}
+					tabs={tabs}
+				/>
 			</div>
 		</div>
 	);

@@ -450,6 +450,27 @@ describe("BrowserPanel", () => {
 		expect(screen.getByTestId("browser-tabs-rail")).toBeInTheDocument();
 	});
 
+	it("keeps the tabs rail on the right of the viewport whether docked or popped out", () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://a.test", title: "A", active: true },
+			{ id: "t2", url: "http://b.test", title: "B", active: false },
+		];
+
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		let viewport = screen.getByTestId("browser-viewport");
+		let rail = screen.getByTestId("browser-tabs-rail");
+		expect(viewport.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+		viewport = screen.getByTestId("browser-viewport");
+		rail = screen.getByTestId("browser-tabs-rail");
+		expect(viewport.compareDocumentPosition(rail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(rail).toHaveClass("border-l");
+		expect(rail).not.toHaveClass("border-r");
+	});
+
 	it("shows empty and error states", () => {
 		hookState.navState = { ...hookState.navState, error: "Connection refused" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
