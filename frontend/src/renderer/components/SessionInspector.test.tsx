@@ -617,7 +617,7 @@ describe("SessionInspector PR section", () => {
       screen
         .getByRole("switch", { name })
         .closest("[data-slot='inspector-policy-row']") as HTMLElement;
-    const ciRow = policyRow("Automatically fix CI failures");
+    const ciRow = policyRow("Automatically send CI failures");
     const terminateRow = policyRow(
       "Terminate session when pull requests merge",
     );
@@ -638,10 +638,10 @@ describe("SessionInspector PR section", () => {
       "bg-surface",
     );
     expect(
-      screen.queryByRole("switch", { name: "Automatically fix review comments" }),
+      screen.queryByRole("switch", { name: "Auto inject review comments" }),
     ).not.toBeInTheDocument();
     for (const name of [
-      "Automatically fix CI failures",
+      "Automatically send CI failures",
       "Terminate session when pull requests merge",
     ]) {
       const toggle = screen.getByRole("switch", { name });
@@ -653,7 +653,7 @@ describe("SessionInspector PR section", () => {
     }
     expect(
       screen.getByRole("button", {
-        name: "Sets the default for newly created pull requests. When disabled, CI failures are displayed but not sent to the worker agent to fix.",
+        name: "Sets the default for newly created pull requests. When disabled, CI failures are not sent to the worker agent to fix.",
       }),
     ).toBeInTheDocument();
     expect(
@@ -667,7 +667,7 @@ describe("SessionInspector PR section", () => {
       await screen.findByRole("button", { name: "Run review" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: "Automatically fix review comments" }),
+      screen.getByRole("switch", { name: "Auto inject review comments" }),
     ).toBeInTheDocument();
   });
 
@@ -675,7 +675,7 @@ describe("SessionInspector PR section", () => {
     renderWithQuery(<SessionInspector session={session([])} />);
 
     const toggle = screen.getByRole("switch", {
-      name: "Automatically fix CI failures",
+      name: "Automatically send CI failures",
     });
     expect(toggle).toBeChecked();
     await userEvent.click(toggle);
@@ -700,7 +700,7 @@ describe("SessionInspector PR section", () => {
     renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
 
     const toggle = screen.getByRole("switch", {
-      name: "Automatically fix CI failures",
+      name: "Automatically send CI failures",
     });
     await userEvent.click(toggle);
 
@@ -2500,7 +2500,7 @@ describe("SessionInspector summary reviews", () => {
     await openReviewsSection();
 
     const toggle = screen.getByRole("switch", {
-      name: "Automatically fix review comments",
+      name: "Auto inject review comments",
     });
     expect(toggle).toBeChecked();
     await userEvent.click(toggle);
@@ -2922,7 +2922,7 @@ describe("SessionInspector summary reviews", () => {
     await screen.findByRole("tab", { name: /Summary/ });
     await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
     expect(
-      screen.getByRole("switch", { name: "Automatically fix review comments" }),
+      screen.getByRole("switch", { name: "Auto inject review comments" }),
     ).toBeInTheDocument();
     expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
   });
