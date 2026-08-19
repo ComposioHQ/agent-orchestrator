@@ -790,11 +790,13 @@ const reviewLabels: InspectorReviewLabels = {
   sendToWorkerAgent: "Send to worker agent",
   sentToWorkerAgent: "Sent to worker agent",
   sendToWorkerAgentError: "Unable to send. Retry.",
+  workerAgentWorkingOnFeedback: "Worker agent is working on this feedback.",
   showLatestReviewOnly: "Show latest only",
   showLess: "Show less",
   showMore: "Show more",
   commentNumber: (number) => `Comment ${number}`,
   unresolvedCount: (count) => `${count} unresolved`,
   viewInFile: "View in file",
+  viewInFileWorkInProgress: "View in file is coming soon.",
   viewOnPR: "View on PR",
 };
