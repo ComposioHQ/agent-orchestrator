@@ -54,6 +54,7 @@ type MutationResult = ReturnType<typeof mutation>;
 
 export type EmulatorMockHook = {
 	status: QueryResult<StatusData>;
+	devices: QueryResult<{ deviceId: string; name: string }[]>;
 	toolchain: QueryResult<ToolchainData>;
 	recheck: MutationResult;
 	start: MutationResult;
@@ -69,6 +70,7 @@ export type EmulatorMockHook = {
 function buildHook(): EmulatorMockHook {
 	return {
 		status: query<StatusData>({ state: "Shutdown", name: "iPhone 15", error: null }),
+		devices: query<{ deviceId: string; name: string }[]>([]),
 		toolchain: query<ToolchainData>({ xcodeDetected: true, guidanceWhyMissing: null, guidanceAppStoreURL: null }),
 		recheck: mutation({ mutate: recheckMutate }),
 		start: mutation({ mutate: startMutate }),

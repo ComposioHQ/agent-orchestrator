@@ -12,9 +12,13 @@ type InputTransport interface {
 	Name() string
 }
 
+// IndigoTransport injects HID via the Indigo protocol (Xcode 26).
 type IndigoTransport struct{ SendFunc func(Input) error }
 
+// Name reports the transport identifier.
 func (t IndigoTransport) Name() string { return "indigo" }
+
+// Send forwards an input event through the transport.
 func (t IndigoTransport) Send(input Input) error {
 	if t.SendFunc == nil {
 		return fmt.Errorf("IndigoHID transport is unavailable")
@@ -22,9 +26,13 @@ func (t IndigoTransport) Send(input Input) error {
 	return t.SendFunc(input)
 }
 
+// DtuHidTransport injects HID via the Device Hub protocol (Xcode 27).
 type DtuHidTransport struct{ SendFunc func(Input) error }
 
+// Name reports the transport identifier.
 func (t DtuHidTransport) Name() string { return "dtu-hid" }
+
+// Send forwards an input event through the transport.
 func (t DtuHidTransport) Send(input Input) error {
 	if t.SendFunc == nil {
 		return fmt.Errorf("Device Hub HID transport is unavailable")

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"math"
 	"net/http"
 	"time"
 
@@ -205,6 +206,11 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 			}
 			if frame.Codec == "h264" {
 				// Binary packet: u32 width, u32 height, Annex-B access unit.
+				// Width/height come from a u32 header, but guard the cast to
+				// keep the conversion provably in range.
+				if frame.Width < 0 || frame.Height < 0 || uint64(frame.Width) > math.MaxUint32 || uint64(frame.Height) > math.MaxUint32 {
+					continue
+				}
 				packet := make([]byte, 8+len(frame.Data))
 				binary.BigEndian.PutUint32(packet[:4], uint32(frame.Width))
 				binary.BigEndian.PutUint32(packet[4:8], uint32(frame.Height))

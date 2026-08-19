@@ -53,10 +53,12 @@ type SimulatorDeviceResponse struct {
 	Runtime  string `json:"runtime,omitempty"`
 }
 
+// SimulatorSessionQuery scopes iOS simulator control to one AO session.
 type SimulatorSessionQuery struct {
 	SessionID string `query:"sessionId,omitempty" description:"AO session owning this simulator."`
 }
 
+// SimulatorDeviceQuery targets a specific simulator device to attach and boot.
 type SimulatorDeviceQuery struct {
 	DeviceID string `query:"deviceId,omitempty" description:"Explicit simulator UDID to attach and boot."`
 }

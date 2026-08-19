@@ -1495,7 +1495,7 @@ describe("SessionInspector tabs", () => {
 
 it("hides the Emulator tab until the Mobile Emulator setting is switched on, even on macOS", () => {
     spoofMacPlatform();
-    renderWithQuery(<SessionInspector session={session([])} />);
+    renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
     const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
     expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
     expect(screen.queryByRole("tab", { name: "Emulator" })).not.toBeInTheDocument();
@@ -1504,7 +1504,7 @@ it("hides the Emulator tab until the Mobile Emulator setting is switched on, eve
   it("adds the Emulator tab on macOS once the Mobile Emulator setting is enabled", () => {
     spoofMacPlatform();
     useUiStore.setState({ mobileEmulatorEnabled: true });
-    renderWithQuery(<SessionInspector session={session([])} />);
+    renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
     const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
     expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files", "▣Emulator"]);
     expect(screen.getByRole("tab", { name: "Emulator" })).toBeInTheDocument();
@@ -1512,7 +1512,7 @@ it("hides the Emulator tab until the Mobile Emulator setting is switched on, eve
 
   it("keeps the Emulator tab hidden on non-macOS even when the setting is enabled", () => {
     useUiStore.setState({ mobileEmulatorEnabled: true });
-    renderWithQuery(<SessionInspector session={session([])} />);
+    renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
     expect(screen.queryByRole("tab", { name: "Emulator" })).not.toBeInTheDocument();
   });
 

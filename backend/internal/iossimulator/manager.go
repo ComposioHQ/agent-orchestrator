@@ -73,6 +73,8 @@ type SessionRegistry struct {
 	newFunc func() *Manager
 }
 
+// NewSessionRegistry builds a registry that lazily creates per-session
+// managers via newFunc (defaulting to New).
 func NewSessionRegistry(newFunc func() *Manager) *SessionRegistry {
 	if newFunc == nil {
 		newFunc = New
@@ -80,6 +82,7 @@ func NewSessionRegistry(newFunc func() *Manager) *SessionRegistry {
 	return &SessionRegistry{items: make(map[string]*Manager), newFunc: newFunc}
 }
 
+// For returns the manager for sessionID, creating it on first use.
 func (r *SessionRegistry) For(sessionID string) *Manager {
 	if sessionID == "" {
 		return r.newFunc()

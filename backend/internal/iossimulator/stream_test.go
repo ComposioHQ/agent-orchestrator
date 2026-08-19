@@ -66,15 +66,25 @@ func TestH264FrameSourceFansOutAnnexBFrames(t *testing.T) {
 	src := NewH264FrameSource("/unused")
 	src.codec = "h264"
 	var writer *io.PipeWriter
+	var mu sync.Mutex
 	src.spawn = func(ctx context.Context, helper string) (io.ReadCloser, func(), error) {
 		reader, nextWriter := io.Pipe()
+		mu.Lock()
 		writer = nextWriter
+		mu.Unlock()
 		return reader, func() { _ = nextWriter.Close() }, nil
 	}
 	frames, unsubscribe := src.Subscribe()
 	defer unsubscribe()
 	wait := time.After(2 * time.Second)
-	for writer == nil {
+	var current *io.PipeWriter
+	for {
+		mu.Lock()
+		current = writer
+		mu.Unlock()
+		if current != nil {
+			break
+		}
 		select {
 		case <-wait:
 			t.Fatal("capture helper did not start")
@@ -83,7 +93,7 @@ func TestH264FrameSourceFansOutAnnexBFrames(t *testing.T) {
 		}
 	}
 	payload := []byte{0, 0, 0, 1, 9}
-	if _, err := writer.Write(h264Frame(393, 852, payload)); err != nil {
+	if _, err := current.Write(h264Frame(393, 852, payload)); err != nil {
 		t.Fatal(err)
 	}
 	select {

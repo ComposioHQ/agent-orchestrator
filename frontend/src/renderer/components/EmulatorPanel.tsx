@@ -1,6 +1,6 @@
 import { Home, Loader2, Lock, Play, RotateCcw, RotateCw, Smartphone, Square } from "lucide-react";
 import type { MouseEvent } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useFrameFps } from "../hooks/useFrameFps";
 import { useIOSSimulator } from "../hooks/useIOSSimulator";
@@ -35,10 +35,17 @@ export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionI
 	const status = ios.status.data;
 	const booted = status?.state === "Booted";
 	const screenshot = ios.screenshot.data;
-	const frame = ios.streamFrame ?? (screenshot ? { data: screenshot.data, mimeType: screenshot.mimeType, codec: "png" as const, width: screenshot.width, height: screenshot.height } : null);
+	const frame = useMemo(
+		() => ios.streamFrame ?? (screenshot ? { data: screenshot.data, mimeType: screenshot.mimeType, codec: "png" as const, width: screenshot.width, height: screenshot.height } : null),
+		[ios.streamFrame, screenshot],
+	);
 	const frameWidth = frame?.width ?? status?.screenWidth ?? 0;
 	const frameHeight = frame?.height ?? status?.screenHeight ?? 0;
-	const fps = useFrameFps(frame?.codec !== "h264" && frame?.data && frame.mimeType ? { data: frame.data, mimeType: frame.mimeType } : null);
+	const fpsTarget = useMemo(
+		() => (frame?.codec !== "h264" && frame?.data && frame.mimeType ? { data: frame.data, mimeType: frame.mimeType } : null),
+		[frame?.codec, frame?.data, frame?.mimeType],
+	);
+	const fps = useFrameFps(fpsTarget);
 	const keyboard = useSimulatorKeyboard({
 		active: activeMac,
 		booted,
