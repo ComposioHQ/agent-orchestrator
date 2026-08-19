@@ -335,7 +335,7 @@ function ensureOverlay(): ShadowRoot {
 				caret-color: var(--ao-foreground);
 				padding: 6px 9px;
 				font-family: var(--ao-font-sans);
-				font-size: var(--ao-text-xs);
+				font-size: 13px;
 				line-height: 20px;
 				font-weight: 400;
 				outline: none;

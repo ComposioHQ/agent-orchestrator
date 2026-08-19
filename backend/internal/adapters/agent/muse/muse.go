@@ -188,6 +188,10 @@ var museBinarySpec = binaryutil.BinarySpec{
 	UnixHomePaths: [][]string{
 		{".local", "bin", "muse"}, // official Meta installer default
 	},
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "muse.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "muse.exe"}},
+	},
 }
 
 // ResolveMuseBinary finds the official Meta Muse Code launcher. The `muse`

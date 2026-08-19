@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
@@ -116,21 +116,17 @@ describe("compaction in the timeline", () => {
 	});
 });
 
-describe("the /compact command", () => {
-	it("runs from the composer without reserving a separate action row", async () => {
-		const user = userEvent.setup();
+describe("the compact control", () => {
+	it("is offered in the composer message tools", () => {
 		const onCompact = vi.fn();
 		render(<ChatWorkspace snapshot={snapshot([assistantSaid])} onCompact={onCompact} />);
 
-		expect(
-			screen.queryByRole("button", { name: "Compact conversation history" }),
-		).not.toBeInTheDocument();
-		const field = screen.getByLabelText("Message the agent");
-		await user.type(field, "/compact");
-		await user.keyboard("{Enter}");
-
+		const tools = screen.getByRole("group", { name: "Message tools" });
+		const compactButton = within(tools).getByRole("button", {
+			name: "Compact conversation history",
+		});
+		compactButton.click();
 		expect(onCompact).toHaveBeenCalledOnce();
-		expect(field).toHaveValue("");
 	});
 
 	it("offers compact alongside provider skills in the slash menu", async () => {
@@ -175,7 +171,7 @@ describe("the /compact command", () => {
 			/>,
 		);
 
-		expect(screen.queryByText("This agent cannot compact its history")).not.toBeInTheDocument();
+		expect(screen.getByText("This agent cannot compact its history")).toBeInTheDocument();
 		await user.type(screen.getByLabelText("Message the agent"), "/compact");
 		await user.keyboard("{Enter}");
 		expect(screen.getByRole("alert")).toHaveTextContent("This agent cannot compact its history");

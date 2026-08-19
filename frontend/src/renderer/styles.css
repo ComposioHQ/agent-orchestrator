@@ -584,6 +584,12 @@
  * frameless titlebar; Linux uses the standard ShellTopbar. The right/bottom
  * insets and the shared --radius-center-panel rounding are kept so the panel
  * matches the macOS framed look. */
+.platform-windows {
+	--size-center-panel-inset: 8px;
+	--size-center-panel-inline-inset: 8px;
+	--size-center-panel-bottom-inset: 8px;
+}
+
 .platform-windows .center-panel-shell,
 .platform-linux .center-panel-shell {
 	padding-top: 0;
@@ -734,8 +740,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 	}
 }
 
@@ -763,7 +769,7 @@ button.settings-link-row:active {
 
 	&:focus-visible {
 		border-radius: var(--radius-md);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 
 	& .settings-row-value {
@@ -806,8 +812,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 		color: var(--color-text-settings-row);
 		outline: none;
 	}
@@ -841,8 +847,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 		color: var(--color-text-settings-row);
 		outline: none;
 	}
@@ -940,7 +946,7 @@ button.settings-link-row:active {
 }
 
 .composer-toolbar .composer-toolbar-option:focus-visible {
-	box-shadow: inset 0 0 0 2px var(--bridge-accent-weak);
+	box-shadow: none;
 }
 
 /* Inline value control inside the task composer's bottom toolbar. Reads as a
@@ -971,7 +977,7 @@ button.settings-link-row:active {
 
 	&:focus-visible {
 		border-color: transparent;
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 		outline: none;
 	}
 
@@ -1036,8 +1042,8 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		border-color: var(--color-border-settings-input);
+		box-shadow: none;
 		color: var(--color-text-settings-row);
 		outline: none;
 	}
@@ -1081,7 +1087,7 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 }
 
@@ -1133,7 +1139,7 @@ button.settings-link-row:active {
 	}
 
 	&:focus-visible {
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 
 	&[data-state="checked"] {
@@ -1178,7 +1184,7 @@ button.settings-link-row:active {
 
 	&:focus-visible {
 		outline: none;
-		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		box-shadow: none;
 	}
 }
 
@@ -1748,6 +1754,20 @@ body.is-resizing-x [data-slot="inspector-container"] {
 .sidebar-focusless :focus-visible {
 	background-color: var(--color-interactive-hover) !important;
 	outline: none !important;
+	box-shadow: none !important;
+}
+
+/* No blue focus rings anywhere — hover/active carry interaction feedback.
+   !important beats Tailwind focus / focus-visible ring and outline utilities. */
+:focus,
+:focus-visible {
+	outline: none !important;
+	outline-offset: 0 !important;
+	--tw-ring-shadow: 0 0 #0000 !important;
+	--tw-ring-offset-shadow: 0 0 #0000 !important;
+	--tw-ring-color: transparent !important;
+}
+:focus-visible {
 	box-shadow: none !important;
 }
 
@@ -2474,12 +2494,9 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	gap: 13px;
 }
 
-/* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
- * + menu on one row while Electron overlays the native min/max/close buttons on
- * the right. Height uses --size-window-titlebar and must match TITLEBAR_HEIGHT
- * + the Window Controls Overlay height in main.ts so the native buttons line up.
- * The whole strip is the window-drag region; interactive children opt out with
- * -webkit-app-region: no-drag. */
+/* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle,
+ * menus, drag region, and window controls. Interactive children opt out of the
+ * drag region with -webkit-app-region: no-drag. */
 .window-titlebar {
 	position: relative;
 	z-index: var(--z-titlebar);
@@ -2488,10 +2505,7 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	flex-shrink: 0;
 	align-items: center;
 	gap: 8px;
-	padding: 0 10px;
-	/* Matches the shell chrome (bg-sidebar) and the Window Controls Overlay
-	   color pushed in WindowTitlebar/main.ts, so the native min/max/close
-	   strip blends into the bar instead of reading as a separate box. */
+	padding: 0 0 0 10px;
 	background: var(--color-bg-sidebar);
 	-webkit-app-region: drag;
 	user-select: none;
@@ -2557,6 +2571,60 @@ body.is-resizing-x [data-slot="inspector-container"] {
 
 .window-titlebar__menu {
 	min-width: 200px;
+}
+
+.platform-windows .window-titlebar__spacer {
+	min-width: 0;
+	flex: 1 1 auto;
+	align-self: stretch;
+}
+
+.platform-windows .window-titlebar__controls {
+	display: flex;
+	height: 100%;
+	flex: 0 0 auto;
+	align-items: stretch;
+	-webkit-app-region: no-drag;
+}
+
+.platform-windows .window-titlebar__control {
+	display: grid;
+	width: 46px;
+	height: 100%;
+	place-items: center;
+	color: var(--fg-muted);
+	transition:
+		background-color 0.12s ease,
+		color 0.12s ease;
+}
+
+.platform-windows .window-titlebar__control:hover {
+	background: color-mix(in srgb, var(--fg) 8%, transparent);
+	color: var(--fg);
+}
+
+.platform-windows .window-titlebar__control:active {
+	background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+
+.platform-windows .window-titlebar__control--close:hover {
+	background: #c42b1c;
+	color: white;
+}
+
+.platform-windows .window-titlebar__control--close:active {
+	background: #a92015;
+	color: white;
+}
+
+.platform-windows .window-titlebar__control-icon {
+	width: 14px;
+	height: 14px;
+}
+
+.platform-windows .window-titlebar__control-icon--maximize {
+	width: 12px;
+	height: 12px;
 }
 
 .topbar-project-pills-group {
@@ -3492,13 +3560,10 @@ body.is-resizing-x [data-slot="inspector-container"] {
 
 /* Maximized browser overlay: a fixed layer over the app workspace (portaled to
    <body>, so it covers the sidebar + topbar too, not just the session area).
-   Electron's Window Controls Overlay owns the top-right titlebar region on
-   Windows, so start below its reported safe-area height. macOS hides the shell
-   topbar; windowed mode reserves the native traffic-light band below, while
-   native fullscreen keeps a 0px top inset. Linux now shows a ShellTopbar, so
-   the overlay must start below --size-toolbar; env(titlebar-area-height)
-   resolves to 0 on Linux (no titleBarOverlay), so we override the top with a
-   platform class. */
+   Windows paints its own titlebar, so overlays start below that row. macOS
+   hides the shell topbar; windowed mode reserves the native traffic-light band,
+   while native fullscreen keeps a 0px top inset. Linux keeps its ShellTopbar
+   offset below. */
 .browser-popout-overlay,
 .files-popout-overlay {
 	position: fixed;
@@ -3511,11 +3576,17 @@ body.is-resizing-x [data-slot="inspector-container"] {
 	-webkit-app-region: no-drag;
 }
 
-/* BaseWindow's explicit shell WebContentsView does not always expose the
-   Window Controls Overlay safe-area env value. Keep maximized browser/files
-   surfaces below the Windows native min/max/close controls in that mode. */
+/* Keep native browser/files surfaces below the custom Windows titlebar. */
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .browser-popout-overlay,
 html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-popout-overlay {
+	top: var(--size-window-titlebar);
+}
+
+/* Web preview has no preload platform attribute. The popouts are direct body
+   portals, so detect the Windows shell in #root instead of using a descendant
+   selector that cannot reach them. */
+body:has(#root .platform-windows) > .browser-popout-overlay,
+body:has(#root .platform-windows) > .files-popout-overlay {
 	top: var(--size-window-titlebar);
 }
 
@@ -3599,25 +3670,6 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-po
 	color: var(--fg);
 }
 
-.browser-panel__annotation-status {
-	max-width: 96px;
-	overflow: hidden;
-	color: var(--fg-muted);
-	font-size: 11px;
-	font-weight: 650;
-	line-height: 1;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	transition:
-		color var(--duration-fast) ease,
-		opacity var(--duration-fast) ease;
-}
-
-.browser-panel__annotation-status--error {
-	max-width: 160px;
-	color: var(--red);
-}
-
 .browser-panel__url-icon {
 	position: absolute;
 	left: 10px;
@@ -3646,8 +3698,8 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-po
 
 .browser-panel__url-input:focus {
 	box-shadow:
-		0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
-		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+		inset 0 1px 0 color-mix(in srgb, white 6%, transparent),
+		0 1px 8px color-mix(in srgb, black 9%, transparent);
 }
 
 .browser-panel__content {
@@ -3666,13 +3718,21 @@ html[data-native-browser-composition="true"][data-ao-platform="win32"] .files-po
 	overflow: hidden;
 	border: 0;
 	border-radius: 8px;
-	background:
-		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
-		var(--bg);
 	box-shadow:
 		inset 0 0 0 1px color-mix(in srgb, var(--color-border) 28%, transparent),
 		inset 0 1px 0 color-mix(in srgb, white 3%, transparent),
 		0 12px 26px color-mix(in srgb, black 14%, transparent);
+}
+
+/* Opaque only when there's no live native page expected to show through
+   (no native bridge, or no URL loaded yet) — see the data-placeholder
+   comment in BrowserPanel.tsx. Any other state must stay transparent so the
+   native WebContentsView (or, briefly, the raised transparent shell during
+   an overlay) is what's actually visible here, not this div's own paint. */
+.browser-panel__viewport[data-placeholder="true"] {
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 34%),
+		var(--bg);
 }
 
 .browser-popout-overlay .browser-panel__viewport {
@@ -3727,6 +3787,12 @@ html[data-native-browser-composition="true"] #root:has(.browser-panel[data-brows
 	background: transparent;
 }
 
+/* `.app-shell-root` is the same element as the `.platform-*` selectors below —
+ * those classes are only applied on Windows/Linux, so macOS had no hook here
+ * and this opaque `bg-sidebar` wrapper painted over the live native page
+ * whenever an overlay raised the shell. Match it by its own class so every
+ * platform is covered. */
+html[data-native-browser-composition="true"] .app-shell-root:has(.browser-panel[data-browser-native-page="live"]),
 html[data-native-browser-composition="true"] .platform-windows:has(.browser-panel[data-browser-native-page="live"]),
 html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[data-browser-native-page="live"]) {
 	background: transparent;
@@ -3780,7 +3846,14 @@ html[data-native-browser-composition="true"] .browser-panel[data-browser-native-
  * when the transparent shell is raised for a menu. Other inspector tabs keep
  * their existing surface unchanged. */
 html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]),
-html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body {
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body,
+/* The element that actually paints is SessionView.tsx's inspector container,
+ * which carries an opaque `bg-background` utility. `.session-inspector` alone is
+ * NOT enough: that class sits on a `display: contents` wrapper which generates
+ * no box, and product-ui's SessionInspectorShellView `<aside>` carries only
+ * layout classes. Verified by measuring the live paint stack at the blanked
+ * pixel — this container and the app shell root were the only opaque layers. */
+html[data-native-browser-composition="true"] [data-slot="inspector-container"]:has(.browser-panel[data-browser-native-page="live"]) {
 	background: transparent;
 }
 
@@ -3805,7 +3878,6 @@ html[data-native-browser-composition="true"] .browser-popout-overlay {
 	}
 
 	.browser-panel,
-	.browser-panel__annotation-status,
 	.browser-panel__toolbar button {
 		transition: none;
 	}

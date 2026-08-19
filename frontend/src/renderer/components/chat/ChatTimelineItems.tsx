@@ -59,6 +59,7 @@ import {
 	ACTIVITY_SUMMARY_BUTTON_CLASS,
 	commandCategory,
 	exploredFileCount,
+	isNonzeroCommandExit,
 } from "./activity-command";
 import { Button } from "../ui/button";
 import {
@@ -211,7 +212,7 @@ export function HumanMessage({
 							: "border-border bg-raised text-foreground",
 					)}
 				>
-					{body ? <p className="whitespace-pre-wrap text-pretty">{body}</p> : null}
+					{body ? <p className="break-words whitespace-pre-wrap text-pretty">{body}</p> : null}
 					{attachments.length > 0 ? (
 						<ul aria-label="Attached files" className={cn("flex max-w-full flex-wrap gap-2", body && "mt-2")}>
 							{attachments.map((path) => {
@@ -426,7 +427,8 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const detail = activity.detail;
 	const files = fileChangeFiles(activity);
 	const hasBody = Boolean(
-		detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
+		detail?.command ||
+			detail?.output || detail?.reason || detail?.text || detail?.terminalInput || files.length,
 	);
 	const { label, path } = splitSummary(activity);
 	const compactCommand = activity.activityKind === "command";
@@ -508,6 +510,14 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 			{open && hasBody ? (
 				<div className="flex flex-col gap-1.5 px-[11px] pb-2.5">
 					{files.length ? <FileChangeList files={files} /> : null}
+					{detail?.command ? (
+						// Said explicitly rather than implied by the label: "Ran command"
+						// alone never tells the reader what ran, and the collapsed row
+						// deliberately keeps only the category.
+						<pre className="overflow-x-auto rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-[10.5px] leading-relaxed text-foreground">
+							{detail.command}
+						</pre>
+					) : null}
 					{detail?.reason || detail?.text ? (
 						<p className="whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
 							{detail.reason ?? detail.text}
@@ -568,10 +578,6 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
  * the viewport of someone reading back through a build log is worse than making
  * them scroll down once.
  *
- * The caveat below it is not boilerplate. The provider drops output, and it does
- * so differently per source, so the note says which source this is and why it may
- * be incomplete rather than hedging the same way about both.
- *
  * The text is what a terminal would have shown, not the bytes: output arrives with
  * its escape sequences intact — nothing in the stack strips them — so a colourized
  * test run rendered here verbatim is a wall of `[0m`, and a progress bar is a
@@ -613,13 +619,6 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
 				<p className="text-[10px] leading-relaxed text-warning">
 					This command printed more than AO stores, so the output above stops early. Open a shell in
 					the worktree to see the rest.
-				</p>
-			) : detail?.outputMayBePartial ? (
-				<p className="text-[10px] leading-relaxed text-muted-foreground/70">
-					{detail.outputSource === "stream"
-						? "Streamed live as the command runs. The provider drops the first chunk, so the beginning may be missing."
-						: "Rolled up by the provider after the command finished, and observed to drop the beginning."}{" "}
-					Open a shell in the worktree for the full run.
 				</p>
 			) : null}
 		</>
@@ -699,7 +698,12 @@ function ActivityState({
 	}
 	if (status === "failed") {
 		return (
-			<span className="shrink-0 font-mono text-[10px] tabular-nums text-destructive">
+			<span
+				className={cn(
+					"shrink-0 font-mono text-[10px] tabular-nums",
+					isNonzeroCommandExit(activity) ? "text-muted-foreground/70" : "text-destructive",
+				)}
+			>
 				{detail?.exitCode !== undefined ? `exit ${detail.exitCode}` : "failed"}
 			</span>
 		);
@@ -1397,7 +1401,7 @@ export function SteerMessage({ activity }: { activity: ConversationActivity }) {
 	const text = activity.detail?.text ?? activity.summary;
 	return (
 		<div className="flex flex-col items-end gap-1">
-			<div className="w-fit max-w-[min(78%,560px)] whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
+			<div className="w-fit max-w-[min(78%,560px)] break-words whitespace-pre-wrap rounded-[10px] border border-accent-dim bg-raised px-3 py-2.5 text-sm leading-[1.55] text-foreground">
 				{text ? <p>{text}</p> : null}
 				<ConversationContentItems
 					content={activity.detail?.content ?? []}

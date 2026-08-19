@@ -73,6 +73,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/orchestrators",
 	"/api/v1/orchestrators/{id}",
 	"/api/v1/projects",
+	"/api/v1/projects/clone",
+	"/api/v1/projects/initialize",
 	"/api/v1/projects/{id}",
 	"/api/v1/projects/{id}/config",
 	"/api/v1/prs/{id}/merge",
@@ -283,6 +285,9 @@ export function apiErrorMessage(error: unknown, fallback = "Request failed"): st
 	if (typeof error === "string" && error !== "") return error;
 	if (typeof error === "object" && error !== null) {
 		const body = error as { code?: unknown; message?: unknown; error?: unknown };
+		if (typeof body.error === "object" && body.error !== null) {
+			return apiErrorMessage(body.error, fallback);
+		}
 		const code = typeof body.code === "string" && body.code !== "" ? body.code : "";
 		if (typeof body.message === "string" && body.message !== "") {
 			return code && !body.message.includes(code) ? `${body.message} (${code})` : body.message;

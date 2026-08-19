@@ -142,6 +142,16 @@ export function MessageSquareIcon(props: IconProps) {
 	);
 }
 
+export function MoreHorizontalIcon(props: IconProps) {
+	return (
+		<Icon name="more-horizontal" {...props}>
+			<circle cx="12" cy="12" r="1" />
+			<circle cx="19" cy="12" r="1" />
+			<circle cx="5" cy="12" r="1" />
+		</Icon>
+	);
+}
+
 export function PaperclipIcon(props: IconProps) {
 	return (
 		<Icon name="paperclip" {...props}>

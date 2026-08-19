@@ -687,6 +687,196 @@ func TestWorkspaceIntegrationWorkspaceProjectInfersPerRepoDefaultBranches(t *tes
 	}
 }
 
+func TestFetchDefaultBranchRefreshesRemoteTrackingRef(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	// Exclude main from remote.origin.fetch. The explicit destination refspec
+	// must still update origin/main instead of succeeding with only FETCH_HEAD.
+	runGit(t, git, repo, "config", "remote.origin.fetch", "+refs/heads/restricted-only:refs/remotes/origin/restricted-only")
+	originURL := gitOutput(t, git, repo, "remote", "get-url", "origin")
+	updater := filepath.Join(tmp, "updater")
+	run(t, git, "clone", originURL, updater)
+	runGit(t, git, updater, "config", "user.email", "ao@example.com")
+	runGit(t, git, updater, "config", "user.name", "Ao Agents")
+	runGit(t, git, updater, "checkout", "-B", "main", "origin/main")
+	if err := os.WriteFile(filepath.Join(updater, "fresh.txt"), []byte("fresh\n"), 0o644); err != nil {
+		t.Fatalf("write fresh file: %v", err)
+	}
+	runGit(t, git, updater, "add", "fresh.txt")
+	runGit(t, git, updater, "commit", "-m", "fresh")
+	freshMain := gitOutput(t, git, updater, "rev-parse", "HEAD")
+	runGit(t, git, updater, "push", "origin", "HEAD:main")
+
+	staleOriginMain := gitOutput(t, git, repo, "rev-parse", "refs/remotes/origin/main")
+	if staleOriginMain == freshMain {
+		t.Fatal("test setup did not leave local origin/main stale")
+	}
+	target, err := ws.ResolveDefaultBranch(context.Background(), repo, "main")
+	if err != nil {
+		t.Fatalf("resolve default branch: %v", err)
+	}
+	if target.BaseRef != "refs/remotes/origin/main" {
+		t.Fatalf("base ref = %q, want refs/remotes/origin/main", target.BaseRef)
+	}
+	if err := ws.FetchDefaultBranch(context.Background(), repo, target); err != nil {
+		t.Fatalf("fetch default branch: %v", err)
+	}
+	if got := gitOutput(t, git, repo, "rev-parse", "refs/remotes/origin/main"); got != freshMain {
+		t.Fatalf("origin/main = %s, want refreshed %s", got, freshMain)
+	}
+}
+
+func TestResolveDefaultBranchKeepsSlashBranchOnOriginWithoutMatchingRemote(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+
+	target, err := ws.ResolveDefaultBranch(context.Background(), repo, "release/2026")
+	if err != nil {
+		t.Fatalf("resolve slash branch: %v", err)
+	}
+	want := ports.WorkspaceDefaultBranch{Remote: "origin", Branch: "release/2026", BaseRef: "refs/remotes/origin/release/2026"}
+	if target != want {
+		t.Fatalf("target = %#v, want %#v", target, want)
+	}
+}
+
+func TestWorkspaceIntegrationRefreshesInferredChildBaseBeforeMaterialization(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	rootRepo := setupOriginClone(t, git, filepath.Join(tmp, "root"))
+	childRepo := setupOriginCloneOnBranch(t, git, filepath.Join(tmp, "child"), "dev")
+	originURL := gitOutput(t, git, childRepo, "remote", "get-url", "origin")
+	updater := filepath.Join(tmp, "child-updater")
+	run(t, git, "clone", originURL, updater)
+	runGit(t, git, updater, "config", "user.email", "ao@example.com")
+	runGit(t, git, updater, "config", "user.name", "Ao Agents")
+	runGit(t, git, updater, "checkout", "-B", "dev", "origin/dev")
+	if err := os.WriteFile(filepath.Join(updater, "fresh-child.txt"), []byte("fresh\n"), 0o644); err != nil {
+		t.Fatalf("write fresh child file: %v", err)
+	}
+	runGit(t, git, updater, "add", "fresh-child.txt")
+	runGit(t, git, updater, "commit", "-m", "advance child dev")
+	freshChild := gitOutput(t, git, updater, "rev-parse", "HEAD")
+	runGit(t, git, updater, "push", "origin", "HEAD:dev")
+
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": rootRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	childTarget, err := ws.ResolveDefaultBranch(context.Background(), childRepo, "")
+	if err != nil {
+		t.Fatalf("resolve inferred child default: %v", err)
+	}
+	if got, want := childTarget.BaseRef, "refs/remotes/origin/dev"; got != want {
+		t.Fatalf("inferred child base ref = %q, want %q", got, want)
+	}
+	if err := ws.FetchDefaultBranch(context.Background(), childRepo, childTarget); err != nil {
+		t.Fatalf("refresh inferred child default: %v", err)
+	}
+
+	info, err := ws.CreateWorkspaceProject(context.Background(), ports.WorkspaceProjectConfig{
+		ProjectID:    "proj",
+		SessionID:    "sess-fresh-child",
+		Kind:         "worker",
+		Branch:       "ao/proj-fresh-child",
+		RootRepoPath: rootRepo,
+		BaseBranch:   "main",
+		Repos: []ports.WorkspaceProjectRepoConfig{{
+			Name:         "api",
+			RelativePath: "services/api",
+			RepoPath:     childRepo,
+			BaseRef:      childTarget.BaseRef,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("create workspace project: %v", err)
+	}
+	childWorktree := info.Worktrees[1]
+	if got := gitOutput(t, git, childWorktree.Path, "rev-parse", "HEAD"); got != freshChild {
+		t.Fatalf("child worktree HEAD = %s, want refreshed %s", got, freshChild)
+	}
+	if childWorktree.BaseSHA != freshChild {
+		t.Fatalf("child BaseSHA = %s, want refreshed %s", childWorktree.BaseSHA, freshChild)
+	}
+}
+
+func TestWorkspaceIntegrationCanonicalBaseRefAvoidsRemoteNameCollision(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, filepath.Join(tmp, "repo"))
+	originURL := gitOutput(t, git, repo, "remote", "get-url", "origin")
+
+	collisionUpdater := filepath.Join(tmp, "collision-updater")
+	run(t, git, "clone", originURL, collisionUpdater)
+	runGit(t, git, collisionUpdater, "config", "user.email", "ao@example.com")
+	runGit(t, git, collisionUpdater, "config", "user.name", "Ao Agents")
+	runGit(t, git, collisionUpdater, "checkout", "-b", "upstream/main", "origin/main")
+	if err := os.WriteFile(filepath.Join(collisionUpdater, "collision.txt"), []byte("origin collision\n"), 0o644); err != nil {
+		t.Fatalf("write collision file: %v", err)
+	}
+	runGit(t, git, collisionUpdater, "add", "collision.txt")
+	runGit(t, git, collisionUpdater, "commit", "-m", "origin collision branch")
+	collisionSHA := gitOutput(t, git, collisionUpdater, "rev-parse", "HEAD")
+	runGit(t, git, collisionUpdater, "push", "origin", "HEAD:refs/heads/upstream/main")
+	runGit(t, git, repo, "fetch", "origin", "+refs/heads/upstream/main:refs/remotes/origin/upstream/main")
+
+	upstreamBare := filepath.Join(tmp, "upstream.git")
+	run(t, git, "init", "--bare", upstreamBare)
+	upstreamUpdater := filepath.Join(tmp, "upstream-updater")
+	run(t, git, "clone", originURL, upstreamUpdater)
+	runGit(t, git, upstreamUpdater, "config", "user.email", "ao@example.com")
+	runGit(t, git, upstreamUpdater, "config", "user.name", "Ao Agents")
+	runGit(t, git, upstreamUpdater, "checkout", "-B", "main", "origin/main")
+	if err := os.WriteFile(filepath.Join(upstreamUpdater, "upstream.txt"), []byte("configured upstream\n"), 0o644); err != nil {
+		t.Fatalf("write upstream file: %v", err)
+	}
+	runGit(t, git, upstreamUpdater, "add", "upstream.txt")
+	runGit(t, git, upstreamUpdater, "commit", "-m", "configured upstream main")
+	upstreamSHA := gitOutput(t, git, upstreamUpdater, "rev-parse", "HEAD")
+	runGit(t, git, upstreamUpdater, "remote", "add", "upstream-target", upstreamBare)
+	runGit(t, git, upstreamUpdater, "push", "upstream-target", "HEAD:main")
+	runGit(t, git, repo, "remote", "add", "upstream", upstreamBare)
+
+	ws, err := New(Options{Binary: git, ManagedRoot: filepath.Join(tmp, "managed"), RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	target, err := ws.ResolveDefaultBranch(context.Background(), repo, "upstream/main")
+	if err != nil {
+		t.Fatalf("resolve qualified default: %v", err)
+	}
+	if got, want := target.BaseRef, "refs/remotes/upstream/main"; got != want {
+		t.Fatalf("qualified base ref = %q, want %q", got, want)
+	}
+	if err := ws.FetchDefaultBranch(context.Background(), repo, target); err != nil {
+		t.Fatalf("fetch qualified default: %v", err)
+	}
+	info, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID:  "proj",
+		SessionID:  "sess-upstream",
+		Branch:     "ao/proj-upstream",
+		BaseBranch: "upstream/main",
+		BaseRef:    target.BaseRef,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got := gitOutput(t, git, info.Path, "rev-parse", "HEAD"); got != upstreamSHA {
+		t.Fatalf("worktree HEAD = %s, want configured upstream %s (origin collision was %s)", got, upstreamSHA, collisionSHA)
+	}
+}
+
 func requireGit(t *testing.T) string {
 	t.Helper()
 	git, err := exec.LookPath("git")
