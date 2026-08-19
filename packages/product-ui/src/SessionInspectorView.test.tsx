@@ -426,6 +426,7 @@ describe("portable inspector presentations", () => {
   it("shows unresolved inline review comments inside each reviewer dropdown", async () => {
     const onResolveInlineComment = vi.fn().mockResolvedValue(undefined);
     const onSendInlineComment = vi.fn().mockResolvedValue(undefined);
+    const onViewInlineComment = vi.fn();
     render(
       <InspectorReviewsView
         externalLink={ExternalLink}
@@ -489,6 +490,7 @@ describe("portable inspector presentations", () => {
         labels={reviewLabels}
         onResolveInlineComment={onResolveInlineComment}
         onSendInlineComment={onSendInlineComment}
+        onViewInlineComment={onViewInlineComment}
         renderAvatar={() => null}
         renderMarkdown={(body) => <p>{body}</p>}
       />,
@@ -540,10 +542,15 @@ describe("portable inspector presentations", () => {
       }),
     );
     await waitFor(() => expect(screen.getByText("Resolved")).toBeInTheDocument());
-    expect(screen.getByRole("link", { name: "View in file" })).toBeInTheDocument();
+    const viewInFile = screen.getByRole("button", { name: "View in file" });
+    expect(screen.queryByRole("link", { name: "View in file" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open on GitHub" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy comment link" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy file path" })).not.toBeInTheDocument();
+    fireEvent.click(viewInFile);
+    expect(onViewInlineComment).toHaveBeenCalledWith(
+      expect.objectContaining({ file: "src/panel.tsx", line: 42 }),
+    );
   });
 
   it("surfaces inline review comment send failures", async () => {

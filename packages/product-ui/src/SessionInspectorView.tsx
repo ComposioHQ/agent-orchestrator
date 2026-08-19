@@ -500,6 +500,7 @@ export function InspectorReviewsView({
 	onResolveInlineComment,
 	onSendAgentReview,
 	onSendInlineComment,
+	onViewInlineComment,
 	renderAvatar,
 	renderMarkdown,
 }: {
@@ -511,6 +512,7 @@ export function InspectorReviewsView({
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
@@ -566,6 +568,7 @@ export function InspectorReviewsView({
 									onSendInlineComment={onSendInlineComment}
 									onRequestRereview={onRequestRereview}
 									onResolveInlineComment={onResolveInlineComment}
+									onViewInlineComment={onViewInlineComment}
 									renderMarkdown={renderMarkdown}
 								/>
 							</div>
@@ -825,6 +828,7 @@ function GithubReviewHistory({
 	onRequestRereview,
 	onResolveInlineComment,
 	onSendInlineComment,
+	onViewInlineComment,
 	renderMarkdown,
 }: {
 	entries: InspectorGithubReview[];
@@ -833,6 +837,7 @@ function GithubReviewHistory({
 	onRequestRereview?: (review: InspectorGithubReview) => Promise<void> | void;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
 	const sorted = [...entries].sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
@@ -849,6 +854,7 @@ function GithubReviewHistory({
 					onRequestRereview={onRequestRereview}
 					onResolveInlineComment={onResolveInlineComment}
 					onSendInlineComment={onSendInlineComment}
+					onViewInlineComment={onViewInlineComment}
 					renderMarkdown={renderMarkdown}
 				/>
 			))}
@@ -863,6 +869,7 @@ function ExternalReviewCard({
 	labels,
 	onResolveInlineComment,
 	onSendInlineComment,
+	onViewInlineComment,
 	renderMarkdown,
 }: {
 	defaultOpen: boolean;
@@ -872,6 +879,7 @@ function ExternalReviewCard({
 	onRequestRereview?: (review: InspectorGithubReview) => Promise<void> | void;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	renderMarkdown: (body: string) => ReactNode;
 }) {
 	const [open, setOpen] = useState(defaultOpen);
@@ -908,8 +916,8 @@ function ExternalReviewCard({
 			{open ? (
 				<div className="flex min-w-0 flex-col gap-3 px-1 pt-2 text-left">
 					{body ? <ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" /> : null}
-					<GithubInlineComments comments={openComments} externalLink={externalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} />
-					{resolvedComments.length > 0 ? <ResolvedInlineComments comments={resolvedComments} externalLink={externalLink} labels={labels} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
+					<GithubInlineComments comments={openComments} externalLink={externalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} onViewInlineComment={onViewInlineComment} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} />
+					{resolvedComments.length > 0 ? <ResolvedInlineComments comments={resolvedComments} externalLink={externalLink} labels={labels} onViewInlineComment={onViewInlineComment} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
 				</div>
 			) : null}
 		</article>
@@ -922,6 +930,7 @@ function GithubInlineComments({
 	labels,
 	onResolveInlineComment,
 	onSendInlineComment,
+	onViewInlineComment,
 	reviewerId,
 	reviewUrl,
 }: {
@@ -930,6 +939,7 @@ function GithubInlineComments({
 	labels: InspectorReviewLabels;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	reviewerId: string;
 	reviewUrl?: string;
 }) {
@@ -941,7 +951,7 @@ function GithubInlineComments({
 				<ChevronIcon className="size-icon-2xs shrink-0" direction={open ? "down" : "right"} />
 				<span>{labels.openComments} · {comments.length}</span>
 			</button>
-			{open ? <InlineCommentList comments={comments} externalLink={ExternalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} reviewerId={reviewerId} reviewUrl={reviewUrl} /> : null}
+			{open ? <InlineCommentList comments={comments} externalLink={ExternalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} onViewInlineComment={onViewInlineComment} reviewerId={reviewerId} reviewUrl={reviewUrl} /> : null}
 		</section>
 	);
 }
@@ -950,12 +960,14 @@ function ResolvedInlineComments({
 	comments,
 	externalLink: ExternalLink,
 	labels,
+	onViewInlineComment,
 	reviewerId,
 	reviewUrl,
 }: {
 	comments: InspectorInlineComment[];
 	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	reviewerId: string;
 	reviewUrl?: string;
 }) {
@@ -966,7 +978,7 @@ function ResolvedInlineComments({
 				<ChevronIcon className="size-icon-2xs shrink-0" direction={open ? "down" : "right"} />
 				<span>{labels.resolvedComments(comments.length)}</span>
 			</button>
-			{open ? <InlineCommentList comments={comments} externalLink={ExternalLink} labels={labels} reviewerId={reviewerId} reviewUrl={reviewUrl} /> : null}
+			{open ? <InlineCommentList comments={comments} externalLink={ExternalLink} labels={labels} onViewInlineComment={onViewInlineComment} reviewerId={reviewerId} reviewUrl={reviewUrl} /> : null}
 		</section>
 	);
 }
@@ -977,6 +989,7 @@ function InlineCommentList({
 	labels,
 	onResolveInlineComment,
 	onSendInlineComment,
+	onViewInlineComment,
 	reviewerId,
 	reviewUrl,
 }: {
@@ -985,6 +998,7 @@ function InlineCommentList({
 	labels: InspectorReviewLabels;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	reviewerId: string;
 	reviewUrl?: string;
 }) {
@@ -1008,6 +1022,7 @@ function InlineCommentList({
 					externalLink={externalLink}
 					key={comment.id}
 					labels={labels}
+					onView={onViewInlineComment && comment.file ? () => onViewInlineComment(comment) : undefined}
 					onResolve={!comment.resolved && onResolveInlineComment ? async () => {
 						setResolvingCommentIds((current) => new Set(current).add(comment.id));
 						setResolveErrorCommentIds((current) => {
@@ -1066,6 +1081,7 @@ function InlineCommentRow({
 	labels,
 	onResolve,
 	onSend,
+	onView,
 	resolveError = false,
 	resolvedSuccess = false,
 	resolving = false,
@@ -1078,6 +1094,7 @@ function InlineCommentRow({
 	labels: InspectorReviewLabels;
 	onResolve?: () => void;
 	onSend?: () => void;
+	onView?: () => void;
 	resolveError?: boolean;
 	resolvedSuccess?: boolean;
 	resolving?: boolean;
@@ -1132,7 +1149,7 @@ function InlineCommentRow({
 					{menuOpen ? (
 						<div className="isolate absolute right-0 top-8 z-[100] flex w-40 flex-col rounded-md border border-border-strong bg-[var(--color-bg-settings-menu)] p-1 text-2xs shadow-[0_16px_40px_rgba(0,0,0,0.65)]">
 							{onResolve ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-60" disabled={resolving} onClick={() => void onResolve()} type="button">{labels.resolveComment}</button> : null}
-							{comment.url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={comment.url}>{labels.viewInFile}</ExternalLink> : null}
+							{onView ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => { setMenuOpen(false); onView(); }} type="button">{labels.viewInFile}</button> : null}
 							{comment.url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={comment.url}>Open on GitHub</ExternalLink> : null}
 							<button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => void copy(comment.url)} type="button">Copy comment link</button>
 						</div>

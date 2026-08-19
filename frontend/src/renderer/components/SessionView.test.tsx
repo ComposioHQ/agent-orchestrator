@@ -305,12 +305,19 @@ vi.mock("./BrowserPanel", () => ({
 vi.mock("./SessionFilesView", () => ({
 	SessionFilesView: ({
 		isMaximized,
+		navigationTarget,
 		onToggleMaximized,
 	}: {
 		isMaximized?: boolean;
+		navigationTarget?: { path: string; line?: number; requestId: number } | null;
 		onToggleMaximized?: (next: boolean) => void;
 	}) => (
-		<button type="button" onClick={() => onToggleMaximized?.(!isMaximized)}>
+		<button
+			data-navigation-line={navigationTarget?.line}
+			data-navigation-path={navigationTarget?.path}
+			type="button"
+			onClick={() => onToggleMaximized?.(!isMaximized)}
+		>
 			{isMaximized ? "files center" : "files rail"}
 		</button>
 	),
@@ -357,12 +364,14 @@ vi.mock("./SessionInspector", () => ({
 		isInspectorVisible = true,
 		onOpenFiles,
 		onToggleBrowserPopOut,
+		onViewInlineComment,
 		view,
 	}: {
 		filesView?: ReactNode;
 		isInspectorVisible?: boolean;
 		onOpenFiles?: () => void;
 		onToggleBrowserPopOut?: () => void;
+		onViewInlineComment?: (comment: { file?: string; line?: number }) => void;
 		view?: string;
 	}) => {
 		inspectorVisibilityRenders.push(isInspectorVisible);
@@ -373,6 +382,9 @@ vi.mock("./SessionInspector", () => ({
 				</button>
 				<button type="button" onClick={onOpenFiles}>
 					open files
+				</button>
+				<button type="button" onClick={() => onViewInlineComment?.({ file: "src/App.tsx", line: 42 })}>
+					view comment in file
 				</button>
 				{view === "files" ? filesView : null}
 			</div>
@@ -1275,6 +1287,17 @@ describe("SessionView", () => {
 		).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+	});
+
+	it("opens an inline review comment at its file and line in the files view", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "view comment in file" }));
+
+		const filesView = within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" });
+		expect(filesView).toHaveAttribute("data-navigation-path", "src/App.tsx");
+		expect(filesView).toHaveAttribute("data-navigation-line", "42");
 	});
 
 	it("maximizes files over the whole app window and returns to the rail", () => {

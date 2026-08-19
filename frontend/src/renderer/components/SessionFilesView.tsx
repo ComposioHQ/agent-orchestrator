@@ -69,7 +69,14 @@ type FileAnnotationModel = {
 type SessionFilesViewProps = {
 	sessionId: string;
 	isMaximized?: boolean;
+	navigationTarget?: SessionFilesNavigationTarget | null;
 	onToggleMaximized?: (next: boolean) => void;
+};
+
+export type SessionFilesNavigationTarget = {
+	path: string;
+	line?: number;
+	requestId: number;
 };
 
 const emptyFiles: WorkspaceFileSummary[] = [];
@@ -101,6 +108,7 @@ function canSplitCompare(status: WorkspaceFileStatus): boolean {
 export function SessionFilesView({
 	sessionId,
 	isMaximized = false,
+	navigationTarget,
 	onToggleMaximized,
 }: SessionFilesViewProps) {
 	const { t } = useTranslation();
@@ -120,6 +128,15 @@ export function SessionFilesView({
 	useEffect(() => subscribeWorkspaceFileChanges(sessionId, queryClient), [queryClient, sessionId]);
 	const files = filesQuery.data?.files ?? emptyFiles;
 	const changedFiles = useMemo(() => files.filter(isChangedWorkspaceFile), [files]);
+	const navigationFile = useMemo(
+		() =>
+			navigationTarget
+				? changedFiles.find(
+						(file) => file.path === navigationTarget.path || file.previousPath === navigationTarget.path,
+					)
+				: undefined,
+		[changedFiles, navigationTarget],
+	);
 
 	useEffect(() => {
 		annotationGenerationRef.current += 1;
@@ -130,6 +147,23 @@ export function SessionFilesView({
 		setAnnotationStatus("idle");
 		setAnnotationError("");
 	}, [sessionId]);
+
+	useEffect(() => {
+		if (!navigationTarget || !navigationFile) return;
+		setFilter("");
+		setExpandedPaths((current) => {
+			if (current.has(navigationFile.path)) return current;
+			const next = new Set(current);
+			next.add(navigationFile.path);
+			return next;
+		});
+		const frame = window.requestAnimationFrame(() => {
+			const fileRow = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-workspace-file-path]") ?? [])
+				.find((row) => row.dataset.workspaceFilePath === navigationFile.path);
+			fileRow?.scrollIntoView?.({ block: "start", inline: "nearest" });
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [navigationFile, navigationTarget]);
 
 	useEffect(
 		() => () => {
@@ -336,6 +370,7 @@ export function SessionFilesView({
 						expandedPaths={expandedPaths}
 						files={visibleFiles}
 						isLoading={filesQuery.isPending}
+						navigationTarget={navigationTarget}
 						onExpandedPathsChange={setExpandedPaths}
 						onRetry={() => void filesQuery.refetch()}
 						sessionId={sessionId}
@@ -355,6 +390,7 @@ function ReviewFileList({
 	expandedPaths,
 	files,
 	isLoading,
+	navigationTarget,
 	onExpandedPathsChange,
 	onRetry,
 	sessionId,
@@ -367,6 +403,7 @@ function ReviewFileList({
 	expandedPaths: Set<string>;
 	files: WorkspaceFileSummary[];
 	isLoading: boolean;
+	navigationTarget?: SessionFilesNavigationTarget | null;
 	onExpandedPathsChange: (next: Set<string>) => void;
 	onRetry: () => void;
 	sessionId: string;
@@ -399,6 +436,12 @@ function ReviewFileList({
 						expanded={expandedPaths.has(file.path)}
 						file={file}
 						key={file.path}
+						navigationTarget={
+							navigationTarget &&
+							(file.path === navigationTarget.path || file.previousPath === navigationTarget.path)
+								? navigationTarget
+								: undefined
+						}
 						sessionId={sessionId}
 						split={split}
 						wrap={wrap}
@@ -413,6 +456,7 @@ function ReviewFileCard({
 	annotation,
 	expanded,
 	file,
+	navigationTarget,
 	sessionId,
 	split,
 	wrap,
@@ -420,6 +464,7 @@ function ReviewFileCard({
 	annotation: FileAnnotationModel;
 	expanded: boolean;
 	file: WorkspaceFileSummary;
+	navigationTarget?: SessionFilesNavigationTarget;
 	sessionId: string;
 	split: boolean;
 	wrap: boolean;
@@ -437,7 +482,7 @@ function ReviewFileCard({
 
 	return (
 		<AccordionItem asChild value={file.path}>
-			<li className="session-files-review-row overflow-hidden bg-transparent">
+			<li className="session-files-review-row overflow-hidden bg-transparent" data-workspace-file-path={file.path}>
 				<AccordionTrigger
 					aria-label={t(expanded ? "files.collapseFile" : "files.expandFile", { file: fileLabel(file) })}
 					className="flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1 text-left"
@@ -475,6 +520,7 @@ function ReviewFileCard({
 							annotation={annotation}
 							detail={detailQuery.data}
 							filePath={file.path}
+							navigationTarget={navigationTarget}
 							onActiveSelectionChange={setSelectionOrMenuActive}
 							sessionId={sessionId}
 							split={split && canSplitCompare(file.status)}
@@ -547,6 +593,7 @@ function ReviewDiffBody({
 	annotation,
 	detail,
 	filePath,
+	navigationTarget,
 	onActiveSelectionChange,
 	sessionId,
 	split,
@@ -555,6 +602,7 @@ function ReviewDiffBody({
 	annotation: FileAnnotationModel;
 	detail: WorkspaceFileDetail;
 	filePath: string;
+	navigationTarget?: SessionFilesNavigationTarget;
 	onActiveSelectionChange: (active: boolean) => void;
 	sessionId: string;
 	split: boolean;
@@ -575,6 +623,7 @@ function ReviewDiffBody({
 		<DiffView
 			annotation={annotation}
 			filePath={filePath}
+			navigationTarget={navigationTarget}
 			onActiveSelectionChange={onActiveSelectionChange}
 			path={detail.path}
 			previousPath={detail.previousPath}
@@ -720,6 +769,7 @@ function useSharedScrollRowVirtualizer(
 function DiffView({
 	annotation,
 	filePath,
+	navigationTarget,
 	onActiveSelectionChange,
 	path,
 	previousPath,
@@ -731,6 +781,7 @@ function DiffView({
 }: {
 	annotation: FileAnnotationModel;
 	filePath: string;
+	navigationTarget?: SessionFilesNavigationTarget;
 	onActiveSelectionChange: (active: boolean) => void;
 	path: string;
 	previousPath?: string;
@@ -746,6 +797,24 @@ function DiffView({
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
 	const shouldVirtualize = !split && rows.length > ROW_VIRTUALIZE_THRESHOLD;
 	const { listRef, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
+	const targetRowIndex = useMemo(() => {
+		const line = navigationTarget?.line;
+		if (line === undefined) return -1;
+		const newLineIndex = rows.findIndex((row) => row.kind !== "hunk" && row.newNo === line);
+		if (newLineIndex >= 0) return newLineIndex;
+		return rows.findIndex((row) => row.kind !== "hunk" && row.oldNo === line);
+	}, [navigationTarget, rows]);
+
+	useEffect(() => {
+		if (!navigationTarget || targetRowIndex < 0) return;
+		if (shouldVirtualize) virtualizer.scrollToIndex(targetRowIndex, { align: "center" });
+		const frame = window.requestAnimationFrame(() => {
+			const targetRow = Array.from(containerRef.current?.querySelectorAll<HTMLElement>("[data-diff-row]") ?? [])
+				.find((row) => row.dataset.rowIndex === String(targetRowIndex));
+			targetRow?.scrollIntoView?.({ block: "center", inline: "nearest" });
+		});
+		return () => window.cancelAnimationFrame(frame);
+	}, [navigationTarget, shouldVirtualize, targetRowIndex, virtualizer]);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -810,7 +879,7 @@ function DiffView({
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} t={t} />
+					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} t={t} targetRowIndex={targetRowIndex} />
 				) : shouldVirtualize ? (
 					<div
 						className={cn("relative", !wrap && "min-w-max")}
@@ -838,6 +907,7 @@ function DiffView({
 										path={path}
 										previousPath={previousPath}
 										row={row}
+										targeted={virtualRow.index === targetRowIndex}
 										t={t}
 										wrap={wrap}
 									/>
@@ -855,6 +925,7 @@ function DiffView({
 								path={path}
 								previousPath={previousPath}
 								row={row}
+								targeted={index === targetRowIndex}
 								t={t}
 								wrap={wrap}
 							/>
@@ -890,18 +961,23 @@ type DiffRowContentProps = {
 	path: string;
 	previousPath?: string;
 	row: DiffRow;
+	targeted: boolean;
 	t: TFunction;
 	wrap: boolean;
 };
 
 // One unified-view diff row, shared between the plain (non-virtualized) and
 // virtualized render paths so they can't drift apart from each other.
-function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wrap }: DiffRowContentProps) {
+function DiffRowContentInner({ annotation, index, path, previousPath, row, targeted, t, wrap }: DiffRowContentProps) {
 	if (row.kind === "hunk") return <HunkBand row={row} />;
 	return (
 		<div>
 			<div
-				className={cn("group/line relative flex", diffRowTone[row.kind])}
+				className={cn(
+					"group/line relative flex",
+					diffRowTone[row.kind],
+					targeted && "outline outline-1 -outline-offset-1 outline-accent/70",
+				)}
 				data-diff-row=""
 				data-kind={row.kind}
 				data-new-no={row.newNo ?? ""}
@@ -951,6 +1027,7 @@ const DiffRowContent = memo(DiffRowContentInner, (prev, next) => {
 		prev.index !== next.index ||
 		prev.path !== next.path ||
 		prev.previousPath !== next.previousPath ||
+		prev.targeted !== next.targeted ||
 		prev.wrap !== next.wrap
 	) {
 		return false;
@@ -1011,12 +1088,14 @@ function SplitDiff({
 	previousPath,
 	rows,
 	t,
+	targetRowIndex,
 }: {
 	annotation: FileAnnotationModel;
 	path: string;
 	previousPath?: string;
 	rows: DiffRow[];
 	t: TFunction;
+	targetRowIndex: number;
 }) {
 	const splitRows = useMemo(() => toSplitRows(rows), [rows]);
 	return (
@@ -1035,6 +1114,7 @@ function SplitDiff({
 								rowIndex={splitRow.leftIndex}
 								side="old"
 								t={t}
+								targeted={splitRow.leftIndex === targetRowIndex}
 							/>
 							<SplitSide
 								annotation={annotation}
@@ -1044,6 +1124,7 @@ function SplitDiff({
 								rowIndex={splitRow.rightIndex}
 								side="new"
 								t={t}
+								targeted={splitRow.rightIndex === targetRowIndex}
 							/>
 						</div>
 						{(splitRow.leftIndex !== null && isAnnotationRow(annotation.target, path, splitRow.leftIndex)) ||
@@ -1065,6 +1146,7 @@ function SplitSide({
 	rowIndex,
 	side,
 	t,
+	targeted,
 }: {
 	annotation: FileAnnotationModel;
 	path: string;
@@ -1073,6 +1155,7 @@ function SplitSide({
 	rowIndex: number | null;
 	side: "old" | "new";
 	t: TFunction;
+	targeted: boolean;
 }) {
 	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
@@ -1080,7 +1163,11 @@ function SplitSide({
 	const target = lineNo == null ? null : lineAnnotationTarget(path, previousPath, row, rowIndex, side);
 	return (
 		<div
-			className={cn("group/line relative flex min-w-0", tone)}
+			className={cn(
+				"group/line relative flex min-w-0",
+				tone,
+				targeted && "outline outline-1 -outline-offset-1 outline-accent/70",
+			)}
 			data-diff-row=""
 			data-kind={row.kind}
 			data-new-no={row.newNo ?? ""}

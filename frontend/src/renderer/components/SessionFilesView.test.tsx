@@ -227,6 +227,22 @@ describe("SessionFilesView", () => {
 		expect(await screen.findByText(diffLine("const value = 1;"))).toBeInTheDocument();
 	});
 
+	it("opens and highlights a requested review-comment line", async () => {
+		renderWithQuery(
+			<SessionFilesView
+				navigationTarget={{ path: "src/App.tsx", line: 1, requestId: 1 }}
+				sessionId="sess-1"
+			/>,
+		);
+
+		expect(await screen.findByRole("button", { name: "Collapse src/App.tsx" })).toBeInTheDocument();
+		const code = await screen.findByText(diffLine("const value = 1;"));
+		expect(code.closest("[data-diff-row]")).toHaveClass("outline-accent/70");
+		expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
+			params: { path: { sessionId: "sess-1" }, query: { path: "src/App.tsx" } },
+		});
+	});
+
 	it("filters and expands a changed file from the review list", async () => {
 		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
