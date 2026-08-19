@@ -10,23 +10,14 @@ permissions:
 
 jobs:
   sync:
-    # Forks must never receive an authenticated bot token or create branches.
+    # Forks must never receive the PAT or create branches in the canonical repo.
     if: github.repository == 'Untrivial-ai/agent-orchestrator'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
-      - name: Mint pricing catalog GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
-        with:
-          app-id: ${{ secrets.PRICING_CATALOG_APP_ID }}
-          private-key: ${{ secrets.PRICING_CATALOG_APP_PRIVATE_KEY }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: main
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.PRICING_CATALOG_PAT }}
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
         with:
           go-version-file: backend/go.mod
@@ -34,7 +25,7 @@ jobs:
       - name: Resolve and download pinned LiteLLM catalog source
         id: source
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.PRICING_CATALOG_PAT }}
         run: |
           set -euo pipefail
           revision="$(gh api repos/BerriAI/litellm/commits/main --jq .sha)"
@@ -64,7 +55,7 @@ jobs:
       - name: Create or update catalog pull request
         if: steps.generate.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.PRICING_CATALOG_PAT }}
         run: |
           set -euo pipefail
           git config user.name "pricing-catalog[bot]"
