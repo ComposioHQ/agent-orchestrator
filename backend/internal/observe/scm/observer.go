@@ -988,6 +988,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 	// re-fetched
 	listedPRs = map[string]bool{}
 	listedRepos = map[string]bool{}
+	pullsByRepo := map[string][]ports.SCMPRObservation{}
 	for repoKey, repo := range repos {
 		g := guards[repoKey]
 		if g.err != nil {
@@ -1013,6 +1014,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			}
 			continue
 		}
+		pullsByRepo[repoKey] = pulls
 		// Record the listed PR numbers so selectRefreshCandidates can
 		// restrict refresh to only updated MRs rather than every tracked MR.
 		// Subjects are identity-keyed, so when a listed PR's provider id
@@ -1028,6 +1030,30 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 				}
 			}
 		}
+	}
+
+	// Provider-wide identity pre-pass: a legacy tracked row may not have a
+	// provider_id yet, while the same PR is listed through both its old and new
+	// repository names after a transfer. Associate the stable id from any exact
+	// legacy repo#number listing before processing discoveries under either
+	// name. Otherwise map iteration order can let the canonical-name listing
+	// persist an unknown baseline before the old-name detail fetch stamps the id.
+	trackedProviderIdentities := map[string]bool{}
+	for repoKey, pulls := range pullsByRepo {
+		repo := repos[repoKey]
+		for _, pr := range pulls {
+			if pr.ProviderID == "" {
+				continue
+			}
+			idKey := identityPRKey(repo.Provider, repo.Host, pr.ProviderID)
+			if subjects[idKey] != nil || subjects[prKey(repo, pr.Number)] != nil {
+				trackedProviderIdentities[idKey] = true
+			}
+		}
+	}
+
+	for repoKey, pulls := range pullsByRepo {
+		repo := repos[repoKey]
 		for _, pr := range pulls {
 			if pr.Number <= 0 || pr.SourceBranch == "" {
 				continue
@@ -1052,7 +1078,8 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 			// semantic hashes — the "Checking merge readiness" flap
 			// (issue #4089, mechanism 2).
 			if pr.ProviderID != "" {
-				if _, ok := subjects[identityPRKey(repo.Provider, repo.Host, pr.ProviderID)]; ok {
+				idKey := identityPRKey(repo.Provider, repo.Host, pr.ProviderID)
+				if trackedProviderIdentities[idKey] || subjects[idKey] != nil {
 					continue
 				}
 			}

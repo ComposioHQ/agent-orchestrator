@@ -3121,44 +3121,54 @@ func TestPoll_SecondScanNameDoesNotRebaselineTrackedPR(t *testing.T) {
 	}
 	defer func() { gitRemoteURLsFunc = restoreRemotes }()
 
-	tracked := domain.PullRequest{
-		URL: "https://github.com/new/r/pull/1", SessionID: "p-1", Number: 1,
-		Provider: "github", Host: "github.com", Repo: "new/r", ProviderID: "PR_stable_1",
-		SourceBranch: "feat", HeadSHA: "sha1", CI: domain.CIPassing, Mergeability: domain.MergeBlocked,
-		MetadataHash: "m", CIHash: "c", ReviewHash: "r", Review: domain.ReviewRequired,
-		ObservedAt: time.Unix(50, 0).UTC(), CIObservedAt: time.Unix(50, 0).UTC(), ReviewObservedAt: time.Unix(50, 0).UTC(),
-	}
-	store := &fakeStore{
-		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
-		projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: "/proj", RepoOriginURL: "https://github.com/new/r.git"}},
-		prs:      map[domain.SessionID][]domain.PullRequest{"p-1": {tracked}},
-		checks:   map[string][]domain.PullRequestCheck{},
-	}
 	listing := []ports.SCMPRObservation{{
 		ProviderID: "PR_stable_1", URL: "https://github.com/new/r/pull/1", Number: 1,
 		SourceBranch: "feat", HeadRepo: "new/r", TargetBranch: "main", HeadSHA: "sha1",
 	}}
-	provider := &fakeProvider{
-		repoGuards: map[string]ports.SCMGuardResult{
-			prKey(newRepo, 0): {ETag: "vN"},
-			prKey(oldRepo, 0): {ETag: "vO"},
-		},
-		// Both scan names list the same PR: the canonical listing and the
-		// stale-remote listing served through GitHub's rename redirect.
-		openPRs: map[string][]ports.SCMPRObservation{
-			prKey(newRepo, 0): listing,
-			prKey(oldRepo, 0): listing,
-		},
-		observations: map[string]ports.SCMObservation{},
-	}
-	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(100, 0).UTC())
-	if err := obs.Poll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	for _, w := range store.writes {
-		if w.pr.Number == 1 && w.pr.CI == domain.CIUnknown {
-			t.Fatalf("tracked PR was re-baselined by a second scan name: %+v", w.pr)
-		}
+	for _, tt := range []struct {
+		name       string
+		providerID string
+	}{
+		{name: "provider identity already stored", providerID: "PR_stable_1"},
+		{name: "legacy row associated by listing identity"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tracked := domain.PullRequest{
+				URL: "https://github.com/new/r/pull/1", SessionID: "p-1", Number: 1,
+				Provider: "github", Host: "github.com", Repo: "old/r", ProviderID: tt.providerID,
+				SourceBranch: "feat", HeadSHA: "sha1", CI: domain.CIPassing, Mergeability: domain.MergeBlocked,
+				MetadataHash: "m", CIHash: "c", ReviewHash: "r", Review: domain.ReviewRequired,
+				ObservedAt: time.Unix(50, 0).UTC(), CIObservedAt: time.Unix(50, 0).UTC(), ReviewObservedAt: time.Unix(50, 0).UTC(),
+			}
+			store := &fakeStore{
+				sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
+				projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: "/proj", RepoOriginURL: "https://github.com/new/r.git"}},
+				prs:      map[domain.SessionID][]domain.PullRequest{"p-1": {tracked}},
+				checks:   map[string][]domain.PullRequestCheck{},
+			}
+			provider := &fakeProvider{
+				repoGuards: map[string]ports.SCMGuardResult{
+					prKey(newRepo, 0): {ETag: "vN"},
+					prKey(oldRepo, 0): {ETag: "vO"},
+				},
+				// Both scan names list the same PR: the canonical listing and the
+				// stale-remote listing served through GitHub's rename redirect.
+				openPRs: map[string][]ports.SCMPRObservation{
+					prKey(newRepo, 0): listing,
+					prKey(oldRepo, 0): listing,
+				},
+				observations: map[string]ports.SCMObservation{},
+			}
+			obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(100, 0).UTC())
+			if err := obs.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range store.writes {
+				if w.pr.Number == 1 && w.pr.CI == domain.CIUnknown {
+					t.Fatalf("tracked PR was re-baselined by a second scan name: %+v", w.pr)
+				}
+			}
+		})
 	}
 }
 

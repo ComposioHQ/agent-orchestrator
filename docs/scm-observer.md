@@ -17,7 +17,7 @@ equivalent; this doc does not duplicate them.
 - [How PR Facts Enter the System](#how-pr-facts-enter-the-system)
 - [The Polling Pipeline](#the-polling-pipeline)
 - [Durable-State Invariants](#durable-state-invariants)
-- [PR Identity Today: Five Independent Derivations](#pr-identity-today-five-independent-derivations)
+- [PR Identity Before #4090: Five Independent Derivations](#pr-identity-before-4090-five-independent-derivations)
 - [Case Study: the Rename Bug Cluster](#case-study-the-rename-bug-cluster)
 - [Target Design: ProviderID-Primary Identity](#target-design-providerid-primary-identity)
 - [Testing Strategy](#testing-strategy)
@@ -163,22 +163,23 @@ correctness state.
    PRs; terminal handling for one reads all of them from the store, so a
    just-discovered sibling must already be durable.
 
-## PR Identity Today: Five Independent Derivations
+## PR Identity Before #4090: Five Independent Derivations
 
-"Which PR is this?" is answered independently in five places. Each derivation
-is locally reasonable; collectively they form a distributed invariant — *all
-five must agree* — that nothing enforces. A repo rename/org transfer is
-exactly the event that makes them disagree.
+Before #4090, "Which PR is this?" was answered independently in five places.
+Each derivation was locally reasonable; collectively they formed a distributed
+invariant — *all five must agree* — that nothing enforced. A repo rename/org
+transfer is exactly the event that made them disagree.
 
 | # | Layer | Identity used | Source |
 |---|-------|--------------|--------|
 | 1 | Stored row | `pr.url` (PK) + `provider/host/repo` + `number` columns | whatever path created the row |
-| 2 | Observer subject key | `prKey(repo, number)` = `provider:host:repo#number` | row's `repo` via `repoForTrackedPR`, or the scanned repo at discovery |
-| 3 | Observation dispatch key | `prKeyFromObs(obs)` — same shape | `obs.Repo`, canonicalized **from the PR URL** since #3923 |
+| 2 | Observer subject key (pre-#4090) | `prKey(repo, number)` = `provider:host:repo#number` | row's `repo` via `repoForTrackedPR`, or the scanned repo at discovery |
+| 3 | Observation dispatch key (pre-#4090) | `prKeyFromObs(obs)` — same shape | `obs.Repo`, canonicalized **from the PR URL** since #3923 |
 | 4 | Repo scan set | owner/name parsed from git remotes + project `RepoOriginURL` | local git config, project record |
 | 5 | Store identity machinery | `provider_id` (unique per provider+host) + `pr_url_alias` | migration 0097, added by #3923 |
 
-After a rename (`AgentWrapper/agent-orchestrator` → `Untrivial-ai/agent-orchestrator`):
+Before #4090, after a rename (`AgentWrapper/agent-orchestrator` →
+`Untrivial-ai/agent-orchestrator`):
 
 - (1) keeps the old `repo` string forever unless something rewrites it.
 - (2) trusts (1), so subjects poll under the old name — which *works*, because
@@ -191,8 +192,8 @@ After a rename (`AgentWrapper/agent-orchestrator` → `Untrivial-ai/agent-orches
   IDs) but is only consulted inside the store, after the observer has already
   decided which subject an observation belongs to — or dropped it.
 
-The stable identity exists (row #5); it just isn't the key the observer
-dispatches on.
+The stable identity existed (row #5); it just was not the key the observer
+dispatched on.
 
 ## Case Study: the Rename Bug Cluster
 
@@ -210,10 +211,13 @@ store layer (aliases + `provider_id`) and changed it at the provider layer
 (`obs.Repo` canonicalized from the PR URL instead of echoing the requesting
 ref), but the observer's dispatch keying between them was not updated. Its
 tests covered each layer separately; no test crossed the seam with a renamed
-repo. PR [#4090](https://github.com/Untrivial-ai/agent-orchestrator/pull/4090)
-patches that seam (URL-match fallback re-keys observations to the requesting
-ref), which restores behavior but adds a *sixth* reconciliation point. That is
-the signal to stop patching pairwise and give identity one owner.
+repo. The first commit in PR
+[#4090](https://github.com/Untrivial-ai/agent-orchestrator/pull/4090) patched
+that seam with a URL-match fallback. The final implementation then removed
+that interim matching layer: subjects and discovery use provider-native IDs,
+and fetch results are attributed positionally to their requesting refs. The
+interim patch was the signal to stop reconciling identities pairwise and give
+identity one owner.
 
 ### The discovery clobber (why the state flaps rather than sticking)
 
