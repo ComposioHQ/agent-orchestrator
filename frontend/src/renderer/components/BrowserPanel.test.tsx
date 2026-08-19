@@ -929,12 +929,12 @@ describe("BrowserPanel", () => {
 	it("keeps the browser viewport transparent once a native page is loaded, so overlays don't blank it", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-		expect(screen.getByTestId("browser-viewport")).not.toHaveClass("bg-background");
+		expect(screen.getByTestId("browser-viewport")).not.toHaveAttribute("data-placeholder");
 	});
 
 	it("keeps an opaque background behind the empty-URL placeholder", () => {
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-		expect(screen.getByTestId("browser-viewport")).toHaveClass("bg-background");
+		expect(screen.getByTestId("browser-viewport")).toHaveAttribute("data-placeholder", "true");
 	});
 
 	it("keeps an opaque background for the static preview fallback when there is no native browser bridge", () => {
@@ -943,7 +943,7 @@ describe("BrowserPanel", () => {
 		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
 		try {
 			render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-			expect(screen.getByTestId("browser-viewport")).toHaveClass("bg-background");
+			expect(screen.getByTestId("browser-viewport")).toHaveAttribute("data-placeholder", "true");
 		} finally {
 			Object.defineProperty(window, "ao", { configurable: true, value: ao });
 		}

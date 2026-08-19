@@ -551,17 +551,20 @@ export function BrowserPanelView({
 			</form>
 			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
 				<div
-					className={cn(
-						"browser-panel__viewport relative min-h-0 flex-1 overflow-hidden",
-						// The live page paints as a separate native WebContentsView, not
-						// inside this div. Opening any overlay (e.g. the tabs-rail flyout,
-						// BrowserTabsRail.tsx's data-browser-native-overlay) briefly raises
-						// the transparent shell above that native view so the overlay can
-						// paint on top — if this div were opaque here, it would blank the
-						// live page for the duration. Keep it opaque only when there's
-						// nothing native to show through (no bridge, or no URL loaded yet).
-						(!hasNativeBrowser || navState.url === "") && "bg-background",
-					)}
+					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden"
+					// The live page paints as a separate native WebContentsView, not inside
+					// this div. Opening any overlay (e.g. the tabs-rail flyout,
+					// BrowserTabsRail.tsx's data-browser-native-overlay) briefly raises the
+					// transparent shell above that native view so the overlay can paint on
+					// top — if this div painted an opaque background here, it would blank
+					// the live page for the duration. `.browser-panel__viewport` in
+					// styles.css carries its own plain-CSS background (a decorative
+					// gradient for the empty/no-bridge placeholder states) that is NOT a
+					// Tailwind utility and so can't be toggled via className — Tailwind
+					// utilities live in a lower-priority cascade layer and can never
+					// override plain author CSS. Gate that CSS rule with this data
+					// attribute instead, so there's exactly one place deciding opacity.
+					data-placeholder={!hasNativeBrowser || navState.url === "" ? "true" : undefined}
 					data-testid="browser-viewport"
 				>
 					<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
