@@ -1156,12 +1156,27 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!options.agentBrowserRuntime) return closeTab(session, input.tabId);
 		return queueNativeOperation(session, async () => {
 			await ensureNativeActiveTab(session);
-			await options.agentBrowserRuntime!.runAction(
-				session.sessionId,
-				"tab-close",
-				{ tabId: input.tabId },
-				agentBrowserTargets(session),
-			);
+			try {
+				await options.agentBrowserRuntime!.runAction(
+					session.sessionId,
+					"tab-close",
+					{ tabId: input.tabId },
+					agentBrowserTargets(session),
+				);
+			} catch (error) {
+				// The automation runtime's own internal tab registry can drift from
+				// session.tabs over a long-running session (observed in practice as
+				// "Tab t5 not found; run `agent-browser tab` to list open tabs" even
+				// though session.tabs.has(input.tabId) above just confirmed AO still
+				// tracks it) — the runtime is a separate process AO doesn't fully
+				// control the internal bookkeeping of. Letting that failure bubble up
+				// left the tab stuck open with no way for the user to close it at all.
+				// The user's intent is unambiguous either way: close this tab. Fall
+				// back to AO's own close path, which only depends on session.tabs and
+				// the real WebContentsView, not the runtime's registry.
+				if (!isAgentBrowserCommandFailure(error)) throw error;
+				return closeTab(session, input.tabId);
+			}
 			session.nativeActiveTabId = undefined;
 			await ensureNativeActiveTab(session);
 			return listTabs(session);
@@ -1495,6 +1510,16 @@ function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 function isBlankBrowserEntry(entry: BrowserEntry): boolean {
 	const url = entry.view.webContents.getURL();
 	return !url || url === "about:blank";
+}
+
+// agent-browser-runtime.ts's parseAgentBrowserJSON throws this exact code for
+// any command the automation runtime's own process reports success:false for
+// (e.g. its internal tab registry not recognizing a tabId session.tabs still
+// has) — distinguishing it from an unrelated failure (the binary missing,
+// the runtime already disposed, a malformed response) that a close-tab
+// fallback should NOT quietly swallow.
+function isAgentBrowserCommandFailure(error: unknown): boolean {
+	return Boolean(error && typeof error === "object" && "code" in error && error.code === "AGENT_BROWSER_COMMAND_FAILED");
 }
 
 function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {

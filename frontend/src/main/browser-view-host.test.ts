@@ -356,6 +356,60 @@ function setupTabHost() {
 	return { activeTargets, constructorOptions, emit, host, invoke, runtime, sent, views };
 }
 
+describe("browser:closeTab automation-runtime fallback", () => {
+	// Regression: observed in a real long-running session as
+	// "Tab t5 not found; run `agent-browser tab` to list open tabs" — the
+	// external automation runtime's own internal tab registry had drifted from
+	// session.tabs, and the close request just threw instead of falling back,
+	// leaving the tab permanently stuck open with no way to close it.
+	it("closes the tab locally when the automation runtime reports its registry does not recognize it", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const before = (await invoke("browser:getTabs", viewId)) as { tabs: { id: string }[] };
+		expect(before.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				throw Object.assign(new Error("Tab t2 not found; run `agent-browser tab` to list open tabs"), {
+					code: "AGENT_BROWSER_COMMAND_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		const result = (await invoke("browser:closeTab", { viewId, tabId: "t2" })) as { tabs: { id: string }[] };
+		expect(result.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+	});
+
+	it("still surfaces an unrelated automation-runtime failure instead of silently closing the tab", async () => {
+		const { invoke, runtime } = setupTabHost();
+		const ensure = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+		const viewId = ensure.viewId;
+		await invoke("browser:openTab", { viewId });
+
+		const runAction = runtime.runAction as unknown as ReturnType<typeof vi.fn>;
+		const originalRunAction = runAction.getMockImplementation()! as (...args: unknown[]) => Promise<unknown>;
+		runAction.mockImplementation(async (sessionId: string, action: string, args: Record<string, unknown>, provider: unknown) => {
+			if (action === "tab-close" && String(args.tabId) === "t2") {
+				throw Object.assign(new Error("agent-browser exited with code 1"), {
+					code: "AGENT_BROWSER_START_FAILED",
+				});
+			}
+			return originalRunAction(sessionId, action, args, provider);
+		});
+
+		await expect(invoke("browser:closeTab", { viewId, tabId: "t2" })).rejects.toThrow("agent-browser exited with code 1");
+
+		const after = (await invoke("browser:getTabs", viewId)) as { tabs: { id: string }[] };
+		expect(after.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+	});
+});
+
 describe("new-session shortcut forwarding", () => {
 	it("focuses the shell before forwarding a matching preview chord", async () => {
 		const { emitBeforeInput, invoke, shellFocus, shellSend } = setupHost();
