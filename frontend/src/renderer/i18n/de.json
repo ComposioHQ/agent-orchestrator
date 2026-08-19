@@ -277,6 +277,7 @@
 	"inspector.sendToWorkerAgentError": "Senden fehlgeschlagen. Erneut versuchen.",
 	"inspector.workerAgentWorkingOnFeedback": "Der Worker-Agent bearbeitet dieses Feedback",
 	"inspector.viewInFile": "In Datei anzeigen",
+	"inspector.viewInFileWorkInProgress": "Das Öffnen von Dateien in AO ist in Arbeit",
 	"inspector.commentNumber": "Kommentar #{{number}}",
 	"inspector.loadMoreReviews": "Mehr laden · {{count}} frühere",
 	"inspector.showLatestReviewOnly": "Nur neueste anzeigen",

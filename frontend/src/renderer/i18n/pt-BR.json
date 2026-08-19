@@ -279,6 +279,7 @@
 	"inspector.sendToWorkerAgentError": "Não foi possível enviar. Tente novamente.",
 	"inspector.workerAgentWorkingOnFeedback": "O agente worker está trabalhando neste feedback",
 	"inspector.viewInFile": "Ver no arquivo",
+	"inspector.viewInFileWorkInProgress": "A abertura de arquivos no AO está em desenvolvimento",
 	"inspector.commentNumber": "Comentário nº {{number}}",
 	"inspector.loadMoreReviews": "Carregar mais · {{count}} anteriores",
 	"inspector.showLatestReviewOnly": "Mostrar apenas a mais recente",

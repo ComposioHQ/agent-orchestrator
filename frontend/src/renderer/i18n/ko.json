@@ -277,6 +277,7 @@
 	"inspector.sendToWorkerAgentError": "보낼 수 없습니다. 다시 시도하세요.",
 	"inspector.workerAgentWorkingOnFeedback": "Worker 에이전트가 이 피드백을 처리하고 있습니다",
 	"inspector.viewInFile": "파일에서 보기",
+	"inspector.viewInFileWorkInProgress": "AO에서 파일 열기 기능은 개발 중입니다",
 	"inspector.commentNumber": "댓글 #{{number}}",
 	"inspector.loadMoreReviews": "더 불러오기 · 이전 {{count}}개",
 	"inspector.showLatestReviewOnly": "최신 항목만 표시",

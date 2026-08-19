@@ -1617,6 +1617,7 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		commentNumber: (number) => t("inspector.commentNumber", { number }),
 		unresolvedCount: (count) => t("inspector.unresolvedCount", { count }),
 		viewInFile: t("inspector.viewInFile"),
+		viewInFileWorkInProgress: t("inspector.viewInFileWorkInProgress"),
 		viewOnPR: t("inspector.viewOnPR"),
 	};
 }

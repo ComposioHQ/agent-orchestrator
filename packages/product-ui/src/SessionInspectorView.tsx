@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useState } from "react";
 import type { ExternalLinkComponent } from "./external-link";
 import {
 	ArrowUpRightIcon,
@@ -484,6 +484,7 @@ export type InspectorReviewLabels = {
 	commentNumber: (number: number) => string;
 	unresolvedCount: (count: number) => string;
 	viewInFile: string;
+	viewInFileWorkInProgress: string;
 	viewOnPR: string;
 };
 
@@ -862,7 +863,33 @@ function GithubReviewHistory({
 }
 
 const reviewHeaderActionClass =
-	"inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground no-underline transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full";
+	"inline-flex h-7 min-w-0 max-w-full appearance-none items-center justify-center rounded-md border border-border-strong bg-transparent px-2 text-center text-muted-foreground no-underline transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full";
+const reviewHeaderActionLabelClass = "whitespace-nowrap font-sans text-xs font-medium leading-none tracking-normal";
+
+function ReviewHeaderAction({
+	children,
+	externalLink: ExternalLink,
+	href,
+	onClick,
+}: {
+	children: string;
+	externalLink: ExternalLinkComponent;
+	href?: string;
+	onClick?: () => Promise<void> | void;
+}) {
+	if (href) {
+		return (
+			<ExternalLink className={reviewHeaderActionClass} href={href}>
+				<span className={reviewHeaderActionLabelClass}>{children}</span>
+			</ExternalLink>
+		);
+	}
+	return (
+		<button className={reviewHeaderActionClass} onClick={onClick} type="button">
+			<span className={reviewHeaderActionLabelClass}>{children}</span>
+		</button>
+	);
+}
 
 function ExternalReviewCard({
 	defaultOpen,
@@ -912,9 +939,9 @@ function ExternalReviewCard({
 					) : <span aria-hidden="true" />}
 					<div className="flex min-w-0 flex-wrap items-center justify-end gap-2 @max-[300px]/inspector:w-full">
 						{reviewUrl ? (
-							<ExternalLink className={reviewHeaderActionClass} href={reviewUrl}>
+							<ReviewHeaderAction externalLink={ExternalLink} href={reviewUrl}>
 								{labels.viewOnPR}
-							</ExternalLink>
+							</ReviewHeaderAction>
 						) : null}
 						{showRereviewAction ? (
 							rereviewRequested ? (
@@ -923,8 +950,8 @@ function ExternalReviewCard({
 									{labels.rereviewRequested}
 								</span>
 							) : (
-								<button
-									className={reviewHeaderActionClass}
+								<ReviewHeaderAction
+									externalLink={ExternalLink}
 									onClick={async () => {
 										setRereviewError(false);
 										try {
@@ -934,10 +961,9 @@ function ExternalReviewCard({
 											setRereviewError(true);
 										}
 									}}
-									type="button"
 								>
 									{labels.requestRereviewPR}
-								</button>
+								</ReviewHeaderAction>
 							)
 						) : null}
 					</div>
@@ -949,7 +975,6 @@ function ExternalReviewCard({
 			) : null}
 			{openInlineCount > 0 ? (
 				<GithubInlineComments
-					externalLink={ExternalLink}
 					labels={labels}
 					onSendInlineComment={onSendInlineComment}
 					onResolveInlineComment={onResolveInlineComment}
@@ -1027,14 +1052,12 @@ function ReviewEntryDisclosure({
 const RESOLVED_COMMENT_DISPLAY_MS = 1000;
 
 function GithubInlineComments({
-	externalLink: ExternalLink,
 	labels,
 	onResolveInlineComment,
 	onSendInlineComment,
 	reviewers,
 	showReviewer = true,
 }: {
-	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
@@ -1085,7 +1108,6 @@ function GithubInlineComments({
 					<InlineCommentRow
 						comment={comment}
 						commentNumber={index + 1}
-						externalLink={ExternalLink}
 						key={comment.id}
 						labels={labels}
 						onResolve={onResolveInlineComment ? async () => {
@@ -1146,7 +1168,6 @@ function GithubInlineComments({
 function InlineCommentRow({
 	comment,
 	commentNumber,
-	externalLink: ExternalLink,
 	labels,
 	onResolve,
 	onSend,
@@ -1159,7 +1180,6 @@ function InlineCommentRow({
 }: {
 	comment: InspectorInlineComment & { reviewerId?: string };
 	commentNumber: number;
-	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onResolve?: () => void;
 	onSend?: () => void;
@@ -1171,6 +1191,7 @@ function InlineCommentRow({
 	sent: boolean;
 }) {
 	const body = comment.body?.trim();
+	const viewInFileTooltipId = useId();
 	return (
 		<div className="flex min-w-0 flex-col gap-2 px-0 py-4 text-xs first:pt-2 last:pb-0">
 			{showReviewer && comment.reviewerId ? (
@@ -1215,11 +1236,23 @@ function InlineCommentRow({
 						{labels.resolveComment}
 					</button>
 				)}
-				{comment.url ? (
-					<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={comment.url}>
+				<span className="group relative inline-flex">
+					<button
+						aria-describedby={viewInFileTooltipId}
+						aria-disabled="true"
+						className="inline-flex h-7 cursor-help items-center rounded-md border border-border/70 bg-transparent px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+						type="button"
+					>
 						{labels.viewInFile}
-					</ExternalLink>
-				) : null}
+					</button>
+					<span
+						className="pointer-events-none invisible absolute bottom-full left-1/2 z-overlay mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground opacity-0 shadow-md transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+						id={viewInFileTooltipId}
+						role="tooltip"
+					>
+						{labels.viewInFileWorkInProgress}
+					</span>
+				</span>
 			</div>
 			{sendError && !sent ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
 			{resolveError && !resolved ? <p className="m-0 text-2xs font-medium text-error">{labels.resolveReviewFailed}</p> : null}

@@ -2460,9 +2460,13 @@ describe("SessionInspector summary reviews", () => {
       screen.getByRole("button", { name: /maya.*Changes requested/i }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Show more" }));
-    expect(screen.getByRole("link", { name: "View in file" })).toHaveAttribute(
-      "href",
-      "https://example.com/comment-9",
+    expect(screen.queryByRole("link", { name: "View in file" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "View in file" })[0]).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getAllByRole("tooltip")[0]).toHaveTextContent(
+      "Opening files in AO is a work in progress",
     );
     const sendButton = screen.getByRole("button", {
       name: "Send to worker agent",

@@ -276,6 +276,7 @@
 	"inspector.sendToWorkerAgentError": "Unable to send. Retry.",
 	"inspector.workerAgentWorkingOnFeedback": "Worker agent is working on this feedback",
 	"inspector.viewInFile": "View in file",
+	"inspector.viewInFileWorkInProgress": "Opening files in AO is a work in progress",
 	"inspector.commentNumber": "Comment #{{number}}",
 	"inspector.loadMoreReviews": "Load more · {{count}} earlier",
 	"inspector.showLatestReviewOnly": "Show latest only",

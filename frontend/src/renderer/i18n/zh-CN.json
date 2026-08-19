@@ -276,6 +276,7 @@
 	"inspector.sendToWorkerAgentError": "无法发送。请重试。",
 	"inspector.workerAgentWorkingOnFeedback": "Worker 代理正在处理此反馈",
 	"inspector.viewInFile": "在文件中查看",
+	"inspector.viewInFileWorkInProgress": "AO 中打开文件的功能正在开发中",
 	"inspector.commentNumber": "评论 #{{number}}",
 	"inspector.loadMoreReviews": "加载更多 · 之前 {{count}} 条",
 	"inspector.showLatestReviewOnly": "仅显示最新一条",

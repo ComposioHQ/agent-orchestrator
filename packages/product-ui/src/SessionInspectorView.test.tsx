@@ -494,6 +494,9 @@ describe("portable inspector presentations", () => {
       name: "Request to re-review PR",
     });
     expect(viewPR.className).toBe(rereview.className);
+    expect(viewPR.firstElementChild?.className).toBe(
+      rereview.firstElementChild?.className,
+    );
     fireEvent.click(
       rereview,
     );
@@ -720,8 +723,16 @@ describe("portable inspector presentations", () => {
         "text-success",
       );
     });
-    expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(
+    const viewInFileButtons = screen.getAllByRole("button", {
+      name: "View in file",
+    });
+    expect(viewInFileButtons).toHaveLength(
       2,
+    );
+    expect(screen.queryByRole("link", { name: "View in file" })).not.toBeInTheDocument();
+    expect(viewInFileButtons[0]).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getAllByRole("tooltip")[0]).toHaveTextContent(
+      "Opening files in AO is a work in progress",
     );
     expect(screen.getAllByText("Sent to worker agent")[0]).toHaveAttribute(
       "title",
@@ -987,5 +998,6 @@ const reviewLabels: InspectorReviewLabels = {
   commentNumber: (number) => `Comment ${number}`,
   unresolvedCount: (count) => `${count} unresolved`,
   viewInFile: "View in file",
+  viewInFileWorkInProgress: "Opening files in AO is a work in progress",
   viewOnPR: "View on PR",
 };
