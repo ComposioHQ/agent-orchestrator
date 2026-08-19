@@ -917,9 +917,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Prompt:                    prompt,
 		LatestUserPrompt:          prompt,
 		BrowserCapabilityVerifier: browserCapabilityVerifier,
-		// agentConfig still holds the user-visible resolved Model; adapterConfig
-		// may have moved it into Mode for mode-list harnesses like Amp.
-		Model: agentConfig.Model,
+		// The user-visible resolved selection is Model for regular harnesses and
+		// Mode for adapters whose catalog is a mode list (e.g. Amp). If an explicit
+		// Model override exists it wins; otherwise fall back to the resolved Mode.
+		Model: resolvedModelForMetadata(cfg.Harness, agentConfig, adapterConfig),
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, ws.BaseRef)
@@ -1294,6 +1295,21 @@ func normalizeAgentConfigForHarness(harness domain.AgentHarness, cfg ports.Agent
 	out.Mode = model
 	out.Model = ""
 	return out
+}
+
+// resolvedModelForMetadata returns the user-visible resolved model selection to
+// persist on the session. Model-based adapters use Config.Model; mode-list
+// adapters like Amp store the selection in Config.Mode. An explicit Model value
+// always wins so spawn overrides are reported exactly as requested.
+func resolvedModelForMetadata(harness domain.AgentHarness, effective, adapter ports.AgentConfig) string {
+	if model := strings.TrimSpace(effective.Model); model != "" {
+		return model
+	}
+	catalog := modelcatalog.Base(string(harness))
+	if catalog.SelectionMode == ports.ModelSelectionModeList {
+		return strings.TrimSpace(adapter.Mode)
+	}
+	return ""
 }
 
 // validateSpawnModel rejects a model when the selected harness has a fixed

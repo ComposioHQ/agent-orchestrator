@@ -1315,6 +1315,49 @@ func TestSpawnAmpModelOverrideLaunchArgv(t *testing.T) {
 	}
 }
 
+// TestSpawnAmpProjectDefaultModePersistsAsModel verifies that when Amp's mode
+// comes from project/role config (not an explicit spawn --model override), the
+// resolved value is still reported as metadata.Model instead of appearing as
+// the agent default.
+func TestSpawnAmpProjectDefaultModePersistsAsModel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH setup differs on windows")
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessAmp,
+			AgentConfig: domain.AgentConfig{Mode: "high"},
+		},
+	}}
+
+	dir := t.TempDir()
+	fakeAmp := filepath.Join(dir, "amp")
+	if err := os.WriteFile(fakeAmp, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake amp binary: %v", err)
+	}
+	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+	wsDir := t.TempDir()
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: wsDir}
+	lookPath := func(string) (string, error) { return fakeAmp, nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: amp.New()}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatalf("amp spawn with project default mode failed: %v", err)
+	}
+
+	want := []string{fakeAmp, "--mode", "high"}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, want) {
+		t.Fatalf("launch argv = %#v, want %#v", rt.lastCfg.Argv, want)
+	}
+	if rec.Metadata.Model != "high" {
+		t.Fatalf("persisted metadata model = %q, want high (project default mode should be reported)", rec.Metadata.Model)
+	}
+}
+
 // TestSpawnModelPersisted asserts the resolved model is stored on the session
 // metadata and survives a store round-trip.
 func TestSpawnModelPersisted(t *testing.T) {
