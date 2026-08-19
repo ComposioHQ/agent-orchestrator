@@ -1381,6 +1381,25 @@ describe("SessionView", () => {
 		expect(inspectorButton()).toHaveAttribute("data-view", "files");
 	});
 
+	// Regression: the "initialized" marker used to live in a component-local
+	// ref, which is recreated whenever SessionView unmounts. Remounting an
+	// already-visited session (e.g. across a route transition) then looked
+	// identical to a first-ever visit and forced the tab back to Summary. The
+	// marker now lives in the ui-store's persisted inspectorSessions state, so
+	// it survives unmount/remount, not just re-renders of one mounted instance.
+	it("remembers the tab a session was left on after unmounting and remounting the view", () => {
+		const view = render(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
+
+		fireEvent.click(screen.getByRole("button", { name: "open files" }));
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
+
+		view.unmount();
+
+		render(<SessionView sessionId="sess-1" />);
+		expect(inspectorButton()).toHaveAttribute("data-view", "files");
+	});
+
 	it("keeps Summary selected when preview content arrives with the async workspace response", () => {
 		const secondWorker = workerSession("sess-2");
 		secondWorker.previewUrl = "http://localhost:5173/";
