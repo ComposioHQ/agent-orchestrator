@@ -179,7 +179,8 @@ export const useUiStore = create<UiState>((set, get) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
-	openGlobalSettings: (section = "general") => set({ settingsModal: { scope: "global", section } }),
+	openGlobalSettings: (section) =>
+		set({ settingsModal: section ? { scope: "global", section } : { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
 	syncSystemTheme: () => {
