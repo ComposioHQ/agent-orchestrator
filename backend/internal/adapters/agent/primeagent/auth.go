@@ -180,7 +180,7 @@ func primeJSONHasCredential(value any, allowPlainKey bool) bool {
 		}
 	case map[string]any:
 		for key, child := range value {
-			if allowPlainKey && strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "mcp:") {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), "mcp:") {
 				continue
 			}
 			normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))

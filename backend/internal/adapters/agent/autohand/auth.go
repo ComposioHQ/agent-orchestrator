@@ -77,9 +77,10 @@ func autohandCloudAuthReady(config map[string]json.RawMessage) (ready, known boo
 		return false, false
 	}
 	// apiKeyHelper is a documented command which Autohand invokes to obtain an
-	// API key. Its configured presence is credential evidence, although AO does
-	// not execute arbitrary user commands merely to answer an advisory probe.
-	return usableSecret(auth.Token) || strings.TrimSpace(auth.APIKeyHelper) != "", true
+	// API key. Its presence alone does not prove the command still exists or
+	// yields a usable key, and AO must not execute arbitrary user commands for
+	// an advisory probe.
+	return usableSecret(auth.Token), true
 }
 
 func usableSecret(value string) bool {

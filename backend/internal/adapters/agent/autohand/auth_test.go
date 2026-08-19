@@ -29,7 +29,7 @@ func TestAutohandAuthStatusUnknownWithoutDocumentedLocalCredential(t *testing.T)
 
 func TestAutohandAuthStatusUsesAUTOHAND_CONFIG(t *testing.T) {
 	t.Setenv("AUTOHAND_CONFIG", writeAutohandAuthConfig(t, `{
-  "auth": {"apiKeyHelper": "read-autohand-key"}
+  "auth": {"token": "session-token"}
 }`))
 	status, err := (&Plugin{resolvedBinary: "autohand"}).AuthStatus(context.Background())
 	if err != nil {
@@ -56,7 +56,7 @@ func TestAutohandConfigAuthStatusAuthorized(t *testing.T) {
 	}
 }
 
-func TestAutohandConfigAuthStatusAuthorizedWithAPIKeyHelper(t *testing.T) {
+func TestAutohandConfigAuthStatusUnknownWithAPIKeyHelper(t *testing.T) {
 	path := writeAutohandAuthConfig(t, `{
   "auth": {"apiKeyHelper": "security find-generic-password -w -s autohand"}
 }`)
@@ -65,8 +65,8 @@ func TestAutohandConfigAuthStatusAuthorizedWithAPIKeyHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusAuthorized {
-		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusAuthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 

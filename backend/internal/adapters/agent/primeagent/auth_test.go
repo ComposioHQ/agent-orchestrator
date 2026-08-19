@@ -86,6 +86,20 @@ func TestPrimeCredentialJSONIgnoresMCPOnlyCredentials(t *testing.T) {
 	}
 }
 
+func TestPrimeModelsJSONIgnoresMCPOnlyCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := os.WriteFile(path, []byte(`{"mcp:notion":{"accessToken":"mcp-token"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, ok, err := primeCredentialJSONStatus(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestPrimeCredentialJSONAuthorizedFromOAuth(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth.json")
 	if err := os.WriteFile(path, []byte(`{"openai-codex":{"type":"oauth","access":"oauth-token"}}`), 0o600); err != nil {
