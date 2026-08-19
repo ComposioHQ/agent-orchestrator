@@ -53,6 +53,49 @@ func frameWith(png []byte) []byte {
 	return out
 }
 
+func h264Frame(width, height uint32, payload []byte) []byte {
+	out := make([]byte, 12+len(payload))
+	binary.BigEndian.PutUint32(out[:4], uint32(len(payload)))
+	binary.BigEndian.PutUint32(out[4:8], width)
+	binary.BigEndian.PutUint32(out[8:12], height)
+	copy(out[12:], payload)
+	return out
+}
+
+func TestH264FrameSourceFansOutAnnexBFrames(t *testing.T) {
+	src := NewH264FrameSource("/unused")
+	src.codec = "h264"
+	var writer *io.PipeWriter
+	src.spawn = func(ctx context.Context, helper string) (io.ReadCloser, func(), error) {
+		reader, nextWriter := io.Pipe()
+		writer = nextWriter
+		return reader, func() { _ = nextWriter.Close() }, nil
+	}
+	frames, unsubscribe := src.Subscribe()
+	defer unsubscribe()
+	wait := time.After(2 * time.Second)
+	for writer == nil {
+		select {
+		case <-wait:
+			t.Fatal("capture helper did not start")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	payload := []byte{0, 0, 0, 1, 9}
+	if _, err := writer.Write(h264Frame(393, 852, payload)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case frame := <-frames:
+		if frame.Codec != "h264" || frame.Width != 393 || frame.Height != 852 || string(frame.Data) != string(payload) {
+			t.Fatalf("unexpected H264 frame: %+v", frame)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for H264 frame")
+	}
+}
+
 func TestFrameSourceFansOutFramesAndRecordsSize(t *testing.T) {
 	src := NewFrameSource("/unused")
 	var pipes []*io.PipeWriter

@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiClient, apiErrorMessage, getApiBaseUrl, subscribeApiBaseUrl } from "../lib/api-client";
 
 export type StreamFrame = {
-	data: string;
-	mimeType: string;
+	data?: string;
+	mimeType?: string;
+	codec?: "png" | "h264";
+	encoded?: ArrayBuffer;
 	width?: number;
 	height?: number;
 };
@@ -13,6 +15,7 @@ export type StreamFrame = {
 export type StreamState = "idle" | "connecting" | "live" | "stalled";
 
 type StreamMessage = { data?: string; mimeType?: string; width?: number; height?: number; error?: string };
+type StreamHello = { type: "hello"; udid?: string; width?: number; height?: number; scale?: number };
 
 // WebSocket reconnect backoff: 1s, 2s, 4s, capped at 8s.
 const WS_RECONNECT_BASE_MS = 1000;
@@ -24,6 +27,8 @@ export function useIOSSimulator(enabled: boolean, sessionId?: string) {
 	const [streamFrame, setStreamFrame] = useState<StreamFrame | null>(null);
 	const [streamState, setStreamState] = useState<StreamState>("idle");
 	const [streamError, setStreamError] = useState<string | null>(null);
+	const [streamHello, setStreamHello] = useState<StreamHello | null>(null);
+	const helloRef = useRef<StreamHello | null>(null);
 
 	const status = useQuery({
 		queryKey: ["ios-device", "status", sessionId],
@@ -113,6 +118,8 @@ export function useIOSSimulator(enabled: boolean, sessionId?: string) {
 			setStreamFrame(null);
 			setStreamState("idle");
 			setStreamError(null);
+			setStreamHello(null);
+			helloRef.current = null;
 			return;
 		}
 		let disposed = false;
@@ -149,11 +156,23 @@ export function useIOSSimulator(enabled: boolean, sessionId?: string) {
 			setStreamState((current) => (current === "live" ? current : "connecting"));
 			const streamQuery = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
 			socket = new WebSocket(`${base.replace(/^http/, "ws")}/api/v1/ios-device/stream${streamQuery}`);
+			socket.binaryType = "arraybuffer";
 			socket.onopen = () => {
 				if (disposed) return;
 				retryCount = 0;
 			};
 			socket.onmessage = (event) => {
+				if (event.data instanceof ArrayBuffer) {
+					const hello = helloRef.current;
+					if (event.data.byteLength < 8) return;
+					const view = new DataView(event.data);
+					const width = view.getUint32(0);
+					const height = view.getUint32(4);
+					setStreamState("live");
+					setStreamError(null);
+					setStreamFrame({ codec: "h264", encoded: event.data.slice(8), width: width || hello?.width, height: height || hello?.height });
+					return;
+				}
 				let message: StreamMessage;
 				try {
 					message = JSON.parse(event.data) as StreamMessage;
@@ -165,10 +184,16 @@ export function useIOSSimulator(enabled: boolean, sessionId?: string) {
 					setStreamError(message.error);
 					return;
 				}
+				if ((message as StreamHello).type === "hello") {
+					const hello = message as StreamHello;
+					setStreamHello(hello);
+					helloRef.current = hello;
+					return;
+				}
 				if (message.data && message.mimeType) {
 					setStreamError(null);
 					setStreamState("live");
-					setStreamFrame({ data: message.data, mimeType: message.mimeType, width: message.width, height: message.height });
+					setStreamFrame({ data: message.data, mimeType: message.mimeType, codec: "png", width: message.width, height: message.height });
 				}
 			};
 			socket.onerror = () => {
@@ -222,6 +247,7 @@ export function useIOSSimulator(enabled: boolean, sessionId?: string) {
 		streamFrame,
 		streamState,
 		streamError,
+		streamHello,
 		permissions,
 		input,
 	};

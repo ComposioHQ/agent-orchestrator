@@ -4,6 +4,7 @@ import CoreMedia
 import CoreVideo
 import ImageIO
 import UniformTypeIdentifiers
+import VideoToolbox
 
 // Native capture helper for the AO iOS Simulator panel.
 //
@@ -25,6 +26,7 @@ import UniformTypeIdentifiers
 struct SimulatorCaptureProbe {
     static func main() async {
         let streaming = CommandLine.arguments.dropFirst().contains("--stream")
+        let h264 = CommandLine.arguments.dropFirst().contains("--h264")
         do {
             // ScreenCaptureKit initializes CoreGraphics through AppKit. A
             // command-line process must create an accessory NSApplication
@@ -45,6 +47,13 @@ struct SimulatorCaptureProbe {
             configuration.queueDepth = 3
             let stream = SCStream(filter: filter, configuration: configuration, delegate: StreamErrorDelegate())
             let output = FrameOutput(streaming: streaming)
+            let encoder = h264 ? H264Output(width: configuration.width, height: configuration.height) : nil
+            if let encoder { try stream.addStreamOutput(encoder, type: .screen, sampleHandlerQueue: DispatchQueue(label: "ao.encode")) }
+            if h264 {
+                try await stream.startCapture()
+                _ = try await withCheckedThrowingContinuation { (_: CheckedContinuation<Void, Error>) in }
+                return
+            }
             try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: DispatchQueue(label: "ao.capture"))
             try await stream.startCapture()
             if streaming {
@@ -126,4 +135,67 @@ final class FrameOutput: NSObject, SCStreamOutput {
         out.append(png)
         FileHandle.standardOutput.write(out)
     }
+}
+
+/// Encodes the IOSurface-backed CVPixelBuffer delivered by ScreenCaptureKit
+/// directly with VideoToolbox. The output is one Annex-B access unit per
+/// length-prefixed record: [u32 payload][u32 width][u32 height][bytes].
+final class H264Output: NSObject, SCStreamOutput {
+    private let width: Int
+    private let height: Int
+    private var session: VTCompressionSession?
+    private let lock = NSLock()
+
+    init(width: Int, height: Int) {
+        self.width = width
+        self.height = height
+        super.init()
+        VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height), codecType: kCMVideoCodecType_H264, encoderSpecification: nil, imageBufferAttributes: nil, compressedDataAllocator: nil, outputCallback: h264Callback, refcon: Unmanaged.passUnretained(self).toOpaque(), compressionSessionOut: &session)
+        if let session {
+            VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+            VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+            VTCompressionSessionPrepareToEncodeFrames(session)
+        }
+    }
+
+    deinit { if let session { VTCompressionSessionInvalidate(session) } }
+
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer), let session else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        VTCompressionSessionEncodeFrame(session, imageBuffer: buffer, presentationTimeStamp: pts, duration: .invalid, frameProperties: nil, sourceFrameRefcon: nil, infoFlagsOut: nil)
+    }
+
+    fileprivate func write(_ sample: CMSampleBuffer) {
+        guard let block = CMSampleBufferGetDataBuffer(sample) else { return }
+        var length = 0
+        var pointer: UnsafeMutablePointer<Int8>?
+        guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer) == noErr, let pointer else { return }
+        var bytes = Data()
+        var offset = 0
+        while offset + 4 <= length {
+            let nRaw = pointer.advanced(by: offset).withMemoryRebound(to: UInt32.self, capacity: 1) { $0.pointee }
+            let n = Int(UInt32(bigEndian: nRaw))
+            if n <= 0 || offset + 4 + n > length { return }
+            bytes.append(contentsOf: [0, 0, 0, 1])
+            bytes.append(Data(bytes: pointer.advanced(by: offset + 4), count: n))
+            offset += 4 + n
+        }
+        guard !bytes.isEmpty else { return }
+        var header = Data()
+        var payloadLength = UInt32(bytes.count).bigEndian
+        var frameWidth = UInt32(width).bigEndian
+        var frameHeight = UInt32(height).bigEndian
+        withUnsafeBytes(of: &payloadLength) { header.append(contentsOf: $0) }
+        withUnsafeBytes(of: &frameWidth) { header.append(contentsOf: $0) }
+        withUnsafeBytes(of: &frameHeight) { header.append(contentsOf: $0) }
+        lock.lock(); defer { lock.unlock() }
+        FileHandle.standardOutput.write(header)
+        FileHandle.standardOutput.write(bytes)
+    }
+}
+
+private func h264Callback(_ outputCallbackRefCon: UnsafeMutableRawPointer?, _ sourceFrameRefCon: UnsafeMutableRawPointer?, _ status: OSStatus, _ infoFlags: VTEncodeInfoFlags, _ sampleBuffer: CMSampleBuffer?) {
+    guard status == noErr, let sampleBuffer, let outputCallbackRefCon else { return }
+    Unmanaged<H264Output>.fromOpaque(outputCallbackRefCon).takeUnretainedValue().write(sampleBuffer)
 }

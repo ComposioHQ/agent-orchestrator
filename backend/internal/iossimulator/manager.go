@@ -52,6 +52,16 @@ type Manager struct {
 	windowBounds     func() (windowBounds, error)
 	post             func(Input) error
 	postPtr          func(action string, x, y, x2, y2 float64) error
+	transport        InputTransport
+}
+
+// SetInputTransport installs direct simulator HID injection for this manager.
+// It is deliberately injectable so CI can use a fake and future Xcode HID
+// implementations do not leak into the HTTP or renderer layers.
+func (m *Manager) SetInputTransport(transport InputTransport) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.transport = transport
 }
 
 // SessionRegistry keeps simulator ownership explicit. The registry does not
@@ -195,7 +205,7 @@ func NewWithRunner(run CommandRunner) *Manager {
 	}
 	return &Manager{
 		run:          run,
-		frames:       NewFrameSource(captureHelperPath()),
+		frames:       NewH264FrameSource(captureHelperPath()),
 		windowBounds: simulatorWindowBounds,
 		post:         defaultPostInput,
 		postPtr:      defaultPostPointer,

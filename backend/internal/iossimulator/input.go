@@ -67,6 +67,9 @@ func (m *Manager) Input(input Input) error {
 	if state != "Booted" {
 		return fmt.Errorf("iOS Simulator is not booted")
 	}
+	if m.transport != nil {
+		return m.transport.Send(input)
+	}
 	switch input.Action {
 	case "tap", "swipe":
 		return m.postPointer(input)

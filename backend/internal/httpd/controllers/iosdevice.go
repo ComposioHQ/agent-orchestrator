@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -177,6 +178,16 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "stream ended") }()
+	// The first message is intentionally JSON and all H.264 frames after it
+	// are binary. This lets WebCodecs initialize once while retaining the PNG
+	// JSON fallback for older helpers.
+	status := m.Status()
+	if err := wsjson.Write(context.Background(), conn, map[string]any{
+		"type": "hello", "sessionId": r.URL.Query().Get("sessionId"), "udid": status.DeviceID,
+		"width": status.ScreenWidth, "height": status.ScreenHeight, "scale": 1,
+	}); err != nil {
+		return
+	}
 
 	frames, unsubscribe := m.Frames().Subscribe()
 	defer unsubscribe()
@@ -191,6 +202,17 @@ func (c *IOSDeviceController) Stream(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				_ = wsjson.Write(context.Background(), conn, map[string]string{"error": "capture stopped"})
 				return
+			}
+			if frame.Codec == "h264" {
+				// Binary packet: u32 width, u32 height, Annex-B access unit.
+				packet := make([]byte, 8+len(frame.Data))
+				binary.BigEndian.PutUint32(packet[:4], uint32(frame.Width))
+				binary.BigEndian.PutUint32(packet[4:8], uint32(frame.Height))
+				copy(packet[8:], frame.Data)
+				if err := conn.Write(context.Background(), websocket.MessageBinary, packet); err != nil {
+					return
+				}
+				continue
 			}
 			if err := wsjson.Write(context.Background(), conn, SimulatorScreenshotResponse{Data: base64.StdEncoding.EncodeToString(frame.Data), MimeType: "image/png", Width: frame.Width, Height: frame.Height}); err != nil {
 				return

@@ -26,6 +26,7 @@ type Frame struct {
 	Data   []byte
 	Width  int
 	Height int
+	Codec  string
 }
 
 // liveSource is the per-run subscriber set owned by one supervisor loop. The
@@ -50,6 +51,7 @@ type FrameSource struct {
 	// baseDelay/maxDelay bound the exponential restart backoff.
 	baseDelay time.Duration
 	maxDelay  time.Duration
+	codec     string
 	// live is non-nil while a supervisor loop is running.
 	live *liveSource
 	// width/height are the most recently captured framebuffer dimensions.
@@ -66,7 +68,19 @@ func NewFrameSource(helper string) *FrameSource {
 		spawn:     spawnCaptureHelper,
 		baseDelay: 250 * time.Millisecond,
 		maxDelay:  4 * time.Second,
+		codec:     "png",
 	}
+}
+
+// NewH264FrameSource selects the native VideoToolbox/Annex-B helper. The PNG
+// constructor remains available as a deterministic fallback for CI and older
+// installations.
+func NewH264FrameSource(helper string) *FrameSource {
+	source := NewFrameSource(helper)
+	if os.Getenv("AO_IOS_CAPTURE_CODEC") != "png" {
+		source.codec = "h264"
+	}
+	return source
 }
 
 // captureHelperPath resolves the ao-ios-capture binary: $AO_IOS_CAPTURE_HELPER
@@ -76,6 +90,9 @@ func captureHelperPath() string {
 		return helper
 	}
 	if executable, err := os.Executable(); err == nil {
+		if helper := filepath.Join(filepath.Dir(executable), "ao-sim-helper.app", "Contents", "MacOS", "ao-sim-helper"); fileExists(helper) {
+			return helper
+		}
 		if helper := filepath.Join(filepath.Dir(executable), "ao-ios-capture"); fileExists(helper) {
 			return helper
 		}
@@ -92,7 +109,11 @@ func fileExists(path string) bool {
 // plus a cleanup func that waits for exit (CommandContext already killed it on
 // context cancel).
 func spawnCaptureHelper(ctx context.Context, helper string) (io.ReadCloser, func(), error) {
-	cmd := exec.CommandContext(ctx, helper, "--stream") // #nosec G204 -- helper is an explicit local AO configuration.
+	args := []string{"--stream"}
+	if os.Getenv("AO_IOS_CAPTURE_CODEC") != "png" {
+		args = append(args, "--h264")
+	}
+	cmd := exec.CommandContext(ctx, helper, args...) // #nosec G204 -- helper is an explicit local AO configuration.
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, nil, err
@@ -192,6 +213,9 @@ func (s *FrameSource) supervise(ctx context.Context, live *liveSource) {
 // to every subscriber. It returns the first I/O error — the supervisor treats
 // any exit as restartable.
 func (s *FrameSource) readLoop(ctx context.Context, reader io.Reader, live *liveSource) error {
+	if s.codec == "h264" {
+		return s.readH264Loop(ctx, reader, live)
+	}
 	var header [4]byte
 	for {
 		if _, err := io.ReadFull(reader, header[:]); err != nil {
@@ -205,7 +229,7 @@ func (s *FrameSource) readLoop(ctx context.Context, reader io.Reader, live *live
 		if _, err := io.ReadFull(reader, data); err != nil {
 			return err
 		}
-		frame := Frame{Data: data}
+		frame := Frame{Data: data, Codec: "png"}
 		if config, err := png.DecodeConfig(bytes.NewReader(data)); err == nil {
 			frame.Width = config.Width
 			frame.Height = config.Height
@@ -225,6 +249,43 @@ func (s *FrameSource) readLoop(ctx context.Context, reader io.Reader, live *live
 		}
 		s.mu.Unlock()
 
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+}
+
+// readH264Loop consumes uint32 payload length, uint32 width, uint32 height,
+// followed by one Annex-B H.264 access unit. Dimensions are repeated so
+// rotation can be handled without reconnecting the viewer.
+func (s *FrameSource) readH264Loop(ctx context.Context, reader io.Reader, live *liveSource) error {
+	var header [12]byte
+	for {
+		if _, err := io.ReadFull(reader, header[:]); err != nil {
+			return err
+		}
+		size := binary.BigEndian.Uint32(header[:4])
+		width := binary.BigEndian.Uint32(header[4:8])
+		height := binary.BigEndian.Uint32(header[8:12])
+		if size == 0 || size > maxFrameBytes {
+			return fmt.Errorf("implausible h264 frame size %d", size)
+		}
+		data := make([]byte, size)
+		if _, err := io.ReadFull(reader, data); err != nil {
+			return err
+		}
+		frame := Frame{Data: data, Width: int(width), Height: int(height), Codec: "h264"}
+		s.mu.Lock()
+		if frame.Width > 0 && frame.Height > 0 {
+			s.width, s.height = frame.Width, frame.Height
+		}
+		for ch := range live.subscribers {
+			select {
+			case ch <- frame:
+			default:
+			}
+		}
+		s.mu.Unlock()
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

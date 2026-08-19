@@ -8,6 +8,7 @@ import { useSimulatorKeyboard } from "../hooks/useSimulatorKeyboard";
 import { isNearFrameEdge, pointerToFrame, type FramePoint } from "../lib/device-viewport";
 import { isMacPlatform } from "../lib/platform";
 import { Button } from "./ui/button";
+import { SimulatorH264Canvas } from "./SimulatorH264Canvas";
 
 /**
  * The emulator is docked inside the right-side session inspector: it lives in
@@ -34,7 +35,7 @@ export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionI
 	const status = ios.status.data;
 	const booted = status?.state === "Booted";
 	const screenshot = ios.screenshot.data;
-	const frame = ios.streamFrame ?? (screenshot ? { data: screenshot.data, mimeType: screenshot.mimeType, width: screenshot.width, height: screenshot.height } : null);
+	const frame = ios.streamFrame ?? (screenshot ? { data: screenshot.data, mimeType: screenshot.mimeType, codec: "png" as const, width: screenshot.width, height: screenshot.height } : null);
 	const frameWidth = frame?.width ?? status?.screenWidth ?? 0;
 	const frameHeight = frame?.height ?? status?.screenHeight ?? 0;
 	const fps = useFrameFps(frame);
@@ -51,14 +52,14 @@ export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionI
 
 	if (!activeMac) return null;
 
-	const pointerPoint = (event: MouseEvent<HTMLImageElement>): FramePoint | null => {
+	const pointerPoint = (event: MouseEvent<HTMLElement>): FramePoint | null => {
 		const bounds = event.currentTarget.getBoundingClientRect();
 		return pointerToFrame(event.clientX, event.clientY, bounds, frameWidth, frameHeight);
 	};
-	const startPointer = (event: MouseEvent<HTMLImageElement>) => {
+	const startPointer = (event: MouseEvent<HTMLElement>) => {
 		pointerStart.current = pointerPoint(event);
 	};
-	const sendPointer = (event: MouseEvent<HTMLImageElement>) => {
+	const sendPointer = (event: MouseEvent<HTMLElement>) => {
 		const start = pointerStart.current;
 		pointerStart.current = null;
 		if (!start) return; // the gesture began outside the device frame
@@ -122,17 +123,25 @@ export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionI
 			    never reach the simulator (pointerToFrame returns null). */}
 			<div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border border-border bg-background/40" data-testid="emulator-stage">
 				{booted && frame ? (
-					<img
+					{frame.codec === "h264" ? <SimulatorH264Canvas
+						encoded={frame.encoded}
+						width={frameWidth}
+						height={frameHeight}
+						label={t("emulator.title")}
+						onMouseDown={startPointer}
+						onMouseUp={sendPointer}
+						onMouseLeave={() => { pointerStart.current = null; }}
+					/> : <img
 						alt={t("emulator.title")}
 						data-testid="emulator-frame"
 						draggable={false}
 						className="max-h-full max-w-full touch-none rounded-sm select-none object-contain"
 						style={frameWidth > 0 && frameHeight > 0 ? { aspectRatio: `${frameWidth} / ${frameHeight}` } : undefined}
-						src={`data:${frame.mimeType};base64,${frame.data}`}
+						src={frame.data ? `data:${frame.mimeType};base64,${frame.data}` : undefined}
 						onMouseDown={startPointer}
 						onMouseUp={sendPointer}
 						onMouseLeave={() => { pointerStart.current = null; }}
-					/>
+					/>}
 				) : booted ? (
 					<p className="flex items-center gap-1.5 text-caption text-passive">
 						{ios.streamState === "connecting" || ios.streamState === "idle" ? (

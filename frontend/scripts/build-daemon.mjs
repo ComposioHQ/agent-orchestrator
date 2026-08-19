@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -49,8 +49,15 @@ if (result.status !== 0) {
 }
 
 if (process.platform === "darwin") {
-	const helperPath = join(outDir, "ao-ios-capture");
+	// Keep the helper independent from Electron. It is an LSBackgroundOnly app
+	// supervised by the daemon and can later grow the IndigoHID transport
+	// without changing the renderer process.
+	const helperApp = join(outDir, "ao-sim-helper.app");
+	const helperPath = join(helperApp, "Contents", "MacOS", "ao-sim-helper");
+	mkdirSync(dirname(helperPath), { recursive: true });
 	const helper = spawnSync("swiftc", ["-parse-as-library", join(backendRoot, "internal/iossimulator/capturehelper/main.swift"), "-o", helperPath], { stdio: "inherit" });
 	if (helper.error) { console.error(`failed to start ScreenCaptureKit helper build: ${helper.error.message}`); process.exit(1); }
 	if (helper.status !== 0) { console.error("ScreenCaptureKit helper build failed"); process.exit(helper.status ?? 1); }
+	const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>ao-sim-helper</string><key>CFBundleIdentifier</key><string>com.aoagents.sim-helper</string><key>CFBundleName</key><string>AO Simulator Helper</string><key>CFBundlePackageType</key><string>APPL</string><key>LSBackgroundOnly</key><true/></dict></plist>\n`;
+	writeFileSync(join(helperApp, "Contents", "Info.plist"), plist);
 }
