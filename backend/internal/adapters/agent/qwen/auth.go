@@ -150,7 +150,10 @@ func qwenConfiguredEnvNames(value any) []string {
 
 func qwenProjectEnvAuthStatus(extraNames ...string) (ports.AgentAuthStatus, bool, error) {
 	cwd, err := os.Getwd()
-	if err != nil || cwd == "" {
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if cwd == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	for _, path := range []string{filepath.Join(cwd, ".env"), filepath.Join(cwd, ".qwen", ".env")} {

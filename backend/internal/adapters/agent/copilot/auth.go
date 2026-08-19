@@ -76,7 +76,7 @@ func copilotConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	}
 	var config map[string]json.RawMessage
 	if err := json.Unmarshal(data, &config); err != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
+		return ports.AgentAuthStatusUnknown, false, err
 	}
 	for _, key := range []string{"authToken", "accessToken", "token"} {
 		var token string

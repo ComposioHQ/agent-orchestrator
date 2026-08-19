@@ -424,6 +424,9 @@ func TestAuthStatusAuthorizedFromEnv(t *testing.T) {
 
 func TestCopilotClassicPATIsNotAnAuthorizationSignal(t *testing.T) {
 	clearCopilotAuthEnv(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("GH_TOKEN", "ghp_classic_token")
 
 	status, ok, err := copilotLocalAuthStatus(context.Background())
