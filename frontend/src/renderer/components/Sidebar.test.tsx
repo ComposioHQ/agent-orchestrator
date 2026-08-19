@@ -474,7 +474,7 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("lists worker sessions by last activity, newest first", () => {
+	it("lists worker sessions by updated time, newest first", () => {
 		const oldest: WorkspaceSession = {
 			...session,
 			id: "proj-1-old",
@@ -518,11 +518,11 @@ describe("Sidebar", () => {
 
 		const sessionButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-session-row] button[aria-label^="Open "]'));
 		expect(sessionButtons.map((button) => button.getAttribute("aria-label"))).toEqual([
-			"Open created fallback",
 			"Open invalid activity",
 			"Open no activity",
-			"Open new task",
 			"Open old task",
+			"Open new task",
+			"Open created fallback",
 		]);
 	});
 
