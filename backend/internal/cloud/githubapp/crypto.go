@@ -88,4 +88,3 @@ func newAEAD(key []byte) (cipher.AEAD, error) {
 	}
 	return cipher.NewGCM(block)
 }
-

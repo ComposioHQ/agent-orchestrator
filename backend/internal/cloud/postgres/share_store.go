@@ -199,18 +199,26 @@ func (s *Store) UpdateProjectShareGrant(
 			 WHERE id = $1 AND org_id = $2 AND project_id = $3 AND status = 'active'`,
 			grantID, orgID, projectID, input.Role, input.ModeCap, input.SessionID,
 		)
-		if err != nil { return normalizeConstraintError(err) }
-		if tag.RowsAffected() == 0 { return ErrNotFound }
+		if err != nil {
+			return normalizeConstraintError(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
 		updated, err := scanSharedProject(tx.QueryRow(ctx,
 			`SELECT `+sharedProjectColumns+sharedProjectFrom+`
 			 WHERE grant_row.id = $1 AND grant_row.org_id = $2 AND grant_row.project_id = $3`,
 			grantID, orgID, projectID,
 		))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		shared = updated
 		return nil
 	})
-	if err != nil { return domain.SharedProject{}, fmt.Errorf("update project share grant: %w", err) }
+	if err != nil {
+		return domain.SharedProject{}, fmt.Errorf("update project share grant: %w", err)
+	}
 	return shared, nil
 }
 
