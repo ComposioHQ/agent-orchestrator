@@ -1237,5 +1237,11 @@
 	"survey.back": "Atrás",
 	"survey.skip": "Omitir",
 	"survey.continue": "Continuar",
-	"survey.finish": "Finalizar"
+	"survey.finish": "Finalizar",
+	"survey.inviteTitle": "Ayuda a dar forma a AO",
+	"survey.inviteSubtitle": "Unas preguntas rápidas",
+	"survey.inviteCta": "Responder encuesta",
+	"survey.inviteDismiss": "Descartar invitación a la encuesta",
+	"survey.remindLater": "Recordármelo más tarde",
+	"survey.dontShowAgain": "No volver a mostrar"
 }

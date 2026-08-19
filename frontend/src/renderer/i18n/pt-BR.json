@@ -1237,5 +1237,11 @@
 	"survey.back": "Voltar",
 	"survey.skip": "Pular",
 	"survey.continue": "Continuar",
-	"survey.finish": "Concluir"
+	"survey.finish": "Concluir",
+	"survey.inviteTitle": "Ajude a moldar o AO",
+	"survey.inviteSubtitle": "Algumas perguntas rápidas",
+	"survey.inviteCta": "Responder pesquisa",
+	"survey.inviteDismiss": "Dispensar convite da pesquisa",
+	"survey.remindLater": "Lembrar mais tarde",
+	"survey.dontShowAgain": "Não mostrar novamente"
 }

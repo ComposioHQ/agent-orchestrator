@@ -1221,5 +1221,11 @@
 	"survey.back": "뒤로",
 	"survey.skip": "건너뛰기",
 	"survey.continue": "계속",
-	"survey.finish": "완료"
+	"survey.finish": "완료",
+	"survey.inviteTitle": "AO 만들기에 참여",
+	"survey.inviteSubtitle": "짧은 질문 몇 개",
+	"survey.inviteCta": "설문 참여",
+	"survey.inviteDismiss": "설문 안내 닫기",
+	"survey.remindLater": "나중에 알림",
+	"survey.dontShowAgain": "다시 표시하지 않음"
 }

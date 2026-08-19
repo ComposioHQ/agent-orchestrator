@@ -1221,5 +1221,11 @@
 	"survey.back": "戻る",
 	"survey.skip": "スキップ",
 	"survey.continue": "次へ",
-	"survey.finish": "完了"
+	"survey.finish": "完了",
+	"survey.inviteTitle": "AO づくりに参加",
+	"survey.inviteSubtitle": "簡単な質問がいくつか",
+	"survey.inviteCta": "アンケートに回答",
+	"survey.inviteDismiss": "アンケートの案内を閉じる",
+	"survey.remindLater": "後で通知",
+	"survey.dontShowAgain": "今後表示しない"
 }

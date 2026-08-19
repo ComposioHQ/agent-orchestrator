@@ -19,9 +19,10 @@ import {
 	Search,
 	Settings,
 	Trash2,
+	X,
 	User,
 } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
@@ -44,6 +45,7 @@ import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { dismissInvite, openSurvey, optOutOfInvite, subscribeSurvey, surveyInviteVisible } from "../lib/survey";
 import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
 	ContextMenu,
@@ -52,6 +54,7 @@ import {
 	ContextMenuSeparator,
 	ContextMenuTrigger,
 } from "./ui/context-menu";
+import { Button } from "./ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -448,6 +451,7 @@ export function Sidebar({
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<SurveyInviteRow tabIndex={isCollapsed ? -1 : 0} updatePending={updateStatus.state === "downloaded"} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("shell.settings")}
@@ -1200,6 +1204,49 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 				className={cn("h-1.5 w-1.5 shrink-0 rounded-full", escalated ? "bg-working" : "bg-passive")}
 			/>
 		</button>
+	);
+}
+
+// SurveyInviteRow invites the user to a short survey. Modeled on the quiet,
+// dismissible feedback cards apps like Linear and GitHub use: a subtle bordered
+// card with fully readable neutral text, where a single accent button is the
+// only coloured element and the clear click target, so the card gets noticed
+// without shouting. It appears only at eligible, randomized moments
+// (surveyInviteVisible), yields to a pending update so only one prompt shows,
+// and the ✕ opens a small menu: remind me later (48h snooze) or don't show
+// again (retired for good).
+function SurveyInviteRow({ tabIndex, updatePending }: { tabIndex: number; updatePending: boolean }) {
+	const { t } = useTranslation();
+	// Subscribe so dismiss / opt-out / complete hide the card immediately, rather
+	// than lingering until some unrelated sidebar re-render.
+	const visible = useSyncExternalStore(subscribeSurvey, surveyInviteVisible, surveyInviteVisible);
+	if (updatePending || !visible) return null;
+	return (
+		<div className="rounded-lg border border-border bg-card p-2.5">
+			<div className="flex items-start justify-between gap-2">
+				<span className="text-control font-medium text-foreground">{t("survey.inviteTitle")}</span>
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<button
+							aria-label={t("survey.inviteDismiss")}
+							className="-mt-0.5 -mr-1 grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-3.5"
+							tabIndex={tabIndex}
+							type="button"
+						>
+							<X aria-hidden="true" />
+						</button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent side="top" align="end" className="min-w-44">
+						<DropdownMenuItem onSelect={() => dismissInvite()}>{t("survey.remindLater")}</DropdownMenuItem>
+						<DropdownMenuItem onSelect={() => optOutOfInvite()}>{t("survey.dontShowAgain")}</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			</div>
+			<p className="mt-0.5 text-caption text-muted-foreground">{t("survey.inviteSubtitle")}</p>
+			<Button className="mt-2 w-full" onClick={() => openSurvey()} size="sm" tabIndex={tabIndex} variant="primary">
+				{t("survey.inviteCta")}
+			</Button>
+		</div>
 	);
 }
 
