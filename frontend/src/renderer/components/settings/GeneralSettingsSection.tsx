@@ -99,6 +99,8 @@ export function GeneralSettingsSection({
 	const soundNotificationsEnabled = useSoundNotificationsStore((state) => state.enabled);
 	const setSoundNotificationsEnabled = useSoundNotificationsStore((state) => state.setEnabled);
 	const soundNotificationsSaving = useSoundNotificationsStore((state) => state.saving);
+	const developerMode = useUiStore((state) => state.developerMode);
+	const setDeveloperMode = useUiStore((state) => state.setDeveloperMode);
 
 	const themeOptions = [
 		{ value: "light", label: t("settings.theme.light") },
@@ -163,6 +165,13 @@ export function GeneralSettingsSection({
 					onCheckedChange={(next) => {
 						void setSoundNotificationsEnabled(next);
 					}}
+				/>
+			</SettingsRow>
+			<SettingsRow label={t("settings.developerMode")}>
+				<Switch
+					aria-label={t("settings.developerMode")}
+					checked={developerMode}
+					onCheckedChange={setDeveloperMode}
 				/>
 			</SettingsRow>
 			<SettingsLinkRow label={t("settings.connectMobile")} onClick={onConnectMobile} />

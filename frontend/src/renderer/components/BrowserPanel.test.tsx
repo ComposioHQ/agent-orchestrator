@@ -161,6 +161,14 @@ describe("BrowserPanel", () => {
 		hookState.openDevTools.mockReset();
 		hookState.closeDevTools.mockReset();
 		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1" };
+		hookState.navState = {
+			viewId: "42:sess-1",
+			url: "",
+			title: "",
+			canGoBack: false,
+			canGoForward: false,
+			isLoading: false,
+		};
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -309,19 +317,41 @@ describe("BrowserPanel", () => {
 	});
 
 	it("opens DevTools from a direct toolbar control", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
 		const { rerender } = render(
 			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
 		);
 		const toolbarButtonCount = screen.getAllByRole("button").length;
 
-		await userEvent.click(screen.getByRole("button", { name: "Open DevTools" }));
+		const openButton = screen.getByRole("button", { name: "Open DevTools" });
+		expect(openButton).toHaveAttribute("aria-pressed", "false");
+		await userEvent.click(openButton);
 		expect(hookState.openDevTools).toHaveBeenCalledOnce();
 
 		hookState.devtoolsState = { viewId: "42:sess-1", open: true, activeTabId: "t1" };
 		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 		expect(screen.getAllByRole("button")).toHaveLength(toolbarButtonCount);
-		await userEvent.click(screen.getByRole("button", { name: "Close DevTools" }));
+		const closeButton = screen.getByRole("button", { name: "Close DevTools" });
+		expect(closeButton).toHaveAttribute("aria-pressed", "true");
+		expect(closeButton).toHaveClass(
+			"bg-accent-strong",
+			"text-accent-foreground",
+			"hover:bg-accent-strong",
+			"dark:hover:bg-accent-strong",
+		);
+		await userEvent.click(closeButton);
 		expect(hookState.closeDevTools).toHaveBeenCalledOnce();
+	});
+
+	it("disables DevTools until the active tab has a page", () => {
+		const { rerender } = render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
+		);
+		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeDisabled();
+
+		hookState.navState = { ...hookState.navState, url: "http://localhost:3000/" };
+		rerender(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.getByRole("button", { name: "Open DevTools" })).toBeEnabled();
 	});
 
 	it("marks blank native panels as opaque and loaded panels as live", () => {

@@ -512,7 +512,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			options,
 			entry,
 			() => entries.get(session.viewId)?.activeTabId === entry.tabId,
-			() => applySessionBounds(session, entry),
+			() => {
+				if (session.devtools && isBlankBrowserEntry(entry)) destroyDevTools(session);
+				applySessionBounds(session, entry);
+			},
 			() => pushTabsState(options, session),
 		);
 		wireFaviconEvents(view.webContents, entry, () => pushTabsState(options, session));
@@ -661,6 +664,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			applyBrowserViewBounds(previous.view, OFFSCREEN_BOUNDS, false);
 		}
 		session.activeTabId = tabId;
+		if (session.devtools && isBlankBrowserEntry(next)) destroyDevTools(session);
 		applySessionBounds(session, next);
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
@@ -774,6 +778,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session: BrowserSessionEntry,
 	): Promise<BrowserDevToolsState> => {
 		const entry = activeEntry(session);
+		if (isBlankBrowserEntry(entry)) {
+			if (session.devtools) destroyDevTools(session);
+			return pushDevToolsState(session);
+		}
 		if (!entry.view.webContents.openDevTools) {
 			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
 		}
@@ -935,6 +943,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser target is unavailable");
 		const entry = activeEntry(session);
 		cancelAnnotation(options, entry, "navigation");
+		if (session.devtools) destroyDevTools(session);
 		session.visible = false;
 		session.bounds = OFFSCREEN_BOUNDS;
 		applySessionBounds(session, entry);
@@ -1172,8 +1181,30 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:openTab", async (event, input: BrowserOpenTabInput) => {
 		const session = entries.get(input.viewId);
 		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
-		await openTab(session, input.url, true);
-		return listTabs(session);
+		let url = input.url;
+		if (url) {
+			const normalized = normalizeBrowserURL(url);
+			if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
+				throw browserError("NAVIGATION_FAILED", "Unsupported browser URL");
+			}
+			url = normalized.href;
+		}
+		if (!options.agentBrowserRuntime) {
+			await openTab(session, url, true);
+			return listTabs(session);
+		}
+		return queueNativeOperation(session, async () => {
+			// Let agent-browser create UI tabs too so its stable tab registry and
+			// AO's WebContentsView IDs stay aligned for later select/close commands.
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-new",
+				{ url },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = session.activeTabId;
+			return listTabs(session);
+		});
 	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
@@ -1459,6 +1490,11 @@ function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	const entry = session.tabs.get(session.activeTabId);
 	if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
 	return entry;
+}
+
+function isBlankBrowserEntry(entry: BrowserEntry): boolean {
+	const url = entry.view.webContents.getURL();
+	return !url || url === "about:blank";
 }
 
 function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {

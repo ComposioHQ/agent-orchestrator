@@ -1,14 +1,6 @@
 <div align="center">
   <img src="assets/ao-logo.svg" alt="Agent Orchestrator" width="144" height="144" />
 
-  <br />
-
-  <a href="https://www.producthunt.com/products/agent-orchestrator?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-agent-orchestrator" target="_blank" rel="noopener noreferrer">
-    <img alt="Agent Orchestrator - Run a fleet of coding agents. Ship like a team. | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1215599&amp;theme=light&amp;t=1786778713789" />
-  </a>
-
-  AO is live on Product Hunt today. If it is useful to you, an upvote or a short piece of feedback would mean a lot.
-
 ### Agent Orchestrator
 
 #### Plan, run, and supervise coding agents from one place.

@@ -269,7 +269,10 @@ export function BrowserPanelView({
 		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
 	}, []);
 
-	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
+	// Docked DevTools belongs to the native page view, which is intentionally
+	// hidden while the active target is blank. Keep close available for any
+	// in-flight state update, but do not offer an open action with no page.
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId) && Boolean(navState.url || devtoolsState.open);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -458,7 +461,11 @@ export function BrowserPanelView({
 				) : null}
 				<Button
 					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
-					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
+					aria-pressed={devtoolsState.open}
+					className={cn(
+						devtoolsState.open &&
+							"bg-accent-strong text-accent-foreground hover:bg-accent-strong dark:hover:bg-accent-strong",
+					)}
 					disabled={!canUseDevTools}
 					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
 					size="icon-sm"

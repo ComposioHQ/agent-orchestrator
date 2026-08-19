@@ -260,6 +260,7 @@ type PR struct {
 	LastNudgeSignature       string
 	StateChangedAt           sql.NullTime
 	AutoInjectCI             bool
+	ProviderID               string
 }
 
 type PRCheck struct {
@@ -311,6 +312,11 @@ type PRReviewThread struct {
 	IsBot        int64
 	SemanticHash string
 	UpdatedAt    time.Time
+}
+
+type PRURLAlias struct {
+	AliasURL     string
+	CanonicalURL string
 }
 
 type Project struct {
@@ -394,6 +400,7 @@ type Session struct {
 	NativeTranscriptPath      string
 	AutoInjectCI              bool
 	AutoReviewEnabled         bool
+	AgentSessionIDLaunchID    string
 }
 
 type SessionCleanupFact struct {
@@ -420,6 +427,7 @@ type SessionInterfaceTransition struct {
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	CompletedAt          sql.NullTime
+	NoticeAcknowledgedAt sql.NullTime
 }
 
 type SessionInterfaceTransitionMessage struct {
@@ -439,6 +447,7 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+	BaseRef      string
 }
 
 type ShellTerminal struct {

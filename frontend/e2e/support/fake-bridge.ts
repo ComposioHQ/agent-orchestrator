@@ -83,7 +83,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onFontSizeShortcut: () => () => undefined,
 				},
 				window: {
-					setOverlay: async () => undefined,
+					isMaximized: async () => false,
+					onMaximized: () => () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
@@ -515,7 +516,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onFontSizeShortcut: () => () => undefined,
 				},
 				window: {
-					setOverlay: async () => undefined,
+					isMaximized: async () => false,
+					onMaximized: () => () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},

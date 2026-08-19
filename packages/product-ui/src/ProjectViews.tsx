@@ -677,7 +677,7 @@ export function ProjectWorkflowSettingsView({
 					label={labels.defaultBranch}
 					id="defaultBranch"
 					value={branch}
-					placeholder="main"
+					placeholder="auto"
 					onChange={onBranchChange}
 				/>
 				<ProjectSettingsInputRow

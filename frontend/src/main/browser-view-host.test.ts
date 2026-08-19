@@ -214,6 +214,8 @@ function setupTabHost() {
 			id: number;
 			getURL: () => string;
 			loadURL: ReturnType<typeof vi.fn>;
+			openDevTools: ReturnType<typeof vi.fn>;
+			closeDevTools: ReturnType<typeof vi.fn>;
 			openWindow: (url: string) => void;
 			close: ReturnType<typeof vi.fn>;
 			};
@@ -273,6 +275,8 @@ function setupTabHost() {
 			},
 			stop: () => undefined,
 			close: vi.fn(),
+			openDevTools: vi.fn(),
+			closeDevTools: vi.fn(),
 			openWindow: (url: string) => {
 				const result = windowOpenHandler?.({ url });
 				if (result?.action === "allow") {
@@ -408,10 +412,22 @@ describe("native Chromium DevTools host", () => {
 		expect(openDevTools).toHaveBeenLastCalledWith({ mode: "undocked", activate: true });
 	});
 
+	it("does not open DevTools for a blank browser target", async () => {
+		const { invoke, openDevTools } = setupHost();
+		const nav = await invoke("browser:ensure", "sess-1");
+		const viewId = (nav as BrowserNavState).viewId;
+
+		const state = await invoke("browser:devtools", { viewId, operation: "open" });
+
+		expect(state).toMatchObject({ open: false, placement: "right" });
+		expect(openDevTools).not.toHaveBeenCalled();
+	});
+
 	it("reflects a manual native DevTools close in the browser toolbar state", async () => {
 		const { invoke, sent, webContentsListeners } = setupHost();
 		const nav = await invoke("browser:ensure", "sess-1");
 		const viewId = (nav as BrowserNavState).viewId;
+		await invoke("browser:navigate", { viewId, url: "http://localhost:3000/" });
 
 		await invoke("browser:devtools", { viewId, operation: "open" });
 		expect(sent.filter((entry) => entry.channel === "browser:devtoolsState").at(-1)?.payload).toMatchObject({
@@ -435,6 +451,32 @@ describe("native Chromium DevTools host", () => {
 			viewId,
 			open: false,
 		});
+	});
+
+	it("closes DevTools when the active page is cleared", async () => {
+		const { closeDevTools, invoke } = setupHost();
+		const nav = await invoke("browser:ensure", "sess-1");
+		const viewId = (nav as BrowserNavState).viewId;
+		await invoke("browser:navigate", { viewId, url: "http://localhost:3000/" });
+		await invoke("browser:devtools", { viewId, operation: "open" });
+
+		await invoke("browser:clear", viewId);
+
+		expect(closeDevTools).toHaveBeenCalledOnce();
+		expect(await invoke("browser:devtools", { viewId, operation: "open" })).toMatchObject({ open: false });
+	});
+
+	it("closes DevTools when switching to a blank tab", async () => {
+		const { invoke, views } = setupTabHost();
+		const nav = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		await invoke("browser:navigate", { viewId: nav.viewId, url: "http://localhost:3000/" });
+		await invoke("browser:devtools", { viewId: nav.viewId, operation: "open" });
+
+		await invoke("browser:openTab", { viewId: nav.viewId });
+
+		expect(views[0].webContents.closeDevTools).toHaveBeenCalledOnce();
+		expect(views[1].webContents.openDevTools).not.toHaveBeenCalled();
+		expect(await invoke("browser:devtools", { viewId: nav.viewId, operation: "open" })).toMatchObject({ open: false });
 	});
 
 });
@@ -696,6 +738,25 @@ describe("agent browser runtime", () => {
 		expect(debuggerSendCommand).toHaveBeenCalledWith("Page.navigate", { url: "http://localhost:4173/" });
 	});
 
+	it("keeps UI-created tabs in the native registry after the daemon has connected", async () => {
+		const { host, invoke, runtime, views } = setupTabHost();
+		await host.execute("sess-1", "snapshot");
+		const state = (await invoke("browser:ensure", "sess-1")) as { viewId: string };
+
+		for (let index = 0; index < 6; index += 1) {
+			await invoke("browser:openTab", { viewId: state.viewId });
+		}
+
+		const nativeNewTabCalls = vi
+			.mocked(runtime.runAction)
+			.mock.calls.filter(([, action]) => action === "tab-new");
+		expect(nativeNewTabCalls).toHaveLength(6);
+		expect(views).toHaveLength(7);
+
+		await invoke("browser:closeTab", { viewId: state.viewId, tabId: "t7" });
+
+		expect(views[6].webContents.close).toHaveBeenCalledTimes(1);
+	});
 
 	it("keeps stable logical tab IDs, separate targets, and the selected tab active", async () => {
 		const { emit, host, invoke, views } = setupTabHost();

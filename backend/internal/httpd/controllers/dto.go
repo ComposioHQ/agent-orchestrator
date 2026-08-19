@@ -114,6 +114,12 @@ type AgentSwitchIDParam struct {
 	SwitchID string `path:"switchId" description:"Durable agent-switch identifier."`
 }
 
+// SessionInterfaceTransitionIDParam is the {transitionId} path parameter for a
+// durable interface handoff.
+type SessionInterfaceTransitionIDParam struct {
+	TransitionID string `path:"transitionId" description:"Durable interface-transition identifier."`
+}
+
 // ListSessionsQuery is the query string accepted by GET /api/v1/sessions.
 type ListSessionsQuery struct {
 	Project          string `query:"project,omitempty" description:"Project id filter."`
@@ -497,17 +503,18 @@ type StartSessionInterfaceTransitionRequest struct {
 // provider-native conversation id is intentionally not exposed: clients need
 // controller state, not an adapter implementation detail.
 type SessionInterfaceTransitionView struct {
-	ID          string                                  `json:"id"`
-	SessionID   domain.SessionID                        `json:"sessionId"`
-	SourceMode  domain.SessionMode                      `json:"sourceMode" enum:"chat,tui"`
-	TargetMode  domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
-	Policy      domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
-	Phase       domain.SessionInterfaceTransitionPhase  `json:"phase" enum:"requested,preflighting,draining,source_stopping,source_stopped,target_starting,activating,completed,failed,cancelled,recovery_required"`
-	ErrorCode   string                                  `json:"errorCode,omitempty"`
-	ErrorDetail string                                  `json:"errorDetail,omitempty"`
-	CreatedAt   time.Time                               `json:"createdAt"`
-	UpdatedAt   time.Time                               `json:"updatedAt"`
-	CompletedAt *time.Time                              `json:"completedAt,omitempty"`
+	ID                   string                                  `json:"id"`
+	SessionID            domain.SessionID                        `json:"sessionId"`
+	SourceMode           domain.SessionMode                      `json:"sourceMode" enum:"chat,tui"`
+	TargetMode           domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
+	Policy               domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
+	Phase                domain.SessionInterfaceTransitionPhase  `json:"phase" enum:"requested,preflighting,draining,source_stopping,source_stopped,target_starting,activating,completed,failed,cancelled,recovery_required"`
+	ErrorCode            string                                  `json:"errorCode,omitempty"`
+	ErrorDetail          string                                  `json:"errorDetail,omitempty"`
+	CreatedAt            time.Time                               `json:"createdAt"`
+	UpdatedAt            time.Time                               `json:"updatedAt"`
+	CompletedAt          *time.Time                              `json:"completedAt,omitempty"`
+	NoticeAcknowledgedAt *time.Time                              `json:"noticeAcknowledgedAt,omitempty"`
 }
 
 // SessionInterfaceTransitionStatusResponse is the body of GET
@@ -531,6 +538,14 @@ type StartSessionInterfaceTransitionResponse struct {
 type CancelSessionInterfaceTransitionResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
+}
+
+// InterfaceTransitionNoticeAckResponse returns the retained transition with
+// its durable notice acknowledgement.
+type InterfaceTransitionNoticeAckResponse struct {
+	OK         bool                           `json:"ok"`
+	SessionID  domain.SessionID               `json:"sessionId"`
+	Transition SessionInterfaceTransitionView `json:"transition"`
 }
 
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
@@ -1821,6 +1836,28 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,kimchi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+}
+
+// ResolveReviewCommentRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/comments/resolve.
+type ResolveReviewCommentRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	CommentURL     string `json:"commentUrl" description:"Provider URL of the unresolved review comment to resolve."`
+}
+
+// ResolveReviewCommentResponse is returned after AO resolves a provider review thread.
+type ResolveReviewCommentResponse struct {
+	OK bool `json:"ok"`
+}
+
+// RequestRereviewRequest is the body of POST /api/v1/sessions/{sessionId}/reviews/rerequest.
+type RequestRereviewRequest struct {
+	PullRequestURL string `json:"pullRequestUrl,omitempty" description:"Tracked pull request URL. Required when the session has multiple PRs."`
+	ReviewerID     string `json:"reviewerId" description:"Provider login of the reviewer to ask for another review."`
+}
+
+// RequestRereviewResponse is returned after AO asks the SCM provider for another review.
+type RequestRereviewResponse struct {
+	OK bool `json:"ok"`
 }
 
 // MobileDeviceResponse is one row of the desktop's mobile-device roster: the

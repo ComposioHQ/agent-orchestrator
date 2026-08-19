@@ -81,6 +81,7 @@ export function ChatComposer({
 	willQueue,
 	disabled,
 	settings,
+	footerAction,
 	skills = [],
 	filePaths = [],
 	filePathsTruncated,
@@ -102,6 +103,8 @@ export function ChatComposer({
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
 	settings?: ReactNode;
+	/** Optional secondary action rendered with message tools in the lower input row. */
+	footerAction?: ReactNode;
 	/** A send is in flight. */
 	busy?: boolean;
 	/** The agent is mid-turn, so this message is held until the turn ends. */
@@ -228,7 +231,11 @@ export function ChatComposer({
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
-	const canSend = hasDraft && !busy && !disabled && !steerPending;
+	// Attachments cannot be steered: the steer branch delivers text only and refuses
+	// an empty body. A staged file must not light up the send button on its own while
+	// steering is armed, or Enter would silently do nothing.
+	const canSend =
+		(text.trim().length > 0 || (staged && !steering)) && !busy && !disabled && !steerPending;
 	const canStopTurn = Boolean(willQueue && onInterrupt && !disabled && !hasDraft);
 	const draftSeedId = draftSeed?.id;
 	const draftSeedText = draftSeed?.text;
@@ -631,6 +638,14 @@ export function ChatComposer({
 						<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
 					) : null}
 					{settings}
+					{footerAction ? (
+						<>
+							{canAttach || settings ? (
+								<span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />
+							) : null}
+							{footerAction}
+						</>
+					) : null}
 				</div>
 
 				<div
