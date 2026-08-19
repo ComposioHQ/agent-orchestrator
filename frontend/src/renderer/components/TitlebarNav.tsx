@@ -42,12 +42,10 @@ export function TitlebarNav({
   historyLocked = false,
   hasSessionTopbar = false,
   isFullScreen = false,
-  onSidebarPreviewEnter,
 }: {
   historyLocked?: boolean;
   hasSessionTopbar?: boolean;
   isFullScreen?: boolean;
-  onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
   const { t } = useTranslation();
   const { isSidebarOpen, toggleSidebar } = useUiStore();
@@ -92,7 +90,6 @@ export function TitlebarNav({
           isSidebarOpen ? t("shell.collapseSidebar") : t("shell.expandSidebar")
         }
         onClick={toggleSidebar}
-        onPointerEnter={onSidebarPreviewEnter}
         title={
           isSidebarOpen
             ? t("titlebar.collapseSidebarShortcut")
