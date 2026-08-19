@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom/vitest";
 import type { ComponentProps } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	ProjectGeneralSettingsView,
 	ProjectModePickerView,
@@ -25,6 +26,8 @@ const modeLabels = {
 function ExternalLink(props: ComponentProps<"a">) {
 	return <a {...props} />;
 }
+
+afterEach(() => cleanup());
 
 describe("project models", () => {
 	it("validates settings in user-action order", () => {
@@ -99,6 +102,35 @@ describe("project presentation", () => {
 		fireEvent.click(screen.getByRole("button", { name: "Create and start" }));
 		expect(onSubmit).toHaveBeenCalledOnce();
 		expect(screen.getByText("Nested repository")).toBeInTheDocument();
+	});
+
+	it("can hide the normal refresh action while keeping an error retry", () => {
+		const onRetry = vi.fn();
+		render(
+			<ProjectSetupFormView
+				agentControls={{ worker: <span>Worker control</span>, orchestrator: <span>Orchestrator control</span> }}
+				agents={{
+					cacheMessage: "Cached",
+					error: "Could not load agents",
+					loading: false,
+					loadingMessage: "Loading",
+					onRetry,
+					refreshing: false,
+					retryLabel: "Retry",
+				}}
+				canSubmit={false}
+				intakeControl={<span>Intake control</span>}
+				isBusy={false}
+				onCancel={vi.fn()}
+				onSubmit={vi.fn()}
+				submitLabel="Create and start"
+				cancelLabel="Cancel"
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+		expect(onRetry).toHaveBeenCalledOnce();
 	});
 
 	it("renders project identity and workspace repository summaries", () => {

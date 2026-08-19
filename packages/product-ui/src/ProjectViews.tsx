@@ -240,8 +240,9 @@ export function ProjectSetupFormView({
 		error?: string | null;
 		loading: boolean;
 		loadingMessage: string;
-		onRefresh: () => void;
-		refreshLabel: string;
+		onRefresh?: () => void;
+		onRetry?: () => void;
+		refreshLabel?: string;
 		refreshing: boolean;
 		retryLabel: string;
 	};
@@ -274,14 +275,16 @@ export function ProjectSetupFormView({
 
 			<div className="flex items-center justify-between gap-3 text-xs leading-row text-[var(--color-text-agents-sheet-description)]">
 				<span>{agents.cacheMessage}</span>
-				<button
-					type="button"
-					className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-					disabled={agents.refreshing}
-					onClick={agents.onRefresh}
-				>
-					{agents.refreshLabel}
-				</button>
+				{agents.onRefresh && agents.refreshLabel && (
+					<button
+						type="button"
+						className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+						disabled={agents.refreshing}
+						onClick={agents.onRefresh}
+					>
+						{agents.refreshLabel}
+					</button>
+				)}
 			</div>
 
 			{agents.error && (
@@ -290,14 +293,16 @@ export function ProjectSetupFormView({
 					role="alert"
 				>
 					<span>{agents.error}</span>
-					<button
-						type="button"
-						className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-						disabled={agents.refreshing}
-						onClick={agents.onRefresh}
-					>
-						{agents.retryLabel}
-					</button>
+					{(agents.onRetry ?? agents.onRefresh) && (
+						<button
+							type="button"
+							className="shrink-0 rounded text-[var(--color-text-agents-sheet-title)] underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
+							disabled={agents.refreshing}
+							onClick={agents.onRetry ?? agents.onRefresh}
+						>
+							{agents.retryLabel}
+						</button>
+					)}
 				</div>
 			)}
 

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	canSubmitProjectSetup,
 	ProjectSetupFormView,
@@ -9,7 +9,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useState, type ReactNode } from "react";
 import type { components } from "../../api/schema";
-import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import {
 	agentLabelCompare,
@@ -113,10 +113,6 @@ export function CreateProjectAgentSheet({
 		...agentsQueryOptions,
 		enabled: open,
 	});
-	const refreshAgentsMutation = useMutation({
-		mutationFn: refreshAgents,
-		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
-	});
 	const agents = agentsQuery.data;
 	const installedAgents = agents?.installed ?? [];
 	const agentOptions = agents?.authorized ?? [];
@@ -127,11 +123,7 @@ export function CreateProjectAgentSheet({
 			? agentsQuery.error.message
 			: t("createProject.couldNotLoadAgents")
 		: null;
-	const displayError = refreshAgentsMutation.isError
-		? refreshAgentsMutation.error instanceof Error
-			? refreshAgentsMutation.error.message
-			: t("createProject.couldNotRefreshAgents")
-		: agentsError;
+	const displayError = agentsError;
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
@@ -150,6 +142,13 @@ export function CreateProjectAgentSheet({
 		!isBusy &&
 		!isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
+
+	useEffect(() => {
+		if (!open) return;
+		void refreshAgentsIfStale().then((next) => {
+			if (next) queryClient.setQueryData(agentsQueryKey, next);
+		});
+	}, [open, queryClient]);
 
 	useEffect(() => {
 		if (!open) return;
@@ -233,11 +232,8 @@ export function CreateProjectAgentSheet({
 							error: displayError,
 							loading: isLoadingAgents,
 							loadingMessage: t("createProject.loadingAgents"),
-							onRefresh: () => refreshAgentsMutation.mutate(),
-							refreshLabel: refreshAgentsMutation.isPending
-								? t("createProject.refreshing")
-								: t("createProject.refreshAgents"),
-							refreshing: refreshAgentsMutation.isPending,
+							onRetry: () => void agentsQuery.refetch(),
+							refreshing: false,
 							retryLabel: t("createProject.retry"),
 						}}
 						alert={
