@@ -315,6 +315,7 @@ vi.mock("./SessionFilesView", () => ({
 		<button
 			data-navigation-line={navigationTarget?.line}
 			data-navigation-path={navigationTarget?.path}
+			data-navigation-request={navigationTarget?.requestId}
 			type="button"
 			onClick={() => onToggleMaximized?.(!isMaximized)}
 		>
@@ -1298,6 +1299,10 @@ describe("SessionView", () => {
 		const filesView = within(screen.getByTestId("panel-inspector")).getByRole("button", { name: "files rail" });
 		expect(filesView).toHaveAttribute("data-navigation-path", "src/App.tsx");
 		expect(filesView).toHaveAttribute("data-navigation-line", "42");
+		expect(filesView).toHaveAttribute("data-navigation-request", "1");
+
+		fireEvent.click(screen.getByRole("button", { name: "view comment in file" }));
+		expect(filesView).toHaveAttribute("data-navigation-request", "2");
 	});
 
 	it("maximizes files over the whole app window and returns to the rail", () => {
