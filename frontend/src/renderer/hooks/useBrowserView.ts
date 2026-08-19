@@ -530,17 +530,21 @@ export function useBrowserView({
 		async (tabId: string) => {
 			const viewId = viewIdRef.current;
 			if (!viewId || !hasNativeBrowser) return;
-			// Capture the tab's info before it's gone, so a user who closes the
-			// wrong tab (or one the agent had open) can get it back without asking
-			// the agent to reopen it. Only real, distinguishable tabs are worth
-			// keeping — a blank tab has nothing to reopen.
 			const closing = tabsState.tabs.find((tab) => tab.id === tabId);
-			if (closing && !isBlankTabUrl(closing.url)) {
+			const state = await window.ao!.browser.closeTab({ viewId, tabId });
+			if (viewIdRef.current !== state.viewId) return;
+			setTabsState(state);
+			// Only remember it once the main process confirms it's actually gone —
+			// closeTab can silently no-op (the tab stays in state.tabs), and
+			// recording it as "closed" anyway would show it in Recently Closed
+			// while it's still sitting right there in the live tab list. Only real,
+			// distinguishable tabs are worth keeping — a blank tab has nothing to
+			// reopen.
+			const stillOpen = state.tabs.some((tab) => tab.id === tabId);
+			if (closing && !stillOpen && !isBlankTabUrl(closing.url)) {
 				const { id, title, url, favicon } = closing;
 				setClosedTabs((current) => [{ id, title, url, favicon }, ...current.filter((t) => t.id !== id)].slice(0, MAX_CLOSED_TABS));
 			}
-			const state = await window.ao!.browser.closeTab({ viewId, tabId });
-			if (viewIdRef.current === state.viewId) setTabsState(state);
 		},
 		[hasNativeBrowser, tabsState.tabs],
 	);

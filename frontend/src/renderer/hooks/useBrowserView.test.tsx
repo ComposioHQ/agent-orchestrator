@@ -247,6 +247,41 @@ describe("useBrowserView", () => {
 		expect(result.current.closedTabs).toEqual([]);
 	});
 
+	// Regression: closeTab can silently no-op — the underlying native close
+	// fails and the tab stays in session.tabs — and the recently-closed
+	// capture used to run before ever checking the response, so a tab that
+	// visibly failed to close still showed up as "closed" anyway.
+	it("does not remember a tab as closed when the main process reports it is still open", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1"]));
+		act(() =>
+			bridge.emitTabs({
+				viewId: "42:sess-1",
+				activeTabId: "t2",
+				tabs: [
+					{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+					{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+				],
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		);
+
+		bridge.closeTab.mockResolvedValueOnce({
+			viewId: "42:sess-1",
+			activeTabId: "t2",
+			tabs: [
+				{ id: "t1", url: "http://localhost:3000/", title: "First", active: false },
+				{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true },
+			],
+		});
+		await act(() => result.current.closeTab("t2"));
+
+		expect(result.current.closedTabs).toEqual([]);
+		expect(result.current.tabs.map((tab) => tab.id)).toEqual(["t1", "t2"]);
+	});
+
 	it("does not remember a closed blank tab, since there is nothing to reopen", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
@@ -264,6 +299,11 @@ describe("useBrowserView", () => {
 			}),
 		);
 
+		bridge.closeTab.mockResolvedValueOnce({
+			viewId: "42:sess-1",
+			activeTabId: "t2",
+			tabs: [{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true }],
+		});
 		await act(() => result.current.closeTab("t1"));
 		expect(result.current.closedTabs).toEqual([]);
 	});
@@ -290,6 +330,11 @@ describe("useBrowserView", () => {
 			}),
 		);
 
+		bridge.closeTab.mockResolvedValueOnce({
+			viewId: "42:sess-1",
+			activeTabId: "t2",
+			tabs: [{ id: "t2", url: "http://localhost:4173/", title: "Second", active: true }],
+		});
 		await act(() => result.current.closeTab("t1"));
 		expect(result.current.closedTabs).toEqual([]);
 	});
