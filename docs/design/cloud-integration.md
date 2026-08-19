@@ -4,6 +4,8 @@ Status: proposed
 
 Research snapshot: `Untrivial-ai/ao-cloud@41f2f755ca815aca6df3ee310b1e7c79b041e4b0`, inspected 2026-08-18
 
+Prior implementation reviewed: [`agent-orchestrator#3225`](https://github.com/Untrivial-ai/agent-orchestrator/pull/3225) at `19af4ffff1a01d1174a7eef401272d8359ba3929`, inspected 2026-08-19
+
 Decision inputs: multi-tenant control plane, Daytona sandboxes, Google authentication, organizations from day one, PostgreSQL, and AO-held credential custody (locked 2026-07-28)
 
 ## Executive decision
@@ -30,9 +32,27 @@ This supersedes the public/private ownership split described in [`docs/cloud-dev
 
 ## Research method and security note
 
-The cloud repository was cloned into `/tmp` and left outside this worktree. The review traced binaries, handlers, SQL migrations, reconciliation, worker startup, browser/terminal transport, frontend callers, deployment assets, and tests. `go test ./...` passed at the snapshot above.
+The cloud repository was cloned into `/tmp` and left outside this worktree. The review traced binaries, handlers, SQL migrations, reconciliation, worker startup, browser/terminal transport, frontend callers, deployment assets, and tests. `go test ./...` passed at the snapshot above. PR #3225 was inspected from a separate detached `/tmp` worktree, including its 116-file diff, 17 commits, linked design, implementation tests, and final head. Its focused cloud/control-plane/bus packages passed locally; its CLI suite also passed after clearing the current AO worker's inherited `AO_SESSION_ID` and `AO_PROJECT_ID`, which otherwise intentionally change CLI project resolution.
 
 A redacted full-repository `gitleaks detect` scan found no committed secret. A filename/pattern scan found `.env.example` and a synthetic credential-shaped test fixture, but no confirmed credential, private key, token, or populated environment file. Nothing from the scan was copied into this repository. The source is nevertheless security-sensitive: deployment configuration names AWS secret locations and environment-variable contracts, and the database schema contains encrypted provider, GitHub, and repository-capability material. Import history and artifacts only; never import a developer `.env`, generated deployment output, database dump, or local auth store.
+
+### Prior in-repository implementation: PR #3225
+
+PR #3225 is valuable implementation evidence, not the merge base. It put a Daytona-backed, Clerk-authenticated control plane directly into this repository as an earlier alternative to the `ao-cloud` code reviewed here. It proved live Daytona provisioning and four-location agent coordination, while its follow-up commits documented failures that an integration must prevent. It is still an open draft with no review discussion, uses per-session Local/Cloud selection rather than project placement, and predates the locked Google/AO-custody decisions.
+
+| Evidence from PR #3225 | Lesson to carry forward | Integration decision |
+| --- | --- | --- |
+| [`internal/cloud/provider.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/cloud/provider.go), [`daytona.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/cloud/daytona.go), and [`recipes.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/cloud/recipes.go) successfully separated provider operations, pinned images, harness setup, and egress domains. | Provider conformance, immutable worker images, a fake recipe, and per-harness outbound policy are proven useful. | Port its Daytona state/egress/label tests into the merged provider suite. Keep the newer `ao-cloud` reconciler as lifecycle owner and use the supported Daytona SDK rather than copying the old hand-written REST contract. |
+| [`supervisor.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/cloud/supervisor.go) returned `provisioning` early, deduplicated retrying spawns, and recorded a durable fallback card. | Provisioning is an asynchronous command, not an HTTP request lifetime. A temporary sandbox outage must not erase the session from the product. | Keep command idempotency and durable desired/observed state in PostgreSQL. Do not copy the detached goroutine plus process-memory authoritative map or whole-table `Save` in [`pgstore.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/controlplane/pgstore.go). |
+| Live testing found that sandbox-local IDs collide. The fix routes by sandbox ID and rewrites only at the edge in [`locations.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/controlplane/locations.go) and [`bus.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/controlplane/bus.go). Tests also added registration ownership, tenant isolation, scoped-token relationships, and compare-and-delete for stale streams. | A display/session ID is not a globally routable identity. Live location ownership is security state, and reconnect teardown can race replacement. | Introduce a canonical opaque session address and epoch-fenced location lease. Carry forward the collision, hijack, cross-tenant, authorization-relationship, and stale-reconnect tests. |
+| The federated bus in [`busproto`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/busproto/proto.go) and [`busclient`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/busclient/client.go) let a keyless cloud orchestrator delegate child creation and let local/cloud agents address one another. | Agent-to-agent `spawn`, `send`, and `terminate` need a location-independent command path. A cloud worker must never receive the Daytona manager key. | Add durable `SessionCommand` routing and session-scoped worker authority to the control plane. Children inherit their project's placement. Use an outbound client connection only where a cloud command must reach a laptop; never expose the loopback daemon on the network. |
+| [`service/session/service.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/service/session/service.go) routed a send remotely only after a local miss, and [`cli/fleet.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/cli/fleet.go) merged local and remote inventory. | Local-first fallback and graceful cloud unavailability are useful, but separate `fleet` and `session ls` vocabularies leak topology. | Route by canonical address/project placement, not by ambiguous local miss. Extend the canonical session list/send CLI and API to union backends; do not add a parallel fleet product model. |
+| The sandbox ran a full nested daemon and was reached through a signed inbound preview URL in [`supervisor.go`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/backend/internal/cloud/supervisor.go). | Reusing the daemon made the prototype quick, but created nested SQLite/project/session identity, two lifecycle authorities, inbound bearer URLs, and edge ID rewriting. | Run the dedicated outbound-only `ao-worker` from `ao-cloud`. Reuse agent/runtime libraries, not the full local daemon or its unauthenticated app API, inside a sandbox. |
+| Renderer routing spread cloud knowledge across 36 changed renderer files, including [`cloud-sessions.ts`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/frontend/src/renderer/lib/cloud-sessions.ts), [`session-api.ts`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/frontend/src/renderer/lib/session-api.ts), and [`useTerminalSession.ts`](https://github.com/Untrivial-ai/agent-orchestrator/blob/19af4ffff1a01d1174a7eef401272d8359ba3929/frontend/src/renderer/hooks/useTerminalSession.ts). | Even with shared components, renderer-side backend selection becomes a second product architecture and forces cloud branches into every interaction. | Keep the renderer on one loopback facade. The daemon resolves the backend and translates cloud REST/events/terminal protocols. UI sees capabilities and generic connection states, never preview URLs or transport selection. |
+| The prototype passed a model credential through renderer HTTP, wrote model/GitHub credentials into the sandbox home, persisted a daemon bus token file, and used signed preview URLs as share/terminal capabilities. | “Not stored by the control plane” is weaker than AO-held custody: secrets still crossed renderer, request, filesystem, snapshot, and URL boundaries. | Reject these paths. Renderer stays token-free, user model credentials are held/encrypted by AO, worker credentials are short-lived and ephemeral, repository grants are scoped, and no sandbox preview bearer is returned to a device or persisted. |
+| A follow-up disabled Daytona's idle auto-stop after it killed a long-running agent; another added bounded retry/back escape states when a sandbox was unreachable. | Provider idle detection cannot substitute for AO lifecycle, and network failure must be a visible recoverable state. | Disable provider-initiated idle stop. AO alone requests pause after durable checkpoint policy. Preserve generic `connecting`, `unavailable`, retry, and back states without cloud-specific screens. |
+
+PR #3225 therefore strengthens the facade/reconciler/worker design below. It also supplies useful tests and operational cases to salvage. Its nested daemon, direct-preview transport, renderer registry, whole-table PostgreSQL store, Clerk identity, per-session placement toggle, and credential propagation are intentionally not adopted.
 
 ## A. `ao-cloud` codebase map
 
@@ -145,6 +165,7 @@ The cloud code is substantial rather than a prototype: about 29k non-test Go lin
 | Session lifecycle | [`session_manager.Manager.Spawn`](../../backend/internal/session_manager/manager.go) creates a local durable row, local worktree, local agent command, and local runtime. Implementing only `ports.Runtime` for cloud would still perform all four local steps and then ask the control plane to duplicate them. | Route above `session_manager`: a project-scoped session backend composed of lifecycle, query, workspace, terminal, SCM, and event capabilities. The existing manager becomes the local implementation. |
 | Project identity | `ProjectRecord.Path` and many services assume a host checkout. A cloud repository lives only in a sandbox/control-plane grant. | A discriminated `ProjectPlacement` with enforced local/cloud invariants and a `CloudProjectLocator { account_id, org_id, remote_project_id }`. No fake filesystem path. |
 | Session identity | Local session IDs are user-oriented strings; cloud IDs are UUIDs and can arrive from another desktop. | An opaque API session reference plus a local `cloud_session_links` identity map. Store remote IDs/project/org and replay cursor only, never activity/status/PR facts. |
+| Agent command routing | Local CLI/service calls assume the target belongs to the current daemon. A cloud orchestrator is keyless and cannot create a sibling sandbox; guessing “remote” after a local ID miss is ambiguous. | A tenant-scoped `SessionAddress` and durable `SessionCommandRouter` for child spawn/send/terminate. Children inherit project placement; cloud commands are idempotent and epoch-fenced. An optional outbound desktop gateway is required only for explicitly supported cloud-to-local commands. |
 | Terminal over WAN | Main mux expects `ReadWriteCloser + Resize`; cloud tickets provide replay sequences, reset/ready markers, input acknowledgements, worker epochs, and expiring leases. Raw adaptation would lose correctness on reconnect. | A `TerminalBridge` implemented by local PTY attach and cloud ticket/WebSocket proxy. The daemon continues to expose the same `/mux` protocol to xterm and translates cloud protocol v2 internally. |
 | Events | Main has one SQLite CDC stream; cloud has one durable SSE stream per session. N sessions means N WAN streams, and neither feeds the local invalidation stream. | Add an org-level ordered cloud event feed with cursor/filtering. A daemon event federator resumes it, maps remote IDs, and publishes the same invalidation categories to the existing local broadcaster. |
 | Chat versus TUI | Main `SessionMode` means conversation interface; cloud `mode` means permission ceiling. Cloud's current interactive worker produces terminal output, while its old headless path produces partial chat events. | Split `interface_mode` and `permission_mode`. For TUI, proxy the remote agent terminal. For Chat, run the same native chat driver/controller in the worker and persist canonical conversation events; never infer Chat messages from terminal bytes. |
@@ -207,6 +228,14 @@ type ProjectPlacement struct {
     Cloud *CloudProjectLocator
 }
 
+type SessionAddress struct {
+    Placement PlacementKind
+    AccountID  string
+    OrgID      string
+    ProjectID  string
+    SessionID  string
+}
+
 type SessionLifecycle interface {
     List(context.Context, SessionFilter) ([]domain.Session, error)
     Get(context.Context, SessionRef) (domain.Session, error)
@@ -229,13 +258,19 @@ type ProjectBackendResolver interface {
     ResolveProject(context.Context, domain.ProjectID) (ProjectBackend, error)
     ResolveSession(context.Context, SessionRef) (ProjectBackend, error)
 }
+
+type SessionCommandRouter interface {
+    SpawnChild(context.Context, SessionAddress, SpawnRequest) (SpawnResult, error)
+    Send(context.Context, SessionAddress, Message) error
+    Terminate(context.Context, SessionAddress) error
+}
 ```
 
 Interfaces should live with their consumers under `service`, following the repository's existing convention. `sessionbackend/local` delegates to the current project/session/lifecycle/workspace/SCM services without changing behavior. `sessionbackend/cloud` calls the control plane, maps its error envelope/request ID, and converts remote DTOs to the same controller DTOs the renderer already consumes.
 
 The SQLite project migration adds `execution_target` with default `local` and a separate `cloud_project_links` table. A local invariant requires a real path; a cloud invariant requires account, organization, and remote project IDs. A `cloud_session_links` table contains only identity mapping and last event cursor. Cloud status, activity, PRs, terminal output, and workspace content are not mirrored.
 
-The public API can add an optional `executionTarget`/capabilities field without changing component selection. Session IDs returned to the renderer are opaque namespaced references; controllers decode them and never ask UI code to branch on them.
+The public API can add an optional `executionTarget`/capabilities field without changing component selection. Session IDs returned to the renderer are opaque namespaced references; controllers decode them and never ask UI code to branch on them. The routable identity is allocated by the authority that creates the session and is never derived from an inner daemon counter, a display name, or a Daytona sandbox ID.
 
 ### Desktop discovery, authentication, and control-plane access
 
@@ -282,6 +317,14 @@ Add an organization-level ordered event log/feed to avoid one WAN SSE connection
 
 Cloud display status is derived in the control plane from durable activity, termination, runtime/sandbox, and PR facts using `backend/pkg/contract`. The daemon does not re-derive with a different clock/window. Local sessions continue to derive in the local service. Both implementations return the same `SessionView` enum and timestamp semantics.
 
+### Agent commands and topology
+
+Project placement, not a per-spawn toggle, decides where work runs. A cloud orchestrator's child inherits its cloud project and delegates `SpawnChild` to the control plane with an idempotency key; it never provisions Daytona directly or starts a nested local session. A local orchestrator in a local project continues to use the local manager. The desktop can still list and address both through the canonical session API because opaque `SessionAddress` values route to the correct backend.
+
+The control plane persists every mutating cloud command before dispatch and records command id, caller session, target address, expected worker epoch, authorization relationship, attempt, and terminal outcome. A session-scoped worker token can address only itself, its owning orchestrator, or children it owns. Registration is a compare-and-swap lease over `(org, session address, host, epoch)`; an old connection's teardown cannot delete a replacement lease. Unknown targets return not-found and are never treated as permission to create or route by local ID.
+
+Cross-project cloud-to-local agent commands are not required for the first vertical slice. If added later, a signed-in desktop daemon holds one outbound control channel and registers only explicit local session addresses. The control plane never dials the loopback daemon, and local operation remains independent when that channel or cloud auth is absent.
+
 ### Terminal streaming
 
 Keep the renderer's existing [`terminal-mux.ts`](../../frontend/src/renderer/lib/terminal-mux.ts) and xterm components unchanged.
@@ -297,6 +340,8 @@ For a cloud pane, the daemon-side `TerminalBridge`:
 
 The control plane must never rely on sticky load balancing: input/output remain durable in PostgreSQL as they are now. Apply explicit retention limits and backpressure so a disconnected terminal cannot grow without bound. Terminal tickets remain out of URLs in logs and are redacted from request telemetry.
 
+No Daytona preview URL or provider bearer reaches Electron, renderer state, local storage, a share token, or an API response. Initial connection and reattachment use bounded timeouts and expose the existing generic retry/back/unavailable states; the last durable control-plane projection remains visible while the sandbox is temporarily unreachable.
+
 ### Daytona implementation
 
 Implement Daytona as `sandbox.Provider`, not as a second lifecycle engine. The current provider interface already covers create/get/find/start/stop/pause/resume/delete plus optional bootstrap/recreate. Daytona's current Go SDK supports Go 1.25+, lifecycle calls, and pushed state updates with polling fallback ([official Go SDK](https://www.daytona.io/docs/en/go-sdk/)); pin an exact SDK version and still keep AO's periodic reconciliation as the correctness fallback.
@@ -307,10 +352,11 @@ Provider mapping requirements:
 - label every sandbox with AO environment, org, project, session, worker epoch, and release; `FindBySession` must validate all ownership labels;
 - map unknown Daytona states to `provisioning`, never `running`;
 - report `running` to AO only after the worker heartbeat, not merely Daytona readiness;
-- use non-ephemeral/pause-resumable sandboxes for active sessions; set bounded auto-stop/archive policy, but let AO own desired state;
+- use non-ephemeral/pause-resumable sandboxes for active sessions and disable provider-initiated idle stop; the AO idle controller alone changes desired state after checkpoint policy, while a provider auto-delete is only a leak backstop for already-stopped, safely checkpointed sandboxes;
+- derive a default-deny egress policy from the pinned worker/agent manifest, including the control-plane, model, SCM, package, and OS-update endpoints; fail staging conformance when the policy is incomplete rather than silently disabling it;
 - install/bootstrap the worker through Daytona process/file APIs or bake it into the pinned snapshot; repair must rotate the worker epoch/ticket;
 - use AO-held Daytona manager credentials in the control plane only. Create least-privilege child keys if account support allows it; no Daytona API key enters a worker;
-- run the existing provider conformance suite against a fake, Docker, and an opt-in live Daytona project.
+- run the existing provider conformance suite plus the PR #3225 state/auto-stop/egress cases against a fake, Docker, and an opt-in live Daytona project.
 
 Daytona supports snapshots, lifecycle operations, resources, and ephemeral policy in its [sandbox documentation](https://www.daytona.io/docs/sandboxes). Exact pause/archive/delete filesystem guarantees must be verified in live acceptance; do not infer dirty-workspace durability from a successful `Stop` response.
 
@@ -321,6 +367,7 @@ For local sessions, nothing changes: one session owns registered git worktrees a
 For cloud sessions:
 
 - the repository checkout inside the sandbox is the live workspace;
+- session creation names an authorized repository plus immutable base commit/ref; it never sends or reconstructs a host filesystem path, and a missing remote is a validation error unless the project is explicitly a cloud scratch project;
 - GitHub App grants are minted by the control plane and constrained to the exact org/project/repository/session/epoch;
 - tokens use askpass/credential helpers and never appear in clone URLs, argv, git config, logs, or durable events;
 - file/diff APIs execute inside the sandbox through the existing bounded, rooted RPC; symlink/traversal rejection remains mandatory;
@@ -335,6 +382,7 @@ The cloud GitHub service owns cloud PR observation and actions. It should emit t
 
 - Existing SQLite projects migrate to `execution_target=local`; there is no behavior change and no cloud sign-in gate.
 - Linking a cloud project creates only its local locator. Repository and org authorization are revalidated by the control plane.
+- Task/session launch surfaces display the project's placement; they do not offer the per-session Local/Cloud toggle used by PR #3225. This prevents a project from having split SCM/workspace authorities.
 - Changing placement is allowed only when the project has no live sessions. It affects new sessions only and requires an explicit confirmation describing workspace location and credential custody.
 - Existing cloud deployment data stays in its PostgreSQL database. Deploy the merged `ao-cloud` binary against the same schema and keep `/api/cloud/v1` and DNS stable. There is no SQLite/Postgres data copy.
 - Preserve cloud migration history verbatim and apply new compatibility migrations for `permission_mode`, `interface_mode`, Google identities/sessions, key versions, and event feeds.
@@ -345,13 +393,13 @@ The cloud GitHub service owns cloud PR observation and actions. It should emit t
 
 Sizing is engineering effort, not elapsed calendar time. It assumes one engineer familiar with AO, excludes external security/compliance review, and includes focused automated tests. Daytona live-environment access is a dependency.
 
-### Now: merge foundations and prove one TUI vertical slice (8–12 engineer-weeks)
+### Now: merge foundations and prove one TUI vertical slice (10–14 engineer-weeks)
 
 1. Import control-plane, PostgreSQL, reconciliation, worker, Docker provider, and deployment history into the layout above; converge Go versions/dependencies and CI. No production route is enabled yet.
-2. Add `ProjectPlacement`, cloud identity-link migrations, narrow backend interfaces, and a resolver. Wrap the current services as the local backend and prove all existing local tests/API snapshots are unchanged.
+2. Add `ProjectPlacement`, canonical session addresses, cloud identity-link migrations, narrow backend/command interfaces, and a resolver. Wrap the current services as the local backend and prove all existing local tests/API snapshots are unchanged.
 3. Replace WorkOS with Google PKCE/AO sessions, add Electron-main credential brokerage, and keep tokens out of renderer/daemon persistence.
-4. Implement the Daytona provider with conformance tests, pinned worker snapshot, labels, bootstrap repair, pause/resume/delete, quota/backoff, and live staging acceptance.
-5. Add cloud backend mapping for project discovery and TUI session list/get/spawn/send/terminate/restore. Add org event federation and the daemon terminal proxy. Use the existing sidebar, board, session, inspector, and terminal components unchanged.
+4. Implement the Daytona provider with conformance tests, pinned worker snapshot, labels, default-deny egress, provider auto-stop disabled, bootstrap repair, pause/resume/delete, quota/backoff, and live staging acceptance.
+5. Add cloud backend mapping for project discovery and TUI session list/get/spawn/send/terminate/restore, including idempotent child spawn/send through the session command router. Add org event federation and the daemon terminal proxy. Use the existing sidebar, board, session, inspector, and terminal components unchanged.
 6. Add security gates: version negotiation, no-store/redaction tests, RLS tests, credential ephemeral-storage tests, replay-gap tests, and cloud-outage/local-continuity tests.
 
 Exit criterion: one signed desktop build can show a local project and a Google-authenticated cloud project side by side, start one local tmux/conpty session and one Daytona TUI session, reconnect both terminals, send input, observe status, and terminate/restore without renderer code branching on placement.
@@ -361,7 +409,7 @@ Exit criterion: one signed desktop build can show a local project and a Google-a
 - Cloud workspace file/diff/checkpoint/restore semantics, attachments, and sandbox-local browser capability tunnel.
 - Canonical GitHub PR/check/review/comment projections and all inspector actions, including stale-head and exactly-once lifecycle reactions.
 - Native Chat workers using the main chat driver contracts and canonical conversation API; then TUI↔Chat transitions and agent switching with durable cloud epochs.
-- Orchestrator child operations through the main CLI contract, multi-repo workspace support, scratch projects, notifications, usage, pin/rename/project settings, and review terminals.
+- Broader cross-project/cross-location agent commands through the main CLI contract, multi-repo workspace support, scratch projects, notifications, usage, pin/rename/project settings, and review terminals.
 - Remove imported headless worker and NodeOps/CreateOS code after parity coverage is in place.
 
 Exit criterion: every control rendered for a cloud session either performs the same semantic operation as local or is disabled by a backend capability with the same component and an explicit reason. There are no `CloudSession*`, `CloudBoard*`, or placement-specific view components.
@@ -379,6 +427,7 @@ Exit criterion: every control rendered for a cloud session either performs the s
 #### PR 1 — `chore(cloud): import control-plane and worker into the backend module` (4–6 days)
 
 - Move cloud Go packages, binaries, PG migrations, Docker local provider, tests, and deployment assets into this repository with history attribution.
+- Port the provider state/egress, session-ID collision, location ownership, scoped authorization, stale-reconnect, and idempotent-spawn tests from PR #3225 as behavioral specifications; do not copy its nested daemon or UI routing.
 - Remove the pseudo-version `replace`, align Go/dependency versions, namespace cloud internals, and make main CI run unit + non-superuser PostgreSQL tests.
 - Keep all cloud wiring buildable but unreachable from the desktop daemon. Do not import the Next `Cloud*` UI, WorkOS desktop code, NodeOps production provider, or secrets.
 - Add a migration checksum test proving imported PostgreSQL migrations are byte-for-byte stable.
@@ -387,8 +436,8 @@ Review boundary: mechanical ownership/build move only; no project routing or use
 
 #### PR 2 — `feat(backend): route projects through pluggable session backends` (6–8 days)
 
-- Add the SQLite placement/link migrations and discriminated domain types.
-- Introduce the narrow `SessionLifecycle`, workspace, terminal, SCM, and event capability ports plus `ProjectBackendResolver`.
+- Add the SQLite placement/link migrations, discriminated domain types, and canonical opaque `SessionAddress`.
+- Introduce the narrow `SessionLifecycle`, workspace, terminal, SCM, and event capability ports plus `ProjectBackendResolver` and `SessionCommandRouter`.
 - Implement `sessionbackend/local` by delegating to current services; route controllers/services through it.
 - Add contract tests that snapshot all existing local project/session DTOs, errors, lifecycle, terminal, and SCM behavior. Cloud resolution returns a typed `cloud_not_configured` error behind a disabled capability.
 
@@ -398,7 +447,7 @@ Review boundary: architecture seam with zero cloud network calls and zero render
 
 - Replace WorkOS-specific domain/config/auth with Google OIDC plus AO-issued short access/rotating refresh sessions; migrate existing development identities without granting org membership by email domain.
 - Implement Electron-main Google PKCE and private daemon credential brokerage; renderer remains token-free.
-- Add `adapters/sandbox/daytona`, exact SDK pin, label ownership checks, worker snapshot bootstrap, state mapping, pause/resume/delete, quota/backoff, and opt-in live tests.
+- Add `adapters/sandbox/daytona`, exact SDK pin, label ownership checks, worker snapshot bootstrap, state mapping, provider auto-stop disabled, per-image egress policy, pause/resume/delete, quota/backoff, and opt-in live tests.
 - Keep the cloud-project feature flag off until staging acceptance demonstrates a worker heartbeat and credential cleanup after replacement.
 
 Review boundary: locked provider/auth decisions and trust path. The next PR can then add the end-to-end cloud project/session/event/terminal vertical slice without mixing identity or provider uncertainty into UI integration.
@@ -408,9 +457,15 @@ Review boundary: locked provider/auth decisions and trust path. The next PR can 
 The integration is not complete merely because a cloud session can start. The following are architectural release gates:
 
 - no renderer component, route, or hook branches on `local` versus `cloud` to select a different screen;
+- project placement is the only execution-placement decision; session launch cannot override it;
 - no cloud session causes a local worktree, local agent process, or local SCM observer to start;
+- no cloud sandbox runs the full local daemon or exposes its unauthenticated app API; the outbound worker protocol is the only control path;
 - no local session requires cloud authentication or control-plane availability;
+- opaque session addresses remain collision-free when different sandboxes produce the same inner/display session id, and stale location teardown cannot remove a replacement epoch;
+- cloud child spawn/send is authorized, durable, and idempotent across lost responses and worker replacement;
 - a cloud event/terminal reconnect is cursor-safe across control-plane replicas and worker replacement;
+- no sandbox preview URL, model credential, refresh token, or provider token reaches renderer state, renderer `localStorage`, logs, or a share link;
+- Daytona provider idle-stop is disabled; only AO's durable desired-state transition may pause an active sandbox;
 - runtime/provider probe errors never terminate a session;
 - cloud sandbox deletion never proceeds before a verified dirty-workspace checkpoint or a proven-clean workspace;
 - Google refresh tokens remain in protected Electron storage, Daytona credentials remain in the control plane, and coding-agent plaintext does not enter a persistent sandbox layer;
