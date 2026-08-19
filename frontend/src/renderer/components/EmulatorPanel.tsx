@@ -1,9 +1,11 @@
-import { Home, Loader2, Play, RotateCcw, RotateCw, Smartphone, Square } from "lucide-react";
+import { Home, Loader2, Lock, Play, RotateCcw, RotateCw, Smartphone, Square } from "lucide-react";
 import type { MouseEvent } from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useFrameFps } from "../hooks/useFrameFps";
 import { useIOSSimulator } from "../hooks/useIOSSimulator";
-import { pointerToFrame, type FramePoint } from "../lib/device-viewport";
+import { useSimulatorKeyboard } from "../hooks/useSimulatorKeyboard";
+import { isNearFrameEdge, pointerToFrame, type FramePoint } from "../lib/device-viewport";
 import { isMacPlatform } from "../lib/platform";
 import { Button } from "./ui/button";
 
@@ -22,18 +24,31 @@ import { Button } from "./ui/button";
  */
 export function EmulatorPanel({ active }: { active: boolean }) {
 	const { t } = useTranslation();
+	const activeMac = active && isMacPlatform();
 	const [text, setText] = useState("");
+	const [edgeHint, setEdgeHint] = useState(false);
+	const edgeHintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const pointerStart = useRef<FramePoint | null>(null);
-	const ios = useIOSSimulator(active && isMacPlatform());
-	if (!active || !isMacPlatform()) return null;
+	const ios = useIOSSimulator(activeMac);
 	const status = ios.status.data;
 	const booted = status?.state === "Booted";
 	const screenshot = ios.screenshot.data;
 	const frame = ios.streamFrame ?? (screenshot ? { data: screenshot.data, mimeType: screenshot.mimeType, width: screenshot.width, height: screenshot.height } : null);
 	const frameWidth = frame?.width ?? status?.screenWidth ?? 0;
 	const frameHeight = frame?.height ?? status?.screenHeight ?? 0;
+	const fps = useFrameFps(frame);
+	const keyboard = useSimulatorKeyboard({
+		active: activeMac,
+		booted,
+		onInput: (input) => ios.input.mutate(input),
+	});
 	const permissions = ios.permissions.data;
 	const toolchain = ios.toolchain.data;
+
+	// A stale edge-hint timer must not fire after the panel unmounts.
+	useEffect(() => () => clearTimeout(edgeHintTimer.current), []);
+
+	if (!activeMac) return null;
 
 	const pointerPoint = (event: MouseEvent<HTMLImageElement>): FramePoint | null => {
 		const bounds = event.currentTarget.getBoundingClientRect();
@@ -51,12 +66,17 @@ export function EmulatorPanel({ active }: { active: boolean }) {
 		if (Math.hypot(end.x - start.x, end.y - start.y) < 8) {
 			ios.input.mutate({ action: "tap", x: end.x, y: end.y });
 		} else {
+			if (isNearFrameEdge(start, frameWidth, frameHeight)) {
+				setEdgeHint(true);
+				clearTimeout(edgeHintTimer.current);
+				edgeHintTimer.current = setTimeout(() => setEdgeHint(false), 1800);
+			}
 			ios.input.mutate({ action: "swipe", x: start.x, y: start.y, x2: end.x, y2: end.y });
 		}
 	};
 
 	return (
-		<div className="flex h-full min-h-0 flex-col gap-2 p-3 @max-[300px]/inspector:px-2.5" role="tabpanel" aria-label={t("emulator.title")}>
+		<div className="flex h-full min-h-0 flex-col gap-2 p-3 @max-[300px]/inspector:px-2.5" ref={keyboard.containerRef} role="tabpanel" aria-label={t("emulator.title")}>
 			<div className="flex items-center justify-between gap-2">
 				<div className="flex min-w-0 flex-col">
 					<strong className="text-sm-md">{t("emulator.title")}</strong>
@@ -119,11 +139,31 @@ export function EmulatorPanel({ active }: { active: boolean }) {
 				) : (
 					<p className="text-caption text-passive">{ios.start.isPending ? t("emulator.booting") : (status?.error ?? t("emulator.startPrompt"))}</p>
 				)}
+				{/* Laid-over device telemetry and input affordances. All overlays are
+				    pointer-events-none so they never swallow frame interactions. */}
+				{fps > 0 ? (
+					<span data-testid="emulator-fps" className="pointer-events-none absolute right-1.5 top-1.5 rounded bg-foreground/70 px-1.5 py-0.5 font-mono text-2xs text-background">
+						{fps} <span className="lowercase">{t("emulator.fps")}</span>
+					</span>
+				) : null}
+				{keyboard.armed ? (
+					<span data-testid="emulator-keyboard-armed" className="pointer-events-none absolute bottom-1.5 left-1.5 rounded bg-foreground/70 px-1.5 py-0.5 text-2xs text-background">
+						{t("emulator.keyboardArmed")}
+					</span>
+				) : null}
+				{edgeHint ? (
+					<div data-testid="emulator-edge-hint" className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-2">
+						<span className="rounded bg-foreground/70 px-2 py-0.5 text-center text-2xs text-background">{t("emulator.edgeGestureHint")}</span>
+					</div>
+				) : null}
 			</div>
 			{booted ? (
 				<div className="flex flex-wrap items-center gap-1.5">
 					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "home" })} aria-label={t("emulator.home")} title={t("emulator.home")}>
 						<Home aria-hidden="true" />
+					</Button>
+					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "lock" })} aria-label={t("emulator.lock")} title={t("emulator.lock")}>
+						<Lock aria-hidden="true" />
 					</Button>
 					<Button size="sm" type="button" variant="outline" onClick={() => ios.input.mutate({ action: "rotateLeft" })} aria-label={t("emulator.rotateLeft")} title={t("emulator.rotateLeft")}>
 						<RotateCcw aria-hidden="true" />

@@ -8,12 +8,13 @@ vi.mock("../lib/platform", () => ({
 	isMacPlatform: () => true,
 }));
 
-const { inputMutate, startMutate, stopMutate, recheckMutate, pointerToFrame, hookState } = vi.hoisted(() => ({
+const { inputMutate, startMutate, stopMutate, recheckMutate, pointerToFrame, isNearFrameEdge, hookState } = vi.hoisted(() => ({
 	inputMutate: vi.fn(),
 	startMutate: vi.fn(),
 	stopMutate: vi.fn(),
 	recheckMutate: vi.fn(),
 	pointerToFrame: vi.fn(),
+	isNearFrameEdge: vi.fn(),
 	hookState: { current: undefined as unknown },
 }));
 
@@ -23,6 +24,7 @@ vi.mock("../hooks/useIOSSimulator", () => ({
 
 vi.mock("../lib/device-viewport", () => ({
 	pointerToFrame: (...args: Parameters<typeof pointerToFrame>) => pointerToFrame(...args),
+	isNearFrameEdge: (...args: Parameters<typeof isNearFrameEdge>) => isNearFrameEdge(...args),
 }));
 
 const query = <T,>(data: T | undefined, overrides: Record<string, unknown> = {}) => ({
@@ -91,12 +93,14 @@ beforeEach(() => {
 	stopMutate.mockReset();
 	recheckMutate.mockReset();
 	pointerToFrame.mockReset();
+	isNearFrameEdge.mockReset();
 	vi.spyOn(window, "open").mockImplementation(() => null);
 	hookState.current = buildHook();
 });
 
 afterEach(() => {
 	vi.restoreAllMocks();
+	vi.useRealTimers();
 	document.body.innerHTML = "";
 });
 
@@ -271,10 +275,12 @@ describe("EmulatorPanel input", () => {
 		expect(inputMutate).not.toHaveBeenCalled();
 	});
 
-	it("dispatches home and orientation shortcuts", () => {
+	it("dispatches home, lock, and orientation shortcuts", () => {
 		renderPanel(booted);
 		fireEvent.click(screen.getByRole("button", { name: "Home" }));
 		expect(inputMutate).toHaveBeenCalledWith({ action: "home" });
+		fireEvent.click(screen.getByRole("button", { name: "Lock" }));
+		expect(inputMutate).toHaveBeenCalledWith({ action: "lock" });
 		fireEvent.click(screen.getByRole("button", { name: "Rotate Left" }));
 		expect(inputMutate).toHaveBeenCalledWith({ action: "rotateLeft" });
 		fireEvent.click(screen.getByRole("button", { name: "Rotate Right" }));
@@ -313,5 +319,122 @@ describe("EmulatorPanel input", () => {
 		renderPanel(booted);
 		fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 		expect(stopMutate).toHaveBeenCalled();
+	});
+
+	it("shows the live frame-rate badge while frames are arriving", () => {
+		renderPanel(booted);
+		expect(screen.getByTestId("emulator-fps")).toHaveTextContent("1 fps");
+	});
+});
+
+describe("EmulatorPanel edge-band warning", () => {
+	const booted = {
+		status: query({ state: "Booted", name: "iPhone 15", error: null }),
+		streamFrame: { data: "aGVsbG8=", mimeType: "image/png", width: 1179, height: 2556 },
+	};
+
+	it("warns when a swipe begins inside the device edge band", () => {
+		vi.useFakeTimers();
+		pointerToFrame
+			.mockReturnValueOnce({ x: 2, y: 300 })
+			.mockReturnValueOnce({ x: 600, y: 300 });
+		isNearFrameEdge.mockReturnValue(true);
+		renderPanel(booted);
+		const frame = screen.getByTestId("emulator-frame");
+		fireEvent.mouseDown(frame, { clientX: 10, clientY: 100 });
+		fireEvent.mouseUp(frame, { clientX: 200, clientY: 100 });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "swipe", x: 2, y: 300, x2: 600, y2: 300 });
+		expect(screen.getByTestId("emulator-edge-hint")).toBeInTheDocument();
+	});
+
+	it("does not warn for swipes that begin inside the frame", () => {
+		pointerToFrame
+			.mockReturnValueOnce({ x: 200, y: 300 })
+			.mockReturnValueOnce({ x: 600, y: 300 });
+		isNearFrameEdge.mockReturnValue(false);
+		renderPanel(booted);
+		const frame = screen.getByTestId("emulator-frame");
+		fireEvent.mouseDown(frame, { clientX: 10, clientY: 100 });
+		fireEvent.mouseUp(frame, { clientX: 200, clientY: 100 });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "swipe", x: 200, y: 300, x2: 600, y2: 300 });
+		expect(screen.queryByTestId("emulator-edge-hint")).not.toBeInTheDocument();
+	});
+});
+
+describe("EmulatorPanel physical keyboard", () => {
+	const booted = {
+		status: query({ state: "Booted", name: "iPhone 15", error: null }),
+		streamFrame: { data: "aGVsbG8=", mimeType: "image/png", width: 1179, height: 2556 },
+	};
+
+	it("arms on a pointer interaction inside the pane", () => {
+		renderPanel(booted);
+		expect(screen.queryByTestId("emulator-keyboard-armed")).not.toBeInTheDocument();
+		fireEvent.pointerDown(screen.getByTestId("emulator-frame"));
+		expect(screen.getByTestId("emulator-keyboard-armed")).toBeInTheDocument();
+	});
+
+	it("forwards Home with ⌘⇧H and Lock with ⌘L when armed", () => {
+		renderPanel(booted);
+		fireEvent.pointerDown(screen.getByTestId("emulator-frame"));
+		fireEvent.keyDown(window, { key: "H", metaKey: true, shiftKey: true });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "home" });
+		fireEvent.keyDown(window, { key: "l", metaKey: true });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "lock" });
+	});
+
+	it("forwards rotate with ⌘←/⌘→ when armed", () => {
+		renderPanel(booted);
+		fireEvent.pointerDown(screen.getByTestId("emulator-frame"));
+		fireEvent.keyDown(window, { key: "ArrowLeft", metaKey: true });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "rotateLeft" });
+		fireEvent.keyDown(window, { key: "ArrowRight", metaKey: true });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "rotateRight" });
+	});
+
+	it("forwards printable text and control keys while armed", () => {
+		renderPanel(booted);
+		fireEvent.pointerDown(screen.getByTestId("emulator-frame"));
+		fireEvent.keyDown(window, { key: "a" });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "text", text: "a" });
+		fireEvent.keyDown(window, { key: "Enter" });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "key", keyCode: 36 });
+		fireEvent.keyDown(window, { key: "Backspace" });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "key", keyCode: 51 });
+		fireEvent.keyDown(window, { key: " " });
+		expect(inputMutate).toHaveBeenCalledWith({ action: "key", keyCode: 49 });
+	});
+
+	it("does not forward keystrokes when the pane is not armed", () => {
+		renderPanel(booted);
+		fireEvent.keyDown(window, { key: "a" });
+		fireEvent.keyDown(window, { key: "Enter" });
+		expect(inputMutate).not.toHaveBeenCalled();
+	});
+
+	it("disarms on Escape and stops forwarding", () => {
+		renderPanel(booted);
+		fireEvent.pointerDown(screen.getByTestId("emulator-frame"));
+		fireEvent.keyDown(window, { key: "Escape" });
+		expect(screen.queryByTestId("emulator-keyboard-armed")).not.toBeInTheDocument();
+		fireEvent.keyDown(window, { key: "a" });
+		expect(inputMutate).not.toHaveBeenCalled();
+	});
+
+	it("disarms when a pointer interaction happens outside the pane", () => {
+		renderPanel(booted);
+		fireEvent.pointerDown(screen.getByTestId("emulator-frame"));
+		expect(screen.getByTestId("emulator-keyboard-armed")).toBeInTheDocument();
+		fireEvent.pointerDown(document.body);
+		expect(screen.queryByTestId("emulator-keyboard-armed")).not.toBeInTheDocument();
+	});
+
+	it("does not hijack keystrokes aimed at AO's text fields", () => {
+		renderPanel(booted);
+		fireEvent.pointerDown(screen.getByTestId("emulator-frame"));
+		const field = screen.getByRole("textbox", { name: "Simulator text input" });
+		fireEvent.focus(field);
+		fireEvent.keyDown(field, { key: "a" });
+		expect(inputMutate).not.toHaveBeenCalled();
 	});
 });

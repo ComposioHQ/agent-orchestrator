@@ -83,7 +83,6 @@ import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { SidebarEmulator } from "./SidebarEmulator";
 import { isMacPlatform, isWindowsPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
 
@@ -420,11 +419,6 @@ export function Sidebar({
 					</SidebarGroupContent>
 				</SidebarGroup>
 			</SidebarContent>
-
-			{/* Always-available emulator docked above the footer (Claude-style). Only
-			    mounted while the sidebar is expanded so the live stream stays off
-			    when the panel slides off-canvas. */}
-			{isMac && !isCollapsed ? <SidebarEmulator /> : null}
 
 			{/* Footer — Settings opens the global settings page directly.
 			    Its hairline and row height match the board Archive bar. Bottom

@@ -18,14 +18,19 @@ type Input struct {
 }
 
 // defaultPostInput dispatches non-pointer actions to the platform input layer.
+// Text and keys are delivered through Simulator.app, so they are preceded by a
+// (throttled) activation of the app — otherwise the keys would land in
+// whoever is frontmost, not the simulator.
 func defaultPostInput(input Input) error {
 	switch input.Action {
 	case "text":
-		return text(input.Text)
+		return focusBefore(func() error { return text(input.Text) })
 	case "key":
-		return key(input.KeyCode)
+		return focusBefore(func() error { return key(input.KeyCode) })
 	case "home":
 		return home()
+	case "lock":
+		return lock()
 	case "rotateLeft":
 		return rotateLeft()
 	case "rotateRight":
@@ -65,7 +70,7 @@ func (m *Manager) Input(input Input) error {
 	switch input.Action {
 	case "tap", "swipe":
 		return m.postPointer(input)
-	case "text", "key", "home", "rotateLeft", "rotateRight":
+	case "text", "key", "home", "lock", "rotateLeft", "rotateRight":
 		if m.post == nil {
 			return fmt.Errorf("iOS Simulator input is not wired")
 		}

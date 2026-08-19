@@ -48,3 +48,35 @@ export function pointerToFrame(
 		y: (y / deviceRect.height) * frameHeight,
 	};
 }
+
+/**
+ * Edge band from which a drag is treated as a system-gesture risk. On devices
+ * without a physical Home button, swipes that begin inside this margin trigger
+ * Home Indicator / Control Center / Notification Center system gestures instead
+ * of being delivered to the app, so the panel warns the user before sending such
+ * a swipe. The margin is expressed in device framebuffer points.
+ */
+export const DEVICE_EDGE_GESTURE_MARGIN_PT = 4;
+
+/**
+ * Returns true when a framebuffer point lies within the given margin of the
+ * device screen edge — the zone iOS reserves for system gestures. The frame
+ * dimensions are the on-screen framebuffer size (1179x2556 etc.), the same
+ * space `pointerToFrame` produces.
+ */
+export function isNearFrameEdge(
+	point: FramePoint,
+	frameWidth: number,
+	frameHeight: number,
+	marginPt: number = DEVICE_EDGE_GESTURE_MARGIN_PT,
+): boolean {
+	if (frameWidth <= 0 || frameHeight <= 0 || marginPt < 0) {
+		return false;
+	}
+	return (
+		point.x <= marginPt ||
+		point.y <= marginPt ||
+		point.x >= frameWidth - marginPt ||
+		point.y >= frameHeight - marginPt
+	);
+}

@@ -1175,5 +1175,9 @@
 	"emulator.home": "Home",
 	"emulator.rotateLeft": "Rotate Left",
 	"emulator.rotateRight": "Rotate Right",
-	"emulator.backspace": "Backspace"
+	"emulator.backspace": "Backspace",
+	"emulator.lock": "Lock",
+	"emulator.edgeGestureHint": "Swipe from the screen edge may trigger a system gesture instead of a plain drag.",
+	"emulator.keyboardArmed": "Keyboard on — Esc to turn off",
+	"emulator.fps": "fps"
 }

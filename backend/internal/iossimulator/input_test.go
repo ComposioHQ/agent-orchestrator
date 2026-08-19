@@ -113,20 +113,36 @@ func TestInputRequiresBootedSimulator(t *testing.T) {
 
 func TestInputHomeRotateDispatch(t *testing.T) {
 	m, posts := recordingPost(t)
-	for _, action := range []string{"home", "rotateLeft", "rotateRight", "text", "key"} {
+	for _, action := range []string{"home", "rotateLeft", "rotateRight", "lock", "text", "key"} {
 		input := Input{Action: action, Text: "hi", KeyCode: 36}
 		if err := m.Input(input); err != nil {
 			t.Fatalf("%s: %v", action, err)
 		}
 	}
 	got := *posts
-	if len(got) != 5 {
-		t.Fatalf("expected 5 posts, got %d", len(got))
+	if len(got) != 6 {
+		t.Fatalf("expected 6 posts, got %d", len(got))
 	}
-	if got[0].action != "home" || got[1].action != "rotateLeft" || got[2].action != "rotateRight" {
+	if got[0].action != "home" || got[1].action != "rotateLeft" || got[2].action != "rotateRight" || got[3].action != "lock" {
 		t.Fatalf("shortcut dispatch order wrong: %v", got)
 	}
-	if got[3].text != "hi" || got[4].code != 36 {
+	if got[4].text != "hi" || got[5].code != 36 {
+		t.Fatalf("text/key payloads not forwarded: %v", got)
+	}
+}
+
+func TestInputDefaultsToFocusBeforeTextAndKey(t *testing.T) {
+	// The real wiring wraps text/key in focusBefore so keys land in
+	// Simulator.app; the injected post path must not change, but the same
+	// actions must still reach it with their payloads intact.
+	m, posts := recordingPost(t)
+	for _, action := range []string{"text", "key"} {
+		if err := m.Input(Input{Action: action, Text: "hello", KeyCode: 36}); err != nil {
+			t.Fatalf("%s: %v", action, err)
+		}
+	}
+	got := *posts
+	if len(got) != 2 || got[0].text != "hello" || got[1].code != 36 {
 		t.Fatalf("text/key payloads not forwarded: %v", got)
 	}
 }

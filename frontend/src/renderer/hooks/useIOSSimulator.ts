@@ -194,7 +194,7 @@ export function useIOSSimulator(enabled: boolean) {
 				| { action: "tap" | "swipe"; x: number; y: number; x2?: number; y2?: number }
 				| { action: "text"; text: string }
 				| { action: "key"; keyCode: number }
-				| { action: "home" | "rotateLeft" | "rotateRight" },
+				| { action: "home" | "lock" | "rotateLeft" | "rotateRight" },
 		) => {
 			const response = await apiClient.POST("/api/v1/ios-device/input", { body: request });
 			if (response.error) throw new Error(apiErrorMessage(response.error, "Failed to send iOS Simulator input"));

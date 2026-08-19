@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type windowBounds struct{ X, Y, Width, Height float64 }
@@ -22,6 +23,27 @@ func focusSimulator() error {
 		return fmt.Errorf("activate Simulator.app: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// lastFocusTime throttles Simulator.app activation so text/key bursts do not
+// re-front the app (and sleep 150 ms) on every keystroke.
+var lastFocusTime time.Time
+
+// focusBefore activates Simulator.app before running post. Text and keyboard
+// keys are delivered through Simulator.app, so without this they would land in
+// whoever is frontmost. Re-activation is throttled to roughly once per burst;
+// the first activation sleeps briefly because Simulator needs a moment before
+// it will accept posted events.
+func focusBefore(post func() error) error {
+	if time.Since(lastFocusTime) > 2*time.Second {
+		lastFocusTime = time.Now()
+		err := focusSimulator()
+		if err != nil {
+			return err
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return post()
 }
 
 func simulatorWindowBounds() (windowBounds, error) {

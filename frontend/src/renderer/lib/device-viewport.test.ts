@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pointerToFrame } from "./device-viewport";
+import { isNearFrameEdge, pointerToFrame } from "./device-viewport";
 
 const frame = { left: 100, top: 50, width: 400, height: 800 };
 
@@ -23,5 +23,34 @@ describe("pointerToFrame", () => {
 	it("returns null when the frame or rect is degenerate", () => {
 		expect(pointerToFrame(300, 250, frame, 0, 1600)).toBeNull();
 		expect(pointerToFrame(300, 250, { left: 0, top: 0, width: 0, height: 0 }, 200, 1600)).toBeNull();
+	});
+});
+
+describe("isNearFrameEdge", () => {
+	const width = 1179;
+	const height = 2556;
+
+	it("flags points inside the device edge margin", () => {
+		expect(isNearFrameEdge({ x: 0, y: 100 }, width, height)).toBe(true);
+		expect(isNearFrameEdge({ x: 3, y: 100 }, width, height)).toBe(true);
+		expect(isNearFrameEdge({ x: 100, y: 2 }, width, height)).toBe(true);
+		expect(isNearFrameEdge({ x: 1178, y: 500 }, width, height)).toBe(true);
+		expect(isNearFrameEdge({ x: 500, y: 2553 }, width, height)).toBe(true);
+	});
+
+	it("ignores points comfortably inside the frame", () => {
+		expect(isNearFrameEdge({ x: 100, y: 500 }, width, height)).toBe(false);
+		expect(isNearFrameEdge({ x: width / 2, y: height / 2 }, width, height)).toBe(false);
+	});
+
+	it("honors a custom margin in framebuffer points", () => {
+		expect(isNearFrameEdge({ x: 20, y: 500 }, width, height, 24)).toBe(true);
+		expect(isNearFrameEdge({ x: 20, y: 500 }, width, height, 4)).toBe(false);
+	});
+
+	it("returns false for degenerate frames or negative margins", () => {
+		expect(isNearFrameEdge({ x: 0, y: 0 }, 0, 2556)).toBe(false);
+		expect(isNearFrameEdge({ x: 0, y: 0 }, 1179, 0)).toBe(false);
+		expect(isNearFrameEdge({ x: 0, y: 0 }, 1179, 2556, -1)).toBe(false);
 	});
 });

@@ -108,6 +108,7 @@ const (
 	shiftFlag   = 1 << 17 // kCGEventFlagMaskShift
 
 	keyH          = 4
+	keyL          = 37
 	keyLeftArrow  = 123
 	keyRightArrow = 124
 )
@@ -117,8 +118,9 @@ const (
 // The activation is momentary: capture never depends on the window being
 // visible, only these button shortcuts need Simulator active.
 func postSimulatorShortcut(flags int64, code int) error {
-	if err := focusSimulator(); err != nil {
-		return err
+	err := focusSimulator()
+	if err != nil {
+		return fmt.Errorf("focus Simulator: %w", err)
 	}
 	// Simulator needs a moment to become the active application; without the
 	// pause the shortcut lands on whoever was frontmost before we activated it.
@@ -131,6 +133,12 @@ func postSimulatorShortcut(flags int64, code int) error {
 
 func home() error {
 	return postSimulatorShortcut(commandFlag|shiftFlag, keyH)
+}
+
+// lock locks the managed device. Simulator.app maps ⌘L to Device > Lock,
+// delivered as a CG keyboard shortcut to the active application.
+func lock() error {
+	return postSimulatorShortcut(commandFlag, keyL)
 }
 
 func rotateLeft() error {
