@@ -222,6 +222,27 @@ describe("BrowserPanel", () => {
 		expect(input).toHaveValue("http://localhost:4173/");
 	});
 
+	it("keeps the maximized tab rail on the right side of the viewport", () => {
+		window.localStorage.removeItem("ao-browser-tabs-w");
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut session={session} />);
+
+		const viewport = screen.getByTestId("browser-viewport");
+		const rail = screen.getByTestId("browser-tabs-rail");
+		const resizeHandle = screen.getByTestId("browser-tabs-resize-handle");
+		expect(viewport.nextElementSibling).toBe(rail);
+		expect(rail).toHaveClass("border-l");
+		expect(rail).not.toHaveClass("border-r");
+		expect(resizeHandle).toHaveClass("left-0");
+
+		fireEvent.pointerDown(resizeHandle, { clientX: 220 });
+		fireEvent.pointerMove(window, { clientX: 190 });
+		fireEvent.pointerUp(window);
+
+		expect(document.documentElement.style.getPropertyValue("--ao-browser-tabs-w")).toBe("250px");
+		expect(window.localStorage.getItem("ao-browser-tabs-w")).toBe("250");
+		window.localStorage.removeItem("ao-browser-tabs-w");
+	});
+
 	it("threads the session preview URL into the browser view (which drives navigation)", () => {
 		render(
 			<BrowserPanel

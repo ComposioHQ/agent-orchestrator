@@ -18,7 +18,6 @@ import {
 	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
-	type InspectorReviewRun,
 	type InspectorTimelineEvent,
 	type InspectorView,
 } from "@aoagents/product-ui";
@@ -1485,13 +1484,6 @@ function MergedReviewsSection({
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
 	};
-	const sendAgentReviewToWorker = async (run: InspectorReviewRun) => {
-		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
-			params: { path: { sessionId: session.id } },
-			body: { message: formatAgentReviewMessage(run) },
-		});
-		if (error) throw new Error(apiErrorMessage(error, "Unable to send agent review to worker agent"));
-	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
 		const entries = (github?.review?.reviews ?? []).filter(
@@ -1673,7 +1665,6 @@ function MergedReviewsSection({
 			labels={labels}
 			onRequestRereview={requestRereview}
 			onResolveInlineComment={resolveInlineComment}
-			onSendAgentReview={sendAgentReviewToWorker}
 			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
 				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
@@ -1759,25 +1750,6 @@ function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { re
 	if (url) {
 		lines.push("", `Comment URL: ${url}`);
 	}
-	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
-	return lines.join("\n");
-}
-
-function formatAgentReviewMessage(run: InspectorReviewRun): string {
-	const reviewer = sanitizeWorkerMessagePart(run.harness.trim() || "reviewer");
-	const verdict = sanitizeWorkerMessagePart(run.verdict.label.trim() || "Review complete");
-	const body = sanitizeWorkerMessagePart(run.body?.trim() || "No review summary provided.");
-	const url = sanitizeWorkerMessagePart(run.url?.trim() || "");
-	const lines = [
-		"An AO reviewer completed a review of your PR. Address any requested changes, commit the fixes, and push the branch to GitHub.",
-		"",
-		`Reviewer: ${reviewer}`,
-		`Verdict: ${verdict}`,
-		"",
-		"Review:",
-		body,
-	];
-	if (url) lines.push("", `Review URL: ${url}`);
 	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
 	return lines.join("\n");
 }

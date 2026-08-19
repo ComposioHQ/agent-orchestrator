@@ -301,6 +301,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 			{expanded ? (
 				<div
 					className="absolute inset-y-0 left-0 w-1.5 cursor-col-resize touch-none"
+					data-testid="browser-tabs-resize-handle"
 					onDoubleClick={onResizeDoubleClick}
 					onPointerDown={onResizePointerDown}
 				/>
