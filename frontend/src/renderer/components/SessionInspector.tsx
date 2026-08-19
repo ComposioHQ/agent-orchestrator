@@ -212,16 +212,16 @@ export function SessionInspector({
 				browserPoppedOut={browserPoppedOut}
 				browserView={
 					session ? (
-					<BrowserView
-						browserPoppedOut={browserPoppedOut}
-						browserAnnotationQueue={browserAnnotationQueue}
-						browserView={browserView}
-						isActive={isInspectorVisible && !browserPoppedOut}
-						onTogglePopOut={onToggleBrowserPopOut}
-						session={session}
-					/>
-				) : undefined
-					}
+						<BrowserView
+							browserPoppedOut={browserPoppedOut}
+							browserAnnotationQueue={browserAnnotationQueue}
+							browserView={browserView}
+							isActive={isInspectorVisible && !browserPoppedOut}
+							onTogglePopOut={onToggleBrowserPopOut}
+							session={session}
+						/>
+					) : undefined
+				}
 				filesView={session ? <FilesView filesView={filesView} onOpenFiles={onOpenFiles} /> : undefined}
 				headerActions={<span aria-hidden="true" className="session-inspector-actions-spacer" />}
 				isVisible={isInspectorVisible}
