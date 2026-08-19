@@ -37,6 +37,7 @@ import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { Switch } from "./ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -532,21 +533,32 @@ function SettingsBody({
 							</p>
 						)}
 						<SettingsRow label={t("settings.project.autoReviewToggle")}>
-							<Switch
-								aria-label={t("settings.project.autoReviewToggle")}
-								checked={form.autoReview}
-								id="project-auto-review"
-								onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
-								size="sm"
-							/>
+							<div className="flex items-center gap-2">
+								<TooltipProvider delayDuration={0}>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<button
+												type="button"
+												className="inline-flex size-6 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+												aria-label={t("settings.project.autoReviewDescription")}
+											>
+												<Info className="size-icon-sm" aria-hidden="true" />
+											</button>
+										</TooltipTrigger>
+										<TooltipContent className="max-w-72 leading-normal" side="top">
+											{t("settings.project.autoReviewDescription")}
+										</TooltipContent>
+									</Tooltip>
+								</TooltipProvider>
+								<Switch
+									aria-label={t("settings.project.autoReviewToggle")}
+									checked={form.autoReview}
+									id="project-auto-review"
+									onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReview: checked }))}
+									size="sm"
+								/>
+							</div>
 						</SettingsRow>
-						<div
-							className="mx-3 mb-2 -mt-1 flex items-start gap-2 rounded-md bg-settings-menu-selected/50 px-3 py-2 text-xs leading-5 text-settings-muted"
-							role="note"
-						>
-							<Info className="mt-0.5 size-icon-sm shrink-0 text-settings-muted" aria-hidden="true" />
-							<span>{t("settings.project.autoReviewDescription")}</span>
-						</div>
 					</ProjectSettingsSection>
 				)}
 				</>
