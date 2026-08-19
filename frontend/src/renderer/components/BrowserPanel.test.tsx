@@ -30,6 +30,8 @@ const hookState = vi.hoisted(() => ({
 	closeTab: vi.fn(),
 	openTab: vi.fn(),
 	reorderTabs: vi.fn(),
+	closedTabs: [] as { id: string; title: string; url: string; favicon?: string }[],
+	reopenClosedTab: vi.fn(),
 	openDevTools: vi.fn(),
 	closeDevTools: vi.fn(),
 	devtoolsState: { viewId: "42:sess-1", open: false, activeTabId: "t1" },
@@ -69,6 +71,8 @@ vi.mock("../hooks/useBrowserView", () => ({
 			closeTab: hookState.closeTab,
 			openTab: hookState.openTab,
 			reorderTabs: hookState.reorderTabs,
+			closedTabs: hookState.closedTabs,
+			reopenClosedTab: hookState.reopenClosedTab,
 			agentBrowserActive: hookState.agentBrowserActive,
 			agentBrowserActivity: hookState.agentBrowserActivity,
 			devtoolsState: hookState.devtoolsState,
@@ -158,6 +162,8 @@ describe("BrowserPanel", () => {
 		hookState.stop.mockReset();
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
+		hookState.reopenClosedTab.mockReset();
+		hookState.closedTabs = [];
 		hookState.openDevTools.mockReset();
 		hookState.closeDevTools.mockReset();
 		hookState.devtoolsState = { viewId: "42:sess-1", open: false, activeTabId: "t1" };
@@ -438,6 +444,35 @@ describe("BrowserPanel", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Close tab First app" }));
 
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("lets the user reopen a recently closed tab from the hover flyout", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
+		];
+		hookState.closedTabs = [{ id: "t3", url: "http://localhost:5173/", title: "Closed app" }];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		expect(screen.getByText("Recently closed")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Reopen Closed app" }));
+
+		expect(hookState.reopenClosedTab).toHaveBeenCalledWith("t3");
+	});
+
+	it("does not show a recently closed section when nothing has been closed", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+		expect(screen.queryByText("Recently closed")).not.toBeInTheDocument();
 	});
 
 	it("surfaces a popup-created tab notice alongside the rail", () => {

@@ -13,6 +13,15 @@ import { OPEN_BROWSER_OVERLAY_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
 
+export type ClosedBrowserTab = {
+	id: string;
+	title: string;
+	url: string;
+	favicon?: string;
+};
+
+const MAX_CLOSED_TABS = 5;
+
 type UseBrowserViewOptions = {
 	sessionId: string;
 	active: boolean;
@@ -51,8 +60,10 @@ export type BrowserViewModel = {
 	tabNotice: string;
 	selectTab: (tabId: string) => Promise<void>;
 	closeTab: (tabId: string) => Promise<void>;
-	openTab: () => Promise<void>;
+	openTab: (url?: string) => Promise<void>;
 	reorderTabs: (orderedIds: string[]) => void;
+	closedTabs: ClosedBrowserTab[];
+	reopenClosedTab: (tabId: string) => Promise<void>;
 	devtoolsState: BrowserDevToolsState;
 	openDevTools: () => Promise<void>;
 	closeDevTools: () => Promise<void>;
@@ -151,6 +162,7 @@ export function useBrowserView({
 	const [tabOrder, setTabOrder] = useState<string[]>([]);
 	const [devtoolsState, setDevtoolsState] = useState<BrowserDevToolsState>(EMPTY_DEVTOOLS_STATE);
 	const [tabNotice, setTabNotice] = useState("");
+	const [closedTabs, setClosedTabs] = useState<ClosedBrowserTab[]>([]);
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
 	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
 	const [stateSessionId, setStateSessionId] = useState(sessionId);
@@ -280,6 +292,7 @@ export function useBrowserView({
 		setTabOrder([]);
 		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
 		setTabNotice("");
+		setClosedTabs([]);
 		setAgentBrowserActive(false);
 		setAgentBrowserActivity(null);
 		if (tabNoticeTimerRef.current !== null) {
@@ -509,18 +522,40 @@ export function useBrowserView({
 		async (tabId: string) => {
 			const viewId = viewIdRef.current;
 			if (!viewId || !hasNativeBrowser) return;
+			// Capture the tab's info before it's gone, so a user who closes the
+			// wrong tab (or one the agent had open) can get it back without asking
+			// the agent to reopen it. Only real, distinguishable tabs are worth
+			// keeping — a blank tab has nothing to reopen.
+			const closing = tabsState.tabs.find((tab) => tab.id === tabId);
+			if (closing?.url) {
+				const { id, title, url, favicon } = closing;
+				setClosedTabs((current) => [{ id, title, url, favicon }, ...current.filter((t) => t.id !== id)].slice(0, MAX_CLOSED_TABS));
+			}
 			const state = await window.ao!.browser.closeTab({ viewId, tabId });
+			if (viewIdRef.current === state.viewId) setTabsState(state);
+		},
+		[hasNativeBrowser, tabsState.tabs],
+	);
+
+	const openTab = useCallback(
+		async (url?: string) => {
+			const viewId = viewIdRef.current;
+			if (!viewId || !hasNativeBrowser) return;
+			const state = await window.ao!.browser.openTab({ viewId, url });
 			if (viewIdRef.current === state.viewId) setTabsState(state);
 		},
 		[hasNativeBrowser],
 	);
 
-	const openTab = useCallback(async () => {
-		const viewId = viewIdRef.current;
-		if (!viewId || !hasNativeBrowser) return;
-		const state = await window.ao!.browser.openTab({ viewId });
-		if (viewIdRef.current === state.viewId) setTabsState(state);
-	}, [hasNativeBrowser]);
+	const reopenClosedTab = useCallback(
+		async (tabId: string) => {
+			const entry = closedTabs.find((tab) => tab.id === tabId);
+			if (!entry) return;
+			setClosedTabs((current) => current.filter((tab) => tab.id !== tabId));
+			await openTab(entry.url);
+		},
+		[closedTabs, openTab],
+	);
 
 	const runDevtools = useCallback(
 		async (operation: "open" | "close" | "setPlacement", placement?: BrowserDevToolsPlacement) => {
@@ -618,6 +653,7 @@ export function useBrowserView({
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
+		setClosedTabs([]);
 	}, [sendHiddenBounds]);
 
 	// Termination invalidates the complete session-owned browser, including all
@@ -651,6 +687,8 @@ export function useBrowserView({
 		closeTab,
 		openTab,
 		reorderTabs,
+		closedTabs: stateBelongsToSession ? closedTabs : [],
+		reopenClosedTab,
 		devtoolsState: stateBelongsToSession ? devtoolsState : EMPTY_DEVTOOLS_STATE,
 		openDevTools: () => runDevtools("open"),
 		closeDevTools: () => runDevtools("close"),
