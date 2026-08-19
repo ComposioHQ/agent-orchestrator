@@ -1107,6 +1107,7 @@ function InlineCommentRow({
 	const body = comment.body?.trim();
 	const fileLabel = comment.file ? `${comment.file}${comment.line ? `:${comment.line}` : ""}` : labels.commentNumber(1);
 	const preview = body ? body.split("\n")[0] : "";
+	const hasMenuActions = Boolean(onResolve || onView || comment.url);
 	const copy = async (value?: string) => {
 		if (!value) return;
 		try {
@@ -1142,7 +1143,7 @@ function InlineCommentRow({
 						</button>
 					) : null}
 				</span>
-				<span className="relative flex shrink-0 items-start justify-end" onClick={(event) => event.stopPropagation()}>
+				{hasMenuActions ? <span className="relative flex shrink-0 items-start justify-end" onClick={(event) => event.stopPropagation()}>
 					<button aria-expanded={menuOpen} aria-label="Comment actions" className="inline-flex size-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" onClick={() => setMenuOpen((current) => !current)} type="button">
 						<MoreHorizontalIcon className="size-icon-xs" />
 					</button>
@@ -1151,10 +1152,10 @@ function InlineCommentRow({
 							{onResolve ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-60" disabled={resolving} onClick={() => void onResolve()} type="button">{labels.resolveComment}</button> : null}
 							{onView ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => { setMenuOpen(false); onView(); }} type="button">{labels.viewInFile}</button> : null}
 							{comment.url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={comment.url}>Open on GitHub</ExternalLink> : null}
-							<button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => void copy(comment.url)} type="button">Copy comment link</button>
+							{comment.url ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => void copy(comment.url)} type="button">Copy comment link</button> : null}
 						</div>
 					) : null}
-				</span>
+				</span> : null}
 			</div>
 			{resolvedSuccess ? <p className="m-0 text-2xs font-medium text-success">{labels.resolvedReview}</p> : null}
 			{resolveError ? <p className="m-0 text-2xs font-medium text-error">{labels.resolveReviewFailed}</p> : null}

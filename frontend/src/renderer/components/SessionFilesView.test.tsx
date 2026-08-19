@@ -243,6 +243,35 @@ describe("SessionFilesView", () => {
 		});
 	});
 
+	it("opens a requested review-comment file without highlighting when no line is available", async () => {
+		renderWithQuery(
+			<SessionFilesView
+				navigationTarget={{ path: "src/App.tsx", requestId: 1 }}
+				sessionId="sess-1"
+			/>,
+		);
+
+		expect(await screen.findByRole("button", { name: "Collapse src/App.tsx" })).toBeInTheDocument();
+		const code = await screen.findByText(diffLine("const value = 1;"));
+		expect(code.closest("[data-diff-row]")).not.toHaveClass("outline-accent/70");
+	});
+
+	it("leaves the file list unchanged when a review comment names an unavailable file", async () => {
+		renderWithQuery(
+			<SessionFilesView
+				navigationTarget={{ path: "src/missing.ts", line: 7, requestId: 1 }}
+				sessionId="sess-1"
+			/>,
+		);
+
+		expect(await screen.findByRole("button", { name: "Expand src/App.tsx" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Expand docs/guide.md" })).toBeInTheDocument();
+		expect(getMock).not.toHaveBeenCalledWith(
+			"/api/v1/sessions/{sessionId}/workspace/file",
+			expect.anything(),
+		);
+	});
+
 	it("filters and expands a changed file from the review list", async () => {
 		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
@@ -310,10 +339,21 @@ describe("SessionFilesView", () => {
 			};
 		});
 
-		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+		renderWithQuery(
+			<SessionFilesView
+				navigationTarget={{ path: "src/OldName.tsx", requestId: 1 }}
+				sessionId="sess-1"
+			/>,
+		);
 
 		expect(await screen.findByText("src/OldName.tsx")).toBeInTheDocument();
 		expect(screen.getByText("src/NewName.tsx")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Collapse src/OldName.tsx -> src/NewName.tsx" })).toBeInTheDocument();
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/file", {
+				params: { path: { sessionId: "sess-1" }, query: { path: "src/NewName.tsx" } },
+			}),
+		);
 	});
 
 	it("reports HEAD fallback when no base comparison is available", async () => {

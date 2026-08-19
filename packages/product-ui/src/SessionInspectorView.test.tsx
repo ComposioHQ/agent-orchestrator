@@ -137,6 +137,23 @@ describe("SessionInspectorShellView", () => {
 });
 
 describe("portable inspector presentations", () => {
+  it("renders no review actions when there is no PR review group", () => {
+    const { container } = render(
+      <InspectorReviewsView
+        externalLink={ExternalLink}
+        groups={[]}
+        isLoading={false}
+        labels={reviewLabels}
+        onViewInlineComment={vi.fn()}
+        renderAvatar={() => null}
+        renderMarkdown={(body) => <p>{body}</p>}
+      />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("button", { name: "View in file" })).not.toBeInTheDocument();
+  });
+
   it("renders PR facts and host-owned actions from a neutral view model", () => {
     render(
       <InspectorPullRequestCardView
@@ -274,6 +291,9 @@ describe("portable inspector presentations", () => {
     expect(githubSummary).toHaveClass("select-text");
     expect(screen.queryByText("Not injected")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "View on PR" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("github-inline-comments")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Comment actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View in file" })).not.toBeInTheDocument();
     expect(renderAvatar).toHaveBeenCalledWith("codex");
     expect(renderMarkdown).toHaveBeenCalledTimes(2);
   });
@@ -610,6 +630,10 @@ describe("portable inspector presentations", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Comment actions" }));
+    expect(screen.queryByRole("button", { name: "View in file" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open on GitHub" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Comment actions" }));
     fireEvent.click(
       screen.getByRole("button", { name: "Send to worker agent" }),
     );
@@ -626,6 +650,7 @@ describe("portable inspector presentations", () => {
   });
 
   it("keeps resolved comments collapsed until requested", () => {
+    const onViewInlineComment = vi.fn();
     render(
       <InspectorReviewsView
         externalLink={ExternalLink}
@@ -643,11 +668,13 @@ describe("portable inspector presentations", () => {
                       file: "src/panel.tsx",
                       line: 8,
                       resolved: true,
-                      url: "https://example.com/comment",
+                    },
+                    {
+                      body: "This resolved note has no source location.",
+                      resolved: true,
                     },
                   ],
                   reviewerId: "maya",
-                  reviewUrl: "https://example.com/review",
                   submittedAt: "",
                   submittedAtLabel: "",
                   verdict: { label: "Commented", tone: "neutral" },
@@ -663,20 +690,30 @@ describe("portable inspector presentations", () => {
         ]}
         isLoading={false}
         labels={reviewLabels}
+        onViewInlineComment={onViewInlineComment}
         renderAvatar={() => null}
         renderMarkdown={(body) => <p>{body}</p>}
       />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /maya.*Commented/i }));
-    expect(screen.getByText("Resolved comments · 1")).toBeInTheDocument();
+    expect(screen.getByText("Resolved comments · 2")).toBeInTheDocument();
     expect(
       screen.queryByText("This resolved note stays hidden by default."),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Resolved comments · 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resolved comments · 2" }));
     expect(
       screen.getByText("This resolved note stays hidden by default."),
     ).toBeInTheDocument();
+    expect(screen.getByText("This resolved note has no source location.")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Comment actions" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Comment actions" }));
+    expect(screen.queryByRole("link", { name: "Open on GitHub" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy comment link" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "View in file" }));
+    expect(onViewInlineComment).toHaveBeenCalledWith(
+      expect.objectContaining({ file: "src/panel.tsx", line: 8, resolved: true }),
+    );
   });
 
   it("tracks URL-less inline comments independently when they share a review URL", async () => {
