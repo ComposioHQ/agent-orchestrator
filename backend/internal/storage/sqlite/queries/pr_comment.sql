@@ -22,6 +22,9 @@ DELETE FROM pr_comment WHERE pr_url = ? AND thread_id = '';
 -- name: DeletePRComment :exec
 DELETE FROM pr_comment WHERE pr_url = ? AND comment_id = ?;
 
+-- name: MarkPRCommentResolved :execrows
+UPDATE pr_comment SET resolved = TRUE WHERE pr_url = ? AND comment_id = ?;
+
 -- name: ListPRComments :many
 SELECT pr_url, comment_id, author, file, line, body, resolved, created_at, thread_id, url, is_bot, auto_inject_review
 FROM pr_comment WHERE pr_url = ? ORDER BY created_at, comment_id;

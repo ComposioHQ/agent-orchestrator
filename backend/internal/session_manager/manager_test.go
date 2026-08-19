@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/amp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
@@ -1239,6 +1240,181 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if got := ws.lastCfg.BaseBranch; got != "" {
 		t.Fatalf("automatic workspace base branch = %q, want empty for adapter inference", got)
+	}
+}
+
+// TestSpawnModelValidation asserts spawn rejects models a fixed-catalog harness
+// cannot honor, while harnesses that accept arbitrary model ids pass through.
+func TestSpawnModelValidation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessAmp},
+	}}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	// Amp has a fixed mode list; "high" is valid. The spawn model override is
+	// routed into AgentConfig.Mode so adapters that read Mode receive the value.
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "high"}}); err != nil {
+		t.Fatalf("amp spawn with model high failed: %v", err)
+	}
+	if agent.lastConfig.Mode != "high" {
+		t.Fatalf("amp launch mode = %q, want high", agent.lastConfig.Mode)
+	}
+	if agent.lastConfig.Model != "" {
+		t.Fatalf("amp launch model = %q, want empty after routing to mode", agent.lastConfig.Model)
+	}
+
+	// Amp rejects a model outside its mode list.
+	before := len(st.sessions)
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "invalid-mode"}})
+	if err == nil {
+		t.Fatal("expected amp to reject invalid-mode")
+	}
+	if !errors.Is(err, ErrUnsupportedModel) {
+		t.Fatalf("err = %v, want ErrUnsupportedModel", err)
+	}
+	if len(st.sessions) != before {
+		t.Fatalf("invalid model left a session row behind: %d sessions, want %d", len(st.sessions), before)
+	}
+
+	// Codex accepts arbitrary custom model ids.
+	st.projects["codex-proj"] = domain.ProjectRecord{ID: "codex-proj", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "codex-proj", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "custom-snapshot-id"}}); err != nil {
+		t.Fatalf("codex spawn with custom model failed: %v", err)
+	}
+}
+
+// TestSpawnAmpModelOverrideLaunchArgv uses the real Amp adapter to verify that
+// a spawn model override for Amp ends up as `--mode <value>` in the actual
+// launch argv instead of silently being dropped because Amp reads Config.Mode.
+func TestSpawnAmpModelOverrideLaunchArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH setup differs on windows")
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessAmp},
+	}}
+
+	dir := t.TempDir()
+	fakeAmp := filepath.Join(dir, "amp")
+	if err := os.WriteFile(fakeAmp, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake amp binary: %v", err)
+	}
+	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+	wsDir := t.TempDir()
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: wsDir}
+	lookPath := func(string) (string, error) { return fakeAmp, nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: amp.New()}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "high"}}); err != nil {
+		t.Fatalf("amp spawn with model high failed: %v", err)
+	}
+
+	want := []string{fakeAmp, "--mode", "high"}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, want) {
+		t.Fatalf("launch argv = %#v, want %#v", rt.lastCfg.Argv, want)
+	}
+
+	// The user-visible resolved model is still persisted, not cleared by the
+	// adapter-facing normalization that moved it into Mode.
+	if len(st.sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(st.sessions))
+	}
+	var rec domain.SessionRecord
+	for _, r := range st.sessions {
+		rec = r
+	}
+	if rec.Metadata.Model != "high" {
+		t.Fatalf("persisted metadata model = %q, want high", rec.Metadata.Model)
+	}
+}
+
+// TestSpawnAmpProjectDefaultModePersistsAsModel verifies that when Amp's mode
+// comes from project/role config (not an explicit spawn --model override), the
+// resolved value is still reported as metadata.Model instead of appearing as
+// the agent default.
+func TestSpawnAmpProjectDefaultModePersistsAsModel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH setup differs on windows")
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessAmp,
+			AgentConfig: domain.AgentConfig{Mode: "high"},
+		},
+	}}
+
+	dir := t.TempDir()
+	fakeAmp := filepath.Join(dir, "amp")
+	if err := os.WriteFile(fakeAmp, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake amp binary: %v", err)
+	}
+	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+	wsDir := t.TempDir()
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: wsDir}
+	lookPath := func(string) (string, error) { return fakeAmp, nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: amp.New()}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatalf("amp spawn with project default mode failed: %v", err)
+	}
+
+	want := []string{fakeAmp, "--mode", "high"}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, want) {
+		t.Fatalf("launch argv = %#v, want %#v", rt.lastCfg.Argv, want)
+	}
+	if rec.Metadata.Model != "high" {
+		t.Fatalf("persisted metadata model = %q, want high (project default mode should be reported)", rec.Metadata.Model)
+	}
+}
+
+// TestSpawnModelPersisted asserts the resolved model is stored on the session
+// metadata and survives a store round-trip.
+func TestSpawnModelPersisted(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "project-model"},
+		Worker:      domain.RoleOverride{Harness: domain.HarnessCodex, AgentConfig: domain.AgentConfig{Model: "role-model"}},
+	}}
+	agent := &recordingAgent{}
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "spawn-model"}})
+	if err != nil {
+		t.Fatalf("spawn failed: %v", err)
+	}
+	if rec.Metadata.Model != "spawn-model" {
+		t.Fatalf("spawn metadata model = %q, want spawn-model", rec.Metadata.Model)
+	}
+	if agent.lastConfig.Model != "spawn-model" {
+		t.Fatalf("launch model = %q, want spawn-model", agent.lastConfig.Model)
+	}
+
+	stored, ok, err := st.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if !ok {
+		t.Fatalf("session %s not found", rec.ID)
+	}
+	if stored.Metadata.Model != "spawn-model" {
+		t.Fatalf("stored metadata model = %q, want spawn-model", stored.Metadata.Model)
 	}
 }
 
@@ -3216,6 +3392,24 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	}
 	if !st.sessions[s.ID].AutoInjectReview {
 		t.Fatal("automatic review injection must default to enabled")
+	}
+	if st.sessions[s.ID].AutoReviewEnabled {
+		t.Fatal("auto review must default to disabled when project config does not enable it")
+	}
+}
+
+func TestSpawn_InheritsAutoReviewFromProjectConfig(t *testing.T) {
+	m, st, _, _ := newManager()
+	cfg := testRoleAgents()
+	cfg.AutoReview = true
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: cfg}
+
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions[s.ID].AutoReviewEnabled {
+		t.Fatal("auto review must be enabled when project config enables it")
 	}
 }
 

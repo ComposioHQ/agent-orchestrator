@@ -90,6 +90,7 @@ type Store interface {
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
+	MarkPRCommentResolved(ctx context.Context, prURL, commentID string) (bool, error)
 }
 
 // Reducer is the lifecycle reaction boundary used after a review result has
@@ -357,6 +358,11 @@ func (s *Service) ResolveReviewComment(ctx context.Context, workerID domain.Sess
 			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
 		return err
+	}
+	if updated, err := s.store.MarkPRCommentResolved(ctx, pr.URL, target.ID); err != nil {
+		return err
+	} else if !updated {
+		return fmt.Errorf("%w: review comment is not tracked for this PR", ErrNotFound)
 	}
 	s.emit("ao.review.comment_resolved", workerID, map[string]any{"provider": pr.Provider})
 	return nil
