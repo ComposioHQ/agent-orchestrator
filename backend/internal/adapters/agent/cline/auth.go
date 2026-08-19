@@ -19,6 +19,9 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
+	if strings.TrimSpace(os.Getenv("CLINE_API_KEY")) != "" {
+		return ports.AgentAuthStatusAuthorized, nil
+	}
 	if status, ok, err := clineProviderAuthStatus(ctx); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	} else if ok {

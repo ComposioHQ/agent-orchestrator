@@ -61,6 +61,17 @@ func TestClineProviderAuthStatusAuthorizedWithAPIKey(t *testing.T) {
 	}
 }
 
+func TestClineAuthStatusAuthorizedWithDocumentedEnvKey(t *testing.T) {
+	t.Setenv("CLINE_API_KEY", "cline-key")
+	status, err := (&Plugin{resolvedBinary: "cline"}).AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusAuthorized)
+	}
+}
+
 func TestClineProviderAuthStatusUnknownWithExpiredOAuth(t *testing.T) {
 	writeClineProvidersFile(t, `{
 		"version": 1,
