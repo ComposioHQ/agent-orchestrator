@@ -1492,6 +1492,9 @@ function MergedReviewsSection({
 		const unresolvedReviewers = (github?.review?.unresolvedBy ?? []).filter(
 			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
 		);
+		const resolvedReviewers = (github?.review?.resolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
 		const unresolved = unresolvedReviewers.reduce((count, reviewer) => count + reviewer.count, 0);
 		const reviewRuns = aoRuns.map((run) => {
 			const reviewUrl = aoReviewCommentUrl(run);
@@ -1509,9 +1512,14 @@ function MergedReviewsSection({
 		const unresolvedByReviewer = new Map(
 			unresolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
 		);
+		const resolvedByReviewer = new Map(
+			resolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
+		);
 		const externalEntries = entries.map((entry) => {
 			const reviewer = unresolvedByReviewer.get(entry.reviewerId);
+			const resolvedReviewer = resolvedByReviewer.get(entry.reviewerId);
 			unresolvedByReviewer.delete(entry.reviewerId);
+			resolvedByReviewer.delete(entry.reviewerId);
 			return {
 				body: entry.body,
 				canRequestRereview: canRequestPRRereview(entry.verdict, github?.url),
@@ -1525,6 +1533,15 @@ function MergedReviewsSection({
 					pullRequestUrl: github?.url,
 					url: link.url || reviewer?.reviewUrl,
 				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
+				})),
 				isBot: entry.isBot,
 				reviewerId: entry.reviewerId,
 				reviewUrl: entry.reviewUrl,
@@ -1534,6 +1551,8 @@ function MergedReviewsSection({
 			};
 		});
 		for (const reviewer of unresolvedByReviewer.values()) {
+			const resolvedReviewer = resolvedByReviewer.get(reviewer.reviewerId);
+			resolvedByReviewer.delete(reviewer.reviewerId);
 			externalEntries.push({
 				body: undefined,
 				canRequestRereview: canRequestPRRereview("changes_requested", github?.url),
@@ -1545,6 +1564,39 @@ function MergedReviewsSection({
 					file: link.file,
 					line: link.line,
 					pullRequestUrl: github?.url,
+					url: link.url || reviewer.reviewUrl,
+				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
+				})),
+				isBot: reviewer.isBot,
+				reviewerId: reviewer.reviewerId,
+				reviewUrl: reviewer.reviewUrl,
+				submittedAt: "",
+				submittedAtLabel: "",
+				verdict: githubVerdict("none", t),
+			});
+		}
+		for (const reviewer of resolvedByReviewer.values()) {
+			externalEntries.push({
+				body: undefined,
+				canRequestRereview: false,
+				id: `resolved:${reviewer.reviewerId}:${number}`,
+				pullRequestUrl: github?.url,
+				inlineComments: [],
+				resolvedComments: reviewer.links.map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
 					url: link.url || reviewer.reviewUrl,
 				})),
 				isBot: reviewer.isBot,

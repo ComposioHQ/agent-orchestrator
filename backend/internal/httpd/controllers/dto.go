@@ -682,6 +682,7 @@ type SessionPRReviewSummary struct {
 	Decision                   domain.ReviewDecision         `json:"decision" enum:"none,approved,changes_requested,review_required"`
 	HasUnresolvedHumanComments bool                          `json:"hasUnresolvedHumanComments"`
 	UnresolvedBy               []SessionPRUnresolvedReviewer `json:"unresolvedBy"`
+	ResolvedBy                 []SessionPRUnresolvedReviewer `json:"resolvedBy,omitempty"`
 	Reviews                    []SessionPRReviewEntry        `json:"reviews,omitempty"`
 }
 
@@ -697,7 +698,7 @@ type SessionPRReviewEntry struct {
 	AutoInjectReview bool                  `json:"autoInjectReview"`
 }
 
-// SessionPRUnresolvedReviewer groups unresolved human comments by reviewer.
+// SessionPRUnresolvedReviewer groups review comments by reviewer.
 type SessionPRUnresolvedReviewer struct {
 	ReviewerID string                       `json:"reviewerId"`
 	Count      int                          `json:"count"`
@@ -706,7 +707,7 @@ type SessionPRUnresolvedReviewer struct {
 	IsBot      bool                         `json:"isBot,omitempty"`
 }
 
-// SessionPRReviewCommentLink points to one unresolved review comment.
+// SessionPRReviewCommentLink points to one review comment.
 type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
@@ -780,14 +781,8 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {
-	reviewers := make([]SessionPRUnresolvedReviewer, 0, len(in.UnresolvedBy))
-	for _, reviewer := range in.UnresolvedBy {
-		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
-		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
-		}
-		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
-	}
+	reviewers := newSessionPRCommentReviewers(in.UnresolvedBy)
+	resolvedReviewers := newSessionPRCommentReviewers(in.ResolvedBy)
 	entries := make([]SessionPRReviewEntry, 0, len(in.Reviews))
 	for _, review := range in.Reviews {
 		entries = append(entries, SessionPRReviewEntry{
@@ -800,7 +795,19 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 			AutoInjectReview: review.AutoInjectReview,
 		})
 	}
-	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers, Reviews: entries}
+	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers, ResolvedBy: resolvedReviewers, Reviews: entries}
+}
+
+func newSessionPRCommentReviewers(in []sessionsvc.PRUnresolvedReviewer) []SessionPRUnresolvedReviewer {
+	reviewers := make([]SessionPRUnresolvedReviewer, 0, len(in))
+	for _, reviewer := range in {
+		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
+		for _, link := range reviewer.Links {
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
+		}
+		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
+	}
+	return reviewers
 }
 
 func newSessionPRMergeabilitySummary(in sessionsvc.PRMergeabilitySummary) SessionPRMergeabilitySummary {

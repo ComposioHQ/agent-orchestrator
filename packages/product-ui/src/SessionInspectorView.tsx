@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useId, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useState } from "react";
 import type { ExternalLinkComponent } from "./external-link";
 import {
 	ArrowUpRightIcon,
@@ -6,6 +6,8 @@ import {
 	CheckIcon,
 	ChevronIcon,
 	GitPullRequestIcon,
+	MessageSquareIcon,
+	MoreHorizontalIcon,
 } from "./icons";
 import {
 	PRCardStatusSummary,
@@ -388,7 +390,6 @@ export type InspectorVerdict = {
 };
 
 export type InspectorReviewRun = {
-	autoInjectReview?: boolean;
 	body?: string;
 	createdAtLabel: string;
 	harness: string;
@@ -404,6 +405,7 @@ export type InspectorInlineComment = {
 	file?: string;
 	line?: number;
 	pullRequestUrl?: string;
+	resolved?: boolean;
 	url?: string;
 };
 
@@ -414,6 +416,7 @@ export type InspectorGithubReview = {
 	inlineComments?: InspectorInlineComment[];
 	isBot?: boolean;
 	pullRequestUrl?: string;
+	resolvedComments?: InspectorInlineComment[];
 	reviewerId: string;
 	reviewUrl?: string;
 	submittedAt: string;
@@ -477,14 +480,12 @@ export type InspectorReviewLabels = {
 	sendToWorkerAgent: string;
 	sentToWorkerAgent: string;
 	sendToWorkerAgentError: string;
-	workerAgentWorkingOnFeedback: string;
 	showLatestReviewOnly: string;
 	showLess: string;
 	showMore: string;
 	commentNumber: (number: number) => string;
 	unresolvedCount: (count: number) => string;
 	viewInFile: string;
-	viewInFileWorkInProgress: string;
 	viewOnPR: string;
 };
 
@@ -495,7 +496,6 @@ export function InspectorReviewsView({
 	labels,
 	onRequestRereview,
 	onResolveInlineComment,
-	onSendAgentReview,
 	onSendInlineComment,
 	renderAvatar,
 	renderMarkdown,
@@ -506,7 +506,6 @@ export function InspectorReviewsView({
 	labels: InspectorReviewLabels;
 	onRequestRereview?: (review: InspectorGithubReview) => Promise<void> | void;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
-	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
@@ -540,13 +539,11 @@ export function InspectorReviewsView({
 								</ReviewSourceLabel>
 								<ReviewRuns
 									dimmed={group.ao.dimmed}
-									externalLink={externalLink}
 									historical={group.ao.historical}
 									labels={labels}
 									renderAvatar={renderAvatar}
 									renderMarkdown={renderMarkdown}
 									runs={group.ao.runs}
-									onSendAgentReview={onSendAgentReview}
 								/>
 							</div>
 						) : null}
@@ -644,7 +641,7 @@ function ReviewDisclosure({
 	if (!collapsible) {
 		return (
 			<article
-				className="overflow-hidden rounded-lg border border-border bg-settings-row"
+				className="relative overflow-visible rounded-lg border border-border bg-settings-row"
 				data-testid="review-pr-row"
 			>
 				<div className="flex min-w-0 flex-col gap-1 border-b border-border/70 px-3 py-2.5">
@@ -666,7 +663,7 @@ function ReviewDisclosure({
 		);
 	}
 	return (
-		<article className="overflow-hidden rounded-lg border border-border bg-settings-row">
+		<article className="relative overflow-visible rounded-lg border border-border bg-settings-row">
 			<button
 				aria-expanded={open}
 				data-testid="review-pr-row"
@@ -692,19 +689,15 @@ function ReviewDisclosure({
 
 function ReviewRuns({
 	dimmed,
-	externalLink,
 	historical,
 	labels,
-	onSendAgentReview,
 	renderAvatar,
 	renderMarkdown,
 	runs,
 }: {
 	dimmed?: boolean;
-	externalLink: ExternalLinkComponent;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
-	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -715,10 +708,8 @@ function ReviewRuns({
 	return (
 		<ReviewRunHistory
 			dimmed={dimmed}
-			externalLink={externalLink}
 			historical={historical}
 			labels={labels}
-			onSendAgentReview={onSendAgentReview}
 			renderAvatar={renderAvatar}
 			renderMarkdown={renderMarkdown}
 			runs={runs}
@@ -728,19 +719,15 @@ function ReviewRuns({
 
 function ReviewRunHistory({
 	dimmed,
-	externalLink,
 	historical,
 	labels,
-	onSendAgentReview,
 	renderAvatar,
 	renderMarkdown,
 	runs,
 }: {
 	dimmed?: boolean;
-	externalLink: ExternalLinkComponent;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
-	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -755,18 +742,14 @@ function ReviewRunHistory({
 			{visible.map((run, index) => (
 				<ReviewSummaryCard
 					actor={run.harness || "reviewer"}
-					autoInjected={run.autoInjectReview}
 					body={run.status === "cancelled" || run.status === "failed" ? "" : run.body}
-					externalLink={externalLink}
 					isEarlier={historical || index > 0}
 					key={run.id}
 					labels={labels}
-					onSend={onSendAgentReview ? () => onSendAgentReview(run) : undefined}
 					renderAvatar={renderAvatar}
 					renderMarkdown={renderMarkdown}
 					testId="review-run-summary"
 					timestamp={run.createdAtLabel}
-					url={run.url}
 					verdict={run.verdict}
 				/>
 			))}
@@ -862,41 +845,11 @@ function GithubReviewHistory({
 	);
 }
 
-const reviewHeaderActionClass =
-	"inline-flex h-7 min-w-0 max-w-full appearance-none items-center justify-center rounded-md border border-border-strong bg-transparent px-2 text-center text-muted-foreground no-underline transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full";
-const reviewHeaderActionLabelClass = "whitespace-nowrap font-sans text-xs font-medium leading-none tracking-normal";
-
-function ReviewHeaderAction({
-	children,
-	externalLink: ExternalLink,
-	href,
-	onClick,
-}: {
-	children: string;
-	externalLink: ExternalLinkComponent;
-	href?: string;
-	onClick?: () => Promise<void> | void;
-}) {
-	if (href) {
-		return (
-			<ExternalLink className={reviewHeaderActionClass} href={href}>
-				<span className={reviewHeaderActionLabelClass}>{children}</span>
-			</ExternalLink>
-		);
-	}
-	return (
-		<button className={reviewHeaderActionClass} onClick={onClick} type="button">
-			<span className={reviewHeaderActionLabelClass}>{children}</span>
-		</button>
-	);
-}
-
 function ExternalReviewCard({
 	defaultOpen,
 	entry,
-	externalLink: ExternalLink,
+	externalLink,
 	labels,
-	onRequestRereview,
 	onResolveInlineComment,
 	onSendInlineComment,
 	renderMarkdown,
@@ -911,413 +864,318 @@ function ExternalReviewCard({
 	renderMarkdown: (body: string) => ReactNode;
 }) {
 	const [open, setOpen] = useState(defaultOpen);
-	const [rereviewRequested, setRereviewRequested] = useState(false);
-	const [rereviewError, setRereviewError] = useState(false);
 	const body = entry.body?.trim();
-	const inlineComments = entry.inlineComments ?? [];
-	const repeatedInlineBody = Boolean(
-		body && inlineComments.some((comment) => normalizedReviewText(comment.body) === normalizedReviewText(body)),
-	);
-	const reviewUrl = entry.reviewUrl || entry.pullRequestUrl;
-	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
-	const showRereviewAction = Boolean(onRequestRereview && (entry.canRequestRereview ?? entry.verdict.tone !== "success"));
+	const openComments = (entry.inlineComments ?? []).filter((comment) => comment.body?.trim() || comment.file || comment.url);
+	const resolvedComments = (entry.resolvedComments ?? []).filter((comment) => comment.body?.trim() || comment.file || comment.url);
 	return (
-		<ReviewEntryDisclosure
-			actor={entry.reviewerId}
-			avatar={<GithubAvatar className="size-5" login={entry.reviewerId} />}
-			botLabel={entry.isBot ? labels.bot : undefined}
-			meta={entry.submittedAtLabel ? labels.reviewedAt(entry.submittedAtLabel) : undefined}
-			onOpenChange={setOpen}
-			open={open}
-			testId="github-review-card"
-			verdict={entry.verdict}
-		>
-			{showRereviewAction || reviewUrl ? (
-				<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
-					{openInlineCount > 0 ? (
-						<span className="font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
-					) : <span aria-hidden="true" />}
-					<div className="flex min-w-0 flex-wrap items-center justify-end gap-2 @max-[300px]/inspector:w-full">
-						{reviewUrl ? (
-							<ReviewHeaderAction externalLink={ExternalLink} href={reviewUrl}>
-								{labels.viewOnPR}
-							</ReviewHeaderAction>
-						) : null}
-						{showRereviewAction ? (
-							rereviewRequested ? (
-								<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
-									<CheckIcon className="size-icon-xs shrink-0" />
-									{labels.rereviewRequested}
-								</span>
-							) : (
-								<ReviewHeaderAction
-									externalLink={ExternalLink}
-									onClick={async () => {
-										setRereviewError(false);
-										try {
-											await onRequestRereview?.(entry);
-											setRereviewRequested(true);
-										} catch {
-											setRereviewError(true);
-										}
-									}}
-								>
-									{labels.requestRereviewPR}
-								</ReviewHeaderAction>
-							)
-						) : null}
-					</div>
-				</div>
-			) : null}
-			{rereviewError ? <p className="m-0 text-2xs font-medium text-error">{labels.rereviewRequestFailed}</p> : null}
-			{body && !repeatedInlineBody ? (
-				<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
-			) : null}
-			{openInlineCount > 0 ? (
-				<GithubInlineComments
-					labels={labels}
-					onSendInlineComment={onSendInlineComment}
-					onResolveInlineComment={onResolveInlineComment}
-					reviewers={[
-						{
-							count: openInlineCount,
-							isBot: entry.isBot,
-							links: inlineComments,
-							reviewerId: entry.reviewerId,
-							reviewUrl: entry.reviewUrl,
-						},
-					]}
-					showReviewer={false}
-				/>
-			) : null}
-		</ReviewEntryDisclosure>
-	);
-}
-
-function normalizedReviewText(value: string | undefined): string {
-	return value?.trim().replace(/\s+/g, " ") ?? "";
-}
-
-function ReviewEntryDisclosure({
-	actor,
-	avatar,
-	botLabel,
-	children,
-	meta,
-	onOpenChange,
-	open,
-	testId,
-	verdict,
-}: {
-	actor: string;
-	avatar: ReactNode;
-	botLabel?: string;
-	children: ReactNode;
-	meta?: ReactNode;
-	onOpenChange: (open: boolean) => void;
-	open: boolean;
-	testId: string;
-	verdict: InspectorVerdict;
-}) {
-	return (
-		<article className="min-w-0 border-b border-border/70 py-3 first:pt-0 last:border-b-0 last:pb-0" data-testid={testId}>
+		<article className="relative min-w-0 border-b border-border/70 py-2 first:pt-0 last:border-b-0 last:pb-0" data-testid="github-review-card">
 			<button
 				aria-expanded={open}
-				className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-interactive-hover/30"
-				onClick={() => onOpenChange(!open)}
+				className="grid w-full min-w-0 grid-cols-[auto_1fr_auto_auto] items-center gap-x-3 gap-y-1 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
+				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
-				<ChevronIcon className="mt-0.5 size-icon-2xs shrink-0 text-passive" direction={open ? "down" : "right"} />
-				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-					<span className="flex min-w-0 items-center gap-1.5">
-						<span className="inline-flex min-w-0 items-center gap-1 text-xs font-semibold text-foreground">
-							{avatar}
-							<span className="truncate">{actor}</span>
-						</span>
-						{botLabel ? <span className="shrink-0 font-mono text-micro text-passive">{botLabel}</span> : null}
+				<GithubAvatar className="size-6 shrink-0" login={entry.reviewerId} />
+				<span className="flex min-w-0 flex-col gap-0.5">
+					<span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-foreground">
+						<span className="truncate">{entry.reviewerId}</span>
+						{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
 					</span>
-					{meta ? (
-						<span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-micro text-passive">
-							{meta}
+					{entry.submittedAtLabel ? <span className="font-mono text-micro text-passive">{labels.reviewedAt(entry.submittedAtLabel)}</span> : null}
+				</span>
+				<span className={cn("flex shrink-0 items-center gap-2 whitespace-nowrap pr-1 text-2xs font-medium", reviewerVerdictTone[entry.verdict.tone])}>
+					<span>{entry.verdict.label}</span>
+					{openComments.length > 0 ? (
+						<span className="inline-flex items-center gap-1.5 rounded-sm px-0.5 text-muted-foreground" title={labels.openInlineComments(openComments.length)}>
+							<MessageSquareIcon className="size-icon-2xs" />
+							<span>{openComments.length}</span>
 						</span>
 					) : null}
 				</span>
-				<VerdictBadge verdict={verdict} />
+				<ChevronIcon className="size-icon-2xs shrink-0 text-passive" direction={open ? "down" : "right"} />
 			</button>
-			{open ? <div className="flex min-w-0 flex-col gap-3 px-1 pt-3">{children}</div> : null}
+			{open ? (
+				<div className="flex min-w-0 flex-col gap-3 px-1 pt-2 text-left">
+					{body ? <ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" /> : null}
+					<GithubInlineComments comments={openComments} externalLink={externalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} />
+					{resolvedComments.length > 0 ? <ResolvedInlineComments comments={resolvedComments} externalLink={externalLink} labels={labels} reviewerId={entry.reviewerId} reviewUrl={entry.reviewUrl} /> : null}
+				</div>
+			) : null}
 		</article>
 	);
 }
 
-const RESOLVED_COMMENT_DISPLAY_MS = 1000;
-
 function GithubInlineComments({
+	comments,
+	externalLink: ExternalLink,
 	labels,
 	onResolveInlineComment,
 	onSendInlineComment,
-	reviewers,
-	showReviewer = true,
+	reviewerId,
+	reviewUrl,
 }: {
+	comments: InspectorInlineComment[];
+	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
-	reviewers: InspectorUnresolvedReviewer[];
-	showReviewer?: boolean;
+	reviewerId: string;
+	reviewUrl?: string;
 }) {
-	// Manual sends are reflected immediately in local UI state after /send succeeds;
-	// persisted autoInjectReview still comes from the next backend PR observation.
+	const [open, setOpen] = useState(true);
+	if (comments.length === 0) return null;
+	return (
+		<section className="min-w-0" data-testid="github-inline-comments">
+			<button aria-expanded={open} className="flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 text-left text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground" onClick={() => setOpen((current) => !current)} type="button">
+				<ChevronIcon className="size-icon-2xs shrink-0" direction={open ? "down" : "right"} />
+				<span>{labels.openComments} · {comments.length}</span>
+			</button>
+			{open ? <InlineCommentList comments={comments} externalLink={ExternalLink} labels={labels} onResolveInlineComment={onResolveInlineComment} onSendInlineComment={onSendInlineComment} reviewerId={reviewerId} reviewUrl={reviewUrl} /> : null}
+		</section>
+	);
+}
+
+function ResolvedInlineComments({
+	comments,
+	externalLink: ExternalLink,
+	labels,
+	reviewerId,
+	reviewUrl,
+}: {
+	comments: InspectorInlineComment[];
+	externalLink: ExternalLinkComponent;
+	labels: InspectorReviewLabels;
+	reviewerId: string;
+	reviewUrl?: string;
+}) {
+	const [open, setOpen] = useState(false);
+	return (
+		<section className="min-w-0 border-t border-border/60 pt-2" data-testid="github-resolved-comments">
+			<button aria-expanded={open} className="flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 text-left text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground" onClick={() => setOpen((current) => !current)} type="button">
+				<ChevronIcon className="size-icon-2xs shrink-0" direction={open ? "down" : "right"} />
+				<span>{labels.resolvedComments(comments.length)}</span>
+			</button>
+			{open ? <InlineCommentList comments={comments} externalLink={ExternalLink} labels={labels} reviewerId={reviewerId} reviewUrl={reviewUrl} /> : null}
+		</section>
+	);
+}
+
+function InlineCommentList({
+	comments,
+	externalLink,
+	labels,
+	onResolveInlineComment,
+	onSendInlineComment,
+	reviewerId,
+	reviewUrl,
+}: {
+	comments: InspectorInlineComment[];
+	externalLink: ExternalLinkComponent;
+	labels: InspectorReviewLabels;
+	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	reviewerId: string;
+	reviewUrl?: string;
+}) {
+	const [manuallyResolvedCommentIds, setManuallyResolvedCommentIds] = useState<Set<string>>(() => new Set());
 	const [manuallySentCommentIds, setManuallySentCommentIds] = useState<Set<string>>(() => new Set());
+	const [resolvingCommentIds, setResolvingCommentIds] = useState<Set<string>>(() => new Set());
+	const [resolveErrorCommentIds, setResolveErrorCommentIds] = useState<Set<string>>(() => new Set());
 	const [sendingCommentIds, setSendingCommentIds] = useState<Set<string>>(() => new Set());
 	const [sendErrorCommentIds, setSendErrorCommentIds] = useState<Set<string>>(() => new Set());
-	const [resolvedCommentIds, setResolvedCommentIds] = useState<Set<string>>(() => new Set());
-	const [removedResolvedCommentIds, setRemovedResolvedCommentIds] = useState<Set<string>>(() => new Set());
-	const [resolveErrorCommentIds, setResolveErrorCommentIds] = useState<Set<string>>(() => new Set());
-	const [visibleCount, setVisibleCount] = useState(1);
-	const comments = reviewers.flatMap((reviewer) =>
-		reviewer.links
-			.filter((link) => link.body?.trim() || link.file || link.url)
-			.map((link, index) => ({
-				...link,
-				id: `${reviewer.reviewerId}:${link.url ?? `${link.file ?? ""}:${link.line ?? ""}:${index}`}`,
-				reviewerId: reviewer.reviewerId,
-				url: link.url || reviewer.reviewUrl,
-			})),
-	);
-	useEffect(() => {
-		if (resolvedCommentIds.size === 0) return;
-		const timeout = window.setTimeout(() => {
-			setRemovedResolvedCommentIds((current) => {
-				const next = new Set(current);
-				for (const id of resolvedCommentIds) next.add(id);
-				return next;
-			});
-		}, RESOLVED_COMMENT_DISPLAY_MS);
-		return () => window.clearTimeout(timeout);
-	}, [resolvedCommentIds]);
-	const remainingComments = comments.filter((comment) => !removedResolvedCommentIds.has(comment.id));
-	if (remainingComments.length === 0) return null;
-	const visibleComments = remainingComments.slice(0, visibleCount);
-	const hasMore = visibleComments.length < remainingComments.length;
+	const keyedComments = comments.map((comment, index) => ({
+		...comment,
+		id: `${reviewerId}:${comment.url ?? `${comment.file ?? ""}:${comment.line ?? ""}:${index}`}`,
+		reviewerId,
+		url: comment.url || reviewUrl,
+	}));
 	return (
-		<section className="min-w-0 border-t border-border/70 pt-4" data-testid="github-inline-comments">
-			<div className="flex min-w-0 items-center justify-between gap-2 pb-2 text-xs">
-				<span className="font-semibold uppercase tracking-wide text-muted-foreground">{labels.openComments}</span>
-			</div>
-			<div className="divide-y divide-border/60">
-				{visibleComments.map((comment, index) => (
-					<InlineCommentRow
-						comment={comment}
-						commentNumber={index + 1}
-						key={comment.id}
-						labels={labels}
-						onResolve={onResolveInlineComment ? async () => {
-								setResolveErrorCommentIds((current) => {
-									const next = new Set(current);
-									next.delete(comment.id);
-									return next;
-								});
-								try {
-									await onResolveInlineComment(comment);
-									setResolvedCommentIds((current) => new Set(current).add(comment.id));
-								} catch {
-									setResolveErrorCommentIds((current) => new Set(current).add(comment.id));
-								}
-							} : undefined}
-						onSend={onSendInlineComment ? async () => {
-							setSendingCommentIds((current) => new Set(current).add(comment.id));
-							setSendErrorCommentIds((current) => {
+		<div className="divide-y divide-border/60">
+			{keyedComments.map((comment) => (
+				<InlineCommentRow
+					comment={comment}
+					externalLink={externalLink}
+					key={comment.id}
+					labels={labels}
+					onResolve={!comment.resolved && onResolveInlineComment ? async () => {
+						setResolvingCommentIds((current) => new Set(current).add(comment.id));
+						setResolveErrorCommentIds((current) => {
+							const next = new Set(current);
+							next.delete(comment.id);
+							return next;
+						});
+						try {
+							await onResolveInlineComment(comment);
+							setManuallyResolvedCommentIds((current) => new Set(current).add(comment.id));
+						} catch {
+							setResolveErrorCommentIds((current) => new Set(current).add(comment.id));
+						} finally {
+							setResolvingCommentIds((current) => {
 								const next = new Set(current);
 								next.delete(comment.id);
 								return next;
 							});
-							try {
-								await onSendInlineComment(comment);
-								setManuallySentCommentIds((current) => new Set(current).add(comment.id));
-							} catch {
-								setSendErrorCommentIds((current) => new Set(current).add(comment.id));
-							} finally {
-								setSendingCommentIds((current) => {
-									const next = new Set(current);
-									next.delete(comment.id);
-									return next;
-								});
-							}
-						} : undefined}
-						sendError={sendErrorCommentIds.has(comment.id)}
-						resolveError={resolveErrorCommentIds.has(comment.id)}
-						resolved={resolvedCommentIds.has(comment.id)}
-						showReviewer={showReviewer}
-						sent={Boolean(comment.autoInjectReview) || manuallySentCommentIds.has(comment.id)}
-						sending={sendingCommentIds.has(comment.id)}
-					/>
-				))}
-			</div>
-			{remainingComments.length > 1 ? (
-				<button
-					className="mt-3 flex w-full items-center justify-center rounded-md border border-dashed border-border px-2 py-1.5 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover/30 hover:text-foreground"
-					onClick={() => setVisibleCount(hasMore ? Math.min(visibleCount + 3, remainingComments.length) : 1)}
-					type="button"
-				>
-					{hasMore ? labels.showMore : labels.showLess}
-				</button>
-			) : null}
-		</section>
+						}
+					} : undefined}
+					onSend={comment.autoInjectReview === false && onSendInlineComment ? async () => {
+						setSendingCommentIds((current) => new Set(current).add(comment.id));
+						setSendErrorCommentIds((current) => {
+							const next = new Set(current);
+							next.delete(comment.id);
+							return next;
+						});
+						try {
+							await onSendInlineComment(comment);
+							setManuallySentCommentIds((current) => new Set(current).add(comment.id));
+						} catch {
+							setSendErrorCommentIds((current) => new Set(current).add(comment.id));
+						} finally {
+							setSendingCommentIds((current) => {
+								const next = new Set(current);
+								next.delete(comment.id);
+								return next;
+							});
+						}
+					} : undefined}
+					resolveError={resolveErrorCommentIds.has(comment.id)}
+					resolvedSuccess={manuallyResolvedCommentIds.has(comment.id)}
+					resolving={resolvingCommentIds.has(comment.id)}
+					sendError={sendErrorCommentIds.has(comment.id)}
+					sent={Boolean(comment.autoInjectReview) || manuallySentCommentIds.has(comment.id)}
+					sending={sendingCommentIds.has(comment.id)}
+				/>
+			))}
+		</div>
 	);
 }
 
 function InlineCommentRow({
 	comment,
-	commentNumber,
+	externalLink: ExternalLink,
 	labels,
 	onResolve,
 	onSend,
 	resolveError = false,
-	resolved = false,
+	resolvedSuccess = false,
+	resolving = false,
 	sendError = false,
 	sending = false,
-	showReviewer = true,
 	sent,
 }: {
-	comment: InspectorInlineComment & { reviewerId?: string };
-	commentNumber: number;
+	comment: InspectorInlineComment & { id: string; reviewerId?: string };
+	externalLink: ExternalLinkComponent;
 	labels: InspectorReviewLabels;
 	onResolve?: () => void;
 	onSend?: () => void;
 	resolveError?: boolean;
-	resolved?: boolean;
+	resolvedSuccess?: boolean;
+	resolving?: boolean;
 	sendError?: boolean;
 	sending?: boolean;
-	showReviewer?: boolean;
 	sent: boolean;
 }) {
+	const [expanded, setExpanded] = useState(false);
+	const [menuOpen, setMenuOpen] = useState(false);
 	const body = comment.body?.trim();
-	const viewInFileTooltipId = useId();
+	const fileLabel = comment.file ? `${comment.file}${comment.line ? `:${comment.line}` : ""}` : labels.commentNumber(1);
+	const preview = body ? body.split("\n")[0] : "";
+	const copy = async (value?: string) => {
+		if (!value) return;
+		try {
+			await navigator.clipboard?.writeText(value);
+		} catch {
+			// Clipboard access may be unavailable in tests or restricted contexts.
+		}
+	};
 	return (
-		<div className="flex min-w-0 flex-col gap-2 px-0 py-4 text-xs first:pt-2 last:pb-0">
-			{showReviewer && comment.reviewerId ? (
-				<span className="inline-flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
-					<GithubAvatar login={comment.reviewerId} />
-					<span className="truncate">{comment.reviewerId}</span>
+		<div className="relative flex min-w-0 flex-col gap-1.5 py-2.5 text-xs">
+			<div aria-expanded={expanded} className="grid w-full min-w-0 cursor-pointer grid-cols-[1fr_auto_auto] items-start gap-2 rounded-md py-1 text-left transition-colors hover:bg-interactive-hover/20" onClick={() => setExpanded((current) => !current)} onKeyDown={(event) => {
+				if (event.key === "Enter" || event.key === " ") {
+					event.preventDefault();
+					setExpanded((current) => !current);
+				}
+			}} role="button" tabIndex={0}>
+				<span className="flex min-w-0 flex-col gap-1">
+					<span className="flex min-w-0 items-center gap-1.5 font-mono text-2xs font-semibold text-foreground">
+						<ChevronIcon className="size-icon-2xs shrink-0 text-passive" direction={expanded ? "down" : "right"} />
+						<span className="truncate" title={fileLabel}>{fileLabel}</span>
+					</span>
+					{body ? <span className={cn("text-muted-foreground", expanded ? "whitespace-pre-wrap break-words" : "truncate")}>{expanded ? body : preview}</span> : null}
 				</span>
-			) : null}
-			<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-2xs font-mono text-passive">
-				<span className="font-semibold text-foreground">#{commentNumber}</span>
-				{comment.file ? <span className="min-w-0 break-words">{comment.file}{comment.line ? `:${comment.line}` : ""}</span> : null}
-			</div>
-			{body ? <p className="m-0 max-w-prose whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">{body}</p> : null}
-			<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
-				{sent ? (
-					<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs" title={labels.workerAgentWorkingOnFeedback}>
-						<CheckIcon className="shrink-0 text-success" />
-						{labels.sentToWorkerAgent}
-					</span>
-				) : (
-					<button
-						className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60"
-						disabled={sending || !onSend}
-						onClick={onSend}
-						type="button"
-					>
-						{labels.sendToWorkerAgent}
+				<span className="flex shrink-0 items-center justify-end" onClick={(event) => event.stopPropagation()}>
+					{sent ? (
+						<span className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium text-success">
+							<CheckIcon className="size-icon-xs shrink-0" />
+							{labels.sentToWorkerAgent}
+						</span>
+					) : onSend ? (
+						<button className="inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent bg-secondary bg-clip-padding px-2.5 text-xs font-normal text-secondary-foreground transition-[background-color,border-color,color,box-shadow,transform,opacity] duration-[100ms] ease-out hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/30 active:scale-[0.97] active:translate-y-px disabled:pointer-events-none disabled:opacity-50" disabled={sending} onClick={onSend} type="button">
+							{labels.sendToWorkerAgent}
+						</button>
+					) : null}
+				</span>
+				<span className="relative flex shrink-0 items-start justify-end" onClick={(event) => event.stopPropagation()}>
+					<button aria-expanded={menuOpen} aria-label="Comment actions" className="inline-flex size-7 items-center justify-center rounded-md border border-border/70 text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" onClick={() => setMenuOpen((current) => !current)} type="button">
+						<MoreHorizontalIcon className="size-icon-xs" />
 					</button>
-				)}
-				{resolved ? (
-					<span className="inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium text-muted-foreground">
-						<CheckIcon className="size-icon-xs shrink-0 text-success" />
-						{labels.resolvedReview}
-					</span>
-				) : (
-					<button
-						className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground"
-						disabled={!onResolve || !comment.url}
-						onClick={onResolve}
-						type="button"
-					>
-						{labels.resolveComment}
-					</button>
-				)}
-				<span className="group relative inline-flex">
-					<button
-						aria-describedby={viewInFileTooltipId}
-						aria-disabled="true"
-						className="inline-flex h-7 cursor-help items-center rounded-md border border-border/70 bg-transparent px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-						type="button"
-					>
-						{labels.viewInFile}
-					</button>
-					<span
-						className="pointer-events-none invisible absolute bottom-full left-1/2 z-overlay mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-xs text-popover-foreground opacity-0 shadow-md transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
-						id={viewInFileTooltipId}
-						role="tooltip"
-					>
-						{labels.viewInFileWorkInProgress}
-					</span>
+					{menuOpen ? (
+						<div className="isolate absolute right-0 top-8 z-[100] flex w-40 flex-col rounded-md border border-border-strong bg-[var(--color-bg-settings-menu)] p-1 text-2xs shadow-[0_16px_40px_rgba(0,0,0,0.65)]">
+							{onResolve ? <button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-60" disabled={resolving} onClick={() => void onResolve()} type="button">{labels.resolveComment}</button> : null}
+							{comment.url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={comment.url}>{labels.viewInFile}</ExternalLink> : null}
+							{comment.url ? <ExternalLink className="rounded px-2 py-1.5 text-muted-foreground no-underline hover:bg-interactive-hover hover:text-foreground" href={comment.url}>Open on GitHub</ExternalLink> : null}
+							<button className="rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-interactive-hover hover:text-foreground" onClick={() => void copy(comment.url)} type="button">Copy comment link</button>
+						</div>
+					) : null}
 				</span>
 			</div>
+			{resolvedSuccess ? <p className="m-0 text-2xs font-medium text-success">{labels.resolvedReview}</p> : null}
+			{resolveError ? <p className="m-0 text-2xs font-medium text-error">{labels.resolveReviewFailed}</p> : null}
 			{sendError && !sent ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
-			{resolveError && !resolved ? <p className="m-0 text-2xs font-medium text-error">{labels.resolveReviewFailed}</p> : null}
 		</div>
 	);
 }
 
 function ReviewSummaryCard({
 	actor,
-	autoInjected = false,
 	body: rawBody,
-	externalLink: ExternalLink,
 	isBot = false,
 	isEarlier = false,
 	labels,
-	onSend,
 	renderAvatar,
 	renderMarkdown,
 	testId,
 	timestamp,
-	url,
 	verdict,
 }: {
 	actor: string;
-	autoInjected?: boolean;
 	body?: string;
-	externalLink: ExternalLinkComponent;
 	isBot?: boolean;
 	isEarlier?: boolean;
 	labels: InspectorReviewLabels;
-	onSend?: () => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	testId: string;
 	timestamp: string;
-	url?: string | null;
 	verdict: InspectorVerdict;
 }) {
-	const [open, setOpen] = useState(false);
 	const [expanded, setExpanded] = useState(false);
-	const [sent, setSent] = useState(autoInjected);
-	const [sending, setSending] = useState(false);
-	const [sendError, setSendError] = useState(false);
-	useEffect(() => {
-		if (autoInjected) setSent(true);
-	}, [autoInjected]);
 	const trimmed = rawBody?.trim();
 	const body = trimmed ? trimmed.replace(/\n{3,}/g, "\n\n") : trimmed;
 	const clamped = body ? isClampedSummary(body) : false;
 	return (
-		<ReviewEntryDisclosure
-			actor={actor}
-			avatar={renderAvatar(actor)}
-			botLabel={isBot ? labels.bot : undefined}
-			meta={
-				<>
+		<article className="flex min-w-0 flex-col gap-1 rounded-md bg-overlay/50 px-2.5 py-2.5">
+			<span className="flex min-w-0 items-center gap-1.5">
+				<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
+					{renderAvatar(actor)}
+					<span className="truncate">{actor}</span>
+				</span>
+				{isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
+				<VerdictBadge verdict={verdict} />
+				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
 					{isEarlier ? <span>{labels.earlierPass}</span> : null}
-					<span>{timestamp}</span>
-				</>
-			}
-			onOpenChange={setOpen}
-			open={open}
-			testId="agent-review-card"
-			verdict={verdict}
-		>
+					<span className="font-mono">{timestamp}</span>
+				</span>
+			</span>
 			{body ? (
 				<ReviewMarkdownBody
 					body={body}
@@ -1332,45 +1190,7 @@ function ReviewSummaryCard({
 				labels={labels}
 				onExpandedChange={() => setExpanded((open) => !open)}
 			/>
-			{body || url ? (
-				<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
-					{body && onSend ? (
-						sent ? (
-							<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs" title={labels.workerAgentWorkingOnFeedback}>
-								<CheckIcon className="shrink-0 text-success" />
-								{labels.sentToWorkerAgent}
-							</span>
-						) : (
-							<button
-								className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60"
-								disabled={sending}
-								onClick={async () => {
-									setSending(true);
-									setSendError(false);
-									try {
-										await onSend();
-										setSent(true);
-									} catch {
-										setSendError(true);
-									} finally {
-										setSending(false);
-									}
-								}}
-								type="button"
-							>
-								{labels.sendToWorkerAgent}
-							</button>
-						)
-					) : null}
-					{url ? (
-						<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={url}>
-							{labels.viewOnPR}
-						</ExternalLink>
-					) : null}
-				</div>
-			) : null}
-			{sendError && !sent ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
-		</ReviewEntryDisclosure>
+		</article>
 	);
 }
 
