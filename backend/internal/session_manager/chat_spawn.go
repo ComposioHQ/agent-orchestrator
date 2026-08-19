@@ -154,6 +154,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				// a terminal that was never created.
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
+				Model:                  agentConfig.Model,
 			}
 			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
 			controllerCommitted = completionErr == nil

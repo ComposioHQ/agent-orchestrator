@@ -154,7 +154,10 @@ type SessionView struct {
 	// unchanged) so the desktop browser panel can re-navigate / refresh on a
 	// repeated preview of the same target. Pulled from the json:"-" domain
 	// Metadata.
-	PreviewRevision   int64            `json:"previewRevision,omitempty"`
+	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// Model is the agent model this session resolved to at spawn time. Empty
+	// means the agent's default model. Pulled from the json:"-" domain Metadata.
+	Model             string           `json:"model,omitempty"`
 	PRs               []SessionPRFacts `json:"prs"`
 	ActiveAgentSwitch *AgentSwitchView `json:"activeAgentSwitch,omitempty"`
 }
@@ -181,6 +184,10 @@ type SpawnSessionRequest struct {
 	// producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
+	// Model is an optional agent model override scoped to this single spawn. Empty
+	// keeps the resolved project/role default. The daemon validates that the
+	// selected harness can honor the model before launching.
+	Model string `json:"model,omitempty" maxLength:"256"`
 
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
@@ -682,6 +689,7 @@ type SessionPRReviewSummary struct {
 	Decision                   domain.ReviewDecision         `json:"decision" enum:"none,approved,changes_requested,review_required"`
 	HasUnresolvedHumanComments bool                          `json:"hasUnresolvedHumanComments"`
 	UnresolvedBy               []SessionPRUnresolvedReviewer `json:"unresolvedBy"`
+	ResolvedBy                 []SessionPRUnresolvedReviewer `json:"resolvedBy,omitempty"`
 	Reviews                    []SessionPRReviewEntry        `json:"reviews,omitempty"`
 }
 
@@ -697,7 +705,7 @@ type SessionPRReviewEntry struct {
 	AutoInjectReview bool                  `json:"autoInjectReview"`
 }
 
-// SessionPRUnresolvedReviewer groups unresolved human comments by reviewer.
+// SessionPRUnresolvedReviewer groups review comments by reviewer.
 type SessionPRUnresolvedReviewer struct {
 	ReviewerID string                       `json:"reviewerId"`
 	Count      int                          `json:"count"`
@@ -706,7 +714,7 @@ type SessionPRUnresolvedReviewer struct {
 	IsBot      bool                         `json:"isBot,omitempty"`
 }
 
-// SessionPRReviewCommentLink points to one unresolved review comment.
+// SessionPRReviewCommentLink points to one review comment.
 type SessionPRReviewCommentLink struct {
 	URL              string `json:"url,omitempty"`
 	File             string `json:"file,omitempty"`
@@ -780,14 +788,8 @@ func newSessionPRCISummary(in sessionsvc.PRCISummary) SessionPRCISummary {
 }
 
 func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSummary {
-	reviewers := make([]SessionPRUnresolvedReviewer, 0, len(in.UnresolvedBy))
-	for _, reviewer := range in.UnresolvedBy {
-		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
-		for _, link := range reviewer.Links {
-			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
-		}
-		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
-	}
+	reviewers := newSessionPRCommentReviewers(in.UnresolvedBy)
+	resolvedReviewers := newSessionPRCommentReviewers(in.ResolvedBy)
 	entries := make([]SessionPRReviewEntry, 0, len(in.Reviews))
 	for _, review := range in.Reviews {
 		entries = append(entries, SessionPRReviewEntry{
@@ -800,7 +802,19 @@ func newSessionPRReviewSummary(in sessionsvc.PRReviewSummary) SessionPRReviewSum
 			AutoInjectReview: review.AutoInjectReview,
 		})
 	}
-	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers, Reviews: entries}
+	return SessionPRReviewSummary{Decision: in.Decision, HasUnresolvedHumanComments: in.HasUnresolvedHumanComments, UnresolvedBy: reviewers, ResolvedBy: resolvedReviewers, Reviews: entries}
+}
+
+func newSessionPRCommentReviewers(in []sessionsvc.PRUnresolvedReviewer) []SessionPRUnresolvedReviewer {
+	reviewers := make([]SessionPRUnresolvedReviewer, 0, len(in))
+	for _, reviewer := range in {
+		links := make([]SessionPRReviewCommentLink, 0, len(reviewer.Links))
+		for _, link := range reviewer.Links {
+			links = append(links, SessionPRReviewCommentLink{URL: link.URL, File: link.File, Line: link.Line, Body: link.Body, AutoInjectReview: link.AutoInjectReview})
+		}
+		reviewers = append(reviewers, SessionPRUnresolvedReviewer{ReviewerID: reviewer.ReviewerID, Count: reviewer.Count, Links: links, ReviewURL: reviewer.ReviewURL, IsBot: reviewer.IsBot})
+	}
+	return reviewers
 }
 
 func newSessionPRMergeabilitySummary(in sessionsvc.PRMergeabilitySummary) SessionPRMergeabilitySummary {

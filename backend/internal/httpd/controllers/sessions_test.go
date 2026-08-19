@@ -45,6 +45,7 @@ type fakeSessionService struct {
 	workspaceFile       sessionsvc.WorkspaceFileDetail
 	workspacePaths      []string
 	spawnErr            error
+	lastSpawn           ports.SpawnConfig
 	orchestratorMode    domain.SessionMode
 	claimErr            error
 	listPRErr           error
@@ -186,6 +187,7 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+	f.lastSpawn = cfg
 	if f.spawnErr != nil {
 		return domain.Session{}, 0, 0, f.spawnErr
 	}
@@ -1158,6 +1160,20 @@ func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_SpawnPassesModelToService(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
+		`{"projectId":"ao","kind":"worker","harness":"codex","prompt":"fix","displayName":"my worker","model":"sonnet"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST session = %d, want 201; body=%s", status, body)
+	}
+	if svc.lastSpawn.AgentConfig.Model != "sonnet" {
+		t.Fatalf("service AgentConfig.Model = %q, want sonnet", svc.lastSpawn.AgentConfig.Model)
+	}
+}
+
 func TestSessionsAPI_OrchestratorAcceptsExplicitChatMode(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
@@ -1806,6 +1822,25 @@ func TestSessionsAPI_SetPreviewRejectsAbsoluteFilesOutsideWorkspace(t *testing.T
 		body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(target)+`}`)
 		if status != http.StatusForbidden || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_OUTSIDE_WORKSPACE"`)) {
 			t.Fatalf("set outside preview %q = %d, body=%s; want 403 workspace error", target, status, body)
+		}
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:4321/docs" {
+		t.Fatalf("persisted previewUrl = %q, want existing target preserved", got)
+	}
+}
+
+func TestSessionsAPI_SetPreviewRejectsRelativeParentTraversal(t *testing.T) {
+	svc := newFakeSessionService()
+	s := svc.sessions["ao-1"]
+	s.Metadata.WorkspacePath = t.TempDir()
+	s.Metadata.PreviewURL = "http://localhost:4321/docs"
+	svc.sessions["ao-1"] = s
+	srv := newSessionTestServer(t, svc)
+
+	for _, target := range []string{"../README.md", "docs/../../README.md", `..\README.md`} {
+		body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(target)+`}`)
+		if status != http.StatusForbidden || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_OUTSIDE_WORKSPACE"`)) {
+			t.Fatalf("set parent traversal preview %q = %d, body=%s; want 403 workspace error", target, status, body)
 		}
 	}
 	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:4321/docs" {
