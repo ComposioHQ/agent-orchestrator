@@ -140,6 +140,7 @@ const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
 export function SessionInspector({
 	session,
 	onOpenReviewerTerminal,
+	onViewInlineComment,
 	browserPoppedOut = false,
 	browserAnnotationQueue,
 	isInspectorVisible = true,
@@ -152,6 +153,7 @@ export function SessionInspector({
 }: {
 	session?: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	browserPoppedOut?: boolean;
 	browserAnnotationQueue?: BrowserAnnotationQueueModel;
 	isInspectorVisible?: boolean;
@@ -223,7 +225,7 @@ export function SessionInspector({
 			loadingText={session ? undefined : t("inspector.loadingSession")}
 			onViewChange={setView}
 			reviewsView={
-				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
+				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} onViewInlineComment={onViewInlineComment} session={session} /> : undefined
 			}
 			summaryView={
 				session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
@@ -318,13 +320,15 @@ function SummaryView({
 function ReviewsView({
 	session,
 	onOpenReviewerTerminal,
+	onViewInlineComment,
 }: {
 	session: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 }) {
 	return (
 		<div role="tabpanel">
-			<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} />
+			<ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} onViewInlineComment={onViewInlineComment} session={session} />
 		</div>
 	);
 }
@@ -1237,9 +1241,11 @@ function resolveDefaultReviewerHarness(config: ProjectConfig | undefined, worker
 function ReviewsSection({
 	session,
 	onOpenReviewerTerminal,
+	onViewInlineComment,
 }: {
 	session: WorkspaceSession;
 	onOpenReviewerTerminal?: OpenReviewerTerminal;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 }) {
 	const { t } = useTranslation();
 	const hasPr = sortedPRs(session).length > 0;
@@ -1410,6 +1416,7 @@ function ReviewsSection({
 			<MergedReviewsSection
 				githubPRs={githubReviews}
 				isLoading={scmSummary.isLoading}
+				onViewInlineComment={onViewInlineComment}
 				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
 				session={session}
@@ -1428,12 +1435,14 @@ function ReviewsSection({
 function MergedReviewsSection({
 	githubPRs,
 	isLoading,
+	onViewInlineComment,
 	reviewStates,
 	runs,
 	session,
 }: {
 	githubPRs: SessionPRSummary[];
 	isLoading: boolean;
+	onViewInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => void;
 	reviewStates: PRReviewState[];
 	runs: ReviewRunFacts[];
 	session: WorkspaceSession;
@@ -1667,6 +1676,7 @@ function MergedReviewsSection({
 			onResolveInlineComment={resolveInlineComment}
 			onSendAgentReview={sendAgentReviewToWorker}
 			onSendInlineComment={sendInlineCommentToWorker}
+			onViewInlineComment={onViewInlineComment}
 			renderAvatar={(harness) => (
 				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
 			)}

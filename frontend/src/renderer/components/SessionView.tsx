@@ -21,7 +21,7 @@ import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { NotificationCenter } from "./NotificationCenter";
 import { ResizeHandle } from "./ResizeHandle";
-import { SessionFilesView } from "./SessionFilesView";
+import { SessionFilesView, type SessionFilesNavigationTarget } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import {
 	SessionInterfaceActionGroup,
@@ -260,6 +260,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [filesNavigationTarget, setFilesNavigationTarget] = useState<SessionFilesNavigationTarget | null>(null);
+	const filesNavigationRequestRef = useRef(0);
+	useEffect(() => {
+		filesNavigationRequestRef.current = 0;
+		setFilesNavigationTarget(null);
+	}, [sessionId]);
 	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const isNativeFullScreen = useWindowFullScreen();
@@ -644,6 +650,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setInspectorOpenForSession(sessionId, true);
 	}, [sessionId, setInspectorOpenForSession, setInspectorViewForSession]);
 
+	const handleViewInlineComment = useCallback(
+		(comment: { file?: string; line?: number }) => {
+			if (!comment.file) return;
+			filesNavigationRequestRef.current += 1;
+			setFilesNavigationTarget({
+				path: comment.file,
+				line: comment.line,
+				requestId: filesNavigationRequestRef.current,
+			});
+			handleOpenFiles();
+		},
+		[handleOpenFiles],
+	);
+
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
 			if (next) setBrowserPopOutState({ sessionId, poppedOut: false });
@@ -903,12 +923,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							browserPoppedOut={browserPoppedOut}
 							filesView={
 								session ? (
-									<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
+									<SessionFilesView navigationTarget={filesNavigationTarget} onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
 								) : null
 							}
 							isInspectorVisible={inspectorPanelVisible}
 							onOpenFiles={handleOpenFiles}
 							onOpenReviewerTerminal={selectReviewerTerminal}
+							onViewInlineComment={handleViewInlineComment}
 							onToggleBrowserPopOut={handleToggleBrowserPopOut}
 							onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 							view={inspectorView}
@@ -953,6 +974,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						>
 							<SessionFilesView
 								isMaximized
+								navigationTarget={filesNavigationTarget}
 								onToggleMaximized={handleToggleFilesPopOut}
 								sessionId={session.id}
 							/>
