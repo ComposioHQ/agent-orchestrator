@@ -46,7 +46,7 @@ func vibeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 		vibeHome = filepath.Join(home, ".vibe")
 	}
 
-	envVars, err := vibeAPIKeyEnvVars(vibeConfigPath(vibeHome))
+	envVars, err := vibeAPIKeyEnvVars(filepath.Join(vibeHome, "config.toml"))
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
@@ -59,18 +59,6 @@ func vibeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 		}
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-// vibeConfigPath follows Vibe's documented precedence: project configuration
-// first, then the Vibe-home configuration.
-func vibeConfigPath(vibeHome string) string {
-	if cwd, err := os.Getwd(); err == nil && cwd != "" {
-		projectConfig := filepath.Join(cwd, ".vibe", "config.toml")
-		if _, err := os.Stat(projectConfig); err == nil {
-			return projectConfig
-		}
-	}
-	return filepath.Join(vibeHome, "config.toml")
 }
 
 func vibeAPIKeyEnvVars(configPath string) ([]string, error) {

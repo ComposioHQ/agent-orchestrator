@@ -110,22 +110,6 @@ func TestVibeEnvFileAuthStatusUnknownForEmptyValue(t *testing.T) {
 	}
 }
 
-func TestVibeConfigPathPrefersProjectConfig(t *testing.T) {
-	project := t.TempDir()
-	projectConfig := filepath.Join(project, ".vibe", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(projectConfig, []byte("api_key_env_var = \"PROJECT_VIBE_KEY\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(project)
-
-	if got := vibeConfigPath(filepath.Join(t.TempDir(), ".vibe")); got != projectConfig {
-		t.Fatalf("vibeConfigPath() = %q, want %q", got, projectConfig)
-	}
-}
-
 func clearVibeAuthEnv(t *testing.T, names ...string) {
 	t.Helper()
 	for _, name := range names {

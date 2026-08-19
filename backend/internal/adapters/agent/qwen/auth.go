@@ -58,11 +58,7 @@ func qwenLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 	if status, ok, err := qwenAuthStatusFromSettings(settingsPath); err != nil || ok {
 		return status, ok, err
 	}
-	names, err := qwenConfiguredEnvNamesFromSettings(settingsPath)
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	return qwenProjectEnvAuthStatus(names...)
+	return ports.AgentAuthStatusUnknown, false, nil
 }
 
 func qwenAuthStatusFromSettings(path string) (ports.AgentAuthStatus, bool, error) {
@@ -104,105 +100,6 @@ func qwenConfiguredEnvPresent(value any) bool {
 			if qwenConfiguredEnvPresent(child) {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func qwenConfiguredEnvNamesFromSettings(path string) ([]string, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var root any
-	if err := json.Unmarshal(data, &root); err != nil {
-		return nil, err
-	}
-	return qwenConfiguredEnvNames(root), nil
-}
-
-func qwenConfiguredEnvNames(value any) []string {
-	var names []string
-	var visit func(any)
-	visit = func(value any) {
-		switch v := value.(type) {
-		case map[string]any:
-			for key, child := range v {
-				if strings.EqualFold(key, "envKey") {
-					if name := stringSetting(child); name != "" && !containsQwenEnvName(names, name) {
-						names = append(names, name)
-					}
-				}
-				visit(child)
-			}
-		case []any:
-			for _, child := range v {
-				visit(child)
-			}
-		}
-	}
-	visit(value)
-	return names
-}
-
-func qwenProjectEnvAuthStatus(extraNames ...string) (ports.AgentAuthStatus, bool, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	if cwd == "" {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	for _, path := range []string{filepath.Join(cwd, ".env"), filepath.Join(cwd, ".qwen", ".env")} {
-		status, ok, err := qwenEnvFileAuthStatus(path, extraNames...)
-		if err != nil || ok {
-			return status, ok, err
-		}
-	}
-	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func qwenEnvFileAuthStatus(path string, extraNames ...string) (ports.AgentAuthStatus, bool, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if !ok || !qwenKnownAPIKeyEnvVar(strings.TrimSpace(key), extraNames...) {
-			continue
-		}
-		if strings.Trim(strings.TrimSpace(value), `"'`) != "" {
-			return ports.AgentAuthStatusAuthorized, true, nil
-		}
-	}
-	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func qwenKnownAPIKeyEnvVar(name string, extraNames ...string) bool {
-	for _, candidate := range qwenAPIKeyEnvVars {
-		if name == candidate {
-			return true
-		}
-	}
-	for _, candidate := range extraNames {
-		if name == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-func containsQwenEnvName(names []string, target string) bool {
-	for _, name := range names {
-		if name == target {
-			return true
 		}
 	}
 	return false
