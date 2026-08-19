@@ -3,16 +3,34 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConversationSnapshot } from "../../types/conversation";
 import type { WorkspaceSession } from "../../types/workspace";
 import { useUiStore } from "../../stores/ui-store";
 import { workspaceQueryKey } from "../../hooks/useWorkspaceQuery";
 
 const LINK = "http://localhost:5173";
 
+function snapshotFor(sessionId: string): ConversationSnapshot {
+	return {
+		capabilities: [],
+		conversationId: `conv-${sessionId}`,
+		sessionId,
+		harness: "codex",
+		mode: "chat",
+		controller: { state: "ready" },
+		items: [],
+		turns: [],
+		settings: {},
+		oldestSequence: 0,
+		latestSequence: 0,
+		hasMoreBefore: false,
+	};
+}
+
 const { postMock, conversationState } = vi.hoisted(() => ({
 	postMock: vi.fn(),
 	conversationState: {
-		snapshot: { capabilities: [] } as { capabilities: string[] } | undefined,
+		snapshot: undefined as ConversationSnapshot | undefined,
 		isLoading: false,
 		unavailable: undefined as { message: string } | undefined,
 		error: undefined as string | undefined,
@@ -27,7 +45,10 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 vi.mock("../../hooks/useConversation", () => ({
-	useConversation: () => conversationState,
+	useConversation: (sessionId: string) => ({
+		...conversationState,
+		snapshot: conversationState.snapshot ?? snapshotFor(sessionId),
+	}),
 	useConversationCommands: () => ({}),
 	useConversationConfigOptions: () => ({ options: [] }),
 	useConversationModels: () => ({ models: [] }),
@@ -39,14 +60,17 @@ vi.mock("../../hooks/useConversation", () => ({
 vi.mock("./ChatWorkspace", () => ({
 	ChatWorkspace: ({
 		onLinkOpen,
+		snapshot,
 		switchAgentControl,
 		shellTarget,
 	}: {
 		onLinkOpen?: (url: string) => void;
+		snapshot: { sessionId: string };
 		switchAgentControl?: ReactNode;
 		shellTarget?: { handleId: string };
 	}) => (
 		<div>
+			<div>Rendered {snapshot.sessionId}</div>
 			<button type="button" onClick={() => onLinkOpen?.(LINK)}>
 				Open chat link
 			</button>
@@ -82,7 +106,7 @@ function Wrapper({ client, children }: { client: QueryClient; children: ReactNod
 
 beforeEach(() => {
 	postMock.mockReset().mockResolvedValue({ data: {}, error: undefined });
-	conversationState.snapshot = { capabilities: [] };
+	conversationState.snapshot = undefined;
 	conversationState.isLoading = false;
 	conversationState.unavailable = undefined;
 	conversationState.error = undefined;
@@ -170,5 +194,31 @@ describe("SessionChatSurface link routing", () => {
 
 		expect(screen.getByTestId("shell-target")).toHaveTextContent("shell-1");
 		expect(screen.queryByText("Conversation unavailable")).not.toBeInTheDocument();
+	});
+
+	it("does not render a previous orchestrator conversation while another orchestrator is selected", () => {
+		const first = { ...session, id: "proj-orchestrator-1", kind: "orchestrator" as const };
+		const second = { ...session, id: "proj-orchestrator-2", kind: "orchestrator" as const };
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+		});
+
+		const view = render(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={first} />
+			</Wrapper>,
+		);
+
+		expect(screen.getByText("Rendered proj-orchestrator-1")).toBeInTheDocument();
+
+		conversationState.snapshot = snapshotFor("proj-orchestrator-1");
+		view.rerender(
+			<Wrapper client={queryClient}>
+				<SessionChatSurface session={second} />
+			</Wrapper>,
+		);
+
+		expect(screen.queryByText("Rendered proj-orchestrator-1")).not.toBeInTheDocument();
+		expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
 	});
 });

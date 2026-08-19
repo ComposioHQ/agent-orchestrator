@@ -111,13 +111,14 @@ export function SessionChatSurface({
 	const [switchSelectorContainer, setSwitchSelectorContainer] = useState<HTMLDivElement | null>(null);
 	const switchMutation = useSwitchAgentState(session.id);
 	const renderShellFallback = Boolean(shellTarget && session);
+	const snapshotSessionMismatch = Boolean(snapshot && snapshot.sessionId !== session.id);
 	const renderSnapshot =
-		snapshot ??
+		(snapshotSessionMismatch ? undefined : snapshot) ??
 		(renderShellFallback
 			? unavailableConversationSnapshot(session)
 			: undefined);
 
-	if (isLoading && !renderShellFallback) {
+	if ((isLoading || snapshotSessionMismatch) && !renderShellFallback) {
 		return (
 			<Centered>
 				<Loader2 aria-hidden="true" className="size-4 animate-spin text-muted-foreground" />
@@ -158,6 +159,7 @@ export function SessionChatSurface({
 
 	return (
 		<ChatWorkspace
+			key={session.id}
 			snapshot={renderSnapshot}
 			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
