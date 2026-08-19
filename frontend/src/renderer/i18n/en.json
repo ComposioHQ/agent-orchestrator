@@ -269,7 +269,7 @@
 	"inspector.rereviewRequested": "Asked for re-review",
 	"inspector.rereviewRequestFailed": "Unable to request re-review",
 	"inspector.resolveComment": "Resolve comment",
-	"inspector.resolvedReview": "Resolved",
+	"inspector.resolvedReview": "Comment resolved",
 	"inspector.resolveReviewFailed": "Unable to resolve. Retry.",
 	"inspector.sendToWorkerAgent": "Send to worker agent",
 	"inspector.sentToWorkerAgent": "Sent to worker agent",
