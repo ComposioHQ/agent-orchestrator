@@ -532,14 +532,17 @@ function SettingsBody({
 								{reviewerWarning}
 							</p>
 						)}
-						<SettingsRow label={t("settings.project.autoReviewToggle")}>
-							<div className="flex items-center gap-2">
+						<div className="settings-row-bar">
+							<div className="flex shrink-0 items-center gap-1.5">
+								<span className="whitespace-nowrap text-sm leading-5 text-settings-label">
+									{t("settings.project.autoReviewToggle")}
+								</span>
 								<TooltipProvider delayDuration={0}>
 									<Tooltip>
 										<TooltipTrigger asChild>
 											<button
 												type="button"
-												className="inline-flex size-6 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
+												className="inline-flex size-5 items-center justify-center rounded-md text-settings-muted transition-colors hover:bg-settings-menu-selected hover:text-settings-label focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
 												aria-label={t("settings.project.autoReviewDescription")}
 											>
 												<Info className="size-icon-sm" aria-hidden="true" />
@@ -550,6 +553,8 @@ function SettingsBody({
 										</TooltipContent>
 									</Tooltip>
 								</TooltipProvider>
+							</div>
+							<div className="flex min-w-0 flex-1 items-center justify-end">
 								<Switch
 									aria-label={t("settings.project.autoReviewToggle")}
 									checked={form.autoReview}
@@ -558,7 +563,7 @@ function SettingsBody({
 									size="sm"
 								/>
 							</div>
-						</SettingsRow>
+						</div>
 					</ProjectSettingsSection>
 				)}
 				</>
