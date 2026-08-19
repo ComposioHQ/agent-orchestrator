@@ -3090,31 +3090,214 @@ func TestPoll_RenamedRepoReconciliationPersistsUnderTrackedRef(t *testing.T) {
 	}
 }
 
-func TestObservationKeyForRefs(t *testing.T) {
-	newObs := func(url, alias string) ports.SCMObservation {
+func TestObservationSubjectKey(t *testing.T) {
+	newObs := func(url, alias, providerID string) ports.SCMObservation {
 		return ports.SCMObservation{
 			Fetched: true, Provider: "github", Host: "github.com", Repo: "new/r",
-			PR: ports.SCMPRObservation{URL: url, URLAlias: alias, Number: 1},
+			PR: ports.SCMPRObservation{URL: url, URLAlias: alias, Number: 1, ProviderID: providerID},
 		}
 	}
-	oldRef := ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}, Number: 1, URL: "https://github.com/new/r/pull/1"}
-	newRef := ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "new", Name: "r", Repo: "new/r"}, Number: 1, URL: "https://github.com/new/r/pull/1"}
+	oldRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}
+	newRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "new", Name: "r", Repo: "new/r"}
+	oldRef := ports.SCMPRRef{Repo: oldRepo, Number: 1, URL: "https://github.com/new/r/pull/1"}
+	newRef := ports.SCMPRRef{Repo: newRepo, Number: 1, URL: "https://github.com/new/r/pull/1"}
+	idKey := identityPRKey("github", "github.com", "PR_1")
+	subj := &subject{}
 	tests := []struct {
-		name string
-		obs  ports.SCMObservation
-		refs []ports.SCMPRRef
-		want string
+		name     string
+		obs      ports.SCMObservation
+		refs     []ports.SCMPRRef
+		subjects map[string]*subject
+		keyByRef map[string]string
+		want     string
 	}{
-		{name: "canonical ref wins", obs: newObs("https://github.com/new/r/pull/1", ""), refs: []ports.SCMPRRef{oldRef, newRef}, want: prKey(newRef.Repo, 1)},
-		{name: "renamed repo falls back to requesting ref by URL", obs: newObs("https://github.com/new/r/pull/1", ""), refs: []ports.SCMPRRef{oldRef}, want: prKey(oldRef.Repo, 1)},
-		{name: "renamed repo falls back via URL alias", obs: newObs("https://github.com/new/r/pull/1", "https://github.com/old/r/pull/1"), refs: []ports.SCMPRRef{{Repo: oldRef.Repo, Number: 1, URL: "https://github.com/old/r/pull/1"}}, want: prKey(oldRef.Repo, 1)},
-		{name: "no matching ref keeps canonical key", obs: newObs("https://github.com/new/r/pull/1", ""), refs: []ports.SCMPRRef{{Repo: oldRef.Repo, Number: 2, URL: "https://github.com/new/r/pull/2"}}, want: "github:github.com:new/r#1"},
+		{
+			name:     "provider identity wins over every name",
+			obs:      newObs("https://github.com/new/r/pull/1", "", "PR_1"),
+			refs:     []ports.SCMPRRef{oldRef},
+			subjects: map[string]*subject{idKey: subj},
+			keyByRef: map[string]string{prKey(oldRepo, 1): idKey},
+			want:     idKey,
+		},
+		{
+			name:     "canonical name key when subject has no identity",
+			obs:      newObs("https://github.com/new/r/pull/1", "", "PR_1"),
+			refs:     []ports.SCMPRRef{newRef},
+			subjects: map[string]*subject{prKey(newRepo, 1): subj},
+			keyByRef: map[string]string{prKey(newRepo, 1): prKey(newRepo, 1)},
+			want:     prKey(newRepo, 1),
+		},
+		{
+			name:     "renamed repo falls back to requesting ref by URL",
+			obs:      newObs("https://github.com/new/r/pull/1", "", ""),
+			refs:     []ports.SCMPRRef{oldRef},
+			subjects: map[string]*subject{prKey(oldRepo, 1): subj},
+			keyByRef: map[string]string{prKey(oldRepo, 1): prKey(oldRepo, 1)},
+			want:     prKey(oldRepo, 1),
+		},
+		{
+			name:     "renamed repo falls back via URL alias",
+			obs:      newObs("https://github.com/new/r/pull/1", "https://github.com/old/r/pull/1", ""),
+			refs:     []ports.SCMPRRef{{Repo: oldRepo, Number: 1, URL: "https://github.com/old/r/pull/1"}},
+			subjects: map[string]*subject{prKey(oldRepo, 1): subj},
+			keyByRef: map[string]string{prKey(oldRepo, 1): prKey(oldRepo, 1)},
+			want:     prKey(oldRepo, 1),
+		},
+		{
+			name:     "no matching ref keeps canonical key",
+			obs:      newObs("https://github.com/new/r/pull/1", "", ""),
+			refs:     []ports.SCMPRRef{{Repo: oldRepo, Number: 2, URL: "https://github.com/new/r/pull/2"}},
+			subjects: map[string]*subject{},
+			keyByRef: map[string]string{},
+			want:     "github:github.com:new/r#1",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := observationKeyForRefs(tt.obs, tt.refs); got != tt.want {
-				t.Fatalf("observationKeyForRefs = %q, want %q", got, tt.want)
+			if got := observationSubjectKey(tt.obs, tt.refs, tt.subjects, tt.keyByRef); got != tt.want {
+				t.Fatalf("observationSubjectKey = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestKeyForTrackedPR(t *testing.T) {
+	repo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "r", Repo: "o/r"}
+	withID := domain.PullRequest{Provider: "GitHub", Host: "GitHub.com", ProviderID: "PR_x", Number: 7}
+	if got, want := keyForTrackedPR(withID, repo), "github:github.com@PR_x"; got != want {
+		t.Fatalf("identity key = %q, want %q", got, want)
+	}
+	withoutID := domain.PullRequest{Number: 7}
+	if got, want := keyForTrackedPR(withoutID, repo), prKey(repo, 7); got != want {
+		t.Fatalf("legacy key = %q, want %q", got, want)
+	}
+}
+
+// The discovery clobber (issue #4089, mechanism 2): a second scan name for the
+// same repository (stale upstream remote after a transfer) lists the same PRs.
+// A tracked PR recognized by its provider identity must NOT be re-discovered —
+// the baseline write would overwrite the row's CI/mergeability facts and wipe
+// its semantic hashes, flapping the PR panel back to "Checking merge
+// readiness" on every listing change.
+func TestPoll_SecondScanNameDoesNotRebaselineTrackedPR(t *testing.T) {
+	oldRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}
+	newRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "new", Name: "r", Repo: "new/r"}
+	restoreRemotes := gitRemoteURLsFunc
+	gitRemoteURLsFunc = func(string) []string {
+		return []string{"https://github.com/new/r.git", "https://github.com/old/r.git"}
+	}
+	defer func() { gitRemoteURLsFunc = restoreRemotes }()
+
+	tracked := domain.PullRequest{
+		URL: "https://github.com/new/r/pull/1", SessionID: "p-1", Number: 1,
+		Provider: "github", Host: "github.com", Repo: "new/r", ProviderID: "PR_stable_1",
+		SourceBranch: "feat", HeadSHA: "sha1", CI: domain.CIPassing, Mergeability: domain.MergeBlocked,
+		MetadataHash: "m", CIHash: "c", ReviewHash: "r", Review: domain.ReviewRequired,
+		ObservedAt: time.Unix(50, 0).UTC(), CIObservedAt: time.Unix(50, 0).UTC(), ReviewObservedAt: time.Unix(50, 0).UTC(),
+	}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: "/proj", RepoOriginURL: "https://github.com/new/r.git"}},
+		prs:      map[domain.SessionID][]domain.PullRequest{"p-1": {tracked}},
+		checks:   map[string][]domain.PullRequestCheck{},
+	}
+	listing := []ports.SCMPRObservation{{
+		ProviderID: "PR_stable_1", URL: "https://github.com/new/r/pull/1", Number: 1,
+		SourceBranch: "feat", HeadRepo: "new/r", TargetBranch: "main", HeadSHA: "sha1",
+	}}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{
+			prKey(newRepo, 0): {ETag: "vN"},
+			prKey(oldRepo, 0): {ETag: "vO"},
+		},
+		// Both scan names list the same PR: the canonical listing and the
+		// stale-remote listing served through GitHub's rename redirect.
+		openPRs: map[string][]ports.SCMPRObservation{
+			prKey(newRepo, 0): listing,
+			prKey(oldRepo, 0): listing,
+		},
+		observations: map[string]ports.SCMObservation{},
+	}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(100, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range store.writes {
+		if w.pr.Number == 1 && w.pr.CI == domain.CIUnknown {
+			t.Fatalf("tracked PR was re-baselined by a second scan name: %+v", w.pr)
+		}
+	}
+}
+
+// Identity-first dispatch: when the tracked row carries a provider id, a
+// canonical observation for a renamed repo is delivered by identity — no URL
+// fallback involved — and the persisted row heals to the canonical repo.
+func TestPoll_IdentityKeyedDispatchSurvivesRename(t *testing.T) {
+	oldRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/old/r.git"}},
+		prs: map[domain.SessionID][]domain.PullRequest{"p-1": {{
+			// URL intentionally differs from the canonical URL so the legacy
+			// URL fallback cannot be what delivers this observation.
+			URL: "https://github.com/old/r/pull/1", SessionID: "p-1", Number: 1,
+			Provider: "github", Host: "github.com", Repo: "old/r", ProviderID: "PR_stable_1",
+			SourceBranch: "feat",
+		}}},
+		checks: map[string][]domain.PullRequestCheck{},
+	}
+	canonical := ports.SCMObservation{
+		Fetched: true, Provider: "github", Host: "github.com", Repo: "new/r",
+		PR:           ports.SCMPRObservation{URL: "https://github.com/new/r/pull/1", Number: 1, ProviderID: "PR_stable_1", State: "open", SourceBranch: "feat", TargetBranch: "main", HeadSHA: "sha1", Title: "PR"},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: "sha1"},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewRequired)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeBlocked), Blockers: []string{"review_required"}},
+	}
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(oldRepo, 0): {ETag: "v1"}},
+		openPRs:      map[string][]ports.SCMPRObservation{},
+		observations: map[string]ports.SCMObservation{prKey(oldRepo, 1): canonical},
+	}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("identity-keyed observation was dropped")
+	}
+	final := store.writes[len(store.writes)-1].pr
+	if final.Repo != "new/r" || final.CI != domain.CIPassing || final.ProviderID != "PR_stable_1" {
+		t.Fatalf("persisted PR = repo %q ci %q providerID %q; want canonical new/r, passing, PR_stable_1", final.Repo, final.CI, final.ProviderID)
+	}
+	if len(lc.observed) != 1 {
+		t.Fatalf("lifecycle notifications = %d, want 1", len(lc.observed))
+	}
+}
+
+// Two stored rows for the same provider-native PR (one per repo name, the
+// pre-#3923 duplicate-row artifact) collapse to a single subject instead of
+// two subjects fighting over the same PR.
+func TestDiscoverSubjects_CollapsesDuplicateRowsByIdentity(t *testing.T) {
+	store := &fakeStore{
+		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
+		projects: map[string]domain.ProjectRecord{"p": {ID: "p", RepoOriginURL: "https://github.com/new/r.git"}},
+		prs: map[domain.SessionID][]domain.PullRequest{"p-1": {
+			{URL: "https://github.com/old/r/pull/1", SessionID: "p-1", Number: 1, Provider: "github", Host: "github.com", Repo: "old/r", ProviderID: "PR_dup", SourceBranch: "feat"},
+			{URL: "https://github.com/new/r/pull/1", SessionID: "p-1", Number: 1, Provider: "github", Host: "github.com", Repo: "new/r", ProviderID: "PR_dup", SourceBranch: "feat"},
+		}},
+		checks: map[string][]domain.PullRequestCheck{},
+	}
+	provider := &fakeProvider{observations: map[string]ports.SCMObservation{}}
+	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(1, 0).UTC())
+	subjects, _, err := obs.discoverSubjects(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(subjects) != 1 {
+		t.Fatalf("subjects = %d, want 1 (same provider identity must collapse)", len(subjects))
+	}
+	if _, ok := subjects[identityPRKey("github", "github.com", "PR_dup")]; !ok {
+		t.Fatalf("subject not keyed by provider identity: %v", subjects)
 	}
 }

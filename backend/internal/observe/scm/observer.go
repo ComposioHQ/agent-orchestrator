@@ -331,6 +331,21 @@ type refreshSelection struct {
 	subjectsByPR  map[string]*subject
 	commitETags   map[string]pendingCacheString
 	candidateKeys map[string]bool
+	// keyByRef maps prKey(ref.Repo, ref.Number) of every issued ref to the
+	// subject key it was issued for. Refs are name-addressed (a GraphQL query
+	// needs an owner/name), subjects are identity-addressed; this is the
+	// bridge back.
+	keyByRef map[string]string
+}
+
+// refKey returns the subject key a ref was issued for, falling back to the
+// ref's name key for refs issued outside the selection bookkeeping.
+func (sel *refreshSelection) refKey(ref ports.SCMPRRef) string {
+	rk := prKey(ref.Repo, ref.Number)
+	if k, ok := sel.keyByRef[rk]; ok {
+		return k
+	}
+	return rk
 }
 
 type persistenceOptions struct {
@@ -484,7 +499,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 		chunkSeen := map[string]bool{}
 		for _, obs := range batch {
 			obs.ObservedAt = now
-			key := observationKeyForRefs(obs, active)
+			key := observationSubjectKey(obs, active, selection.subjectsByPR, selection.keyByRef)
 			if key == "" {
 				continue
 			}
@@ -509,7 +524,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 						// Fall back to the ref's provider when the placeholder
 						// did not carry one (defensive — multi always sets it).
 						for _, ref := range active {
-							if prKey(ref.Repo, ref.Number) == key {
+							if selection.refKey(ref) == key {
 								providerKey = ref.Repo.Provider
 								break
 							}
@@ -530,8 +545,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 			chunkSeen[key] = true
 		}
 		for _, ref := range active {
-			key := prKey(ref.Repo, ref.Number)
-			if !chunkSeen[key] {
+			if !chunkSeen[selection.refKey(ref)] {
 				markRepoRefreshFailed(ref.Repo)
 			}
 		}
@@ -802,7 +816,11 @@ func (o *Observer) discoverSubjects(ctx context.Context) (map[string]*subject, [
 				o.logger.Warn("scm observer: tracked PR repo no longer belongs to project", "session", sess.ID, "pr", pr.URL, "repo", pr.Repo)
 				continue
 			}
-			key := prKey(prRepo, pr.Number)
+			// Identity-keyed: two rows for the same provider-native PR (e.g.
+			// observed under both the pre- and post-transfer repo name)
+			// resolve to one subject here instead of becoming two subjects
+			// that fight over the same PR downstream.
+			key := keyForTrackedPR(pr, prRepo)
 			if existing, ok := out[key]; ok {
 				o.logger.Warn("scm observer: duplicate tracked PR ownership skipped", "pr", key, "kept_session", existing.session.ID, "skipped_session", sess.ID)
 				continue
@@ -1024,9 +1042,18 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 		}
 		// Record the listed PR numbers so selectRefreshCandidates can
 		// restrict refresh to only updated MRs rather than every tracked MR.
+		// Subjects are identity-keyed, so when a listed PR's provider id
+		// matches a tracked subject, mark the subject key too — otherwise a
+		// listing served under a renamed repo's old name would never promote
+		// the subject to refresh candidate.
 		listedRepos[repoKey] = true
 		for _, pr := range pulls {
 			listedPRs[prKey(repo, pr.Number)] = true
+			if pr.ProviderID != "" {
+				if idKey := identityPRKey(repo.Provider, repo.Host, pr.ProviderID); subjects[idKey] != nil {
+					listedPRs[idKey] = true
+				}
+			}
 		}
 		for _, pr := range pulls {
 			if pr.Number <= 0 || pr.SourceBranch == "" {
@@ -1041,9 +1068,20 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 					continue
 				}
 			}
-			key := prKey(repo, pr.Number)
-			if _, ok := subjects[key]; ok {
+			if _, ok := subjects[prKey(repo, pr.Number)]; ok {
 				continue
+			}
+			// Identity dedupe: a PR already tracked under its provider-native
+			// identity must never be treated as new, even when this listing
+			// was served under a different repo name (pre-transfer remote,
+			// mirror). Without this, the baseline write below re-baselines
+			// the tracked row and wipes its CI/mergeability facts and
+			// semantic hashes — the "Checking merge readiness" flap
+			// (issue #4089, mechanism 2).
+			if pr.ProviderID != "" {
+				if _, ok := subjects[identityPRKey(repo.Provider, repo.Host, pr.ProviderID)]; ok {
+					continue
+				}
 			}
 			// Branch-prefix attribution must only claim PRs whose head branch
 			// lives in a session's push origin. A same-repo PR has head == origin
@@ -1084,7 +1122,7 @@ func (o *Observer) discoverNewPRs(ctx context.Context, sessionRepos []sessionRep
 				}
 				continue
 			}
-			subjects[key] = &subject{
+			subjects[keyForTrackedPR(known, repo)] = &subject{
 				session: sr.session,
 				repo:    repo,
 				branch:  sr.branch,
@@ -1219,12 +1257,13 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		subjectsByPR:  map[string]*subject{},
 		commitETags:   map[string]pendingCacheString{},
 		candidateKeys: map[string]bool{},
+		keyByRef:      map[string]string{},
 	}
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
 			continue
 		}
-		key := prKey(s.repo, s.known.Number)
+		key := keyForTrackedPR(s.known, s.repo)
 		selection.subjectsByPR[key] = s
 		candidate := missingLocalState(s.known)
 		repoCursor := o.Cache.LastSyncCursor[prKey(s.repo, 0)]
@@ -1291,6 +1330,7 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		if candidate {
 			selection.refs = append(selection.refs, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
 			selection.candidateKeys[key] = true
+			selection.keyByRef[prKey(s.repo, s.known.Number)] = key
 		}
 	}
 	return selection
@@ -1363,10 +1403,12 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 		if g.err != nil || g.result.NotModified {
 			continue
 		}
-		key := prKey(s.repo, s.known.Number)
+		key := keyForTrackedPR(s.known, s.repo)
 		// Only reconcile PRs not in the current listing — listed PRs are
-		// already covered by the normal refresh path.
-		if listedPRs[key] {
+		// already covered by the normal refresh path. listedPRs carries the
+		// subject key for identity-matched listings and the name key
+		// otherwise; check both so a rename cannot double-fetch.
+		if listedPRs[key] || listedPRs[prKey(s.repo, s.known.Number)] {
 			continue
 		}
 		// Skip refs already selected as refresh candidates by the normal
@@ -1379,9 +1421,16 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 			ref: ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL},
 			s:   s,
 		})
+		selection.keyByRef[prKey(s.repo, s.known.Number)] = key
 	}
 	if len(refs) == 0 {
 		return out
+	}
+	// Reconcile refs resolve against their pending subjects; the selection's
+	// subjectsByPR does not yet contain them (they were not candidates).
+	reconSubjects := map[string]*subject{}
+	for _, r := range refs {
+		reconSubjects[keyForTrackedPR(r.s.known, r.s.repo)] = r.s
 	}
 	// Unbounded: issue detail fetches for every reconciled PR. The worst case
 	// is bounded by the tracked-open-PR count, which is small in AO's use case.
@@ -1425,7 +1474,7 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 		reconcileSeen := map[string]bool{}
 		for _, obs := range batch {
 			obs.ObservedAt = now
-			key := observationKeyForRefs(obs, active)
+			key := observationSubjectKey(obs, active, reconSubjects, selection.keyByRef)
 			if key == "" {
 				continue
 			}
@@ -1437,7 +1486,7 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 					providerKey := obs.Provider
 					if providerKey == "" {
 						for _, ref := range active {
-							if prKey(ref.Repo, ref.Number) == key {
+							if selection.refKey(ref) == key {
 								providerKey = ref.Repo.Provider
 								break
 							}
@@ -1455,7 +1504,7 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 				// Mark the repo refresh-incomplete on any failure so the
 				// repo ETag/cursor do not advance without an observation.
 				for _, ref := range active {
-					if prKey(ref.Repo, ref.Number) == key {
+					if selection.refKey(ref) == key {
 						markRepoFailed(ref.Repo)
 						break
 					}
@@ -1469,11 +1518,8 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 			// candidateKeys also ensures prRefreshOK is initialized for this
 			// key so the commit-ETag cache does not advance unless the
 			// persistence succeeds.
-			for _, r := range chunk {
-				if prKey(r.ref.Repo, r.ref.Number) == key {
-					selection.subjectsByPR[key] = r.s
-					break
-				}
+			if s, ok := reconSubjects[key]; ok {
+				selection.subjectsByPR[key] = s
 			}
 			selection.candidateKeys[key] = true
 			// Pre-mark the repo refresh-incomplete for every reconciled
@@ -1485,7 +1531,7 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 			// after a successful write so the ETag/cursor can advance on
 			// a real terminal transition only.
 			for _, ref := range active {
-				if prKey(ref.Repo, ref.Number) == key {
+				if selection.refKey(ref) == key {
 					markRepoFailed(ref.Repo)
 					break
 				}
@@ -1495,7 +1541,7 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 		// must mark its repo refresh-incomplete (no-op result: durable state
 		// must not advance).
 		for _, r := range chunk {
-			key := prKey(r.ref.Repo, r.ref.Number)
+			key := selection.refKey(r.ref)
 			if reconcileSeen[key] {
 				// A "still open" observation: if the semantic hashes are
 				// unchanged (no terminal transition), the persistence loop
@@ -1604,7 +1650,7 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		if s.known.Merged || s.known.Closed {
 			continue
 		}
-		pkey := prKey(s.repo, s.known.Number)
+		pkey := keyForTrackedPR(s.known, s.repo)
 		obs, hasObs := observations[pkey]
 		decision := string(s.known.Review)
 		if hasObs && obs.Review.Decision != "" {
@@ -2038,26 +2084,49 @@ func prKeyFromObs(obs ports.SCMObservation) string {
 	return obs.Provider + ":" + obs.Host + ":" + obs.Repo + "#" + fmt.Sprint(obs.PR.Number)
 }
 
-// observationKeyForRefs resolves the key a fetched observation should be
-// dispatched under. Normally that is prKeyFromObs: the observation's canonical
-// repo matches the ref that requested it. After a repository rename or org
-// transfer, the provider serves the fetch through a redirect and the
-// observation canonicalizes to the new owner/name while the tracked subject
-// (whose repo comes from the stored PR row) still carries the old one. The two
-// keys then never match, so the observation would be dropped on every poll —
-// CI and mergeability stay "unknown" forever while the separate per-ref review
-// refresh keeps working. Falling back to matching the requesting ref by PR URL
-// delivers the observation under the subject's key; persistence then records
-// the canonical repo on the row, so the identities converge on the next poll.
-func observationKeyForRefs(obs ports.SCMObservation, refs []ports.SCMPRRef) string {
-	key := prKeyFromObs(obs)
-	if key == "" {
+// PR identity has one owner: the provider-native id (provider, host,
+// provider_id), which survives repository renames and org transfers. Repo
+// name, number, and URL are mutable display coordinates. Subjects,
+// observation dispatch, and discovery dedupe all key on identityPRKey when a
+// provider id is known; the legacy name-based prKey remains only as a
+// self-retiring fallback for rows that predate provider ids (their first
+// successful fetch stamps one). Repo-level state — list ETags, sync cursors,
+// commit-check guards — deliberately stays name-keyed: listing genuinely is a
+// per-name operation.
+func identityPRKey(provider, host, providerID string) string {
+	return strings.ToLower(strings.TrimSpace(provider)) + ":" +
+		strings.ToLower(strings.TrimSpace(host)) + "@" + strings.TrimSpace(providerID)
+}
+
+// keyForTrackedPR returns the dispatch key a tracked PR registers under: the
+// provider-native identity when the row carries one, else the legacy
+// name-based key derived from the resolved repo.
+func keyForTrackedPR(pr domain.PullRequest, repo ports.SCMRepo) string {
+	if pr.Provider != "" && pr.Host != "" && pr.ProviderID != "" {
+		return identityPRKey(pr.Provider, pr.Host, pr.ProviderID)
+	}
+	return prKey(repo, pr.Number)
+}
+
+// observationSubjectKey resolves which subject a fetched observation belongs
+// to, in priority order: provider identity, canonical name key, then the
+// requesting ref matched by name or PR URL/alias (the rename fallback for
+// rows without a provider id — after a transfer the observation
+// canonicalizes to the new owner/name while a legacy subject still carries
+// the old one). keyByRef maps prKey(ref.Repo, ref.Number) of every issued
+// ref to the subject key it was issued for.
+func observationSubjectKey(obs ports.SCMObservation, refs []ports.SCMPRRef, subjects map[string]*subject, keyByRef map[string]string) string {
+	if obs.PR.ProviderID != "" && obs.Provider != "" && obs.Host != "" {
+		if k := identityPRKey(obs.Provider, obs.Host, obs.PR.ProviderID); subjects[k] != nil {
+			return k
+		}
+	}
+	canonical := prKeyFromObs(obs)
+	if canonical == "" {
 		return ""
 	}
-	for _, ref := range refs {
-		if prKey(ref.Repo, ref.Number) == key {
-			return key
-		}
+	if subjects[canonical] != nil {
+		return canonical
 	}
 	obsURL := strings.TrimSpace(obs.PR.URL)
 	obsAlias := strings.TrimSpace(obs.PR.URLAlias)
@@ -2065,15 +2134,17 @@ func observationKeyForRefs(obs ports.SCMObservation, refs []ports.SCMPRRef) stri
 		if ref.Number != obs.PR.Number {
 			continue
 		}
+		rk := prKey(ref.Repo, ref.Number)
 		refURL := strings.TrimSpace(ref.URL)
-		if refURL == "" {
-			continue
-		}
-		if refURL == obsURL || (obsAlias != "" && refURL == obsAlias) {
-			return prKey(ref.Repo, ref.Number)
+		urlMatch := refURL != "" && (refURL == obsURL || (obsAlias != "" && refURL == obsAlias))
+		if rk == canonical || urlMatch {
+			if k, ok := keyByRef[rk]; ok {
+				return k
+			}
+			return rk
 		}
 	}
-	return key
+	return canonical
 }
 
 func prKey(repo ports.SCMRepo, number int) string {

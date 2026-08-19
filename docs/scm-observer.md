@@ -241,13 +241,18 @@ matches a live subject:
   an old-name clobber leaves the row `unknown` until the canonical listing
   happens to re-discover it — the "stuck most of the time" experience.
 
-#4090's seam fix shrinks the visible window to at most one poll but does not
-stop the churn (hash wipes force refetches and lifecycle redelivery every
-cycle). Change 2 of the target design removes the clobber at the source:
-discovery dedupes listing entries against tracked subjects by provider
-identity, so a second scan name can never re-baseline a tracked row.
+Change 2 of the design below removes the clobber at the source: discovery
+dedupes listing entries against tracked subjects by provider identity, so a
+second scan name can never re-baseline a tracked row. (The URL-fallback seam
+fix alone would have shrunk the visible window to at most one poll; the
+identity dedupe makes the clobber structurally impossible.)
 
 ## Target Design: ProviderID-Primary Identity
+
+*Implemented in PR
+[#4090](https://github.com/Untrivial-ai/agent-orchestrator/pull/4090) —
+`identityPRKey` / `keyForTrackedPR` / `observationSubjectKey` in
+`backend/internal/observe/scm/observer.go`.*
 
 **Principle: a PR's identity is `(provider, host, provider_id)`. Repo name,
 number, and URL are mutable display coordinates.** Node IDs survive renames,
