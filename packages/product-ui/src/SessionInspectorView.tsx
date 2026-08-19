@@ -388,6 +388,7 @@ export type InspectorVerdict = {
 };
 
 export type InspectorReviewRun = {
+	autoInjectReview?: boolean;
 	body?: string;
 	createdAtLabel: string;
 	harness: string;
@@ -492,6 +493,7 @@ export function InspectorReviewsView({
 	labels,
 	onRequestRereview,
 	onResolveInlineComment,
+	onSendAgentReview,
 	onSendInlineComment,
 	renderAvatar,
 	renderMarkdown,
@@ -502,6 +504,7 @@ export function InspectorReviewsView({
 	labels: InspectorReviewLabels;
 	onRequestRereview?: (review: InspectorGithubReview) => Promise<void> | void;
 	onResolveInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
+	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	onSendInlineComment?: (comment: InspectorInlineComment & { reviewerId?: string }) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
@@ -535,11 +538,13 @@ export function InspectorReviewsView({
 								</ReviewSourceLabel>
 								<ReviewRuns
 									dimmed={group.ao.dimmed}
+									externalLink={externalLink}
 									historical={group.ao.historical}
 									labels={labels}
 									renderAvatar={renderAvatar}
 									renderMarkdown={renderMarkdown}
 									runs={group.ao.runs}
+									onSendAgentReview={onSendAgentReview}
 								/>
 							</div>
 						) : null}
@@ -685,15 +690,19 @@ function ReviewDisclosure({
 
 function ReviewRuns({
 	dimmed,
+	externalLink,
 	historical,
 	labels,
+	onSendAgentReview,
 	renderAvatar,
 	renderMarkdown,
 	runs,
 }: {
 	dimmed?: boolean;
+	externalLink: ExternalLinkComponent;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
+	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -704,8 +713,10 @@ function ReviewRuns({
 	return (
 		<ReviewRunHistory
 			dimmed={dimmed}
+			externalLink={externalLink}
 			historical={historical}
 			labels={labels}
+			onSendAgentReview={onSendAgentReview}
 			renderAvatar={renderAvatar}
 			renderMarkdown={renderMarkdown}
 			runs={runs}
@@ -715,15 +726,19 @@ function ReviewRuns({
 
 function ReviewRunHistory({
 	dimmed,
+	externalLink,
 	historical,
 	labels,
+	onSendAgentReview,
 	renderAvatar,
 	renderMarkdown,
 	runs,
 }: {
 	dimmed?: boolean;
+	externalLink: ExternalLinkComponent;
 	historical?: boolean;
 	labels: InspectorReviewLabels;
+	onSendAgentReview?: (run: InspectorReviewRun) => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	runs: InspectorReviewRun[];
@@ -738,14 +753,18 @@ function ReviewRunHistory({
 			{visible.map((run, index) => (
 				<ReviewSummaryCard
 					actor={run.harness || "reviewer"}
+					autoInjected={run.autoInjectReview}
 					body={run.status === "cancelled" || run.status === "failed" ? "" : run.body}
+					externalLink={externalLink}
 					isEarlier={historical || index > 0}
 					key={run.id}
 					labels={labels}
+					onSend={onSendAgentReview ? () => onSendAgentReview(run) : undefined}
 					renderAvatar={renderAvatar}
 					renderMarkdown={renderMarkdown}
 					testId="review-run-summary"
 					timestamp={run.createdAtLabel}
+					url={run.url}
 					verdict={run.verdict}
 				/>
 			))}
@@ -1189,29 +1208,43 @@ function InlineCommentRow({
 
 function ReviewSummaryCard({
 	actor,
+	autoInjected = false,
 	body: rawBody,
+	externalLink: ExternalLink,
 	isBot = false,
 	isEarlier = false,
 	labels,
+	onSend,
 	renderAvatar,
 	renderMarkdown,
 	testId,
 	timestamp,
+	url,
 	verdict,
 }: {
 	actor: string;
+	autoInjected?: boolean;
 	body?: string;
+	externalLink: ExternalLinkComponent;
 	isBot?: boolean;
 	isEarlier?: boolean;
 	labels: InspectorReviewLabels;
+	onSend?: () => Promise<void> | void;
 	renderAvatar: (harness: string) => ReactNode;
 	renderMarkdown: (body: string) => ReactNode;
 	testId: string;
 	timestamp: string;
+	url?: string | null;
 	verdict: InspectorVerdict;
 }) {
 	const [open, setOpen] = useState(false);
 	const [expanded, setExpanded] = useState(false);
+	const [sent, setSent] = useState(autoInjected);
+	const [sending, setSending] = useState(false);
+	const [sendError, setSendError] = useState(false);
+	useEffect(() => {
+		if (autoInjected) setSent(true);
+	}, [autoInjected]);
 	const trimmed = rawBody?.trim();
 	const body = trimmed ? trimmed.replace(/\n{3,}/g, "\n\n") : trimmed;
 	const clamped = body ? isClampedSummary(body) : false;
@@ -1245,6 +1278,44 @@ function ReviewSummaryCard({
 				labels={labels}
 				onExpandedChange={() => setExpanded((open) => !open)}
 			/>
+			{body || url ? (
+				<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-border/50 pt-2 text-2xs">
+					{body && onSend ? (
+						sent ? (
+							<span className="inline-flex h-control-md items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground [&_svg]:size-icon-xs">
+								<CheckIcon className="shrink-0 text-success" />
+								{labels.sentToWorkerAgent}
+							</span>
+						) : (
+							<button
+								className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60"
+								disabled={sending}
+								onClick={async () => {
+									setSending(true);
+									setSendError(false);
+									try {
+										await onSend();
+										setSent(true);
+									} catch {
+										setSendError(true);
+									} finally {
+										setSending(false);
+									}
+								}}
+								type="button"
+							>
+								{labels.sendToWorkerAgent}
+							</button>
+						)
+					) : null}
+					{url ? (
+						<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={url}>
+							{labels.viewOnPR}
+						</ExternalLink>
+					) : null}
+				</div>
+			) : null}
+			{sendError && !sent ? <p className="m-0 text-2xs font-medium text-error">{labels.sendToWorkerAgentError}</p> : null}
 		</ReviewEntryDisclosure>
 	);
 }
