@@ -31,6 +31,7 @@ import type { BrowserTabState } from "../../main/browser-view-host";
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { browserTabLabel } from "../lib/browser-tab-label";
 import { useResizable } from "../hooks/useResizable";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 
 const RAIL_DEFAULT_WIDTH = 220;
@@ -220,17 +221,23 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 				expanded ? "w-(--ao-browser-tabs-w)" : pinned ? "w-8" : "w-0",
 			)}
 			data-testid="browser-tabs-rail"
+			// Only the collapsed (0px) rail opens the flyout on hover. Pinned already
+			// renders every tab as a favicon row, so opening the flyout there covered
+			// the live page with a duplicate of the list the user is already looking
+			// at; each favicon carries a tooltip naming its site instead. The toolbar
+			// trigger is likewise hidden while pinned (BrowserPanel.tsx's
+			// showTabsTrigger), so this is the last path into the flyout.
 			onBlur={
-				!expanded
+				collapsed
 					? (event) => {
 							if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
 							closeFlyout();
 						}
 					: undefined
 			}
-			onFocus={!expanded ? () => openFlyout(true) : undefined}
-			onPointerEnter={!expanded ? () => openFlyout() : undefined}
-			onPointerLeave={!expanded ? () => closeFlyout() : undefined}
+			onFocus={collapsed ? () => openFlyout(true) : undefined}
+			onPointerEnter={collapsed ? () => openFlyout() : undefined}
+			onPointerLeave={collapsed ? () => closeFlyout() : undefined}
 		>
 			{/* Docked keeps "+" in the toolbar (BrowserPanel.tsx) — putting it here
 			    too would add a header row this rail's nav doesn't have, breaking the
@@ -269,6 +276,9 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 				{collapsed ? null : (
 					<DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
 						<SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
+							{/* No app-wide TooltipProvider exists (each site mounts its own),
+							    so the pinned rail's favicon tooltips need one here. */}
+							<TooltipProvider delayDuration={250}>
 							<div className="flex flex-col">
 								{tabs.map((tab) =>
 									expanded ? (
@@ -294,6 +304,7 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 									),
 								)}
 							</div>
+							</TooltipProvider>
 						</SortableContext>
 					</DndContext>
 				)}
@@ -400,22 +411,34 @@ function TabFavicon({ className, tab }: { className: string; tab: BrowserTabStat
 function IconTabRow({ active, chrome, onSelect, tab }: TabRowProps) {
 	const label = browserTabLabel(tab.title, tab.url);
 	return (
-		<button
-			aria-current={active ? "true" : undefined}
-			aria-label={`${label.title} — ${label.subtitle}`}
-			className={cn(
-				"flex h-8 w-full items-center justify-center overflow-hidden p-1.5 transition-colors",
-				"hover:bg-interactive-hover",
-				active && "bg-interactive-active",
-			)}
-			onClick={onSelect}
-			ref={chrome?.setNodeRef}
-			style={chrome?.style}
-			type="button"
-			{...chrome?.dragProps}
-		>
-			<TabFavicon className="size-icon-base" tab={tab} />
-		</button>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-current={active ? "true" : undefined}
+					aria-label={`${label.title} — ${label.subtitle}`}
+					className={cn(
+						"flex h-8 w-full items-center justify-center overflow-hidden p-1.5 transition-colors",
+						"hover:bg-interactive-hover",
+						active && "bg-interactive-active",
+					)}
+					onClick={onSelect}
+					ref={chrome?.setNodeRef}
+					style={chrome?.style}
+					type="button"
+					{...chrome?.dragProps}
+				>
+					<TabFavicon className="size-icon-base" tab={tab} />
+				</button>
+			</TooltipTrigger>
+			{/* The rail hugs the right edge, so the tooltip opens leftward over the
+			    page. `data-browser-native-overlay` raises the transparent shell above
+			    the live native page for as long as it shows — without it the tooltip
+			    paints behind the page and is invisible (see dom-selectors.ts). */}
+			<TooltipContent data-browser-native-overlay="true" side="left">
+				<span className="block max-w-56 truncate font-medium">{label.title}</span>
+				<span className="block max-w-56 truncate text-muted-foreground">{label.subtitle}</span>
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
