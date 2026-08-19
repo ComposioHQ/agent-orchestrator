@@ -3,6 +3,7 @@ package project_test
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,6 +181,99 @@ func TestManager_AddListGetRemove(t *testing.T) {
 
 	_, err = m.Remove(ctx, "ao")
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_CloneRegistersRepositoryAndPreservesOrigin(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	source := gitRepo(t)
+	remoteURL := (&url.URL{Scheme: "file", Path: source}).String()
+	destinationParent := t.TempDir()
+
+	cloned, err := m.Clone(ctx, project.CloneInput{
+		RemoteURL:         remoteURL,
+		DestinationParent: destinationParent,
+		Name:              ptr("Cloned repository"),
+	})
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	wantPath := filepath.Join(destinationParent, filepath.Base(source))
+	if cloned.Path != wantPath || cloned.Name != "Cloned repository" || cloned.Repo != remoteURL {
+		t.Fatalf("Clone returned %#v, want path=%q name=%q repo=%q", cloned, wantPath, "Cloned repository", remoteURL)
+	}
+	if out, err := exec.Command("git", "-C", wantPath, "rev-parse", "--verify", "HEAD").CombinedOutput(); err != nil {
+		t.Fatalf("cloned repository has no checkout: %v (%s)", err, out)
+	}
+	if listed, err := m.List(ctx); err != nil || len(listed) != 1 || listed[0].Path != wantPath {
+		t.Fatalf("List after Clone = %#v, %v", listed, err)
+	}
+}
+
+func TestManager_CloneRejectsUnsafeURLsAndExistingDestination(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	destinationParent := t.TempDir()
+
+	for _, tc := range []struct {
+		name, remoteURL, code string
+	}{
+		{name: "plain path", remoteURL: "owner/repository", code: "INVALID_GIT_URL"},
+		{name: "unsupported helper", remoteURL: "ext::sh -c exploit", code: "INVALID_GIT_URL"},
+		{name: "embedded credential", remoteURL: "https://token@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "credential query", remoteURL: "https://github.com/acme/repository.git?access_token=secret", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+		{name: "ssh password", remoteURL: "ssh://git:secret@github.com/acme/repository.git", code: "GIT_URL_CONTAINS_CREDENTIALS"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := m.Clone(ctx, project.CloneInput{RemoteURL: tc.remoteURL, DestinationParent: destinationParent})
+			wantCode(t, err, tc.code)
+		})
+	}
+
+	existing := filepath.Join(destinationParent, "repository")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(existing, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := m.Clone(ctx, project.CloneInput{
+		RemoteURL:         "https://github.com/acme/repository.git",
+		DestinationParent: destinationParent,
+	})
+	wantCode(t, err, "CLONE_DESTINATION_EXISTS")
+	if got, err := os.ReadFile(sentinel); err != nil || string(got) != "keep" {
+		t.Fatalf("existing destination changed: %q, %v", got, err)
+	}
+}
+
+func TestManager_CloneCleansUpFailedAndEmptyCheckouts(t *testing.T) {
+	ctx := context.Background()
+	m := newManager(t)
+	destinationParent := t.TempDir()
+
+	missing := filepath.Join(t.TempDir(), "missing-repository")
+	missingURL := (&url.URL{Scheme: "file", Path: missing}).String()
+	_, err := m.Clone(ctx, project.CloneInput{RemoteURL: missingURL, DestinationParent: destinationParent})
+	wantCode(t, err, "GIT_CLONE_FAILED")
+	if _, err := os.Stat(filepath.Join(destinationParent, "missing-repository")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed clone destination still exists: %v", err)
+	}
+
+	emptySource := filepath.Join(t.TempDir(), "empty-repository")
+	if out, err := exec.Command("git", "init", "-b", "main", emptySource).CombinedOutput(); err != nil {
+		t.Fatalf("git init empty source: %v (%s)", err, out)
+	}
+	emptyURL := (&url.URL{Scheme: "file", Path: emptySource}).String()
+	_, err = m.Clone(ctx, project.CloneInput{RemoteURL: emptyURL, DestinationParent: destinationParent})
+	wantCode(t, err, "CLONE_EMPTY_REPOSITORY")
+	if _, err := os.Stat(filepath.Join(destinationParent, "empty-repository")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty clone destination still exists: %v", err)
+	}
+	if temporary, err := filepath.Glob(filepath.Join(destinationParent, ".ao-clone-*")); err != nil || len(temporary) != 0 {
+		t.Fatalf("temporary clone directories = %#v, %v", temporary, err)
+	}
 }
 
 func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {

@@ -493,6 +493,17 @@ func (s *Store) ListPRComments(ctx context.Context, prURL string) ([]domain.Pull
 	return out, nil
 }
 
+// MarkPRCommentResolved records a provider-resolved review comment locally.
+func (s *Store) MarkPRCommentResolved(ctx context.Context, prURL, commentID string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	affected, err := s.qw.MarkPRCommentResolved(ctx, gen.MarkPRCommentResolvedParams{PRURL: prURL, CommentID: commentID})
+	if err != nil {
+		return false, fmt.Errorf("mark pr comment resolved %s/%s: %w", prURL, commentID, err)
+	}
+	return affected > 0, nil
+}
+
 // ListPRReviewThreads returns a PR's review threads, oldest first.
 func (s *Store) ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error) {
 	rows, err := s.qr.ListPRReviewThreads(ctx, prURL)

@@ -286,7 +286,7 @@
 	   the sidebar hangs below. Distinct from --size-toolbar (36px) because
 	   the shell header is taller (56px) to accommodate the project crumb. */
 	--size-shell-topbar: 56px;
-	/* Windows custom title bar (.window-titlebar) — keep in sync with TITLEBAR_HEIGHT in main.ts. */
+	/* Windows custom title bar (.window-titlebar). */
 	--size-window-titlebar: 36px;
 	--size-inspector-tabs: var(--size-topbar-secondary);
 	--size-topbar-context-max: 32rem;

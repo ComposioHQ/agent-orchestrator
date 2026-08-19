@@ -88,11 +88,20 @@ type Runtime interface {
 
 // StyledTerminalOutputReader is an optional runtime capability for safety
 // checks that must distinguish dim placeholder text from a human-authored
-// draft. Implementations return the same bounded pane excerpt as GetOutput but
-// preserve ANSI style sequences. Callers must fail closed when unavailable.
+// draft. Implementations return a bounded excerpt of the rendered current
+// viewport with ANSI cell styles preserved; raw terminal history is not valid
+// evidence for this contract. Callers must fail closed when unavailable.
 type StyledTerminalOutputReader interface {
 	GetStyledOutput(ctx context.Context, handle RuntimeHandle, lines int) (string, error)
 }
+
+// ErrStyledTerminalOutputUnavailable reports that a runtime implementation can
+// provide styled current-screen output in general, but not for this particular
+// handle. This occurs when a detached runtime host survives an AO upgrade from
+// a protocol version that predates rendered-surface support. Callers may use
+// their conservative no-surface fallback; every other read error remains an
+// inconclusive probe and must fail closed.
+var ErrStyledTerminalOutputUnavailable = errors.New("runtime: styled terminal output unavailable for handle")
 
 // RuntimeRestarter is an optional runtime capability for replacing the process
 // inside an existing terminal session. Implementations should preserve the
@@ -204,6 +213,23 @@ type Workspace interface {
 	// present are skipped. Owning this here keeps git/process execution inside the
 	// workspace adapter rather than leaking into callers.
 	AddExclude(ctx context.Context, info WorkspaceInfo, patterns ...string) error
+}
+
+// WorkspaceDefaultBranchRefresher is an optional capability for Git-backed
+// workspaces. Resolution is local-only so callers can retain the canonical ref
+// even when the subsequent best-effort network refresh fails.
+type WorkspaceDefaultBranchRefresher interface {
+	ResolveDefaultBranch(ctx context.Context, repoPath, configuredBranch string) (WorkspaceDefaultBranch, error)
+	FetchDefaultBranch(ctx context.Context, repoPath string, target WorkspaceDefaultBranch) error
+}
+
+// WorkspaceDefaultBranch is a locally resolved default-branch target. BaseRef
+// is canonical (for example refs/remotes/upstream/main), so materialization
+// never has to reconstruct the remote decision from an ambiguous slash.
+type WorkspaceDefaultBranch struct {
+	Remote  string
+	Branch  string
+	BaseRef string
 }
 
 // WorkspaceObserver is an optional read-only capability implemented by
@@ -326,10 +352,8 @@ type WorkspaceConfig struct {
 	// created from. Empty asks the workspace adapter to resolve an authoritative
 	// repository default; it must never infer from the checked-out branch.
 	BaseBranch string
-	// BaseRef is the repository-default comparison ref recorded when this
-	// workspace was first created. Restore carries it forward without
-	// re-resolving repository defaults; Create ignores it and resolves the
-	// current base itself.
+	// BaseRef is the exact canonical ref selected before any best-effort fetch.
+	// Restore carries it forward without re-resolving repository defaults.
 	BaseRef string
 	// RepoPath optionally overrides ProjectID-based repo resolution.
 	RepoPath string
@@ -364,6 +388,7 @@ type WorkspaceProjectConfig struct {
 	// BaseBranch applies only to RootRepoPath. Empty asks the workspace adapter
 	// to resolve that repository's default independently from every child.
 	BaseBranch string
+	BaseRef    string
 	Repos      []WorkspaceProjectRepoConfig
 }
 
@@ -376,6 +401,7 @@ type WorkspaceProjectRepoConfig struct {
 	// BaseBranch applies only to RepoPath. Empty asks the workspace adapter to
 	// resolve this repository's default independently from the workspace root.
 	BaseBranch string
+	BaseRef    string
 }
 
 // WorkspaceProjectInfo returns the root worktree plus every child worktree.

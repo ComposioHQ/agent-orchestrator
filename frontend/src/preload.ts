@@ -176,8 +176,14 @@ const api = {
 		},
 	},
 	window: {
-		setOverlay: (overlay: { color: string; symbolColor: string }) =>
-			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
+		isMaximized: () => ipcRenderer.invoke("window:isMaximized") as Promise<boolean>,
+		onMaximized: (listener: (maximized: boolean) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, maximized: boolean) => listener(maximized);
+			ipcRenderer.on("window:maximized", wrapped);
+			return () => {
+				ipcRenderer.off("window:maximized", wrapped);
+			};
+		},
 		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
 		onFullScreen: (listener: (fullScreen: boolean) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);

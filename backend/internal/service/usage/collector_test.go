@@ -394,6 +394,37 @@ func TestCollectorReactivateSessionPreservesCursorWithoutHook(t *testing.T) {
 	}
 }
 
+func TestCollectorRegistersChatUsageWhenLifecycleMarksControllerSpawned(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestChatSession(t, store, domain.HarnessCodex, "", false)
+
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "08", "18", "rollout-native-chat.jsonl")
+	writeUsageFixture(t, path, codexSessionMetaFixture(t, "native-chat", ""))
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+	manager := lifecycle.New(store, nil)
+	manager.SetUsageFinalizer(collector)
+
+	mustNoError(t, manager.MarkSpawned(context.Background(), session.ID, domain.SessionMetadata{
+		ProviderConversationID: "native-chat",
+	}))
+	bindings, err := store.ListUsageBindingsForSession(context.Background(), session.ID)
+	if err != nil || len(bindings) != 1 {
+		t.Fatalf("chat usage bindings=%+v err=%v, want one binding for the provider conversation", bindings, err)
+	}
+	if bindings[0].NativeRootID != "native-chat" || bindings[0].State != domain.UsageBindingActive {
+		t.Fatalf("chat usage binding=%+v, want active native-chat binding", bindings[0])
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("chat usage sources=%+v err=%v, want the provider rollout", sources, err)
+	}
+	wantPath := canonicalUsagePath(t, path)
+	if sources[0].ArtifactPath != wantPath {
+		t.Fatalf("chat usage source path=%q, want %q", sources[0].ArtifactPath, wantPath)
+	}
+}
+
 func TestCollectorReactivateSessionRejectsStaleLaunch(t *testing.T) {
 	store := collectorTestStore(t)
 	session := collectorTestSession(t, store, domain.HarnessCodex, "native-stale", false)
@@ -971,6 +1002,27 @@ func TestCollectorBackfillsOnlyNonTerminatedSupportedSessions(t *testing.T) {
 	sources, err := store.ListUsageSourcesForBinding(context.Background(), bindings[0].ID)
 	if err != nil || len(sources) != 1 {
 		t.Fatalf("active sources=%+v err=%v", sources, err)
+	}
+}
+
+func TestCollectorBackfillsChatSessionFromProviderConversationID(t *testing.T) {
+	store := collectorTestStore(t)
+	session := collectorTestChatSession(t, store, domain.HarnessCodex, "native-chat-backfill", false)
+	root := filepath.Join(t.TempDir(), "sessions")
+	path := filepath.Join(root, "2026", "08", "18", "rollout-native-chat-backfill.jsonl")
+	writeUsageFixture(t, path, codexSessionMetaFixture(t, "native-chat-backfill", ""))
+	collector := NewCollector(store, SourceRoots{CodexSessions: root}, nil)
+
+	mustNoError(t, collector.BackfillActive(context.Background()), "backfill chat usage")
+	binding, ok, err := store.GetUsageBinding(
+		context.Background(), session.ID, session.Harness, "native-chat-backfill",
+	)
+	if err != nil || !ok || binding.State != domain.UsageBindingActive {
+		t.Fatalf("chat backfill binding=%+v ok=%v err=%v", binding, ok, err)
+	}
+	sources, err := store.ListUsageSourcesForBinding(context.Background(), binding.ID)
+	if err != nil || len(sources) != 1 || sources[0].ArtifactPath != canonicalUsagePath(t, path) {
+		t.Fatalf("chat backfill sources=%+v err=%v", sources, err)
 	}
 }
 
@@ -1757,6 +1809,32 @@ func assertNoUsageSourcesForSession(t *testing.T, store *sqlite.Store, sessionID
 
 func collectorTestSession(t *testing.T, store *sqlite.Store, harness domain.AgentHarness, nativeID string, terminated bool) domain.SessionRecord {
 	return collectorTestSessionWithActivity(t, store, harness, nativeID, terminated, domain.ActivityIdle)
+}
+
+func collectorTestChatSession(
+	t *testing.T,
+	store *sqlite.Store,
+	harness domain.AgentHarness,
+	providerConversationID string,
+	terminated bool,
+) domain.SessionRecord {
+	t.Helper()
+	now := time.Now().UTC()
+	session, err := store.CreateSession(context.Background(), domain.SessionRecord{
+		ProjectID:    "usage-test",
+		Kind:         domain.KindWorker,
+		Harness:      harness,
+		Mode:         domain.SessionModeChat,
+		Activity:     domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		IsTerminated: terminated,
+		Metadata: domain.SessionMetadata{
+			ProviderConversationID: providerConversationID,
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	mustNoError(t, err)
+	return session
 }
 
 func collectorTestSessionWithActivity(

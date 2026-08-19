@@ -130,6 +130,8 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	rec.Metadata.LatestUserPrompt = "Please finish the duplicate-listener test."
 	rec.Metadata.LatestAssistantUpdate = "The generation fence is implemented; the test is unfinished."
 	rec.Metadata.NativeTranscriptPath = "/ao/transcripts/claude/session.jsonl"
+	rec.Metadata.AgentSessionID = "native-session-1"
+	rec.Metadata.AgentSessionIDLaunchID = "launch-1"
 
 	created, err := s.CreateSession(ctx, rec)
 	if err != nil {
@@ -141,13 +143,15 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	}
 	if got.Metadata.LatestUserPrompt != rec.Metadata.LatestUserPrompt ||
 		got.Metadata.LatestAssistantUpdate != rec.Metadata.LatestAssistantUpdate ||
-		got.Metadata.NativeTranscriptPath != rec.Metadata.NativeTranscriptPath {
+		got.Metadata.NativeTranscriptPath != rec.Metadata.NativeTranscriptPath ||
+		got.Metadata.AgentSessionIDLaunchID != rec.Metadata.AgentSessionIDLaunchID {
 		t.Fatalf("handoff inputs after create = %+v", got.Metadata)
 	}
 
 	got.Metadata.LatestUserPrompt = "Now run the focused tests."
 	got.Metadata.LatestAssistantUpdate = "The regression test has been added."
 	got.Metadata.NativeTranscriptPath = "/ao/transcripts/codex/session.jsonl"
+	got.Metadata.AgentSessionIDLaunchID = "launch-2"
 	got.UpdatedAt = got.UpdatedAt.Add(time.Second)
 	if err := s.UpdateSession(ctx, got); err != nil {
 		t.Fatalf("update session: %v", err)
@@ -158,11 +162,13 @@ func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	}
 	if updated.Metadata.LatestUserPrompt != got.Metadata.LatestUserPrompt ||
 		updated.Metadata.LatestAssistantUpdate != got.Metadata.LatestAssistantUpdate ||
-		updated.Metadata.NativeTranscriptPath != got.Metadata.NativeTranscriptPath {
+		updated.Metadata.NativeTranscriptPath != got.Metadata.NativeTranscriptPath ||
+		updated.Metadata.AgentSessionIDLaunchID != got.Metadata.AgentSessionIDLaunchID {
 		t.Fatalf("handoff inputs after update = %+v", updated.Metadata)
 	}
 	listed, err := s.ListSessions(ctx, created.ProjectID)
-	if err != nil || len(listed) != 1 || listed[0].Metadata.LatestUserPrompt != got.Metadata.LatestUserPrompt {
+	if err != nil || len(listed) != 1 || listed[0].Metadata.LatestUserPrompt != got.Metadata.LatestUserPrompt ||
+		listed[0].Metadata.AgentSessionIDLaunchID != got.Metadata.AgentSessionIDLaunchID {
 		t.Fatalf("listed handoff inputs = %+v err=%v", listed, err)
 	}
 }
@@ -925,6 +931,43 @@ func TestPRCommentsReplace(t *testing.T) {
 	_ = s.WritePR(ctx, domain.PullRequest{URL: "pr1", SessionID: r.ID, UpdatedAt: now}, nil, []domain.PullRequestComment{{ID: "c1", Body: "x", CreatedAt: now}})
 	if list, _ := s.ListPRComments(ctx, "pr1"); len(list) != 1 {
 		t.Fatalf("after replace, comments = %d, want 1", len(list))
+	}
+}
+
+func TestMarkPRCommentResolved(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+	now := time.Now().UTC().Truncate(time.Second)
+	pr := domain.PullRequest{URL: "pr1", SessionID: r.ID, UpdatedAt: now}
+	if err := s.WritePR(ctx, pr, nil, []domain.PullRequestComment{
+		{ID: "c1", Author: "a", Body: "nit", URL: "comment-1", CreatedAt: now},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := s.MarkPRCommentResolved(ctx, "pr1", "c1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated {
+		t.Fatal("MarkPRCommentResolved updated = false, want true")
+	}
+	comments, err := s.ListPRComments(ctx, "pr1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 1 || !comments[0].Resolved {
+		t.Fatalf("comments = %+v, want c1 resolved", comments)
+	}
+
+	updated, err = s.MarkPRCommentResolved(ctx, "pr1", "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated {
+		t.Fatal("MarkPRCommentResolved missing updated = true, want false")
 	}
 }
 

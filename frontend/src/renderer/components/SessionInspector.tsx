@@ -18,6 +18,7 @@ import {
 	type InspectorGithubReview,
 	type InspectorReviewGroup,
 	type InspectorReviewLabels,
+	type InspectorReviewRun,
 	type InspectorTimelineEvent,
 	type InspectorView,
 } from "@aoagents/product-ui";
@@ -175,8 +176,19 @@ export function SessionInspector({
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
-	const view: InspectorView = requestedView;
-	const tabs = VIEW_DEFS.map((entry) => {
+	// A persisted/controlled Reviews selection can outlive the last reviewable PR.
+	// Keep the shell on a real, visible tab instead of rendering an empty, unlabelled body.
+	const reviewsAvailable = reviewsTabVisible(session);
+	const availableViewDefs = reviewsAvailable
+		? VIEW_DEFS
+		: VIEW_DEFS.filter((entry) => entry.id !== "reviews");
+	const view: InspectorView = availableViewDefs.some((entry) => entry.id === requestedView) ? requestedView : "summary";
+	useEffect(() => {
+		if (view === requestedView) return;
+		setInternalView(view);
+		onViewChange?.(view);
+	}, [onViewChange, requestedView, view]);
+	const tabs = availableViewDefs.map((entry) => {
 		const label = t(entry.labelKey);
 		return {
 			...entry,
@@ -214,14 +226,37 @@ export function SessionInspector({
 				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
 			}
 			summaryView={
-				session ? <SummaryView onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+				session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
 			}
 			tabs={tabs}
 		/>
 	);
 }
 
-function SummaryView({ onOpenReviews, session }: { onOpenReviews: () => void; session: WorkspaceSession }) {
+function reviewsTabVisible(session: WorkspaceSession | undefined): boolean {
+	if (!session) return true;
+	return sortedPRs(session).some((pr) => pr.state === "open" || pr.state === "draft");
+}
+
+function externalReviewActorMatchesPRAuthor(actor: string | undefined, author: string | undefined): boolean {
+	const normalizedActor = normalizeReviewerId(actor);
+	const normalizedAuthor = normalizeReviewerId(author);
+	return normalizedActor !== "" && normalizedActor === normalizedAuthor;
+}
+
+function normalizeReviewerId(value: string | undefined): string {
+	return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
+}
+
+function SummaryView({
+	canOpenReviews,
+	onOpenReviews,
+	session,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	session: WorkspaceSession;
+}) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const developerMode = useUiStore((state) => state.developerMode);
@@ -250,6 +285,7 @@ function SummaryView({ onOpenReviews, session }: { onOpenReviews: () => void; se
 					{hasPRs ? (
 						prSummaries.map((pr) => (
 							<PRSummaryCard
+								canOpenReviews={canOpenReviews}
 								key={pr.url || pr.htmlUrl || pr.number}
 								onOpenReviews={onOpenReviews}
 								pr={pr}
@@ -861,6 +897,7 @@ function SessionControls({ session }: { session: WorkspaceSession }) {
 	return (
 		<Section title={t("inspector.sessionControls")}>
 			<AutoInjectCIPolicyControl session={session} />
+			<AutoInjectReviewPolicyControl session={session} />
 			{session.kind === "orchestrator" ? null : canTerminateNow ? (
 				<div className="flex items-center justify-between gap-3 py-1">
 					<span className="min-w-0 text-xs font-medium text-settings-label">{t("inspector.terminateShort")}</span>
@@ -917,7 +954,17 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => void; pr: SessionPRSummary; sessionId: string }) {
+function PRSummaryCard({
+	canOpenReviews,
+	onOpenReviews,
+	pr,
+	sessionId,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	pr: SessionPRSummary;
+	sessionId: string;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const presentation = prCardPresentation(pr);
@@ -949,8 +996,8 @@ function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => 
 		card: presentation,
 		href: prBrowserUrl(pr),
 		stateLabel: t(prStateLabelKeys[pr.state]),
-		reviewDetailsAction: pr.review.decision !== "none" ? (
-				<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
+		reviewDetailsAction: canOpenReviews && pr.review.decision !== "none" ? (
+			<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
 				{t("pr.review.viewDetails")} ↗
 			</button>
 		) : undefined,
@@ -1320,19 +1367,12 @@ function ReviewsSection({
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
 		(pr) =>
-			pr.state === "open" &&
+			(pr.state === "open" || pr.state === "draft") &&
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
-	const hasPRs = sortedPRs(session).length > 0;
-
 	return (
 		<div className="p-2">
-			{hasPRs ? null : (
-				<Section surface title={t("inspector.review.controls")}>
-					<AutoInjectReviewPolicyControl session={session} />
-				</Section>
-			)}
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
 			<ReviewPanel
@@ -1437,13 +1477,29 @@ function MergedReviewsSection({
 		});
 		if (error) throw new Error(apiErrorMessage(error, "Unable to send review comment to worker agent"));
 	};
+	const sendAgentReviewToWorker = async (run: InspectorReviewRun) => {
+		const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
+			params: { path: { sessionId: session.id } },
+			body: { message: formatAgentReviewMessage(run) },
+		});
+		if (error) throw new Error(apiErrorMessage(error, "Unable to send agent review to worker agent"));
+	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
-		const entries = github?.review?.reviews ?? [];
-		const unresolved = (github?.review?.unresolvedBy ?? []).reduce((count, reviewer) => count + reviewer.count, 0);
+		const entries = (github?.review?.reviews ?? []).filter(
+			(entry) => !externalReviewActorMatchesPRAuthor(entry.reviewerId, github?.author),
+		);
+		const unresolvedReviewers = (github?.review?.unresolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
+		const resolvedReviewers = (github?.review?.resolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
+		const unresolved = unresolvedReviewers.reduce((count, reviewer) => count + reviewer.count, 0);
 		const reviewRuns = aoRuns.map((run) => {
 			const reviewUrl = aoReviewCommentUrl(run);
 			return {
+				autoInjectReview: run.autoInjectReview,
 				body: run.body,
 				createdAtLabel: formatTimeCompact(run.createdAt),
 				harness: run.harness || "reviewer",
@@ -1454,13 +1510,19 @@ function MergedReviewsSection({
 			};
 		});
 		const unresolvedByReviewer = new Map(
-			(github?.review?.unresolvedBy ?? []).map((reviewer) => [reviewer.reviewerId, reviewer]),
+			unresolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
+		);
+		const resolvedByReviewer = new Map(
+			resolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
 		);
 		const externalEntries = entries.map((entry) => {
 			const reviewer = unresolvedByReviewer.get(entry.reviewerId);
+			const resolvedReviewer = resolvedByReviewer.get(entry.reviewerId);
 			unresolvedByReviewer.delete(entry.reviewerId);
+			resolvedByReviewer.delete(entry.reviewerId);
 			return {
 				body: entry.body,
+				canRequestRereview: canRequestPRRereview(entry.verdict, github?.url),
 				id: entry.reviewUrl || `${entry.reviewerId}:${entry.submittedAt}`,
 				pullRequestUrl: github?.url,
 				inlineComments: (reviewer?.links ?? []).map((link) => ({
@@ -1471,6 +1533,15 @@ function MergedReviewsSection({
 					pullRequestUrl: github?.url,
 					url: link.url || reviewer?.reviewUrl,
 				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
+				})),
 				isBot: entry.isBot,
 				reviewerId: entry.reviewerId,
 				reviewUrl: entry.reviewUrl,
@@ -1480,8 +1551,11 @@ function MergedReviewsSection({
 			};
 		});
 		for (const reviewer of unresolvedByReviewer.values()) {
+			const resolvedReviewer = resolvedByReviewer.get(reviewer.reviewerId);
+			resolvedByReviewer.delete(reviewer.reviewerId);
 			externalEntries.push({
 				body: undefined,
+				canRequestRereview: canRequestPRRereview("changes_requested", github?.url),
 				id: `unresolved:${reviewer.reviewerId}:${number}`,
 				pullRequestUrl: github?.url,
 				inlineComments: reviewer.links.map((link) => ({
@@ -1490,6 +1564,39 @@ function MergedReviewsSection({
 					file: link.file,
 					line: link.line,
 					pullRequestUrl: github?.url,
+					url: link.url || reviewer.reviewUrl,
+				})),
+				resolvedComments: (resolvedReviewer?.links ?? []).map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
+					url: link.url || resolvedReviewer?.reviewUrl,
+				})),
+				isBot: reviewer.isBot,
+				reviewerId: reviewer.reviewerId,
+				reviewUrl: reviewer.reviewUrl,
+				submittedAt: "",
+				submittedAtLabel: "",
+				verdict: githubVerdict("none", t),
+			});
+		}
+		for (const reviewer of resolvedByReviewer.values()) {
+			externalEntries.push({
+				body: undefined,
+				canRequestRereview: false,
+				id: `resolved:${reviewer.reviewerId}:${number}`,
+				pullRequestUrl: github?.url,
+				inlineComments: [],
+				resolvedComments: reviewer.links.map((link) => ({
+					autoInjectReview: link.autoInjectReview,
+					body: link.body,
+					file: link.file,
+					line: link.line,
+					pullRequestUrl: github?.url,
+					resolved: true,
 					url: link.url || reviewer.reviewUrl,
 				})),
 				isBot: reviewer.isBot,
@@ -1517,11 +1624,11 @@ function MergedReviewsSection({
 						entries: externalEntries,
 						notInjected:
 							entries.some((review) => review.autoInjectReview === false) ||
-							(github.review?.unresolvedBy ?? []).some((reviewer) =>
+							unresolvedReviewers.some((reviewer) =>
 								reviewer.links.some((link) => link.autoInjectReview === false),
 							),
 						unresolved,
-						unresolvedBy: (github.review?.unresolvedBy ?? []).map((reviewer) => ({
+						unresolvedBy: unresolvedReviewers.map((reviewer) => ({
 							count: reviewer.count,
 							isBot: reviewer.isBot,
 							links: reviewer.links.map((link) => ({
@@ -1547,7 +1654,9 @@ function MergedReviewsSection({
 			title: (ao?.title ?? github?.title)?.trim() || `PR #${number}`,
 			verdict: ao ? reviewVerdict(ao) : undefined,
 		};
-	});
+	}).filter((group) =>
+		Boolean(group.ao || (group.github && (group.github.entries.length > 0 || group.github.unresolved > 0))),
+	);
 	return (
 		<InspectorReviewsView
 			externalLink={ProductExternalLink}
@@ -1556,13 +1665,19 @@ function MergedReviewsSection({
 			labels={labels}
 			onRequestRereview={requestRereview}
 			onResolveInlineComment={resolveInlineComment}
+			onSendAgentReview={sendAgentReviewToWorker}
 			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
-				<AgentAvatar className="size-icon-sm shrink-0" decorative provider={harness} />
+				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
 			)}
 			renderMarkdown={renderReviewMarkdown}
 		/>
 	);
+}
+
+function canRequestPRRereview(verdict: string | undefined, pullRequestUrl: string | undefined): boolean {
+	if (!pullRequestUrl) return false;
+	return verdict !== "approved";
 }
 
 function reviewLabels(t: TFunction): InspectorReviewLabels {
@@ -1589,12 +1704,14 @@ function reviewLabels(t: TFunction): InspectorReviewLabels {
 		sendToWorkerAgent: t("inspector.sendToWorkerAgent"),
 		sentToWorkerAgent: t("inspector.sentToWorkerAgent"),
 		sendToWorkerAgentError: t("inspector.sendToWorkerAgentError"),
+		workerAgentWorkingOnFeedback: t("inspector.workerAgentWorkingOnFeedback"),
 		showLatestReviewOnly: t("inspector.showLatestReviewOnly"),
 		showLess: t("inspector.showLess"),
 		showMore: t("inspector.showMore"),
 		commentNumber: (number) => t("inspector.commentNumber", { number }),
 		unresolvedCount: (count) => t("inspector.unresolvedCount", { count }),
 		viewInFile: t("inspector.viewInFile"),
+		viewInFileWorkInProgress: t("inspector.viewInFileWorkInProgress"),
 		viewOnPR: t("inspector.viewOnPR"),
 	};
 }
@@ -1634,6 +1751,25 @@ function formatInlineReviewCommentMessage(comment: InspectorInlineComment & { re
 	if (url) {
 		lines.push("", `Comment URL: ${url}`);
 	}
+	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
+	return lines.join("\n");
+}
+
+function formatAgentReviewMessage(run: InspectorReviewRun): string {
+	const reviewer = sanitizeWorkerMessagePart(run.harness.trim() || "reviewer");
+	const verdict = sanitizeWorkerMessagePart(run.verdict.label.trim() || "Review complete");
+	const body = sanitizeWorkerMessagePart(run.body?.trim() || "No review summary provided.");
+	const url = sanitizeWorkerMessagePart(run.url?.trim() || "");
+	const lines = [
+		"An AO reviewer completed a review of your PR. Address any requested changes, commit the fixes, and push the branch to GitHub.",
+		"",
+		`Reviewer: ${reviewer}`,
+		`Verdict: ${verdict}`,
+		"",
+		"Review:",
+		body,
+	];
+	if (url) lines.push("", `Review URL: ${url}`);
 	lines.push("", "You should not need to re-fetch review data unless you need additional context beyond what AO has provided here.");
 	return lines.join("\n");
 }
@@ -1858,8 +1994,7 @@ function ReviewPanel({
 							) : null}
 						</div>
 					</div>
-					<AutoInjectReviewPolicyControl session={session} />
-					</div>
+				</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
 						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />

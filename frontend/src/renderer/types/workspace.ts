@@ -212,7 +212,10 @@ function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	return a.id > b.id;
 }
 
-function sessionLastActiveNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
+function sessionRecentlyUpdatedNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
+	const aUpdated = timestamp(a.updatedAt);
+	const bUpdated = timestamp(b.updatedAt);
+	if (aUpdated !== bUpdated) return aUpdated > bUpdated;
 	const aLastActive = sessionLastActiveTimestamp(a);
 	const bLastActive = sessionLastActiveTimestamp(b);
 	if (aLastActive !== bLastActive) return aLastActive > bLastActive;
@@ -242,10 +245,10 @@ export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[]
 	return sessions.filter((s) => !isOrchestratorSession(s));
 }
 
-/** Worker sessions ordered by agent activity, newest first. */
+/** Worker sessions ordered by session update time, newest first. */
 export function sortedWorkerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
 	return workerSessions(sessions).sort((a, b) =>
-		sessionLastActiveNewer(b, a) ? 1 : sessionLastActiveNewer(a, b) ? -1 : 0,
+		sessionRecentlyUpdatedNewer(b, a) ? 1 : sessionRecentlyUpdatedNewer(a, b) ? -1 : 0,
 	);
 }
 

@@ -141,6 +141,66 @@ describe("ChatMarkdown", () => {
 		openExternal.mockRestore();
 	});
 
+	it("opens a web link in the system browser on Cmd-click", () => {
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderWithLinkHandler("see [the issue](https://example.com/i/1)", onLinkOpen);
+
+		fireEvent.click(screen.getByRole("link", { name: "the issue" }), { metaKey: true });
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com/i/1");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("opens a web link in the system browser on Ctrl-click", () => {
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderWithLinkHandler("see [the issue](https://example.com/i/1)", onLinkOpen);
+
+		fireEvent.click(screen.getByRole("link", { name: "the issue" }), { ctrlKey: true });
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com/i/1");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("offers 'Open in system browser' on right-click, without opening in the panel", async () => {
+		const user = userEvent.setup();
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderWithLinkHandler("see [the issue](https://example.com/i/1)", onLinkOpen);
+
+		fireEvent.contextMenu(screen.getByRole("link", { name: "the issue" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Open in system browser" }));
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com/i/1");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("offers 'Copy link address' on right-click", async () => {
+		const user = userEvent.setup();
+		const writeText = vi.spyOn(aoBridge.clipboard, "writeText").mockResolvedValue(undefined);
+		renderWithLinkHandler("see [the issue](https://example.com/i/1)", vi.fn());
+
+		fireEvent.contextMenu(screen.getByRole("link", { name: "the issue" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Copy link address" }));
+
+		expect(writeText).toHaveBeenCalledWith("https://example.com/i/1");
+		writeText.mockRestore();
+	});
+
+	it("omits the system-browser item for non-web links but still offers copying", async () => {
+		// mailto must never reach shell.openExternal from the menu.
+		renderWithLinkHandler("[Email support](mailto:support@example.com)", vi.fn());
+
+		fireEvent.contextMenu(screen.getByRole("link", { name: "Email support" }));
+
+		expect(await screen.findByRole("menuitem", { name: "Copy link address" })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: "Open in system browser" })).not.toBeInTheDocument();
+	});
+
 	it("opens non-web links in the system browser", async () => {
 		const user = userEvent.setup();
 		const onLinkOpen = vi.fn();
