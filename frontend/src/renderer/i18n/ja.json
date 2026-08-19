@@ -228,7 +228,7 @@
 	"inspector.resumingAgent": "エージェントを再開中…",
 	"inspector.returnToPanel": "パネルに戻る",
 	"inspector.review.approved": "承認済み",
-	"inspector.review.autoInject": "レビューフィードバックを自動送信",
+	"inspector.review.autoInject": "Auto inject review comments",
 	"inspector.review.autoInjectDescription": "無効にすると、レビューコメントはワーカーエージェントに送信されませんが、表示はされます。",
 	"inspector.review.autoInjectError": "レビューの自動送信設定を更新できません",
 	"inspector.review.cancel": "レビューを停止",

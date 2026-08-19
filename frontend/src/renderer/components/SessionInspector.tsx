@@ -175,8 +175,12 @@ export function SessionInspector({
 		onViewChange?.(next);
 		if (next === "files") onOpenFiles?.();
 	};
-	const view: InspectorView = requestedView;
-	const tabs = VIEW_DEFS.map((entry) => {
+	const reviewsAvailable = reviewsTabVisible(session);
+	const availableViewDefs = reviewsAvailable
+		? VIEW_DEFS
+		: VIEW_DEFS.filter((entry) => entry.id !== "reviews");
+	const view: InspectorView = availableViewDefs.some((entry) => entry.id === requestedView) ? requestedView : "summary";
+	const tabs = availableViewDefs.map((entry) => {
 		const label = t(entry.labelKey);
 		return {
 			...entry,
@@ -214,14 +218,39 @@ export function SessionInspector({
 				session ? <ReviewsView onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : undefined
 			}
 			summaryView={
-				session ? <SummaryView onOpenReviews={() => setView("reviews")} session={session} /> : undefined
+				session ? <SummaryView canOpenReviews={reviewsAvailable} onOpenReviews={() => setView("reviews")} session={session} /> : undefined
 			}
 			tabs={tabs}
 		/>
 	);
 }
 
-function SummaryView({ onOpenReviews, session }: { onOpenReviews: () => void; session: WorkspaceSession }) {
+function reviewsTabVisible(session: WorkspaceSession | undefined): boolean {
+	if (!session) return true;
+	const prs = sortedPRs(session);
+	if (prs.length === 0) return true;
+	return prs.some((pr) => pr.state === "open" || pr.state === "draft");
+}
+
+function externalReviewActorMatchesPRAuthor(actor: string | undefined, author: string | undefined): boolean {
+	const normalizedActor = normalizeReviewerId(actor);
+	const normalizedAuthor = normalizeReviewerId(author);
+	return normalizedActor !== "" && normalizedActor === normalizedAuthor;
+}
+
+function normalizeReviewerId(value: string | undefined): string {
+	return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
+}
+
+function SummaryView({
+	canOpenReviews,
+	onOpenReviews,
+	session,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	session: WorkspaceSession;
+}) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
 	const developerMode = useUiStore((state) => state.developerMode);
@@ -250,6 +279,7 @@ function SummaryView({ onOpenReviews, session }: { onOpenReviews: () => void; se
 					{hasPRs ? (
 						prSummaries.map((pr) => (
 							<PRSummaryCard
+								canOpenReviews={canOpenReviews}
 								key={pr.url || pr.htmlUrl || pr.number}
 								onOpenReviews={onOpenReviews}
 								pr={pr}
@@ -917,7 +947,17 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => void; pr: SessionPRSummary; sessionId: string }) {
+function PRSummaryCard({
+	canOpenReviews,
+	onOpenReviews,
+	pr,
+	sessionId,
+}: {
+	canOpenReviews: boolean;
+	onOpenReviews: () => void;
+	pr: SessionPRSummary;
+	sessionId: string;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const presentation = prCardPresentation(pr);
@@ -949,8 +989,8 @@ function PRSummaryCard({ onOpenReviews, pr, sessionId }: { onOpenReviews: () => 
 		card: presentation,
 		href: prBrowserUrl(pr),
 		stateLabel: t(prStateLabelKeys[pr.state]),
-		reviewDetailsAction: pr.review.decision !== "none" ? (
-				<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
+		reviewDetailsAction: canOpenReviews && pr.review.decision !== "none" ? (
+			<button className="whitespace-nowrap text-2xs text-settings-muted underline-offset-2 hover:underline" onClick={onOpenReviews} type="button">
 				{t("pr.review.viewDetails")} ↗
 			</button>
 		) : undefined,
@@ -1320,7 +1360,7 @@ function ReviewsSection({
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
 		(pr) =>
-			pr.state === "open" &&
+			(pr.state === "open" || pr.state === "draft") &&
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
@@ -1439,8 +1479,13 @@ function MergedReviewsSection({
 	};
 	const groups: InspectorReviewGroup[] = rows.map(([number, { ao, github }]) => {
 		const aoRuns = ao ? [...(runsByPR.get(ao.prUrl) ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
-		const entries = github?.review?.reviews ?? [];
-		const unresolved = (github?.review?.unresolvedBy ?? []).reduce((count, reviewer) => count + reviewer.count, 0);
+		const entries = (github?.review?.reviews ?? []).filter(
+			(entry) => !externalReviewActorMatchesPRAuthor(entry.reviewerId, github?.author),
+		);
+		const unresolvedReviewers = (github?.review?.unresolvedBy ?? []).filter(
+			(reviewer) => !externalReviewActorMatchesPRAuthor(reviewer.reviewerId, github?.author),
+		);
+		const unresolved = unresolvedReviewers.reduce((count, reviewer) => count + reviewer.count, 0);
 		const reviewRuns = aoRuns.map((run) => {
 			const reviewUrl = aoReviewCommentUrl(run);
 			return {
@@ -1454,7 +1499,7 @@ function MergedReviewsSection({
 			};
 		});
 		const unresolvedByReviewer = new Map(
-			(github?.review?.unresolvedBy ?? []).map((reviewer) => [reviewer.reviewerId, reviewer]),
+			unresolvedReviewers.map((reviewer) => [reviewer.reviewerId, reviewer]),
 		);
 		const externalEntries = entries.map((entry) => {
 			const reviewer = unresolvedByReviewer.get(entry.reviewerId);
@@ -1519,11 +1564,11 @@ function MergedReviewsSection({
 						entries: externalEntries,
 						notInjected:
 							entries.some((review) => review.autoInjectReview === false) ||
-							(github.review?.unresolvedBy ?? []).some((reviewer) =>
+							unresolvedReviewers.some((reviewer) =>
 								reviewer.links.some((link) => link.autoInjectReview === false),
 							),
 						unresolved,
-						unresolvedBy: (github.review?.unresolvedBy ?? []).map((reviewer) => ({
+						unresolvedBy: unresolvedReviewers.map((reviewer) => ({
 							count: reviewer.count,
 							isBot: reviewer.isBot,
 							links: reviewer.links.map((link) => ({
@@ -1549,7 +1594,9 @@ function MergedReviewsSection({
 			title: (ao?.title ?? github?.title)?.trim() || `PR #${number}`,
 			verdict: ao ? reviewVerdict(ao) : undefined,
 		};
-	});
+	}).filter((group) =>
+		Boolean(group.ao || (group.github && (group.github.entries.length > 0 || group.github.unresolved > 0))),
+	);
 	return (
 		<InspectorReviewsView
 			externalLink={ProductExternalLink}

@@ -638,7 +638,7 @@ describe("SessionInspector PR section", () => {
       "bg-surface",
     );
     expect(
-      screen.queryByRole("switch", { name: "Automatically send reviews" }),
+      screen.queryByRole("switch", { name: "Auto inject review comments" }),
     ).not.toBeInTheDocument();
     for (const name of [
       "Automatically send CI failures",
@@ -667,7 +667,7 @@ describe("SessionInspector PR section", () => {
       await screen.findByRole("button", { name: "Run review" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: "Automatically send reviews" }),
+      screen.getByRole("switch", { name: "Auto inject review comments" }),
     ).toBeInTheDocument();
   });
 
@@ -1446,6 +1446,34 @@ describe("SessionInspector tabs", () => {
     expect(screen.queryByText("Pull request")).not.toBeInTheDocument();
   });
 
+  it("keeps the Reviews tab available for draft PRs", async () => {
+    mockCommonGets([], "", [reviewState(1, "needs_review")]);
+    renderWithQuery(<SessionInspector session={session([pr(1, "draft")])} />);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Reviews" }));
+
+    expect(await screen.findByText("Review controls")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review latest commit" })).not.toBeDisabled();
+  });
+
+  it("hides the Reviews tab when every PR is merged or closed", async () => {
+    mockCommonGets([], "", [reviewState(1, "up_to_date"), reviewState(2, "up_to_date")]);
+    renderWithQuery(
+      <SessionInspector
+        session={session([pr(1, "merged"), pr(2, "closed")])}
+        view="reviews"
+      />,
+    );
+
+    expect(screen.queryByRole("tab", { name: "Reviews" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Summary" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByText("Review controls")).not.toBeInTheDocument();
+    expect(screen.queryByText("View review details")).not.toBeInTheDocument();
+  });
+
   it("does not render the overview card in the summary", () => {
     renderWithQuery(
       <SessionInspector
@@ -2050,6 +2078,7 @@ describe("SessionInspector summary reviews", () => {
                 url: "https://example.com/pr/3",
                 htmlUrl: "https://example.com/pr/3",
                 state: "open",
+                author: "ada",
                 ci: {
                   state: "passing",
                   failingChecks: [],
@@ -2138,6 +2167,7 @@ describe("SessionInspector summary reviews", () => {
                 url: "https://example.com/pr/3",
                 htmlUrl: "https://example.com/pr/3",
                 state: "open",
+                author: "ada",
                 ci: {
                   state: "passing",
                   failingChecks: [],
@@ -2162,8 +2192,30 @@ describe("SessionInspector summary reviews", () => {
                         "https://example.com/pr/3#pullrequestreview-456",
                       autoInjectReview: true,
                     },
+                    {
+                      reviewerId: "ada",
+                      verdict: "changes_requested",
+                      submittedAt: "2026-06-16T12:00:00Z",
+                      body: "Self review should stay hidden.",
+                      reviewUrl:
+                        "https://example.com/pr/3#pullrequestreview-789",
+                      autoInjectReview: true,
+                    },
                   ],
-                  unresolvedBy: [],
+                  unresolvedBy: [
+                    {
+                      reviewerId: "ada",
+                      count: 1,
+                      links: [
+                        {
+                          body: "Self comment should stay hidden.",
+                          file: "self.ts",
+                          line: 1,
+                          autoInjectReview: true,
+                        },
+                      ],
+                    },
+                  ],
                 },
               },
             ],
@@ -2183,6 +2235,9 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(reviewCard);
     const summary = await screen.findByTestId("github-review-summary");
     const externalReview = summary.closest("article") as HTMLElement;
+    expect(screen.queryByRole("button", { name: /ada/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Self review should stay hidden.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Self comment should stay hidden.")).not.toBeInTheDocument();
     expect(summary).toHaveClass("select-text");
     expect(within(summary).getByText("ready").tagName).toBe("STRONG");
     expect(within(summary).getByText("Ship it").tagName).toBe("LI");
@@ -2445,7 +2500,7 @@ describe("SessionInspector summary reviews", () => {
     await openReviewsSection();
 
     const toggle = screen.getByRole("switch", {
-      name: "Automatically send reviews",
+      name: "Auto inject review comments",
     });
     expect(toggle).toBeChecked();
     await userEvent.click(toggle);
@@ -2867,7 +2922,7 @@ describe("SessionInspector summary reviews", () => {
     await screen.findByRole("tab", { name: /Summary/ });
     await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
     expect(
-      screen.getByRole("switch", { name: "Automatically send reviews" }),
+      screen.getByRole("switch", { name: "Auto inject review comments" }),
     ).toBeInTheDocument();
     expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
   });

@@ -230,7 +230,7 @@
 	"inspector.resumingAgent": "Retomando agente…",
 	"inspector.returnToPanel": "Voltar ao painel",
 	"inspector.review.approved": "Aprovado",
-	"inspector.review.autoInject": "Enviar feedback da revisão automaticamente",
+	"inspector.review.autoInject": "Auto inject review comments",
 	"inspector.review.autoInjectDescription": "Quando desativado, os comentários da revisão não serão enviados ao agente worker, mas continuarão sendo exibidos.",
 	"inspector.review.autoInjectError": "Não foi possível atualizar a injeção automática de revisões",
 	"inspector.review.cancel": "Parar revisão",

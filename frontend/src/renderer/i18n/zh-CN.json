@@ -227,7 +227,7 @@
 	"inspector.resumingAgent": "正在恢复代理…",
 	"inspector.returnToPanel": "返回面板",
 	"inspector.review.approved": "已批准",
-	"inspector.review.autoInject": "自动发送评审反馈",
+	"inspector.review.autoInject": "Auto inject review comments",
 	"inspector.review.autoInjectDescription": "禁用后，评审评论不会发送给 worker 代理，但仍会显示。",
 	"inspector.review.autoInjectError": "无法更新评审自动注入设置",
 	"inspector.review.cancel": "停止评审",
