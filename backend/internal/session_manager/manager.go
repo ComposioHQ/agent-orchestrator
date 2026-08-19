@@ -725,6 +725,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := validateSpawnModel(cfg.Harness, agentConfig.Model); err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %s", ErrUnsupportedModel, err.Error())
 	}
+	// Adapters whose model picker is an agent-owned mode list (e.g. Amp) keep
+	// their selectable values in AgentConfig.Mode. Route any effective Model
+	// value into Mode so `ao spawn --agent amp --model high` launches Amp with
+	// `--mode high` instead of silently using the default.
+	agentConfig = normalizeAgentConfigForHarness(cfg.Harness, agentConfig)
 
 	// Resolve the controller mode here, before anything durable is created, for
 	// the same reason an unknown harness is rejected above: a chat request AO
@@ -1265,6 +1270,25 @@ func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 		base.Permissions = override.Permissions
 	}
 	return base
+}
+
+// normalizeAgentConfigForHarness moves an effective Model override into Mode
+// for adapters that expose selectable values as agent-owned modes rather than
+// raw model ids. This keeps the spawn API's single `model` field usable while
+// ensuring the adapter's launch command receives the value in the field it
+// actually reads (e.g. Amp's `--mode` flag reads Config.Mode).
+func normalizeAgentConfigForHarness(harness domain.AgentHarness, cfg ports.AgentConfig) ports.AgentConfig {
+	model := strings.TrimSpace(cfg.Model)
+	if model == "" {
+		return cfg
+	}
+	catalog := modelcatalog.Base(string(harness))
+	if catalog.SelectionMode != ports.ModelSelectionModeList {
+		return cfg
+	}
+	cfg.Mode = model
+	cfg.Model = ""
+	return cfg
 }
 
 // validateSpawnModel rejects a model when the selected harness has a fixed

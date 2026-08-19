@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/amp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
@@ -1232,9 +1233,16 @@ func TestSpawnModelValidation(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	// Amp has a fixed mode list; "high" is valid.
+	// Amp has a fixed mode list; "high" is valid. The spawn model override is
+	// routed into AgentConfig.Mode so adapters that read Mode receive the value.
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "high"}}); err != nil {
 		t.Fatalf("amp spawn with model high failed: %v", err)
+	}
+	if agent.lastConfig.Mode != "high" {
+		t.Fatalf("amp launch mode = %q, want high", agent.lastConfig.Mode)
+	}
+	if agent.lastConfig.Model != "" {
+		t.Fatalf("amp launch model = %q, want empty after routing to mode", agent.lastConfig.Model)
 	}
 
 	// Amp rejects a model outside its mode list.
@@ -1256,6 +1264,41 @@ func TestSpawnModelValidation(t *testing.T) {
 	}}
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "codex-proj", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "custom-snapshot-id"}}); err != nil {
 		t.Fatalf("codex spawn with custom model failed: %v", err)
+	}
+}
+
+// TestSpawnAmpModelOverrideLaunchArgv uses the real Amp adapter to verify that
+// a spawn model override for Amp ends up as `--mode <value>` in the actual
+// launch argv instead of silently being dropped because Amp reads Config.Mode.
+func TestSpawnAmpModelOverrideLaunchArgv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH setup differs on windows")
+	}
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessAmp},
+	}}
+
+	dir := t.TempDir()
+	fakeAmp := filepath.Join(dir, "amp")
+	if err := os.WriteFile(fakeAmp, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake amp binary: %v", err)
+	}
+	t.Setenv("PATH", dir+string(filepath.ListSeparator)+os.Getenv("PATH"))
+
+	wsDir := t.TempDir()
+	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{path: wsDir}
+	lookPath := func(string) (string, error) { return fakeAmp, nil }
+	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: amp.New()}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, AgentConfig: ports.AgentConfig{Model: "high"}}); err != nil {
+		t.Fatalf("amp spawn with model high failed: %v", err)
+	}
+
+	want := []string{fakeAmp, "--mode", "high"}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, want) {
+		t.Fatalf("launch argv = %#v, want %#v", rt.lastCfg.Argv, want)
 	}
 }
 
