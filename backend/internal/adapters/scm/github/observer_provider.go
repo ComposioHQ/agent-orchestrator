@@ -222,6 +222,11 @@ func stableCheckFingerprint(parts []string) string {
 // FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs in
 // one GraphQL request. The observer owns chunking; this method rejects larger
 // batches so tests catch accidental over-batching.
+// FetchPullRequests returns observations positionally aligned with refs:
+// out[i] answers refs[i]. A PR the batch query could not resolve (deleted
+// repo, permissions) leaves a zero-value Fetched=false placeholder at its
+// index so the observer marks that ref refresh-incomplete without guessing
+// which response belonged to which request.
 func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	if len(refs) == 0 {
 		return nil, nil
@@ -234,7 +239,7 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ports.SCMObservation, 0, len(refs))
+	out := make([]ports.SCMObservation, len(refs))
 	for i, ref := range refs {
 		repoData, _ := data[aliases[i]].(map[string]any)
 		pr, _ := repoData["pullRequest"].(map[string]any)
@@ -246,7 +251,7 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 				return nil, err
 			}
 		}
-		out = append(out, scmObservationFromGraphQL(ref, pr))
+		out[i] = scmObservationFromGraphQL(ref, pr)
 	}
 	return out, nil
 }

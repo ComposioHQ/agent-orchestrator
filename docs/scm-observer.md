@@ -251,8 +251,12 @@ identity dedupe makes the clobber structurally impossible.)
 
 *Implemented in PR
 [#4090](https://github.com/Untrivial-ai/agent-orchestrator/pull/4090) —
-`identityPRKey` / `keyForTrackedPR` / `observationSubjectKey` in
-`backend/internal/observe/scm/observer.go`.*
+`identityPRKey` / `keyForTrackedPR` in
+`backend/internal/observe/scm/observer.go`, plus the positional
+`FetchPullRequests` contract below. The observer is net smaller than before
+the fix: fetched observations are never re-keyed from their content, so the
+entire dispatch-matching layer (including the interim URL fallback) was
+deleted.*
 
 **Principle: a PR's identity is `(provider, host, provider_id)`. Repo name,
 number, and URL are mutable display coordinates.** Node IDs survive renames,
@@ -278,11 +282,13 @@ and migration 0097 already enforces their uniqueness in storage.
    "already tracked?" check both switch to identity, which kills the
    two-scan-repos-create-two-subjects class (#3922) at the source instead of
    collapsing it later in the store.
-3. **Observation dispatch matches by identity first.** The batch and
-   reconcile loops key fetched observations by `obs.PR.ProviderID`; the
-   URL-match fallback from #4090 remains only for legacy rows whose
-   `provider_id` is still empty (their first successful fetch stamps it, so
-   the fallback is self-retiring).
+3. **Observations are attributed positionally, never re-derived.**
+   `FetchPullRequests` returns results aligned 1:1 with the requested refs
+   (`result[i]` answers `refs[i]`, `Fetched=false` placeholder for gaps —
+   GitLab and multi already worked this way; GitHub was the outlier). The
+   observer records which subject each ref was issued for and attributes
+   `batch[i]` directly — no content-based matching exists to break on a
+   rename, and legacy id-less rows are covered by the same mechanism.
 4. **Rows self-heal, no data migration.** Persistence already writes
    `obs.Repo` (canonical) and maintains `pr_url_alias`; with identity-keyed
    dispatch, every stale row converges to canonical repo/URL on its next
@@ -318,8 +324,8 @@ transfer end-to-end:
 4. Discovery sees the same PR via two scan names → one subject, one row, and
    — critically — **no baseline write over the tracked row's facts**
    (regression test for #3922 and the #4089 flap at the observer layer).
-5. Legacy row without `provider_id` → URL fallback delivers the first fetch,
-   which stamps the ID; second poll dispatches by identity.
+5. Legacy row without `provider_id` → positional attribution delivers the
+   first fetch, which stamps the ID; second poll keys by identity.
 6. Review refresh keyed by identity → review + metadata land on the same row.
 7. Post-transfer new PR discovered via the old scan name → attributed and
    enriched (observer half of #3252).

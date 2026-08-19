@@ -209,6 +209,9 @@ func (p *fakeProvider) ListPRsByRepo(_ context.Context, repo ports.SCMRepo, _ ti
 func (p *fakeProvider) CommitChecksGuard(_ context.Context, repo ports.SCMRepo, sha, _ string) (ports.SCMGuardResult, error) {
 	return p.checkGuards[commitKey(repo, sha)], nil
 }
+// FetchPullRequests honors the positional-alignment contract: out[i] answers
+// refs[i], with a zero-value Fetched=false placeholder for refs the fake has
+// no observation for.
 func (p *fakeProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -216,25 +219,25 @@ func (p *fakeProvider) FetchPullRequests(_ context.Context, refs []ports.SCMPRRe
 	if p.fetchErr != nil {
 		return nil, p.fetchErr
 	}
-	out := make([]ports.SCMObservation, 0, len(refs))
-	for _, ref := range refs {
+	out := make([]ports.SCMObservation, len(refs))
+	for i, ref := range refs {
 		key := prKey(ref.Repo, ref.Number)
 		// Per-observation error mimics the multi dispatcher's per-provider
 		// Error metadata: a Fetched=false placeholder carrying the failure
 		// so the observer can route it to cooldown / refresh-incomplete.
 		if err, ok := p.fetchObsErrors[key]; ok {
-			out = append(out, ports.SCMObservation{
+			out[i] = ports.SCMObservation{
 				Fetched:  false,
 				Provider: ref.Repo.Provider,
 				Host:     ref.Repo.Host,
 				Repo:     ref.Repo.Repo,
 				PR:       ports.SCMPRObservation{Number: ref.Number, URL: ref.URL},
 				Error:    err,
-			})
+			}
 			continue
 		}
 		if obs, ok := p.observations[key]; ok {
-			out = append(out, obs)
+			out[i] = obs
 		}
 	}
 	return out, nil
@@ -3087,77 +3090,6 @@ func TestPoll_RenamedRepoReconciliationPersistsUnderTrackedRef(t *testing.T) {
 	final := store.writes[len(store.writes)-1].pr
 	if final.Repo != "new/r" || final.CI != domain.CIPassing {
 		t.Fatalf("persisted PR = repo %q ci %q; want canonical new/r with passing CI", final.Repo, final.CI)
-	}
-}
-
-func TestObservationSubjectKey(t *testing.T) {
-	newObs := func(url, alias, providerID string) ports.SCMObservation {
-		return ports.SCMObservation{
-			Fetched: true, Provider: "github", Host: "github.com", Repo: "new/r",
-			PR: ports.SCMPRObservation{URL: url, URLAlias: alias, Number: 1, ProviderID: providerID},
-		}
-	}
-	oldRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "old", Name: "r", Repo: "old/r"}
-	newRepo := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "new", Name: "r", Repo: "new/r"}
-	oldRef := ports.SCMPRRef{Repo: oldRepo, Number: 1, URL: "https://github.com/new/r/pull/1"}
-	newRef := ports.SCMPRRef{Repo: newRepo, Number: 1, URL: "https://github.com/new/r/pull/1"}
-	idKey := identityPRKey("github", "github.com", "PR_1")
-	subj := &subject{}
-	tests := []struct {
-		name     string
-		obs      ports.SCMObservation
-		refs     []ports.SCMPRRef
-		subjects map[string]*subject
-		keyByRef map[string]string
-		want     string
-	}{
-		{
-			name:     "provider identity wins over every name",
-			obs:      newObs("https://github.com/new/r/pull/1", "", "PR_1"),
-			refs:     []ports.SCMPRRef{oldRef},
-			subjects: map[string]*subject{idKey: subj},
-			keyByRef: map[string]string{prKey(oldRepo, 1): idKey},
-			want:     idKey,
-		},
-		{
-			name:     "canonical name key when subject has no identity",
-			obs:      newObs("https://github.com/new/r/pull/1", "", "PR_1"),
-			refs:     []ports.SCMPRRef{newRef},
-			subjects: map[string]*subject{prKey(newRepo, 1): subj},
-			keyByRef: map[string]string{prKey(newRepo, 1): prKey(newRepo, 1)},
-			want:     prKey(newRepo, 1),
-		},
-		{
-			name:     "renamed repo falls back to requesting ref by URL",
-			obs:      newObs("https://github.com/new/r/pull/1", "", ""),
-			refs:     []ports.SCMPRRef{oldRef},
-			subjects: map[string]*subject{prKey(oldRepo, 1): subj},
-			keyByRef: map[string]string{prKey(oldRepo, 1): prKey(oldRepo, 1)},
-			want:     prKey(oldRepo, 1),
-		},
-		{
-			name:     "renamed repo falls back via URL alias",
-			obs:      newObs("https://github.com/new/r/pull/1", "https://github.com/old/r/pull/1", ""),
-			refs:     []ports.SCMPRRef{{Repo: oldRepo, Number: 1, URL: "https://github.com/old/r/pull/1"}},
-			subjects: map[string]*subject{prKey(oldRepo, 1): subj},
-			keyByRef: map[string]string{prKey(oldRepo, 1): prKey(oldRepo, 1)},
-			want:     prKey(oldRepo, 1),
-		},
-		{
-			name:     "no matching ref keeps canonical key",
-			obs:      newObs("https://github.com/new/r/pull/1", "", ""),
-			refs:     []ports.SCMPRRef{{Repo: oldRepo, Number: 2, URL: "https://github.com/new/r/pull/2"}},
-			subjects: map[string]*subject{},
-			keyByRef: map[string]string{},
-			want:     "github:github.com:new/r#1",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := observationSubjectKey(tt.obs, tt.refs, tt.subjects, tt.keyByRef); got != tt.want {
-				t.Fatalf("observationSubjectKey = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 

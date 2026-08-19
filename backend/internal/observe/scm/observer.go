@@ -65,6 +65,12 @@ type Provider interface {
 	RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag string) (ports.SCMGuardResult, error)
 	ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, updatedAfter time.Time) ([]ports.SCMPRObservation, error)
 	CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, headSHA, etag string) (ports.SCMGuardResult, error)
+	// FetchPullRequests returns observations positionally aligned with refs:
+	// result[i] answers refs[i], with a Fetched=false placeholder (optionally
+	// carrying a per-observation Error) when refs[i] could not be fetched.
+	// The observer relies on this alignment to attribute each observation to
+	// the subject it was requested for — repo renames make any content-based
+	// re-derivation (repo name, URL) ambiguous.
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
 	FetchFailedCheckLogTail(ctx context.Context, repo ports.SCMRepo, check ports.SCMCheckObservation) (string, error)
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
@@ -327,25 +333,13 @@ type pendingCacheString struct {
 }
 
 type refreshSelection struct {
+	// refs and refKeys are parallel: refKeys[i] is the subject key
+	// refs[i] was issued for.
 	refs          []ports.SCMPRRef
+	refKeys       []string
 	subjectsByPR  map[string]*subject
 	commitETags   map[string]pendingCacheString
 	candidateKeys map[string]bool
-	// keyByRef maps prKey(ref.Repo, ref.Number) of every issued ref to the
-	// subject key it was issued for. Refs are name-addressed (a GraphQL query
-	// needs an owner/name), subjects are identity-addressed; this is the
-	// bridge back.
-	keyByRef map[string]string
-}
-
-// refKey returns the subject key a ref was issued for, falling back to the
-// ref's name key for refs issued outside the selection bookkeeping.
-func (sel *refreshSelection) refKey(ref ports.SCMPRRef) string {
-	rk := prKey(ref.Repo, ref.Number)
-	if k, ok := sel.keyByRef[rk]; ok {
-		return k
-	}
-	return rk
 }
 
 type persistenceOptions struct {
@@ -449,16 +443,21 @@ func (o *Observer) Poll(ctx context.Context) error {
 	for key := range selection.candidateKeys {
 		prRefreshOK[key] = false
 	}
-	for _, chunk := range chunks(selection.refs, BatchSize) {
+	for start := 0; start < len(selection.refs); start += BatchSize {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		// Skip the entire chunk if every ref's provider is under a rate-limit
-		// cooldown; otherwise filter out the cooled-down providers so a
-		// rate-limited GitLab does not suppress healthy GitHub refs in the
-		// same chunk
-		active := chunk[:0]
-		for _, ref := range chunk {
+		end := min(start+BatchSize, len(selection.refs))
+		// Filter out cooled-down providers so a rate-limited GitLab does not
+		// suppress healthy GitHub refs in the same chunk. activeKeys stays
+		// positionally aligned with active: FetchPullRequests answers
+		// result[i] for active[i], so activeKeys[i] is the subject key each
+		// observation is attributed to — no content-based matching, which a
+		// repo rename would make ambiguous.
+		active := make([]ports.SCMPRRef, 0, end-start)
+		activeKeys := make([]string, 0, end-start)
+		for i := start; i < end; i++ {
+			ref := selection.refs[i]
 			if o.inRateLimitCooldown(now, ref.Repo.Provider) {
 				// Item 3 — cooldown-skip marks refresh-incomplete: when a ref
 				// is skipped under cooldown, its repository is marked as
@@ -471,6 +470,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 				continue
 			}
 			active = append(active, ref)
+			activeKeys = append(activeKeys, selection.refKeys[i])
 		}
 		if len(active) == 0 {
 			continue
@@ -496,58 +496,31 @@ func (o *Observer) Poll(ctx context.Context) error {
 			}
 			continue
 		}
-		chunkSeen := map[string]bool{}
-		for _, obs := range batch {
-			obs.ObservedAt = now
-			key := observationSubjectKey(obs, active, selection.subjectsByPR, selection.keyByRef)
-			if key == "" {
-				continue
-			}
-			// Reject Fetched=false observations from transient failures so
-			// they do not overwrite durable metadata/CI/review facts. The
-			// provider returns Fetched=false + a non-nil error; the
-			// placeholder must not advance ETags or be persisted (review
-			// finding #1).
-			//
-			// Per-observation Error routing (review Item 7): when the
-			// multi dispatcher attaches a failure as transient metadata on
-			// a Fetched=false observation (one provider failed while
-			// another succeeded), route it here so the failed provider is
-			// not retried every tick:
-			//   - rate-limit error → per-provider cooldown (reuses existing
-			//     rateLimitCooldown/setRateLimitCooldown machinery);
-			//   - non-rate-limit error → mark the repo refresh-incomplete.
-			if !obs.Fetched {
-				if obs.Error != nil {
-					providerKey := obs.Provider
-					if providerKey == "" {
-						// Fall back to the ref's provider when the placeholder
-						// did not carry one (defensive — multi always sets it).
-						for _, ref := range active {
-							if selection.refKey(ref) == key {
-								providerKey = ref.Repo.Provider
-								break
-							}
-						}
-					}
-					if cooldown, ok := rateLimitCooldown(now, obs.Error); ok {
-						if providerKey != "" {
-							o.setRateLimitCooldown(now, providerKey, cooldown)
-						}
-						o.logger.Warn("scm observer: provider rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", obs.Error)
+		for i, ref := range active {
+			// Reject Fetched=false observations (missing PR, or a transient
+			// failure attached by the multi dispatcher as per-observation
+			// Error metadata) so they do not overwrite durable facts, and
+			// mark the ref's repo refresh-incomplete either way:
+			//   - rate-limit error → per-provider cooldown;
+			//   - other/no error → the repo ETag/cursor simply must not
+			//     advance without an observation (review finding #1).
+			if i >= len(batch) || !batch[i].Fetched {
+				if i < len(batch) && batch[i].Error != nil {
+					fetchErr := batch[i].Error
+					providerKey := firstNonEmpty(batch[i].Provider, ref.Repo.Provider)
+					if cooldown, ok := rateLimitCooldown(now, fetchErr); ok {
+						o.setRateLimitCooldown(now, providerKey, cooldown)
+						o.logger.Warn("scm observer: provider rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", fetchErr)
 					} else {
-						o.logger.Warn("scm observer: provider fetch failed (per-observation); marking refresh-incomplete", "provider", providerKey, "err", obs.Error)
+						o.logger.Warn("scm observer: provider fetch failed (per-observation); marking refresh-incomplete", "provider", providerKey, "err", fetchErr)
 					}
 				}
+				markRepoRefreshFailed(ref.Repo)
 				continue
 			}
-			observations[key] = obs
-			chunkSeen[key] = true
-		}
-		for _, ref := range active {
-			if !chunkSeen[selection.refKey(ref)] {
-				markRepoRefreshFailed(ref.Repo)
-			}
+			obs := batch[i]
+			obs.ObservedAt = now
+			observations[activeKeys[i]] = obs
 		}
 	}
 
@@ -1257,7 +1230,6 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		subjectsByPR:  map[string]*subject{},
 		commitETags:   map[string]pendingCacheString{},
 		candidateKeys: map[string]bool{},
-		keyByRef:      map[string]string{},
 	}
 	for _, s := range subjects {
 		if !s.hasPR || s.known.Number <= 0 {
@@ -1329,8 +1301,8 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 		}
 		if candidate {
 			selection.refs = append(selection.refs, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
+			selection.refKeys = append(selection.refKeys, key)
 			selection.candidateKeys[key] = true
-			selection.keyByRef[prKey(s.repo, s.known.Number)] = key
 		}
 	}
 	return selection
@@ -1421,16 +1393,9 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 			ref: ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL},
 			s:   s,
 		})
-		selection.keyByRef[prKey(s.repo, s.known.Number)] = key
 	}
 	if len(refs) == 0 {
 		return out
-	}
-	// Reconcile refs resolve against their pending subjects; the selection's
-	// subjectsByPR does not yet contain them (they were not candidates).
-	reconSubjects := map[string]*subject{}
-	for _, r := range refs {
-		reconSubjects[keyForTrackedPR(r.s.known, r.s.repo)] = r.s
 	}
 	// Unbounded: issue detail fetches for every reconciled PR. The worst case
 	// is bounded by the tracked-open-PR count, which is small in AO's use case.
@@ -1438,23 +1403,25 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 		if err := ctx.Err(); err != nil {
 			return out
 		}
-		refBatch := make([]ports.SCMPRRef, 0, len(chunk))
-		for _, r := range chunk {
-			refBatch = append(refBatch, r.ref)
-		}
 		// Skip cooled-down providers so a rate-limited GitHub does not
 		// suppress reconciliation of other providers (defensive — only
 		// GitHub PRs are reconciled here, but the guard keeps the invariant).
-		active := refBatch[:0]
-		for _, ref := range refBatch {
-			if o.inRateLimitCooldown(now, ref.Repo.Provider) {
-				markRepoFailed(ref.Repo)
+		// activePending stays aligned with the refs sent to the provider, so
+		// batch[i] is attributed to activePending[i]'s subject positionally.
+		activePending := make([]pendingReconcile, 0, len(chunk))
+		for _, r := range chunk {
+			if o.inRateLimitCooldown(now, r.ref.Repo.Provider) {
+				markRepoFailed(r.ref.Repo)
 				continue
 			}
-			active = append(active, ref)
+			activePending = append(activePending, r)
 		}
-		if len(active) == 0 {
+		if len(activePending) == 0 {
 			continue
+		}
+		active := make([]ports.SCMPRRef, len(activePending))
+		for i, r := range activePending {
+			active[i] = r.ref
 		}
 		batch, err := o.provider.FetchPullRequests(ctx, active)
 		if err != nil {
@@ -1471,96 +1438,44 @@ func (o *Observer) reconcileTerminalGitHubPRs(ctx context.Context, subjects map[
 			}
 			continue
 		}
-		reconcileSeen := map[string]bool{}
-		for _, obs := range batch {
-			obs.ObservedAt = now
-			key := observationSubjectKey(obs, active, reconSubjects, selection.keyByRef)
-			if key == "" {
-				continue
-			}
-			if !obs.Fetched {
-				// Fetched=false placeholders are transient failures; route
-				// per-observation errors via the same path as the normal
-				// fetch loop. Do not persist placeholders.
-				if obs.Error != nil {
-					providerKey := obs.Provider
-					if providerKey == "" {
-						for _, ref := range active {
-							if selection.refKey(ref) == key {
-								providerKey = ref.Repo.Provider
-								break
-							}
-						}
-					}
-					if cooldown, ok := rateLimitCooldown(now, obs.Error); ok {
-						if providerKey != "" {
-							o.setRateLimitCooldown(now, providerKey, cooldown)
-						}
-						o.logger.Warn("scm observer: reconciliation rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", obs.Error)
+		for i, r := range activePending {
+			// A missing or Fetched=false result (transient failure carried as
+			// per-observation Error metadata) must not persist and must mark
+			// the repo refresh-incomplete so the ETag/cursor do not advance
+			// without an observation.
+			if i >= len(batch) || !batch[i].Fetched {
+				if i < len(batch) && batch[i].Error != nil {
+					fetchErr := batch[i].Error
+					providerKey := firstNonEmpty(batch[i].Provider, r.ref.Repo.Provider)
+					if cooldown, ok := rateLimitCooldown(now, fetchErr); ok {
+						o.setRateLimitCooldown(now, providerKey, cooldown)
+						o.logger.Warn("scm observer: reconciliation rate-limited (per-observation); entering cooldown", "provider", providerKey, "cooldown", cooldown, "err", fetchErr)
 					} else {
-						o.logger.Warn("scm observer: reconciliation fetch failed (per-observation); marking refresh-incomplete", "provider", providerKey, "err", obs.Error)
+						o.logger.Warn("scm observer: reconciliation fetch failed (per-observation); marking refresh-incomplete", "provider", providerKey, "err", fetchErr)
 					}
 				}
-				// Mark the repo refresh-incomplete on any failure so the
-				// repo ETag/cursor do not advance without an observation.
-				for _, ref := range active {
-					if selection.refKey(ref) == key {
-						markRepoFailed(ref.Repo)
-						break
-					}
-				}
+				markRepoFailed(r.ref.Repo)
 				continue
 			}
+			obs := batch[i]
+			obs.ObservedAt = now
+			key := keyForTrackedPR(r.s.known, r.s.repo)
 			out[key] = obs
-			reconcileSeen[key] = true
 			// Register the reconciled PR in selection.subjectsByPR and
 			// candidateKeys so the persistence loop processes it. Marking
 			// candidateKeys also ensures prRefreshOK is initialized for this
 			// key so the commit-ETag cache does not advance unless the
 			// persistence succeeds.
-			if s, ok := reconSubjects[key]; ok {
-				selection.subjectsByPR[key] = s
-			}
+			selection.subjectsByPR[key] = r.s
 			selection.candidateKeys[key] = true
 			// Pre-mark the repo refresh-incomplete for every reconciled
-			// "still open" observation. A "still open" result is a no-op
-			// persistence that must NOT advance the repo ETag or sync
-			// cursor (cross-cutting durable-state preservation rule). If
-			// the observation turns out to be a terminal transition
-			// (hashes changed), the persistence loop clears this mark
-			// after a successful write so the ETag/cursor can advance on
-			// a real terminal transition only.
-			for _, ref := range active {
-				if selection.refKey(ref) == key {
-					markRepoFailed(ref.Repo)
-					break
-				}
-			}
-		}
-		// Any reconciled PR that did not yield a Fetched=true observation
-		// must mark its repo refresh-incomplete (no-op result: durable state
-		// must not advance).
-		for _, r := range chunk {
-			key := selection.refKey(r.ref)
-			if reconcileSeen[key] {
-				// A "still open" observation: if the semantic hashes are
-				// unchanged (no terminal transition), the persistence loop
-				// treats it as a no-op and sets prRefreshOK[key]=true without
-				// writing. But we must still prevent the repo ETag/cursor
-				// from advancing on a no-op reconciliation result, so mark
-				// the repo refresh-incomplete here. If the result IS a
-				// terminal transition (hashes changed), the persistence
-				// loop sets prRefreshOK[key]=true after a successful write —
-				// we must NOT pre-mark the repo failed in that case. The
-				// persistence loop's prRefreshOK[key]=true overrides the
-				// repo-level mark for the ETag/cursor advancement decision
-				// only if listedRepos[repoKey] is also true. Since the
-				// reconciled PR was NOT in the listing, listedRepos[repoKey]
-				// may still be true (the listing was fetched), so we mark
-				// the repo refresh-incomplete to ensure the cursor does not
-				// advance without a terminal observation being persisted.
-				continue
-			}
+			// observation. A "still open" result is a no-op persistence that
+			// must NOT advance the repo ETag or sync cursor (cross-cutting
+			// durable-state preservation rule): the persistence loop treats
+			// unchanged hashes as a no-op and never clears this mark. If the
+			// result IS a terminal transition (hashes changed), a successful
+			// write sets prRefreshOK[key]=true, which un-marks the repo so
+			// the ETag/cursor can advance on a real terminal transition only.
 			markRepoFailed(r.ref.Repo)
 		}
 	}
@@ -2077,22 +1992,17 @@ func stableHash(v any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func prKeyFromObs(obs ports.SCMObservation) string {
-	if obs.Repo == "" || obs.PR.Number <= 0 {
-		return ""
-	}
-	return obs.Provider + ":" + obs.Host + ":" + obs.Repo + "#" + fmt.Sprint(obs.PR.Number)
-}
-
 // PR identity has one owner: the provider-native id (provider, host,
 // provider_id), which survives repository renames and org transfers. Repo
-// name, number, and URL are mutable display coordinates. Subjects,
-// observation dispatch, and discovery dedupe all key on identityPRKey when a
-// provider id is known; the legacy name-based prKey remains only as a
-// self-retiring fallback for rows that predate provider ids (their first
-// successful fetch stamps one). Repo-level state — list ETags, sync cursors,
-// commit-check guards — deliberately stays name-keyed: listing genuinely is a
-// per-name operation.
+// name, number, and URL are mutable display coordinates. Subjects and
+// discovery dedupe key on identityPRKey when a provider id is known; the
+// legacy name-based prKey remains only as a self-retiring fallback for rows
+// that predate provider ids (their first successful fetch stamps one).
+// Fetched observations are never re-keyed from their content at all — they
+// are attributed positionally to the ref that requested them (see the
+// Provider.FetchPullRequests contract). Repo-level state — list ETags, sync
+// cursors, commit-check guards — deliberately stays name-keyed: listing
+// genuinely is a per-name operation.
 func identityPRKey(provider, host, providerID string) string {
 	return strings.ToLower(strings.TrimSpace(provider)) + ":" +
 		strings.ToLower(strings.TrimSpace(host)) + "@" + strings.TrimSpace(providerID)
@@ -2106,45 +2016,6 @@ func keyForTrackedPR(pr domain.PullRequest, repo ports.SCMRepo) string {
 		return identityPRKey(pr.Provider, pr.Host, pr.ProviderID)
 	}
 	return prKey(repo, pr.Number)
-}
-
-// observationSubjectKey resolves which subject a fetched observation belongs
-// to, in priority order: provider identity, canonical name key, then the
-// requesting ref matched by name or PR URL/alias (the rename fallback for
-// rows without a provider id — after a transfer the observation
-// canonicalizes to the new owner/name while a legacy subject still carries
-// the old one). keyByRef maps prKey(ref.Repo, ref.Number) of every issued
-// ref to the subject key it was issued for.
-func observationSubjectKey(obs ports.SCMObservation, refs []ports.SCMPRRef, subjects map[string]*subject, keyByRef map[string]string) string {
-	if obs.PR.ProviderID != "" && obs.Provider != "" && obs.Host != "" {
-		if k := identityPRKey(obs.Provider, obs.Host, obs.PR.ProviderID); subjects[k] != nil {
-			return k
-		}
-	}
-	canonical := prKeyFromObs(obs)
-	if canonical == "" {
-		return ""
-	}
-	if subjects[canonical] != nil {
-		return canonical
-	}
-	obsURL := strings.TrimSpace(obs.PR.URL)
-	obsAlias := strings.TrimSpace(obs.PR.URLAlias)
-	for _, ref := range refs {
-		if ref.Number != obs.PR.Number {
-			continue
-		}
-		rk := prKey(ref.Repo, ref.Number)
-		refURL := strings.TrimSpace(ref.URL)
-		urlMatch := refURL != "" && (refURL == obsURL || (obsAlias != "" && refURL == obsAlias))
-		if rk == canonical || urlMatch {
-			if k, ok := keyByRef[rk]; ok {
-				return k
-			}
-			return rk
-		}
-	}
-	return canonical
 }
 
 func prKey(repo ports.SCMRepo, number int) string {
