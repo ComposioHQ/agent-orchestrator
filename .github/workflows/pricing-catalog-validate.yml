@@ -22,3 +22,42 @@ jobs:
           cache: false
       - name: Validate reviewed catalog
         run: go run ./backend/cmd/pricingcatalog validate -root .
+      - name: Resolve latest LiteLLM catalog revision
+        id: source
+        run: |
+          set -euo pipefail
+          revision="$(curl --fail --location --silent --show-error \
+            https://api.github.com/repos/BerriAI/litellm/commits/main | jq -r .sha)"
+          if ! [[ "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "LiteLLM main did not resolve to a full SHA" >&2
+            exit 1
+          fi
+          curl --fail --location --max-filesize 33554432 \
+            --output "$RUNNER_TEMP/model_prices_and_context_window.json" \
+            "https://raw.githubusercontent.com/BerriAI/litellm/$revision/model_prices_and_context_window.json"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - name: Generate latest catalog preview
+        env:
+          REVISION: ${{ steps.source.outputs.revision }}
+        run: |
+          set -euo pipefail
+          go run ./backend/cmd/pricingcatalog sync -root . \
+            -source "$RUNNER_TEMP/model_prices_and_context_window.json" \
+            -revision "$REVISION"
+          go run ./backend/cmd/pricingcatalog validate -root .
+          {
+            echo "### Pricing catalog preview"
+            echo
+            echo "LiteLLM revision: \`$REVISION\`"
+            echo
+            echo '```text'
+            git status --short -- pricing/catalog/v1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload generated catalog preview
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pricing-catalog-preview-${{ github.event.pull_request.number }}
+          path: pricing/catalog/v1
+          if-no-files-found: error
+          retention-days: 7
