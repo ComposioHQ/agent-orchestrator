@@ -424,41 +424,39 @@ export function BrowserPanelView({
 								: t("browser.annotate")
 					}
 					aria-pressed={annotationMode || status === "picking"}
-					className="browser-panel__annotate-btn"
+					className="browser-panel__annotate-btn relative"
 					disabled={!canAnnotate || status === "sending"}
 					onClick={() => void toggleAnnotationMode()}
 					size="icon-sm"
-					title={canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate")}
+					// Status is available on hover/focus (native title tooltip on the same
+					// button, plus the corner dot below) rather than permanently-visible
+					// on-screen text — mirrors the design note on annotate-preload.ts's
+					// on-page hint banner. Falls back to the button's own static label
+					// when there's no live status to report.
+					title={annotationStatusLabel || agentStatusLabel || (canRetryAnnotation ? t("browser.retryAnnotation") : t("browser.annotate"))}
 					type="button"
 					variant="ghost"
 				>
 					<MousePointer2 aria-hidden="true" className="h-4 w-4" />
-				</Button>
-				{annotationStatusLabel ? (
-					// Status is available on hover/focus (native title tooltip) rather than
-					// as permanently-visible on-screen text — see the design note this
-					// mirrors on annotate-preload.ts's on-page hint banner.
-					<span
-						className="browser-panel__annotation-status flex size-4 shrink-0 items-center justify-center"
-						title={annotationStatusLabel}
-					>
+					{annotationStatusLabel ? (
 						<span
 							aria-hidden="true"
-							className={cn("size-1.5 rounded-full", status === "error" ? "bg-destructive" : "bg-accent")}
+							className={cn(
+								"pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full",
+								status === "error" ? "bg-destructive" : "bg-accent",
+							)}
 						/>
-						<span className="sr-only" role="status">
-							{annotationStatusLabel}
-						</span>
+					) : agentStatusLabel ? (
+						<span aria-hidden="true" className="pointer-events-none absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-accent" />
+					) : null}
+				</Button>
+				{annotationStatusLabel ? (
+					<span className="sr-only" role="status">
+						{annotationStatusLabel}
 					</span>
 				) : agentStatusLabel ? (
-					<span
-						className="browser-panel__annotation-status flex size-4 shrink-0 items-center justify-center"
-						title={agentStatusLabel}
-					>
-						<span aria-hidden="true" className="size-1.5 rounded-full bg-accent" />
-						<span aria-live="polite" className="sr-only" role="status">
-							{agentStatusLabel}
-						</span>
+					<span aria-live="polite" className="sr-only" role="status">
+						{agentStatusLabel}
 					</span>
 				) : null}
 					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
