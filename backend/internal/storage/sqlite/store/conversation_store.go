@@ -1827,6 +1827,20 @@ func (s *Store) LoadConversationSnapshotPage(
 	if beforeSequence <= 0 || beforeSequence > conv.LatestSequence+1 {
 		beforeSequence = conv.LatestSequence + 1
 	}
+	visibleAfterSequence, err := s.conversationVisibleAfterSequence(ctx, conv)
+	if err != nil {
+		return ConversationSnapshot{}, err
+	}
+	if beforeSequence <= visibleAfterSequence {
+		snapshot := ConversationSnapshot{
+			Conversation:               conversationToDomain(conv),
+			BranchPoints:               s.conversationBranchPoints(ctx, conversationID),
+			BranchedFromEarlierMessage: s.conversationBranchedFromEarlierMessage(ctx, conversationID, conv.ActiveBranchID),
+			OldestSequence:             visibleAfterSequence,
+			HasMoreBefore:              false,
+		}
+		return snapshot, nil
+	}
 	fetchLimit := limit + 1
 
 	messageRows, err := s.qr.SelectConversationMessagesPage(ctx, gen.SelectConversationMessagesPageParams{
@@ -1848,10 +1862,14 @@ func (s *Store) LoadConversationSnapshotPage(
 
 	sequences := make([]int64, 0, len(messageRows)+len(activityRows))
 	for _, row := range messageRows {
-		sequences = append(sequences, row.Sequence)
+		if row.Sequence >= visibleAfterSequence {
+			sequences = append(sequences, row.Sequence)
+		}
 	}
 	for _, row := range activityRows {
-		sequences = append(sequences, row.Sequence)
+		if row.Sequence >= visibleAfterSequence {
+			sequences = append(sequences, row.Sequence)
+		}
 	}
 	sort.Slice(sequences, func(i, j int) bool { return sequences[i] > sequences[j] })
 	hasMore := int64(len(sequences)) > limit
@@ -1861,6 +1879,12 @@ func (s *Store) LoadConversationSnapshotPage(
 	oldest := beforeSequence
 	if len(sequences) > 0 {
 		oldest = sequences[len(sequences)-1]
+	}
+	if oldest < visibleAfterSequence {
+		oldest = visibleAfterSequence
+	}
+	if oldest <= visibleAfterSequence {
+		hasMore = false
 	}
 
 	turnRows, err := s.qr.SelectConversationTurnsPage(ctx, gen.SelectConversationTurnsPageParams{
@@ -1885,16 +1909,33 @@ func (s *Store) LoadConversationSnapshotPage(
 	// SQL returns newest-first so LIMIT is useful; the API contract remains
 	// oldest-first inside each page.
 	for i := len(messageRows) - 1; i >= 0; i-- {
-		if messageRows[i].Sequence >= oldest {
+		if messageRows[i].Sequence >= oldest && messageRows[i].Sequence >= visibleAfterSequence {
 			snapshot.Messages = append(snapshot.Messages, messageToDomain(messageRows[i]))
 		}
 	}
 	for i := len(activityRows) - 1; i >= 0; i-- {
-		if activityRows[i].Sequence >= oldest {
+		if activityRows[i].Sequence >= oldest && activityRows[i].Sequence >= visibleAfterSequence {
 			snapshot.Activities = append(snapshot.Activities, activityToDomain(activityRows[i]))
 		}
 	}
 	return snapshot, nil
+}
+
+func (s *Store) conversationVisibleAfterSequence(
+	ctx context.Context,
+	conv gen.Conversation,
+) (int64, error) {
+	if conv.Scope != domain.ConversationScopeProject || conv.CurrentSessionID == nil || *conv.CurrentSessionID == "" {
+		return 0, nil
+	}
+	sequence, err := s.qr.SelectConversationContextResetSequence(ctx, gen.SelectConversationContextResetSequenceParams{
+		ConversationID: conv.ID,
+		ProviderItemID: "ao-context-reset:" + string(*conv.CurrentSessionID),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("select context reset boundary for conversation %s: %w", conv.ID, err)
+	}
+	return sequence, nil
 }
 
 // LoadConversationSnapshot reads a whole conversation. Items come back ordered by

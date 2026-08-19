@@ -57,28 +57,35 @@ vi.mock("../../hooks/useConversation", () => ({
 	useWorkspaceFilePaths: () => ({ paths: [], truncated: false }),
 }));
 
-vi.mock("./ChatWorkspace", () => ({
-	ChatWorkspace: ({
-		onLinkOpen,
-		snapshot,
-		switchAgentControl,
-		shellTarget,
-	}: {
-		onLinkOpen?: (url: string) => void;
-		snapshot: { sessionId: string };
-		switchAgentControl?: ReactNode;
-		shellTarget?: { handleId: string };
-	}) => (
-		<div>
-			<div>Rendered {snapshot.sessionId}</div>
-			<button type="button" onClick={() => onLinkOpen?.(LINK)}>
-				Open chat link
-			</button>
-			{shellTarget ? <div data-testid="shell-target">{shellTarget.handleId}</div> : null}
-			{switchAgentControl}
-		</div>
-	),
-}));
+vi.mock("./ChatWorkspace", async () => {
+	const { useState } = await vi.importActual<typeof import("react")>("react");
+	return {
+		ChatWorkspace: ({
+			onLinkOpen,
+			snapshot,
+			switchAgentControl,
+			shellTarget,
+		}: {
+			onLinkOpen?: (url: string) => void;
+			snapshot: { sessionId: string };
+			switchAgentControl?: ReactNode;
+			shellTarget?: { handleId: string };
+		}) => {
+			const [mountedSessionId] = useState(snapshot.sessionId);
+			return (
+				<div>
+					<div>Mounted {mountedSessionId}</div>
+					<div>Rendered {snapshot.sessionId}</div>
+					<button type="button" onClick={() => onLinkOpen?.(LINK)}>
+						Open chat link
+					</button>
+					{shellTarget ? <div data-testid="shell-target">{shellTarget.handleId}</div> : null}
+					{switchAgentControl}
+				</div>
+			);
+		},
+	};
+});
 
 vi.mock("../TerminalSwitchAgentButton", () => ({
 	TerminalSwitchAgentButton: () => <button aria-label="Switch agent" type="button" />,
@@ -196,7 +203,7 @@ describe("SessionChatSurface link routing", () => {
 		expect(screen.queryByText("Conversation unavailable")).not.toBeInTheDocument();
 	});
 
-	it("does not render a previous orchestrator conversation while another orchestrator is selected", () => {
+	it("remounts the chat workspace when switching between chat sessions", () => {
 		const first = { ...session, id: "proj-orchestrator-1", kind: "orchestrator" as const };
 		const second = { ...session, id: "proj-orchestrator-2", kind: "orchestrator" as const };
 		const queryClient = new QueryClient({
@@ -209,16 +216,17 @@ describe("SessionChatSurface link routing", () => {
 			</Wrapper>,
 		);
 
+		expect(screen.getByText("Mounted proj-orchestrator-1")).toBeInTheDocument();
 		expect(screen.getByText("Rendered proj-orchestrator-1")).toBeInTheDocument();
 
-		conversationState.snapshot = snapshotFor("proj-orchestrator-1");
 		view.rerender(
 			<Wrapper client={queryClient}>
 				<SessionChatSurface session={second} />
 			</Wrapper>,
 		);
 
-		expect(screen.queryByText("Rendered proj-orchestrator-1")).not.toBeInTheDocument();
-		expect(screen.getByText("Loading conversation…")).toBeInTheDocument();
+		expect(screen.getByText("Mounted proj-orchestrator-2")).toBeInTheDocument();
+		expect(screen.getByText("Rendered proj-orchestrator-2")).toBeInTheDocument();
+		expect(screen.queryByText("Mounted proj-orchestrator-1")).not.toBeInTheDocument();
 	});
 });
