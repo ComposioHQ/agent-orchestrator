@@ -20,7 +20,7 @@ export function SimulatorH264Canvas({ encoded, width, height, label, ...props }:
 		const context = canvas.getContext("2d", { alpha: false });
 		if (!context) return;
 		const decoder = new VideoDecoderAPI({
-			output: (frame) => {
+			output: (frame: any) => {
 				context.drawImage(frame, 0, 0, width, height);
 				frame.close();
 			},
@@ -37,6 +37,8 @@ export function SimulatorH264Canvas({ encoded, width, height, label, ...props }:
 
 	useEffect(() => {
 		if (!encoded || !decoderRef.current || decoderRef.current.state !== "configured") return;
+		const EncodedVideoChunkAPI = (globalThis as any).EncodedVideoChunk;
+		if (!EncodedVideoChunkAPI) return;
 		const chunk = new EncodedVideoChunkAPI({
 			type: firstChunkRef.current ? "key" : "delta",
 			timestamp: timestampRef.current++,

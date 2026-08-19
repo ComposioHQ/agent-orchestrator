@@ -38,7 +38,7 @@ export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionI
 	const frame = ios.streamFrame ?? (screenshot ? { data: screenshot.data, mimeType: screenshot.mimeType, codec: "png" as const, width: screenshot.width, height: screenshot.height } : null);
 	const frameWidth = frame?.width ?? status?.screenWidth ?? 0;
 	const frameHeight = frame?.height ?? status?.screenHeight ?? 0;
-	const fps = useFrameFps(frame);
+	const fps = useFrameFps(frame?.codec !== "h264" && frame?.data && frame.mimeType ? { data: frame.data, mimeType: frame.mimeType } : null);
 	const keyboard = useSimulatorKeyboard({
 		active: activeMac,
 		booted,
@@ -123,7 +123,7 @@ export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionI
 			    never reach the simulator (pointerToFrame returns null). */}
 			<div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md border border-border bg-background/40" data-testid="emulator-stage">
 				{booted && frame ? (
-					{frame.codec === "h264" ? <SimulatorH264Canvas
+					frame.codec === "h264" ? <SimulatorH264Canvas
 						encoded={frame.encoded}
 						width={frameWidth}
 						height={frameHeight}
@@ -141,7 +141,7 @@ export function EmulatorPanel({ active, sessionId }: { active: boolean; sessionI
 						onMouseDown={startPointer}
 						onMouseUp={sendPointer}
 						onMouseLeave={() => { pointerStart.current = null; }}
-					/>}
+					/>
 				) : booted ? (
 					<p className="flex items-center gap-1.5 text-caption text-passive">
 						{ios.streamState === "connecting" || ios.streamState === "idle" ? (
