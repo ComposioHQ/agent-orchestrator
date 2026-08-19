@@ -868,83 +868,118 @@ function ExternalReviewCard({
 	const openInlineCount = inlineComments.filter((comment) => comment.body?.trim() || comment.file || comment.url).length;
 	const showRereviewAction = Boolean(onRequestRereview && (entry.canRequestRereview ?? entry.verdict.tone !== "success"));
 	return (
-		<article className="min-w-0 border-b border-border/70 py-3 first:pt-0 last:border-b-0 last:pb-0" data-testid="github-review-card">
+		<ReviewEntryDisclosure
+			actor={entry.reviewerId}
+			avatar={<GithubAvatar className="size-5" login={entry.reviewerId} />}
+			botLabel={entry.isBot ? labels.bot : undefined}
+			meta={entry.submittedAtLabel ? labels.reviewedAt(entry.submittedAtLabel) : undefined}
+			onOpenChange={setOpen}
+			open={open}
+			testId="github-review-card"
+			verdict={entry.verdict}
+		>
+			{showRereviewAction ? (
+				<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
+					{openInlineCount > 0 ? (
+						<span className="font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
+					) : <span aria-hidden="true" />}
+					{rereviewRequested ? (
+						<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
+							<CheckIcon className="size-icon-xs shrink-0" />
+							{labels.rereviewRequested}
+						</span>
+					) : (
+						<button
+							className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
+							onClick={async () => {
+								setRereviewError(false);
+								try {
+									await onRequestRereview?.(entry);
+									setRereviewRequested(true);
+								} catch {
+									setRereviewError(true);
+								}
+							}}
+							type="button"
+						>
+							{labels.requestRereviewPR}
+						</button>
+					)}
+				</div>
+			) : null}
+			{rereviewError ? <p className="m-0 text-2xs font-medium text-error">{labels.rereviewRequestFailed}</p> : null}
+			{body ? (
+				<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
+			) : null}
+			{openInlineCount > 0 ? (
+				<GithubInlineComments
+					externalLink={externalLink}
+					labels={labels}
+					onSendInlineComment={onSendInlineComment}
+					onResolveInlineComment={onResolveInlineComment}
+					reviewers={[
+						{
+							count: openInlineCount,
+							isBot: entry.isBot,
+							links: inlineComments,
+							reviewerId: entry.reviewerId,
+							reviewUrl: entry.reviewUrl,
+						},
+					]}
+					showReviewer={false}
+				/>
+			) : null}
+		</ReviewEntryDisclosure>
+	);
+}
+
+function ReviewEntryDisclosure({
+	actor,
+	avatar,
+	botLabel,
+	children,
+	meta,
+	onOpenChange,
+	open,
+	testId,
+	verdict,
+}: {
+	actor: string;
+	avatar: ReactNode;
+	botLabel?: string;
+	children: ReactNode;
+	meta?: ReactNode;
+	onOpenChange: (open: boolean) => void;
+	open: boolean;
+	testId: string;
+	verdict: InspectorVerdict;
+}) {
+	return (
+		<article className="min-w-0 border-b border-border/70 py-3 first:pt-0 last:border-b-0 last:pb-0" data-testid={testId}>
 			<button
 				aria-expanded={open}
 				className="flex w-full min-w-0 items-start gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-interactive-hover/30"
-				onClick={() => setOpen((current) => !current)}
+				onClick={() => onOpenChange(!open)}
 				type="button"
 			>
 				<ChevronIcon className="mt-0.5 size-icon-2xs shrink-0 text-passive" direction={open ? "down" : "right"} />
 				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<span className="flex min-w-0 items-center gap-1.5">
 						<span className="inline-flex min-w-0 items-center gap-1 text-xs font-semibold text-foreground">
-							<GithubAvatar className="size-5" login={entry.reviewerId} />
-							<span className="truncate">{entry.reviewerId}</span>
+							{avatar}
+							<span className="truncate">{actor}</span>
 						</span>
-						{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
+						{botLabel ? <span className="shrink-0 font-mono text-micro text-passive">{botLabel}</span> : null}
 					</span>
-					<span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-micro text-passive">
-						{entry.submittedAtLabel ? <span>{labels.reviewedAt(entry.submittedAtLabel)}</span> : null}
-					</span>
+					{meta ? (
+						<span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-micro text-passive">
+							{meta}
+						</span>
+					) : null}
 				</span>
-				<VerdictBadge verdict={entry.verdict} />
+				<VerdictBadge verdict={verdict} />
 			</button>
-			{open ? (
-				<div className="flex min-w-0 flex-col gap-3 px-1 pt-3">
-					{showRereviewAction ? (
-						<div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-y border-border/50 py-2 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-stretch">
-							{openInlineCount > 0 ? (
-								<span className="font-mono text-2xs font-semibold text-error">{labels.unresolvedCount(openInlineCount)}</span>
-							) : <span aria-hidden="true" />}
-							{rereviewRequested ? (
-								<span className="inline-flex h-control-md items-center gap-1.5 text-2xs font-medium text-success">
-									<CheckIcon className="size-icon-xs shrink-0" />
-									{labels.rereviewRequested}
-								</span>
-							) : (
-								<button
-									className="inline-flex h-7 min-w-0 max-w-full items-center justify-center rounded-md border border-border-strong px-1.5 text-center text-micro font-medium tracking-tight text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground @max-[300px]/inspector:w-full"
-									onClick={async () => {
-										setRereviewError(false);
-										try {
-											await onRequestRereview?.(entry);
-											setRereviewRequested(true);
-										} catch {
-											setRereviewError(true);
-										}
-									}}
-									type="button"
-								>
-									{labels.requestRereviewPR}
-								</button>
-							)}
-						</div>
-					) : null}
-					{rereviewError ? <p className="m-0 text-2xs font-medium text-error">{labels.rereviewRequestFailed}</p> : null}
-					{body ? (
-						<ReviewMarkdownBody body={body} clamped={false} renderMarkdown={renderMarkdown} testId="github-review-summary" />
-					) : null}
-					{openInlineCount > 0 ? (
-						<GithubInlineComments
-							externalLink={externalLink}
-							labels={labels}
-							onSendInlineComment={onSendInlineComment}
-							onResolveInlineComment={onResolveInlineComment}
-							reviewers={[
-								{
-									count: openInlineCount,
-									isBot: entry.isBot,
-									links: inlineComments,
-									reviewerId: entry.reviewerId,
-									reviewUrl: entry.reviewUrl,
-								},
-							]}
-							showReviewer={false}
-						/>
-					) : null}
-				</div>
-			) : null}
+			{open ? <div className="flex min-w-0 flex-col gap-3 px-1 pt-3">{children}</div> : null}
 		</article>
 	);
 }
@@ -1175,24 +1210,27 @@ function ReviewSummaryCard({
 	timestamp: string;
 	verdict: InspectorVerdict;
 }) {
+	const [open, setOpen] = useState(false);
 	const [expanded, setExpanded] = useState(false);
 	const trimmed = rawBody?.trim();
 	const body = trimmed ? trimmed.replace(/\n{3,}/g, "\n\n") : trimmed;
 	const clamped = body ? isClampedSummary(body) : false;
 	return (
-		<article className="flex min-w-0 flex-col gap-1 rounded-md bg-overlay/50 px-2.5 py-2.5">
-			<span className="flex min-w-0 items-center gap-1.5">
-				<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
-					{renderAvatar(actor)}
-					<span className="truncate">{actor}</span>
-				</span>
-				{isBot ? <span className="shrink-0 font-mono text-micro text-passive">{labels.bot}</span> : null}
-				<VerdictBadge verdict={verdict} />
-				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
+		<ReviewEntryDisclosure
+			actor={actor}
+			avatar={renderAvatar(actor)}
+			botLabel={isBot ? labels.bot : undefined}
+			meta={
+				<>
 					{isEarlier ? <span>{labels.earlierPass}</span> : null}
-					<span className="font-mono">{timestamp}</span>
-				</span>
-			</span>
+					<span>{timestamp}</span>
+				</>
+			}
+			onOpenChange={setOpen}
+			open={open}
+			testId="agent-review-card"
+			verdict={verdict}
+		>
 			{body ? (
 				<ReviewMarkdownBody
 					body={body}
@@ -1207,7 +1245,7 @@ function ReviewSummaryCard({
 				labels={labels}
 				onExpandedChange={() => setExpanded((open) => !open)}
 			/>
-		</article>
+		</ReviewEntryDisclosure>
 	);
 }
 

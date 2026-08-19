@@ -1564,7 +1564,7 @@ function MergedReviewsSection({
 			onResolveInlineComment={resolveInlineComment}
 			onSendInlineComment={sendInlineCommentToWorker}
 			renderAvatar={(harness) => (
-				<AgentAvatar className="size-icon-sm shrink-0" decorative provider={harness} />
+				<AgentAvatar className="size-5 shrink-0" decorative provider={harness} />
 			)}
 			renderMarkdown={renderReviewMarkdown}
 		/>

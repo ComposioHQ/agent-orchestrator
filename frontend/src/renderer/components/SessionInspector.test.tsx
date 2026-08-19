@@ -1476,6 +1476,14 @@ describe("SessionInspector summary reviews", () => {
     }
   };
 
+  const openLatestAgentReview = async () => {
+    const cards = await screen.findAllByTestId("agent-review-card");
+    const trigger = within(cards[0]).getByRole("button");
+    if (trigger.getAttribute("aria-expanded") === "false") {
+      await userEvent.click(trigger);
+    }
+  };
+
   it("triggers a review and opens the returned reviewer terminal", async () => {
     mockCommonGets([], "", [reviewState(3, "needs_review")]);
     const runningReview = {
@@ -1886,6 +1894,7 @@ describe("SessionInspector summary reviews", () => {
 
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
+    await openLatestAgentReview();
 
     const summary = await screen.findByTestId("review-run-summary");
     expect(summary).toHaveClass("line-clamp-4");
@@ -1912,6 +1921,7 @@ describe("SessionInspector summary reviews", () => {
 
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
+    await openLatestAgentReview();
 
     expect(await screen.findByTestId("review-run-summary")).not.toHaveClass(
       "line-clamp-4",
@@ -1934,6 +1944,7 @@ describe("SessionInspector summary reviews", () => {
 
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
+    await openLatestAgentReview();
 
     const summary = await screen.findByTestId("review-run-summary");
     expect(within(summary).getByText("auth validation").tagName).toBe("STRONG");
@@ -1951,6 +1962,7 @@ describe("SessionInspector summary reviews", () => {
 
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
+    await openLatestAgentReview();
 
     expect(await screen.findByTestId("review-run-summary")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /View on PR/ })).not.toBeInTheDocument();
@@ -1997,6 +2009,7 @@ describe("SessionInspector summary reviews", () => {
 
       renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
       await openReviewsSection();
+      await openLatestAgentReview();
 
       expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
       expect(
@@ -2628,6 +2641,7 @@ describe("SessionInspector summary reviews", () => {
 
     renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
     await openReviewsSection();
+    await openLatestAgentReview();
 
     expect(
       await screen.findByText("codex asked for tests."),
@@ -2638,6 +2652,8 @@ describe("SessionInspector summary reviews", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Load more · 1 earlier" }),
     );
+    const reviewCards = screen.getAllByTestId("agent-review-card");
+    await userEvent.click(within(reviewCards[1]).getByRole("button"));
     expect(
       screen.getByText("claude-code found nothing blocking."),
     ).toBeInTheDocument();

@@ -261,8 +261,14 @@ describe("portable inspector presentations", () => {
 
     const row = screen.getByTestId("review-pr-row");
     expect(row).not.toHaveAttribute("aria-expanded");
-    expect(screen.getByText("Looks good.")).toBeInTheDocument();
+    expect(screen.queryByText("Looks good.")).not.toBeInTheDocument();
     expect(screen.queryByText("Ship it.")).not.toBeInTheDocument();
+    const agentReview = screen.getByRole("button", {
+      name: /codex.*Approved/,
+    });
+    expect(agentReview).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(agentReview);
+    expect(screen.getByText("Looks good.")).toBeInTheDocument();
     const externalReview = screen.getByRole("button", {
       name: /review-bot.*Approved/,
     });
