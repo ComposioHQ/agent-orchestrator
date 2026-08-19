@@ -153,8 +153,9 @@ function ShellLayout() {
 	// VS Code's "drop a folder to open it". A depth counter (not a relatedTarget
 	// check) tracks dragenter/dragleave so the overlay doesn't flicker as the
 	// pointer crosses child-element boundaries. XtermTerminal's own drop handler
-	// calls stopPropagation, so a drop landing on an active terminal pane never
-	// reaches this window-level listener — no special-casing needed there.
+	// only swallows (preventDefault/stopPropagation) a drop that is NOT a
+	// directory — a dropped folder is left untouched so it bubbles here even
+	// when it lands on an active terminal pane.
 	const [isDragActive, setIsDragActive] = useState(false);
 	const dragDepthRef = useRef(0);
 	useEffect(() => {
