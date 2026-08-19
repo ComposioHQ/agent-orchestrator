@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatComposer } from "./ChatComposer";
@@ -29,6 +29,50 @@ const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("focuses the message field when the chat composer opens", () => {
+		const { field } = renderComposer({ autoFocusKey: "session-1" });
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("refocuses the message field when the active chat session changes", () => {
+		const { rerender } = render(
+			<>
+				<button type="button">Outside</button>
+				<ChatComposer onSend={vi.fn()} autoFocusKey="session-1" />
+			</>,
+		);
+		const field = screen.getByLabelText("Message the agent");
+		expect(document.activeElement).toBe(field);
+
+		screen.getByRole("button", { name: "Outside" }).focus();
+		expect(document.activeElement).not.toBe(field);
+
+		rerender(
+			<>
+				<button type="button">Outside</button>
+				<ChatComposer onSend={vi.fn()} autoFocusKey="session-2" />
+			</>,
+		);
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("refocuses the message field when returning to the chat window", () => {
+		const { field } = renderComposer({ autoFocusKey: "session-1" });
+		field.blur();
+		expect(document.activeElement).not.toBe(field);
+
+		act(() => {
+			window.dispatchEvent(new Event("focus"));
+		});
+
+		expect(document.activeElement).toBe(field);
+	});
+
+	it("does not focus the hidden or inactive chat composer", () => {
+		const { field } = renderComposer({ autoFocus: false, autoFocusKey: "session-1" });
+		expect(document.activeElement).not.toBe(field);
+	});
+
 	it("grows with the draft, then scrolls after the seven-line cap", () => {
 		const { field } = renderComposer();
 		let scrollHeight = 112;
