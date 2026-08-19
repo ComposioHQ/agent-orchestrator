@@ -81,11 +81,15 @@ func gooseConfigPaths() []string {
 
 	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
 		add(filepath.Join(xdg, "goose", "config.yaml"))
+		add(filepath.Join(xdg, "goose", "secrets.yaml"))
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		// Goose stores config here on macOS as well, rather than under
 		// os.UserConfigDir's "Application Support" path.
 		add(filepath.Join(home, ".config", "goose", "config.yaml"))
+		// Goose falls back to this plaintext secret store when its keyring is
+		// disabled or unavailable. Keyring-only credentials remain unknown.
+		add(filepath.Join(home, ".config", "goose", "secrets.yaml"))
 	}
 	return paths
 }

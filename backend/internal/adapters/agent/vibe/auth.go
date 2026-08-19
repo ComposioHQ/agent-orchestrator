@@ -46,6 +46,10 @@ func vibeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 		vibeHome = filepath.Join(home, ".vibe")
 	}
 
+	// AuthStatus is a catalog-level probe and has no session workspace. Do not
+	// inspect a project .vibe/config.toml from the daemon's current directory:
+	// it could belong to an unrelated checkout and report its credentials for
+	// every session. The global Vibe config remains valid evidence here.
 	envVars, err := vibeAPIKeyEnvVars(filepath.Join(vibeHome, "config.toml"))
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err

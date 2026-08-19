@@ -83,6 +83,10 @@ func primeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, err
 	if err != nil || found {
 		return status, found, err
 	}
+	status, found, err = primeCredentialJSONStatus(filepath.Join(dir, "models.json"), false)
+	if err != nil || found {
+		return status, found, err
+	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }
 

@@ -42,6 +42,9 @@ func copilotLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, e
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
 	}
+	if copilotBYOKConfigured() {
+		return ports.AgentAuthStatusAuthorized, true, nil
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -50,7 +53,7 @@ func copilotLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, e
 	if home == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	configStatus, configOK, err := copilotConfigAuthStatus(filepath.Join(home, ".copilot", "config.json"))
+	configStatus, configOK, err := copilotConfigAuthStatus(filepath.Join(copilotHomeDir(home), "config.json"))
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
@@ -61,6 +64,21 @@ func copilotLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, e
 		return status, ok, err
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
+}
+
+// copilotBYOKConfigured recognizes Copilot CLI's documented local BYOK setup.
+// An API key is optional because providers such as local Ollama do not require
+// one; the endpoint and model identify a usable provider configuration.
+func copilotBYOKConfigured() bool {
+	return strings.TrimSpace(os.Getenv("COPILOT_PROVIDER_BASE_URL")) != "" &&
+		strings.TrimSpace(os.Getenv("COPILOT_MODEL")) != ""
+}
+
+func copilotHomeDir(home string) string {
+	if path := strings.TrimSpace(os.Getenv("COPILOT_HOME")); path != "" {
+		return path
+	}
+	return filepath.Join(home, ".copilot")
 }
 
 func copilotConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {

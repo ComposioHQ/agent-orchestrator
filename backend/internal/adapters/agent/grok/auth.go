@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-
 	"github.com/pelletier/go-toml/v2"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -36,18 +36,18 @@ func grokLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 		return ports.AgentAuthStatusAuthorized, true, nil
 	}
 
-	home, err := os.UserHomeDir()
+	grokHome, err := grokConfigDir()
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if home == "" {
+	if grokHome == "" {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	configStatus, configOK, err := grokConfigAuthStatus(filepath.Join(home, ".grok", "config.toml"))
+	configStatus, configOK, err := grokConfigAuthStatus(filepath.Join(grokHome, "config.toml"))
 	if err != nil || configOK {
 		return configStatus, configOK, err
 	}
-	path := filepath.Join(home, ".grok", "auth.json")
+	path := filepath.Join(grokHome, "auth.json")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return ports.AgentAuthStatusUnknown, false, nil
@@ -80,6 +80,21 @@ func grokLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 		}
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
+}
+
+// grokConfigDir follows Grok Build's GROK_HOME override for all local state.
+func grokConfigDir() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("GROK_HOME")); home != "" {
+		return home, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if home == "" {
+		return "", nil
+	}
+	return filepath.Join(home, ".grok"), nil
 }
 
 // grokConfigAuthStatus recognizes the documented per-model api_key and

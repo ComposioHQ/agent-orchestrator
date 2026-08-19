@@ -56,7 +56,7 @@ func TestPrimeLocalAuthStatusUnknownForEmptyAuthFile(t *testing.T) {
 	}
 }
 
-func TestPrimeLocalAuthStatusIgnoresModelsFileCredentials(t *testing.T) {
+func TestPrimeLocalAuthStatusAuthorizedFromModelsFileCredentials(t *testing.T) {
 	clearPrimeCredentialEnv(t)
 	dir := t.TempDir()
 	t.Setenv(primeAgentCodingAgentDirEnv, dir)
@@ -67,8 +67,8 @@ func TestPrimeLocalAuthStatusIgnoresModelsFileCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok || status != ports.AgentAuthStatusUnknown {
-		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
 	}
 }
 

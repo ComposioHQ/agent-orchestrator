@@ -58,6 +58,22 @@ func TestGrokLocalAuthStatusAuthorizedWithConfiguredModelAPIKey(t *testing.T) {
 	}
 }
 
+func TestGrokLocalAuthStatusUsesGrokHome(t *testing.T) {
+	grokHome := t.TempDir()
+	t.Setenv("GROK_HOME", grokHome)
+	if err := os.WriteFile(filepath.Join(grokHome, "auth.json"), []byte(`{"default":{"access_token":"token"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, ok, err := grokLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusAuthorized)
+	}
+}
+
 func TestGrokLocalAuthStatusAuthorizedWithAuthFile(t *testing.T) {
 	writeGrokAuthFile(t, `{
 		"https://auth.x.ai::account": {

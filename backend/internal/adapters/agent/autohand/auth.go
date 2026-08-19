@@ -70,12 +70,16 @@ func autohandCloudAuthReady(config map[string]json.RawMessage) (ready, known boo
 		return false, false
 	}
 	var auth struct {
-		Token string `json:"token"`
+		Token        string `json:"token"`
+		APIKeyHelper string `json:"apiKeyHelper"`
 	}
 	if err := json.Unmarshal(authRaw, &auth); err != nil {
 		return false, false
 	}
-	return usableSecret(auth.Token), true
+	// apiKeyHelper is a documented command which Autohand invokes to obtain an
+	// API key. Its configured presence is credential evidence, although AO does
+	// not execute arbitrary user commands merely to answer an advisory probe.
+	return usableSecret(auth.Token) || strings.TrimSpace(auth.APIKeyHelper) != "", true
 }
 
 func usableSecret(value string) bool {

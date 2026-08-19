@@ -80,6 +80,30 @@ func TestVibeAPIKeyEnvVarsReadsConfig(t *testing.T) {
 	}
 }
 
+func TestVibeLocalAuthStatusIgnoresDaemonWorkingDirectoryProjectConfig(t *testing.T) {
+	clearVibeAuthEnv(t, vibeDefaultAPIKeyEnvVar, "VIBE_CODE_API_KEY", "PROJECT_VIBE_KEY")
+	project := t.TempDir()
+	projectConfig := filepath.Join(project, ".vibe", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(projectConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(projectConfig, []byte("api_key_env_var = \"PROJECT_VIBE_KEY\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	globalHome := filepath.Join(t.TempDir(), ".vibe")
+	t.Setenv("VIBE_HOME", globalHome)
+	t.Setenv("PROJECT_VIBE_KEY", "project-only-key")
+	t.Chdir(project)
+
+	status, ok, err := vibeLocalAuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestVibeEnvFileAuthStatusAuthorized(t *testing.T) {
 	envPath := filepath.Join(t.TempDir(), ".env")
 	if err := os.WriteFile(envPath, []byte("MISTRAL_API_KEY=test-key\n"), 0o600); err != nil {
