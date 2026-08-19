@@ -120,6 +120,20 @@ function visibleBlockingPrompt(output) {
     /\((y|yes)\)/i.test(output)
   );
 }
+function paneSignals(output) {
+  if (!output) return ["empty-pane"];
+  const normalized = output.toLowerCase();
+  const signals = [];
+  if (visibleBlockingPrompt(output)) signals.push("blocking-prompt");
+  if (normalized.includes("login") || normalized.includes("auth") || normalized.includes("api key") || normalized.includes("oauth")) signals.push("auth-or-login");
+  if (normalized.includes("rate limit") || normalized.includes("quota") || normalized.includes("too many requests")) signals.push("rate-limit-or-quota");
+  if (normalized.includes("error") || normalized.includes("failed") || normalized.includes("panic") || normalized.includes("exception")) signals.push("error-text");
+  if (normalized.includes("permission denied") || normalized.includes("not allowed")) signals.push("permission-denied");
+  if (normalized.includes("merge conflict") || normalized.includes("conflict")) signals.push("conflict");
+  if (normalized.includes("compiling") || normalized.includes("running") || normalized.includes("installing") || normalized.includes("building")) signals.push("work-in-progress");
+  if (/[>$#]\s*$/.test(output.trim()) || normalized.includes("press enter")) signals.push("input-or-shell-prompt");
+  return signals.length ? signals : ["no-known-signal"];
+}
 async function readPromptArtifact(dataDir, sessionID) {
   if (!dataDir) return { status: "unobservable", reason: "ao status did not expose dataDir" };
   const path = join(resolve(expandHome(dataDir)), "prompts", sessionID, "system.md");
@@ -210,14 +224,72 @@ async function main() {
 
 async function finish(report, options, created, command) {
   if (options.cleanup) for (const id of [...created].reverse()) report.cleanup.results.push({ id, result: await command(["session", "kill", id]) });
-  report.finishedAt = new Date().toISOString(); await save(report, options.report);
   const counts = report.stages.reduce((a, x) => { a[x.status] = (a[x.status] || 0) + 1; return a; }, {});
+  if (report.failure || (counts.unobservable || 0) > 0) report.diagnostics = await collectIssueDiagnostics(report, options, command, counts);
+  report.finishedAt = new Date().toISOString(); await save(report, options.report);
   console.log(`AO agent E2E: ${counts.passed || 0} passed, ${counts.unobservable || 0} unobservable, ${counts.failed || 0} failed`); if (options.report) console.log(`Report: ${resolve(expandHome(options.report))}`); if (report.failure) { console.error(`Failed at ${report.failure.stage}: ${report.failure.reason}`); return 1; }
   if ((counts.unobservable || 0) > 0 && !options.allowUnobservable) {
     console.error("Unobservable evidence is non-passing by default. Re-run with --allow-unobservable only for diagnostic baselines.");
     return 1;
   }
   return 0;
+}
+
+async function collectIssueDiagnostics(report, options, command, counts) {
+  const diagnostics = {
+    capturedAt: new Date().toISOString(),
+    trigger: report.failure ? "failure" : "unobservable",
+    counts,
+    sessions: [],
+    commands: [],
+  };
+  for (const args of [
+    ["status", "--json"],
+    ["session", "ls", "--project", options.project, "--all", "--json"],
+  ]) {
+    const result = await command(args);
+    diagnostics.commands.push({ command: args, result });
+  }
+  const known = new Map();
+  for (const item of report.sessions) if (item?.id) known.set(item.id, item);
+  for (const stage of report.stages) {
+    for (const value of strings(stage.observed ?? {})) {
+      if (/^[A-Za-z0-9_-]{8,}$/.test(value) && report.sessions.some((item) => item.id === value)) known.set(value, report.sessions.find((item) => item.id === value));
+    }
+  }
+  for (const [sessionID, metadata] of known) {
+    const detail = await command(["session", "get", sessionID, "--json"]);
+    const tmux = await captureTmuxDiagnostics(sessionID, options);
+    const entry = {
+      id: sessionID,
+      role: metadata.role,
+      harness: metadata.harness,
+      detail,
+      tmux,
+    };
+    if (metadata.role === "worker") entry.reviews = await command(["review", "ls", sessionID, "--json"]);
+    diagnostics.sessions.push(entry);
+  }
+  diagnostics.summary = diagnostics.sessions.map((session) => ({
+    id: session.id,
+    role: session.role,
+    hasTmux: session.tmux.hasSession,
+    signals: session.tmux.signals,
+    detailExit: session.detail.code,
+  }));
+  return diagnostics;
+}
+
+async function captureTmuxDiagnostics(sessionID, options) {
+  const target = `${sessionID}:0.0`;
+  const hasSessionResult = await runCommand(["tmux", "has-session", "-t", sessionID], options.commandTimeoutSeconds);
+  const tmux = { target, hasSession: hasSessionResult.code === 0, hasSessionResult, signals: ["tmux-session-missing"] };
+  if (hasSessionResult.code !== 0) return tmux;
+  const captureResult = await runCommand(["tmux", "capture-pane", "-t", target, "-p", "-S", `-${options.tmuxLines}`], options.commandTimeoutSeconds);
+  tmux.captureResult = captureResult;
+  tmux.visibleBlockingPrompt = visibleBlockingPrompt(captureResult.stdout);
+  tmux.signals = paneSignals(captureResult.stdout);
+  return tmux;
 }
 
 main().then((code) => { process.exitCode = code; }).catch((error) => { console.error(error.stack || error); process.exitCode = 1; });

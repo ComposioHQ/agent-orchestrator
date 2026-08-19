@@ -76,8 +76,9 @@ Use `--lifecycle-session` for the exact target. If omitted, lifecycle falls back
 - Reviewer testing: review records are polled until a completed reviewer run with session, status, and verdict evidence is visible.
 - Lifecycle: a selected session is killed, observed as terminated, restored, observed as live again, and checked through tmux diagnostics.
 - Tmux diagnostics: for each observed orchestrator, worker, worker-work, and reviewer session, the runner checks the tmux session, captures recent pane output, and flags visible blocking prompts. It records this as evidence only; it does not send keys or approve prompts.
+- Issue diagnostics: when any stage fails or becomes `unobservable`, the final report adds a `diagnostics` section with fresh `ao status`, full session listing, per-session `ao session get`, worker `ao review ls`, tmux existence checks, recent pane captures, and pane signal tags such as `blocking-prompt`, `auth-or-login`, `rate-limit-or-quota`, `error-text`, `permission-denied`, `conflict`, `work-in-progress`, and `input-or-shell-prompt`.
 
-Keep the report. It records commands, exit codes, stdout/stderr, timestamps, IDs, observations, the first failed stage, and cleanup results.
+Keep the report. It records commands, exit codes, stdout/stderr, timestamps, IDs, observations, the first failed stage, cleanup results, and failure diagnostics. Use `diagnostics.summary` first to see which session was blocked, missing tmux, waiting for input, failing auth, rate limited, or still doing work.
 
 ## Manual diagnosis
 
@@ -112,12 +113,12 @@ For prompt delivery, prefer observed role behavior and AO-generated prompt artif
 - `reviewer`: review run, reviewer session, or submitted verdict evidence missing before timeout.
 - `lifecycle`: session kill did not terminate, restore did not bring the session back, or restored tmux/session evidence is missing.
 
-Do not auto-retry externally visible actions. Do not kill or delete sessions unless the user explicitly selected cleanup. Escalate with the JSON report and the exact failed stage.
+Do not auto-retry externally visible actions. Do not kill or delete sessions unless the user explicitly selected cleanup. Escalate with the JSON report, the exact failed stage, and the `diagnostics.summary` entries for every affected session.
 
 ## Useful next modules
 
 The current split covers the major path. The next valuable modules would be:
 
 - Artifact/diff verification: inspect the worker worktree and assert the requested code change plus relevant checks, instead of stopping at PR/session evidence.
-- Failure bundle export: collect the JSON report, tmux panes, session detail, review detail, branch, PR URL, and recent daemon logs into one directory for debugging.
+- Failure bundle export: collect the JSON report, captured diagnostics, branch, PR URL, and recent daemon logs into one directory for debugging.
 - Recovery-after-review: verify changes-requested comments create a follow-up worker action and an updated PR/check state.
