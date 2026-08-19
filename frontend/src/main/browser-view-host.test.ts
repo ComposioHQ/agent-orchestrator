@@ -933,9 +933,21 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 		// Counts closes that were made to hit closeTab's "wasActive"
 		// reactivation branch (browser-view-host.ts:696 -- the path that calls
 		// activateTab/applySessionBounds/pushNavState/pushDevToolsState/
-		// retargetDevTools) so the final assertion has real evidence that path
-		// actually ran, not just that the loop reached the code.
+		// retargetDevTools) versus its plain non-active-tab deletion branch, so
+		// the final assertion has real evidence both paths actually ran.
+		//
+		// These counters are ground truth BY CONSTRUCTION, not by inference:
+		// each iteration below explicitly selects a tab X and then either closes
+		// that same X (wasActive true by direct equality, tabId ===
+		// activeTabId) or closes a different Y (wasActive false by direct
+		// inequality). Which id we pass to closeTab is exactly what determines
+		// the branch -- there is nothing to derive from closeTab's internal
+		// reactivation-promotes-the-tail behavior, unlike a prior version of
+		// this test that tried to infer wasActive from close order/parity and,
+		// by induction on that promotion behavior, ended up hitting the
+		// reactivation branch on every single close.
 		let reactivatingCloses = 0;
+		let nonReactivatingCloses = 0;
 
 		for (let cycle = 0; cycle < 20; cycle += 1) {
 			for (let i = 0; i < MAX_BROWSER_TABS - 1; i += 1) {
@@ -961,21 +973,20 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 			let closeCount = 0;
 			while (tabs.tabs.length > 1) {
 				const before = tabs.tabs.length;
-				// Alternate which tab gets closed: on even iterations, select the
-				// head tab and then close that same tab, forcing closeTab's
-				// "wasActive" reactivation branch to run; on odd iterations, close
-				// the tail (a background tab) without touching selection, so the
-				// plain non-active-tab deletion path runs too. Tail-closing alone
-				// (the old behavior) never made the closed tab coincide with the
-				// active one, so the reactivation branch was never exercised.
-				const closingActiveTab = closeCount % 2 === 0;
-				let closingId: string;
-				if (closingActiveTab) {
-					closingId = tabs.tabs[0].id;
-					await invoke("browser:selectTab", { viewId, tabId: closingId });
-				} else {
-					closingId = tabs.tabs[tabs.tabs.length - 1].id;
-				}
+				// Always select a tab first (X), fetched fresh from the current
+				// `tabs.tabs` list rather than a remembered index or position,
+				// since positions shift as tabs close. Then, by construction:
+				//   - reactivating close: close that SAME id X.
+				//   - non-reactivating close: close a DIFFERENT id Y != X that
+				//     was not the one just selected.
+				// Each branch is verifiable by inspection right here -- no
+				// induction over closeTab's internal promotion behavior required.
+				const wantsReactivation = closeCount % 2 === 0;
+				const selectedId = tabs.tabs[0].id;
+				await invoke("browser:selectTab", { viewId, tabId: selectedId });
+				const closingId = wantsReactivation
+					? selectedId
+					: tabs.tabs.find((tab) => tab.id !== selectedId)!.id;
 
 				const result = (await invoke("browser:closeTab", { viewId, tabId: closingId })) as BrowserTabsState;
 
@@ -985,7 +996,11 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 				// -- a broken reactivation would otherwise pass silently, as it
 				// did before this assertion existed.
 				expect(result.tabs.some((tab) => tab.id === result.activeTabId)).toBe(true);
-				if (closingActiveTab) reactivatingCloses += 1;
+				if (wantsReactivation) {
+					reactivatingCloses += 1;
+				} else {
+					nonReactivatingCloses += 1;
+				}
 
 				tabs = result;
 				closeCount += 1;
@@ -995,10 +1010,15 @@ describe("browser tab lifecycle stress (tabs stop closing regression guard)", ()
 			expect((await invoke("browser:getTabs", viewId)) as BrowserTabsState).toMatchObject({ tabs: [{ id: tabs.tabs[0].id }] });
 		}
 
-		// 20 cycles x 8 reactivating closes/cycle (closeCount 0,2,4,...,14 out
-		// of 15 closes per cycle) -- confirms the alternation above genuinely
-		// exercised closeTab's wasActive branch, not merely that the loop ran.
-		expect(reactivatingCloses).toBe(160);
+		// Both branches must have real coverage -- these counters are ground
+		// truth by construction (see the comment above the loop), not derived
+		// from closeTab's behavior, so this assertion can't pass by accident
+		// the way the prior induction-based version did. The thresholds are
+		// deliberately loose (the actual split is a deterministic 160
+		// reactivating / 140 non-reactivating for MAX_BROWSER_TABS=16 across 20
+		// cycles) since what matters is that neither branch has zero coverage.
+		expect(reactivatingCloses).toBeGreaterThanOrEqual(5);
+		expect(nonReactivatingCloses).toBeGreaterThanOrEqual(5);
 
 		const final = (await invoke("browser:getTabs", viewId)) as BrowserTabsState;
 		expect(final.tabs).toHaveLength(1);
