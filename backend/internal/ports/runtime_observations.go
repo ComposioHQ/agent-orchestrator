@@ -56,6 +56,9 @@ type ActivitySignal struct {
 	// TranscriptPath is a read-only provider-native transcript reference when
 	// the hook exposes one. AO stores the path, never rewrites the transcript.
 	TranscriptPath string
+	// ContextPressure is a best-effort harness context-budget reading. Nil
+	// means the harness has not reported; it never fabricates a zero value.
+	ContextPressure *domain.ContextPressure
 	// LaunchID is set by AO's process supervisor. Lifecycle rejects a signal
 	// from an older process generation of the same session.
 	LaunchID string

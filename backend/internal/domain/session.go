@@ -78,6 +78,15 @@ type SessionMetadata struct {
 	BrowserCapabilityVerifier string `json:"-"`
 }
 
+// ContextPressure is a best-effort harness reading for remaining context
+// budget. Nil on a session means the harness has not reported a reading.
+type ContextPressure struct {
+	UsedPercent             int       `json:"usedPercent"`
+	UntilAutoCompactPercent int       `json:"untilAutoCompactPercent"`
+	Source                  string    `json:"source"`
+	ObservedAt              time.Time `json:"observedAt"`
+}
+
 // SessionRecord is the persistence shape. It intentionally stores only durable
 // facts: identity, agent harness, activity_state, is_terminated, and operational
 // metadata. The user-facing Status is derived from these facts plus PR facts.
@@ -108,10 +117,11 @@ type SessionRecord struct {
 	IsTerminated  bool      `json:"isTerminated"`
 	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
 	// completing the session's PR set through a merge tears down the session.
-	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
-	AutoInjectReview   bool            `json:"autoInjectReview"`
-	AutoInjectCI       bool            `json:"autoInjectCI"`
-	Metadata           SessionMetadata `json:"-"`
+	TerminateOnPRMerge bool             `json:"terminateOnPrMerge"`
+	AutoInjectReview   bool             `json:"autoInjectReview"`
+	AutoInjectCI       bool             `json:"autoInjectCI"`
+	Metadata           SessionMetadata  `json:"-"`
+	ContextPressure    *ContextPressure `json:"contextPressure,omitempty"`
 	// CleanupGeneration is a monotonic counter bumped each time the session is
 	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its
 	// durable cleanup facts with the generation they were written for so a

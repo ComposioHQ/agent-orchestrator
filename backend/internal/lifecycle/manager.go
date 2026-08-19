@@ -464,7 +464,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			}
 		}
 	}
-	if !s.Valid && s.AgentSessionID == "" && s.LatestUserPrompt == "" && s.LatestAssistantUpdate == "" && s.TranscriptPath == "" {
+	if !s.Valid && s.AgentSessionID == "" && s.LatestUserPrompt == "" && s.LatestAssistantUpdate == "" && s.TranscriptPath == "" && s.ContextPressure == nil {
 		return nil
 	}
 	if s.LaunchID != "" {
@@ -536,15 +536,22 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		(s.LatestUserPrompt != "" && rec.Metadata.LatestUserPrompt != s.LatestUserPrompt) ||
 		(s.LatestAssistantUpdate != "" && rec.Metadata.LatestAssistantUpdate != s.LatestAssistantUpdate) ||
 		(s.TranscriptPath != "" && rec.Metadata.NativeTranscriptPath != s.TranscriptPath)
+	pressureChanged := s.ContextPressure != nil && !contextPressureEqual(rec.ContextPressure, s.ContextPressure)
 	if s.Valid {
 		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
 	}
-	if !s.Valid && !metadataChanged {
+	if !s.Valid && !metadataChanged && !pressureChanged {
 		m.mu.Unlock()
 		return nil
 	}
 	if !s.Valid {
-		applyActivityMetadata(&rec.Metadata, s)
+		if metadataChanged {
+			applyActivityMetadata(&rec.Metadata, s)
+		}
+		if pressureChanged {
+			cp := *s.ContextPressure
+			rec.ContextPressure = &cp
+		}
 		rec.UpdatedAt = now
 		_, err := m.store.UpdateSessionFromActivitySignal(ctx, rec)
 		m.mu.Unlock()
@@ -554,6 +561,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		// Fold metadata into rec before copying it into next below, so the
 		// activity and resume handle land in one store update.
 		applyActivityMetadata(&rec.Metadata, s)
+	}
+	if pressureChanged {
+		cp := *s.ContextPressure
+		rec.ContextPressure = &cp
 	}
 	prevState := rec.Activity.State
 	prevAt := rec.Activity.LastActivityAt
@@ -565,7 +576,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameState && !rec.FirstSignalAt.IsZero() {
-		if metadataChanged || s.Event == "user-prompt-submit" {
+		if metadataChanged || pressureChanged || s.Event == "user-prompt-submit" {
 			rec.UpdatedAt = now
 			applied, err := m.store.UpdateSessionFromActivitySignal(ctx, rec)
 			m.mu.Unlock()
@@ -628,6 +639,16 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	m.emitNotification(ctx, intent)
 	m.resolveNotifications(ctx, resolutions...)
 	return nil
+}
+
+func contextPressureEqual(a, b *domain.ContextPressure) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.UsedPercent == b.UsedPercent &&
+		a.UntilAutoCompactPercent == b.UntilAutoCompactPercent &&
+		a.Source == b.Source &&
+		a.ObservedAt.Equal(b.ObservedAt)
 }
 
 // stagePendingAgentSwitchNativeMetadata persists provider-assigned startup

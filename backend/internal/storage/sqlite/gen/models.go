@@ -390,6 +390,7 @@ type Session struct {
 	ReviewerHarness           domain.ReviewerHarness
 	IsPinned                  bool
 	PinnedAt                  sql.NullTime
+	ContextPressure           sql.NullString
 	SessionMode               domain.SessionMode
 	ProviderConversationID    string
 	ControllerGeneration      string

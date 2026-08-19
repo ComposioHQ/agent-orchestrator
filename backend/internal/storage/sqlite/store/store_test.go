@@ -122,6 +122,46 @@ func TestSessionPersistsDiffBaseMetadata(t *testing.T) {
 	}
 }
 
+func TestSessionPersistsContextPressure(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	if got.ContextPressure != nil {
+		t.Fatalf("new session context pressure = %#v, want nil", got.ContextPressure)
+	}
+
+	observedAt := time.Date(2026, 6, 2, 12, 30, 0, 0, time.UTC)
+	got.ContextPressure = &domain.ContextPressure{
+		UsedPercent:             91,
+		UntilAutoCompactPercent: 9,
+		Source:                  "claude-code",
+		ObservedAt:              observedAt,
+	}
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update session: %v", err)
+	}
+	updated, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
+	}
+	if updated.ContextPressure == nil {
+		t.Fatal("updated context pressure is nil")
+	}
+	if *updated.ContextPressure != *got.ContextPressure {
+		t.Fatalf("updated context pressure = %#v, want %#v", updated.ContextPressure, got.ContextPressure)
+	}
+}
+
 func TestSessionPersistsDeterministicHandoffInputs(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -1438,6 +1478,57 @@ func TestSessionPinFiresCDCEvent(t *testing.T) {
 	}
 	if isPinned, ok := payload["isPinned"].(bool); !ok || !isPinned {
 		t.Fatalf("payload isPinned = %v, want true", payload["isPinned"])
+	}
+}
+
+func TestSessionContextPressureFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	got, ok, err := s.GetSession(ctx, r.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	got.ContextPressure = &domain.ContextPressure{
+		UsedPercent:             91,
+		UntilAutoCompactPercent: 9,
+		Source:                  "claude-code",
+		ObservedAt:              time.Date(2026, 6, 2, 12, 30, 0, 0, time.UTC),
+	}
+	got.UpdatedAt = got.UpdatedAt.Add(time.Minute)
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update session: %v", err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []json.RawMessage
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			payloads = append(payloads, e.Payload)
+		}
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after context pressure change", len(payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloads[0], &payload); err != nil {
+		t.Fatalf("session_updated payload JSON: %v", err)
+	}
+	if payload["id"] != string(r.ID) {
+		t.Fatalf("payload id = %v, want %q", payload["id"], r.ID)
+	}
+	cp, ok := payload["contextPressure"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload contextPressure = %v, want object", payload["contextPressure"])
+	}
+	if cp["usedPercent"] != 91.0 {
+		t.Fatalf("payload contextPressure.usedPercent = %v, want 91", cp["usedPercent"])
 	}
 }
 

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -403,6 +404,7 @@ func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 			ProviderConversationID:    row.ProviderConversationID,
 			ControllerGeneration:      row.ControllerGeneration,
 		},
+		ContextPressure:   nullStringToContextPressure(row.ContextPressure),
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
@@ -457,6 +459,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		TerminateOnPRMerge:        rec.TerminateOnPRMerge,
 		AutoInjectReview:          rec.AutoInjectReview,
 		AutoInjectCI:              rec.AutoInjectCI,
+		ContextPressure:           contextPressureToNullString(rec.ContextPressure),
 		CleanupGeneration:         rec.CleanupGeneration,
 		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 		SessionMode:               domain.NormalizeSessionMode(rec.Mode),
@@ -501,12 +504,35 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		TerminateOnPRMerge:        rec.TerminateOnPRMerge,
 		AutoInjectReview:          rec.AutoInjectReview,
 		AutoInjectCI:              rec.AutoInjectCI,
+		ContextPressure:           contextPressureToNullString(rec.ContextPressure),
 		CleanupGeneration:         rec.CleanupGeneration,
 		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
 		ProviderConversationID:    rec.Metadata.ProviderConversationID,
 		ControllerGeneration:      rec.Metadata.ControllerGeneration,
 		UpdatedAt:                 rec.UpdatedAt,
 	}
+}
+
+func nullStringToContextPressure(s sql.NullString) *domain.ContextPressure {
+	if !s.Valid || s.String == "" {
+		return nil
+	}
+	var cp domain.ContextPressure
+	if err := json.Unmarshal([]byte(s.String), &cp); err != nil {
+		return nil
+	}
+	return &cp
+}
+
+func contextPressureToNullString(cp *domain.ContextPressure) sql.NullString {
+	if cp == nil {
+		return sql.NullString{}
+	}
+	b, err := json.Marshal(cp)
+	if err != nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: string(b), Valid: true}
 }
 
 // nullTimeToTime / timeToNullTime bridge the nullable first_signal_at column
