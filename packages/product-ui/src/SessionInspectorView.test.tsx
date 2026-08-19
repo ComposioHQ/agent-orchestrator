@@ -708,7 +708,7 @@ describe("portable inspector presentations", () => {
         "text-success",
       );
     });
-    expect(screen.getAllByRole("link", { name: "View in file" })).toHaveLength(
+    expect(screen.getAllByRole("link", { name: "View on PR" })).toHaveLength(
       2,
     );
   });

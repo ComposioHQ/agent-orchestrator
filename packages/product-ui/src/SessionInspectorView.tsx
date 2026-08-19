@@ -1196,7 +1196,7 @@ function InlineCommentRow({
 				)}
 				{comment.url ? (
 					<ExternalLink className="inline-flex h-7 items-center rounded-md border border-border/70 px-2 text-2xs font-medium text-muted-foreground no-underline transition-colors hover:border-border-strong hover:bg-interactive-hover hover:text-foreground" href={comment.url}>
-						{labels.viewInFile}
+						{labels.viewOnPR}
 					</ExternalLink>
 				) : null}
 			</div>
