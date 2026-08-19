@@ -19,6 +19,9 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
+	if strings.TrimSpace(os.Getenv("CURSOR_API_KEY")) != "" {
+		return ports.AgentAuthStatusAuthorized, nil
+	}
 	if status, err := cursorCLIAuthStatus(ctx, binary); err == nil && status != ports.AgentAuthStatusUnknown {
 		return status, nil
 	} else if err != nil && ctx.Err() != nil {

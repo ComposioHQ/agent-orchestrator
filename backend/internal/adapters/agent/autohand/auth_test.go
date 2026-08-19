@@ -1,12 +1,42 @@
 package autohand
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestAutohandAuthStatusUsesDocumentedStatusCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AUTOHAND_CONFIG", "")
+	for _, name := range []string{
+		"AUTOHAND_API_KEY", "AUTOHAND_AUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+		"GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY",
+	} {
+		t.Setenv(name, "")
+	}
+	previous := authprobe.CmdRunner
+	authprobe.CmdRunner = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "autohand" || !reflect.DeepEqual(args, []string{"auth", "status"}) {
+			t.Fatalf("command = %s %#v, want autohand auth status", name, args)
+		}
+		return []byte("Authenticated as agent@example.com"), nil
+	}
+	defer func() { authprobe.CmdRunner = previous }()
+
+	status, err := (&Plugin{resolvedBinary: "autohand"}).AuthStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("status = %q, want %q", status, ports.AgentAuthStatusAuthorized)
+	}
+}
 
 func TestAutohandConfigAuthStatusAuthorized(t *testing.T) {
 	path := writeAutohandAuthConfig(t, `{

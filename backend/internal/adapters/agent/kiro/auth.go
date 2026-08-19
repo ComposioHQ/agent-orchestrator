@@ -2,6 +2,8 @@ package kiro
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -14,6 +16,9 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	binary, err := p.kiroBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
+	}
+	if strings.TrimSpace(os.Getenv("KIRO_API_KEY")) != "" {
+		return ports.AgentAuthStatusAuthorized, nil
 	}
 	return kiroWhoamiAuthStatus(ctx, binary)
 }

@@ -351,14 +351,17 @@ func assertRawJSONEqual(t *testing.T, want, got json.RawMessage) {
 }
 
 func TestAuthStatus(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
 	plugin := &Plugin{resolvedBinary: "agy"}
 
 	status, err := plugin.AuthStatus(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if status != ports.AgentAuthStatusAuthorized {
-		t.Errorf("AuthStatus() = %v, want AgentAuthStatusAuthorized", status)
+	if status != ports.AgentAuthStatusUnknown {
+		t.Errorf("AuthStatus() = %v, want AgentAuthStatusUnknown", status)
 	}
 }
 

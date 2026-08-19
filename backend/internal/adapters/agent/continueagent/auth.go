@@ -2,6 +2,7 @@ package continueagent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,12 +12,40 @@ import (
 	yaml "gopkg.in/yaml.v3"
 )
 
+var _ ports.AgentAuthChecker = (*Plugin)(nil)
+
+// AuthStatus reports Continue credentials that can be checked without sending
+// a model prompt. Continue has no non-interactive status command.
+func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	if _, err := p.ResolveBinary(ctx); err != nil {
+		if errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			return ports.AgentAuthStatusUnknown, nil
+		}
+		return ports.AgentAuthStatusUnknown, err
+	}
+	status, ok, err := continueLocalAuthStatus(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	if ok {
+		return status, nil
+	}
+	return ports.AgentAuthStatusUnknown, nil
+}
+
+var continueAPIKeyEnvVars = []string{
+	"CONTINUE_API_KEY",
+	"ANTHROPIC_API_KEY",
+}
+
 func continueLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	if strings.TrimSpace(os.Getenv("CONTINUE_API_KEY")) != "" {
-		return ports.AgentAuthStatusAuthorized, true, nil
+	for _, name := range continueAPIKeyEnvVars {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return ports.AgentAuthStatusAuthorized, true, nil
+		}
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		status, ok, err := continueConfigAuthStatus(filepath.Join(home, ".continue", "config.yaml"))

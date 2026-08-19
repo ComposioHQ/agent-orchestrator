@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -17,7 +18,23 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
-	return autohandConfigAuthStatus(autohandConfigPath())
+	binary, err := p.ResolveBinary(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	for _, name := range []string{
+		"AUTOHAND_API_KEY", "AUTOHAND_AUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+		"GOOGLE_API_KEY", "OPENROUTER_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY",
+	} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return ports.AgentAuthStatusAuthorized, nil
+		}
+	}
+	status, err := autohandConfigAuthStatus(autohandConfigPath())
+	if err != nil || status != ports.AgentAuthStatusUnknown {
+		return status, err
+	}
+	return authprobe.CLIStatus(ctx, binary, [][]string{{"auth", "status"}})
 }
 
 func autohandConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) {

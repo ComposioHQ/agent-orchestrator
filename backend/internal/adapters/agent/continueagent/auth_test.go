@@ -22,7 +22,9 @@ func TestContinueLocalAuthStatusAuthorizedFromEnv(t *testing.T) {
 }
 
 func TestContinueLocalAuthStatusUnknownWithoutEnv(t *testing.T) {
-	t.Setenv("CONTINUE_API_KEY", "")
+	for _, name := range continueAPIKeyEnvVars {
+		t.Setenv(name, "")
+	}
 	t.Setenv("HOME", t.TempDir())
 
 	status, ok, err := continueLocalAuthStatus(context.Background())

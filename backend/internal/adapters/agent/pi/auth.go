@@ -26,6 +26,15 @@ func piLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error)
 	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
+	for _, name := range []string{
+		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+		"MISTRAL_API_KEY", "GROQ_API_KEY", "XAI_API_KEY", "OPENROUTER_API_KEY",
+		"DEEPSEEK_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY", "KIMI_API_KEY",
+	} {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return ports.AgentAuthStatusAuthorized, true, nil
+		}
+	}
 	configDir, ok := piConfigDir()
 	if !ok {
 		return ports.AgentAuthStatusUnknown, false, nil
