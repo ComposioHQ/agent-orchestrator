@@ -153,7 +153,7 @@ describe("GlobalSettingsForm", () => {
 		// "Settings" heading is now in the modal dialog header, not in the form body
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
-		expect(screen.getByText("Updates")).toBeInTheDocument();
+		expect(await screen.findByText("Updates")).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
@@ -268,12 +268,11 @@ describe("GlobalSettingsForm", () => {
 
 	it("auto-saves when automatic updates are toggled", async () => {
 		renderForm();
-		await screen.findByLabelText("Automatic Updates");
-		await userEvent.click(screen.getByLabelText("Automatic Updates"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Disabled" }));
+		await userEvent.click(await screen.findByRole("switch", { name: "Automatic Updates" }));
 		await waitFor(() =>
 			expect(setUpdate).toHaveBeenCalledWith(expect.objectContaining({ enabled: false, channel: "latest" })),
 		);
+		expect(screen.queryByLabelText("Updates channel")).not.toBeInTheDocument();
 	});
 
 	it("hides the nightly warning on the stable channel", async () => {
