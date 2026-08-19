@@ -3773,6 +3773,12 @@ html[data-native-browser-composition="true"] #root:has(.browser-panel[data-brows
 	background: transparent;
 }
 
+/* `.app-shell-root` is the same element as the `.platform-*` selectors below —
+ * those classes are only applied on Windows/Linux, so macOS had no hook here
+ * and this opaque `bg-sidebar` wrapper painted over the live native page
+ * whenever an overlay raised the shell. Match it by its own class so every
+ * platform is covered. */
+html[data-native-browser-composition="true"] .app-shell-root:has(.browser-panel[data-browser-native-page="live"]),
 html[data-native-browser-composition="true"] .platform-windows:has(.browser-panel[data-browser-native-page="live"]),
 html[data-native-browser-composition="true"] .platform-linux:has(.browser-panel[data-browser-native-page="live"]) {
 	background: transparent;
@@ -3826,7 +3832,14 @@ html[data-native-browser-composition="true"] .browser-panel[data-browser-native-
  * when the transparent shell is raised for a menu. Other inspector tabs keep
  * their existing surface unchanged. */
 html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]),
-html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body {
+html[data-native-browser-composition="true"] .session-inspector:has(.browser-panel[data-browser-native-page="live"]) .session-inspector__body,
+/* The element that actually paints is SessionView.tsx's inspector container,
+ * which carries an opaque `bg-background` utility. `.session-inspector` alone is
+ * NOT enough: that class sits on a `display: contents` wrapper which generates
+ * no box, and product-ui's SessionInspectorShellView `<aside>` carries only
+ * layout classes. Verified by measuring the live paint stack at the blanked
+ * pixel — this container and the app shell root were the only opaque layers. */
+html[data-native-browser-composition="true"] [data-slot="inspector-container"]:has(.browser-panel[data-browser-native-page="live"]) {
 	background: transparent;
 }
 
