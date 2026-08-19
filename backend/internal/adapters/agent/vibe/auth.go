@@ -4,12 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -31,7 +28,6 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 const (
 	// This names the default env var Vibe reads; it is not a credential value.
 	vibeDefaultAPIKeyEnvVar = "MISTRAL_API_KEY" //nolint:gosec // env var name, not a credential value
-	vibeKeychainService     = "vibe"
 )
 
 func vibeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
@@ -50,7 +46,7 @@ func vibeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 		vibeHome = filepath.Join(home, ".vibe")
 	}
 
-	envVars, err := vibeAPIKeyEnvVars(filepath.Join(vibeHome, "config.toml"))
+	envVars, err := vibeAPIKeyEnvVars(vibeConfigPath(vibeHome))
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
@@ -62,15 +58,19 @@ func vibeLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 			return status, ok, err
 		}
 	}
-	if status, ok, err := vibeSessionLogAuthStatus(ctx, filepath.Join(vibeHome, "logs", "session")); err != nil || ok {
-		return status, ok, err
-	}
-	for _, envVar := range envVars {
-		if status, ok, err := vibeKeychainAuthStatus(ctx, envVar); err != nil || ok {
-			return status, ok, err
+	return ports.AgentAuthStatusUnknown, false, nil
+}
+
+// vibeConfigPath follows Vibe's documented precedence: project configuration
+// first, then the Vibe-home configuration.
+func vibeConfigPath(vibeHome string) string {
+	if cwd, err := os.Getwd(); err == nil && cwd != "" {
+		projectConfig := filepath.Join(cwd, ".vibe", "config.toml")
+		if _, err := os.Stat(projectConfig); err == nil {
+			return projectConfig
 		}
 	}
-	return ports.AgentAuthStatusUnknown, false, nil
+	return filepath.Join(vibeHome, "config.toml")
 }
 
 func vibeAPIKeyEnvVars(configPath string) ([]string, error) {
@@ -118,59 +118,6 @@ func vibeEnvFileAuthStatus(path, envVar string) (ports.AgentAuthStatus, bool, er
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func vibeKeychainAuthStatus(ctx context.Context, envVar string) (ports.AgentAuthStatus, bool, error) {
-	if runtime.GOOS != "darwin" {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	if strings.TrimSpace(envVar) == "" {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	out, err := aoprocess.CommandContext(probeCtx, "security", "find-generic-password", "-s", vibeKeychainService, "-a", envVar, "-w").CombinedOutput()
-	if probeCtx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, false, nil
-	}
-	if err == nil && strings.TrimSpace(string(out)) != "" {
-		return ports.AgentAuthStatusAuthorized, true, nil
-	}
-	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func vibeSessionLogAuthStatus(ctx context.Context, dir string) (ports.AgentAuthStatus, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	paths, err := filepath.Glob(filepath.Join(dir, "session_*", "messages.jsonl"))
-	if err != nil {
-		return ports.AgentAuthStatusUnknown, false, err
-	}
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return ports.AgentAuthStatusUnknown, false, err
-		}
-		data, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return ports.AgentAuthStatusUnknown, false, err
-		}
-		if vibeMessagesShowModelUse(string(data)) {
-			return ports.AgentAuthStatusAuthorized, true, nil
-		}
-	}
-	return ports.AgentAuthStatusUnknown, false, nil
-}
-
-func vibeMessagesShowModelUse(text string) bool {
-	return strings.Contains(text, `"role": "assistant"`) ||
-		strings.Contains(text, `"role":"assistant"`) ||
-		strings.Contains(text, `"reasoning_content"`) ||
-		strings.Contains(text, `"session_completion_tokens"`)
 }
 
 func containsString(values []string, target string) bool {
